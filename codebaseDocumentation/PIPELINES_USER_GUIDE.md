@@ -211,11 +211,13 @@ point a user to the step's Logs button when a step shows a failure.
 
 From the list, each pipeline row offers:
 
-- **Run** — open the run panel.
-- **Edit** — open the builder.
-- **Duplicate** — make an independent copy (fresh ids; the copy creates its own
-  computed properties on first run).
-- **Delete** — remove it (with the keep/remove computed-properties choice).
+- **Open** — click the row body to open it in the editor (where you both edit
+  and run).
+- **Run** — a quick-run button on the row (runs the saved pipeline as-is).
+- **Duplicate** (⋮ overflow menu) — make an independent copy (fresh ids; the
+  copy creates its own computed properties on first run).
+- **Delete** (⋮ overflow menu) — remove it (with the keep/remove
+  computed-properties choice).
 
 Pipelines live on the configuration, so they persist across sessions and are
 shared by every dataset in the collection.
