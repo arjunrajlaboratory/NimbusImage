@@ -216,7 +216,8 @@
                 :label="`Apply to all datasets in collection (${controller.collectionDatasetCount.value})`"
                 :disabled="
                   controller.isRunning.value ||
-                  !controller.canApplyToAllDatasets.value
+                  !controller.canApplyToAllDatasets.value ||
+                  !!controller.batchProgress.value
                 "
                 density="compact"
                 hide-details
@@ -369,10 +370,6 @@ import {
 // step's live run status, and the footer runs the pipeline (saving first).
 const props = defineProps<{
   pipeline: IPipeline;
-}>();
-
-const emit = defineEmits<{
-  (e: "saved", pipelineId: string): void;
 }>();
 
 const controller = inject<PipelineRunController>(PipelineRunControllerKey)!;
@@ -661,7 +658,6 @@ async function persist(): Promise<IPipeline | null> {
   saveError.value = null;
   try {
     await pipelinesStore.savePipeline(cloneDeep(localPipeline.value));
-    emit("saved", localPipeline.value.id);
     return pipelinesStore.getPipelineById(localPipeline.value.id);
   } catch (error) {
     logError("Failed to save pipeline:", error);

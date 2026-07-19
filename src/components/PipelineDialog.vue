@@ -104,6 +104,15 @@ const showSuggestDialog = ref(false);
 function openEditor(pipeline: IPipeline) {
   activePipeline.value = pipeline;
   activeView.value = "editor";
+  // A finished run's summary belongs to the pipeline that ran. When opening a
+  // *different* pipeline (and nothing is running), drop it so the status strip
+  // doesn't hover a stale result over an unrelated editor.
+  if (
+    !controller.isRunning.value &&
+    controller.activePipelineId.value !== pipeline.id
+  ) {
+    controller.clearResult();
+  }
 }
 
 function backToList() {

@@ -59,6 +59,16 @@ export function stepStatusColor(status?: TStepStatus): string | undefined {
   }
 }
 
+// A fresh per-step status baseline for a pipeline that isn't the live run:
+// enabled steps are pending, disabled steps are skipped, no progress or errors.
+function makeBaselineStatuses(pipeline: IPipeline): IStepRunState[] {
+  return pipeline.steps.map((step) => ({
+    status: step.enabled ? "pending" : "skipped",
+    progress: {},
+    errors: { errors: [] },
+  }));
+}
+
 // Shared run controller for the Pipelines dialog. Instantiated ONCE (in
 // PipelineDialog) and provided to the editor and the status strip so both read
 // one source of truth for the single in-flight run — and it survives the dialog
@@ -106,11 +116,7 @@ export function createPipelineRunController() {
     if (activePipelineId.value === pipeline.id && stepStatuses.value.length) {
       return stepStatuses.value;
     }
-    return pipeline.steps.map((step) => ({
-      status: step.enabled ? "pending" : "skipped",
-      progress: {},
-      errors: { errors: [] },
-    }));
+    return makeBaselineStatuses(pipeline);
   }
 
   function jobIdFor(pipeline: IPipeline, index: number): string | null {
@@ -125,11 +131,7 @@ export function createPipelineRunController() {
     result.value = null;
     cancelFn.value = null;
     cancelledByUser.value = false;
-    stepStatuses.value = pipeline.steps.map((step) => ({
-      status: step.enabled ? "pending" : "skipped",
-      progress: {},
-      errors: { errors: [] },
-    }));
+    stepStatuses.value = makeBaselineStatuses(pipeline);
     stepJobIds.value = pipeline.steps.map(() => null);
   }
 
@@ -229,6 +231,14 @@ export function createPipelineRunController() {
     cancelFn.value?.();
   }
 
+  // Drop the finished-run summary (and any lingering batch progress) so the
+  // status strip stops describing a run that no longer matches what's on
+  // screen — e.g. when the editor opens a different pipeline than the last run.
+  function clearResult() {
+    result.value = null;
+    batchProgress.value = null;
+  }
+
   return {
     activePipelineId,
     stepStatuses,
@@ -249,6 +259,7 @@ export function createPipelineRunController() {
     jobIdFor,
     run,
     cancel,
+    clearResult,
   };
 }
 
