@@ -136,6 +136,7 @@ function submitResult(jobId: string, success: boolean) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  pipelinesStore.setRunningPipelineId(null);
   h.main.dataset = { id: "d1", z: [0], time: [0] };
   h.main.isLoggedIn = true;
   h.main.configuration = {
@@ -363,6 +364,24 @@ describe("runPipeline", () => {
     });
 
     expect(h.main.updateConfigurationPipelines).not.toHaveBeenCalled();
+  });
+
+  it("clears running state when the post-run refresh fails", async () => {
+    h.annotations.submitAnnotationWorkerJob.mockResolvedValue(
+      submitResult("j", true),
+    );
+    h.properties.fetchPropertyValues.mockRejectedValueOnce(
+      new Error("refresh failed"),
+    );
+
+    await expect(
+      pipelinesStore.runPipeline({
+        pipeline: pipeline([annotationStep("a")]),
+      }),
+    ).rejects.toThrow("refresh failed");
+
+    expect(pipelinesStore.runningPipelineId).toBeNull();
+    expect(h.progress.complete).toHaveBeenCalledTimes(2);
   });
 
   it("persists the configuration when a property is newly materialized", async () => {

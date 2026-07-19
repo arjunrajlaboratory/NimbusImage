@@ -146,10 +146,11 @@ export function createPipelineRunController() {
     if (!canRunPipeline(pipeline)) {
       return;
     }
-    lastRunWasBatch.value = applyToAllDatasets.value;
+    const runAsBatch = applyToAllDatasets.value && canApplyToAllDatasets.value;
+    lastRunWasBatch.value = runAsBatch;
     resetRunState(pipeline);
 
-    if (applyToAllDatasets.value && store.selectedConfigurationId) {
+    if (runAsBatch && store.selectedConfigurationId) {
       await runBatch(pipeline);
       return;
     }

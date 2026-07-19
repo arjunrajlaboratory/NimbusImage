@@ -474,24 +474,28 @@ export class Pipelines extends VuexModule {
       }
     }
 
-    // Persist newly-materialized property ids captured during the run, but
-    // only when something actually changed - an annotation-only run (or one
-    // whose property steps all reused an already-matching property) has
-    // nothing new to write back to the configuration.
-    if (materializedPropertyChanged) {
-      await main.updateConfigurationPipelines(cloneDeep(this.pipelines));
-    }
+    try {
+      // Persist newly-materialized property ids captured during the run, but
+      // only when something actually changed - an annotation-only run (or one
+      // whose property steps all reused an already-matching property) has
+      // nothing new to write back to the configuration.
+      if (materializedPropertyChanged) {
+        await main.updateConfigurationPipelines(cloneDeep(this.pipelines));
+      }
 
-    // Refresh derived state once for the whole run. Skipped for batch children —
-    // runPipelineBatch refreshes once at the end for the currently-viewed
-    // dataset.
-    if (!skipRefresh) {
-      await this.refreshAfterRun();
-    }
-
-    progress.complete(topProgressId);
-    if (!skipRunningState) {
-      this.setRunningPipelineId(null);
+      // Refresh derived state once for the whole run. Skipped for batch
+      // children — runPipelineBatch refreshes once at the end for the
+      // currently-viewed dataset.
+      if (!skipRefresh) {
+        await this.refreshAfterRun();
+      }
+    } finally {
+      // A failed configuration sync or post-run refresh must not leave the
+      // global run lock or its progress entry stuck indefinitely.
+      progress.complete(topProgressId);
+      if (!skipRunningState) {
+        this.setRunningPipelineId(null);
+      }
     }
 
     const result: IPipelineRunResult = {
