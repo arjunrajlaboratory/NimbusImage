@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose build:*)",
+      "Bash(docker compose:*)",
+      "Bash(curl:*)",
+      "Bash(tox)",
+      "Bash(tox:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}
