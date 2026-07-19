@@ -28,7 +28,6 @@ SKILLS = {
     "workers": "nimbusimage-workers",
     "analyze": "nimbusimage-analyze",
 }
-REFERENCE_FILES = ("api-overview.md", "gotchas.md")
 
 
 def remove_path(path: Path) -> None:
@@ -42,6 +41,14 @@ def replace_tree(source: Path, target: Path) -> None:
     remove_path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source, target)
+
+
+def synchronize_reference_trees(
+    source_root: Path,
+    target_roots: list[Path],
+) -> None:
+    for target_root in target_roots:
+        replace_tree(source_root, target_root)
 
 
 def write_text_if_changed(path: Path, content: str) -> None:
@@ -85,15 +92,13 @@ def unexpected_repo_skills(
 
 
 def write_generated_skills() -> None:
-    for plugin_name in SKILLS:
-        skill_root = PLUGIN_SKILLS_ROOT / plugin_name
-        references_root = skill_root / "references"
-        references_root.mkdir(parents=True, exist_ok=True)
-        for reference_name in REFERENCE_FILES:
-            shutil.copy2(
-                PLUGIN_ROOT / "references" / reference_name,
-                references_root / reference_name,
-            )
+    synchronize_reference_trees(
+        PLUGIN_ROOT / "references",
+        [
+            PLUGIN_SKILLS_ROOT / plugin_name / "references"
+            for plugin_name in SKILLS
+        ],
+    )
 
     for source_skill in sorted(PROJECT_SKILLS_ROOT.iterdir()):
         if (source_skill / "SKILL.md").is_file():
@@ -294,12 +299,11 @@ def check_generated_skills() -> list[str]:
             errors.append(
                 f"missing file: {metadata_path.relative_to(REPO_ROOT)}"
             )
-        for reference_name in REFERENCE_FILES:
-            compare_file(
-                PLUGIN_ROOT / "references" / reference_name,
-                skill_root / "references" / reference_name,
-                errors,
-            )
+        compare_tree(
+            PLUGIN_ROOT / "references",
+            skill_root / "references",
+            errors,
+        )
 
     for source_skill in sorted(PROJECT_SKILLS_ROOT.iterdir()):
         if (source_skill / "SKILL.md").is_file():

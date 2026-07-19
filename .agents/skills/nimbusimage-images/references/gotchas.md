@@ -8,6 +8,7 @@ Things that will trip you up if you don't know about them.
 - [Worker parameter keys are exact strings](#worker-parameter-keys-are-exact-strings)
 - [id vs _id](#id-vs-_id)
 - [update_many returns nothing](#update_many-returns-nothing)
+- [Offset pagination is not mutation-safe](#offset-pagination-is-not-mutation-safe)
 - [Connection update returns 500](#connection-update-returns-500)
 - [Coordinate conventions](#coordinate-conventions)
 - [ds.shape is height, width](#dsshape-is-height-width)
@@ -53,6 +54,15 @@ MongoDB stores `_id`, but some parts of the API expect `id`. The Python models u
 ## update_many returns nothing
 
 `ds.annotations.update_many()` sends all updates in one HTTP request, but the backend endpoint returns no body — so the method returns `None`, not a list of updated annotations. If you need the fresh state, call `ds.annotations.get(id)` on the IDs you updated.
+
+## Offset pagination is not mutation-safe
+
+Do not use increasing `offset` values while adding, deleting, or moving annotations. Those mutations change subsequent page boundaries and can cause records to be skipped or repeated. Use the stable `_id` cursor provided by `ds.annotations.iter_all()` instead:
+
+```python
+for annotation in ds.annotations.iter_all(page_size=1000):
+    process(annotation)
+```
 
 ## Connection update returns 500
 

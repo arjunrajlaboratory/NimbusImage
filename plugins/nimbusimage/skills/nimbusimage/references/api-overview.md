@@ -53,12 +53,14 @@ All models have `to_dict()` / `from_dict()` for serialization.
 
 | Method | Signature | Returns |
 |--------|-----------|---------|
-| `list` | `(shape?, tags?, limit=0, offset=0)` | `list[Annotation]` |
+| `list` | `(shape?, tags?, limit=0, offset=0, after_id?, sort?, sortdir=1)` | `list[Annotation]` |
+| `iter_all` | `(shape?, tags?, page_size=1000)` | `Iterator[Annotation]` |
 | `get` | `(annotation_id)` | `Annotation` |
 | `count` | `(shape?, tags?)` | `int` |
 | `create` | `(annotation)` | `Annotation` |
 | `create_many` | `(annotations, connect_to?)` | `list[Annotation]` |
 | `update` | `(annotation_id, updates)` | `Annotation` |
+| `update_many` | `(list[(annotation_id, updates)])` | `None` |
 | `delete` | `(annotation_id)` | `None` |
 | `delete_many` | `(annotation_ids)` | `None` |
 | `compute` | `(image, channel, tags, ...)` | `Job` |

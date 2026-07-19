@@ -8,6 +8,8 @@ on:
       - ".claude-plugin/**"
       - "AGENTS.md"
       - "CLAUDE.md"
+      - "README.md"
+      - "nimbusimage/README.md"
       - "plugins/nimbusimage/**"
       - ".github/workflows/agent-skills.yaml"
   push:
@@ -17,6 +19,8 @@ on:
       - ".claude-plugin/**"
       - "AGENTS.md"
       - "CLAUDE.md"
+      - "README.md"
+      - "nimbusimage/README.md"
       - "plugins/nimbusimage/**"
       - ".github/workflows/agent-skills.yaml"
 
