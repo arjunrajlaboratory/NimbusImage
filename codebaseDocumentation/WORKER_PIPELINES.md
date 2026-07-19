@@ -2,11 +2,60 @@
 
 ## Status
 
-Design specification. Not yet implemented. This document is written to a level
-of detail sufficient for a single engineer to implement without further
-architectural decisions. Where a decision has genuine trade-offs, the
-recommended option is stated first and marked **(recommended)**; alternatives
-are listed so they aren't re-litigated during review.
+**Implemented and shipped** on the worker-pipelines branch. This document began
+as a design spec, and the later sections still read that way — they are kept as
+design rationale. This section tracks what actually shipped and what is
+outstanding. (Where a design decision had genuine trade-offs, the recommended
+option is stated first and marked **(recommended)**; alternatives are listed so
+they aren't re-litigated.)
+
+### What shipped
+
+- **Data model + persistence.** `IPipeline` + `IAnnotationPipelineStep` /
+  `IPropertyPipelineStep`, stored on the configuration under `meta.pipelines` on
+  the `upenn_collection` document (its own MongoDB collection, not a folder;
+  extra `meta` keys are allowed, so **no backend changes** were needed).
+- **Runner** (`src/store/pipelines.ts`): sequential submit-and-await with
+  stop-on-failure / `continueOnError` / cancellation, lazy materialized-property
+  reuse + cleanup, and **batch across datasets** (≤ 50) with one end-of-run
+  refresh.
+- **UI**: a single entry point — the **Pipelines** button in the Tools panel —
+  opens a two-view dialog: a **list** and a unified **editor** where you both
+  build and run (per-step live status + inline job logs, Save + Run in one view).
+  A run-status strip shows in every view; overall progress rides the app's global
+  progress widget. Steps can be built from an annotation worker, a property
+  worker, or an **existing worker-backed tool**. Tag auto-wiring joins property
+  steps to the nearest upstream annotation step.
+
+### Removed / superseded
+
+- **AI pipeline suggestion** (the `claude_pipeline` backend route, the suggest
+  dialog / store action / `ChatAPI` method, and the `origin: "ai"` badge) was
+  **removed**, pending a replacement in a separate update that refactors the
+  chat/suggest system. §6 below is retained as historical design only; none of it
+  is wired up. The distinct **tool**-suggester (`claude_suggest_tools`, the
+  lightbulb in the Tools panel) is unaffected, and the backend is byte-for-byte
+  master.
+
+### Follow-ups / TODO
+
+- [ ] **Re-add pipeline suggestion** in the separate chat/suggest refactor PR —
+      this branch intentionally carries none.
+- [ ] **Live end-to-end smoke test on a real worker stack.** A UI-triggered run
+      on a warm container has completed reporting success while creating **0**
+      annotations; confirm real worker output end-to-end before relying on it.
+- [ ] **Reconnect run progress after a full page reload.** The jobs continue
+      server-side, but the dialog's per-step live status is in-memory and rebuilds
+      to a baseline on reload — mid-run reload loses the live tracking (results
+      still land; a manual refresh shows them).
+
+### By design (not TODO)
+
+- Pipelines are **collection-wide** (stored on the shared configuration), not
+  per-dataset.
+- Batch runs are capped at **50 datasets** (a guard against accidental large runs).
+- Property steps compute only on **materializable shapes** (point / line /
+  polygon); other shapes clamp to polygon.
 
 ## Motivation
 
@@ -23,9 +72,9 @@ analysis is several steps in sequence:
 The user must run each step by hand, wait for it to finish, wire up the tags so
 step 2 and 3 see step 1's output, and remember the correct order. **Worker
 Pipelines** lets a user define this sequence once, run it with a single click,
-and re-run it on new datasets. A secondary feature uses an LLM (Claude Sonnet)
-to *auto-suggest* common pipelines from the worker images installed on the
-server and the current dataset's contents.
+and re-run it on new datasets. (A secondary feature that used an LLM to
+*auto-suggest* pipelines was removed pending a replacement — see Status above and
+§6.)
 
 ## Terminology
 
@@ -452,7 +501,7 @@ already takes a `datasetId`, so the outer loop is thin.
 
 ## 5. Tag wiring (the data contract, made usable)
 
-Steps communicate only through tags + shape (§Terminology). The builder UI must
+Steps communicate only through tags + shape (§Terminology). The editor UI must
 make this correct-by-default so users don't have to reason about it:
 
 - An annotation step's **output tags** = `step.annotation.tags`.
@@ -466,7 +515,7 @@ make this correct-by-default so users don't have to reason about it:
   to know which to offer updating; don't clobber manual edits).
 - **Validation (warn, don't block):** before running, flag property steps whose
   `inputTags` match no upstream output tags and no pre-existing annotations —
-  they'll compute on nothing. Show as a non-blocking warning in the run panel.
+  they'll compute on nothing. Show as a non-blocking warning in the editor.
 
 Tags are free-form strings shared with the rest of the app; there's no tag
 registry to update. A pipeline that outputs `nuclei` and one that filters
@@ -716,6 +765,10 @@ regressions:
 ---
 
 ## 9. Implementation plan (ordered)
+
+> _Historical: this is the original build order. Steps 1–5 and 8 shipped; steps 6
+> and 7 (AI suggest) were built then removed — see **Status** at the top for the
+> current state and open follow-ups._
 
 1. **Model + persistence.** Add `IPipeline`/step interfaces and
    `pipelines: IPipeline[]` to `model.ts`; default `[]` in the config factory;

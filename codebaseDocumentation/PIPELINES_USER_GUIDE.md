@@ -53,7 +53,7 @@ annotations to measure **by tag**. Tags are the glue of a pipeline.
 Example: an annotation step tags its output `spots`; a downstream property step
 sets its input tags to `spots`, so it measures exactly those annotations.
 
-Because getting these tags to line up by hand is fiddly, the builder does it
+Because getting these tags to line up by hand is fiddly, the editor does it
 automatically (see [Auto-wiring](#auto-wiring-tags) below).
 
 ---
@@ -128,7 +128,7 @@ Expanding a step shows its editor:
 
 ### Auto-wiring tags
 
-To spare users from lining tags up by hand, the builder **auto-wires** property
+To spare users from lining tags up by hand, the editor **auto-wires** property
 steps: a property step automatically takes its **input tags** and **shape**
 from the nearest **enabled annotation step above it**. A caption on the property
 step shows what it is wired to (e.g. "Reads tags from step 1 (Cellpose SAM)").
@@ -188,7 +188,7 @@ those computed properties.
 ### Running across a whole collection
 
 If the dataset belongs to a collection with **more than one and at most 50**
-datasets, the run panel offers **Apply to all datasets in collection**. This
+datasets, the editor offers **Apply to all datasets in collection**. This
 runs the whole pipeline once per dataset in the collection, in sequence, with a
 batch progress indicator. The 50-dataset cap is a guard against accidentally
 launching a very large batch. Above 50, the option is disabled with an
@@ -233,7 +233,7 @@ shared by every dataset in the collection.
 | **Annotation step** | Runs an annotation-producing worker; creates tagged annotations. |
 | **Property step** | Runs a property worker; measures existing annotations selected by tag. |
 | **Tags** | Labels applied to annotations; how a property step selects what to measure and how steps connect. |
-| **Auto-wiring** | The builder copying an upstream annotation step's tags/shape into a downstream property step automatically. |
+| **Auto-wiring** | The editor copying an upstream annotation step's tags/shape into a downstream property step automatically. |
 | **Materializable shapes** | The shapes a property can be computed on: point, line, polygon. |
 | **Materialized property** | The persisted property definition a property step creates on first run and reuses. |
 | **Origin** | Where a pipeline came from: `user` or `preset`. |
@@ -250,19 +250,19 @@ existing tools), and Save or Run.
 **"Why did my property step measure nothing?"** Its input tags probably don't
 match any annotations. Property steps select annotations by tag; make sure the
 step's input tags match the output tags of the annotation step that produced
-them. The builder auto-wires this, but a manual tag edit detaches it. The run
-panel shows a pre-run warning for this case.
+them. The editor auto-wires this, but a manual tag edit detaches it. The editor
+shows a pre-run warning for this case.
 
-**"Why did a step fail?"** Open that step's **Logs** button in the run panel to
+**"Why did a step fail?"** Open that step's **Logs** button in the editor to
 see the worker's output. That log explains the failure.
 
 **"Can I run a pipeline on all my datasets?"** Yes, if the collection has
 between 2 and 50 datasets — check "Apply to all datasets in collection" in the
-run panel.
+editor.
 
 **"My step uses a rectangle shape but the property won't compute."** Properties
 can only be computed on point, line, or polygon annotations. Use one of those
-shapes for annotation steps that feed a property step (the builder clamps
+shapes for annotation steps that feed a property step (the editor clamps
 non-materializable shapes to polygon automatically).
 
 **"Can I reuse a tool I already set up?"** Yes — in Add step, choose "Existing
