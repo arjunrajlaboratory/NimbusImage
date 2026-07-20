@@ -57,6 +57,11 @@ def _firstFile(item):
     return list(Item().childFiles(item, limit=1))[0]
 
 
+def _clearLargeImageMarks(folder):
+    for item in Item().find({"folderId": folder["_id"]}):
+        ImageItem().delete(item)
+
+
 def _mockLargeImagePipeline(
     monkeypatch, metadataError=None, transcodeError=None
 ):
@@ -279,11 +284,12 @@ class TestDatasetMultiSourcePipeline:
     def testMetadataFailureRollsBackLargeImageMarks(
         self, admin, server, fsAssetstore, monkeypatch
     ):
-        folder = self._makeDatasetFolder(admin, "metadata_failure_dataset")
         _mockLargeImagePipeline(
             monkeypatch,
             metadataError=TileSourceError("forced metadata failure"),
         )
+        folder = self._makeDatasetFolder(admin, "metadata_failure_dataset")
+        _clearLargeImageMarks(folder)
         resp = server.request(
             path=MULTI_SOURCE_PATH % folder["_id"],
             method="POST",
@@ -398,6 +404,59 @@ class TestDatasetMultiSourcePipeline:
         )
         assertStatus(secondResp, 409)
 
+    def testConcurrentConfigurationUploadConflictsAndRollsBack(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """A competing exact-name item must win over this request.
+
+        Girder resolves simultaneous duplicate item creation by renaming the
+        later item.  Inject the winning item after the endpoint's preflight
+        check but immediately before its upload to reproduce that race.
+        """
+        _mockLargeImagePipeline(monkeypatch)
+        folder = self._makeDatasetFolder(admin, "concurrent_conflict_dataset")
+        _clearLargeImageMarks(folder)
+        originalUpload = Upload.uploadFromFile
+        injected = False
+
+        def uploadWithConcurrentWinner(
+            model, stream, size, name, parentType, parent, *args, **kwargs
+        ):
+            nonlocal injected
+            if name == "multi-source2.json" and not injected:
+                injected = True
+                Item().createItem(name, kwargs["user"], parent)
+            return originalUpload(
+                model, stream, size, name, parentType, parent, *args, **kwargs
+            )
+
+        monkeypatch.setattr(
+            Upload, "uploadFromFile", uploadWithConcurrentWinner
+        )
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+
+        assertStatus(resp, 409)
+        items = list(Item().find({"folderId": folder["_id"]}))
+        configItems = [
+            item for item in items
+            if item["name"].startswith("multi-source2.json")
+        ]
+        assert [item["name"] for item in configItems] == ["multi-source2.json"]
+        reloadedFolder = Folder().load(
+            folder["_id"], user=admin, level=AccessType.READ
+        )
+        assert "dimensionLabels" not in reloadedFolder.get("meta", {})
+        for item in items:
+            if item not in configItems:
+                assert "largeImage" not in item
+
     def testTranscodeSchedulesJob(self, admin, server, largeImageCapable):
         folder = self._makeDatasetFolder(admin, "transcode_dataset")
 
@@ -424,13 +483,14 @@ class TestDatasetMultiSourcePipeline:
     def testTranscodeSetupFailureCanBeRetried(
         self, admin, server, fsAssetstore, monkeypatch
     ):
-        folder = self._makeDatasetFolder(admin, "transcode_failure_dataset")
         _mockLargeImagePipeline(
             monkeypatch,
             transcodeError=TileGeneralError(
                 "forced transcode setup failure"
             ),
         )
+        folder = self._makeDatasetFolder(admin, "transcode_failure_dataset")
+        _clearLargeImageMarks(folder)
         resp = server.request(
             path=MULTI_SOURCE_PATH % folder["_id"],
             method="POST",

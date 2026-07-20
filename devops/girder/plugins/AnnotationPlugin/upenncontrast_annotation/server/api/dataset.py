@@ -171,6 +171,10 @@ class Dataset(Resource):
             newItem, newFile = self._uploadConfiguration(
                 folder, result["config"], user
             )
+            if newItem["name"] != MULTI_SOURCE_ITEM_NAME:
+                raise RestException(
+                    "Dataset was configured by another request.", code=409
+                )
 
             # Store reversible folder metadata before starting a transcode
             # job or removing source large images.  If either operation
