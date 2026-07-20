@@ -143,6 +143,20 @@ describe("cameraRefreshNeeded", () => {
     ).toBe(true);
   });
 
+  it("keeps zoom hysteresis on the FIRST camera event (no previous event)", () => {
+    // A non-camera refresh (e.g. a frame change) set lastRefresh but there is no
+    // prior camera event yet. A sub-threshold cursor-centered zoom drifts the
+    // center; it must be read as a zoom (vs the last-refresh zoom), not a pan.
+    expect(
+      cameraRefreshNeeded(
+        { zoom: 4.2, center: { x: 180, y: 100 } },
+        refresh,
+        null, // no previous camera event
+        0.2,
+      ),
+    ).toBe(false);
+  });
+
   it("skips when nothing changed", () => {
     expect(
       cameraRefreshNeeded(

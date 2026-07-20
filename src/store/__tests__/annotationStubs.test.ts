@@ -406,11 +406,17 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
           budget: visibleBudget,
           selectSubset: selectStableSubset,
         });
+        // Restrict hydration candidates to the drawn (visible) set (mirrors the
+        // store): only visible annotations are rendered, so hydrating others is
+        // wasted and can leave drawn annotations as dots.
+        const visibleSet = new Set(visibleIds);
 
-        const inViewportWithSize = inViewport.map((id) => ({
-          id,
-          size: state.annotationStubs.get(id)?.estimatedRadius ?? 0,
-        }));
+        const inViewportWithSize = inViewport
+          .filter((id) => visibleSet.has(id))
+          .map((id) => ({
+            id,
+            size: state.annotationStubs.get(id)?.estimatedRadius ?? 0,
+          }));
         inViewportWithSize.sort((a, b) => b.size - a.size);
 
         let idsToHydrate: string[];
@@ -420,10 +426,13 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
             .map((item) => item.id);
         } else {
           const remainingBudget = hydrationBudget - inViewportWithSize.length;
-          const offViewportWithSize = ring.concat(outside).map((id) => ({
-            id,
-            size: state.annotationStubs.get(id)?.estimatedRadius ?? 0,
-          }));
+          const offViewportWithSize = ring
+            .concat(outside)
+            .filter((id) => visibleSet.has(id))
+            .map((id) => ({
+              id,
+              size: state.annotationStubs.get(id)?.estimatedRadius ?? 0,
+            }));
           offViewportWithSize.sort((a, b) => b.size - a.size);
           idsToHydrate = [
             ...inViewportWithSize.map((item) => item.id),
@@ -1110,6 +1119,48 @@ describe("annotation stub/hydration store logic", () => {
       expect(store.state.hydratedAnnotations.size).toBeLessThanOrEqual(
         smallBudget,
       );
+    });
+
+    it("only hydrates annotations that are in the drawn (visible) set", async () => {
+      // Varying sizes so the "largest" hydration pick differs from the
+      // stable-hash visible subset; a budget below the in-view count forces a
+      // subset. Every hydrated annotation must still be one that is drawn —
+      // otherwise the backend hydrates undrawn annotations while drawn ones stay
+      // dots (the bug this restriction fixes).
+      store.state.visibilityConfig = {
+        maxVisible: 1000,
+        maxHydrated: 1000,
+        minimumVisible: 0,
+      };
+      const annotations = Array.from({ length: 100 }, (_, i) =>
+        makeSquareAnnotation(
+          `ann-${i}`,
+          5 + (i % 10) * 9,
+          5 + ((i / 10) | 0) * 9,
+          1 + (i % 7), // varying radius
+        ),
+      );
+      store.commit("setAnnotations", annotations);
+      const gcsBounds = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      await store.dispatch("updateVisibilityAndHydration", {
+        filteredIds: annotations.map((a) => a.id),
+        gcsBounds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+        maxVisible: 20, // visible budget 20 << 100 in view → a stable subset
+        maxHydrated: 20,
+      });
+
+      expect(store.state.visibleAnnotationIds.size).toBe(20);
+      expect(store.state.hydratedAnnotations.size).toBeGreaterThan(0);
+      for (const id of store.state.hydratedAnnotations.keys()) {
+        expect(store.state.visibleAnnotationIds.has(id)).toBe(true);
+      }
     });
 
     it("sets hydration mode to shapes when annotations are hydrated", async () => {

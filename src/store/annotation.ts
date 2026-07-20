@@ -2433,17 +2433,19 @@ export class Annotations extends VuexModule {
       budget: visibleBudget,
       selectSubset: selectStableSubset,
     });
+    const visibleSet = new Set(visibleIds);
 
     // Step 4: Fill hydration budget (two-tier, largest first, UNEXPANDED box).
-    // Points are self-complete (centroid IS the only coordinate), so they never
-    // hydrate — drop them from both tiers BEFORE budget allocation so the budget
-    // goes entirely to shapes that actually need coordinates. For an all-points
-    // dataset this filters the candidate lists to empty, so the size-selection
-    // is skipped entirely. selectLargestBySize then picks the largest by
-    // estimatedRadius via a bounded min-heap (not a full O(N log N) sort) — see
-    // its definition.
+    // Candidates are restricted to the DRAWN (visible) set: only visible
+    // annotations are rendered, so hydrating anything else fetches coordinates
+    // that never appear — and because visibility picks a stable-hash subset while
+    // hydration picks the largest, an unrestricted candidate list could hydrate
+    // mostly-undrawn annotations and leave drawn ones as dots. Points are
+    // self-complete (centroid IS the only coordinate) so they never hydrate —
+    // dropped here too. selectLargestBySize then picks the largest by
+    // estimatedRadius via a bounded min-heap (not a full O(N log N) sort).
     const needsHydration = (id: string): boolean =>
-      idHasHydratableShape(id, stubsMap);
+      visibleSet.has(id) && idHasHydratableShape(id, stubsMap);
     const sizeOf = (id: string) => stubsMap.get(id)?.estimatedRadius ?? 0;
     const hydInViewport = inViewport.filter(needsHydration);
     let idsToHydrate: string[];
@@ -2454,10 +2456,9 @@ export class Annotations extends VuexModule {
         hydrationBudget,
       );
     } else {
-      // Fill the rest from off the actual viewport (ring + outside). Built in a
-      // single filtered pass — no intermediate concat — and only in this branch,
-      // where the in-viewport shapes don't fill the budget (when zoomed out the
-      // in-viewport alone overflows the budget and this never runs).
+      // Fill the rest from off the actual viewport (ring + outside) — still only
+      // drawn ones. Built in a single filtered pass (no intermediate concat) and
+      // only in this branch, where the in-viewport shapes don't fill the budget.
       const offHydratable: string[] = [];
       for (const id of ring) {
         if (needsHydration(id)) offHydratable.push(id);
@@ -2478,7 +2479,6 @@ export class Annotations extends VuexModule {
     // Step 5b: Render-coverage counts for the ACTUAL (unexpanded) viewport — how
     // many annotations are in view vs how many of those are drawn. Reuses the
     // partition's inViewport bucket. Drives the render-coverage indicator.
-    const visibleSet = new Set(visibleIds);
     let viewportRendered = 0;
     for (const id of inViewport) {
       if (visibleSet.has(id)) {

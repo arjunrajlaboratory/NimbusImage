@@ -155,9 +155,9 @@ const numericFields: INumericField[] = [
   },
   {
     key: "coverageTarget",
-    label: "Zoomed-out coverage target",
+    label: "Coverage target",
     description:
-      "Fraction of the screen the rendered dots may cover when fully zoomed out (only for datasets larger than the render cap). Lower = sparser, cleaner overview. The budget doubles per zoom level up to the cap.",
+      "Target fraction of the screen the rendered dots may cover (only for datasets larger than the render cap). Lower = sparser. With 'Reveal more when zooming in' OFF (default) it is evaluated at the current zoom, so density stays ~constant; with it ON it sets the zoomed-out budget, which doubles per zoom level up to the cap. Minimum visible can raise either budget.",
     step: 0.05,
   },
   {

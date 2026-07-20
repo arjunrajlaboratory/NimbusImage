@@ -35,11 +35,15 @@ export function cameraRefreshNeeded(
     return true;
   }
   // Pan: the center moved since the last refresh AND this event isn't a zoom
-  // (zoom unchanged vs the previous event → it's a pure pan).
+  // (zoom unchanged vs the previous event → it's a pure pan). Fall back to the
+  // last-refresh zoom when there's no prior event, so the very first camera
+  // event after a non-camera refresh (e.g. a frame change) doesn't misread a
+  // sub-threshold cursor-centered zoom — which drifts the center — as a pan.
   const centerMoved =
     current.center.x !== lastRefresh.center.x ||
     current.center.y !== lastRefresh.center.y;
-  const zoomUnchangedThisEvent = !lastEvent || current.zoom === lastEvent.zoom;
+  const previousZoom = lastEvent?.zoom ?? lastRefresh.zoom;
+  const zoomUnchangedThisEvent = current.zoom === previousZoom;
   return centerMoved && zoomUnchangedThisEvent;
 }
 
