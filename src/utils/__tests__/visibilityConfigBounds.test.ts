@@ -9,10 +9,12 @@ import type { IVisibilityConfig } from "@/store/model";
 const current: IVisibilityConfig = {
   stubThreshold: 10000,
   maxVisible: 50000,
+  minimumVisible: 5000,
   maxHydrated: 20000,
   hydrationCacheCap: 40000,
   globalThreshold: true,
   coverageTarget: 0.17,
+  revealMoreOnZoom: true,
   viewportRefreshFraction: 0.2,
 };
 
@@ -57,6 +59,32 @@ describe("clampVisibilityConfig", () => {
     expect(config.hydrationCacheCap).toBe(50000);
     expect(adjusted).toContain("maxHydrated");
     expect(adjusted).toContain("hydrationCacheCap");
+  });
+
+  it("caps minimumVisible at maxVisible (cross-field)", () => {
+    // A minimum floor above the render cap is nonsensical — clamp it down.
+    const { config, adjusted } = clampVisibilityConfig(
+      { minimumVisible: 90000 },
+      current,
+    );
+    expect(config.minimumVisible).toBe(current.maxVisible); // 50000
+    expect(adjusted).toContain("minimumVisible");
+  });
+
+  it("drags minimumVisible down when maxVisible is lowered below it", () => {
+    // Lowering the cap below the current floor pulls the floor down with it.
+    const { config } = clampVisibilityConfig({ maxVisible: 3000 }, current);
+    expect(config.maxVisible).toBe(3000);
+    expect(config.minimumVisible).toBe(3000);
+  });
+
+  it("allows minimumVisible of 0 (defer to the zoom rule)", () => {
+    const { config, adjusted } = clampVisibilityConfig(
+      { minimumVisible: 0 },
+      current,
+    );
+    expect(config.minimumVisible).toBe(0);
+    expect(adjusted).toEqual([]);
   });
 
   it("raises hydrationCacheCap to at least maxHydrated (cross-field)", () => {
@@ -107,6 +135,20 @@ describe("clampVisibilityConfig", () => {
       current,
     );
     expect(config.globalThreshold).toBe(false);
+  });
+
+  it("preserves the boolean revealMoreOnZoom (and defaults to current)", () => {
+    expect(
+      clampVisibilityConfig({ revealMoreOnZoom: false }, current).config
+        .revealMoreOnZoom,
+    ).toBe(false);
+    // Untouched → keeps the current value, and isn't reported as adjusted.
+    const { config, adjusted } = clampVisibilityConfig(
+      { maxVisible: 30000 },
+      current,
+    );
+    expect(config.revealMoreOnZoom).toBe(true);
+    expect(adjusted).not.toContain("revealMoreOnZoom");
   });
 
   it("exposes the agreed bounds", () => {

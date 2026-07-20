@@ -1452,6 +1452,10 @@ export class Main extends VuexModule {
     // are repopulated by the reload that follows.
     if (datasetChanged) {
       this.context.dispatch("resetFilterState");
+      // Advanced rendering settings are session tuning, not per-dataset — snap
+      // them back to defaults on a genuine switch (not a same-dataset refresh)
+      // so a tweak for one dataset can't silently carry into the next.
+      this.context.dispatch("resetVisibilityConfig");
     }
     if (!id) {
       this.setDataset({ id, data: null });

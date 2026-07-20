@@ -62,112 +62,83 @@ describe("recenterCameraInfo", () => {
 });
 
 describe("cameraRefreshNeeded", () => {
-  // Unified zoom + pan hysteresis: skip the refresh only when BOTH the zoom
-  // magnification change is < fraction AND the center moved < fraction × the
-  // viewport extent. fraction 0.2 → zoom threshold = log2(1.2) ≈ 0.263 levels;
-  // pan threshold = 0.2 × extent. Here extent = 1000 → pan threshold = 200.
-  const last = { zoom: 4, center: { x: 100, y: 100 } };
-  const extent = 1000;
+  // Pan refreshes on ANY amount (zoom unchanged this event); zoom keeps a
+  // magnification hysteresis vs the last refresh: fraction 0.2 → threshold
+  // log2(1.2) ≈ 0.263 levels. Args: (current, lastRefresh, lastEvent, fraction).
+  const refresh = { zoom: 4, center: { x: 100, y: 100 } };
+  // "prev event" at the same zoom as the refresh, unless a test overrides it.
+  const sameZoomEvent = { zoom: 4, center: { x: 100, y: 100 } };
 
   it("refreshes when there is no prior refresh baseline", () => {
     expect(
       cameraRefreshNeeded(
         { zoom: 4, center: { x: 100, y: 100 } },
         null,
+        null,
         0.2,
-        extent,
       ),
     ).toBe(true);
   });
 
-  it("skips a small pan below the distance threshold (zoom unchanged)", () => {
-    // moved 100 < 200 → skip
+  it("refreshes on any pan when the zoom is unchanged this event", () => {
+    // Even a 1-unit move refreshes now (no pan threshold).
     expect(
       cameraRefreshNeeded(
-        { zoom: 4, center: { x: 200, y: 100 } },
-        last,
+        { zoom: 4, center: { x: 101, y: 100 } },
+        refresh,
+        sameZoomEvent,
         0.2,
-        extent,
-      ),
-    ).toBe(false);
-  });
-
-  it("refreshes a pan at or beyond the distance threshold", () => {
-    // moved 250 > 200 → refresh
-    expect(
-      cameraRefreshNeeded(
-        { zoom: 4, center: { x: 350, y: 100 } },
-        last,
-        0.2,
-        extent,
-      ),
-    ).toBe(true);
-    // diagonal move: hypot(200,200) ≈ 283 > 200 → refresh
-    expect(
-      cameraRefreshNeeded(
-        { zoom: 4, center: { x: 300, y: 300 } },
-        last,
-        0.2,
-        extent,
       ),
     ).toBe(true);
   });
 
   it("skips a centered zoom change below the magnification threshold", () => {
-    // |Δzoom| = 0.2 < log2(1.2) ≈ 0.263 → skip
+    // |Δzoom| = 0.2 < log2(1.2) ≈ 0.263, center unchanged → skip
     expect(
       cameraRefreshNeeded(
         { zoom: 4.2, center: { x: 100, y: 100 } },
-        last,
+        refresh,
+        sameZoomEvent,
         0.2,
-        extent,
       ),
     ).toBe(false);
   });
 
   it("refreshes a centered zoom change at or above the magnification threshold", () => {
-    // |Δzoom| = 0.3 > 0.263 → refresh
     expect(
       cameraRefreshNeeded(
         { zoom: 4.3, center: { x: 100, y: 100 } },
-        last,
+        refresh,
+        sameZoomEvent,
         0.2,
-        extent,
       ),
     ).toBe(true);
   });
 
-  it("skips when both a small pan and a small zoom are below their thresholds", () => {
-    // moved 100 < 200 AND |Δzoom| 0.2 < 0.263 → skip
+  it("keeps zoom hysteresis when a sub-threshold zoom also drifts the center", () => {
+    // Scroll-wheel zoom: this event changed the zoom (4 → 4.2) and drifted the
+    // center. Because the zoom changed THIS event, the drift is not a pan → skip.
     expect(
       cameraRefreshNeeded(
         { zoom: 4.2, center: { x: 180, y: 100 } },
-        last,
+        refresh,
+        sameZoomEvent, // previous event was at zoom 4
         0.2,
-        extent,
       ),
     ).toBe(false);
   });
 
-  it("refreshes when a sub-threshold pan combines with an over-threshold zoom", () => {
+  it("refreshes a pan after a sub-threshold zoom (does not get poisoned by the frozen refresh baseline)", () => {
+    // Regression: a sub-threshold zoom left the refresh baseline frozen at
+    // zoom 4, and the previous event is now at zoom 4.2. A subsequent pure pan
+    // (still zoom 4.2, center moved) must refresh — the zoom is unchanged vs the
+    // previous event, so it's a pan, even though |4.2 - 4| ≠ 0 vs the refresh.
     expect(
       cameraRefreshNeeded(
-        { zoom: 4.3, center: { x: 180, y: 100 } },
-        last,
+        { zoom: 4.2, center: { x: 200, y: 100 } },
+        refresh, // last refresh still at zoom 4
+        { zoom: 4.2, center: { x: 100, y: 100 } }, // previous event at zoom 4.2
         0.2,
-        extent,
-      ),
-    ).toBe(true);
-  });
-
-  it("refreshes on any pan when the viewport extent is unknown", () => {
-    // extent 0 → can't scale the pan distance → refresh on any center move (safe).
-    expect(
-      cameraRefreshNeeded(
-        { zoom: 4, center: { x: 101, y: 100 } },
-        last,
-        0.2,
-        0,
       ),
     ).toBe(true);
   });
@@ -176,9 +147,9 @@ describe("cameraRefreshNeeded", () => {
     expect(
       cameraRefreshNeeded(
         { zoom: 4, center: { x: 100, y: 100 } },
-        last,
+        refresh,
+        sameZoomEvent,
         0.2,
-        extent,
       ),
     ).toBe(false);
   });

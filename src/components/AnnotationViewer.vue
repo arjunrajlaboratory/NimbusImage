@@ -4101,25 +4101,9 @@ const STUB_STROKE_PX = 4;
 
 // Hysteresis baseline: the camera state at the last visibility refresh.
 let lastRefreshCamera: { zoom: number; center: IGeoJSPosition } | null = null;
-
-// World-unit diagonal of the viewport bounding box — the scale the pan
-// hysteresis measures center movement against. 0 when bounds are unavailable.
-function viewportExtent(gcsBounds: IGeoJSPosition[] | undefined): number {
-  if (!gcsBounds || gcsBounds.length < 2) {
-    return 0;
-  }
-  let minX = Infinity,
-    minY = Infinity,
-    maxX = -Infinity,
-    maxY = -Infinity;
-  for (const pt of gcsBounds) {
-    minX = Math.min(minX, pt.x);
-    minY = Math.min(minY, pt.y);
-    maxX = Math.max(maxX, pt.x);
-    maxY = Math.max(maxY, pt.y);
-  }
-  return Math.hypot(maxX - minX, maxY - minY);
-}
+// The previous camera event — used to tell a pure pan (zoom unchanged this
+// event) from a zoom, independently of the refresh baseline.
+let lastCameraEvent: { zoom: number; center: IGeoJSPosition } | null = null;
 
 // Visibility and hydration updates
 function updateVisibility() {
@@ -4134,7 +4118,7 @@ function updateVisibility() {
   // the full configured cap as the user zooms in. The zoomed-out floor is
   // derived from on-screen annotation density (size + stroke vs screen).
   const map = props.annotationLayer.map();
-  const { maxVisible, maxHydrated, coverageTarget } =
+  const { maxVisible, maxHydrated, coverageTarget, revealMoreOnZoom } =
     annotationStore.visibilityConfig;
   const zoomMin = map.zoomRange().min;
   const size = map.size();
@@ -4146,6 +4130,7 @@ function updateVisibility() {
     screenArea: size.width * size.height,
     strokePx: STUB_STROKE_PX,
     coverageTarget,
+    revealMoreOnZoom,
     maxVisible,
     maxHydrated,
     loaded: annotationStore.annotationStubs.size,
@@ -4176,23 +4161,26 @@ const updateVisibilityDebounced = debounce(updateVisibility, 250);
 // to avoid flash of empty frame while debounce waits
 watch([filteredAnnotations, xy, z, time], updateVisibility);
 
-// Camera changes (pan/zoom) are debounced since they fire rapidly. Unified
-// hysteresis (C4): skip the refresh until EITHER the zoom magnification OR the
-// center (as a fraction of the viewport) changes by viewportRefreshFraction —
-// avoids constant re-render + re-hydration churn on small pan/zoom nudges.
+// Camera changes (pan/zoom) are debounced since they fire rapidly. Pan refreshes
+// on any amount (a new region is revealed); zoom keeps a magnification
+// hysteresis (viewportRefreshFraction) to avoid re-render + re-hydration churn
+// on small zoom nudges. The debounce coalesces a drag into one refresh on settle.
 watch(
   () => store.cameraInfo,
   () => {
     stubPerf.trackCameraUpdate();
     const cam = store.cameraInfo;
-    if (
-      !cameraRefreshNeeded(
-        { zoom: cam.zoom, center: cam.center },
-        lastRefreshCamera,
-        annotationStore.visibilityConfig.viewportRefreshFraction,
-        viewportExtent(cam.gcsBounds),
-      )
-    ) {
+    const current = { zoom: cam.zoom, center: cam.center };
+    const needed = cameraRefreshNeeded(
+      current,
+      lastRefreshCamera,
+      lastCameraEvent,
+      annotationStore.visibilityConfig.viewportRefreshFraction,
+    );
+    // Track every event (not just refreshes) so a pure pan is detected as
+    // "zoom unchanged since the previous event" even after a sub-threshold zoom.
+    lastCameraEvent = current;
+    if (!needed) {
       return;
     }
     updateVisibilityDebounced();

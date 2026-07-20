@@ -18,10 +18,11 @@ export interface IVisibilityBound {
   integer: boolean;
 }
 
-// The numeric fields of IVisibilityConfig (globalThreshold is a boolean).
+// The numeric fields of IVisibilityConfig (globalThreshold and revealMoreOnZoom
+// are booleans, handled separately).
 export type TVisibilityNumericKey = Exclude<
   keyof IVisibilityConfig,
-  "globalThreshold"
+  "globalThreshold" | "revealMoreOnZoom"
 >;
 
 // Hard ceilings are "slow-but-survivable, never OOM/freeze" caps, a little
@@ -34,6 +35,7 @@ export const VISIBILITY_BOUNDS: Record<
 > = {
   stubThreshold: { min: 1000, max: 200000, integer: true },
   maxVisible: { min: 1000, max: 200000, integer: true },
+  minimumVisible: { min: 0, max: 200000, integer: true },
   maxHydrated: { min: 500, max: 200000, integer: true },
   hydrationCacheCap: { min: 500, max: 200000, integer: true },
   coverageTarget: { min: 0.01, max: 1, integer: false },
@@ -85,6 +87,8 @@ export function clampVisibilityConfig(
   // Cross-field invariants.
   next.maxHydrated = Math.min(next.maxHydrated, next.maxVisible);
   next.hydrationCacheCap = Math.max(next.hydrationCacheCap, next.maxHydrated);
+  // The minimum floor can't exceed the cap it floors toward.
+  next.minimumVisible = Math.min(next.minimumVisible, next.maxVisible);
 
   const adjusted = NUMERIC_KEYS.filter((key) => next[key] !== requested[key]);
 
@@ -92,6 +96,7 @@ export function clampVisibilityConfig(
     config: {
       ...next,
       globalThreshold: proposed.globalThreshold ?? current.globalThreshold,
+      revealMoreOnZoom: proposed.revealMoreOnZoom ?? current.revealMoreOnZoom,
     },
     adjusted,
   };
