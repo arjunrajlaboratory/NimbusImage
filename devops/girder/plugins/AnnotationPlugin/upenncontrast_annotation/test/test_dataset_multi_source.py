@@ -17,7 +17,7 @@ import json
 
 import pytest
 from bson.objectid import ObjectId
-from large_image.exceptions import TileGeneralError
+from large_image.exceptions import TileGeneralError, TileSourceError
 
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
@@ -55,6 +55,31 @@ def _uploadTiffItem(user, folder, name, fill=0):
 
 def _firstFile(item):
     return list(Item().childFiles(item, limit=1))[0]
+
+
+def _mockLargeImagePipeline(
+    monkeypatch, metadataError=None, transcodeError=None
+):
+    """Install deterministic model doubles for endpoint failure tests."""
+    def createImageItem(self, item, file, createJob=True, **kwargs):
+        if createJob == "always" and transcodeError is not None:
+            raise transcodeError
+        item["largeImage"] = {
+            "fileId": file["_id"], "sourceName": "mock_source",
+        }
+        Item().save(item)
+        return None
+
+    def getMetadata(self, item, **kwargs):
+        if metadataError is not None:
+            raise metadataError
+        return {"bandCount": 1, "frames": [], "sizeX": 16, "sizeY": 16}
+
+    monkeypatch.setattr(ImageItem, "createImageItem", createImageItem)
+    monkeypatch.setattr(ImageItem, "getMetadata", getMetadata)
+    monkeypatch.setattr(
+        ImageItem, "getInternalMetadata", lambda self, item, **kwargs: {}
+    )
 
 
 @pytest.fixture
@@ -163,6 +188,27 @@ class TestDatasetMultiSourceValidation:
             assertStatus(resp, 400)
             assert "assignments" in resp.json["message"]
 
+    @pytest.mark.parametrize(
+        "field", ("transcode", "splitRGBBands", "enableCompositing", "dryRun")
+    )
+    def testRejectsNonBooleanOptions(self, admin, server, field):
+        folder = utilities.createFolder(
+            admin, "invalid_boolean_%s" % field,
+            upenn_utilities.datasetMetadata,
+        )
+        Item().createItem("placeholder.tif", admin, folder)
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({field: "false"}),
+            type="application/json",
+        )
+
+        assertStatus(resp, 400)
+        assert resp.json["message"] == "%s must be a boolean." % field
+
     def testAllowedWithExplicitWriteAccess(self, admin, user, server):
         """A user granted WRITE (but not owner) can configure the
         dataset; verifies the check is a genuine WRITE check and not an
@@ -227,6 +273,30 @@ class TestDatasetMultiSourcePipeline:
         assert "dimensionLabels" not in reloadedFolder.get("meta", {})
         # ... and must roll back the largeImage marks it needed to read
         # tile metadata, leaving the items exactly as uploaded.
+        for item in Item().find({"folderId": folder["_id"]}):
+            assert "largeImage" not in item
+
+    def testMetadataFailureRollsBackLargeImageMarks(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        folder = self._makeDatasetFolder(admin, "metadata_failure_dataset")
+        _mockLargeImagePipeline(
+            monkeypatch,
+            metadataError=TileSourceError("forced metadata failure"),
+        )
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"dryRun": True}),
+            type="application/json",
+            exception=True,
+        )
+
+        assertStatus(resp, 500)
+        assert Item().findOne({
+            "folderId": folder["_id"], "name": "multi-source2.json",
+        }) is None
         for item in Item().find({"folderId": folder["_id"]}):
             assert "largeImage" not in item
 
@@ -350,6 +420,45 @@ class TestDatasetMultiSourcePipeline:
         )
         assert job is not None
         assert job["type"] == "large_image_tiff"
+
+    def testTranscodeSetupFailureCanBeRetried(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        folder = self._makeDatasetFolder(admin, "transcode_failure_dataset")
+        _mockLargeImagePipeline(
+            monkeypatch,
+            transcodeError=TileGeneralError(
+                "forced transcode setup failure"
+            ),
+        )
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": True}),
+            type="application/json",
+            exception=True,
+        )
+
+        assertStatus(resp, 500)
+        assert Item().findOne({
+            "folderId": folder["_id"], "name": "multi-source2.json",
+        }) is None
+        reloadedFolder = Folder().load(
+            folder["_id"], user=admin, level=AccessType.READ
+        )
+        assert "dimensionLabels" not in reloadedFolder.get("meta", {})
+        for item in Item().find({"folderId": folder["_id"]}):
+            assert "largeImage" not in item
+
+        retry = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatusOk(retry)
 
     def testInvalidFileIdRaisesRestExceptionNotBareError(
         self, admin, server, largeImageCapable
