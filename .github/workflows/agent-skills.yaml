@@ -1,0 +1,39 @@
+name: Validate agent skills
+
+on:
+  pull_request:
+    paths:
+      - ".agents/**"
+      - ".claude/**"
+      - ".claude-plugin/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "README.md"
+      - "nimbusimage/README.md"
+      - "plugins/nimbusimage/**"
+      - ".github/workflows/agent-skills.yaml"
+  push:
+    branches: [master]
+    paths:
+      - ".agents/**"
+      - ".claude/**"
+      - ".claude-plugin/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "README.md"
+      - "nimbusimage/README.md"
+      - "plugins/nimbusimage/**"
+      - ".github/workflows/agent-skills.yaml"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test skill synchronization
+        run: python3 -m unittest plugins/nimbusimage/scripts/test_sync_skills.py
+      - name: Check Claude and Codex skill parity
+        run: python3 plugins/nimbusimage/scripts/sync_skills.py --check

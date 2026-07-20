@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Repository Agent Guidance
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides shared guidance to Claude Code, Codex, and other coding agents working in this repository. `AGENTS.md` links here so both providers use one canonical instruction file.
 
 ## Project Overview
 
@@ -717,22 +717,6 @@ VITE_SENTRY_TRACES_SAMPLE_RATE=1.0
 
 Get the DSN value from the Sentry project's Settings → Client Keys (DSN) page. Trigger a test event with `setTimeout(() => { throw new Error("test"); });` in the browser console — a synchronous throw from devtools is swallowed, but async throws hit `window.onerror` which Sentry hooks. Filter on `environment:local-dev` in the Sentry UI to keep your test events out of the production view.
 
-## Allowed Tools
+## Agent Tooling Notes
 
-The following commands are pre-approved for Claude Code to run without confirmation:
-
-```
-# Docker commands for backend development
-Bash(docker compose build:*)
-Bash(docker compose:*)
-Bash(curl:*)
-
-# Testing
-Bash(tox)
-Bash(tox:*)
-
-# Git operations
-Bash(git add:*)
-Bash(git commit:*)
-Bash(git push:*)
-```
+Tool permissions are controlled by the active agent environment, not by this file. Common development commands include `docker compose`, `curl`, `tox`, and standard Git commands. Follow the host's sandbox and approval policy when running them.

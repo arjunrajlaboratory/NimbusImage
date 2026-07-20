@@ -1,4 +1,5 @@
 ---
+name: nimbusimage
 description: >
   Connect to a NimbusImage server and work with scientific imaging datasets
   using the nimbusimage Python API. Use this skill whenever the user mentions
@@ -56,13 +57,19 @@ Two snags come up often enough that they belong here:
 
 **Before writing any connection code, check whether the user already has credentials configured.** Follow this sequence:
 
-1. Check if `NI_API_URL` and `NI_API_KEY` (or `NI_TOKEN`) environment variables are set (run `echo $NI_API_URL` etc.)
-2. If both are set, use `ni.connect()` with no arguments — it reads them automatically
-3. If not set, **ask the user** for their server URL and API key
-4. If they don't have an API key, tell them to request one from their NimbusImage administrator
-5. Suggest they set env vars for future sessions so credentials aren't repeated
+1. Check whether the variables are set without printing their values:
 
-Never hardcode credentials in scripts. Never guess default passwords. If the user provides credentials in conversation, use them for the current session but remind them that env vars are more secure for repeated use.
+   ```bash
+   test -n "${NI_API_URL:-}" && echo "NI_API_URL is set" || echo "NI_API_URL is missing"
+   test -n "${NI_API_KEY:-}" && echo "NI_API_KEY is set" || echo "NI_API_KEY is missing"
+   test -n "${NI_TOKEN:-}" && echo "NI_TOKEN is set" || echo "NI_TOKEN is missing"
+   ```
+
+2. If `NI_API_URL` and either credential variable are set, use `ni.connect()` with no arguments.
+3. If credentials are missing, tell the user which variables to export in their local shell, then rerun the presence check. Do not ask them to paste API keys, tokens, or passwords into the conversation.
+4. If they do not have an API key, tell them to request one from their NimbusImage administrator.
+
+Never print, hardcode, or repeat credentials. Never guess default passwords.
 
 ```python
 import nimbusimage as ni
@@ -205,12 +212,12 @@ All models are Pydantic BaseModel with `to_dict()` and `from_dict()`:
 
 For deeper operations, route to the appropriate skill:
 
-- **`/nimbus-skills:images`** — fetching image frames, composites, z-stacks, crops
-- **`/nimbus-skills:annotations`** — creating, listing, filtering, deleting annotations; geometry helpers
-- **`/nimbus-skills:workers`** — running annotation and property workers, job tracking
-- **`/nimbus-skills:analyze`** — properties, export, connections, sharing
+- **Images skill** — fetching image frames, composites, z-stacks, crops
+- **Annotations skill** — creating, listing, filtering, deleting annotations; geometry helpers
+- **Workers skill** — running annotation and property workers, job tracking
+- **Analyze skill** — properties, export, connections, sharing
 
-For the full API reference for any accessor, read the corresponding reference file in the `references/` directory.
+For full accessor signatures, read `references/api-overview.md`. Before using lower-level APIs or modifying access, read `references/gotchas.md`.
 
 ## Safety: stay on the accessor layer
 

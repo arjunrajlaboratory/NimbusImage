@@ -1,4 +1,5 @@
 ---
+name: nimbusimage-workers
 description: >
   Run Docker-based computational workers on NimbusImage datasets using the
   nimbusimage Python API. Use this skill when the user wants to run
@@ -232,3 +233,5 @@ values = ds.properties.get_values()
 - The `connect_to` dict must always include `"tags"` — use `{"tags": []}` for no connections.
 - Property workers require the property to be created and registered before running.
 - `job.wait()` blocks the Python process. For long-running workers, consider non-blocking polling.
+
+For worker-related accessor signatures, read `references/api-overview.md`. Before submitting work, read `references/gotchas.md`, especially exact interface keys and job status codes.

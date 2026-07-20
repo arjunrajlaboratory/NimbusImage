@@ -1,4 +1,5 @@
 ---
+name: annotations
 description: >
   Create, list, filter, update, and delete annotations on NimbusImage datasets
   using the nimbusimage Python API. Use this skill when the user wants to work
@@ -31,8 +32,13 @@ nuclei = ds.annotations.list(shape="polygon", tags=["nucleus"])
 # Count without fetching
 n = ds.annotations.count(shape="polygon", tags=["nucleus"])
 
-# Pagination
-page = ds.annotations.list(limit=100, offset=200)
+# Stable pagination for large or changing result sets
+for ann in ds.annotations.iter_all(
+    shape="polygon",
+    tags=["nucleus"],
+    page_size=1000,
+):
+    process(ann)
 
 # Get one by ID
 ann = ds.annotations.get("annotation_id_here")
@@ -187,6 +193,7 @@ ds.annotations.create_many(annotations)
 - Tags are lists of strings. Multiple tags means AND when filtering server-side.
 - `dataset_id` is required when creating annotations — it's the folder ID of the dataset.
 - `location` defaults to `Location(xy=0, z=0, time=0)` if not specified.
+- Use `iter_all()` for mutation-safe pagination. Offset pagination can skip or repeat records if annotations change between requests.
 - Use `create_many` / `delete_many` for bulk operations — never loop with individual calls.
 
-For the full AnnotationAccessor API, read `references/annotations-api.md`.
+For complete `AnnotationAccessor` signatures, read `references/api-overview.md`. For coordinate and bulk-operation caveats, read `references/gotchas.md`.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "NimbusImage"
+  short_description: "Connect to and work with NimbusImage datasets"
+  default_prompt: "Use the NimbusImage skill to connect to a server and inspect datasets."

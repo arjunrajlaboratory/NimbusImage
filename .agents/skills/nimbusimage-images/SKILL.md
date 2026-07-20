@@ -1,4 +1,5 @@
 ---
+name: nimbusimage-images
 description: >
   Fetch image data from NimbusImage datasets as numpy arrays using the
   nimbusimage Python API. Use this skill when the user wants to retrieve
@@ -128,3 +129,5 @@ mip = z_stack.max(axis=0)  # (H, W)
 - `ds.shape` returns `(height, width)` — numpy convention, not `(width, height)`.
 - Composite requires layer settings in the dataset's collection. If no layers are configured, it returns a blank image.
 - Frame coordinates: `channel`, `z`, `time`, `xy` are all 0-indexed integers.
+
+For complete `ImageAccessor` signatures, read `references/api-overview.md`. For coordinate and composite caveats, read `references/gotchas.md`.
