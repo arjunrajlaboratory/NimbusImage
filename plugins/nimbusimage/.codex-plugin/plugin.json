@@ -1,6 +1,6 @@
 {
   "name": "nimbusimage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Skills for working with NimbusImage scientific imaging datasets through the nimbusimage Python API",
   "author": {
     "name": "Arjun Raj Laboratory",
