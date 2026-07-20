@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -58,11 +59,14 @@ def write_text_if_changed(path: Path, content: str) -> None:
 
 
 def render_repo_skill(skill_text: str, plugin_name: str, repo_name: str) -> str:
-    expected = f"name: {plugin_name}\n"
-    replacement = f"name: {repo_name}\n"
-    if expected not in skill_text:
+    # Anchor to the frontmatter `name:` line (start of line) rather than a
+    # substring, so prose that happens to contain "name: <plugin_name>" can
+    # never be rewritten by accident.
+    pattern = re.compile(rf"^name: {re.escape(plugin_name)}$", re.MULTILINE)
+    rendered, count = pattern.subn(f"name: {repo_name}", skill_text, count=1)
+    if count == 0:
         raise ValueError(f"Shared skill {plugin_name} has an invalid name")
-    return skill_text.replace(expected, replacement, 1)
+    return rendered
 
 
 def expected_repo_skill_names() -> set[str]:
@@ -235,6 +239,12 @@ def validate_metadata(errors: list[str]) -> None:
         errors.append("Codex plugin name must be nimbusimage")
     if codex_manifest.get("skills") != "./skills/":
         errors.append("Codex plugin skills path must be ./skills/")
+    # Intentional name split — do NOT "align" these. The marketplace entry and
+    # the Codex plugin are named "nimbusimage" (the public install id is
+    # `nimbusimage@NimbusImage`), but the Claude plugin's own name stays
+    # "nimbus-skills". Claude derives the skill namespace (/nimbus-skills:*) from
+    # the plugin name, so keeping it fixed preserves existing installs; renaming
+    # it would silently rebrand every /nimbus-skills:* command for current users.
     if claude_manifest.get("name") != "nimbus-skills":
         errors.append("Claude runtime namespace must remain nimbus-skills")
     if claude_manifest.get("skills") != "./skills/":
