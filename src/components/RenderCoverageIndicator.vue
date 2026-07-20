@@ -48,11 +48,25 @@ import VisibilitySettings from "@/components/VisibilitySettings.vue";
 
 // Shows how much of what's in the CURRENT VIEWPORT is actually drawn (the "am I
 // seeing everything here?" metric), with the dataset total as context. Always
-// visible in stub-only (large-dataset) mode — a stable readout and the home for
-// the rendering-settings gear.
+// visible in stub (large-dataset) mode — a stable readout and the home for the
+// rendering-settings gear.
+
+// "Stub mode" for display purposes, derived REACTIVELY (not the load-time
+// stubOnlyMode data flag): the dataset was loaded stub-only, OR its count now
+// exceeds the stub-mode threshold. Lowering the threshold below the count in
+// the settings therefore surfaces the indicator immediately, without a reload —
+// annotationStubs (replaced on load) and visibilityConfig (replaced on every
+// settings change) are both reactive, so this recomputes when either changes.
+const stubMode = computed(
+  () =>
+    annotationStore.stubOnlyMode ||
+    annotationStore.annotationStubs.size >
+      annotationStore.visibilityConfig.stubThreshold,
+);
+
 const coverage = computed(() =>
   computeRenderCoverage({
-    stubOnlyMode: annotationStore.stubOnlyMode,
+    stubMode: stubMode.value,
     viewportShown: annotationStore.viewportRenderedCount,
     viewportTotal: annotationStore.viewportAnnotationCount,
     loaded: annotationStore.annotationStubs.size,

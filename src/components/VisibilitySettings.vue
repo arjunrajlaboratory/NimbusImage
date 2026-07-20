@@ -1,10 +1,15 @@
 <template>
   <div class="visibility-settings">
-    <p v-if="showBlurb" class="settings-blurb text-caption">
-      For datasets with very large annotation counts (e.g. spatial data),
-      NimbusImage renders a subset at a time to stay responsive. These tune that
-      behavior — the defaults suit most datasets, and showing more annotations
-      at once makes panning large datasets slower.
+    <p v-if="showBlurb" class="settings-blurb">
+      <v-icon size="x-small" class="settings-blurb__icon"
+        >mdi-information-outline</v-icon
+      >
+      <span>
+        For datasets with very large annotation counts (e.g. spatial data),
+        NimbusImage renders a subset at a time to stay responsive. These tune
+        that behavior — the defaults suit most datasets, and showing more
+        annotations at once makes panning large datasets slower.
+      </span>
     </p>
 
     <div v-for="field in numericFields" :key="field.key" class="field-row">
@@ -50,6 +55,19 @@
     <v-switch
       hide-details
       density="compact"
+      v-model="revealMoreOnZoom"
+      label="Reveal more when zooming in"
+      v-description="{
+        section: 'Annotation rendering',
+        title: 'Reveal more when zooming in',
+        description:
+          'When off (default), the coverage target is enforced at every zoom, so the view stays at that density (uncrowded) and reveals everything only when you zoom into a sparse region. When on, the coverage target only limits the fully-zoomed-out view and more annotations are progressively revealed as you zoom in (working zooms can get crowded).',
+      }"
+    />
+
+    <v-switch
+      hide-details
+      density="compact"
       v-model="globalThreshold"
       label="Global threshold (all layers)"
       v-description="{
@@ -59,6 +77,23 @@
           'When on, the visibility threshold applies to total annotations across all layers. When off, each layer is checked independently.',
       }"
     />
+
+    <div class="reset-row">
+      <v-btn
+        variant="text"
+        size="small"
+        prepend-icon="mdi-restore"
+        @click="resetToDefaults"
+        v-description="{
+          section: 'Annotation rendering',
+          title: 'Reset to defaults',
+          description:
+            'Restore all annotation-rendering settings to their shipped default values.',
+        }"
+      >
+        Reset to defaults
+      </v-btn>
+    </div>
   </div>
 </template>
 
@@ -98,6 +133,13 @@ const numericFields: INumericField[] = [
     step: 1000,
   },
   {
+    key: "minimumVisible",
+    label: "Minimum visible annotations",
+    description:
+      "Floor on the zoom-adaptive budget: at least this many are drawn at any zoom (never more than Max visible). A view holding fewer than this shows everything; a busier view shows at least this many (or the zoom-rule count, whichever is higher). Set to 0 to defer entirely to the zoom rule.",
+    step: 1000,
+  },
+  {
     key: "maxHydrated",
     label: "Max hydrated annotations",
     description:
@@ -113,16 +155,16 @@ const numericFields: INumericField[] = [
   },
   {
     key: "coverageTarget",
-    label: "Zoomed-out coverage target",
+    label: "Coverage target",
     description:
-      "Fraction of the screen the rendered dots may cover when fully zoomed out (only for datasets larger than the render cap). Lower = sparser, cleaner overview. The budget doubles per zoom level up to the cap.",
+      "Target fraction of the screen the rendered dots may cover (only for datasets larger than the render cap). Lower = sparser. With 'Reveal more when zooming in' OFF (default) it is evaluated at the current zoom, so density stays ~constant; with it ON it sets the zoomed-out budget, which doubles per zoom level up to the cap. Minimum visible can raise either budget.",
     step: 0.05,
   },
   {
     key: "viewportRefreshFraction",
-    label: "Viewport refresh threshold",
+    label: "Zoom refresh threshold",
     description:
-      "How much the zoom (magnification) or pan (fraction of the viewport) must change (e.g. 0.2 = 20%) before the view re-renders and re-hydrates. Higher = fewer refreshes / less loading churn while navigating.",
+      "How much the zoom magnification must change (e.g. 0.2 = 20%) before the view re-renders and re-hydrates. Higher = fewer refreshes / less loading churn while zooming. Panning always refreshes, so this affects zoom only.",
     step: 0.05,
   },
 ];
@@ -185,12 +227,52 @@ const globalThreshold = computed({
     annotationStore.setVisibilityConfig({ globalThreshold: value });
   },
 });
+
+const revealMoreOnZoom = computed({
+  get: () => annotationStore.visibilityConfig.revealMoreOnZoom,
+  set: (value: boolean) => {
+    annotationStore.setVisibilityConfig({ revealMoreOnZoom: value });
+  },
+});
+
+function resetToDefaults() {
+  annotationStore.resetVisibilityConfig();
+  // Reflect the restored values back into the inputs and clear any pending
+  // "adjusted" notes/timers.
+  for (const field of numericFields) {
+    draft[field.key] = annotationStore.visibilityConfig[field.key];
+  }
+  for (const key of Object.keys(notes) as TVisibilityNumericKey[]) {
+    if (noteTimers[key] !== undefined) {
+      window.clearTimeout(noteTimers[key]);
+      delete noteTimers[key];
+    }
+    delete notes[key];
+  }
+}
 </script>
 
 <style lang="scss" scoped>
 .settings-blurb {
-  opacity: 0.8;
-  margin-bottom: 8px;
+  // Info-note styling: small, muted, with a leading info icon. Font size is set
+  // explicitly (not via the text-caption utility) so it wins over Vuetify's
+  // cascade-layered utilities, which an unlayered parent rule was overriding —
+  // that override is what made this blurb render at the surrounding body size.
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  opacity: 0.7;
+  margin-bottom: 10px;
+}
+
+.settings-blurb__icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: rgb(var(--v-theme-info));
+  opacity: 0.9;
 }
 
 .field-row {
@@ -209,5 +291,11 @@ const globalThreshold = computed({
 .adjust-note {
   margin-top: 2px;
   color: rgb(var(--v-theme-warning));
+}
+
+.reset-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
 }
 </style>

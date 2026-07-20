@@ -1603,6 +1603,11 @@ export interface IVisibilityConfig {
   // Max annotations to render (stubs or shapes) — the cap when fully zoomed in.
   // Datasets at or below this render fully at every zoom (the size gate).
   maxVisible: number;
+  // Floor on the zoom-adaptive render budget: at least this many are drawn at
+  // any zoom (clamped to maxVisible). So a view holding fewer than this shows
+  // everything; a busier view shows at least this many (or the zoom-rule count,
+  // whichever is higher). Set to 0 to defer entirely to the zoom rule.
+  minimumVisible: number;
   // Max annotations to keep hydrated per visibility update — the cap when fully
   // zoomed in.
   maxHydrated: number;
@@ -1611,13 +1616,21 @@ export interface IVisibilityConfig {
   hydrationCacheCap: number;
   // If true, threshold applies to total frame annotations across all layers.
   globalThreshold: boolean;
-  // Fraction of the screen the rendered dots may cover when fully zoomed out.
-  // Sets the zoomed-out floor from annotation size + screen; the budget doubles
-  // per zoom level up to maxVisible.
+  // Fraction of the screen the rendered dots may cover. See revealMoreOnZoom for
+  // how this interacts with zoom.
   coverageTarget: number;
-  // Camera hysteresis: skip the camera-driven refresh until EITHER the zoom
-  // magnification OR the center (as a fraction of the viewport) changes by this
-  // fraction (e.g. 0.2 = 20%).
+  // Controls how the render budget responds to zoom:
+  //   false (default): enforce coverageTarget at EVERY zoom — the budget is the
+  //     number of dots that cover coverageTarget of the screen at the current
+  //     zoom, so the view stays at ~that density (uncrowded) and reveals
+  //     everything only when you zoom into a genuinely sparse region.
+  //   true: "reveal more as you zoom in" — coverageTarget sets the zoomed-out
+  //     floor and the budget doubles per zoom level up to maxVisible, so working
+  //     zooms progressively reveal (and can crowd) more.
+  revealMoreOnZoom: boolean;
+  // Zoom hysteresis: skip the camera-driven refresh until the zoom magnification
+  // changes by this fraction (e.g. 0.2 = 20%). Panning has no threshold — any
+  // pan refreshes — so this governs zoom only.
   viewportRefreshFraction: number;
 }
 

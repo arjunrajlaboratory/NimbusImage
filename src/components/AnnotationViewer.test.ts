@@ -571,10 +571,12 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.visibilityConfig = {
       stubThreshold: 10000,
       maxVisible: 10000,
+      minimumVisible: 5000,
       maxHydrated: 5000,
       hydrationCacheCap: 10000,
       globalThreshold: true,
       coverageTarget: 0.15,
+      revealMoreOnZoom: true,
       viewportRefreshFraction: 0.2,
     };
     mockedAnnotationStore.averageStubRadius = 0;

@@ -1,52 +1,50 @@
 import type { ICameraInfo, IGeoJSPosition } from "@/store/model";
 
 /**
- * Unified pan + zoom hysteresis for the camera-driven visibility refresh.
+ * Camera-driven visibility refresh gate: PAN refreshes on any amount, ZOOM keeps
+ * a hysteresis.
  *
- * Recomputing the render budget + re-hydrating on every tiny camera change causes
- * constant loading churn. This gates the refresh on a single sensitivity
- * `fraction` (e.g. 0.2 = 20%): refresh once EITHER
- *   - the zoom magnification changed by >= the fraction (zoom is logarithmic, so
- *     a 20% change is `log2(1.2)` ≈ 0.263 zoom levels), OR
- *   - the center moved by >= the fraction of the viewport extent (world units).
- * Skip only when BOTH are below threshold. Covering pan too is what actually
- * suppresses scroll-wheel zoom (which shifts the center toward the cursor) — a
- * zoom-only gate would still refresh on its center drift.
+ * Recomputing the render budget + re-hydrating on every tiny zoom nudge causes
+ * loading churn, so a zoom change refreshes only past a magnification threshold
+ * measured against the LAST REFRESH (`zoomFraction`, e.g. 0.2 = 20% →
+ * `log2(1.2)` ≈ 0.263 zoom levels). Panning reveals a genuinely new region, so
+ * ANY center movement refreshes — there is no pan threshold.
  *
- * `viewportExtent` is a world-unit scale for the pan threshold (the viewport
- * diagonal); when it is unknown (<= 0) any pan refreshes, which is the safe
- * default.
+ * The trick that keeps the two apart (and keeps zoom hysteresis intact for
+ * scroll-wheel zoom, which drifts the center toward the cursor): a center move
+ * counts as a pan only when THIS EVENT didn't change the zoom (`lastEvent` is
+ * the previous camera event). A center drift accompanying a zoom stays gated by
+ * the zoom threshold. Comparing the pan against the last EVENT rather than the
+ * last REFRESH is essential: a sub-threshold zoom leaves the refresh baseline
+ * frozen at the old zoom, so a "zoom unchanged vs last refresh" test would treat
+ * every following pan as a zoom and never refresh.
  */
 export function cameraRefreshNeeded(
   current: { zoom: number; center: IGeoJSPosition },
-  last: { zoom: number; center: IGeoJSPosition } | null,
-  fraction: number,
-  viewportExtent: number,
+  lastRefresh: { zoom: number; center: IGeoJSPosition } | null,
+  lastEvent: { zoom: number; center: IGeoJSPosition } | null,
+  zoomFraction: number,
 ): boolean {
-  if (!last || !current.center || !last.center) {
+  if (!lastRefresh || !current.center || !lastRefresh.center) {
     return true;
   }
-  // Pan: refresh if the center moved by >= fraction of the viewport extent.
+  // Zoom: refresh past the magnification threshold since the last refresh.
   if (
-    current.center.x !== last.center.x ||
-    current.center.y !== last.center.y
+    Math.abs(current.zoom - lastRefresh.zoom) >= Math.log2(1 + zoomFraction)
   ) {
-    // Written as `!(x > 0)` rather than `x <= 0` so it also catches NaN (an
-    // unknown/uninitialized extent): NaN comparisons are always false, so
-    // `!(NaN > 0)` is true → refresh on any pan, the safe default.
-    if (!(viewportExtent > 0)) {
-      return true; // can't scale the move → refresh on any pan (safe)
-    }
-    const panDistance = Math.hypot(
-      current.center.x - last.center.x,
-      current.center.y - last.center.y,
-    );
-    if (panDistance >= fraction * viewportExtent) {
-      return true;
-    }
+    return true;
   }
-  // Zoom: refresh only past the magnification threshold.
-  return Math.abs(current.zoom - last.zoom) >= Math.log2(1 + fraction);
+  // Pan: the center moved since the last refresh AND this event isn't a zoom
+  // (zoom unchanged vs the previous event → it's a pure pan). Fall back to the
+  // last-refresh zoom when there's no prior event, so the very first camera
+  // event after a non-camera refresh (e.g. a frame change) doesn't misread a
+  // sub-threshold cursor-centered zoom — which drifts the center — as a pan.
+  const centerMoved =
+    current.center.x !== lastRefresh.center.x ||
+    current.center.y !== lastRefresh.center.y;
+  const previousZoom = lastEvent?.zoom ?? lastRefresh.zoom;
+  const zoomUnchangedThisEvent = current.zoom === previousZoom;
+  return centerMoved && zoomUnchangedThisEvent;
 }
 
 /**

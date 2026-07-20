@@ -26,6 +26,7 @@ import {
   selectStableSubset,
   stubFromAnnotation,
 } from "@/utils/annotation";
+import { selectVisibleIds, clampVisibleBudget } from "@/utils/visibilityBudget";
 import { AnnotationSpatialIndex } from "@/utils/spatialIndex";
 
 // ---------- helpers ----------
@@ -80,7 +81,11 @@ interface StubStoreState {
   visibleAnnotationIds: Set<string>;
   hydrationMode: THydrationMode;
   selectedAnnotationIds: Set<string>;
-  visibilityConfig: { maxVisible: number; maxHydrated: number };
+  visibilityConfig: {
+    maxVisible: number;
+    maxHydrated: number;
+    minimumVisible?: number;
+  };
 }
 
 function createStubStore(spatialIndex: AnnotationSpatialIndex) {
@@ -95,7 +100,11 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
         visibleAnnotationIds: markRaw(new Set()),
         hydrationMode: "dots",
         selectedAnnotationIds: markRaw(new Set()),
-        visibilityConfig: { maxVisible: 20000, maxHydrated: 10000 },
+        visibilityConfig: {
+          maxVisible: 20000,
+          maxHydrated: 10000,
+          minimumVisible: 5000,
+        },
       };
     },
     getters: {
@@ -310,10 +319,26 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
           filteredIds?: string[];
           gcsBounds?: { x: number; y: number }[];
           currentFrameLocation: IAnnotationLocation;
+          // Zoom-adaptive budget overrides (mirrors the real action). Fall back
+          // to the static config caps when not supplied.
+          maxVisible?: number;
+          maxHydrated?: number;
         },
       ) {
         const { filteredIds, gcsBounds, currentFrameLocation } = params;
-        const { maxVisible, maxHydrated } = state.visibilityConfig;
+        const zoomVisibleBudget =
+          params.maxVisible ?? state.visibilityConfig.maxVisible;
+        const zoomHydrated =
+          params.maxHydrated ?? state.visibilityConfig.maxHydrated;
+        // Floor the visible budget at minimumVisible, capped at the config max.
+        const minimumVisible = state.visibilityConfig.minimumVisible ?? 0;
+        const visibleBudget = clampVisibleBudget(
+          zoomVisibleBudget,
+          minimumVisible,
+          state.visibilityConfig.maxVisible,
+        );
+        // Never hydrate more than the drawn (visible) set (mirrors the store).
+        const hydrationBudget = Math.min(zoomHydrated, visibleBudget);
 
         const onCurrentFrame = (stub: IAnnotationStub | undefined) =>
           !!stub &&
@@ -338,14 +363,13 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
           }
         }
 
-        // Two viewport splits (mirrors the real action, C2): visibility uses
-        // an EXPANDED box (pan pre-load); hydration uses the UNEXPANDED box —
-        // the region the user actually sees — so zooming in re-prioritizes the
-        // newly-visible annotations.
-        let visInViewport = currentFrameIds;
-        let visOutOfViewport: string[] = [];
-        let hydInViewport = currentFrameIds;
-        let hydOutOfViewport: string[] = [];
+        // Single-pass three-way partition (mirrors the real action, C2): the
+        // UNEXPANDED viewport (drives hydration + coverage counts + visibility
+        // tier 1), the RING out to the 50%-expanded box (pan pre-load), and
+        // everything OUTSIDE.
+        let inViewport = currentFrameIds;
+        let ring: string[] = [];
+        let outside: string[] = [];
 
         if (gcsBounds && gcsBounds.length === 4) {
           let minX = Infinity,
@@ -358,58 +382,57 @@ function createStubStore(spatialIndex: AnnotationSpatialIndex) {
             maxX = Math.max(maxX, pt.x);
             maxY = Math.max(maxY, pt.y);
           }
-          // Unexpanded (raw) split — the actual viewport — drives hydration.
-          ({
-            inViewportIds: hydInViewport,
-            outOfViewportIds: hydOutOfViewport,
-          } = spatialIndex.splitByViewport(
-            currentFrameIds,
-            minX,
-            minY,
-            maxX,
-            maxY,
-          ));
-          // Expanded by 50% on each side — drives visibility (pan pre-load).
           const width = maxX - minX;
           const height = maxY - minY;
-          ({
-            inViewportIds: visInViewport,
-            outOfViewportIds: visOutOfViewport,
-          } = spatialIndex.splitByViewport(
+          ({ inViewport, ring, outside } = spatialIndex.partitionByViewports(
             currentFrameIds,
-            minX - width * 0.5,
-            minY - height * 0.5,
-            maxX + width * 0.5,
-            maxY + height * 0.5,
+            { minX, minY, maxX, maxY },
+            {
+              minX: minX - width * 0.5,
+              minY: minY - height * 0.5,
+              maxX: maxX + width * 0.5,
+              maxY: maxY + height * 0.5,
+            },
           ));
         }
 
-        let visibleIds: string[];
-        if (visInViewport.length >= maxVisible) {
-          visibleIds = selectStableSubset(visInViewport, maxVisible);
-        } else {
-          const remaining = maxVisible - visInViewport.length;
-          const offViewport = selectStableSubset(visOutOfViewport, remaining);
-          visibleIds = [...visInViewport, ...offViewport];
-        }
+        // Priority tiers (mirrors the real action): actual viewport first, then
+        // the pan-preload ring, then off-screen — so the minimumVisible floor
+        // (folded into visibleBudget) is honored in the visible area.
+        const visibleIds = selectVisibleIds({
+          inViewportIds: inViewport,
+          marginIds: ring,
+          offViewportIds: outside,
+          budget: visibleBudget,
+          selectSubset: selectStableSubset,
+        });
+        // Restrict hydration candidates to the drawn (visible) set (mirrors the
+        // store): only visible annotations are rendered, so hydrating others is
+        // wasted and can leave drawn annotations as dots.
+        const visibleSet = new Set(visibleIds);
 
-        const inViewportWithSize = hydInViewport.map((id) => ({
-          id,
-          size: state.annotationStubs.get(id)?.estimatedRadius ?? 0,
-        }));
-        inViewportWithSize.sort((a, b) => b.size - a.size);
-
-        let idsToHydrate: string[];
-        if (inViewportWithSize.length >= maxHydrated) {
-          idsToHydrate = inViewportWithSize
-            .slice(0, maxHydrated)
-            .map((item) => item.id);
-        } else {
-          const remainingBudget = maxHydrated - inViewportWithSize.length;
-          const offViewportWithSize = hydOutOfViewport.map((id) => ({
+        const inViewportWithSize = inViewport
+          .filter((id) => visibleSet.has(id))
+          .map((id) => ({
             id,
             size: state.annotationStubs.get(id)?.estimatedRadius ?? 0,
           }));
+        inViewportWithSize.sort((a, b) => b.size - a.size);
+
+        let idsToHydrate: string[];
+        if (inViewportWithSize.length >= hydrationBudget) {
+          idsToHydrate = inViewportWithSize
+            .slice(0, hydrationBudget)
+            .map((item) => item.id);
+        } else {
+          const remainingBudget = hydrationBudget - inViewportWithSize.length;
+          const offViewportWithSize = ring
+            .concat(outside)
+            .filter((id) => visibleSet.has(id))
+            .map((id) => ({
+              id,
+              size: state.annotationStubs.get(id)?.estimatedRadius ?? 0,
+            }));
           offViewportWithSize.sort((a, b) => b.size - a.size);
           idsToHydrate = [
             ...inViewportWithSize.map((item) => item.id),
@@ -959,6 +982,121 @@ describe("annotation stub/hydration store logic", () => {
       );
     });
 
+    it("floors the visible-area count at minimumVisible when the zoom budget is lower", async () => {
+      // 200 annotations in the viewport, cap 1000, floor 50. A zoom-adaptive
+      // budget of 10 (passed in) is below the floor → at least 50 must be drawn
+      // in the actual viewport, not the raw 10.
+      store.state.visibilityConfig = {
+        maxVisible: 1000,
+        maxHydrated: 1000,
+        minimumVisible: 50,
+      };
+      const annotations = Array.from({ length: 200 }, (_, i) =>
+        makeSquareAnnotation(
+          `ann-${i}`,
+          5 + (i % 20) * 4,
+          5 + ((i / 20) | 0) * 9,
+          2,
+        ),
+      );
+      store.commit("setAnnotations", annotations);
+      const gcsBounds = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      await store.dispatch("updateVisibilityAndHydration", {
+        filteredIds: annotations.map((a) => a.id),
+        gcsBounds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+        maxVisible: 10, // zoom-adaptive budget below the floor
+      });
+
+      // Floored to minimumVisible (50), not the raw zoom budget (10)...
+      expect(store.state.visibleAnnotationIds.size).toBe(50);
+      // ...and every drawn annotation is one of the in-view 200 (the floor lands
+      // in the visible area, not the pan-preload margin).
+      for (const id of store.state.visibleAnnotationIds) {
+        expect(id.startsWith("ann-")).toBe(true);
+      }
+    });
+
+    it("keeps the floored draws in the viewport, not the pan-preload margin", async () => {
+      // 60 in the actual viewport (0..100) and 60 in the margin ring (110..140,
+      // inside the 50%-expanded box). Floor 30, zoom budget 5 → the 30 drawn must
+      // all come from the actual viewport.
+      store.state.visibilityConfig = {
+        maxVisible: 1000,
+        maxHydrated: 1000,
+        minimumVisible: 30,
+      };
+      const inView = Array.from({ length: 60 }, (_, i) =>
+        makeSquareAnnotation(
+          `in-${i}`,
+          5 + (i % 10) * 9,
+          5 + ((i / 10) | 0) * 15,
+          2,
+        ),
+      );
+      const margin = Array.from({ length: 60 }, (_, i) =>
+        makeSquareAnnotation(
+          `margin-${i}`,
+          112 + (i % 6) * 4,
+          5 + ((i / 6) | 0) * 9,
+          2,
+        ),
+      );
+      store.commit("setAnnotations", [...inView, ...margin]);
+      const gcsBounds = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      await store.dispatch("updateVisibilityAndHydration", {
+        filteredIds: [...inView, ...margin].map((a) => a.id),
+        gcsBounds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+        maxVisible: 5,
+      });
+
+      expect(store.state.visibleAnnotationIds.size).toBe(30);
+      for (const id of store.state.visibleAnnotationIds) {
+        expect(id.startsWith("in-")).toBe(true); // never a margin id
+      }
+    });
+
+    it("shows everything in view when fewer than minimumVisible are present", async () => {
+      // 20 in view, floor 50 → all 20 drawn (nothing to floor up to).
+      store.state.visibilityConfig = {
+        maxVisible: 1000,
+        maxHydrated: 1000,
+        minimumVisible: 50,
+      };
+      const annotations = Array.from({ length: 20 }, (_, i) =>
+        makeSquareAnnotation(`ann-${i}`, 10 + i * 4, 50, 2),
+      );
+      store.commit("setAnnotations", annotations);
+      const gcsBounds = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      await store.dispatch("updateVisibilityAndHydration", {
+        filteredIds: annotations.map((a) => a.id),
+        gcsBounds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+        maxVisible: 5,
+      });
+
+      expect(store.state.visibleAnnotationIds.size).toBe(20);
+    });
+
     it("respects hydration budget (maxHydrated)", async () => {
       const smallBudget = 3;
       store.state.visibilityConfig = {
@@ -981,6 +1119,48 @@ describe("annotation stub/hydration store logic", () => {
       expect(store.state.hydratedAnnotations.size).toBeLessThanOrEqual(
         smallBudget,
       );
+    });
+
+    it("only hydrates annotations that are in the drawn (visible) set", async () => {
+      // Varying sizes so the "largest" hydration pick differs from the
+      // stable-hash visible subset; a budget below the in-view count forces a
+      // subset. Every hydrated annotation must still be one that is drawn —
+      // otherwise the backend hydrates undrawn annotations while drawn ones stay
+      // dots (the bug this restriction fixes).
+      store.state.visibilityConfig = {
+        maxVisible: 1000,
+        maxHydrated: 1000,
+        minimumVisible: 0,
+      };
+      const annotations = Array.from({ length: 100 }, (_, i) =>
+        makeSquareAnnotation(
+          `ann-${i}`,
+          5 + (i % 10) * 9,
+          5 + ((i / 10) | 0) * 9,
+          1 + (i % 7), // varying radius
+        ),
+      );
+      store.commit("setAnnotations", annotations);
+      const gcsBounds = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      await store.dispatch("updateVisibilityAndHydration", {
+        filteredIds: annotations.map((a) => a.id),
+        gcsBounds,
+        currentFrameLocation: { XY: 0, Z: 0, Time: 0 },
+        maxVisible: 20, // visible budget 20 << 100 in view → a stable subset
+        maxHydrated: 20,
+      });
+
+      expect(store.state.visibleAnnotationIds.size).toBe(20);
+      expect(store.state.hydratedAnnotations.size).toBeGreaterThan(0);
+      for (const id of store.state.hydratedAnnotations.keys()) {
+        expect(store.state.visibleAnnotationIds.has(id)).toBe(true);
+      }
     });
 
     it("sets hydration mode to shapes when annotations are hydrated", async () => {
