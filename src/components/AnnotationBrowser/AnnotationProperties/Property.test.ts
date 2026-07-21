@@ -17,8 +17,8 @@ vi.mock("@/store/properties", () => ({
       progressInfo: {},
       errorInfo: { errors: [] },
     }),
-    uncomputedAnnotationsPerProperty: {
-      "prop-1": ["ann-1", "ann-2"],
+    uncomputedCountByProperty: {
+      "prop-1": 2,
     },
     propertyStatuses: {},
     computeProperty: vi.fn(),
@@ -65,11 +65,14 @@ describe("Property", () => {
     expect(propertyStore.getStatus).toHaveBeenCalledWith("prop-1");
   });
 
-  it("uncomputed reads from store", () => {
+  it("uncomputed reads the count map from store", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.uncomputed).toBe(
-      propertyStore.uncomputedAnnotationsPerProperty,
-    );
+    expect(wrapper.vm.uncomputed).toBe(propertyStore.uncomputedCountByProperty);
+  });
+
+  it("shows the uncomputed count for the property", () => {
+    const wrapper = mountComponent();
+    expect(wrapper.text()).toContain("2");
   });
 
   it("filteredErrors filters by ERROR type", () => {

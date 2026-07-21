@@ -83,7 +83,7 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import SelectAllNoneChips from "./SelectAllNoneChips.vue";
 import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
-import { IAnnotation } from "@/store/model";
+import { TAnnotationOrStub } from "@/store/model";
 
 const props = withDefaults(
   defineProps<{
@@ -173,10 +173,10 @@ async function handleTagRemoveFromAll(tag: string) {
 }
 
 async function applyColorToTag(tag: string) {
-  const annotationsWithTag = annotationStore.annotations.filter(
-    (annotation: IAnnotation) => annotation.tags.includes(tag),
+  const annotationsWithTag = annotationStore.annotationsForIteration.filter(
+    (annotation: TAnnotationOrStub) => annotation.tags.includes(tag),
   );
-  const annotationIds = annotationsWithTag.map((a: IAnnotation) => a.id);
+  const annotationIds = annotationsWithTag.map((a: TAnnotationOrStub) => a.id);
 
   const isRandomColor = colorOption.value === "random";
   const color = colorOption.value === "layer" ? null : tagColor.value;

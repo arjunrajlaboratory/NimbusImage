@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Repository Agent Guidance
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides shared guidance to Claude Code, Codex, and other coding agents working in this repository. `AGENTS.md` links here so both providers use one canonical instruction file.
 
 ## Project Overview
 
@@ -636,6 +636,42 @@ flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/ap
 
 Note: Linting is also run as part of tox tests, so `tox` will catch linting errors.
 
+## NimbusImage Python API
+
+The `nimbusimage` Python package (`nimbusimage/`) provides programmatic access to the backend. Use it for scripts that create/query/modify annotations, datasets, and other resources — prefer it over raw `curl` commands.
+
+**Setup:**
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e nimbusimage python-dotenv
+```
+
+**Credentials:** Store in `.env` (gitignored) at the project root:
+```
+GIRDER_API_URL=http://localhost:8080/api/v1
+GIRDER_USERNAME=admin
+GIRDER_PASSWORD=password
+```
+
+**Usage (high-level API):**
+```python
+import nimbusimage as ni
+client = ni.connect("http://localhost:8080/api/v1", api_key="your-key")
+ds = client.dataset(name="My Experiment")
+ds.annotations.list(shape="polygon")
+```
+
+**Usage (low-level Girder client):**
+```python
+from dotenv import load_dotenv
+from nimbusimage._girder import create_client
+load_dotenv()
+gc = create_client(api_url=os.environ["GIRDER_API_URL"], username=os.environ["GIRDER_USERNAME"], password=os.environ["GIRDER_PASSWORD"])
+gc.post("/upenn_annotation/multiple", json=annotations)
+```
+
+See `nimbusimage/README.md` for full API reference and authentication options (API keys vs username/password).
+
 ## Important Notes
 
 - **Package Manager:** Project uses pnpm exclusively (enforced by preinstall script)
@@ -681,22 +717,6 @@ VITE_SENTRY_TRACES_SAMPLE_RATE=1.0
 
 Get the DSN value from the Sentry project's Settings → Client Keys (DSN) page. Trigger a test event with `setTimeout(() => { throw new Error("test"); });` in the browser console — a synchronous throw from devtools is swallowed, but async throws hit `window.onerror` which Sentry hooks. Filter on `environment:local-dev` in the Sentry UI to keep your test events out of the production view.
 
-## Allowed Tools
+## Agent Tooling Notes
 
-The following commands are pre-approved for Claude Code to run without confirmation:
-
-```
-# Docker commands for backend development
-Bash(docker compose build:*)
-Bash(docker compose:*)
-Bash(curl:*)
-
-# Testing
-Bash(tox)
-Bash(tox:*)
-
-# Git operations
-Bash(git add:*)
-Bash(git commit:*)
-Bash(git push:*)
-```
+Tool permissions are controlled by the active agent environment, not by this file. Common development commands include `docker compose`, `curl`, `tox`, and standard Git commands. Follow the host's sandbox and approval policy when running them.

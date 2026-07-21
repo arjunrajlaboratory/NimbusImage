@@ -24,7 +24,7 @@ vi.mock("@/store", () => ({
 
 vi.mock("@/store/properties", () => ({
   default: {
-    uncomputedAnnotationsPerProperty: {} as Record<string, any[]>,
+    uncomputedCountByProperty: {} as Record<string, number>,
   },
 }));
 
@@ -103,7 +103,7 @@ describe("App", () => {
     (store as any).api = {
       getUserPrivateFolder: vi.fn().mockResolvedValue({ _id: "folder-1" }),
     };
-    (propertyStore as any).uncomputedAnnotationsPerProperty = {};
+    (propertyStore as any).uncomputedCountByProperty = {};
     (axios.get as any) = vi
       .fn()
       .mockResolvedValue({ data: [{ name: "Tool1", type: "create" }] });
@@ -230,25 +230,25 @@ describe("App", () => {
 
   // -- Computed: hasUncomputedProperties --
   it("hasUncomputedProperties returns false when no uncomputed entries", () => {
-    (propertyStore as any).uncomputedAnnotationsPerProperty = {};
+    (propertyStore as any).uncomputedCountByProperty = {};
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.hasUncomputedProperties).toBe(false);
   });
 
   it("hasUncomputedProperties returns true when there are uncomputed entries", () => {
-    (propertyStore as any).uncomputedAnnotationsPerProperty = {
-      prop1: ["ann1", "ann2"],
+    (propertyStore as any).uncomputedCountByProperty = {
+      prop1: 2,
     };
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.hasUncomputedProperties).toBe(true);
   });
 
-  it("hasUncomputedProperties returns false when all arrays are empty", () => {
-    (propertyStore as any).uncomputedAnnotationsPerProperty = {
-      prop1: [],
-      prop2: [],
+  it("hasUncomputedProperties returns false when all counts are zero", () => {
+    (propertyStore as any).uncomputedCountByProperty = {
+      prop1: 0,
+      prop2: 0,
     };
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;

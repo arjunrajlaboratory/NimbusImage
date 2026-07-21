@@ -447,6 +447,7 @@
     </template>
 
     <analyze-dialog v-model="analyzeDialogOpen" @show-in-list="onShowInList" />
+    <pipeline-dialog v-model="pipelineDialogOpen" />
   </v-app>
 </template>
 
@@ -472,6 +473,7 @@ import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.
 import DataIoMenu from "@/components/DataIOMenu.vue";
 import FiltersPanel from "@/components/FiltersPanel.vue";
 import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
+import PipelineDialog from "@/components/PipelineDialog.vue";
 import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
 import NavigatorPanel from "@/components/NavigatorPanel.vue";
 import LayersPanel from "@/components/LayersPanel.vue";
@@ -500,6 +502,7 @@ void Snapshots;
 void AnnotationBrowser;
 void FiltersPanel;
 void AnalyzeDialog;
+void PipelineDialog;
 void UndoRedoButtons;
 void NavigatorPanel;
 void LayersPanel;
@@ -583,6 +586,11 @@ const anyLeftPaletteOpen = computed(
 const analyzeDialogOpen = computed({
   get: () => store.isAnalyzeDialogOpen,
   set: (value: boolean) => store.setIsAnalyzeDialogOpen(value),
+});
+
+const pipelineDialogOpen = computed({
+  get: () => store.isPipelineDialogOpen,
+  set: (value: boolean) => store.setIsPipelineDialogOpen(value),
 });
 
 const isUploadLoading = ref(false);
@@ -856,9 +864,9 @@ const routeName = computed(() => route.name);
 const isDatasetView = computed(() => routeName.value === "datasetview");
 
 const hasUncomputedProperties = computed(() => {
-  const uncomputed = propertyStore.uncomputedAnnotationsPerProperty;
-  for (const id in uncomputed) {
-    if (uncomputed[id].length > 0) {
+  const counts = propertyStore.uncomputedCountByProperty;
+  for (const id in counts) {
+    if (counts[id] > 0) {
       return true;
     }
   }

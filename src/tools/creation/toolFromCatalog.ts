@@ -42,7 +42,11 @@ export const MANUAL_CATALOG: IToolSuggestionCatalogEntry[] = [
   },
 ];
 
-function buildDefaultCoordinateAssignments(
+// Exported for reuse by the pipeline builder (PipelineEditor.vue), which also
+// creates annotation setups programmatically and needs dataset-derived Z/Time
+// maxima (a hardcoded max would break the step editor's "Assign" validation,
+// whose rule is `value < max`).
+export function buildDefaultCoordinateAssignments(
   layerId?: string,
 ): IAnnotationSetup["coordinateAssignments"] {
   return {

@@ -48,6 +48,7 @@ import {
   TLayerMode,
   ISnapshot,
   IDatasetConfigurationBase,
+  IPipeline,
   IToolConfiguration,
   AnnotationNames,
   AnnotationShape,
@@ -71,6 +72,7 @@ import {
   CombineToolStateSymbol,
   NotificationType,
   IDimensionStrategy,
+  IVisibilityConfig,
 } from "./model";
 
 import persister from "./Persister";
@@ -390,6 +392,7 @@ export class Main extends VuexModule {
   annotationPanelBadge: boolean = false;
   isHelpPanelOpen: boolean = false;
   isAnalyzeDialogOpen: boolean = false;
+  isPipelineDialogOpen: boolean = false;
   // True while a layer is being dragged (reordered/grouped). Used to suppress
   // palette re-layout that would otherwise re-render the draggable mid-drag.
   isLayerDragging: boolean = false;
@@ -1130,6 +1133,7 @@ export class Main extends VuexModule {
     data: IDatasetConfiguration | null;
   }) {
     this.setConfigurationImpl({ id, data });
+    this.context.dispatch("loadVisibilityConfig", data?.visibilityConfig);
     // Warm the SAM model cache in the background: encoder downloads are
     // large, this way they are usually cached before a SAM tool is selected
     const samModels = new Set(
@@ -1157,6 +1161,13 @@ export class Main extends VuexModule {
     this.configuration = data;
     if (!data) {
       return;
+    }
+  }
+
+  @Mutation
+  private setConfigurationVisibilityConfig(config: IVisibilityConfig) {
+    if (this.configuration) {
+      this.configuration.visibilityConfig = { ...config };
     }
   }
 
@@ -1218,6 +1229,11 @@ export class Main extends VuexModule {
   @Mutation
   public setIsAnalyzeDialogOpen(value: boolean) {
     this.isAnalyzeDialogOpen = value;
+  }
+
+  @Mutation
+  public setIsPipelineDialogOpen(value: boolean) {
+    this.isPipelineDialogOpen = value;
   }
 
   @Mutation
@@ -1433,9 +1449,21 @@ export class Main extends VuexModule {
   @Action
   async setSelectedDataset(id: string | null) {
     memDiag.autoSnapshot(`setSelectedDataset:enter id=${id ?? "null"}`);
+    // this.dataset still holds the previously selected dataset here (setDataset
+    // runs later), so this detects a genuine switch vs. a same-dataset refresh.
+    const datasetChanged = id !== this.dataset?.id;
     this.api.flushCaches();
     this.context.dispatch("resetAnnotationState");
     this.context.dispatch("resetPropertyState");
+    // Filters hold unrecoverable user state (tag/property/ROI/ID filters), so
+    // only reset them on an actual dataset change. refreshDataset() re-runs
+    // setSelectedDataset with the same id (e.g. NavigatorPanel unroll toggles);
+    // wiping filters there would discard the user's active filters. The
+    // annotation/property resets above are safe to run every time because they
+    // are repopulated by the reload that follows.
+    if (datasetChanged) {
+      this.context.dispatch("resetFilterState");
+    }
     if (!id) {
       this.setDataset({ id, data: null });
       memDiag.autoSnapshot("setSelectedDataset:exit (null)");
@@ -1859,8 +1887,9 @@ export class Main extends VuexModule {
   }
 
   @Action
-  async getCollectionDatasetCount(): Promise<number> {
-    const configurationId = this.selectedConfigurationId;
+  async getCollectionDatasetCount(
+    configurationId = this.selectedConfigurationId,
+  ): Promise<number> {
     if (!configurationId) {
       return 0;
     }
@@ -1972,20 +2001,57 @@ export class Main extends VuexModule {
   }
 
   @Action
-  updateConfigurationProperties(propertyIds: string[]) {
-    if (this.configuration) {
-      this.configuration.propertyIds = propertyIds;
-      this.syncConfiguration("propertyIds");
+  async updateConfigurationProperties(propertyIds: string[]) {
+    const configuration = this.configuration;
+    if (!configuration) {
+      throw new Error("Cannot update properties without a configuration");
+    }
+    const previous = configuration.propertyIds;
+    configuration.propertyIds = propertyIds;
+    try {
+      await this.syncConfiguration({ key: "propertyIds", throwOnError: true });
+    } catch (error) {
+      configuration.propertyIds = previous;
+      throw error;
     }
   }
 
   @Action
-  async syncConfiguration(key: keyof IDatasetConfigurationBase) {
+  async updateConfigurationPipelines(pipelines: IPipeline[]) {
+    const configuration = this.configuration;
+    if (!configuration) {
+      throw new Error("Cannot update pipelines without a configuration");
+    }
+    const previous = configuration.pipelines;
+    configuration.pipelines = pipelines;
+    try {
+      await this.syncConfiguration({ key: "pipelines", throwOnError: true });
+    } catch (error) {
+      configuration.pipelines = previous;
+      throw error;
+    }
+  }
+
+  @Action
+  async syncConfiguration(
+    payload:
+      | keyof IDatasetConfigurationBase
+      | { key: keyof IDatasetConfigurationBase; throwOnError?: boolean },
+  ) {
+    const key = typeof payload === "string" ? payload : payload.key;
+    const throwOnError =
+      typeof payload === "string" ? false : payload.throwOnError ?? false;
     if (!this.isLoggedIn) {
       this.createNotLoggedInNotification();
+      if (throwOnError) {
+        throw new Error("Authentication is required to save configuration");
+      }
       return;
     }
     if (!this.configuration) {
+      if (throwOnError) {
+        throw new Error("Cannot save without a configuration");
+      }
       return;
     }
     sync.setSaving(true);
@@ -1995,7 +2061,19 @@ export class Main extends VuexModule {
       sync.setSaving(false);
     } catch (error) {
       sync.setSaving(error as Error);
+      if (throwOnError) {
+        throw error;
+      }
     }
+  }
+
+  @Action
+  async saveVisibilityConfig(config: IVisibilityConfig) {
+    if (!this.configuration) {
+      return;
+    }
+    this.setConfigurationVisibilityConfig(config);
+    await this.syncConfiguration("visibilityConfig");
   }
 
   @Action
