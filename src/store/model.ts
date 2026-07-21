@@ -516,6 +516,10 @@ export interface IDatasetConfigurationBase {
   propertyIds: string[];
   pipelines: IPipeline[];
   scales: IScales;
+  // Shared annotation-rendering tuning for this configuration. Optional for
+  // compatibility with configurations created before these settings were
+  // persisted.
+  visibilityConfig?: IVisibilityConfig;
 }
 
 export interface IDatasetConfiguration extends IDatasetConfigurationBase {
@@ -1634,6 +1638,27 @@ export interface IVisibilityConfig {
   viewportRefreshFraction: number;
 }
 
+export const DEFAULT_VISIBILITY_CONFIG: IVisibilityConfig = {
+  stubThreshold: 100000,
+  maxVisible: 50000,
+  minimumVisible: 5000,
+  maxHydrated: 20000,
+  hydrationCacheCap: 40000,
+  globalThreshold: true,
+  coverageTarget: 0.3,
+  revealMoreOnZoom: false,
+  viewportRefreshFraction: 0.2,
+};
+
+export function resolveVisibilityConfig(
+  config?: Partial<IVisibilityConfig>,
+): IVisibilityConfig {
+  return {
+    ...DEFAULT_VISIBILITY_CONFIG,
+    ...config,
+  };
+}
+
 export function isHydratedAnnotation(
   annotation: TAnnotationOrStub,
 ): annotation is IAnnotation {
@@ -2280,6 +2305,7 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       zStep: { value: 1, unit: "m" },
       tStep: { value: 1, unit: "s" },
     },
+    visibilityConfig: resolveVisibilityConfig(),
   };
 }
 

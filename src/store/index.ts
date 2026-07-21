@@ -71,6 +71,7 @@ import {
   CombineToolStateSymbol,
   NotificationType,
   IDimensionStrategy,
+  IVisibilityConfig,
 } from "./model";
 
 import persister from "./Persister";
@@ -1130,6 +1131,7 @@ export class Main extends VuexModule {
     data: IDatasetConfiguration | null;
   }) {
     this.setConfigurationImpl({ id, data });
+    this.context.dispatch("loadVisibilityConfig", data?.visibilityConfig);
     // Warm the SAM model cache in the background: encoder downloads are
     // large, this way they are usually cached before a SAM tool is selected
     const samModels = new Set(
@@ -1157,6 +1159,13 @@ export class Main extends VuexModule {
     this.configuration = data;
     if (!data) {
       return;
+    }
+  }
+
+  @Mutation
+  private setConfigurationVisibilityConfig(config: IVisibilityConfig) {
+    if (this.configuration) {
+      this.configuration.visibilityConfig = { ...config };
     }
   }
 
@@ -1452,10 +1461,6 @@ export class Main extends VuexModule {
     // are repopulated by the reload that follows.
     if (datasetChanged) {
       this.context.dispatch("resetFilterState");
-      // Advanced rendering settings are session tuning, not per-dataset — snap
-      // them back to defaults on a genuine switch (not a same-dataset refresh)
-      // so a tweak for one dataset can't silently carry into the next.
-      this.context.dispatch("resetVisibilityConfig");
     }
     if (!id) {
       this.setDataset({ id, data: null });
@@ -2058,6 +2063,15 @@ export class Main extends VuexModule {
         throw error;
       }
     }
+  }
+
+  @Action
+  async saveVisibilityConfig(config: IVisibilityConfig) {
+    if (!this.configuration) {
+      return;
+    }
+    this.setConfigurationVisibilityConfig(config);
+    await this.syncConfiguration("visibilityConfig");
   }
 
   @Action

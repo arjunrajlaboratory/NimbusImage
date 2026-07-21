@@ -34,6 +34,7 @@ import {
   TJobType,
   IDatasetConfigurationCompatibility,
   IJob,
+  resolveVisibilityConfig,
 } from "@/store/model";
 import {
   toStyle,
@@ -1261,6 +1262,12 @@ export function setBaseCollectionValues(
     description: item.description,
   };
   for (const key of configurationBaseKeys) {
+    if (key === "visibilityConfig") {
+      config.visibilityConfig = resolveVisibilityConfig(
+        item.meta.visibilityConfig,
+      );
+      continue;
+    }
     config[key] =
       key in item.meta ? item.meta[key] : exampleConfigurationBase()[key];
   }
