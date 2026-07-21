@@ -78,7 +78,11 @@ describe("selectStableSubset", () => {
     const expected = [...ids]
       .sort((a, b) => hashString(a) - hashString(b))
       .slice(0, k);
-    expect(new Set(selectStableSubset(ids, k))).toEqual(new Set(expected));
+    expect(selectStableSubset(ids, k)).toEqual(expected);
+  });
+
+  it("returns an empty subset for a zero budget", () => {
+    expect(selectStableSubset(["a", "b", "c"], 0)).toEqual([]);
   });
 
   it("selects the same set regardless of input order", () => {

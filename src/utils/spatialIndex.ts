@@ -78,29 +78,35 @@ export class AnnotationSpatialIndex {
    * The inner box must be contained in the outer box (it always is here: the outer
    * is the inner expanded by 50% each side). This replaces two `splitByViewport`
    * calls plus a caller-side set-difference with one iteration over
-   * `currentFrameIds`, which matters on the hot visibility-update path at ~700K.
+   * `currentFrameIds`, using the already-indexed point coordinates directly
+   * instead of running two tree searches and building two full result sets.
+   * That matters on the hot visibility-update path at ~700K.
    */
   partitionByViewports(
     currentFrameIds: string[],
     innerBox: { minX: number; minY: number; maxX: number; maxY: number },
     outerBox: { minX: number; minY: number; maxX: number; maxY: number },
   ): { inViewport: string[]; ring: string[]; outside: string[] } {
-    const innerSet = new Set<string>();
-    for (const item of this.tree.search(innerBox)) {
-      innerSet.add(item.id);
-    }
-    const outerSet = new Set<string>();
-    for (const item of this.tree.search(outerBox)) {
-      outerSet.add(item.id);
-    }
-
     const inViewport: string[] = [];
     const ring: string[] = [];
     const outside: string[] = [];
     for (const id of currentFrameIds) {
-      if (innerSet.has(id)) {
+      const item = this.itemById.get(id);
+      if (
+        item &&
+        item.minX >= innerBox.minX &&
+        item.minX <= innerBox.maxX &&
+        item.minY >= innerBox.minY &&
+        item.minY <= innerBox.maxY
+      ) {
         inViewport.push(id);
-      } else if (outerSet.has(id)) {
+      } else if (
+        item &&
+        item.minX >= outerBox.minX &&
+        item.minX <= outerBox.maxX &&
+        item.minY >= outerBox.minY &&
+        item.minY <= outerBox.maxY
+      ) {
         ring.push(id);
       } else {
         outside.push(id);
