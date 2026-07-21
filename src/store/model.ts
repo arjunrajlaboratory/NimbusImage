@@ -1854,11 +1854,45 @@ export type TPropertyHistogram = {
   max: number;
 }[];
 
+// Annotation export files are raw Mongo documents produced by
+// `GET /export/json`: the identifier lives under `_id`, and `id` isn't
+// present. These types describe that on-disk/import shape, as opposed to
+// the normalized `IAnnotation`/`IAnnotationConnection`/`IAnnotationProperty`
+// used everywhere else once the frontend has parsed a server response.
+export type ISerializedAnnotation = Omit<IAnnotation, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
+export type ISerializedConnection = Omit<IAnnotationConnection, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
+export type ISerializedProperty = Omit<IAnnotationProperty, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
 export interface ISerializedData {
-  annotations: IAnnotation[];
-  annotationConnections: IAnnotationConnection[];
-  annotationProperties: IAnnotationProperty[];
+  annotations: ISerializedAnnotation[];
+  annotationConnections: ISerializedConnection[];
+  annotationProperties: ISerializedProperty[];
   annotationPropertyValues: IAnnotationPropertyValues;
+}
+
+export interface IAnnotationImportPayload {
+  datasetId: string;
+  annotations?: ISerializedAnnotation[];
+  connections?: ISerializedConnection[];
+  propertyValues?: IAnnotationPropertyValues;
+  propertyIdMap?: { [oldPropertyId: string]: string };
+}
+
+export interface IAnnotationImportResult {
+  annotationCount: number;
+  connectionCount: number;
+  propertyValueCount: number;
 }
 
 export interface IJobEventData {
