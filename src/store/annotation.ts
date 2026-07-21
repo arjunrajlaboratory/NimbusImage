@@ -33,6 +33,7 @@ import {
   type TAnnotationOrStub,
   type THydrationMode,
   type IVisibilityConfig,
+  resolveVisibilityConfig,
 } from "./model";
 import type AnnotationsAPI from "./AnnotationsAPI";
 
@@ -80,22 +81,6 @@ function cloneAnnotation(annotation: IAnnotation): IAnnotation {
     coordinates: toRaw(rawAnnotation.coordinates),
   });
 }
-
-// Shipped defaults for the advanced annotation-rendering settings. Single
-// source of truth for both the store's initial value and the per-dataset reset
-// (settings are session state, not persisted, and snap back to these when the
-// dataset changes). Spread on use so each assignment gets a fresh object.
-const DEFAULT_VISIBILITY_CONFIG: IVisibilityConfig = {
-  stubThreshold: 100000,
-  maxVisible: 50000,
-  minimumVisible: 5000,
-  maxHydrated: 20000,
-  hydrationCacheCap: 40000,
-  globalThreshold: true,
-  coverageTarget: 0.3,
-  revealMoreOnZoom: false,
-  viewportRefreshFraction: 0.2,
-};
 
 @Module({ dynamic: true, store, name: "annotation" })
 export class Annotations extends VuexModule {
@@ -204,7 +189,7 @@ export class Annotations extends VuexModule {
   hydratedAnnotations: Map<string, IAnnotation> = markRaw(new Map());
   visibleAnnotationIds: Set<string> = markRaw(new Set());
   hydrationMode: THydrationMode = "dots";
-  visibilityConfig: IVisibilityConfig = { ...DEFAULT_VISIBILITY_CONFIG };
+  visibilityConfig: IVisibilityConfig = resolveVisibilityConfig();
 
   // Average annotation radius (world units) over the loaded stubs, computed once
   // when stubs are set. Feeds the density-derived zoomed-out render budget.
@@ -221,15 +206,30 @@ export class Annotations extends VuexModule {
     this.visibilityConfig = { ...this.visibilityConfig, ...config };
   }
 
-  // Snap the advanced rendering settings back to the shipped defaults. Used by
-  // the settings "Reset to defaults" button and on a genuine dataset switch
-  // (settings are session tuning, not per-dataset, so a tweak for one dataset
-  // shouldn't silently carry into the next). An action so it can be dispatched
-  // cross-module from the main store; passing every default key makes the
-  // setVisibilityConfig merge resolve to exactly the defaults.
+  @Mutation
+  replaceVisibilityConfig(config?: Partial<IVisibilityConfig>) {
+    this.visibilityConfig = resolveVisibilityConfig(config);
+  }
+
+  // Load configuration metadata over the shipped defaults so configurations
+  // created before persistence (and partial metadata from future migrations)
+  // always get a complete, independent settings object.
   @Action
-  resetVisibilityConfig() {
-    this.setVisibilityConfig({ ...DEFAULT_VISIBILITY_CONFIG });
+  loadVisibilityConfig(config?: Partial<IVisibilityConfig>) {
+    this.replaceVisibilityConfig(config);
+  }
+
+  @Action
+  async updateVisibilityConfig(config: Partial<IVisibilityConfig>) {
+    this.setVisibilityConfig(config);
+    await main.saveVisibilityConfig(this.visibilityConfig);
+  }
+
+  // Reset the shared configuration metadata as well as the live renderer.
+  @Action
+  async resetVisibilityConfig() {
+    this.replaceVisibilityConfig();
+    await main.saveVisibilityConfig(this.visibilityConfig);
   }
 
   @Mutation

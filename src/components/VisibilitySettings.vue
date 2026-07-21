@@ -98,7 +98,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive } from "vue";
+import { computed, onBeforeUnmount, reactive, watch } from "vue";
 import annotationStore from "@/store/annotation";
 import {
   VISIBILITY_BOUNDS,
@@ -185,6 +185,18 @@ const draft = reactive<Record<TVisibilityNumericKey, number>>(
 const notes = reactive<Partial<Record<TVisibilityNumericKey, string>>>({});
 const noteTimers: Partial<Record<TVisibilityNumericKey, number>> = {};
 
+// VisibilitySettings can mount before the selected configuration finishes
+// loading. Keep the editable numeric draft aligned when persisted settings are
+// hydrated or when the user switches configurations.
+watch(
+  () => annotationStore.visibilityConfig,
+  (config) => {
+    for (const field of numericFields) {
+      draft[field.key] = config[field.key];
+    }
+  },
+);
+
 function flashNote(key: TVisibilityNumericKey, value: number) {
   notes[key] = `Adjusted to ${value.toLocaleString()}`;
   if (noteTimers[key] !== undefined) {
@@ -210,7 +222,7 @@ function commitField(key: TVisibilityNumericKey) {
     { [key]: draft[key] },
     annotationStore.visibilityConfig,
   );
-  annotationStore.setVisibilityConfig(config);
+  annotationStore.updateVisibilityConfig(config);
   // Reflect the accepted values back into the inputs (covers cross-field
   // changes to fields the user didn't touch).
   for (const field of numericFields) {
@@ -224,14 +236,14 @@ function commitField(key: TVisibilityNumericKey) {
 const globalThreshold = computed({
   get: () => annotationStore.visibilityConfig.globalThreshold,
   set: (value: boolean) => {
-    annotationStore.setVisibilityConfig({ globalThreshold: value });
+    annotationStore.updateVisibilityConfig({ globalThreshold: value });
   },
 });
 
 const revealMoreOnZoom = computed({
   get: () => annotationStore.visibilityConfig.revealMoreOnZoom,
   set: (value: boolean) => {
-    annotationStore.setVisibilityConfig({ revealMoreOnZoom: value });
+    annotationStore.updateVisibilityConfig({ revealMoreOnZoom: value });
   },
 });
 
