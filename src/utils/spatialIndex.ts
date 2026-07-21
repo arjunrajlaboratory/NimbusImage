@@ -92,20 +92,25 @@ export class AnnotationSpatialIndex {
     const outside: string[] = [];
     for (const id of currentFrameIds) {
       const item = this.itemById.get(id);
+      if (!item) {
+        outside.push(id);
+        continue;
+      }
+      // SpatialItem entries are points: bulkLoad and insert always set
+      // minX === maxX and minY === maxY.
+      const { minX, minY } = item;
       if (
-        item &&
-        item.minX >= innerBox.minX &&
-        item.minX <= innerBox.maxX &&
-        item.minY >= innerBox.minY &&
-        item.minY <= innerBox.maxY
+        minX >= innerBox.minX &&
+        minX <= innerBox.maxX &&
+        minY >= innerBox.minY &&
+        minY <= innerBox.maxY
       ) {
         inViewport.push(id);
       } else if (
-        item &&
-        item.minX >= outerBox.minX &&
-        item.minX <= outerBox.maxX &&
-        item.minY >= outerBox.minY &&
-        item.minY <= outerBox.maxY
+        minX >= outerBox.minX &&
+        minX <= outerBox.maxX &&
+        minY >= outerBox.minY &&
+        minY <= outerBox.maxY
       ) {
         ring.push(id);
       } else {

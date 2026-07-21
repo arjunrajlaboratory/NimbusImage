@@ -424,10 +424,13 @@ export function selectLargestBySize(
   // root is the worst kept element, so a new candidate replaces it iff it beats
   // it. O(n log count) — ~4× faster than sorting all n at 700K — and avoids the
   // O(n log n) full sort the old object-sort paid. `worse(a, b)` ⇒ a is more
-  // evictable than b: smaller size, or (size tie) larger hash — so the smaller
-  // hash survives ties, matching the deterministic tie-break above.
-  const worse = (a: number, b: number) =>
-    sizes[a] !== sizes[b] ? sizes[a] < sizes[b] : hashes[a] > hashes[b];
+  // evictable than b: smaller size, or (size tie) larger hash/id — so the
+  // smaller hash/id survives ties, matching the deterministic tie-break above.
+  const worse = (a: number, b: number) => {
+    if (sizes[a] !== sizes[b]) return sizes[a] < sizes[b];
+    if (hashes[a] !== hashes[b]) return hashes[a] > hashes[b];
+    return ids[a] > ids[b];
+  };
   const heap = new Int32Array(count);
   let size = 0;
   for (let i = 0; i < n; i++) {

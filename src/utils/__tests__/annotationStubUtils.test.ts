@@ -92,6 +92,14 @@ describe("selectStableSubset", () => {
       new Set(selectStableSubset(shuffled, 10)),
     );
   });
+
+  it("breaks hash collisions by id regardless of input order", () => {
+    const largerId = "d63cf0eeecc40375b230be50";
+    const smallerId = "38817f7125d2721c2651e6cb";
+    expect(hashString(largerId)).toBe(hashString(smallerId));
+    expect(selectStableSubset([largerId, smallerId], 1)).toEqual([smallerId]);
+    expect(selectStableSubset([smallerId, largerId], 1)).toEqual([smallerId]);
+  });
 });
 
 describe("selectLargestBySize", () => {
@@ -131,6 +139,18 @@ describe("selectLargestBySize", () => {
     ]);
     expect(selectLargestBySize(["e", "d", "c", "b", "a"], sizeOf, 1)).toEqual([
       lowerHash,
+    ]);
+  });
+
+  it("breaks size and hash collisions by id regardless of input order", () => {
+    const largerId = "d63cf0eeecc40375b230be50";
+    const smallerId = "38817f7125d2721c2651e6cb";
+    expect(hashString(largerId)).toBe(hashString(smallerId));
+    expect(selectLargestBySize([largerId, smallerId], () => 1, 1)).toEqual([
+      smallerId,
+    ]);
+    expect(selectLargestBySize([smallerId, largerId], () => 1, 1)).toEqual([
+      smallerId,
     ]);
   });
 
