@@ -91,4 +91,52 @@ describe("configuration visibility metadata", () => {
       visibilityConfig: configuration.visibilityConfig,
     });
   });
+
+  it("waits for an earlier visibility save before starting the latest save", async () => {
+    let finishFirstSave!: (value: { data: object }) => void;
+    const firstSave = new Promise<{ data: object }>((resolve) => {
+      finishFirstSave = resolve;
+    });
+    const client = {
+      put: vi
+        .fn()
+        .mockReturnValueOnce(firstSave)
+        .mockResolvedValueOnce({ data: {} }),
+    } as any;
+    const api = new GirderAPI(client);
+    const configuration = makeConfiguration({
+      ...DEFAULT_VISIBILITY_CONFIG,
+      maxVisible: 51000,
+    });
+
+    const earlierSave = api.updateConfigurationKey(
+      configuration,
+      "visibilityConfig",
+    );
+    configuration.visibilityConfig = {
+      ...DEFAULT_VISIBILITY_CONFIG,
+      ...configuration.visibilityConfig,
+      maxVisible: 52000,
+    };
+    const latestSave = api.updateConfigurationKey(
+      configuration,
+      "visibilityConfig",
+    );
+
+    await vi.waitFor(() => expect(client.put).toHaveBeenCalledTimes(1));
+
+    finishFirstSave({ data: {} });
+    await earlierSave;
+    await latestSave;
+
+    expect(client.put).toHaveBeenCalledTimes(2);
+    const earlierMetadata = JSON.parse(
+      (client.put.mock.calls[0][1] as FormData).get("metadata") as string,
+    );
+    const latestMetadata = JSON.parse(
+      (client.put.mock.calls[1][1] as FormData).get("metadata") as string,
+    );
+    expect(earlierMetadata.visibilityConfig.maxVisible).toBe(51000);
+    expect(latestMetadata.visibilityConfig.maxVisible).toBe(52000);
+  });
 });
