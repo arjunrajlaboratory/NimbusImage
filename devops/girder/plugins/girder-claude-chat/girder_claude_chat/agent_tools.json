@@ -1,0 +1,804 @@
+[
+  {
+    "name": "get_interface_state",
+    "description": "Get a structured snapshot of the current NimbusImage interface state: dataset, collection, location (XY/Z/Time), layer mode, camera, layers (id, name, channel, color, contrast, visibility), selected tool, active annotation filters, and annotation counts. Cheap and precise — prefer this over capture_screenshot for questions about application state. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "capture_screenshot",
+    "description": "Capture a screenshot and receive it as an image. 'viewport' shows just the rendered image in the viewer (reliable), 'interface' shows the whole application window (may miss some WebGL content). Use only when you need to see image content (e.g. what kind of cells are visible); use get_interface_state for application state. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "enum": ["viewport", "interface", "both"],
+          "description": "Which screenshot(s) to capture. Default: viewport."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_annotation_summary",
+    "description": "Get annotation counts grouped by tag, shape and channel, plus the count of currently filtered and selected annotations. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_annotations",
+    "description": "List annotations matching a query, with id, name, shape, tags, channel, location, color and centroid. Use this to inspect specific annotations, not to enumerate a whole dataset: for counts or a breakdown by tag/shape/channel, prefer get_annotation_summary. Results are paged (default 50, max 200); the result reports totalMatching, hasMore and nextOffset, so page further only when you need those specific items. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "object",
+          "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
+          "properties": {
+            "tags": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
+            },
+            "exclusive": {
+              "type": "boolean",
+              "description": "If true, annotations must have ALL the given tags."
+            },
+            "shape": {
+              "type": "string",
+              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+            },
+            "channel": { "type": "integer" },
+            "currentFrameOnly": {
+              "type": "boolean",
+              "description": "Only annotations at the current XY/Z/Time location."
+            },
+            "ids": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Explicit annotation ids."
+            }
+          },
+          "additionalProperties": false
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum number of annotations to return (default 50, hard-capped at 200). For larger match sets, page with offset or call get_annotation_summary for counts and breakdowns instead of listing them all."
+        },
+        "offset": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_tools",
+    "description": "List the tools in the current collection's toolset (id, name, type, and the worker image for worker-based tools). Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_workers",
+    "description": "List the available worker images (automated annotation algorithms such as Cellpose or Piscis) with their names and descriptions. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_worker_interface",
+    "description": "Get the parameter schema (name, type, default, min/max) for a worker image. Call before run_worker to know which workerInterfaceValues can be set. May take a few seconds if the interface is not cached. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "The worker Docker image, as returned by list_workers or list_tools."
+        }
+      },
+      "required": ["image"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_location",
+    "description": "Move the viewer to a different XY position, Z slice and/or time point. Omitted fields keep their current value. Values are clamped to the dataset's range. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "xy": { "type": "integer", "minimum": 0 },
+        "z": { "type": "integer", "minimum": 0 },
+        "time": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_camera",
+    "description": "Pan and/or zoom the viewer camera. Either provide center (image pixel coordinates) and/or zoom (GeoJS zoom level; +1 doubles magnification), OR provide fit to frame the view: 'annotations' (all annotations), 'selection' (the selected ones), or 'full' (the whole image). Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "center": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          },
+          "required": ["x", "y"],
+          "additionalProperties": false
+        },
+        "zoom": { "type": "number" },
+        "fit": {
+          "type": "string",
+          "enum": ["annotations", "selection", "full"],
+          "description": "Zoom/pan to frame these; ignores center/zoom if set."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_layer_mode",
+    "description": "Switch the layer display mode: 'single' (one layer at a time), 'multiple' (blended layers), or 'unroll' (grid of frames; optionally choose which dimensions to unroll). Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["single", "multiple", "unroll"]
+        },
+        "unrollXY": { "type": "boolean" },
+        "unrollZ": { "type": "boolean" },
+        "unrollT": { "type": "boolean" }
+      },
+      "required": ["mode"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "update_layer",
+    "description": "Change one display layer: color (hex), visibility, contrast (black/white points), or name. Color, visibility and name change the shared collection; contrast defaults to the user's personal view override (like the contrast slider), or set contrastScope to 'configuration' to change the shared collection. Refer to the layer by its id or its exact name from get_interface_state. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "layer": {
+          "type": "string",
+          "description": "Layer id or layer name."
+        },
+        "color": {
+          "type": "string",
+          "description": "Hex color like #RRGGBB."
+        },
+        "visible": { "type": "boolean" },
+        "contrast": {
+          "type": "object",
+          "properties": {
+            "mode": { "type": "string", "enum": ["percentile", "absolute"] },
+            "blackPoint": { "type": "number" },
+            "whitePoint": { "type": "number" }
+          },
+          "required": ["mode", "blackPoint", "whitePoint"],
+          "additionalProperties": false
+        },
+        "contrastScope": {
+          "type": "string",
+          "enum": ["view", "configuration"],
+          "description": "Where to save contrast: 'view' (personal, default) or 'configuration' (shared collection)."
+        },
+        "name": { "type": "string" }
+      },
+      "required": ["layer"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_layer_visibility",
+    "description": "Declaratively set which layers are visible: the listed layers (by id or name) become visible, all others are hidden. In 'single' layer mode only pass one layer. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "visibleLayers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Layer ids or names that should be visible."
+        }
+      },
+      "required": ["visibleLayers"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_display_options",
+    "description": "Change viewer display options. Provide any subset: drawAnnotations (show/hide annotation overlays), annotationOpacity (0-1), showScalebar, scalebarColor (hex), backgroundColor (hex or name), drawAnnotationConnections. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "drawAnnotations": { "type": "boolean" },
+        "annotationOpacity": {
+          "type": "number",
+          "description": "Annotation overlay opacity, 0 (transparent) to 1 (opaque)."
+        },
+        "showScalebar": { "type": "boolean" },
+        "scalebarColor": { "type": "string", "description": "Hex color." },
+        "backgroundColor": {
+          "type": "string",
+          "description": "Hex color or CSS color name."
+        },
+        "drawAnnotationConnections": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_view_mode",
+    "description": "Switch the viewer between 2D and 3D (volume) rendering. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string", "enum": ["2d", "3d"] }
+      },
+      "required": ["mode"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_scale",
+    "description": "Set the dataset's physical scale in the collection so measurements use real units. Provide any of pixelSize / zStep (length units: nm, µm, mm, m) and tStep (time units: ms, s, m, h, d). Applies to the shared collection.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "pixelSize": {
+          "type": "object",
+          "properties": {
+            "value": { "type": "number" },
+            "unit": { "type": "string", "enum": ["nm", "µm", "mm", "m"] }
+          },
+          "required": ["value", "unit"],
+          "additionalProperties": false
+        },
+        "zStep": {
+          "type": "object",
+          "properties": {
+            "value": { "type": "number" },
+            "unit": { "type": "string", "enum": ["nm", "µm", "mm", "m"] }
+          },
+          "required": ["value", "unit"],
+          "additionalProperties": false
+        },
+        "tStep": {
+          "type": "object",
+          "properties": {
+            "value": { "type": "number" },
+            "unit": { "type": "string", "enum": ["ms", "s", "m", "h", "d"] }
+          },
+          "required": ["value", "unit"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "select_annotations",
+    "description": "Change the current annotation selection using a query (same query shape as list_annotations). Mode 'replace' sets the selection, 'add' extends it, 'remove' subtracts from it, 'clear' empties it. Reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "object",
+          "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
+          "properties": {
+            "tags": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
+            },
+            "exclusive": {
+              "type": "boolean",
+              "description": "If true, annotations must have ALL the given tags."
+            },
+            "shape": {
+              "type": "string",
+              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+            },
+            "channel": { "type": "integer" },
+            "currentFrameOnly": {
+              "type": "boolean",
+              "description": "Only annotations at the current XY/Z/Time location."
+            },
+            "ids": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Explicit annotation ids."
+            }
+          },
+          "additionalProperties": false
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["replace", "add", "remove", "clear"]
+        }
+      },
+      "required": ["mode"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "color_annotations",
+    "description": "Set the display color of annotations, either the current selection (target 'selection') or those matching a query. Pass color null to clear the override so annotations fall back to their layer color. This edits stored annotations; undoable with the undo tool.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "oneOf": [
+            { "type": "string", "enum": ["selection"] },
+            {
+              "type": "object",
+              "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
+              "properties": {
+                "tags": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
+                },
+                "exclusive": {
+                  "type": "boolean",
+                  "description": "If true, annotations must have ALL the given tags."
+                },
+                "shape": {
+                  "type": "string",
+                  "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+                },
+                "channel": { "type": "integer" },
+                "currentFrameOnly": {
+                  "type": "boolean",
+                  "description": "Only annotations at the current XY/Z/Time location."
+                },
+                "ids": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Explicit annotation ids."
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "color": {
+          "type": ["string", "null"],
+          "description": "Hex color like #RRGGBB, or null to clear."
+        },
+        "randomize": {
+          "type": "boolean",
+          "description": "Give each annotation a random color instead."
+        }
+      },
+      "required": ["target", "color"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "tag_annotations",
+    "description": "Add, remove or replace tags on annotations (current selection or a query). This edits stored annotations; undoable with the undo tool.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "oneOf": [
+            { "type": "string", "enum": ["selection"] },
+            {
+              "type": "object",
+              "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
+              "properties": {
+                "tags": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
+                },
+                "exclusive": {
+                  "type": "boolean",
+                  "description": "If true, annotations must have ALL the given tags."
+                },
+                "shape": {
+                  "type": "string",
+                  "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+                },
+                "channel": { "type": "integer" },
+                "currentFrameOnly": {
+                  "type": "boolean",
+                  "description": "Only annotations at the current XY/Z/Time location."
+                },
+                "ids": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Explicit annotation ids."
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["add", "remove", "replace"]
+        }
+      },
+      "required": ["target", "tags", "mode"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_annotation_filter",
+    "description": "Configure which annotations are shown in the viewer and annotation browser: filter by tags, restrict to the current frame, and/or filter by computed property value ranges (e.g. 'area > 100'). Use clearAll to remove all filters, or clearPropertyFilters for just the property ones. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Show only annotations with at least one of these tags (all, if exclusive)."
+        },
+        "exclusive": { "type": "boolean" },
+        "currentFrameOnly": { "type": "boolean" },
+        "propertyFilters": {
+          "type": "array",
+          "description": "Keep only annotations whose property value is within [min, max]. Use the propertyPath from get_property_values.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "propertyPath": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Full property value path from get_property_values."
+              },
+              "min": { "type": "number" },
+              "max": { "type": "number" }
+            },
+            "required": ["propertyPath"],
+            "additionalProperties": false
+          }
+        },
+        "clearPropertyFilters": {
+          "type": "boolean",
+          "description": "Disable all active property-value filters."
+        },
+        "clearAll": {
+          "type": "boolean",
+          "description": "Disable the tag filter, current-frame restriction, and property filters."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "select_tool",
+    "description": "Activate a tool from the toolset by its id (from list_tools), or pass null to deactivate the current tool. Reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "toolId": { "type": ["string", "null"] }
+      },
+      "required": ["toolId"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_tool",
+    "description": "Add a new annotation tool to the current collection's toolset (e.g. 'set up a DAPI blob tool'). Provide EITHER manualShape for a hand-drawing tool OR workerImage for an automated worker tool (from list_workers), not both. ALWAYS provide tags: annotations the tool creates carry these tags, and tags are how annotations are filtered, measured and analyzed downstream — an untagged tool produces annotations that are hard to work with. Optionally bind it to a channel with channelName and give it a name. Gated: the user approves before the tool is created. The tool is added but NOT activated; use select_tool to make it active, or run_worker to run a worker tool.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "manualShape": {
+          "type": "string",
+          "enum": ["polygon", "point", "line"],
+          "description": "For a manual hand-drawing tool: the annotation shape. 'polygon' is a blob outline."
+        },
+        "workerImage": {
+          "type": "string",
+          "description": "For an automated worker tool: the worker Docker image, as returned by list_workers."
+        },
+        "channelName": {
+          "type": "string",
+          "description": "Bind the tool to this channel, matching one of the dataset's channel names."
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional custom tool name; a channel-prefixed default (e.g. 'DAPI Blob') is used otherwise."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Tags applied to every annotation the tool creates (e.g. [\"nucleus\"]). Always provide at least one tag describing what the tool annotates."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_properties",
+    "description": "List the annotation property definitions (measurements) set up in this collection, with id, name, worker image, the annotation shape they apply to, tags, and whether they have been computed. Read-only. Use to find a property id to compute or read, and to avoid creating duplicates.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_property",
+    "description": "Define a new annotation property (measurement) computed by a property worker (e.g. intensity, morphology). Pass propertyWorkerImage (a worker from list_workers whose isPropertyWorker is true) and the annotation shape it applies to; optionally restrict to tags, set worker parameters (get_worker_interface shows them), and name it. Gated: the user approves. This only defines the property — call compute_property to actually compute values.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyWorkerImage": {
+          "type": "string",
+          "description": "The property-worker Docker image (from list_workers, isPropertyWorker true)."
+        },
+        "shape": {
+          "type": "string",
+          "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"],
+          "description": "The annotation shape this property applies to."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Only apply to annotations having these tags. Omit for all."
+        },
+        "exclusive": {
+          "type": "boolean",
+          "description": "If true, annotations must have ALL the given tags."
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional property name; the worker's name is used otherwise."
+        },
+        "workerInterfaceValues": {
+          "type": "object",
+          "description": "Worker parameter overrides (see get_worker_interface); defaults are used for anything omitted."
+        }
+      },
+      "required": ["propertyWorkerImage", "shape"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "compute_property",
+    "description": "Compute an existing property definition's values for this dataset's annotations. Pass the propertyId (from list_properties or create_property). Gated: the user approves. Starts a background job; values populate as it runs — read them with get_property_values.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyId": {
+          "type": "string",
+          "description": "The id of the property to compute (from list_properties/create_property)."
+        }
+      },
+      "required": ["propertyId"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_property_values",
+    "description": "Read computed property values as summary statistics (count, mean, std, min, max, median, p25, p75) per property value path — not a per-annotation dump. Optionally restrict to one propertyId and/or filter the annotations with a query (same shape as list_annotations). Read-only. Use to answer questions like 'what's the mean intensity of my nuclei?'.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyId": {
+          "type": "string",
+          "description": "Restrict to a single property (from list_properties). Omit for all computed properties."
+        },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query): only summarize values for matching annotations."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_property_histogram",
+    "description": "Get a binned histogram (min, max, count per bucket) for one numeric property value path across annotations, optionally restricted by a query (same shape as list_annotations). Use this to inspect the distribution shape (skew, modality, outliers) of a property before deciding what to plot or conclude. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyPath": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Property value path segments, as returned by get_property_values' propertyPath."
+        },
+        "buckets": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Number of buckets (default 50, max 200)."
+        },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query)."
+        }
+      },
+      "required": ["propertyPath"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_sample_values",
+    "description": "Get up to n sample rows (annotation id, tags, plus the value for each requested property path) so you can eyeball raw data before drawing conclusions. Rows are sampled evenly across the dataset, not the first n. Read-only; default 20 rows, max 100.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyPaths": {
+          "type": "array",
+          "items": { "type": "array", "items": { "type": "string" } },
+          "description": "Property value paths (each an array of segments)."
+        },
+        "n": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query)."
+        }
+      },
+      "required": ["propertyPaths"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_scatter_plot",
+    "description": "Create an interactive scatter plot of one property against another, rendered inline in the panel. Annotations missing a numeric value on either axis are dropped. Optionally color points by each annotation's first tag, and/or restrict annotations with a query (same shape as list_annotations). The raw points are never sent back to you — they render directly for the user; you receive only a plotId and point count. Refer to the plot by its title in your reply.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "xPropertyPath": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Property value path for the x axis (from get_property_values' propertyPath)."
+        },
+        "yPropertyPath": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Property value path for the y axis (from get_property_values' propertyPath)."
+        },
+        "title": { "type": "string" },
+        "xLabel": {
+          "type": "string",
+          "description": "Optional x-axis label; defaults to the property's full name."
+        },
+        "yLabel": {
+          "type": "string",
+          "description": "Optional y-axis label; defaults to the property's full name."
+        },
+        "colorByTag": {
+          "type": "boolean",
+          "description": "One trace per first-tag (untagged grouped together)."
+        },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query)."
+        }
+      },
+      "required": ["xPropertyPath", "yPropertyPath", "title"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_histogram_plot",
+    "description": "Create an interactive histogram of one numeric property value path, rendered inline in the panel as a bar chart, optionally restricted by a query (same shape as list_annotations). The binned data renders directly for the user and is never sent back to you; you receive only a plotId and bucket count. Refer to the plot by its title in your reply.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyPath": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Property value path segments, as returned by get_property_values' propertyPath."
+        },
+        "title": { "type": "string" },
+        "buckets": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Number of buckets (default 50, max 200)."
+        },
+        "xLabel": {
+          "type": "string",
+          "description": "Optional x-axis label; defaults to the property's full name."
+        },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query)."
+        }
+      },
+      "required": ["propertyPath", "title"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_box_plot",
+    "description": "Create an interactive box plot of one or more numeric property value paths, rendered inline in the panel, optionally restricted by a query (same shape as list_annotations). With groupByTag (valid only for a single path) it draws one box per annotation first-tag; otherwise one box per property path. The raw values render directly for the user and are never sent back to you; you receive only a plotId and trace count. Refer to the plot by its title in your reply.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyPaths": {
+          "type": "array",
+          "items": { "type": "array", "items": { "type": "string" } },
+          "description": "Property value paths (each an array of segments, from get_property_values' propertyPath)."
+        },
+        "title": { "type": "string" },
+        "groupByTag": {
+          "type": "boolean",
+          "description": "One box per annotation first-tag; requires exactly one propertyPath."
+        },
+        "query": {
+          "type": "object",
+          "description": "Annotation filter (same fields as list_annotations' query)."
+        }
+      },
+      "required": ["propertyPaths", "title"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "undo",
+    "description": "Undo the most recent annotation change in this dataset (create/edit/delete/tag/color). Does not affect view state such as camera or layer settings.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "redo",
+    "description": "Redo the most recently undone annotation change in this dataset.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "run_worker",
+    "description": "Run a worker-based annotation tool from the toolset (by tool id from list_tools). Starts a compute job that may create many annotations and take minutes; the user must approve. Returns the job id immediately; progress is shown to the user. Optionally override worker parameters (see get_worker_interface for the schema; unspecified parameters use saved or default values).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "toolId": { "type": "string" },
+        "workerInterfaceValues": {
+          "type": "object",
+          "description": "Parameter overrides keyed by parameter name.",
+          "additionalProperties": true
+        }
+      },
+      "required": ["toolId"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_help_topic",
+    "description": "Read NimbusImage documentation on a topic — how a feature works, or how the user can do something themselves in the UI. Call this before explaining a workflow you are unsure about. The available topic slugs are listed in the system prompt.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "The topic slug to read (e.g. \"workflows\", \"image-processing\"). Must be one of the slugs listed in the system prompt."
+        }
+      },
+      "required": ["topic"]
+    }
+  }
+]

@@ -5,23 +5,21 @@ import {
   Action,
   getModule,
 } from "vuex-module-decorators";
-import { v4 as uuidv4 } from "uuid";
 import { logError } from "@/utils/log";
 import store from "./root";
 import main from "./index";
 import properties from "./properties";
 import persister from "./Persister";
 import {
-  AnnotationShape,
   IResolvedToolSuggestion,
-  IToolConfiguration,
   IToolSuggestion,
-  IToolSuggestionCatalogEntry,
   IToolSuggestionLayerContext,
-  IToolTemplate,
   TToolSuggestionStatus,
 } from "./model";
-import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
+import {
+  buildCatalog,
+  buildToolConfiguration,
+} from "@/tools/creation/toolFromCatalog";
 import {
   captureInterfaceScreenshot,
   captureViewportScreenshot,
@@ -68,165 +66,11 @@ function rememberSuggestedConfigurationId(configurationId: string): void {
   );
 }
 
-// Manual (non-worker) tools we can offer. Currently just a blob tool, matching
-// the "suggest a blob tool if you see blobs" requirement.
-const MANUAL_CATALOG: IToolSuggestionCatalogEntry[] = [
-  {
-    id: "manual:blob",
-    name: "Blob",
-    kind: "manual",
-    description: "Manually draw blob (polygon) outlines around objects.",
-    defaultShape: AnnotationShape.Polygon,
-  },
-];
-
-// Exported for reuse by the pipeline builder / AI pipeline suggestions, which
-// also create annotation setups programmatically and need dataset-derived
-// Z/Time maxima (a hardcoded max would break the step editor's "Assign"
-// validation, whose rule is `value < max`).
-export function buildDefaultCoordinateAssignments(
-  layerId?: string,
-): IAnnotationSetup["coordinateAssignments"] {
-  return {
-    layer: layerId,
-    Z: { type: "layer", value: 1, max: (main.dataset?.z.length || 0) + 1 },
-    Time: {
-      type: "layer",
-      value: 1,
-      max: (main.dataset?.time.length || 0) + 1,
-    },
-  };
-}
-
 function getToolSuggestionsPanel(): HTMLElement | null {
   if (typeof document === "undefined") {
     return null;
   }
   return document.querySelector(TOOL_SUGGESTIONS_PANEL_SELECTOR);
-}
-
-// Resolve a channel name (as the model referred to it) to a configuration
-// layer id, so a suggested tool runs on the right channel.
-function layerIdForChannelName(channelName?: string): string | undefined {
-  if (!channelName || !main.dataset) {
-    return undefined;
-  }
-  const trimmedChannelName = channelName.trim();
-  for (const layer of main.layers) {
-    const resolvedChannelName =
-      main.dataset.channelNames.get(layer.channel) ||
-      `Channel ${layer.channel}`;
-    if (resolvedChannelName === trimmedChannelName) {
-      return layer.id;
-    }
-  }
-  return undefined;
-}
-
-function buildAnnotationSetup(
-  shape: AnnotationShape,
-  layerId?: string,
-): IAnnotationSetup {
-  return {
-    tags: [],
-    coordinateAssignments: buildDefaultCoordinateAssignments(layerId),
-    shape,
-    color: undefined,
-  };
-}
-
-function toolNameForSuggestion(
-  entry: IToolSuggestionCatalogEntry,
-  suggestion: IToolSuggestion,
-  layerId?: string,
-) {
-  const baseName = entry.name.trim();
-  const channelName = suggestion.channelName?.trim();
-  if (!channelName || !layerId) {
-    return baseName;
-  }
-  if (baseName.toLowerCase().startsWith(`${channelName.toLowerCase()} `)) {
-    return baseName;
-  }
-  return `${channelName} ${baseName}`;
-}
-
-// Build a concrete IToolConfiguration from a catalog entry + suggestion, using
-// the same templates the manual tool-creation UI uses.
-function buildToolConfiguration(
-  entry: IToolSuggestionCatalogEntry,
-  suggestion: IToolSuggestion,
-): IToolConfiguration | null {
-  const templates = main.toolTemplateList as IToolTemplate[];
-  const layerId = layerIdForChannelName(suggestion.channelName);
-  const shape = entry.defaultShape ?? AnnotationShape.Point;
-  const annotationSetup = buildAnnotationSetup(shape, layerId);
-  const toolName = toolNameForSuggestion(entry, suggestion, layerId);
-
-  if (entry.kind === "worker") {
-    const template = templates.find((t) => t.type === "segmentation");
-    if (!template || !entry.image) {
-      return null;
-    }
-    // Mirror ToolTypeSelection: drop the dockerImage submenu element and seed
-    // the image into values.
-    const computedTemplate: IToolTemplate = {
-      ...template,
-      interface: template.interface.filter(
-        (elem) => elem.type !== "dockerImage",
-      ),
-    };
-    return {
-      id: uuidv4(),
-      name: toolName,
-      hotkey: null,
-      type: "segmentation",
-      template: computedTemplate,
-      values: {
-        image: { image: entry.image },
-        annotation: annotationSetup,
-        jobDateTag: false,
-      },
-    };
-  }
-
-  // Manual blob tool.
-  const template = templates.find((t) => t.type === "create");
-  if (!template) {
-    return null;
-  }
-  return {
-    id: uuidv4(),
-    name: toolName,
-    hotkey: null,
-    type: "create",
-    template,
-    values: {
-      annotation: annotationSetup,
-    },
-  };
-}
-
-// Build the catalog of tools we can set up for the current dataset from the
-// registered worker images plus the fixed manual tools.
-function buildCatalog(): IToolSuggestionCatalogEntry[] {
-  const catalog: IToolSuggestionCatalogEntry[] = [...MANUAL_CATALOG];
-  const workerImages = properties.workerImageList;
-  for (const image in workerImages) {
-    const labels = workerImages[image];
-    if (labels.isAnnotationWorker === undefined) {
-      continue;
-    }
-    catalog.push({
-      id: `worker:${image}`,
-      name: labels.interfaceName || image,
-      kind: "worker",
-      description: labels.description || "",
-      image,
-      defaultShape: labels.annotationShape ?? AnnotationShape.Point,
-    });
-  }
-  return catalog;
 }
 
 function buildLayerContext(): IToolSuggestionLayerContext[] {
@@ -416,7 +260,7 @@ export class ToolSuggestions extends VuexModule {
       const layers = buildLayerContext();
 
       const rawSuggestions: IToolSuggestion[] =
-        await main.chatAPI.getToolSuggestions({
+        await main.toolSuggestionsAPI.getToolSuggestions({
           images,
           catalog,
           channels,
@@ -439,7 +283,9 @@ export class ToolSuggestions extends VuexModule {
         if (!entry) {
           continue;
         }
-        const tool = buildToolConfiguration(entry, suggestion);
+        const tool = buildToolConfiguration(entry, {
+          channelName: suggestion.channelName,
+        });
         if (!tool) {
           continue;
         }

@@ -429,7 +429,7 @@ import { logError } from "@/utils/log";
 import DockerImageSelect from "@/components/DockerImageSelect.vue";
 import PipelineStepEditor from "@/components/pipelines/PipelineStepEditor.vue";
 import JobLogDialog from "@/components/JobLogDialog.vue";
-import { buildDefaultCoordinateAssignments } from "@/store/toolSuggestions";
+import { buildDefaultCoordinateAssignments } from "@/tools/creation/toolFromCatalog";
 import {
   PipelineRunController,
   PipelineRunControllerKey,

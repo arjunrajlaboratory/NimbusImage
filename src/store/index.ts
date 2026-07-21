@@ -24,7 +24,8 @@ import { v4 as uuidv4 } from "uuid";
 
 import AnnotationsAPI from "./AnnotationsAPI";
 import PropertiesAPI from "./PropertiesAPI";
-import ChatAPI from "./ChatAPI";
+import ToolSuggestionsAPI from "./ToolSuggestionsAPI";
+import AgentAPI from "./AgentAPI";
 import GirderAPI from "./GirderAPI";
 import ExportAPI from "./ExportAPI";
 import ProjectsAPI from "./ProjectsAPI";
@@ -241,7 +242,8 @@ export class Main extends VuexModule {
   api = new GirderAPI(this.girderRestProxy);
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
-  chatAPI = new ChatAPI(this.girderRestProxy);
+  toolSuggestionsAPI = new ToolSuggestionsAPI(this.girderRestProxy);
+  agentAPI = new AgentAPI(this.girderRestProxy);
   exportAPI = new ExportAPI(this.girderRestProxy);
   projectsAPI = new ProjectsAPI(this.girderRestProxy);
   zenodoAPI = new ZenodoAPI(this.girderRestProxy);
@@ -2320,6 +2322,22 @@ export class Main extends VuexModule {
       if (this.canEditDatasetView) {
         this.api.updateDatasetView(this.datasetView);
       }
+    }
+  }
+
+  // Replace the whole per-view contrast override map in one backend sync,
+  // instead of one saveContrastInView call (and dataset-view update) per
+  // layer. Used by the AI panel's revert-view-changes.
+  @Action
+  async setViewContrastOverrides(layerContrasts: {
+    [layerId: string]: IContrast;
+  }) {
+    if (!this.datasetView) {
+      return;
+    }
+    this.datasetView.layerContrasts = { ...layerContrasts };
+    if (this.canEditDatasetView) {
+      await this.api.updateDatasetView(this.datasetView);
     }
   }
 
