@@ -496,10 +496,12 @@ describe("executeAgentTool", () => {
     expect(mockMain.changeLayer).toHaveBeenCalledWith({
       layerId: "l1",
       delta: { color: "#ff0000" },
+      throwOnError: true,
     });
     expect(mockMain.saveContrastInView).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
+      throwOnError: true,
     });
   });
 
@@ -898,6 +900,7 @@ describe("update_layer contrast scope", () => {
     expect(mockMain.saveContrastInView).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
+      throwOnError: true,
     });
     expect(mockMain.saveContrastInConfiguration).not.toHaveBeenCalled();
   });
@@ -911,8 +914,87 @@ describe("update_layer contrast scope", () => {
     expect(mockMain.saveContrastInConfiguration).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
+      throwOnError: true,
     });
     expect(mockMain.saveContrastInView).not.toHaveBeenCalled();
+  });
+});
+
+describe("surfaces backend sync failures (#1239)", () => {
+  const layer = {
+    id: "l1",
+    name: "DAPI",
+    color: "#0000ff",
+    visible: true,
+    contrast: { mode: "percentile", blackPoint: 0, whitePoint: 100 },
+  };
+  const contrast = { mode: "percentile", blackPoint: 5, whitePoint: 95 } as any;
+
+  beforeEach(() => {
+    mockMain.layers = [layer];
+    mockMain.getLayerFromId = vi.fn(() => layer);
+    // Reset to benign resolving mocks (a prior test may have made one reject).
+    mockMain.changeLayer = vi.fn(async () => undefined);
+    mockMain.syncConfiguration = vi.fn(async () => undefined);
+    mockMain.saveContrastInView = vi.fn(async () => undefined);
+    mockMain.saveContrastInConfiguration = vi.fn(async () => undefined);
+  });
+
+  it("update_layer reports a failed config save instead of success", async () => {
+    // syncConfiguration with throwOnError rejects on a read-only collection;
+    // changeLayer propagates it. The tool must fail, not report the layer as
+    // updated.
+    mockMain.changeLayer = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool(
+        "update_layer",
+        { layer: "l1", color: "#ff0000" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("update_layer reports a failed contrast save", async () => {
+    mockMain.saveContrastInView = vi.fn(async () => {
+      throw new Error("network error");
+    });
+    await expect(
+      executeAgentTool("update_layer", { layer: "l1", contrast }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("set_layer_visibility reports a failed sync instead of success", async () => {
+    mockMain.syncConfiguration = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool(
+        "set_layer_visibility",
+        { visibleLayers: ["l1"] },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // The failing sync is the one that opted into throwOnError.
+    expect(mockMain.syncConfiguration).toHaveBeenCalledWith({
+      key: "layers",
+      throwOnError: true,
+    });
+  });
+
+  it("update_layer still succeeds when the save succeeds", async () => {
+    const { result } = await executeAgentTool(
+      "update_layer",
+      { layer: "l1", color: "#ff0000" },
+      context,
+    );
+    expect(result.layer.id).toBe("l1");
+    expect(mockMain.changeLayer).toHaveBeenCalledWith({
+      layerId: "l1",
+      delta: { color: "#ff0000" },
+      throwOnError: true,
+    });
   });
 });
 

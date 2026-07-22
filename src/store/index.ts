@@ -2286,15 +2286,26 @@ export class Main extends VuexModule {
   async saveContrastInConfiguration({
     layerId,
     contrast,
+    throwOnError,
   }: {
     layerId: string;
     contrast: IContrast;
+    // See changeLayer: opt-in error propagation for the AI panel (#1239).
+    throwOnError?: boolean;
   }) {
-    this.changeLayer({ layerId, delta: { contrast }, sync: true });
+    await this.changeLayer({
+      layerId,
+      delta: { contrast },
+      sync: true,
+      throwOnError,
+    });
     if (this.datasetView) {
       delete this.datasetView.layerContrasts[layerId];
       if (this.canEditDatasetView) {
-        this.api.updateDatasetView(this.datasetView);
+        const update = this.api.updateDatasetView(this.datasetView);
+        if (throwOnError) {
+          await update;
+        }
       }
     }
   }
@@ -2303,14 +2314,20 @@ export class Main extends VuexModule {
   async saveContrastInView({
     layerId,
     contrast,
+    throwOnError,
   }: {
     layerId: string;
     contrast: IContrast;
+    // See changeLayer: opt-in error propagation for the AI panel (#1239).
+    throwOnError?: boolean;
   }) {
     if (this.datasetView) {
       this.datasetView.layerContrasts[layerId] = contrast;
       if (this.canEditDatasetView) {
-        this.api.updateDatasetView(this.datasetView);
+        const update = this.api.updateDatasetView(this.datasetView);
+        if (throwOnError) {
+          await update;
+        }
       }
     }
   }
@@ -2406,10 +2423,18 @@ export class Main extends VuexModule {
     layerId: string;
     delta: Partial<IDisplayLayer>;
     sync?: boolean;
+    // Opt-in: propagate a failed backend persist to the caller (default is
+    // the app-wide swallow-and-surface-in-the-saving-indicator behavior).
+    // Used by the AI panel so a rejected write isn't reported as success
+    // (issue #1239).
+    throwOnError?: boolean;
   }) {
     this.changeLayerImpl(args);
     if (args.sync !== false && this.isLoggedIn) {
-      await this.syncConfiguration("layers");
+      await this.syncConfiguration({
+        key: "layers",
+        throwOnError: args.throwOnError,
+      });
     }
   }
 

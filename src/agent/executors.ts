@@ -96,6 +96,29 @@ const MAX_LIST_ANNOTATIONS = LARGE_ANNOTATION_RESULT;
 // can correct its call.
 export class ToolExecutionError extends Error {}
 
+// Configuration/view mutations persist to the backend and can be rejected
+// (e.g. a read-only collection, a network failure). syncConfiguration swallows
+// those failures app-wide and only surfaces them via the global saving-state
+// indicator (issue #1239) — but the AI panel asserts success in prose, so a
+// swallowed failure would have the model tell the user a change was saved when
+// it only persisted locally. These mutators opt into throwOnError; this wraps
+// them so a backend rejection becomes a ToolExecutionError the model reports as
+// a failure instead of success.
+async function persistOrThrow<T>(
+  what: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error: any) {
+    throw new ToolExecutionError(
+      `${what} could not be saved: ${
+        error?.message ?? "the backend rejected the change"
+      }`,
+    );
+  }
+}
+
 interface IAnnotationQuery {
   tags?: string[];
   exclusive?: boolean;
@@ -1064,22 +1087,31 @@ const registry: { [name: string]: IAgentToolEntry } = {
         );
       }
       if (Object.keys(delta).length > 0) {
-        await main.changeLayer({ layerId: layer.id, delta });
+        await persistOrThrow("layer update", () =>
+          main.changeLayer({ layerId: layer.id, delta, throwOnError: true }),
+        );
       }
       if (input.contrast != null) {
+        const contrast = input.contrast;
         // Default matches the UI slider: a personal view override. Pass
         // contrastScope "configuration" to change the shared collection
         // instead (persisted for everyone using the collection).
         if (input.contrastScope === "configuration") {
-          await main.saveContrastInConfiguration({
-            layerId: layer.id,
-            contrast: input.contrast,
-          });
+          await persistOrThrow("contrast", () =>
+            main.saveContrastInConfiguration({
+              layerId: layer.id,
+              contrast,
+              throwOnError: true,
+            }),
+          );
         } else {
-          await main.saveContrastInView({
-            layerId: layer.id,
-            contrast: input.contrast,
-          });
+          await persistOrThrow("contrast", () =>
+            main.saveContrastInView({
+              layerId: layer.id,
+              contrast,
+              throwOnError: true,
+            }),
+          );
         }
       }
       const updated = main.getLayerFromId(layer.id)!;
@@ -1119,7 +1151,9 @@ const registry: { [name: string]: IAgentToolEntry } = {
           });
         }
       }
-      await main.syncConfiguration("layers");
+      await persistOrThrow("layer visibility", () =>
+        main.syncConfiguration({ key: "layers", throwOnError: true }),
+      );
       return {
         result: {
           layers: main.layers.map((l) => ({
