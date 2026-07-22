@@ -645,3 +645,21 @@ class TestCreateMultipleValidation:
         sample = upenn_utilities.getSampleAnnotation("not-a-valid-object-id")
         resp = self._post(server, admin, [sample])
         assertStatus(resp, 400)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestComputeValidation:
+    """POST /upenn_annotation/compute must reject a malformed datasetId with
+    400, not a 500 from bson deep inside Folder().load."""
+
+    def testMalformedDatasetIdReturns400(self, admin, server):
+        resp = server.request(
+            path="/upenn_annotation/compute",
+            method="POST",
+            user=admin,
+            params={"datasetId": "not-a-valid-object-id"},
+            body=json.dumps({"image": "worker:latest"}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)

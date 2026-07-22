@@ -480,6 +480,10 @@ class Annotation(Resource):
             raise RestException(
                 code=400, message="Missing datasetId parameter"
             )
+        # Validate the id shape here so a malformed datasetId is a clean 400,
+        # not a 500 from bson deep inside Folder().load. Keep the original
+        # string: runJobRequest passes datasetId to the worker as a string.
+        requireObjectId(datasetId, "datasetId")
         return self._annotationModel.compute(
             datasetId, self.getBodyJson(), self.getCurrentUser()
         )

@@ -114,3 +114,17 @@ class TestPropertyComputeAccess:
             type="application/json",
         )
         assertStatus(resp, 403)
+
+    def testMalformedDatasetIdReturns400(self, admin, server):
+        """A malformed datasetId is a clean 400, not a 500 from bson deep in
+        Folder().load."""
+        prop = self._createProperty(admin)
+        resp = server.request(
+            path="/annotation_property/%s/compute" % prop["_id"],
+            method="POST",
+            user=admin,
+            params={"datasetId": "not-a-valid-object-id"},
+            body=json.dumps({}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
