@@ -90,7 +90,7 @@
   },
   {
     "name": "list_workers",
-    "description": "List the available worker images (automated annotation algorithms such as Cellpose or Piscis) with their names and descriptions. Read-only.",
+    "description": "List the available worker images (automated annotation algorithms such as Cellpose-SAM or Piscis) with their names and descriptions. Read-only.",
     "input_schema": {
       "type": "object",
       "properties": {},
