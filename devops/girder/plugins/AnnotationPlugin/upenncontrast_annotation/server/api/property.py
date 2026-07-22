@@ -61,9 +61,12 @@ class AnnotationProperty(Resource):
     )
     def compute(self, annotation_property, params):
         datasetId = params.get("datasetId", None)
-        if datasetId and id:
+        if datasetId:
             return self._propertyModel.compute(
-                annotation_property, datasetId, self.getBodyJson()
+                annotation_property,
+                datasetId,
+                self.getBodyJson(),
+                self.getCurrentUser(),
             )
         return {}
 
