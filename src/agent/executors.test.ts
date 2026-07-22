@@ -938,6 +938,18 @@ describe("surfaces backend sync failures (#1239)", () => {
     mockMain.syncConfiguration = vi.fn(async () => undefined);
     mockMain.saveContrastInView = vi.fn(async () => undefined);
     mockMain.saveContrastInConfiguration = vi.fn(async () => undefined);
+    mockMain.setLayerMode = vi.fn(async () => undefined);
+    mockMain.saveScaleInConfiguration = vi.fn(async () => undefined);
+    mockMain.addToolToConfiguration = vi.fn(async () => undefined);
+    mockMain.configuration = { id: "conf1", name: "Collection", layers: [] };
+    mockProperties.workerImageList = {
+      "prop:1": {
+        isPropertyWorker: "x",
+        interfaceName: "Intensity",
+        annotationShape: "polygon",
+      },
+    };
+    mockProperties.getWorkerInterface = vi.fn(() => ({}));
   });
 
   it("update_layer reports a failed config save instead of success", async () => {
@@ -995,6 +1007,58 @@ describe("surfaces backend sync failures (#1239)", () => {
       delta: { color: "#ff0000" },
       throwOnError: true,
     });
+  });
+
+  it("set_layer_mode reports a failed sync instead of success", async () => {
+    mockMain.setLayerMode = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool("set_layer_mode", { mode: "multiple" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.setLayerMode).toHaveBeenCalledWith({
+      mode: "multiple",
+      throwOnError: true,
+    });
+  });
+
+  it("set_scale reports a failed sync instead of success", async () => {
+    mockMain.saveScaleInConfiguration = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool(
+        "set_scale",
+        { pixelSize: { value: 0.65, unit: "µm" } },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("create_tool reports a failed sync instead of success", async () => {
+    mockMain.addToolToConfiguration = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool("create_tool", { manualShape: "polygon" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // The AI panel opts into error propagation via the options form.
+    expect(mockMain.addToolToConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ throwOnError: true }),
+    );
+  });
+
+  it("create_property reports a failed backend save instead of success", async () => {
+    mockProperties.createProperty = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool(
+        "create_property",
+        { propertyWorkerImage: "prop:1", shape: "polygon" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
   });
 });
 
@@ -1065,10 +1129,12 @@ describe("set_scale", () => {
     expect(mockMain.saveScaleInConfiguration).toHaveBeenCalledWith({
       itemId: "pixelSize",
       scale: { value: 0.65, unit: "µm" },
+      throwOnError: true,
     });
     expect(mockMain.saveScaleInConfiguration).toHaveBeenCalledWith({
       itemId: "zStep",
       scale: { value: 2, unit: "µm" },
+      throwOnError: true,
     });
   });
 

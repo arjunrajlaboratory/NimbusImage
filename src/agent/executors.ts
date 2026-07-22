@@ -991,7 +991,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       }
       const LENGTH_UNITS = ["nm", "µm", "mm", "m"];
       const TIME_UNITS = ["ms", "s", "m", "h", "d"];
-      const apply = (
+      const apply = async (
         itemId: "pixelSize" | "zStep" | "tStep",
         scale: { value: number; unit: string },
         units: string[],
@@ -1008,25 +1008,28 @@ const registry: { [name: string]: IAgentToolEntry } = {
         }
         // scale.unit was just validated against the allowed unit list, so the
         // narrowing cast to the branded unit type is sound here.
-        main.saveScaleInConfiguration({
-          itemId,
-          scale: {
-            value: scale.value,
-            unit: scale.unit as TUnitLength | TUnitTime,
-          } as IScaleInformation<TUnitLength | TUnitTime>,
-        });
+        await persistOrThrow(`${itemId} scale`, () =>
+          main.saveScaleInConfiguration({
+            itemId,
+            scale: {
+              value: scale.value,
+              unit: scale.unit as TUnitLength | TUnitTime,
+            } as IScaleInformation<TUnitLength | TUnitTime>,
+            throwOnError: true,
+          }),
+        );
       };
       let changed = false;
       if (input.pixelSize) {
-        apply("pixelSize", input.pixelSize, LENGTH_UNITS);
+        await apply("pixelSize", input.pixelSize, LENGTH_UNITS);
         changed = true;
       }
       if (input.zStep) {
-        apply("zStep", input.zStep, LENGTH_UNITS);
+        await apply("zStep", input.zStep, LENGTH_UNITS);
         changed = true;
       }
       if (input.tStep) {
-        apply("tStep", input.tStep, TIME_UNITS);
+        await apply("tStep", input.tStep, TIME_UNITS);
         changed = true;
       }
       if (!changed) {
@@ -1046,7 +1049,9 @@ const registry: { [name: string]: IAgentToolEntry } = {
       unrollT?: boolean;
     }) => {
       requireLogin();
-      await main.setLayerMode(input.mode);
+      await persistOrThrow("layer mode", () =>
+        main.setLayerMode({ mode: input.mode, throwOnError: true }),
+      );
       if (input.unrollXY != null) {
         await main.setUnrollXY(input.unrollXY);
       }
@@ -1428,7 +1433,9 @@ const registry: { [name: string]: IAgentToolEntry } = {
           "Could not build the requested tool (missing tool template)",
         );
       }
-      await main.addToolToConfiguration(tool);
+      await persistOrThrow("tool", () =>
+        main.addToolToConfiguration({ tool, throwOnError: true }),
+      );
       return {
         result: {
           toolId: tool.id,
@@ -1507,16 +1514,24 @@ const registry: { [name: string]: IAgentToolEntry } = {
         image,
         input.workerInterfaceValues ?? {},
       );
-      const property = await propertyStore.createProperty({
-        name:
-          input.name ??
-          propertyStore.workerImageList[image]?.interfaceName ??
-          "Property",
-        image,
-        tags: { tags: input.tags ?? [], exclusive: input.exclusive ?? false },
-        shape: input.shape as AnnotationShape,
-        workerInterface,
-      });
+      // createProperty hits the backend directly (PropertiesAPI rejects on
+      // failure rather than swallowing), so wrap it to report a clean failure
+      // instead of leaking a raw error (issue #1239).
+      const property = await persistOrThrow("property", () =>
+        propertyStore.createProperty({
+          name:
+            input.name ??
+            propertyStore.workerImageList[image]?.interfaceName ??
+            "Property",
+          image,
+          tags: {
+            tags: input.tags ?? [],
+            exclusive: input.exclusive ?? false,
+          },
+          shape: input.shape as AnnotationShape,
+          workerInterface,
+        }),
+      );
       if (!property) {
         throw new ToolExecutionError("Failed to create the property");
       }

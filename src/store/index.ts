@@ -870,7 +870,21 @@ export class Main extends VuexModule {
   }
 
   @Action
-  addToolToConfiguration(tool: IToolConfiguration) {
+  async addToolToConfiguration(
+    // Accept a bare tool or {tool, throwOnError}. throwOnError lets the AI
+    // panel surface a failed persist (issue #1239); existing callers pass the
+    // bare tool and keep the swallow behavior. IToolConfiguration has no
+    // "tool" key, so its presence unambiguously marks the options form.
+    payload:
+      | IToolConfiguration
+      | {
+          tool: IToolConfiguration;
+          throwOnError?: boolean;
+        },
+  ) {
+    const tool = "tool" in payload ? payload.tool : payload;
+    const throwOnError =
+      "tool" in payload ? payload.throwOnError ?? false : false;
     if (this.configuration) {
       this.setConfigurationTools([...this.configuration.tools, tool]);
       // Fetch the worker interface for this new tool if there is one
@@ -878,7 +892,7 @@ export class Main extends VuexModule {
       if (image) {
         this.context.dispatch("requestWorkerInterface", image);
       }
-      this.syncConfiguration("tools");
+      await this.syncConfiguration({ key: "tools", throwOnError });
     }
   }
 
@@ -2217,7 +2231,17 @@ export class Main extends VuexModule {
   }
 
   @Action
-  async setLayerMode(mode: TLayerMode) {
+  async setLayerMode(
+    // Accept either a bare mode or {mode, throwOnError}, mirroring
+    // syncConfiguration's payload shape. throwOnError lets the AI panel
+    // surface a failed persist instead of reporting success (issue #1239);
+    // existing callers pass the bare mode and keep the swallow behavior.
+    payload: TLayerMode | { mode: TLayerMode; throwOnError?: boolean },
+  ) {
+    const mode = typeof payload === "string" ? payload : payload.mode;
+    const throwOnError =
+      typeof payload === "string" ? false : payload.throwOnError ?? false;
+
     // Store current visibility state before changing mode
     this.storeLayerVisibility(mode);
 
@@ -2234,7 +2258,7 @@ export class Main extends VuexModule {
 
     // Sync the configuration with the backend
     if (this.isLoggedIn) {
-      await this.syncConfiguration("layers");
+      await this.syncConfiguration({ key: "layers", throwOnError });
     }
   }
 
@@ -2359,16 +2383,20 @@ export class Main extends VuexModule {
   }
 
   @Action
-  saveScaleInConfiguration({
+  async saveScaleInConfiguration({
     itemId,
     scale,
+    throwOnError,
   }: {
     itemId: keyof IScales;
     scale: IScaleInformation<TUnitLength | TUnitTime>;
+    // Opt-in error propagation for the AI panel (issue #1239); existing
+    // callers omit it and keep the swallow behavior.
+    throwOnError?: boolean;
   }) {
     if (this.configuration) {
       (this.configuration.scales as any)[itemId] = scale;
-      this.syncConfiguration("scales");
+      await this.syncConfiguration({ key: "scales", throwOnError });
     }
   }
 
