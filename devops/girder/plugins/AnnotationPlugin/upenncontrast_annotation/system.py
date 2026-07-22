@@ -1,6 +1,8 @@
+import datetime
 import io
 import json
 import logging
+import re
 
 import large_image
 import yaml
@@ -13,6 +15,7 @@ from girder.exceptions import RestException
 from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.item import Item
+from girder.models.token import Token
 from girder.models.upload import Upload
 from girder.models.user import User
 from girder_jobs.constants import JobStatus
@@ -22,6 +25,22 @@ from girder_large_image.models.image_item import ImageItem
 logger = logging.getLogger(__name__)
 
 conversionJobs = {}
+
+# Look-back window units accepted by the active-users endpoint, expressed in
+# seconds.
+ACTIVE_USERS_WINDOW_UNITS = {
+    "s": 1,
+    "m": 60,
+    "h": 3600,
+    "d": 86400,
+    "w": 604800,
+}
+
+# Upper bound on the look-back window. Girder deletes tokens once they expire
+# (default ~180 days), so counts for windows longer than the token lifetime
+# are inherently limited by token retention; this cap keeps an unbounded
+# client-supplied value from scanning an arbitrarily large token range.
+MAX_ACTIVE_USERS_WINDOW_SECONDS = 366 * 86400
 
 
 def addSystemEndpoints(apiRoot):
@@ -35,6 +54,8 @@ def addSystemEndpoints(apiRoot):
     apiRoot.item.route("PUT", (":itemId", "cache_maxmerge"), cacheMaxMerge)
     # Added to the folder route
     apiRoot.folder.route("GET", ("query",), getFoldersByQuery)
+    # Added to the system route (admin-only usage metrics)
+    apiRoot.system.route("GET", ("active_users",), getActiveUsers)
 
     # Also bind some events
     events.bind(
@@ -89,6 +110,75 @@ def getFoldersByQuery(self, query, limit, offset, sort):
     return Folder().findWithPermissions(
         query, offset=offset, limit=limit, sort=sort, user=user
     )
+
+
+def _parseActiveUsersWindow(window):
+    """
+    Convert a window string (e.g. "1d", "24h", "7d") to a number of seconds.
+
+    :param window: an integer amount followed by a unit (s, m, h, d, w).
+    :returns: the window length in seconds.
+    :raises RestException: if the value is malformed or out of range.
+    """
+    match = re.fullmatch(r"(\d+)([smhdw])", window.strip().lower())
+    if not match:
+        raise RestException(
+            "window must be a positive integer followed by one of "
+            "s, m, h, d, w (e.g. '1d', '7d', '24h').",
+            code=400,
+        )
+    seconds = int(match.group(1)) * ACTIVE_USERS_WINDOW_UNITS[match.group(2)]
+    if seconds <= 0:
+        raise RestException("window must be greater than zero.", code=400)
+    if seconds > MAX_ACTIVE_USERS_WINDOW_SECONDS:
+        raise RestException(
+            "window is too large; the maximum is 366d.", code=400
+        )
+    return seconds
+
+
+@access.admin
+@autoDescribeRoute(
+    Description("Count distinct authenticated users active within a window.")
+    .notes(
+        "Returns the number of distinct users who obtained an authentication "
+        "token within the given look-back window. This counts users who "
+        "authenticated (logged in or refreshed a session) during the window, "
+        "deduplicated per user. Requires site administrator access.\n\n"
+        "Because Girder deletes tokens once they expire (default ~180 days), "
+        "counts for windows longer than the token lifetime are limited by "
+        "token retention."
+    )
+    .param(
+        "window",
+        "Length of the look-back window: a positive integer followed by a "
+        "unit (s, m, h, d, w). Defaults to 1d.",
+        required=False,
+        default="1d",
+    )
+    .errorResponse("You are not a site administrator.", 403)
+    .errorResponse("The window parameter is invalid.", 400)
+)
+@boundHandler()
+def getActiveUsers(self, window):
+    windowSeconds = _parseActiveUsersWindow(window)
+    end = datetime.datetime.utcnow()
+    start = end - datetime.timedelta(seconds=windowSeconds)
+    # Aggregation is the one sanctioned use of collection directly; Girder's
+    # find() does not support aggregation pipelines. Grouping on userId
+    # deduplicates so the result is a distinct-user count, not a token count.
+    aggregation = list(Token().collection.aggregate([
+        {"$match": {"created": {"$gte": start}, "userId": {"$ne": None}}},
+        {"$group": {"_id": "$userId"}},
+        {"$count": "count"},
+    ]))
+    return {
+        "window": window,
+        "windowSeconds": windowSeconds,
+        "start": start,
+        "end": end,
+        "activeUsers": aggregation[0]["count"] if aggregation else 0,
+    }
 
 
 @access.user
