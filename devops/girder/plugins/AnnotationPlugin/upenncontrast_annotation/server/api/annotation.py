@@ -17,6 +17,7 @@ from ..helpers.validation import (
     MAX_LIST_LIMIT,
     dropNoOpPropertyFilters,
     requireInt,
+    requireList,
     requireObjectBody,
     requireObjectId,
     validateAnnotationIdCount,
@@ -160,8 +161,16 @@ class Annotation(Resource):
         "Create multiple annotations", getDatasetIdFromAnnotationListInBody
     )
     def createMultiple(self, params, *args, **kwargs):
-        bodyJson = kwargs["memoizedBodyJson"]
-        annotations = self._annotationModel.convertIdsToObjectIds(bodyJson)
+        # Validate the body shape at the API boundary (400, not 500): a
+        # non-list body or a non-dict entry would otherwise trip an uncaught
+        # AttributeError/TypeError in convertIdsToObjectIds.
+        bodyJson = requireList(kwargs["memoizedBodyJson"], "Request body")
+        for entry in bodyJson:
+            requireObjectBody(entry, "Each annotation")
+        try:
+            annotations = self._annotationModel.convertIdsToObjectIds(bodyJson)
+        except InvalidId:
+            raise RestException("Invalid id in annotation", code=400)
         datasetIds = {
             ann["datasetId"] for ann in annotations
             if "datasetId" in ann
