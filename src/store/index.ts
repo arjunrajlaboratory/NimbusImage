@@ -2352,7 +2352,18 @@ export class Main extends VuexModule {
         if (throwOnError) {
           await update;
         }
+      } else if (throwOnError) {
+        // The local override was applied, but it can't be persisted (a
+        // read-only / public dataset view). Callers opting into throwOnError
+        // (the AI panel) must not report success for a change that won't
+        // survive a reload -- see issue #1239.
+        throw new Error(
+          "Cannot save the contrast: you do not have permission to edit " +
+            "this dataset view",
+        );
       }
+    } else if (throwOnError) {
+      throw new Error("Cannot save the contrast: no dataset view is open");
     }
   }
 
