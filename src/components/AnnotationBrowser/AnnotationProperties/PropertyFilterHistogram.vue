@@ -371,12 +371,10 @@ onMounted(() => {
   }
 
   filterStore.updateHistograms();
-  if (!propertyFilter.value.enabled) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      enabled: true,
-    });
-  }
+  // Re-enabling a disabled filter when its row (re-)appears is handled in the
+  // filterStore.togglePropertyPathFiltering action, not here. Doing it on
+  // mount would force-enable filters restored from the configuration with a
+  // deliberately persisted `enabled: false`, defeating that persistence.
   initializeHandles();
 });
 

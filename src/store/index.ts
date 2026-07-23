@@ -1524,6 +1524,14 @@ export class Main extends VuexModule {
     try {
       sync.setLoading(true);
       const configuration = await this.context.dispatch("getConfiguration", id);
+      // Flush any pending annotation-browser save while the previous
+      // configuration is still loaded. setConfiguration below flips
+      // this.configuration to the new one, after which the debounced save
+      // would either write to the wrong configuration or be dropped by the
+      // hydration guard. This matters for same-dataset configuration switches
+      // within the 500 ms debounce window, which never pass through
+      // setSelectedDataset (where the dataset-switch flush lives).
+      await this.flushAnnotationBrowserSave();
       if (!configuration) {
         this.setConfiguration({ id: null, data: null });
       } else {
@@ -2147,10 +2155,20 @@ export class Main extends VuexModule {
         propertyFilters: IPropertyAnnotationFilter[];
       };
     };
+    const filterPaths = rootState.filters.filterPaths;
+    // Persist only the filters backing a visible row. Removing a filter drops
+    // its path from filterPaths but leaves a disabled orphan in propertyFilters
+    // (PropertyFilterHistogram's onBeforeUnmount); persisting those would let
+    // them accumulate unboundedly in the configuration across add/remove
+    // cycles. A removed filter's range is not part of the browser state to
+    // restore — re-adding it creates a fresh filter.
+    const visiblePaths = new Set(filterPaths.map((p) => JSON.stringify(p)));
     this.setConfigurationAnnotationBrowserConfig({
       displayedPropertyPaths: [...rootState.properties.displayedPropertyPaths],
-      filterPaths: [...rootState.filters.filterPaths],
-      propertyFilters: [...rootState.filters.propertyFilters],
+      filterPaths: [...filterPaths],
+      propertyFilters: rootState.filters.propertyFilters.filter((f) =>
+        visiblePaths.has(JSON.stringify(f.propertyPath)),
+      ),
     });
     await this.syncConfiguration("annotationBrowserConfig");
   }
@@ -2172,6 +2190,11 @@ export class Main extends VuexModule {
   // configuration).
   @Action
   hydrateAnnotationBrowserState() {
+    // Discard any pending save without flushing: callers (setSelectedDataset
+    // and setSelectedConfiguration) already flush while the previous
+    // configuration is still loaded. By the time we get here this.configuration
+    // is the new one, so flushing would save the wrong configuration. This is
+    // just defensive cleanup of an already-flushed timer.
     if (annotationBrowserSaveTimer !== null) {
       clearTimeout(annotationBrowserSaveTimer);
       annotationBrowserSaveTimer = null;

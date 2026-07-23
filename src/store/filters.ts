@@ -143,9 +143,31 @@ export class Filters extends VuexModule {
     }
   }
 
+  @Mutation
+  private reenableFilterForPath(path: string[]) {
+    const filter = this.propertyFilters.find((f) =>
+      arePathEquals(f.propertyPath, path),
+    );
+    if (filter && !filter.enabled) {
+      this.propertyFilters = this.propertyFilters.map((f) =>
+        f === filter ? { ...f, enabled: true } : f,
+      );
+    }
+  }
+
   @Action
   togglePropertyPathFiltering(path: string[]) {
+    const isAdding = findIndexOfPath(path, this.filterPaths) < 0;
     this.togglePropertyPathFilteringImpl(path);
+    // Adding a filter row reactivates it: removeFilter leaves a disabled
+    // orphan in propertyFilters (see PropertyFilterHistogram's
+    // onBeforeUnmount), and a user re-adding the row expects it to filter
+    // again. This lives here rather than in the component's onMounted so that
+    // hydrating a deliberately-disabled filter from the configuration is not
+    // force-enabled — the whole point of persisting the enabled state.
+    if (isAdding) {
+      this.reenableFilterForPath(path);
+    }
     main.scheduleAnnotationBrowserSave();
   }
 

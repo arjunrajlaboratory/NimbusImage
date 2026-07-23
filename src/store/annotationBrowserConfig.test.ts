@@ -112,6 +112,39 @@ describe("annotation browser config persistence", () => {
     });
   });
 
+  describe("disabled filter enabled-state (Codex #1)", () => {
+    it("re-enables an existing disabled filter when its row is re-added", () => {
+      // A disabled orphan left behind after the row was removed.
+      filters.hydrateAnnotationBrowserFilters({
+        filterPaths: [],
+        propertyFilters: [{ ...makeFilter("prop-a"), enabled: false }],
+      });
+      filters.togglePropertyPathFiltering(["prop-a"]);
+      expect(filters.filterPaths).toEqual([["prop-a"]]);
+      expect(filters.propertyFilters[0].enabled).toBe(true);
+    });
+
+    it("does not re-enable when a filter row is being removed", () => {
+      filters.hydrateAnnotationBrowserFilters({
+        filterPaths: [["prop-a"]],
+        propertyFilters: [{ ...makeFilter("prop-a"), enabled: false }],
+      });
+      filters.togglePropertyPathFiltering(["prop-a"]); // removes the row
+      expect(filters.filterPaths).toEqual([]);
+      expect(filters.propertyFilters[0].enabled).toBe(false);
+    });
+
+    it("hydration preserves a deliberately disabled visible filter", () => {
+      filters.hydrateAnnotationBrowserFilters({
+        filterPaths: [["prop-a"]],
+        propertyFilters: [{ ...makeFilter("prop-a"), enabled: false }],
+      });
+      // No store-level force-enable: the enabled:false state survives.
+      expect(filters.propertyFilters[0].enabled).toBe(false);
+      expect(mocks.scheduleAnnotationBrowserSave).not.toHaveBeenCalled();
+    });
+  });
+
   describe("resolveAnnotationBrowserConfig", () => {
     it("returns empty state for a configuration without the key", () => {
       expect(resolveAnnotationBrowserConfig(undefined, ["prop-a"])).toEqual({
