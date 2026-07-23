@@ -55,6 +55,8 @@ vi.mock("@/store/annotation", () => {
       mockDeleteUnselectedAnnotations(...args),
     deleteAnnotations: (...args: any[]) => mockDeleteAnnotations(...args),
     stubOnlyMode: false,
+    // Small stubThreshold keeps the over-the-limit list guard test fast.
+    visibilityConfig: { stubThreshold: 100 },
     tagSelectedAnnotations: (...args: any[]) =>
       mockTagSelectedAnnotations(...args),
     removeTagsFromSelectedAnnotations: (...args: any[]) =>
@@ -589,7 +591,7 @@ describe("AnnotationList", () => {
 
   function vm_listItemLimit() {
     const wrapper = mountComponent();
-    return (wrapper.vm as any).LIST_ITEM_LIMIT as number;
+    return (wrapper.vm as any).listItemLimit as number;
   }
 
   describe("hover", () => {

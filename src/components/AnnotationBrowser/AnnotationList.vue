@@ -249,7 +249,7 @@
         <div class="text-body-2">
           Too many to list. Narrow with tag, property, or ROI filters (or the
           annotation ID filter above) to under
-          {{ LIST_ITEM_LIMIT.toLocaleString() }} to browse them here.
+          {{ listItemLimit.toLocaleString() }} to browse them here.
         </div>
       </div>
       <!-- Server mode: backend-paginated table. Uses the SAME item markup.
@@ -559,15 +559,18 @@ const listedAnnotations = computed(() => {
 });
 
 // Defensive scale guard, superseded in practice by stubOnlyMode (server mode):
-// server mode activates at maxVisible = 10,000, below this 20,000 threshold, so
-// the client-side `tooManyToList` branch is effectively unreachable now that the
-// server-driven list (Option B) handles large datasets. Kept as a safety net for
-// any client-mode path that materializes one item per filtered annotation and
-// sorts client-side (which would hang the tab above this many).
-const LIST_ITEM_LIMIT = 20000;
+// stub-only mode activates above the configured stubThreshold, so client mode
+// never holds more than stubThreshold hydrated annotations and this branch is
+// effectively unreachable. Track the live config value (rather than a hardcoded
+// count) so the client list never refuses a dataset that stub mode chose to
+// load fully. Kept as a safety net for any client-mode path that materializes
+// one item per filtered annotation and sorts client-side.
+const listItemLimit = computed(
+  () => annotationStore.visibilityConfig.stubThreshold,
+);
 
 const tooManyToList = computed(
-  () => listedAnnotations.value.length > LIST_ITEM_LIMIT,
+  () => listedAnnotations.value.length > listItemLimit.value,
 );
 
 const filteredItems = computed(() => {
@@ -1012,7 +1015,7 @@ defineExpose({
   tableItemClass,
   annotationFilteredDialog,
   localIdFilter,
-  LIST_ITEM_LIMIT,
+  listItemLimit,
   tooManyToList,
   addOrRemove,
   page,
