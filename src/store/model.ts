@@ -508,6 +508,15 @@ export interface IDatasetConfigurationCompatibility {
   channels: { [key: number]: string };
 }
 
+export interface IAnnotationBrowserConfig {
+  // Property columns shown in the annotation list
+  displayedPropertyPaths: string[][];
+  // Properties with a filter row in the annotation browser
+  filterPaths: string[][];
+  // Range/values and enabled state of those filter rows
+  propertyFilters: IPropertyAnnotationFilter[];
+}
+
 export interface IDatasetConfigurationBase {
   compatibility: IDatasetConfigurationCompatibility;
   layers: IDisplayLayer[];
@@ -520,6 +529,10 @@ export interface IDatasetConfigurationBase {
   // compatibility with configurations created before these settings were
   // persisted.
   visibilityConfig?: IVisibilityConfig;
+  // Shared annotation-browser state (displayed property columns and property
+  // filters). Optional for compatibility with configurations created before
+  // this was persisted.
+  annotationBrowserConfig?: IAnnotationBrowserConfig;
 }
 
 export interface IDatasetConfiguration extends IDatasetConfigurationBase {
@@ -2340,6 +2353,11 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       tStep: { value: 1, unit: "s" },
     },
     visibilityConfig: resolveVisibilityConfig(),
+    annotationBrowserConfig: {
+      displayedPropertyPaths: [],
+      filterPaths: [],
+      propertyFilters: [],
+    },
   };
 }
 
