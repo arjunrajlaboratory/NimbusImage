@@ -47,11 +47,11 @@ vi.mock("@/utils/annotation", () => ({
 
 import filters from "./filters";
 import properties from "./properties";
+import { IPropertyAnnotationFilter, PropertyFilterMode } from "./model";
 import {
-  IPropertyAnnotationFilter,
-  PropertyFilterMode,
+  buildAnnotationBrowserConfig,
   resolveAnnotationBrowserConfig,
-} from "./model";
+} from "@/utils/annotationBrowserConfig";
 
 function makeFilter(propertyId: string): IPropertyAnnotationFilter {
   return {
@@ -158,14 +158,26 @@ describe("annotation browser config persistence", () => {
       const resolved = resolveAnnotationBrowserConfig(
         {
           displayedPropertyPaths: [["prop-a"], ["gone", "sub"]],
-          filterPaths: [["gone"]],
+          filterPaths: [["prop-a"], ["gone"]],
           propertyFilters: [makeFilter("prop-a"), makeFilter("gone")],
         },
         ["prop-a"],
       );
       expect(resolved.displayedPropertyPaths).toEqual([["prop-a"]]);
-      expect(resolved.filterPaths).toEqual([]);
+      expect(resolved.filterPaths).toEqual([["prop-a"]]);
       expect(resolved.propertyFilters).toEqual([makeFilter("prop-a")]);
+    });
+
+    it("drops property filters with no corresponding visible row", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        {
+          displayedPropertyPaths: [],
+          filterPaths: [], // no rows
+          propertyFilters: [makeFilter("prop-a")], // known property, but hidden
+        },
+        ["prop-a"],
+      );
+      expect(resolved.propertyFilters).toEqual([]);
     });
 
     it("tolerates malformed persisted data", () => {
@@ -187,7 +199,34 @@ describe("annotation browser config persistence", () => {
       );
       expect(resolved.displayedPropertyPaths).toEqual([["prop-a"]]);
       expect(resolved.filterPaths).toEqual([]);
-      expect(resolved.propertyFilters).toEqual([makeFilter("prop-a")]);
+      // filterPaths resolved to empty, so no filter has a visible row.
+      expect(resolved.propertyFilters).toEqual([]);
+    });
+  });
+
+  describe("buildAnnotationBrowserConfig", () => {
+    it("keeps only property filters backing a visible row", () => {
+      const built = buildAnnotationBrowserConfig(
+        [["prop-a"]],
+        [["prop-a"]],
+        [
+          makeFilter("prop-a"),
+          { ...makeFilter("prop-b"), enabled: false }, // orphan, no row
+        ],
+      );
+      expect(built.displayedPropertyPaths).toEqual([["prop-a"]]);
+      expect(built.filterPaths).toEqual([["prop-a"]]);
+      expect(built.propertyFilters).toEqual([makeFilter("prop-a")]);
+    });
+
+    it("returns copies rather than the input arrays", () => {
+      const displayed = [["prop-a"]];
+      const filterPaths = [["prop-a"]];
+      const built = buildAnnotationBrowserConfig(displayed, filterPaths, [
+        makeFilter("prop-a"),
+      ]);
+      expect(built.displayedPropertyPaths).not.toBe(displayed);
+      expect(built.filterPaths).not.toBe(filterPaths);
     });
   });
 

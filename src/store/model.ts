@@ -1672,32 +1672,6 @@ export function resolveVisibilityConfig(
   };
 }
 
-// Validate a persisted annotation-browser config coming from the server:
-// drop malformed entries and paths referencing properties that are no longer
-// part of the configuration.
-export function resolveAnnotationBrowserConfig(
-  config: Partial<IAnnotationBrowserConfig> | undefined,
-  propertyIds: string[],
-): IAnnotationBrowserConfig {
-  const knownIds = new Set(propertyIds);
-  const isKnownPath = (path: unknown): path is string[] =>
-    Array.isArray(path) &&
-    path.length > 0 &&
-    path.every((segment) => typeof segment === "string") &&
-    knownIds.has(path[0]);
-  const asArray = <T>(value: T[] | undefined): T[] =>
-    Array.isArray(value) ? value : [];
-  return {
-    displayedPropertyPaths: asArray(config?.displayedPropertyPaths).filter(
-      isKnownPath,
-    ),
-    filterPaths: asArray(config?.filterPaths).filter(isKnownPath),
-    propertyFilters: asArray(config?.propertyFilters).filter((filter) =>
-      isKnownPath(filter?.propertyPath),
-    ),
-  };
-}
-
 export function isHydratedAnnotation(
   annotation: TAnnotationOrStub,
 ): annotation is IAnnotation {
