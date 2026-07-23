@@ -366,10 +366,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             cursor = self._aggregate(self._pvModel.collection, pipeline)
             return [str(doc["annotationId"]) for doc in cursor]
 
-        pipeline = self._buildListMatchStages(datasetId, filters)
-        if filters.get("propertyFilters"):
-            pipeline += self._lookupStages()
-            pipeline += self._propertyFilterStages(filters)
+        pipeline = self._annotationDrivenStages(datasetId, filters)
         pipeline.append({"$project": {"_id": 1}})
         cursor = self._aggregate(self.collection, pipeline)
         return [str(doc["_id"]) for doc in cursor]
@@ -627,10 +624,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             result = list(self._aggregate(self._pvModel.collection, pipeline))
             return result[0]["n"] if result else 0
 
-        pipeline = self._buildListMatchStages(datasetId, filters)
-        if filters.get("propertyFilters"):
-            pipeline += self._lookupStages()
-            pipeline += self._propertyFilterStages(filters)
+        pipeline = self._annotationDrivenStages(datasetId, filters)
         pipeline.append({"$count": "n"})
         result = list(self._aggregate(self.collection, pipeline))
         return result[0]["n"] if result else 0
@@ -644,12 +638,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
         transfer of the full matching id set to the browser.
         """
         def basePipeline():
-            pipeline = self._buildListMatchStages(datasetId, filters)
-            if self._needsPropertyBeforePage(filters, sort):
-                pipeline += self._lookupStages()
-                pipeline += self._propertyFilterStages(filters)
-                pipeline += self._propertySortAddFields(sort)
-            return pipeline
+            return self._annotationDrivenStages(datasetId, filters, sort)
 
         # The default list order is _id ascending, and explicit _id sorting
         # is also common. Resolve that position with an indexed range count
@@ -687,7 +676,8 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # replicates the page order (_hasSortValue desc, value asc/desc, _id
         # asc) as an expression. $ifNull maps a missing field to null exactly
         # like $sort does, so missing and null order identically here and in
-        # listPage.
+        # listPage. `sort` is never None here: the isIdSort branch above
+        # returns for a missing sort.
         descending = sort.get("order") == "desc"
         if sort.get("type") == "property":
             valueRef = {"$ifNull": ["$_sortValue", None]}
@@ -849,6 +839,21 @@ class Annotation(AccessControlMixin, ProxiedModel):
             return True
         return bool(filters.get("propertyFilters"))
 
+    def _annotationDrivenStages(self, datasetId, filters, sort=None):
+        """Annotation-driven pipeline prefix shared by the list queries.
+
+        Match stages over annotation-document fields, plus -- only when a
+        property filter (or property sort) requires the values before
+        pagination -- the property-value join, property filters, and the
+        property sort fields.
+        """
+        pipeline = self._buildListMatchStages(datasetId, filters)
+        if self._needsPropertyBeforePage(filters, sort):
+            pipeline += self._lookupStages()
+            pipeline += self._propertyFilterStages(filters)
+            pipeline += self._propertySortAddFields(sort)
+        return pipeline
+
     def listPage(self, datasetId, filters, sort, propertyPaths,
                  offset, limit):
         skip = max(0, offset)
@@ -880,10 +885,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # sort/filter (the PV docs don't carry those fields), or a field sort
         # accompanies a property filter. Join, filter, sort, then paginate on
         # the annotation collection.
-        pipeline = self._buildListMatchStages(datasetId, filters)
-        pipeline += self._lookupStages()
-        pipeline += self._propertyFilterStages(filters)
-        pipeline += self._propertySortAddFields(sort)
+        pipeline = self._annotationDrivenStages(datasetId, filters, sort)
         pipeline.append(self._sortStage(sort))
         pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})
