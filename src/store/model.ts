@@ -1895,6 +1895,13 @@ export interface IAnnotationImportResult {
   propertyValueCount: number;
 }
 
+// Storage usage and quota for a user, as reported by the girder-user-quota
+// plugin. Sizes are in bytes; quota is null when unlimited.
+export interface IUserStorageQuota {
+  used: number;
+  quota: number | null;
+}
+
 export interface IJobEventData {
   _id: string;
   title?: string;
