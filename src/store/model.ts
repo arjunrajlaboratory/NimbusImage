@@ -508,6 +508,15 @@ export interface IDatasetConfigurationCompatibility {
   channels: { [key: number]: string };
 }
 
+export interface IAnnotationBrowserConfig {
+  // Property columns shown in the annotation list
+  displayedPropertyPaths: string[][];
+  // Properties with a filter row in the annotation browser
+  filterPaths: string[][];
+  // Range/values and enabled state of those filter rows
+  propertyFilters: IPropertyAnnotationFilter[];
+}
+
 export interface IDatasetConfigurationBase {
   compatibility: IDatasetConfigurationCompatibility;
   layers: IDisplayLayer[];
@@ -520,6 +529,10 @@ export interface IDatasetConfigurationBase {
   // compatibility with configurations created before these settings were
   // persisted.
   visibilityConfig?: IVisibilityConfig;
+  // Shared annotation-browser state (displayed property columns and property
+  // filters). Optional for compatibility with configurations created before
+  // this was persisted.
+  annotationBrowserConfig?: IAnnotationBrowserConfig;
 }
 
 export interface IDatasetConfiguration extends IDatasetConfigurationBase {
@@ -1659,6 +1672,32 @@ export function resolveVisibilityConfig(
   };
 }
 
+// Validate a persisted annotation-browser config coming from the server:
+// drop malformed entries and paths referencing properties that are no longer
+// part of the configuration.
+export function resolveAnnotationBrowserConfig(
+  config: Partial<IAnnotationBrowserConfig> | undefined,
+  propertyIds: string[],
+): IAnnotationBrowserConfig {
+  const knownIds = new Set(propertyIds);
+  const isKnownPath = (path: unknown): path is string[] =>
+    Array.isArray(path) &&
+    path.length > 0 &&
+    path.every((segment) => typeof segment === "string") &&
+    knownIds.has(path[0]);
+  const asArray = <T>(value: T[] | undefined): T[] =>
+    Array.isArray(value) ? value : [];
+  return {
+    displayedPropertyPaths: asArray(config?.displayedPropertyPaths).filter(
+      isKnownPath,
+    ),
+    filterPaths: asArray(config?.filterPaths).filter(isKnownPath),
+    propertyFilters: asArray(config?.propertyFilters).filter((filter) =>
+      isKnownPath(filter?.propertyPath),
+    ),
+  };
+}
+
 export function isHydratedAnnotation(
   annotation: TAnnotationOrStub,
 ): annotation is IAnnotation {
@@ -2340,6 +2379,11 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       tStep: { value: 1, unit: "s" },
     },
     visibilityConfig: resolveVisibilityConfig(),
+    annotationBrowserConfig: {
+      displayedPropertyPaths: [],
+      filterPaths: [],
+      propertyFilters: [],
+    },
   };
 }
 

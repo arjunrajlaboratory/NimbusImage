@@ -73,6 +73,9 @@ import {
   NotificationType,
   IDimensionStrategy,
   IVisibilityConfig,
+  IAnnotationBrowserConfig,
+  IPropertyAnnotationFilter,
+  resolveAnnotationBrowserConfig,
 } from "./model";
 
 import persister from "./Persister";
@@ -211,6 +214,14 @@ function createGirderRestClient(options: {
 // Without this, a slower request with a different filter can land last and
 // overwrite the result of a newer request.
 let recentDatasetViewsRequestId = 0;
+
+// Annotation-browser persistence bookkeeping. Module-level (not Vuex state)
+// since these are internal tokens never read by the UI. Saves only run while
+// the in-memory browser state (displayed columns, property filters) is known
+// to mirror the configuration identified here; the id is cleared during
+// dataset/configuration transitions and set again after hydration.
+let annotationBrowserHydratedConfigId: string | null = null;
+let annotationBrowserSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
@@ -1134,6 +1145,7 @@ export class Main extends VuexModule {
   }) {
     this.setConfigurationImpl({ id, data });
     this.context.dispatch("loadVisibilityConfig", data?.visibilityConfig);
+    this.hydrateAnnotationBrowserState();
     // Warm the SAM model cache in the background: encoder downloads are
     // large, this way they are usually cached before a SAM tool is selected
     const samModels = new Set(
@@ -1452,6 +1464,12 @@ export class Main extends VuexModule {
     // this.dataset still holds the previously selected dataset here (setDataset
     // runs later), so this detects a genuine switch vs. a same-dataset refresh.
     const datasetChanged = id !== this.dataset?.id;
+    // Persist any pending annotation-browser change before the resets below
+    // wipe the state it would capture, then disable saves for the transition
+    // (hydrateAnnotationBrowserState re-enables them once the new state is in
+    // place).
+    await this.flushAnnotationBrowserSave();
+    annotationBrowserHydratedConfigId = null;
     this.api.flushCaches();
     this.context.dispatch("resetAnnotationState");
     this.context.dispatch("resetPropertyState");
@@ -1480,6 +1498,11 @@ export class Main extends VuexModule {
       });
       this.setDataset({ id, data: r });
       await this.loadLargeImages();
+      // setConfiguration only re-fires when the configuration changes; on a
+      // same-dataset refresh (unroll toggles) or a switch that keeps the same
+      // configuration, re-hydrate here to restore the browser state the
+      // resets above wiped and to re-enable saves.
+      this.hydrateAnnotationBrowserState();
       sync.setLoading(false);
       sync.setDatasetLoading(false);
     } catch (error) {
@@ -2074,6 +2097,103 @@ export class Main extends VuexModule {
     }
     this.setConfigurationVisibilityConfig(config);
     await this.syncConfiguration("visibilityConfig");
+  }
+
+  // Debounced entry point called by the properties/filters stores whenever
+  // the user changes displayed columns or property filters. Debounced because
+  // dragging a filter histogram slider emits a continuous stream of updates.
+  @Action
+  scheduleAnnotationBrowserSave() {
+    if (annotationBrowserSaveTimer !== null) {
+      clearTimeout(annotationBrowserSaveTimer);
+    }
+    annotationBrowserSaveTimer = setTimeout(() => {
+      annotationBrowserSaveTimer = null;
+      this.saveAnnotationBrowserConfig();
+    }, 500);
+  }
+
+  // Run any pending debounced save immediately. Called before dataset-switch
+  // resets wipe the state the save would capture.
+  @Action
+  async flushAnnotationBrowserSave() {
+    if (annotationBrowserSaveTimer === null) {
+      return;
+    }
+    clearTimeout(annotationBrowserSaveTimer);
+    annotationBrowserSaveTimer = null;
+    await this.saveAnnotationBrowserConfig();
+  }
+
+  @Action
+  private async saveAnnotationBrowserConfig() {
+    const configuration = this.configuration;
+    // Only save while the in-memory state is known to mirror this
+    // configuration. This blocks writes during transitions — e.g. the
+    // disabled filter that PropertyFilterHistogram re-adds on unmount would
+    // otherwise overwrite the persisted state of the wrong configuration.
+    if (
+      !configuration ||
+      annotationBrowserHydratedConfigId !== configuration.id
+    ) {
+      return;
+    }
+    // index.ts cannot import the properties/filters modules (they import this
+    // module), so read their state through the store root state.
+    const rootState = this.context.rootState as {
+      properties: { displayedPropertyPaths: string[][] };
+      filters: {
+        filterPaths: string[][];
+        propertyFilters: IPropertyAnnotationFilter[];
+      };
+    };
+    this.setConfigurationAnnotationBrowserConfig({
+      displayedPropertyPaths: [...rootState.properties.displayedPropertyPaths],
+      filterPaths: [...rootState.filters.filterPaths],
+      propertyFilters: [...rootState.filters.propertyFilters],
+    });
+    await this.syncConfiguration("annotationBrowserConfig");
+  }
+
+  @Mutation
+  private setConfigurationAnnotationBrowserConfig(
+    config: IAnnotationBrowserConfig,
+  ) {
+    if (this.configuration) {
+      this.configuration.annotationBrowserConfig = config;
+    }
+  }
+
+  // Push the configuration's persisted annotation-browser state into the
+  // properties and filters stores and (re-)enable saves for it. Idempotent;
+  // called both when a configuration loads and at the end of
+  // setSelectedDataset, which covers the paths where setConfiguration never
+  // re-fires (same-dataset refresh, or a dataset switch that keeps the same
+  // configuration).
+  @Action
+  hydrateAnnotationBrowserState() {
+    if (annotationBrowserSaveTimer !== null) {
+      clearTimeout(annotationBrowserSaveTimer);
+      annotationBrowserSaveTimer = null;
+    }
+    const configuration = this.configuration;
+    if (!configuration) {
+      annotationBrowserHydratedConfigId = null;
+      return;
+    }
+    const config = resolveAnnotationBrowserConfig(
+      configuration.annotationBrowserConfig,
+      configuration.propertyIds,
+    );
+    this.context.dispatch(
+      "hydrateDisplayedPropertyPaths",
+      config.displayedPropertyPaths,
+    );
+    this.context.dispatch("hydrateAnnotationBrowserFilters", {
+      filterPaths: config.filterPaths,
+      propertyFilters: config.propertyFilters,
+    });
+    annotationBrowserHydratedConfigId = configuration.id;
   }
 
   @Action

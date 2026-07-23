@@ -134,13 +134,38 @@ export class Filters extends VuexModule {
   }
 
   @Mutation
-  togglePropertyPathFiltering(path: string[]) {
+  private togglePropertyPathFilteringImpl(path: string[]) {
     const pathIdx = findIndexOfPath(path, this.filterPaths);
     if (pathIdx < 0) {
       this.filterPaths.push(path);
     } else {
       this.filterPaths.splice(pathIdx, 1);
     }
+  }
+
+  @Action
+  togglePropertyPathFiltering(path: string[]) {
+    this.togglePropertyPathFilteringImpl(path);
+    main.scheduleAnnotationBrowserSave();
+  }
+
+  @Mutation
+  private setAnnotationBrowserFilterState(payload: {
+    filterPaths: string[][];
+    propertyFilters: IPropertyAnnotationFilter[];
+  }) {
+    this.filterPaths = payload.filterPaths;
+    this.propertyFilters = payload.propertyFilters;
+  }
+
+  // Restore filter rows and their ranges persisted in the configuration.
+  // Uses the raw mutation so hydration never schedules a save of its own.
+  @Action
+  hydrateAnnotationBrowserFilters(payload: {
+    filterPaths: string[][];
+    propertyFilters: IPropertyAnnotationFilter[];
+  }) {
+    this.setAnnotationBrowserFilterState(payload);
   }
 
   @Mutation
@@ -441,7 +466,7 @@ export class Filters extends VuexModule {
   }
 
   @Mutation
-  public updatePropertyFilter(value: IPropertyAnnotationFilter) {
+  private updatePropertyFilterImpl(value: IPropertyAnnotationFilter) {
     this.propertyFilters = [
       ...this.propertyFilters.filter(
         (filter: IPropertyAnnotationFilter) =>
@@ -449,6 +474,12 @@ export class Filters extends VuexModule {
       ),
       value,
     ];
+  }
+
+  @Action
+  public updatePropertyFilter(value: IPropertyAnnotationFilter) {
+    this.updatePropertyFilterImpl(value);
+    main.scheduleAnnotationBrowserSave();
   }
 
   @Mutation
