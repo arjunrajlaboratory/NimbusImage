@@ -5,12 +5,8 @@ import type {
 import { createPathStringFromPathArray } from "@/utils/paths";
 
 // Assemble the annotation-browser state to persist in the configuration.
-// Only filters backing a visible row (path present in filterPaths) are kept:
-// removing a filter drops its path from filterPaths but leaves a disabled
-// orphan in propertyFilters (see PropertyFilterHistogram's onBeforeUnmount);
-// persisting those would let them accumulate unboundedly across add/remove
-// cycles. A removed filter's range is not part of the browser state to
-// restore — re-adding it creates a fresh filter.
+// Only filters backing a visible row (path present in filterPaths) belong to
+// configuration metadata. Filters created by chat remain session-only.
 export function buildAnnotationBrowserConfig(
   displayedPropertyPaths: string[][],
   filterPaths: string[][],
@@ -28,9 +24,7 @@ export function buildAnnotationBrowserConfig(
 
 // Validate a persisted annotation-browser config coming from the server: drop
 // malformed entries, paths referencing properties no longer part of the
-// configuration, and property filters that have no corresponding visible row
-// (defense-in-depth against configs written before the save-side filtering, or
-// hand-edited metadata).
+// configuration, and property filters outside the persisted browser rows.
 export function resolveAnnotationBrowserConfig(
   config: Partial<IAnnotationBrowserConfig> | undefined,
   propertyIds: string[],

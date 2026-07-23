@@ -84,10 +84,20 @@ describe("annotation browser config persistence", () => {
       expect(mocks.scheduleAnnotationBrowserSave).toHaveBeenCalledTimes(1);
     });
 
-    it("schedules a save when a property filter is updated", () => {
+    it("schedules a save when a visible property filter is updated", () => {
+      filters.hydrateAnnotationBrowserFilters({
+        filterPaths: [["prop-a"]],
+        propertyFilters: [],
+      });
       filters.updatePropertyFilter(makeFilter("prop-a"));
       expect(filters.propertyFilters).toHaveLength(1);
       expect(mocks.scheduleAnnotationBrowserSave).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps chat-created property filters session-only", () => {
+      filters.updatePropertyFilter(makeFilter("prop-a"));
+      expect(filters.propertyFilters).toHaveLength(1);
+      expect(mocks.scheduleAnnotationBrowserSave).not.toHaveBeenCalled();
     });
 
     it("does not schedule a save when hydrating from a configuration", () => {
@@ -112,26 +122,16 @@ describe("annotation browser config persistence", () => {
     });
   });
 
-  describe("disabled filter enabled-state (Codex #1)", () => {
-    it("re-enables an existing disabled filter when its row is re-added", () => {
-      // A disabled orphan left behind after the row was removed.
-      filters.hydrateAnnotationBrowserFilters({
-        filterPaths: [],
-        propertyFilters: [{ ...makeFilter("prop-a"), enabled: false }],
-      });
-      filters.togglePropertyPathFiltering(["prop-a"]);
-      expect(filters.filterPaths).toEqual([["prop-a"]]);
-      expect(filters.propertyFilters[0].enabled).toBe(true);
-    });
-
-    it("does not re-enable when a filter row is being removed", () => {
+  describe("filter row ownership", () => {
+    it("removes the property filter with its row", () => {
       filters.hydrateAnnotationBrowserFilters({
         filterPaths: [["prop-a"]],
-        propertyFilters: [{ ...makeFilter("prop-a"), enabled: false }],
+        propertyFilters: [makeFilter("prop-a")],
       });
-      filters.togglePropertyPathFiltering(["prop-a"]); // removes the row
+      filters.togglePropertyPathFiltering(["prop-a"]);
       expect(filters.filterPaths).toEqual([]);
-      expect(filters.propertyFilters[0].enabled).toBe(false);
+      expect(filters.propertyFilters).toEqual([]);
+      expect(mocks.scheduleAnnotationBrowserSave).toHaveBeenCalledTimes(1);
     });
 
     it("hydration preserves a deliberately disabled visible filter", () => {
@@ -205,14 +205,11 @@ describe("annotation browser config persistence", () => {
   });
 
   describe("buildAnnotationBrowserConfig", () => {
-    it("keeps only property filters backing a visible row", () => {
+    it("omits session-only filters without a visible row", () => {
       const built = buildAnnotationBrowserConfig(
         [["prop-a"]],
         [["prop-a"]],
-        [
-          makeFilter("prop-a"),
-          { ...makeFilter("prop-b"), enabled: false }, // orphan, no row
-        ],
+        [makeFilter("prop-a"), { ...makeFilter("prop-b"), enabled: false }],
       );
       expect(built.displayedPropertyPaths).toEqual([["prop-a"]]);
       expect(built.filterPaths).toEqual([["prop-a"]]);

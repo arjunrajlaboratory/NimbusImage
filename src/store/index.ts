@@ -217,12 +217,8 @@ function createGirderRestClient(options: {
 // overwrite the result of a newer request.
 let recentDatasetViewsRequestId = 0;
 
-// Annotation-browser persistence bookkeeping. Module-level (not Vuex state)
-// since these are internal tokens never read by the UI. Saves only run while
-// the in-memory browser state (displayed columns, property filters) is known
-// to mirror the configuration identified here; the id is cleared during
-// dataset/configuration transitions and set again after hydration.
-let annotationBrowserHydratedConfigId: string | null = null;
+// Annotation-browser persistence bookkeeping. Module-level rather than Vuex
+// state because the debounce timer is never read by the UI.
 let annotationBrowserSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 @Module({ dynamic: true, store, name: "main" })
@@ -1467,10 +1463,8 @@ export class Main extends VuexModule {
     // runs later), so this detects a genuine switch vs. a same-dataset refresh.
     const datasetChanged = id !== this.dataset?.id;
     // Persist any pending annotation-browser change before the resets below
-    // wipe the state it would capture, then disable saves for the transition
-    // (hydrateAnnotationBrowserState re-enables them once the new state is in
-    // place).
-    await this.beginAnnotationBrowserTransition();
+    // wipe the state it would capture.
+    await this.flushAnnotationBrowserSave();
     this.api.flushCaches();
     this.context.dispatch("resetAnnotationState");
     this.context.dispatch("resetPropertyState");
@@ -1502,7 +1496,7 @@ export class Main extends VuexModule {
       // setConfiguration only re-fires when the configuration changes; on a
       // same-dataset refresh (unroll toggles) or a switch that keeps the same
       // configuration, re-hydrate here to restore the browser state the
-      // resets above wiped and to re-enable saves.
+      // resets above wiped.
       this.hydrateAnnotationBrowserState();
       sync.setLoading(false);
       sync.setDatasetLoading(false);
@@ -1526,12 +1520,12 @@ export class Main extends VuexModule {
       sync.setLoading(true);
       const configuration = await this.context.dispatch("getConfiguration", id);
       // Flush any pending annotation-browser save while the previous
-      // configuration is still loaded, then block saves for the transition.
+      // configuration is still loaded.
       // setConfiguration below flips this.configuration to the new one, after
       // which the debounced save would write to the wrong configuration. This
       // matters for same-dataset configuration switches within the 500 ms
       // debounce window, which never pass through setSelectedDataset.
-      await this.beginAnnotationBrowserTransition();
+      await this.flushAnnotationBrowserSave();
       if (!configuration) {
         this.setConfiguration({ id: null, data: null });
       } else {
@@ -2133,30 +2127,10 @@ export class Main extends VuexModule {
     await this.saveAnnotationBrowserConfig();
   }
 
-  // Begin a dataset/configuration transition: flush any pending save while the
-  // previous configuration is still loaded, then disable saves until the new
-  // state is hydrated. Both setSelectedDataset and setSelectedConfiguration
-  // call this before mutating this.configuration or resetting the stores, so
-  // the "flush old, block during transition, hydrate new" invariant holds
-  // regardless of the order the two resolve in (they run concurrently from
-  // setDatasetViewId).
-  @Action
-  async beginAnnotationBrowserTransition() {
-    await this.flushAnnotationBrowserSave();
-    annotationBrowserHydratedConfigId = null;
-  }
-
   @Action
   private async saveAnnotationBrowserConfig() {
     const configuration = this.configuration;
-    // Only save while the in-memory state is known to mirror this
-    // configuration. This blocks writes during transitions — e.g. the
-    // disabled filter that PropertyFilterHistogram re-adds on unmount would
-    // otherwise overwrite the persisted state of the wrong configuration.
-    if (
-      !configuration ||
-      annotationBrowserHydratedConfigId !== configuration.id
-    ) {
+    if (!configuration) {
       return;
     }
     // index.ts cannot statically import the properties/filters modules (they
@@ -2184,25 +2158,15 @@ export class Main extends VuexModule {
   }
 
   // Push the configuration's persisted annotation-browser state into the
-  // properties and filters stores and (re-)enable saves for it. Idempotent;
-  // called both when a configuration loads and at the end of
+  // properties and filters stores. Idempotent; called both when a
+  // configuration loads and at the end of
   // setSelectedDataset, which covers the paths where setConfiguration never
   // re-fires (same-dataset refresh, or a dataset switch that keeps the same
   // configuration).
   @Action
   hydrateAnnotationBrowserState() {
-    // Discard any pending save without flushing: callers (setSelectedDataset
-    // and setSelectedConfiguration) already flush while the previous
-    // configuration is still loaded. By the time we get here this.configuration
-    // is the new one, so flushing would save the wrong configuration. This is
-    // just defensive cleanup of an already-flushed timer.
-    if (annotationBrowserSaveTimer !== null) {
-      clearTimeout(annotationBrowserSaveTimer);
-      annotationBrowserSaveTimer = null;
-    }
     const configuration = this.configuration;
     if (!configuration) {
-      annotationBrowserHydratedConfigId = null;
       return;
     }
     const config = resolveAnnotationBrowserConfig(
@@ -2217,7 +2181,6 @@ export class Main extends VuexModule {
       filterPaths: config.filterPaths,
       propertyFilters: config.propertyFilters,
     });
-    annotationBrowserHydratedConfigId = configuration.id;
   }
 
   @Action

@@ -97,14 +97,6 @@ export class Filters extends VuexModule {
     // they render as broken, uneditable filter chips in the next dataset (the
     // paths no longer resolve to any property). onlyCurrentFrame is a generic
     // view toggle rather than stale data, so it is intentionally preserved.
-    //
-    // Known limitation: clearing filterPaths unmounts the old dataset's
-    // PropertyFilterHistogram components, and their onBeforeUnmount re-adds a
-    // single *disabled* propertyFilter after this reset runs. That orphan is
-    // inert — it is excluded from filteredAnnotations (enabled === false) and
-    // never rendered (the panel iterates filterPaths, now empty) — and the
-    // next dataset switch clears it. See PropertyFilterHistogram.vue's
-    // onBeforeUnmount for why that disable step must stay.
     this.tagFilter = {
       id: "tagFilter",
       exclusive: false,
@@ -140,34 +132,15 @@ export class Filters extends VuexModule {
       this.filterPaths.push(path);
     } else {
       this.filterPaths.splice(pathIdx, 1);
-    }
-  }
-
-  @Mutation
-  private reenableFilterForPath(path: string[]) {
-    const filter = this.propertyFilters.find((f) =>
-      arePathEquals(f.propertyPath, path),
-    );
-    if (filter && !filter.enabled) {
-      this.propertyFilters = this.propertyFilters.map((f) =>
-        f === filter ? { ...f, enabled: true } : f,
+      this.propertyFilters = this.propertyFilters.filter(
+        (filter) => !arePathEquals(filter.propertyPath, path),
       );
     }
   }
 
   @Action
   togglePropertyPathFiltering(path: string[]) {
-    const isAdding = findIndexOfPath(path, this.filterPaths) < 0;
     this.togglePropertyPathFilteringImpl(path);
-    // Adding a filter row reactivates it: removeFilter leaves a disabled
-    // orphan in propertyFilters (see PropertyFilterHistogram's
-    // onBeforeUnmount), and a user re-adding the row expects it to filter
-    // again. This lives here rather than in the component's onMounted so that
-    // hydrating a deliberately-disabled filter from the configuration is not
-    // force-enabled — the whole point of persisting the enabled state.
-    if (isAdding) {
-      this.reenableFilterForPath(path);
-    }
     main.scheduleAnnotationBrowserSave();
   }
 
@@ -501,7 +474,11 @@ export class Filters extends VuexModule {
   @Action
   public updatePropertyFilter(value: IPropertyAnnotationFilter) {
     this.updatePropertyFilterImpl(value);
-    main.scheduleAnnotationBrowserSave();
+    // Chat-created filters have no Annotation Browser row and remain
+    // session-only. Once a row exists, its edits belong to the configuration.
+    if (findIndexOfPath(value.propertyPath, this.filterPaths) >= 0) {
+      main.scheduleAnnotationBrowserSave();
+    }
   }
 
   @Mutation
