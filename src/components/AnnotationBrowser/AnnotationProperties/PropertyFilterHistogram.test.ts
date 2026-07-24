@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ref } from "vue";
 import { shallowMount } from "@vue/test-utils";
 
 const { d3Chain } = vi.hoisted(() => {
@@ -297,6 +298,34 @@ describe("PropertyFilterHistogram", () => {
     expect(vm.propertyFilter.id).toBe("existing-id");
   });
 
+  it("preserves a restored range when the histogram loads", async () => {
+    const histogram = ref<any[]>([]);
+    const existingFilter = {
+      id: "existing-id",
+      propertyPath: ["propA", "sub1"],
+      range: { min: 12, max: 24 },
+      exclusive: false,
+      enabled: true,
+      valuesOrRange: "range",
+    };
+    (filterStore as any).propertyFilters = [existingFilter];
+    (filterStore as any).getHistogram = vi.fn(() => histogram.value);
+
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.defaultMinMax).toBe(false);
+    expect(vm.minValue).toBe(12);
+    expect(vm.maxValue).toBe(24);
+
+    (filterStore.updatePropertyFilter as any).mockClear();
+    histogram.value = [{ count: 5, min: 0, max: 100 }];
+    await wrapper.vm.$nextTick();
+
+    expect(vm.minValue).toBe(12);
+    expect(vm.maxValue).toBe(24);
+    expect(filterStore.updatePropertyFilter).not.toHaveBeenCalled();
+  });
+
   it("hist returns histogram from filterStore", () => {
     const histData = [
       { count: 5, min: 10, max: 15 },
@@ -449,7 +478,7 @@ describe("PropertyFilterHistogram", () => {
     expect(filterStore.updateHistograms).toHaveBeenCalled();
   });
 
-  it("onBeforeUnmount disables filter if it was enabled", () => {
+  it("does not mutate the filter when the component unmounts", () => {
     const existingFilter = {
       id: "test-id",
       propertyPath: ["propA", "sub1"],
@@ -461,12 +490,8 @@ describe("PropertyFilterHistogram", () => {
     (filterStore as any).propertyFilters = [existingFilter];
     const wrapper = mountComponent();
     (filterStore.updatePropertyFilter as any).mockClear();
-    // Trigger onBeforeUnmount
     wrapper.unmount();
-    // Should have been called to disable the filter
-    expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
-    const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
-    expect(call.enabled).toBe(false);
+    expect(filterStore.updatePropertyFilter).not.toHaveBeenCalled();
   });
 
   // Vuetify 3 @change migration: v-checkbox and v-btn-toggle should use @update:model-value
