@@ -366,10 +366,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             cursor = self._aggregate(self._pvModel.collection, pipeline)
             return [str(doc["annotationId"]) for doc in cursor]
 
-        pipeline = self._buildListMatchStages(datasetId, filters)
-        if filters.get("propertyFilters"):
-            pipeline += self._lookupStages()
-            pipeline += self._propertyFilterStages(filters)
+        pipeline = self._annotationDrivenStages(datasetId, filters)
         pipeline.append({"$project": {"_id": 1}})
         cursor = self._aggregate(self.collection, pipeline)
         return [str(doc["_id"]) for doc in cursor]
@@ -627,13 +624,118 @@ class Annotation(AccessControlMixin, ProxiedModel):
             result = list(self._aggregate(self._pvModel.collection, pipeline))
             return result[0]["n"] if result else 0
 
-        pipeline = self._buildListMatchStages(datasetId, filters)
-        if filters.get("propertyFilters"):
-            pipeline += self._lookupStages()
-            pipeline += self._propertyFilterStages(filters)
+        pipeline = self._annotationDrivenStages(datasetId, filters)
         pipeline.append({"$count": "n"})
         result = list(self._aggregate(self.collection, pipeline))
         return result[0]["n"] if result else 0
+
+    def listPosition(self, datasetId, filters, sort, annotationId):
+        """Zero-based position of an annotation in a filtered/sorted list.
+
+        This intentionally uses the annotation-driven form for every query.
+        It has the same filter and ordering semantics as listPage, including
+        property filters/sorts and the stable _id tie-break, while avoiding
+        transfer of the full matching id set to the browser.
+        """
+        def basePipeline():
+            return self._annotationDrivenStages(datasetId, filters, sort)
+
+        # The default list order is _id ascending, and explicit _id sorting
+        # is also common. Resolve that position with an indexed range count
+        # on _id directly (no sort-value fetch needed).
+        isIdSort = not sort or (
+            sort.get("type") == "field" and sort.get("key") == "_id"
+        )
+        if isIdSort:
+            targetPipeline = basePipeline()
+            targetPipeline += [
+                {"$match": {"_id": annotationId}},
+                {"$limit": 1},
+                {"$project": {"_id": 1}},
+            ]
+            if next(iter(self._aggregate(
+                    self.collection, targetPipeline)), None) is None:
+                return None
+
+            comparison = "$gt" if (
+                sort and sort.get("order") == "desc"
+            ) else "$lt"
+            countPipeline = basePipeline()
+            countPipeline += [
+                {"$match": {"_id": {comparison: annotationId}}},
+                {"$count": "position"},
+            ]
+            result = next(iter(self._aggregate(
+                self.collection, countPipeline
+            )), None)
+            return result["position"] if result else 0
+
+        # Non-_id sorts: fetch the anchor's sort value inside the filtered
+        # set, then COUNT the rows that sort strictly before it -- the same
+        # match/lookup stages, but no full-set $sort or window walk. "Before"
+        # replicates the page order (_hasSortValue desc, value asc/desc, _id
+        # asc) as an expression. $ifNull maps a missing field to null exactly
+        # like $sort does, so missing and null order identically here and in
+        # listPage. `sort` is never None here: the isIdSort branch above
+        # returns for a missing sort.
+        descending = sort.get("order") == "desc"
+        if sort.get("type") == "property":
+            valueRef = {"$ifNull": ["$_sortValue", None]}
+            hasValueRef = "$_hasSortValue"
+        else:
+            key = sort.get("key")
+            if key not in self._SORTABLE_FIELDS:
+                raise ValueError("Invalid sort field: %s" % key)
+            valueRef = {"$ifNull": ["$" + key, None]}
+            hasValueRef = None
+
+        anchorPipeline = basePipeline()
+        anchorPipeline += [
+            {"$match": {"_id": annotationId}},
+            {"$limit": 1},
+            {"$project": {
+                "_id": 0,
+                "value": valueRef,
+                "hasValue": hasValueRef or {"$literal": 1},
+            }},
+        ]
+        anchor = next(iter(self._aggregate(
+            self.collection, anchorPipeline)), None)
+        if anchor is None:
+            return None
+
+        idBefore = {"$lt": ["$_id", annotationId]}
+        if hasValueRef is not None and not anchor["hasValue"]:
+            # The anchor lacks a value for the property sort key, so every
+            # row WITH a value precedes it (_hasSortValue sorts descending
+            # first regardless of direction); among no-value rows the order
+            # is _id ascending.
+            before = {"$or": [
+                {"$eq": [hasValueRef, 1]},
+                {"$and": [{"$eq": [hasValueRef, 0]}, idBefore]},
+            ]}
+        else:
+            valueCmp = "$gt" if descending else "$lt"
+            strictlyBefore = {valueCmp: [valueRef, anchor["value"]]}
+            tieBefore = {"$and": [
+                {"$eq": [valueRef, anchor["value"]]}, idBefore,
+            ]}
+            before = {"$or": [strictlyBefore, tieBefore]}
+            if hasValueRef is not None:
+                # The anchor has a value: only value-bearing rows can
+                # precede it (no-value rows always sort after them).
+                before = {"$and": [
+                    {"$eq": [hasValueRef, 1]}, before,
+                ]}
+
+        countPipeline = basePipeline()
+        countPipeline += [
+            {"$match": {"$expr": before}},
+            {"$count": "position"},
+        ]
+        result = next(iter(self._aggregate(
+            self.collection, countPipeline)), None)
+        return result["position"] if result else 0
 
     def _propertyComputeMatch(self, shape, tagSpec):
         """Match expression for the annotations a property CAN be computed on.
@@ -737,6 +839,21 @@ class Annotation(AccessControlMixin, ProxiedModel):
             return True
         return bool(filters.get("propertyFilters"))
 
+    def _annotationDrivenStages(self, datasetId, filters, sort=None):
+        """Annotation-driven pipeline prefix shared by the list queries.
+
+        Match stages over annotation-document fields, plus -- only when a
+        property filter (or property sort) requires the values before
+        pagination -- the property-value join, property filters, and the
+        property sort fields.
+        """
+        pipeline = self._buildListMatchStages(datasetId, filters)
+        if self._needsPropertyBeforePage(filters, sort):
+            pipeline += self._lookupStages()
+            pipeline += self._propertyFilterStages(filters)
+            pipeline += self._propertySortAddFields(sort)
+        return pipeline
+
     def listPage(self, datasetId, filters, sort, propertyPaths,
                  offset, limit):
         skip = max(0, offset)
@@ -768,10 +885,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # sort/filter (the PV docs don't carry those fields), or a field sort
         # accompanies a property filter. Join, filter, sort, then paginate on
         # the annotation collection.
-        pipeline = self._buildListMatchStages(datasetId, filters)
-        pipeline += self._lookupStages()
-        pipeline += self._propertyFilterStages(filters)
-        pipeline += self._propertySortAddFields(sort)
+        pipeline = self._annotationDrivenStages(datasetId, filters, sort)
         pipeline.append(self._sortStage(sort))
         pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})

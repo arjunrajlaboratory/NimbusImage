@@ -508,6 +508,15 @@ export interface IDatasetConfigurationCompatibility {
   channels: { [key: number]: string };
 }
 
+export interface IAnnotationBrowserConfig {
+  // Property columns shown in the annotation list
+  displayedPropertyPaths: string[][];
+  // Properties with a filter row in the annotation browser
+  filterPaths: string[][];
+  // Range/values and enabled state of those filter rows
+  propertyFilters: IPropertyAnnotationFilter[];
+}
+
 export interface IDatasetConfigurationBase {
   compatibility: IDatasetConfigurationCompatibility;
   layers: IDisplayLayer[];
@@ -520,6 +529,10 @@ export interface IDatasetConfigurationBase {
   // compatibility with configurations created before these settings were
   // persisted.
   visibilityConfig?: IVisibilityConfig;
+  // Shared annotation-browser state (displayed property columns and property
+  // filters). Optional for compatibility with configurations created before
+  // this was persisted.
+  annotationBrowserConfig?: IAnnotationBrowserConfig;
 }
 
 export interface IDatasetConfiguration extends IDatasetConfigurationBase {
@@ -1584,6 +1597,10 @@ export interface IAnnotationListQuery {
   propertyPaths: string[][];
   offset: number;
   limit: number;
+  // When supplied, the server ignores `offset` and returns the page containing
+  // this annotation under the same filters and sort. `offset` in the response
+  // is null when the annotation is not part of the filtered result.
+  anchorId?: string;
 }
 
 // A server list row: stub fields + the requested property values.
@@ -1595,6 +1612,7 @@ export interface IAnnotationListRow extends IAnnotationStub {
 export interface IAnnotationListPage {
   total: number;
   rows: IAnnotationListRow[];
+  offset?: number | null;
 }
 
 export type THydrationMode = "shapes" | "dots";
@@ -1637,6 +1655,13 @@ export interface IVisibilityConfig {
   // pan refreshes — so this governs zoom only.
   viewportRefreshFraction: number;
 }
+
+// Annotation count above which the annotation browser list switches to the
+// backend-paginated (server) list, independently of stub-only mode. This is a
+// UI materialization limit (one v-data-table row per annotation, client-side
+// sort), NOT a data-loading concern like stubThreshold — a fully-fetched
+// dataset can still be too large to sort/render as a client-side table.
+export const ANNOTATION_LIST_SERVER_THRESHOLD = 20000;
 
 export const DEFAULT_VISIBILITY_CONFIG: IVisibilityConfig = {
   stubThreshold: 100000,
@@ -1893,6 +1918,13 @@ export interface IAnnotationImportResult {
   annotationCount: number;
   connectionCount: number;
   propertyValueCount: number;
+}
+
+// Storage usage and quota for a user, as reported by the girder-user-quota
+// plugin. Sizes are in bytes; quota is null when unlimited.
+export interface IUserStorageQuota {
+  used: number;
+  quota: number | null;
 }
 
 export interface IJobEventData {
@@ -2340,6 +2372,11 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       tStep: { value: 1, unit: "s" },
     },
     visibilityConfig: resolveVisibilityConfig(),
+    annotationBrowserConfig: {
+      displayedPropertyPaths: [],
+      filterPaths: [],
+      propertyFilters: [],
+    },
   };
 }
 

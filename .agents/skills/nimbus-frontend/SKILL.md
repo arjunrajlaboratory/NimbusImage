@@ -53,9 +53,50 @@ Store modules still use `vuex-module-decorators` with `@Module`, `@Mutation`, an
 
 For advanced store patterns (routeMapper, form change detection, caching with batch loading): read `references/store-module-patterns.md`
 
+### Driving the AI panel (agent) from the console
+
+To test the Nimbus AI panel (`src/store/aiPanel.ts`, `AiPanel.vue`) end-to-end without clicking, dispatch its actions on the live store. Two traps:
+
+- **The actions register UNNAMESPACED.** `vuex-module-decorators` puts them in the global action map as `sendUserMessage`, `handleAuthenticatedUserChange`, etc. — NOT `aiPanel/sendUserMessage`. A namespaced dispatch is silently dropped (Vuex warns, resolves a no-op promise, nothing runs). Confirm with `store._actions['sendUserMessage']`.
+- `sendUserMessage` runs the whole agent loop and only resolves when the turn ends — **don't await it** if you want to poll progress; fire it and read `store.state.aiPanel.items` / `.running` on a timer.
+
+```js
+const store = document.querySelector('#app').__vue_app__.config.globalProperties.$store;
+store.commit('setAutoApprove', true);              // skip gated-action approval clicks
+await store.dispatch('clearConversationAndStorage'); // full reset (memory + IndexedDB)
+store.dispatch('sendUserMessage', 'Find the nuclei in this image.'); // fire, don't await
+```
+
+**Send exactly once, from a clean/hydrated state.** Two `sendUserMessage`s in quick succession start two overlapping runs that both push to the module-level `wireMessages`, nesting the tool-result blocks (`content: [[tool_result,…]]`). The next request then fails with Anthropic `400 … messages.N.content.0: Input should be an object`. This is not a create/run bug — it's conversation corruption from concurrent turns. (The UI's `send()` and the `sendUserMessage` guard both check `running`, but a stale in-flight run or leftover persisted conversation can still bite; a hard reload + `clearConversationAndStorage` gives a truly clean slate.) Related: `hydrating` (module var) blocks sends until a reloaded conversation finishes restoring — a dispatch right after reload can no-op; wait a beat. `clearConversation()` (no `force`) no-ops while `running`; use `clearConversationAndStorage`.
+
+Agent tool executors live in `src/agent/executors.ts` (`executeAgentTool(name, input, ctx)`), importable in the Vite dev page for isolated testing: `await import('/src/agent/executors.ts?t=' + Date.now())` (the query-bust avoids a stale module cache). Worker tools save parameters under `tool.values.workerInterfaceValues`; `channelCheckboxes` values are `{channelIndex: true}` maps (a `true` value selects — key-presence alone does not).
+
 ### Store Edits Break HMR — Hard-Reload
 
 Editing any `src/store/*.ts` while `pnpm run dev` runs corrupts the store: vuex-module-decorators registers getters at import time with no HMR accept handler, so a hot re-import double-registers → `[vuex] duplicate getter key` cascade and broken state (e.g. annotations stuck at 0). **Hard-reload the page after every store-module edit** before trusting any in-browser behavior. Component `.vue` edits HMR fine — prefer putting temporary instrumentation in `.vue` files.
+
+### Actions That Throw Need `@Action({ rawError: true })`
+
+`vuex-module-decorators` wraps **any** error thrown from a bare `@Action` in a generic `Error("ERR_ACTION_ACCESS_UNDEFINED: Are you trying to access this.someMutation()...")`, discarding the original message — unless the action is declared `@Action({ rawError: true })`. This is a library-wide behavior, not specific to one module.
+
+Most actions in this codebase never throw (they log and return `null`/`false` on failure), so this rarely bites. It matters the moment an action is *designed* to throw so a caller can show the real failure reason (e.g. `addMultiSourceMetadata` throwing a storage-quota message for `MultiSourceConfiguration.vue` to display). Forgetting `rawError: true` silently replaces that message with the cryptic wrapper text — `tsc`/lint/tests all stay green because the action still rejects, just with the wrong message.
+
+```typescript
+// BAD: caller's catch block sees "ERR_ACTION_ACCESS_UNDEFINED: ..." instead
+// of the real message
+@Action
+async doThing() {
+  throw new Error("Helpful, specific reason");
+}
+
+// GOOD
+@Action({ rawError: true })
+async doThing() {
+  throw new Error("Helpful, specific reason");
+}
+```
+
+When writing a test for an action's thrown-error message, `expect(...).rejects.toThrow("substring")` is not a reliable regression check here: the wrapped error's message embeds the original error's `.stack` (which starts with `"Error: <original message>"`), so a substring match can pass even when `rawError` is missing. Assert the exact `.message` instead. See `src/store/index.test.ts` for the pattern (dispatches the real action instead of mocking `@/store`).
 
 ### Watching Getters That Rebuild Their Return Object
 
@@ -71,6 +112,10 @@ watch(() => JSON.stringify(annotationListServer.currentFilters), cb);
 ```
 
 Watch out for stringify cost on large objects.
+
+**This bug recurs even after being fixed once nearby — grep for it.** A second, separate `watch([...9 getters...], cb, { deep: true })` in the same file (`AnnotationList.vue`'s "server-mode reactive refetch" block, a few lines below the `currentFilters` watch above) had the identical bug, confirmed via live instrumentation firing every 30-80ms with **zero** of the 9 tracked values actually changing. Each spurious firing called `setOptions({ page: 1 })`, silently resetting the server-paginated annotation list's page after every click-to-row navigation — while the *rows* stayed correct (the accompanying debounced refetch never settled long enough to fire), so only the page number/footer/Index column were wrong. This looked exactly like "clicking an annotation goes to the wrong spot in the list," and a plausible-looking `VDataTableServer` `update:options` stale-echo race was chased first as the cause (it even reproduced once) before instrumenting the watcher itself proved it was actually firing with no real change. **When you find and fix one instance of this pattern, `grep -n "deep:\s*true" src` for siblings in the same or related files before considering it fixed — a documented fix comment next to one watcher does not protect a copy-pasted watcher elsewhere.**
+
+Not every `{ deep: true }` is this bug — it only applies when the watched source is a **getter function that rebuilds a fresh object/array on each call** (a Vuex/Pinia getter, a `computed`, or a plain function reading store state). A `ref()`/`reactive()` passed **directly** as the watch source (not wrapped in a function) is the correct, safe use of `deep: true` — Vue tracks its stable identity and only fires on genuine in-place mutations. Don't blanket-remove `deep: true` without checking which case you're in.
 
 ## Vuetify 4 Patterns
 

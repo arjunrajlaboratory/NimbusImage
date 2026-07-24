@@ -1648,6 +1648,81 @@ describe("AnnotationViewer", () => {
       });
     });
 
+    // --- shouldSelectStub ---
+    describe("shouldSelectStub", () => {
+      beforeEach(() => {
+        wrapper = mountComponent();
+        // Real Euclidean distance so the hit-test math is actually exercised.
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+      });
+
+      function makeStub(overrides: any = {}) {
+        return {
+          id: "stub1",
+          centroid: { x: 0, y: 0 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "polygon",
+          channel: 0,
+          tags: [],
+          color: null,
+          estimatedRadius: 10,
+          ...overrides,
+        };
+      }
+
+      it("hit-tests the stub radius in world units (no unitsPerPixel scaling)", () => {
+        // The stub dot's style.radius is estimatedRadius in WORLD units. A click
+        // 8 world units away is inside the rendered radius (10), so it must hit
+        // regardless of the zoom-dependent unitsPerPixel.
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 0 };
+        const unitsPerPixel = 0.25; // zoomed in — the regression trigger
+        const result = (wrapper.vm as any).shouldSelectStub(
+          { x: 8, y: 0 },
+          stub,
+          style,
+          unitsPerPixel,
+        );
+        // Old (buggy) math: radius * unitsPerPixel = 2.5 → 8 > 2.5 → missed.
+        // Fixed math: radius = 10 → 8 < 10 → hit.
+        expect(result).toBe(true);
+      });
+
+      it("misses when the click is outside the world-unit radius", () => {
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 0 };
+        const result = (wrapper.vm as any).shouldSelectStub(
+          { x: 12, y: 0 },
+          stub,
+          style,
+          4, // zoomed out — old math would falsely hit (10*4=40)
+        );
+        expect(result).toBe(false);
+      });
+
+      it("converts only the stroke width by unitsPerPixel", () => {
+        // radius 10 (world) + strokeWidth 4 * unitsPerPixel 0.5 = 12 world units.
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 4 };
+        const inside = (wrapper.vm as any).shouldSelectStub(
+          { x: 11.5, y: 0 },
+          stub,
+          style,
+          0.5,
+        );
+        const outside = (wrapper.vm as any).shouldSelectStub(
+          { x: 12.5, y: 0 },
+          stub,
+          style,
+          0.5,
+        );
+        expect(inside).toBe(true);
+        expect(outside).toBe(false);
+      });
+    });
+
     // --- getSelectedAnnotationsFromAnnotation ---
     describe("getSelectedAnnotationsFromAnnotation", () => {
       it("iterates annotations and filters using shouldSelectAnnotation", () => {
@@ -4059,6 +4134,134 @@ describe("AnnotationViewer", () => {
           (call: any[]) => call[0] === "geojs.mouseclick",
         );
         expect(mouseclickCalls.length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    // Regression: clicking an annotation in the viewer (no tool selected)
+    // must set hoveredAnnotationId so the annotation list can page-jump,
+    // scroll to, and highlight the row.
+    describe("click-to-hover navigation", () => {
+      function fireAnnotationLayerMouseclicks(evt: any) {
+        const geoOnCalls = ((wrapper.vm as any).annotationLayer.geoOn as any)
+          .mock.calls;
+        const handlers = geoOnCalls
+          .filter((call: any[]) => call[0] === "geojs.mouseclick")
+          .map((call: any[]) => call[1]);
+        handlers.forEach((handler: any) => handler(evt));
+      }
+
+      it("clicking a point annotation sets hoveredAnnotationId", () => {
+        const ann = makeAnnotation(); // point at (10, 20)
+        mockedAnnotationStore.annotations = [ann];
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith("ann1");
+      });
+
+      it("clicking a stub-rendered (unhydrated) annotation sets hoveredAnnotationId", () => {
+        // Non-point stubs resolve to undefined via getAnnotationFromId; the
+        // hover hit-test must fall back to the stub and its rendered dot.
+        const stub = {
+          id: "stub1",
+          centroid: { x: 10, y: 20 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "polygon",
+          channel: 0,
+          tags: [],
+          color: null,
+          estimatedRadius: 5,
+        };
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        (mockedAnnotationStore.getStub as any).mockImplementation(
+          (id: string) => (id === "stub1" ? stub : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "stub1");
+        geoAnn.options("isStub", true);
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith("stub1");
+      });
+
+      it("clicking empty space clears hoveredAnnotationId", () => {
+        const ann = makeAnnotation();
+        mockedAnnotationStore.annotations = [ann];
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 500, y: 500 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith(null);
+      });
+
+      it("does not set hover when a tool is selected", () => {
+        const ann = makeAnnotation();
+        mockedAnnotationStore.annotations = [ann];
+        mockedStore.selectedTool = {
+          configuration: { type: "create", values: {} },
+          state: null,
+        } as any;
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).not.toHaveBeenCalled();
       });
     });
 

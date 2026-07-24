@@ -172,7 +172,8 @@
         class="mb-2"
       >
         Region (ROI) filters are not applied to this list while browsing a large
-        dataset. Use tag, property, or annotation ID filters to narrow results.
+        dataset (they still apply to the image view). Use tag, property, or
+        annotation ID filters to narrow results.
       </v-alert>
       <!-- Per-query feedback (B2): a server /list query can take ~1s+ at scale,
            so show a clear in-flight affordance with the matched count. The
@@ -315,7 +316,14 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import {
+  ref,
+  computed,
+  watch,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+} from "vue";
 import { debounce } from "lodash";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
@@ -341,6 +349,7 @@ import {
   IAnnotationListSort,
   IAnnotationPropertyValues,
   isHydratedAnnotation,
+  ANNOTATION_LIST_SERVER_THRESHOLD,
 } from "@/store/model";
 
 const allHeaders = [
@@ -385,14 +394,46 @@ const emit = defineEmits<{
 }>();
 
 const annotationRefMap = new Map<string, Element>();
+type AnnotationRefWaiter = (element: Element | null) => void;
+const annotationRefWaiters = new Map<string, Set<AnnotationRefWaiter>>();
+
 function setAnnotationRef(id: string, el: any) {
   if (el) {
     // In Vue 2, component refs resolve to the component instance; get the $el
     const element = el.$el || el;
     annotationRefMap.set(id, element);
+    const waiters = annotationRefWaiters.get(id);
+    if (waiters) {
+      annotationRefWaiters.delete(id);
+      waiters.forEach((resolve) => resolve(element));
+    }
   } else {
     annotationRefMap.delete(id);
   }
+}
+
+function waitForAnnotationRef(
+  id: string,
+  timeoutMs: number = 1500,
+): Promise<Element | null> {
+  const mounted = annotationRefMap.get(id);
+  if (mounted) {
+    return Promise.resolve(mounted);
+  }
+  return new Promise((resolve) => {
+    const waiters = annotationRefWaiters.get(id) ?? new Set();
+    annotationRefWaiters.set(id, waiters);
+    const finish: AnnotationRefWaiter = (element) => {
+      globalThis.clearTimeout(timeout);
+      waiters.delete(finish);
+      if (waiters.size === 0) {
+        annotationRefWaiters.delete(id);
+      }
+      resolve(element);
+    };
+    waiters.add(finish);
+    const timeout = globalThis.setTimeout(() => finish(null), timeoutMs);
+  });
 }
 
 // Template ref
@@ -409,6 +450,16 @@ const addOrRemove = ref<"add" | "remove">("add");
 // These are "from" or "to" v-data-table
 const page = ref(1);
 const itemsPerPage = ref(10);
+// While a click-to-row navigation is in flight, the server-mode options the
+// table showed when it started. Lets onServerOptions tell Vuetify's stale
+// options echo (equal to this snapshot → drop) apart from a genuine user
+// pagination action (anything else → cancel the navigation and honor it).
+let preNavigationOptions: {
+  page: number;
+  itemsPerPage: number;
+  sort: IAnnotationListSort | null;
+} | null = null;
+let serverNavigationSequence = 0;
 const groupBy = ref<string | string[]>([]);
 const sortBy = ref<{ key: string; order: "asc" | "desc" }[]>([]);
 
@@ -428,7 +479,7 @@ const isDeletingAnnotations = computed(() => {
 // derived from it): that getter iterates ALL stubs client-side and applies
 // property filters without property values loaded, so it is both expensive and
 // wrong in server mode. Every shared computed has an isServerMode branch.
-const isServerMode = computed(() => annotationStore.stubOnlyMode);
+const isServerMode = computed(() => annotationStore.isListServerMode);
 
 const serverItemsLength = computed(() => annotationListServer.total);
 
@@ -503,13 +554,32 @@ function onServerOptions(opts: {
   // Vuetify's options composable watches {immediate:true} and emits
   // update:options on mount, which would duplicate the onMounted fetchPage().
   // No-op when the incoming options already match the store state so the
-  // mount-time emit doesn't trigger a second identical request.
+  // mount-time emit doesn't trigger a second identical request. (This also
+  // absorbs a post-navigation reconcile echo carrying the NEW options.)
   if (
     opts.page === annotationListServer.page &&
     opts.itemsPerPage === annotationListServer.pageSize &&
     sortsEqual(newSort, annotationListServer.sort)
   ) {
     return;
+  }
+  // Programmatic click-to-row navigation changes page + rows together. Vuetify
+  // can emit its pre-navigation options while reconciling those props;
+  // treating that echo as a user pagination event immediately fetches the old
+  // page again (the brief flash reported on large lists). Drop ONLY that exact
+  // echo — any other options event is a genuine user action, which wins over
+  // the pending navigation.
+  if (preNavigationOptions) {
+    if (
+      opts.page === preNavigationOptions.page &&
+      opts.itemsPerPage === preNavigationOptions.itemsPerPage &&
+      sortsEqual(newSort, preNavigationOptions.sort)
+    ) {
+      return;
+    }
+    preNavigationOptions = null;
+    serverNavigationSequence += 1;
+    annotationListServer.cancelPendingNavigation();
   }
   annotationListServer.setOptions({
     page: opts.page,
@@ -558,13 +628,12 @@ const listedAnnotations = computed(() => {
   return annotations;
 });
 
-// Defensive scale guard, superseded in practice by stubOnlyMode (server mode):
-// server mode activates at maxVisible = 10,000, below this 20,000 threshold, so
-// the client-side `tooManyToList` branch is effectively unreachable now that the
-// server-driven list (Option B) handles large datasets. Kept as a safety net for
-// any client-mode path that materializes one item per filtered annotation and
+// Defensive scale guard, unreachable in practice: isListServerMode routes any
+// dataset above this same threshold to the server list, so the client path
+// never holds more than this many annotations. Kept as a safety net for any
+// client-mode path that materializes one item per filtered annotation and
 // sorts client-side (which would hang the tab above this many).
-const LIST_ITEM_LIMIT = 20000;
+const LIST_ITEM_LIMIT = ANNOTATION_LIST_SERVER_THRESHOLD;
 
 const tooManyToList = computed(
   () => listedAnnotations.value.length > LIST_ITEM_LIMIT,
@@ -793,27 +862,58 @@ const getPageFromItemId = computed(() => {
 // for external hovers (e.g., hovering an annotation in the image viewer).
 let hoverFromList = false;
 
-// Stacked @Watch("hoveredId") @Watch("itemsPerPage") → single watch
-watch([hoveredId, itemsPerPage], () => {
-  // In server mode the page/scroll-to-hovered logic would read the client
-  // filtered set (via getPageFromItemId → dataTableItems → filteredItems);
-  // skip it entirely so server mode never touches that getter.
-  if (isServerMode.value) {
-    return;
-  }
+async function onHoveredIdOrItemsPerPageChanged() {
+  const navigationSequence = ++serverNavigationSequence;
+  // Cancel an older off-page lookup even when this hover resolves to a row
+  // already mounted on the current page.
+  annotationListServer.cancelPendingNavigation();
   if (hoveredId.value === null) {
+    preNavigationOptions = null;
     hoverFromList = false;
     return;
   }
   if (hoverFromList) {
+    preNavigationOptions = null;
     hoverFromList = false;
     return;
   }
-  // Change page (only for external hovers, e.g., from image viewer)
-  page.value = getPageFromItemId.value(hoveredId.value);
-  // Get the tr element from the ref map if it exists
-  const annotationEl = annotationRefMap.get(hoveredId.value);
-  if (!annotationEl) {
+  const targetId = hoveredId.value;
+  let annotationEl: Element | null | undefined;
+  if (isServerMode.value) {
+    preNavigationOptions = {
+      page: annotationListServer.page,
+      itemsPerPage: annotationListServer.pageSize,
+      sort: annotationListServer.sort,
+    };
+    try {
+      if (!annotationRefMap.has(targetId)) {
+        const loaded = await annotationListServer.fetchPageContaining(targetId);
+        // The user may have hovered/clicked something else while the server was
+        // locating this row. Never scroll to or retain a stale navigation.
+        if (!loaded || hoveredId.value !== targetId) {
+          return;
+        }
+      }
+      // VDataTableServer reconciles its internal pagination after Vue's first
+      // tick. Resolve from the actual row ref instead of guessing how many
+      // ticks that render will take.
+      annotationEl = await waitForAnnotationRef(targetId);
+    } finally {
+      if (navigationSequence === serverNavigationSequence) {
+        await nextTick();
+        preNavigationOptions = null;
+      }
+    }
+  } else {
+    preNavigationOptions = null;
+    page.value = getPageFromItemId.value(targetId);
+    annotationEl = await waitForAnnotationRef(targetId);
+  }
+  if (
+    !annotationEl ||
+    hoveredId.value !== targetId ||
+    navigationSequence !== serverNavigationSequence
+  ) {
     return;
   }
   // Scroll to the element
@@ -821,7 +921,10 @@ watch([hoveredId, itemsPerPage], () => {
     behavior: "smooth",
     block: "nearest",
   });
-});
+}
+
+// Stacked @Watch("hoveredId") @Watch("itemsPerPage") → single watch
+watch([hoveredId, itemsPerPage], onHoveredIdOrItemsPerPageChanged);
 
 // --- Server-mode reactive refetch -----------------------------------------
 // Each watch body is a no-op in client mode (the client set is reactive on its
@@ -846,18 +949,26 @@ watch(localIdFilter, (value) => {
   debouncedServerRefetch();
 });
 
+// Watch a JSON-serialized snapshot rather than the raw getters with
+// { deep: true }: filterStore/propertyStore rebuild fresh array/object
+// references on every genuine mutation, so deep-watching them fires on every
+// unrelated reactive touch, not just real changes (same trap as the
+// currentFilters watch below — see its comment). That spurious refiring calls
+// setOptions({page: 1}) within tens of ms of any real click-to-row
+// navigation, silently resetting the page the user just navigated to.
 watch(
-  [
-    () => filterStore.tagFilter,
-    () => filterStore.propertyFilters,
-    () => filterStore.onlyCurrentFrame,
-    () => filterStore.selectionFilter,
-    () => filterStore.annotationIdFilters,
-    () => propertyStore.displayedPropertyPaths,
-    () => store.xy,
-    () => store.z,
-    () => store.time,
-  ],
+  () =>
+    JSON.stringify([
+      filterStore.tagFilter,
+      filterStore.propertyFilters,
+      filterStore.onlyCurrentFrame,
+      filterStore.selectionFilter,
+      filterStore.annotationIdFilters,
+      propertyStore.displayedPropertyPaths,
+      store.xy,
+      store.z,
+      store.time,
+    ]),
   () => {
     if (!isServerMode.value) {
       return;
@@ -865,7 +976,6 @@ watch(
     annotationListServer.setOptions({ page: 1 });
     debouncedServerRefetch();
   },
-  { deep: true },
 );
 
 // Scope server-mode selection to the current query. The selection set is
@@ -897,8 +1007,41 @@ watch(
   },
 );
 
+// Server mode can now engage outside stub-only mode (fully-fetched dataset
+// above the list threshold), so the mode can flip mid-session: crossing the
+// threshold by creating/deleting annotations, or the initial fetch completing
+// after mount. Fetch page 1 on entry so the table isn't empty/stale.
+watch(isServerMode, (value) => {
+  if (value) {
+    annotationListServer.setOptions({ page: 1 });
+    annotationListServer.fetchPage();
+  }
+});
+
+// In non-stub server mode the dataset is fully loaded client-side, so
+// annotations can be created/edited/deleted locally (drawing tools, undo)
+// without going through this component's server-aware code paths. The server
+// rows would silently go stale; refetch when the client set changes. Stub mode
+// is excluded: annotations[] is empty there and stub-mode mutations already
+// refetch explicitly where needed.
+watch(
+  () => annotationStore.annotations.length,
+  () => {
+    if (isServerMode.value && !annotationStore.stubOnlyMode) {
+      debouncedServerRefetch();
+    }
+  },
+);
+
 onBeforeUnmount(() => {
+  serverNavigationSequence += 1;
+  preNavigationOptions = null;
+  annotationRefWaiters.forEach((waiters) =>
+    waiters.forEach((resolve) => resolve(null)),
+  );
+  annotationRefWaiters.clear();
   debouncedServerRefetch.cancel();
+  annotationListServer.cancelPendingNavigation();
 });
 
 onMounted(() => {
@@ -1010,6 +1153,8 @@ defineExpose({
   columnOptions,
   selectedColumns,
   tableItemClass,
+  setAnnotationRef,
+  waitForAnnotationRef,
   annotationFilteredDialog,
   localIdFilter,
   LIST_ITEM_LIMIT,
@@ -1035,6 +1180,7 @@ defineExpose({
   propertyHeaders,
   goToAnnotationIdLocation,
   hoveredId,
+  onHoveredIdOrItemsPerPageChanged,
   dataTableItems,
   sortBy,
   getPageFromItemId,
@@ -1178,5 +1324,15 @@ td span {
 }
 .compact-table tbody tr td {
   border-bottom: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+}
+
+/* The transparency rule above intentionally wins over Vuetify's table
+   surfaces, but it must not erase interactive row feedback. Apply the color
+   to cells (which cover the row background) with enough specificity to keep a
+   clicked annotation visibly highlighted after the pointer leaves it. */
+.compact-table tbody tr:hover > td,
+.compact-table tbody tr.is-hovered > td,
+.compact-table tbody tr.is-hovered:hover > td {
+  background-color: #616161 !important;
 }
 </style>

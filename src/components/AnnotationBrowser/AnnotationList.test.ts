@@ -71,6 +71,11 @@ vi.mock("@/store/annotation", () => {
     annotationCentroids: {} as Record<string, any>,
     annotations: [],
     annotationIdToIdx: {} as Record<string, number>,
+    // Mirrors the real store getter: server list mode in stub-only mode OR when
+    // the fully-loaded set exceeds the list threshold.
+    get isListServerMode() {
+      return this.stubOnlyMode || this.annotations.length > 20000;
+    },
   };
   Object.defineProperty(state, "annotationsForIteration", {
     get() {
@@ -101,6 +106,10 @@ vi.mock("@/store/filters", () => ({
 }));
 
 const mockFetchPage = vi.fn();
+const mockFetchPageContaining = vi.fn<
+  (annotationId: string) => Promise<boolean>
+>(async () => true);
+const mockCancelPendingNavigation = vi.fn();
 const mockSetOptions = vi.fn();
 const mockSetIdSubstring = vi.fn();
 vi.mock("@/store/annotationListServer", () => ({
@@ -113,6 +122,9 @@ vi.mock("@/store/annotationListServer", () => ({
     sort: null,
     setOptions: (...a: any[]) => mockSetOptions(...a),
     fetchPage: (...a: any[]) => mockFetchPage(...a),
+    fetchPageContaining: (annotationId: string) =>
+      mockFetchPageContaining(annotationId),
+    cancelPendingNavigation: (...a: any[]) => mockCancelPendingNavigation(...a),
     fetchMatchingIds: vi.fn(async () => []),
     setIdSubstring: (...a: any[]) => mockSetIdSubstring(...a),
   },
@@ -236,6 +248,9 @@ describe("AnnotationList", () => {
     // inline module-mock implementation.
     (annotationListServer as any).fetchMatchingIds = vi.fn(async () => []);
     mockFetchPage.mockClear();
+    mockFetchPageContaining.mockClear();
+    mockFetchPageContaining.mockResolvedValue(true);
+    mockCancelPendingNavigation.mockClear();
     mockSetOptions.mockClear();
     mockSetIdSubstring.mockClear();
 
@@ -564,6 +579,23 @@ describe("AnnotationList", () => {
     });
   });
 
+  describe("server mode for large fully-loaded datasets", () => {
+    it("uses the client list at or below the threshold in non-stub mode", () => {
+      (annotationStore as any).annotations = new Array(20000);
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).isServerMode).toBe(false);
+      expect(mockFetchPage).not.toHaveBeenCalled();
+    });
+
+    it("switches to the server list above the threshold in non-stub mode", () => {
+      (annotationStore as any).annotations = new Array(20001);
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).isServerMode).toBe(true);
+      // onMounted fetches the first server page.
+      expect(mockFetchPage).toHaveBeenCalled();
+    });
+  });
+
   describe("list size guard", () => {
     it("tooManyToList is false and items build normally under the limit", () => {
       const ann = makeAnnotation({ id: "ann1" });
@@ -856,6 +888,29 @@ describe("AnnotationList", () => {
       const vm = wrapper.vm as any;
       expect(vm.getPageFromItemId("ann1")).toBe(1);
     });
+
+    it("waits for and scrolls to a row after changing the client page", async () => {
+      (filterStore as any).filteredAnnotations = Array.from(
+        { length: 15 },
+        (_, index) => makeAnnotation({ id: `ann${index + 1}` }),
+      );
+      (annotationStore as any).hoveredAnnotationId = "ann14";
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const scrollIntoView = vi.fn();
+
+      const navigation = vm.onHoveredIdOrItemsPerPageChanged();
+      await Promise.resolve();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      vm.setAnnotationRef("ann14", { scrollIntoView });
+      await navigation;
+
+      expect(vm.page).toBe(2);
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
   });
 
   describe("hoveredId", () => {
@@ -933,7 +988,7 @@ describe("AnnotationList", () => {
       expect(vm.serverRowItems[0].index).toBe(100);
     });
 
-    it("does not invoke filterStore.filteredAnnotations in server mode", () => {
+    it("does not invoke filterStore.filteredAnnotations in server mode", async () => {
       // A throwing getter proves server mode never reads the client set.
       Object.defineProperty(filterStore, "filteredAnnotations", {
         configurable: true,
@@ -954,15 +1009,107 @@ describe("AnnotationList", () => {
       expect(vm.serverItemsLength).toBe(7);
       // The hover watch must also stay off the client set: simulate an external
       // hover (e.g. from the image viewer) and let the watcher run.
+      vm.setAnnotationRef("srv1", { scrollIntoView: vi.fn() });
       (annotationStore as any).hoveredAnnotationId = "srv1";
       vm.itemsPerPage = 200;
-      expect(() => wrapper.vm.$nextTick()).not.toThrow();
+      await expect(wrapper.vm.$nextTick()).resolves.toBeUndefined();
       // Restore a plain data property so later tests aren't affected.
       Object.defineProperty(filterStore, "filteredAnnotations", {
         configurable: true,
         writable: true,
         value: [],
       });
+    });
+
+    it("loads the page containing an externally hovered off-page row", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).hoveredAnnotationId = "off-page";
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const scrollIntoView = vi.fn();
+      mockFetchPageContaining.mockClear();
+
+      const navigation = vm.onHoveredIdOrItemsPerPageChanged();
+      await Promise.resolve();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      vm.setAnnotationRef("off-page", { scrollIntoView });
+      await navigation;
+
+      expect(mockFetchPageContaining).toHaveBeenCalledWith("off-page");
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
+
+    it("drops Vuetify's stale options echo while an anchor page is mounting", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).hoveredAnnotationId = "off-page";
+      let finishPageLookup!: (loaded: boolean) => void;
+      mockFetchPageContaining.mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishPageLookup = resolve;
+          }),
+      );
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const scrollIntoView = vi.fn();
+      mockSetOptions.mockClear();
+      mockFetchPage.mockClear();
+
+      const navigation = vm.onHoveredIdOrItemsPerPageChanged();
+      // The anchor result lands and moves the store to the target page...
+      finishPageLookup(true);
+      (annotationListServer as any).page = 5;
+      await Promise.resolve();
+      // ...then Vuetify re-emits the PRE-navigation options while reconciling.
+      // That stale echo must be dropped, and must not cancel the navigation.
+      vm.onServerOptions({ page: 1, itemsPerPage: 50, sortBy: [] });
+
+      expect(mockSetOptions).not.toHaveBeenCalled();
+      expect(mockFetchPage).not.toHaveBeenCalled();
+
+      vm.setAnnotationRef("off-page", { scrollIntoView });
+      await navigation;
+      expect(scrollIntoView).toHaveBeenCalled();
+      (annotationListServer as any).page = 1;
+    });
+
+    it("lets a user pagination click cancel an anchor navigation", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).hoveredAnnotationId = "off-page";
+      let finishPageLookup!: (loaded: boolean) => void;
+      mockFetchPageContaining.mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishPageLookup = resolve;
+          }),
+      );
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const scrollIntoView = vi.fn();
+      mockSetOptions.mockClear();
+      mockFetchPage.mockClear();
+
+      const navigation = vm.onHoveredIdOrItemsPerPageChanged();
+      mockCancelPendingNavigation.mockClear();
+      // A genuine pagination click (differs from both the pre-navigation
+      // snapshot and the store state) wins over the pending navigation.
+      vm.onServerOptions({ page: 2, itemsPerPage: 50, sortBy: [] });
+
+      expect(mockCancelPendingNavigation).toHaveBeenCalled();
+      expect(mockSetOptions).toHaveBeenCalledWith({
+        page: 2,
+        pageSize: 50,
+        sort: null,
+      });
+      expect(mockFetchPage).toHaveBeenCalled();
+
+      finishPageLookup(true);
+      vm.setAnnotationRef("off-page", { scrollIntoView });
+      await navigation;
+      expect(scrollIntoView).not.toHaveBeenCalled();
     });
 
     it("selectAllValue uses server total + selectedAnnotationIds in server mode", () => {

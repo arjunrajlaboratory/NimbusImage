@@ -15,7 +15,7 @@ NimbusImage vocabulary:
   (free-text labels like "nucleus"), a channel, a location (XY/Z/Time) and an
   optional display color. Annotations can be selected and filtered.
 - "Tools" live in the collection's toolset. Manual tools are used by hand;
-  worker tools run automated algorithms (Cellpose, Piscis, ...) in Docker
+  worker tools run automated algorithms (Cellpose-SAM, Piscis, ...) in Docker
   containers as background jobs.
 
 How to work:
@@ -35,6 +35,30 @@ How to work:
   analyzed later, so an untagged tool breaks downstream workflows. It adds the
   tool but does not activate it — use select_tool afterward, or run_worker for
   a worker tool.
+- Workers have parameters (model choice, channels, diameter, thresholds, ...).
+  Before creating a worker tool (create_tool), defining a property
+  (create_property) or running a worker (run_worker), call get_worker_interface
+  for its image and fill in workerInterfaceValues deliberately: always set
+  every required parameter and any channel/select parameter — built-in
+  defaults (channel 0, an empty selection) are usually wrong for the user's
+  dataset. Pick values from what the user asked for (e.g. which stain marks
+  nuclei vs cytoplasm). Values passed to create_tool are saved with the tool
+  and used whenever it runs; run_worker can still override them for a single
+  run.
+- get_worker_interface returns, alongside each parameter's `type`, a
+  `valueFormats` guide (the exact shape each type's value must take) and a
+  `channels` list (the dataset's channel index↔name mapping). READ BOTH and
+  format every value accordingly. In particular:
+  - "channel": a single 0-based channel index NUMBER (not a name). Look up the
+    index in `channels` — e.g. if DAPI is index 0, pass 0.
+  - "channelCheckboxes" (used for the model's input "slots"): an ARRAY of
+    0-based channel indices to select, e.g. [0] to use the DAPI channel in
+    channels. Do NOT pass the index as a map value like {"0": 0} — that
+    selects nothing and the worker fails with "No channel selected".
+  - "select": exactly one string from that parameter's `items`.
+  - "notes": informational only — never set a value for it.
+  A worker with input slots (e.g. Cellpose "Channel for Slot 1/2/3") needs at
+  least the required first slot set to the right channel.
 - You can compute measurements (properties) on annotations. list_properties
   shows what is defined; create_property defines one from a property worker
   (a list_workers image whose isPropertyWorker is true) for a given shape/tags;

@@ -387,12 +387,24 @@
     </v-row>
 
     <!-- Progress bar and status for transcoding -->
-    <v-card class="mt-4" v-if="isUploading">
+    <v-card class="mt-4" v-if="isUploading || generationErrorMessage">
       <v-card-text>
         <div class="d-flex align-center mb-2">
-          <div class="text-body-2 text-medium-emphasis mr-3">
+          <div
+            v-if="!generationErrorMessage"
+            class="text-body-2 text-medium-emphasis mr-3"
+          >
             {{ progressStatusText }}
           </div>
+          <v-alert
+            v-else
+            type="error"
+            variant="tonal"
+            density="compact"
+            class="mr-3"
+          >
+            {{ generationErrorMessage }}
+          </v-alert>
           <v-spacer></v-spacer>
           <v-btn
             size="small"
@@ -406,7 +418,7 @@
           </v-btn>
         </div>
         <v-progress-linear
-          v-if="transcodeProgress !== undefined"
+          v-if="transcodeProgress !== undefined && !generationErrorMessage"
           :model-value="transcodeProgress"
           height="20"
           striped
@@ -607,6 +619,7 @@ const emit = defineEmits<{
   (e: "generatedJson", jsonId: string | null, config: any): void;
   (e: "configData", data: any): void;
   (e: "log", logs: string): void;
+  (e: "generationError", message: string): void;
 }>();
 
 const router = useRouter();
@@ -621,6 +634,7 @@ const transcode = ref(false);
 
 const isUploading = ref(false);
 const logs = ref("");
+const generationErrorMessage = ref<string | null>(null);
 
 const showLogDialog = ref(false);
 const showCopySnackbar = ref(false);
@@ -1800,6 +1814,7 @@ async function generateJson(): Promise<string | null> {
 
   logs.value = "";
   isUploading.value = true;
+  generationErrorMessage.value = null;
   transcodeProgress.value = undefined;
   if (transcode.value) {
     progressStatusText.value = "Preparing transcoding";
@@ -1856,7 +1871,14 @@ async function generateJson(): Promise<string | null> {
     return itemId;
   } catch (error) {
     logError("Failed to create multi source:", error);
+    generationErrorMessage.value =
+      error instanceof Error && error.message
+        ? error.message
+        : "Failed to configure the dataset. See the log for details.";
+    emit("generationError", generationErrorMessage.value);
     return null;
+  } finally {
+    isUploading.value = false;
   }
 }
 
@@ -2015,6 +2037,7 @@ defineExpose({
   assignmentItems,
   submitError,
   isRGBAssignmentValid,
+  generationErrorMessage,
   // Methods
   detectColorVsChannels,
   sliceAndJoin,

@@ -146,8 +146,8 @@ Flag `except Exception:` or bare `except:`. These swallow errors like KeyboardIn
 
 ### 10. Public Endpoint Input Validation (most-recurring external-review finding)
 For every new or modified `@access.public` endpoint:
-- Any `.get()` / `len()` / `int()` / indexing on request data must be preceded by an inline `isinstance` type check that raises `RestException(code=400, ...)`. There is no shared validation helper module — guard inline (real example: `server/api/annotation.py::updateMultiple`). A malformed payload must produce a clean 400, never an uncaught 500.
-- Caller-supplied ObjectId strings converted with `except bson.errors.InvalidId` (NOT `except ValueError` — InvalidId is not a ValueError) at the API boundary.
+- Any `.get()` / `len()` / `int()` / indexing on request data must be validated at the API boundary via the shared helpers in `server/helpers/validation.py` (`requireObjectBody`, `requireList`, `requireObjectId`, `requireInt`, `validateListInputs`, ...), which raise `RestException(code=400, ...)`. Flag new/edited endpoints that hand-roll inline `isinstance` guards instead of calling these. A malformed payload must produce a clean 400, never an uncaught 500. (Applies to `@access.user` endpoints too, not only `@access.public`.)
+- Caller-supplied ObjectId strings converted with `except (bson.errors.InvalidId, TypeError)` at the API boundary (InvalidId for a bad hex string, TypeError for a non-string like `{"datasetId": 123}`; InvalidId is NOT a ValueError). `requireObjectId` already does this.
 - Counts/limits clamped to a `MAX_*` constant — unauthenticated callers must not be able to force unbounded DB or serialization work.
 - When one endpoint has the gap, check sibling public endpoints in the same file — this pattern recurs in clusters.
 

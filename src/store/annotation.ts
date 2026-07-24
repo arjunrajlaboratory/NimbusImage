@@ -34,6 +34,7 @@ import {
   type THydrationMode,
   type IVisibilityConfig,
   resolveVisibilityConfig,
+  ANNOTATION_LIST_SERVER_THRESHOLD,
 } from "./model";
 import type AnnotationsAPI from "./AnnotationsAPI";
 
@@ -108,6 +109,20 @@ export class Annotations extends VuexModule {
 
   // When true, annotations[] is empty and all metadata lives in annotationStubs.
   stubOnlyMode: boolean = false;
+
+  // Whether the annotation browser list should use the backend-paginated
+  // (server) list instead of materializing a client-side v-data-table. True in
+  // stub-only mode (the client has no full annotations to list) and for
+  // fully-fetched datasets too large to sort/render as client table rows —
+  // possible because stubThreshold (a data-loading knob) can sit well above
+  // the table's materialization limit. Note: the server list cannot apply ROI
+  // filters (a client-side polygon test); the list UI surfaces a warning.
+  get isListServerMode() {
+    return (
+      this.stubOnlyMode ||
+      this.annotations.length > ANNOTATION_LIST_SERVER_THRESHOLD
+    );
+  }
 
   get allAnnotationIds() {
     if (this.stubOnlyMode) {
