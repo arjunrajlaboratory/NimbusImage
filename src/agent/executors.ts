@@ -1159,25 +1159,32 @@ const registry: { [name: string]: IAgentToolEntry } = {
           "Provide at least one of color, visible, contrast, name",
         );
       }
-      if (Object.keys(delta).length > 0) {
+      const contrast = input.contrast;
+      // Default matches the UI slider: a personal view override. Pass
+      // contrastScope "configuration" to change the shared collection
+      // instead (persisted for everyone using the collection).
+      if (contrast != null && input.contrastScope === "configuration") {
+        // Both target the configuration's "layers" key, so write them
+        // together: two separate writes could leave the shared collection
+        // partially updated if the second failed (Codex P2 on PR #1262).
         await persistOrThrow("layer update", () =>
-          main.changeLayer({ layerId: layer.id, delta, throwOnError: true }),
+          main.saveContrastInConfiguration({
+            layerId: layer.id,
+            contrast,
+            delta,
+            throwOnError: true,
+          }),
         );
-      }
-      if (input.contrast != null) {
-        const contrast = input.contrast;
-        // Default matches the UI slider: a personal view override. Pass
-        // contrastScope "configuration" to change the shared collection
-        // instead (persisted for everyone using the collection).
-        if (input.contrastScope === "configuration") {
-          await persistOrThrow("contrast", () =>
-            main.saveContrastInConfiguration({
-              layerId: layer.id,
-              contrast,
-              throwOnError: true,
-            }),
+      } else {
+        if (Object.keys(delta).length > 0) {
+          await persistOrThrow("layer update", () =>
+            main.changeLayer({ layerId: layer.id, delta, throwOnError: true }),
           );
-        } else {
+        }
+        // A view-scoped contrast lands in the dataset view, a different
+        // resource from the configuration, so it is necessarily a second
+        // write - there is no single call that covers both.
+        if (contrast != null) {
           await persistOrThrow("contrast", () =>
             main.saveContrastInView({
               layerId: layer.id,

@@ -2508,16 +2508,24 @@ export class Main extends VuexModule {
   async saveContrastInConfiguration({
     layerId,
     contrast,
+    delta,
     throwOnError,
   }: {
     layerId: string;
     contrast: IContrast;
+    // Extra layer fields to write in the SAME configuration sync as the
+    // contrast. The AI panel's update_layer can change colour/name/visibility
+    // and a collection-scoped contrast in one call; sending them as two
+    // changeLayer calls wrote the "layers" key twice and could leave the
+    // collection partially updated when the second failed (Codex P2 on
+    // PR #1262).
+    delta?: Partial<IDisplayLayer>;
     // See changeLayer: opt-in error propagation for the AI panel (#1239).
     throwOnError?: boolean;
   }) {
     await this.changeLayer({
       layerId,
-      delta: { contrast },
+      delta: { ...delta, contrast },
       sync: true,
       throwOnError,
     });

@@ -1011,9 +1011,35 @@ describe("update_layer contrast scope", () => {
     expect(mockMain.saveContrastInConfiguration).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
+      delta: {},
       throwOnError: true,
     });
     expect(mockMain.saveContrastInView).not.toHaveBeenCalled();
+  });
+
+  it("writes layer fields and a collection-scoped contrast in one call", async () => {
+    // Both land in the configuration's "layers" key. Two separate writes
+    // could leave the shared collection partially updated if the second
+    // failed (Codex P2 on PR #1262).
+    await executeAgentTool(
+      "update_layer",
+      {
+        layer: "l1",
+        color: "#ff0000",
+        contrast,
+        contrastScope: "configuration",
+      },
+      context,
+    );
+    expect(mockMain.saveContrastInConfiguration).toHaveBeenCalledTimes(1);
+    expect(mockMain.saveContrastInConfiguration).toHaveBeenCalledWith({
+      layerId: "l1",
+      contrast,
+      delta: { color: "#ff0000" },
+      throwOnError: true,
+    });
+    // No separate changeLayer write for the colour.
+    expect(mockMain.changeLayer).not.toHaveBeenCalled();
   });
 });
 
