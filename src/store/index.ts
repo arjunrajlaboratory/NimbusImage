@@ -80,6 +80,10 @@ import {
   buildAnnotationBrowserConfig,
   resolveAnnotationBrowserConfig,
 } from "@/utils/annotationBrowserConfig";
+import {
+  storageSeverityFromPercentage,
+  TStorageSeverity,
+} from "@/utils/storage";
 
 import persister from "./Persister";
 import store from "./root";
@@ -509,15 +513,27 @@ export class Main extends VuexModule {
   // no quota (unlimited) or usage hasn't been fetched yet.
   get storageUsagePercentage(): number | null {
     const info = this.userStorageInfo;
-    if (!info || info.quota == null || info.quota <= 0) {
+    // A null quota means unlimited storage — there is no percentage to show.
+    // A zero quota is a real "no storage allowed" limit (girder-user-quota
+    // blocks every upload against it), so any usage is at/over it: report
+    // 100% (this also avoids dividing by zero).
+    if (!info || info.quota == null) {
       return null;
+    }
+    if (info.quota <= 0) {
+      return 100;
     }
     return (info.used / info.quota) * 100;
   }
 
-  get isNearStorageLimit() {
-    const percentage = this.storageUsagePercentage;
-    return percentage != null && percentage > 90;
+  // Severity of the current storage usage, escalating from "ok" to "warning"
+  // to "error" at the shared thresholds in @/utils/storage.
+  get storageSeverity(): TStorageSeverity {
+    return storageSeverityFromPercentage(this.storageUsagePercentage);
+  }
+
+  get isNearStorageLimit(): boolean {
+    return this.storageSeverity !== "ok";
   }
 
   get userChannelColors() {

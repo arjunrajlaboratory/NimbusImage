@@ -58,22 +58,14 @@ import { computed } from "vue";
 import { useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 import { formatSize } from "@/utils/conversion";
+import { storageSeverityColor } from "@/utils/storage";
 
 const router = useRouter();
 
 const storageInfo = computed(() => store.userStorageInfo);
 const usagePercentage = computed(() => store.storageUsagePercentage);
 
-const usageColor = computed(() => {
-  const percentage = usagePercentage.value ?? 0;
-  if (percentage > 95) {
-    return "error";
-  }
-  if (percentage > 90) {
-    return "warning";
-  }
-  return "primary";
-});
+const usageColor = computed(() => storageSeverityColor(store.storageSeverity));
 
 async function logout() {
   await store.logout();

@@ -56,13 +56,12 @@
       <template #activator="{ props: activatorProps }">
         <v-btn variant="text" icon size="small" v-bind="activatorProps">
           <v-badge
-            v-if="store.isNearStorageLimit"
+            :model-value="store.isNearStorageLimit"
             dot
             :color="storageBadgeColor"
           >
             <v-icon>mdi-account-circle</v-icon>
           </v-badge>
-          <v-icon v-else>mdi-account-circle</v-icon>
         </v-btn>
       </template>
       <v-card>
@@ -76,6 +75,7 @@
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
+import { storageSeverityColor } from "@/utils/storage";
 import UserProfileSettings from "@/layout/UserProfileSettings.vue";
 import UserMenuLoginForm from "@/layout/UserMenuLoginForm.vue";
 
@@ -114,7 +114,7 @@ watch(userMenu, (isOpen) => {
 });
 
 const storageBadgeColor = computed(() =>
-  (store.storageUsagePercentage ?? 0) > 95 ? "error" : "warning",
+  storageSeverityColor(store.storageSeverity),
 );
 
 defineExpose({ userMenu, isDomainLocked, domain, loggedInOrOut });
