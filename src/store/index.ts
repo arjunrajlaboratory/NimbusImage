@@ -2120,7 +2120,10 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true because this rolls back and rethrows so the caller can
+  // report the real reason (see syncConfiguration). Third link in the
+  // create_property chain the AI panel reports on (#1239).
+  @Action({ rawError: true })
   async updateConfigurationProperties(propertyIds: string[]) {
     const configuration = this.configuration;
     if (!configuration) {

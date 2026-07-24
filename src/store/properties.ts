@@ -767,7 +767,11 @@ export class Properties extends VuexModule {
     this.properties = [...properties];
   }
 
-  @Action
+  // rawError: true because this rolls back and rethrows so the caller can
+  // report the real reason; a bare @Action would replace the message with
+  // vuex-module-decorators' generic ERR_ACTION_ACCESS_UNDEFINED text. Part of
+  // the create_property chain the AI panel reports on (#1239).
+  @Action({ rawError: true })
   protected async setProperties(properties: IAnnotationProperty[]) {
     const previous = this.properties;
     this.setPropertiesImpl(properties);
@@ -910,7 +914,10 @@ export class Properties extends VuexModule {
     );
   }
 
-  @Action
+  // rawError: true because both awaits here propagate on failure (the
+  // annotation_property POST, and the propertyIds sync inside setProperties)
+  // and the AI panel reports that reason to the user. See setProperties.
+  @Action({ rawError: true })
   async createProperty(property: IAnnotationPropertyConfiguration) {
     const newProperty = await this.propertiesAPI.createProperty(property);
     if (newProperty) {
