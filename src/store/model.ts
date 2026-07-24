@@ -1597,6 +1597,10 @@ export interface IAnnotationListQuery {
   propertyPaths: string[][];
   offset: number;
   limit: number;
+  // When supplied, the server ignores `offset` and returns the page containing
+  // this annotation under the same filters and sort. `offset` in the response
+  // is null when the annotation is not part of the filtered result.
+  anchorId?: string;
 }
 
 // A server list row: stub fields + the requested property values.
@@ -1608,6 +1612,7 @@ export interface IAnnotationListRow extends IAnnotationStub {
 export interface IAnnotationListPage {
   total: number;
   rows: IAnnotationListRow[];
+  offset?: number | null;
 }
 
 export type THydrationMode = "shapes" | "dots";

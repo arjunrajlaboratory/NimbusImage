@@ -19,6 +19,7 @@ describe("AnnotationsAPI.fetchAnnotationListPage", () => {
     const { api, client } = makeApi(async () => ({
       data: {
         total: 1,
+        offset: 0,
         rows: [
           {
             _id: "a1",
@@ -47,6 +48,7 @@ describe("AnnotationsAPI.fetchAnnotationListPage", () => {
       expect.objectContaining({ datasetId: "ds" }),
     );
     expect(page.total).toBe(1);
+    expect(page.offset).toBe(0);
     expect(page.rows[0].id).toBe("a1");
     expect(page.rows[0].name).toBe("Cell 1");
     expect((page.rows[0].values as any).p.Area).toBe(9);
@@ -78,6 +80,45 @@ describe("AnnotationsAPI.fetchAnnotationListPage", () => {
       limit: 50,
     });
     expect(page.rows[0].name).toBeNull();
+  });
+
+  it("posts anchorId and preserves a null offset when it is filtered out", async () => {
+    const { api, client } = makeApi(async () => ({
+      data: { total: 12, offset: null, rows: [] },
+    }));
+    const page = await api.fetchAnnotationListPage({
+      datasetId: "ds",
+      filters: {},
+      sort: null,
+      propertyPaths: [],
+      offset: 0,
+      limit: 10,
+      anchorId: "a12",
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "upenn_annotation/list",
+      expect.objectContaining({ anchorId: "a12" }),
+    );
+    expect(page.offset).toBeNull();
+    expect(page.rows).toEqual([]);
+  });
+
+  it("does not substitute the request offset when the response lacks one", async () => {
+    // A response without `offset` means an outdated backend that ignored
+    // anchorId; falling back to the request offset would navigate to page 1.
+    const { api } = makeApi(async () => ({
+      data: { total: 12, rows: [] },
+    }));
+    const page = await api.fetchAnnotationListPage({
+      datasetId: "ds",
+      filters: {},
+      sort: null,
+      propertyPaths: [],
+      offset: 0,
+      limit: 10,
+      anchorId: "a12",
+    });
+    expect(page.offset).toBeUndefined();
   });
 });
 
