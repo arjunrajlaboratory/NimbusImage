@@ -25,7 +25,12 @@ import {
   captureInterfaceScreenshot,
   captureViewportScreenshot,
 } from "@/utils/interfaceCapture";
-import { getDefault } from "@/utils/workerInterface";
+import {
+  getDefault,
+  normalizeWorkerInterfaceValue,
+  WORKER_INTERFACE_VALUE_FORMATS,
+  type IChannelContext,
+} from "@/utils/workerInterface";
 import { registerPlot, type IAgentPlot } from "./plotRegistry";
 import {
   MAX_BOX_POINTS,
@@ -364,10 +369,26 @@ async function resolveWorkerInterfaceValues(
         `Valid parameters: ${Object.keys(workerInterface).join(", ")}`,
     );
   }
+  const channelContext = buildChannelContext();
   const values: IWorkerInterfaceValues = {};
   for (const id in workerInterface) {
     if (id in overrides) {
-      values[id] = overrides[id];
+      // Normalize the agent-supplied value into the canonical shape (channel
+      // names/indices -> the {index: boolean} map the worker expects, etc.).
+      // A bad value throws here as a ToolExecutionError so the agent gets
+      // actionable feedback instead of saving a tool that fails at run time.
+      try {
+        values[id] = normalizeWorkerInterfaceValue(
+          workerInterface[id],
+          overrides[id],
+          channelContext,
+          id,
+        );
+      } catch (error: any) {
+        throw new ToolExecutionError(
+          error?.message ?? `Invalid value for worker parameter "${id}"`,
+        );
+      }
     } else if (id in saved) {
       values[id] = saved[id];
     } else {
@@ -378,6 +399,24 @@ async function resolveWorkerInterfaceValues(
     }
   }
   return values;
+}
+
+// Channel index<->name context for resolving agent-supplied channel references
+// against the open dataset. Empty when no dataset is open: index references
+// then pass through unvalidated, and name references can't resolve at all
+// (create_tool does not require a dataset, so this path is reachable).
+function buildChannelContext(): IChannelContext {
+  const dataset = main.dataset;
+  const nameToIndex = new Map<string, number>();
+  if (dataset) {
+    for (const channel of dataset.channels) {
+      const name = dataset.channelNames.get(channel);
+      if (name) {
+        nameToIndex.set(name.toLowerCase(), channel);
+      }
+    }
+  }
+  return { channels: dataset ? dataset.channels.slice() : [], nameToIndex };
 }
 
 // The viewer display options the agent can toggle (all local view state,
@@ -784,7 +823,32 @@ const registry: { [name: string]: IAgentToolEntry } = {
           `Could not fetch the interface for worker "${input.image}"`,
         );
       }
-      return { result: { image: input.image, interface: workerInterface } };
+      // The interface only carries a `type` per parameter, not the shape its
+      // value must take — so the agent gets a per-type format guide (limited to
+      // the types actually present) plus the dataset's channel index↔name list,
+      // which it needs to fill channel parameters correctly.
+      const typesPresent = new Set(
+        Object.values(workerInterface).map((element) => element.type),
+      );
+      const valueFormats: { [type: string]: string } = {};
+      for (const type of typesPresent) {
+        valueFormats[type] = WORKER_INTERFACE_VALUE_FORMATS[type];
+      }
+      const dataset = main.dataset;
+      const channels = dataset
+        ? dataset.channels.map((channel) => ({
+            index: channel,
+            name: dataset.channelNames.get(channel) ?? `Channel ${channel}`,
+          }))
+        : [];
+      return {
+        result: {
+          image: input.image,
+          interface: workerInterface,
+          valueFormats,
+          channels,
+        },
+      };
     },
   },
 
@@ -1329,6 +1393,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       channelName?: string;
       name?: string;
       tags?: string[];
+      workerInterfaceValues?: IWorkerInterfaceValues;
     }) => {
       requireLogin();
       if (!main.configuration) {
@@ -1339,6 +1404,11 @@ const registry: { [name: string]: IAgentToolEntry } = {
       if (hasManual === hasWorker) {
         throw new ToolExecutionError(
           "Provide exactly one of manualShape or workerImage",
+        );
+      }
+      if (hasManual && input.workerInterfaceValues != null) {
+        throw new ToolExecutionError(
+          "workerInterfaceValues only applies to worker tools",
         );
       }
       let entry;
@@ -1384,10 +1454,21 @@ const registry: { [name: string]: IAgentToolEntry } = {
           }`,
         );
       }
+      // Worker tools are saved with fully-resolved parameter values (model
+      // overrides on top of interface defaults), so the tool is runnable from
+      // the UI and pipelines with the intended parameters, not blank slots.
+      let workerInterfaceValues: IWorkerInterfaceValues | undefined;
+      if (input.workerImage != null) {
+        workerInterfaceValues = await resolveWorkerInterfaceValues(
+          input.workerImage,
+          input.workerInterfaceValues ?? {},
+        );
+      }
       const tool = buildToolConfiguration(entry, {
         channelName: input.channelName,
         name: input.name,
         tags: input.tags,
+        workerInterfaceValues,
       });
       if (!tool) {
         throw new ToolExecutionError(
@@ -1402,6 +1483,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
           type: tool.type,
           channelName: input.channelName ?? null,
           tags: input.tags ?? [],
+          parameters: workerInterfaceValues ?? null,
         },
       };
     },
@@ -2094,7 +2176,14 @@ export function describeAgentToolCall(name: string, input: any): string {
         Array.isArray(input?.tags) && input.tags.length
           ? ` tagging ${joinList(input.tags)}`
           : "";
-      return `Set up a ${kind} tool${channel}${tags}`;
+      const parameterNames =
+        typeof input?.workerInterfaceValues === "object"
+          ? Object.keys(input.workerInterfaceValues ?? {})
+          : [];
+      const parameters = parameterNames.length
+        ? ` (setting ${joinList(parameterNames)})`
+        : "";
+      return `Set up a ${kind} tool${channel}${tags}${parameters}`;
     }
     case "set_display_options":
       return "Change viewer display options";

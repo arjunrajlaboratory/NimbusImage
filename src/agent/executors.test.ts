@@ -646,6 +646,98 @@ describe("executeAgentTool", () => {
     expect(result.type).toBe("segmentation");
   });
 
+  it("saves resolved worker parameters on a created worker tool", async () => {
+    const { buildToolConfiguration } = await import(
+      "@/tools/creation/toolFromCatalog"
+    );
+    // Overrides land on top of interface defaults, so the saved tool has a
+    // concrete value for every parameter slot.
+    mockProperties.getWorkerInterface = vi.fn(() => ({
+      Channel: { type: "channel", required: true },
+      Diameter: { type: "number", default: 30 },
+    }));
+    const { result } = await executeAgentTool(
+      "create_tool",
+      { workerImage: "img:1", workerInterfaceValues: { Channel: 1 } },
+      context,
+    );
+    expect(buildToolConfiguration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workerInterfaceValues: { Channel: 1, Diameter: 30 },
+      }),
+    );
+    expect(result.parameters).toEqual({ Channel: 1, Diameter: 30 });
+  });
+
+  it("resolves a channel name and normalizes channelCheckboxes", async () => {
+    // The mock dataset has channels 0 (DAPI) and 1 (Cy3). The agent may pass a
+    // channel name, an index, or an array; all normalize to the on-disk shape.
+    mockProperties.getWorkerInterface = vi.fn(() => ({
+      Channel: { type: "channel", required: true },
+      "Channel for Slot 1": { type: "channelCheckboxes" },
+    }));
+    const { result } = await executeAgentTool(
+      "create_tool",
+      {
+        workerImage: "img:1",
+        workerInterfaceValues: {
+          Channel: "DAPI",
+          "Channel for Slot 1": ["DAPI"],
+        },
+      },
+      context,
+    );
+    expect(result.parameters).toEqual({
+      Channel: 0,
+      "Channel for Slot 1": { 0: true, 1: false },
+    });
+  });
+
+  it("rejects a channelCheckboxes value that selects nothing", async () => {
+    // The original bug: {"0": 0} means "channel 0" to the model but 0 is falsy,
+    // so no channel is selected and the worker fails with "No channel selected".
+    mockProperties.getWorkerInterface = vi.fn(() => ({
+      "Channel for Slot 1": { type: "channelCheckboxes" },
+    }));
+    await expect(
+      executeAgentTool(
+        "create_tool",
+        {
+          workerImage: "img:1",
+          workerInterfaceValues: { "Channel for Slot 1": { 0: 0 } },
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown worker parameters on create_tool", async () => {
+    mockProperties.getWorkerInterface = vi.fn(() => ({
+      Diameter: { type: "number", default: 30 },
+    }));
+    await expect(
+      executeAgentTool(
+        "create_tool",
+        { workerImage: "img:1", workerInterfaceValues: { Bogus: 1 } },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("rejects workerInterfaceValues on a manual tool", async () => {
+    await expect(
+      executeAgentTool(
+        "create_tool",
+        { manualShape: "point", workerInterfaceValues: { Diameter: 30 } },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
+  });
+
   it("rejects providing both or neither of manualShape/workerImage", async () => {
     await expect(
       executeAgentTool(
