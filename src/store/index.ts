@@ -1784,7 +1784,12 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true is required here because this action throws on failure
+  // (e.g. a storage quota breach) and callers rely on reading the original
+  // Error's message. Without it, vuex-module-decorators wraps any thrown
+  // error in a generic "ERR_ACTION_ACCESS_UNDEFINED" message, discarding the
+  // actual failure reason.
+  @Action({ rawError: true })
   async addMultiSourceMetadata({
     parentId,
     metadata,
