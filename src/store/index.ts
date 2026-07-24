@@ -912,7 +912,9 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async addToolToConfiguration(
     // Accept a bare tool or {tool, throwOnError}. throwOnError lets the AI
     // panel surface a failed persist (issue #1239); existing callers pass the
@@ -2150,7 +2152,13 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true is required because the throwOnError path rethrows the
+  // backend error and callers (the AI panel) read the original message.
+  // Without it, vuex-module-decorators replaces the error with a generic
+  // "ERR_ACTION_ACCESS_UNDEFINED" message. Same rationale as
+  // addMultiSourceMetadata. It is a no-op for the default swallow path,
+  // which never throws.
+  @Action({ rawError: true })
   async syncConfiguration(
     payload:
       | keyof IDatasetConfigurationBase
@@ -2416,7 +2424,9 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async setLayerMode(
     // Accept either a bare mode or {mode, throwOnError}, mirroring
     // syncConfiguration's payload shape. throwOnError lets the AI panel
@@ -2492,7 +2502,9 @@ export class Main extends VuexModule {
     });
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async saveContrastInConfiguration({
     layerId,
     contrast,
@@ -2520,7 +2532,9 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async saveContrastInView({
     layerId,
     contrast,
@@ -2579,7 +2593,9 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async saveScaleInConfiguration({
     itemId,
     scale,
@@ -2643,7 +2659,9 @@ export class Main extends VuexModule {
     confLayers.splice(index, 1, Object.assign({}, layer, delta));
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async changeLayer(args: {
     layerId: string;
     delta: Partial<IDisplayLayer>;
