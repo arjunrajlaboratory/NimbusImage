@@ -1055,7 +1055,12 @@ const registry: { [name: string]: IAgentToolEntry } = {
       }
       const LENGTH_UNITS = ["nm", "µm", "mm", "m"];
       const TIME_UNITS = ["ms", "s", "m", "h", "d"];
-      const apply = async (
+      // Validate every requested field BEFORE writing any of them, then
+      // persist the whole scales object in one backend write. Validating and
+      // saving field-by-field issued a write per field and left the shared
+      // collection partially updated when a later field was rejected - by the
+      // backend, or by this validation (Codex P2 on PR #1262).
+      const validate = (
         itemId: "pixelSize" | "zStep" | "tStep",
         scale: { value: number; unit: string },
         units: string[],
@@ -1072,35 +1077,34 @@ const registry: { [name: string]: IAgentToolEntry } = {
         }
         // scale.unit was just validated against the allowed unit list, so the
         // narrowing cast to the branded unit type is sound here.
-        await persistOrThrow(`${itemId} scale`, () =>
-          main.saveScaleInConfiguration({
-            itemId,
-            scale: {
-              value: scale.value,
-              unit: scale.unit as TUnitLength | TUnitTime,
-            } as IScaleInformation<TUnitLength | TUnitTime>,
-            throwOnError: true,
-          }),
-        );
+        return {
+          value: scale.value,
+          unit: scale.unit as TUnitLength | TUnitTime,
+        } as IScaleInformation<TUnitLength | TUnitTime>;
       };
-      let changed = false;
+      const scales: Partial<
+        Record<
+          "pixelSize" | "zStep" | "tStep",
+          IScaleInformation<TUnitLength | TUnitTime>
+        >
+      > = {};
       if (input.pixelSize) {
-        await apply("pixelSize", input.pixelSize, LENGTH_UNITS);
-        changed = true;
+        scales.pixelSize = validate("pixelSize", input.pixelSize, LENGTH_UNITS);
       }
       if (input.zStep) {
-        await apply("zStep", input.zStep, LENGTH_UNITS);
-        changed = true;
+        scales.zStep = validate("zStep", input.zStep, LENGTH_UNITS);
       }
       if (input.tStep) {
-        await apply("tStep", input.tStep, TIME_UNITS);
-        changed = true;
+        scales.tStep = validate("tStep", input.tStep, TIME_UNITS);
       }
-      if (!changed) {
+      if (Object.keys(scales).length === 0) {
         throw new ToolExecutionError(
           "Provide at least one of pixelSize, zStep, tStep",
         );
       }
+      await persistOrThrow("scales", () =>
+        main.saveScalesInConfiguration({ scales, throwOnError: true }),
+      );
       return { result: { scales: main.scales } };
     },
   },

@@ -55,6 +55,7 @@ vi.mock("@/store", () => ({
     saveContrastInView: vi.fn(),
     saveContrastInConfiguration: vi.fn(),
     saveScaleInConfiguration: vi.fn(),
+    saveScalesInConfiguration: vi.fn(),
     scales: {
       pixelSize: { value: 1, unit: "µm" },
       zStep: { value: 1, unit: "µm" },
@@ -1036,6 +1037,7 @@ describe("surfaces backend sync failures (#1239)", () => {
     mockMain.saveContrastInConfiguration = vi.fn(async () => undefined);
     mockMain.setLayerMode = vi.fn(async () => undefined);
     mockMain.saveScaleInConfiguration = vi.fn(async () => undefined);
+    mockMain.saveScalesInConfiguration = vi.fn(async () => undefined);
     mockMain.addToolToConfiguration = vi.fn(async () => undefined);
     mockMain.configuration = { id: "conf1", name: "Collection", layers: [] };
     mockProperties.workerImageList = {
@@ -1119,7 +1121,7 @@ describe("surfaces backend sync failures (#1239)", () => {
   });
 
   it("set_scale reports a failed sync instead of success", async () => {
-    mockMain.saveScaleInConfiguration = vi.fn(async () => {
+    mockMain.saveScalesInConfiguration = vi.fn(async () => {
       throw new Error("Write access denied");
     });
     await expect(
@@ -1222,14 +1224,14 @@ describe("set_scale", () => {
       },
       context,
     );
-    expect(mockMain.saveScaleInConfiguration).toHaveBeenCalledWith({
-      itemId: "pixelSize",
-      scale: { value: 0.65, unit: "µm" },
-      throwOnError: true,
-    });
-    expect(mockMain.saveScaleInConfiguration).toHaveBeenCalledWith({
-      itemId: "zStep",
-      scale: { value: 2, unit: "µm" },
+    // One backend write for all requested fields, not one per field
+    // (Codex P2 on PR #1262).
+    expect(mockMain.saveScalesInConfiguration).toHaveBeenCalledTimes(1);
+    expect(mockMain.saveScalesInConfiguration).toHaveBeenCalledWith({
+      scales: {
+        pixelSize: { value: 0.65, unit: "µm" },
+        zStep: { value: 2, unit: "µm" },
+      },
       throwOnError: true,
     });
   });
@@ -1242,7 +1244,7 @@ describe("set_scale", () => {
         context,
       ),
     ).rejects.toBeInstanceOf(ToolExecutionError);
-    expect(mockMain.saveScaleInConfiguration).not.toHaveBeenCalled();
+    expect(mockMain.saveScalesInConfiguration).not.toHaveBeenCalled();
   });
 
   it("rejects a length unit on the time step and vice versa", async () => {
@@ -1260,6 +1262,24 @@ describe("set_scale", () => {
         context,
       ),
     ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("writes nothing when a later field is invalid", async () => {
+    // Validation used to be interleaved with saving, so a valid pixelSize was
+    // already persisted before an invalid tStep threw, leaving the shared
+    // collection partially updated (Codex P2 on PR #1262).
+    await expect(
+      executeAgentTool(
+        "set_scale",
+        {
+          pixelSize: { value: 0.65, unit: "µm" },
+          tStep: { value: 1, unit: "µm" },
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.saveScalesInConfiguration).not.toHaveBeenCalled();
+    expect(mockMain.saveScaleInConfiguration).not.toHaveBeenCalled();
   });
 
   it("requires at least one dimension", async () => {

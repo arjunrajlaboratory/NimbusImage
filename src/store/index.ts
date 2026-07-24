@@ -2616,6 +2616,31 @@ export class Main extends VuexModule {
     }
   }
 
+  // Batch sibling of saveScaleInConfiguration: assigns every provided scale
+  // and syncs once. The AI panel's set_scale can set pixelSize, zStep and
+  // tStep in a single call; saving them one at a time issued a backend write
+  // per field and could leave the collection partially updated when a later
+  // one failed (Codex P2 on PR #1262). The interactive UI edits one field at
+  // a time and keeps using the singular action.
+  @Action({ rawError: true })
+  async saveScalesInConfiguration({
+    scales,
+    throwOnError,
+  }: {
+    scales: Partial<
+      Record<keyof IScales, IScaleInformation<TUnitLength | TUnitTime>>
+    >;
+    throwOnError?: boolean;
+  }) {
+    if (!this.configuration) {
+      return;
+    }
+    for (const [itemId, scale] of Object.entries(scales)) {
+      (this.configuration.scales as any)[itemId] = scale;
+    }
+    await this.syncConfiguration({ key: "scales", throwOnError });
+  }
+
   @Action
   saveScalesInView({
     itemId,
