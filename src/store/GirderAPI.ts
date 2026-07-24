@@ -34,6 +34,7 @@ import {
   TJobType,
   IDatasetConfigurationCompatibility,
   IJob,
+  IUserStorageInfo,
   resolveVisibilityConfig,
 } from "@/store/model";
 import {
@@ -195,6 +196,14 @@ export default class GirderAPI {
       `folder?parentType=user&parentId=${parentId}&name=${folderName}`,
     );
     return result.data.length > 0 ? result.data[0] : null;
+  }
+
+  async getUserStorageInfo(userId: string): Promise<IUserStorageInfo> {
+    const response = await this.client.get(`user/${userId}/quota`);
+    return {
+      used: response.data.size ?? 0,
+      quota: response.data.quota?._currentFileSizeQuota ?? null,
+    };
   }
 
   async getAssetstores(): Promise<IGirderAssetstore[]> {

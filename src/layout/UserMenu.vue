@@ -55,7 +55,14 @@
     >
       <template #activator="{ props: activatorProps }">
         <v-btn variant="text" icon size="small" v-bind="activatorProps">
-          <v-icon>mdi-account-circle</v-icon>
+          <v-badge
+            v-if="store.isNearStorageLimit"
+            dot
+            :color="storageBadgeColor"
+          >
+            <v-icon>mdi-account-circle</v-icon>
+          </v-badge>
+          <v-icon v-else>mdi-account-circle</v-icon>
         </v-btn>
       </template>
       <v-card>
@@ -66,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 import UserProfileSettings from "@/layout/UserProfileSettings.vue";
@@ -98,6 +105,17 @@ function loggedInOrOut() {
 
 watch(() => store.isLoggedIn, loggedInOrOut);
 watch(() => store.hasUserLoggedOut, loggedInOrOut);
+
+// Refresh storage usage each time the profile menu opens
+watch(userMenu, (isOpen) => {
+  if (isOpen && store.isLoggedIn) {
+    store.fetchUserStorageInfo();
+  }
+});
+
+const storageBadgeColor = computed(() =>
+  (store.storageUsagePercentage ?? 0) > 95 ? "error" : "warning",
+);
 
 defineExpose({ userMenu, isDomainLocked, domain, loggedInOrOut });
 </script>

@@ -74,6 +74,7 @@ import {
   IDimensionStrategy,
   IVisibilityConfig,
   IAnnotationBrowserConfig,
+  IUserStorageInfo,
 } from "./model";
 import {
   buildAnnotationBrowserConfig,
@@ -263,6 +264,7 @@ export class Main extends VuexModule {
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
   hasUserLoggedOut: boolean = false;
+  userStorageInfo: IUserStorageInfo | null = null;
 
   history: IHistoryEntry[] = [];
 
@@ -501,6 +503,21 @@ export class Main extends VuexModule {
       this.datasetView != null &&
       (this.datasetView._accessLevel ?? 0) >= 1
     );
+  }
+
+  // Percentage of the storage quota currently used, or null when there is
+  // no quota (unlimited) or usage hasn't been fetched yet.
+  get storageUsagePercentage(): number | null {
+    const info = this.userStorageInfo;
+    if (!info || info.quota == null || info.quota <= 0) {
+      return null;
+    }
+    return (info.used / info.quota) * 100;
+  }
+
+  get isNearStorageLimit() {
+    const percentage = this.storageUsagePercentage;
+    return percentage != null && percentage > 90;
   }
 
   get userChannelColors() {
@@ -971,6 +988,7 @@ export class Main extends VuexModule {
         this.loadUserColors().catch((error) => {
           logError("Failed to load user colors during login:", error);
         }),
+        this.fetchUserStorageInfo(),
       );
     } else {
       this.setAssetstores([]);
@@ -995,8 +1013,30 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  protected setUserStorageInfo(info: IUserStorageInfo | null) {
+    this.userStorageInfo = info;
+  }
+
+  @Action
+  async fetchUserStorageInfo() {
+    const user = this.girderUser;
+    if (!user) {
+      this.setUserStorageInfo(null);
+      return;
+    }
+    try {
+      this.setUserStorageInfo(await this.api.getUserStorageInfo(user._id));
+    } catch (error) {
+      // The user_quota plugin may not be enabled on this backend
+      logWarning("Failed to fetch user storage info:", error);
+      this.setUserStorageInfo(null);
+    }
+  }
+
+  @Mutation
   protected loggedOut() {
     this.girderUser = null;
+    this.userStorageInfo = null;
     this.selectedDatasetId = null;
     this.dataset = null;
     this.selectedConfigurationId = null;

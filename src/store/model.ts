@@ -10,6 +10,13 @@ export interface IHistoryEntry {
   actionDate: Date;
 }
 
+export interface IUserStorageInfo {
+  // Bytes currently used by the user
+  used: number;
+  // Storage limit in bytes, or null when unlimited
+  quota: number | null;
+}
+
 export interface IFrameInfo {
   DeltaT: number;
   PositionX: number;
