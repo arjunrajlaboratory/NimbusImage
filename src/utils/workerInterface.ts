@@ -65,9 +65,10 @@ export const WORKER_INTERFACE_VALUE_FORMATS: Record<
     "The channel(s) to use for this slot, as an ARRAY of 0-based channel " +
     'indices — e.g. [0] selects the first channel (see the "channels" list ' +
     "for the index↔name mapping). To select the DAPI channel, pass the index " +
-    "DAPI has in that list. You may also pass an object mapping channel index " +
-    'to true/false, e.g. {"0": true, "1": false}, but the value MUST be true ' +
-    "to select a channel — the key alone does not select it.",
+    "DAPI has in that list; pass [] to select nothing (optional slots only). " +
+    "An object mapping channel index to a true/false BOOLEAN also works, e.g. " +
+    '{"0": true, "1": false} — but the value must be literally true to select ' +
+    'a channel: {"0": 0} selects nothing and is rejected.',
   checkbox: "A boolean: true or false.",
 };
 
@@ -79,6 +80,23 @@ export interface IChannelContext {
   nameToIndex: Map<string, number>;
 }
 
+// "Available channels: 0 (dapi), 1 (fitc)." for error messages, or "" when the
+// dataset's channels are unknown. Called only on failure paths — building it
+// eagerly would walk the channel list on every successful resolution.
+function describeAvailableChannels(ctx: IChannelContext): string {
+  if (ctx.channels.length === 0) {
+    return "";
+  }
+  const indexToName = new Map(
+    [...ctx.nameToIndex.entries()].map(([name, index]) => [index, name]),
+  );
+  const described = ctx.channels.map((channel) => {
+    const name = indexToName.get(channel);
+    return name ? `${channel} (${name})` : `${channel}`;
+  });
+  return ` Available channels: ${described.join(", ")}.`;
+}
+
 // Resolve one channel reference — a 0-based index number, a numeric string, or
 // a channel name — to a channel index. Throws a descriptive Error when it does
 // not correspond to a channel in the dataset.
@@ -87,22 +105,11 @@ function resolveChannelRef(
   ctx: IChannelContext,
   paramId: string,
 ): number {
-  const available =
-    ctx.channels.length > 0
-      ? ` Available channels: ${ctx.channels
-          .map((c) => {
-            const name = [...ctx.nameToIndex.entries()].find(
-              ([, idx]) => idx === c,
-            )?.[0];
-            return name ? `${c} (${name})` : `${c}`;
-          })
-          .join(", ")}.`
-      : "";
   const validate = (index: number): number => {
     if (ctx.channels.length > 0 && !ctx.channels.includes(index)) {
       throw new Error(
         `"${paramId}": channel index ${index} does not exist in this ` +
-          `dataset.${available}`,
+          `dataset.${describeAvailableChannels(ctx)}`,
       );
     }
     return index;
@@ -122,7 +129,10 @@ function resolveChannelRef(
     }
     const byName = ctx.nameToIndex.get(trimmed.toLowerCase());
     if (byName == null) {
-      throw new Error(`"${paramId}": unknown channel "${ref}".${available}`);
+      throw new Error(
+        `"${paramId}": unknown channel "${ref}".` +
+          describeAvailableChannels(ctx),
+      );
     }
     return byName;
   }
@@ -157,23 +167,28 @@ export function normalizeWorkerInterfaceValue(
     }
     case "channelCheckboxes": {
       const selected = new Set<number>();
-      let provided = false;
+      // Set when a map value is falsy but NOT boolean false (e.g. {"0": 0}):
+      // the agent put the channel index in the value slot, so it meant to
+      // select that channel and selected nothing. An explicit all-`false` map
+      // (the canonical UI shape) and an empty array are deliberate "select
+      // nothing" — legitimate for the optional slots — and must not throw.
+      let indexUsedAsValue = false;
       if (value == null) {
-        provided = false;
+        // Treated as "nothing selected"; the caller omitted the parameter.
       } else if (Array.isArray(value)) {
-        provided = value.length > 0;
         for (const ref of value) {
           selected.add(resolveChannelRef(ref, ctx, paramId));
         }
       } else if (typeof value === "number" || typeof value === "string") {
-        provided = true;
         selected.add(resolveChannelRef(value, ctx, paramId));
       } else if (typeof value === "object") {
-        const entries = Object.entries(value as Record<string, unknown>);
-        provided = entries.length > 0;
-        for (const [key, selectedFlag] of entries) {
-          if (selectedFlag) {
+        for (const [key, isSelected] of Object.entries(
+          value as Record<string, unknown>,
+        )) {
+          if (isSelected) {
             selected.add(resolveChannelRef(key, ctx, paramId));
+          } else if (isSelected !== false) {
+            indexUsedAsValue = true;
           }
         }
       } else {
@@ -181,33 +196,29 @@ export function normalizeWorkerInterfaceValue(
           `"${paramId}": expected an array of channel indices, e.g. [0].`,
         );
       }
-      // A value was supplied but nothing ended up selected — almost always the
-      // agent passed the channel index as the map value (e.g. {"0": 0}) instead
-      // of true. Surface it so the agent retries rather than saving a tool that
-      // fails at run time with "No channel selected".
-      if (provided && selected.size === 0) {
+      // Surface the misuse so the agent retries, rather than saving a tool that
+      // fails at run time with the worker's "No channel selected for Slot 1".
+      if (indexUsedAsValue) {
         throw new Error(
-          `"${paramId}": you provided a value but no channel is selected. ` +
-            "Pass the channel indices to select as an array, e.g. [0] for the " +
-            "first channel.",
+          `"${paramId}": a channel index was used as a map value (e.g. ` +
+            '{"0": 0}), which selects nothing. Pass the channel indices to ' +
+            "select as an array, e.g. [0] for the first channel.",
         );
       }
+      // Every channel gets an explicit boolean, matching what the checkbox UI
+      // writes. resolveChannelRef already rejected indices outside
+      // ctx.channels, so `selected` never adds keys beyond this loop's range.
       const result: { [channel: number]: boolean } = {};
       const channels =
         ctx.channels.length > 0 ? ctx.channels : [...selected].sort();
       for (const channel of channels) {
         result[channel] = selected.has(channel);
       }
-      for (const channel of selected) {
-        if (!(channel in result)) {
-          result[channel] = true;
-        }
-      }
       return result;
     }
     case "select": {
       if (value == null) {
-        return getDefault(element.type, element.default) ?? "";
+        return getDefault(element.type, element.default);
       }
       const items = element.items ?? [];
       if (items.length > 0 && !items.includes(value as string)) {
@@ -219,11 +230,30 @@ export function normalizeWorkerInterfaceValue(
       return value as TWorkerInterfaceValue;
     }
     case "checkbox":
-      return Boolean(value);
+      // Deliberately strict: Boolean("false") is true, so coercing would turn a
+      // stringy "false" into an enabled option the caller never asked for.
+      if (typeof value !== "boolean") {
+        throw new Error(
+          `"${paramId}": expected true or false, got ` +
+            `${JSON.stringify(value)}.`,
+        );
+      }
+      return value;
     case "number": {
-      const asNumber = typeof value === "number" ? value : Number(value);
-      if (Number.isNaN(asNumber)) {
-        throw new Error(`"${paramId}": expected a number, got ${value}.`);
+      // Also deliberately strict: Number("") and Number([]) are 0, so coercing
+      // would silently substitute 0 for a value that was never a number.
+      let asNumber: number;
+      if (typeof value === "number") {
+        asNumber = value;
+      } else if (typeof value === "string" && value.trim() !== "") {
+        asNumber = Number(value);
+      } else {
+        asNumber = NaN;
+      }
+      if (!Number.isFinite(asNumber)) {
+        throw new Error(
+          `"${paramId}": expected a number, got ${JSON.stringify(value)}.`,
+        );
       }
       return asNumber;
     }

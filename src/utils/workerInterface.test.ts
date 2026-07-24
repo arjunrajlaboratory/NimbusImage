@@ -55,12 +55,36 @@ describe("normalizeWorkerInterfaceValue — channelCheckboxes", () => {
     // The bug: model wrote {"0": 0} meaning channel 0, but 0 is falsy.
     expect(() =>
       normalizeWorkerInterfaceValue(checkboxes, { 0: 0 } as any, ctx, "Slot 1"),
-    ).toThrow(/no channel is selected/);
+    ).toThrow(/used as a map value/);
+  });
+
+  it("throws on an index-as-value even when another channel is selected", () => {
+    expect(() =>
+      normalizeWorkerInterfaceValue(
+        checkboxes,
+        { 0: 0, 1: true } as any,
+        ctx,
+        "Slot 1",
+      ),
+    ).toThrow(/used as a map value/);
   });
 
   it("allows an explicit empty selection for optional slots", () => {
     expect(
       normalizeWorkerInterfaceValue(checkboxes, [], ctx, "Slot 2"),
+    ).toEqual({ 0: false, 1: false, 2: false, 3: false });
+  });
+
+  it("allows an explicit all-false map (the canonical UI shape)", () => {
+    // Distinct from {"0": 0}: boolean false is a deliberate "not selected", so
+    // an optional slot the agent explicitly cleared must not error.
+    expect(
+      normalizeWorkerInterfaceValue(
+        checkboxes,
+        { 0: false, 1: false, 2: false, 3: false } as any,
+        ctx,
+        "Slot 2",
+      ),
     ).toEqual({ 0: false, 1: false, 2: false, 3: false });
   });
 
@@ -99,17 +123,28 @@ describe("normalizeWorkerInterfaceValue — other types", () => {
     );
   });
 
-  it("coerces checkbox values to boolean", () => {
+  it("accepts real booleans for checkbox but rejects stringy ones", () => {
     const el = { type: "checkbox" } as TWorkerInterfaceElement;
-    expect(normalizeWorkerInterfaceValue(el, 1 as any, ctx, "Flag")).toBe(true);
+    expect(normalizeWorkerInterfaceValue(el, true, ctx, "Flag")).toBe(true);
+    expect(normalizeWorkerInterfaceValue(el, false, ctx, "Flag")).toBe(false);
+    // Boolean("false") is true — coercing here would enable the option.
+    for (const bad of ["false", "true", 1, 0, null]) {
+      expect(() =>
+        normalizeWorkerInterfaceValue(el, bad as any, ctx, "Flag"),
+      ).toThrow(/expected true or false/);
+    }
   });
 
-  it("rejects a non-numeric number value", () => {
+  it("rejects values that would silently coerce to a wrong number", () => {
     const el = { type: "number" } as TWorkerInterfaceElement;
     expect(normalizeWorkerInterfaceValue(el, 5, ctx, "Diameter")).toBe(5);
-    expect(() =>
-      normalizeWorkerInterfaceValue(el, "abc" as any, ctx, "Diameter"),
-    ).toThrow(/expected a number/);
+    expect(normalizeWorkerInterfaceValue(el, "7.5" as any, ctx, "D")).toBe(7.5);
+    // Number("") / Number(" ") / Number([]) are all 0, and Number(null) is 0.
+    for (const bad of ["abc", "", "   ", [], null, Infinity]) {
+      expect(() =>
+        normalizeWorkerInterfaceValue(el, bad as any, ctx, "Diameter"),
+      ).toThrow(/expected a number/);
+    }
   });
 });
 

@@ -402,8 +402,9 @@ async function resolveWorkerInterfaceValues(
 }
 
 // Channel index<->name context for resolving agent-supplied channel references
-// against the open dataset. Empty when no dataset is open (channel refs then
-// pass through unvalidated).
+// against the open dataset. Empty when no dataset is open: index references
+// then pass through unvalidated, and name references can't resolve at all
+// (create_tool does not require a dataset, so this path is reachable).
 function buildChannelContext(): IChannelContext {
   const dataset = main.dataset;
   const nameToIndex = new Map<string, number>();
