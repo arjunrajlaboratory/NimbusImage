@@ -156,14 +156,30 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 <style lang="scss" scoped>
 .progress-container {
   position: absolute;
-  bottom: 50px;
-  left: 20px;
+  // Sit just above the bottom-left button cluster (palette / lock / fit-to-window
+  // at bottom:10px in ImageViewer) and align to its left edge, so progress bars
+  // and notifications never land on top of the left palette stack (Tools panel).
+  bottom: 56px;
+  left: 10px;
   z-index: 2000;
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 400px;
   max-width: 400px;
+  // Animate the palette-driven shift via transform (GPU-composited, doesn't
+  // trigger layout) rather than `left`.
+  transition: transform 0.2s ease;
+}
+
+/* When the whole left palette stack is open it reaches the bottom-left corner
+   and would cover this stack; slide it right of the column, mirroring the
+   bottom-left button cluster (same 10 px gap to the palette's right edge via
+   `--nimbus-left-palette-clear-x`). `.left-palettes-open` is set on `<v-app>`
+   by App.vue (an ancestor); scoped CSS adds the data-v attribute to the last
+   compound selector only, so the ancestor class still matches. */
+.left-palettes-open .progress-container {
+  transform: translateX(calc(var(--nimbus-left-palette-clear-x) - 10px));
 }
 
 .progress-group {
