@@ -72,6 +72,10 @@ watch(() => JSON.stringify(annotationListServer.currentFilters), cb);
 
 Watch out for stringify cost on large objects.
 
+**This bug recurs even after being fixed once nearby — grep for it.** A second, separate `watch([...9 getters...], cb, { deep: true })` in the same file (`AnnotationList.vue`'s "server-mode reactive refetch" block, a few lines below the `currentFilters` watch above) had the identical bug, confirmed via live instrumentation firing every 30-80ms with **zero** of the 9 tracked values actually changing. Each spurious firing called `setOptions({ page: 1 })`, silently resetting the server-paginated annotation list's page after every click-to-row navigation — while the *rows* stayed correct (the accompanying debounced refetch never settled long enough to fire), so only the page number/footer/Index column were wrong. This looked exactly like "clicking an annotation goes to the wrong spot in the list," and a plausible-looking `VDataTableServer` `update:options` stale-echo race was chased first as the cause (it even reproduced once) before instrumenting the watcher itself proved it was actually firing with no real change. **When you find and fix one instance of this pattern, `grep -n "deep:\s*true" src` for siblings in the same or related files before considering it fixed — a documented fix comment next to one watcher does not protect a copy-pasted watcher elsewhere.**
+
+Not every `{ deep: true }` is this bug — it only applies when the watched source is a **getter function that rebuilds a fresh object/array on each call** (a Vuex/Pinia getter, a `computed`, or a plain function reading store state). A `ref()`/`reactive()` passed **directly** as the watch source (not wrapped in a function) is the correct, safe use of `deep: true` — Vue tracks its stable identity and only fires on genuine in-place mutations. Don't blanket-remove `deep: true` without checking which case you're in.
+
 ## Vuetify 4 Patterns
 
 ### CSS Cascade Layers

@@ -949,18 +949,26 @@ watch(localIdFilter, (value) => {
   debouncedServerRefetch();
 });
 
+// Watch a JSON-serialized snapshot rather than the raw getters with
+// { deep: true }: filterStore/propertyStore rebuild fresh array/object
+// references on every genuine mutation, so deep-watching them fires on every
+// unrelated reactive touch, not just real changes (same trap as the
+// currentFilters watch below — see its comment). That spurious refiring calls
+// setOptions({page: 1}) within tens of ms of any real click-to-row
+// navigation, silently resetting the page the user just navigated to.
 watch(
-  [
-    () => filterStore.tagFilter,
-    () => filterStore.propertyFilters,
-    () => filterStore.onlyCurrentFrame,
-    () => filterStore.selectionFilter,
-    () => filterStore.annotationIdFilters,
-    () => propertyStore.displayedPropertyPaths,
-    () => store.xy,
-    () => store.z,
-    () => store.time,
-  ],
+  () =>
+    JSON.stringify([
+      filterStore.tagFilter,
+      filterStore.propertyFilters,
+      filterStore.onlyCurrentFrame,
+      filterStore.selectionFilter,
+      filterStore.annotationIdFilters,
+      propertyStore.displayedPropertyPaths,
+      store.xy,
+      store.z,
+      store.time,
+    ]),
   () => {
     if (!isServerMode.value) {
       return;
@@ -968,7 +976,6 @@ watch(
     annotationListServer.setOptions({ page: 1 });
     debouncedServerRefetch();
   },
-  { deep: true },
 );
 
 // Scope server-mode selection to the current query. The selection set is
