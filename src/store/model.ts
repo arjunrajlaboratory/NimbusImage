@@ -1638,6 +1638,13 @@ export interface IVisibilityConfig {
   viewportRefreshFraction: number;
 }
 
+// Annotation count above which the annotation browser list switches to the
+// backend-paginated (server) list, independently of stub-only mode. This is a
+// UI materialization limit (one v-data-table row per annotation, client-side
+// sort), NOT a data-loading concern like stubThreshold — a fully-fetched
+// dataset can still be too large to sort/render as a client-side table.
+export const ANNOTATION_LIST_SERVER_THRESHOLD = 20000;
+
 export const DEFAULT_VISIBILITY_CONFIG: IVisibilityConfig = {
   stubThreshold: 100000,
   maxVisible: 50000,

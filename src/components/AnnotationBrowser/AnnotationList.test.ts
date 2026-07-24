@@ -55,8 +55,6 @@ vi.mock("@/store/annotation", () => {
       mockDeleteUnselectedAnnotations(...args),
     deleteAnnotations: (...args: any[]) => mockDeleteAnnotations(...args),
     stubOnlyMode: false,
-    // Small stubThreshold keeps the over-the-limit list guard test fast.
-    visibilityConfig: { stubThreshold: 100 },
     tagSelectedAnnotations: (...args: any[]) =>
       mockTagSelectedAnnotations(...args),
     removeTagsFromSelectedAnnotations: (...args: any[]) =>
@@ -73,6 +71,11 @@ vi.mock("@/store/annotation", () => {
     annotationCentroids: {} as Record<string, any>,
     annotations: [],
     annotationIdToIdx: {} as Record<string, number>,
+    // Mirrors the real store getter: server list mode in stub-only mode OR when
+    // the fully-loaded set exceeds the list threshold.
+    get isListServerMode() {
+      return this.stubOnlyMode || this.annotations.length > 20000;
+    },
   };
   Object.defineProperty(state, "annotationsForIteration", {
     get() {
@@ -566,6 +569,23 @@ describe("AnnotationList", () => {
     });
   });
 
+  describe("server mode for large fully-loaded datasets", () => {
+    it("uses the client list at or below the threshold in non-stub mode", () => {
+      (annotationStore as any).annotations = new Array(20000);
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).isServerMode).toBe(false);
+      expect(mockFetchPage).not.toHaveBeenCalled();
+    });
+
+    it("switches to the server list above the threshold in non-stub mode", () => {
+      (annotationStore as any).annotations = new Array(20001);
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).isServerMode).toBe(true);
+      // onMounted fetches the first server page.
+      expect(mockFetchPage).toHaveBeenCalled();
+    });
+  });
+
   describe("list size guard", () => {
     it("tooManyToList is false and items build normally under the limit", () => {
       const ann = makeAnnotation({ id: "ann1" });
@@ -591,7 +611,7 @@ describe("AnnotationList", () => {
 
   function vm_listItemLimit() {
     const wrapper = mountComponent();
-    return (wrapper.vm as any).listItemLimit as number;
+    return (wrapper.vm as any).LIST_ITEM_LIMIT as number;
   }
 
   describe("hover", () => {

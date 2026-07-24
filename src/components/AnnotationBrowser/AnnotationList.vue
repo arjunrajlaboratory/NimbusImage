@@ -172,7 +172,8 @@
         class="mb-2"
       >
         Region (ROI) filters are not applied to this list while browsing a large
-        dataset. Use tag, property, or annotation ID filters to narrow results.
+        dataset (they still apply to the image view). Use tag, property, or
+        annotation ID filters to narrow results.
       </v-alert>
       <!-- Per-query feedback (B2): a server /list query can take ~1s+ at scale,
            so show a clear in-flight affordance with the matched count. The
@@ -249,7 +250,7 @@
         <div class="text-body-2">
           Too many to list. Narrow with tag, property, or ROI filters (or the
           annotation ID filter above) to under
-          {{ listItemLimit.toLocaleString() }} to browse them here.
+          {{ LIST_ITEM_LIMIT.toLocaleString() }} to browse them here.
         </div>
       </div>
       <!-- Server mode: backend-paginated table. Uses the SAME item markup.
@@ -341,6 +342,7 @@ import {
   IAnnotationListSort,
   IAnnotationPropertyValues,
   isHydratedAnnotation,
+  ANNOTATION_LIST_SERVER_THRESHOLD,
 } from "@/store/model";
 
 const allHeaders = [
@@ -428,7 +430,7 @@ const isDeletingAnnotations = computed(() => {
 // derived from it): that getter iterates ALL stubs client-side and applies
 // property filters without property values loaded, so it is both expensive and
 // wrong in server mode. Every shared computed has an isServerMode branch.
-const isServerMode = computed(() => annotationStore.stubOnlyMode);
+const isServerMode = computed(() => annotationStore.isListServerMode);
 
 const serverItemsLength = computed(() => annotationListServer.total);
 
@@ -558,19 +560,15 @@ const listedAnnotations = computed(() => {
   return annotations;
 });
 
-// Defensive scale guard, superseded in practice by stubOnlyMode (server mode):
-// stub-only mode activates above the configured stubThreshold, so client mode
-// never holds more than stubThreshold hydrated annotations and this branch is
-// effectively unreachable. Track the live config value (rather than a hardcoded
-// count) so the client list never refuses a dataset that stub mode chose to
-// load fully. Kept as a safety net for any client-mode path that materializes
-// one item per filtered annotation and sorts client-side.
-const listItemLimit = computed(
-  () => annotationStore.visibilityConfig.stubThreshold,
-);
+// Defensive scale guard, unreachable in practice: isListServerMode routes any
+// dataset above this same threshold to the server list, so the client path
+// never holds more than this many annotations. Kept as a safety net for any
+// client-mode path that materializes one item per filtered annotation and
+// sorts client-side (which would hang the tab above this many).
+const LIST_ITEM_LIMIT = ANNOTATION_LIST_SERVER_THRESHOLD;
 
 const tooManyToList = computed(
-  () => listedAnnotations.value.length > listItemLimit.value,
+  () => listedAnnotations.value.length > LIST_ITEM_LIMIT,
 );
 
 const filteredItems = computed(() => {
@@ -900,6 +898,32 @@ watch(
   },
 );
 
+// Server mode can now engage outside stub-only mode (fully-fetched dataset
+// above the list threshold), so the mode can flip mid-session: crossing the
+// threshold by creating/deleting annotations, or the initial fetch completing
+// after mount. Fetch page 1 on entry so the table isn't empty/stale.
+watch(isServerMode, (value) => {
+  if (value) {
+    annotationListServer.setOptions({ page: 1 });
+    annotationListServer.fetchPage();
+  }
+});
+
+// In non-stub server mode the dataset is fully loaded client-side, so
+// annotations can be created/edited/deleted locally (drawing tools, undo)
+// without going through this component's server-aware code paths. The server
+// rows would silently go stale; refetch when the client set changes. Stub mode
+// is excluded: annotations[] is empty there and stub-mode mutations already
+// refetch explicitly where needed.
+watch(
+  () => annotationStore.annotations.length,
+  () => {
+    if (isServerMode.value && !annotationStore.stubOnlyMode) {
+      debouncedServerRefetch();
+    }
+  },
+);
+
 onBeforeUnmount(() => {
   debouncedServerRefetch.cancel();
 });
@@ -1015,7 +1039,7 @@ defineExpose({
   tableItemClass,
   annotationFilteredDialog,
   localIdFilter,
-  listItemLimit,
+  LIST_ITEM_LIMIT,
   tooManyToList,
   addOrRemove,
   page,
