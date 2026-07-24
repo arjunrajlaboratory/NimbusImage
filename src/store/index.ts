@@ -74,11 +74,16 @@ import {
   IDimensionStrategy,
   IVisibilityConfig,
   IAnnotationBrowserConfig,
+  IUserStorageQuota,
 } from "./model";
 import {
   buildAnnotationBrowserConfig,
   resolveAnnotationBrowserConfig,
 } from "@/utils/annotationBrowserConfig";
+import {
+  storageSeverityFromPercentage,
+  TStorageSeverity,
+} from "@/utils/storage";
 
 import persister from "./Persister";
 import store from "./root";
@@ -264,6 +269,7 @@ export class Main extends VuexModule {
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
   hasUserLoggedOut: boolean = false;
+  userStorageInfo: IUserStorageQuota | null = null;
 
   history: IHistoryEntry[] = [];
 
@@ -502,6 +508,33 @@ export class Main extends VuexModule {
       this.datasetView != null &&
       (this.datasetView._accessLevel ?? 0) >= 1
     );
+  }
+
+  // Percentage of the storage quota currently used, or null when there is
+  // no quota (unlimited) or usage hasn't been fetched yet.
+  get storageUsagePercentage(): number | null {
+    const info = this.userStorageInfo;
+    // A null quota means unlimited storage — there is no percentage to show.
+    // A zero quota is a real "no storage allowed" limit (girder-user-quota
+    // blocks every upload against it), so any usage is at/over it: report
+    // 100% (this also avoids dividing by zero).
+    if (!info || info.quota == null) {
+      return null;
+    }
+    if (info.quota <= 0) {
+      return 100;
+    }
+    return (info.used / info.quota) * 100;
+  }
+
+  // Severity of the current storage usage, escalating from "ok" to "warning"
+  // to "error" at the shared thresholds in @/utils/storage.
+  get storageSeverity(): TStorageSeverity {
+    return storageSeverityFromPercentage(this.storageUsagePercentage);
+  }
+
+  get isNearStorageLimit(): boolean {
+    return this.storageSeverity !== "ok";
   }
 
   get userChannelColors() {
@@ -972,6 +1005,7 @@ export class Main extends VuexModule {
         this.loadUserColors().catch((error) => {
           logError("Failed to load user colors during login:", error);
         }),
+        this.fetchUserStorageInfo(),
       );
     } else {
       this.setAssetstores([]);
@@ -996,8 +1030,34 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  protected setUserStorageInfo(info: IUserStorageQuota | null) {
+    this.userStorageInfo = info;
+  }
+
+  @Action
+  async fetchUserStorageInfo() {
+    const user = this.girderUser;
+    if (!user) {
+      this.setUserStorageInfo(null);
+      return;
+    }
+    const userId = user._id;
+    // getUserStorageQuota returns null when the quota cannot be fetched
+    // (e.g. the user_quota plugin is not enabled on the backend).
+    const info = await this.api.getUserStorageQuota(userId);
+    // This action fires on login and on every profile-menu open, so a slow
+    // response can resolve after the user logged out or switched accounts.
+    // Discard it in that case so we never show one user's quota to another.
+    if (this.girderUser?._id !== userId) {
+      return;
+    }
+    this.setUserStorageInfo(info);
+  }
+
+  @Mutation
   protected loggedOut() {
     this.girderUser = null;
+    this.userStorageInfo = null;
     this.selectedDatasetId = null;
     this.dataset = null;
     this.selectedConfigurationId = null;
