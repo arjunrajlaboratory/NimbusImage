@@ -57,6 +57,29 @@ For advanced store patterns (routeMapper, form change detection, caching with ba
 
 Editing any `src/store/*.ts` while `pnpm run dev` runs corrupts the store: vuex-module-decorators registers getters at import time with no HMR accept handler, so a hot re-import double-registers → `[vuex] duplicate getter key` cascade and broken state (e.g. annotations stuck at 0). **Hard-reload the page after every store-module edit** before trusting any in-browser behavior. Component `.vue` edits HMR fine — prefer putting temporary instrumentation in `.vue` files.
 
+### Actions That Throw Need `@Action({ rawError: true })`
+
+`vuex-module-decorators` wraps **any** error thrown from a bare `@Action` in a generic `Error("ERR_ACTION_ACCESS_UNDEFINED: Are you trying to access this.someMutation()...")`, discarding the original message — unless the action is declared `@Action({ rawError: true })`. This is a library-wide behavior, not specific to one module.
+
+Most actions in this codebase never throw (they log and return `null`/`false` on failure), so this rarely bites. It matters the moment an action is *designed* to throw so a caller can show the real failure reason (e.g. `addMultiSourceMetadata` throwing a storage-quota message for `MultiSourceConfiguration.vue` to display). Forgetting `rawError: true` silently replaces that message with the cryptic wrapper text — `tsc`/lint/tests all stay green because the action still rejects, just with the wrong message.
+
+```typescript
+// BAD: caller's catch block sees "ERR_ACTION_ACCESS_UNDEFINED: ..." instead
+// of the real message
+@Action
+async doThing() {
+  throw new Error("Helpful, specific reason");
+}
+
+// GOOD
+@Action({ rawError: true })
+async doThing() {
+  throw new Error("Helpful, specific reason");
+}
+```
+
+When writing a test for an action's thrown-error message, `expect(...).rejects.toThrow("substring")` is not a reliable regression check here: the wrapped error's message embeds the original error's `.stack` (which starts with `"Error: <original message>"`), so a substring match can pass even when `rawError` is missing. Assert the exact `.message` instead. See `src/store/index.test.ts` for the pattern (dispatches the real action instead of mocking `@/store`).
+
 ### Watching Getters That Rebuild Their Return Object
 
 `watch(() => someGetter, cb, { deep: true })` on a getter that returns a **new object on every read** fires on every dependency touch — including dependencies the getter reads but that don't change the output (`deep: true` skips the value comparison entirely). This shipped a real bug: a deep watch on `currentFilters` cleared the selection on every Z-scrub because the getter read `z` unconditionally. tsc/lint/reasoning all passed; only the live app caught it.

@@ -10,13 +10,6 @@ export interface IHistoryEntry {
   actionDate: Date;
 }
 
-export interface IUserStorageInfo {
-  // Bytes currently used by the user
-  used: number;
-  // Storage limit in bytes, or null when unlimited
-  quota: number | null;
-}
-
 export interface IFrameInfo {
   DeltaT: number;
   PositionX: number;
@@ -1925,6 +1918,13 @@ export interface IAnnotationImportResult {
   annotationCount: number;
   connectionCount: number;
   propertyValueCount: number;
+}
+
+// Storage usage and quota for a user, as reported by the girder-user-quota
+// plugin. Sizes are in bytes; quota is null when unlimited.
+export interface IUserStorageQuota {
+  used: number;
+  quota: number | null;
 }
 
 export interface IJobEventData {

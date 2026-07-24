@@ -34,7 +34,7 @@ import {
   TJobType,
   IDatasetConfigurationCompatibility,
   IJob,
-  IUserStorageInfo,
+  IUserStorageQuota,
   resolveVisibilityConfig,
 } from "@/store/model";
 import {
@@ -196,14 +196,6 @@ export default class GirderAPI {
       `folder?parentType=user&parentId=${parentId}&name=${folderName}`,
     );
     return result.data.length > 0 ? result.data[0] : null;
-  }
-
-  async getUserStorageInfo(userId: string): Promise<IUserStorageInfo> {
-    const response = await this.client.get(`user/${userId}/quota`);
-    return {
-      used: response.data.size ?? 0,
-      quota: response.data.quota?._currentFileSizeQuota ?? null,
-    };
   }
 
   async getAssetstores(): Promise<IGirderAssetstore[]> {
@@ -1127,6 +1119,23 @@ export default class GirderAPI {
     } catch (error) {
       logError("Failed to fetch user API keys");
       return [];
+    }
+  }
+
+  // Fetch the user's storage usage and quota from the girder-user-quota
+  // plugin. `quota` is null when the user has no quota (unlimited storage).
+  // Returns null if the quota information cannot be fetched (e.g. the
+  // user-quota plugin is not enabled on the backend).
+  async getUserStorageQuota(userId: string): Promise<IUserStorageQuota | null> {
+    try {
+      const response = await this.client.get(`user/${userId}/quota`);
+      return {
+        used: response.data.size ?? 0,
+        quota: response.data.quota?._currentFileSizeQuota ?? null,
+      };
+    } catch (error) {
+      logError("Failed to fetch user storage quota");
+      return null;
     }
   }
 
