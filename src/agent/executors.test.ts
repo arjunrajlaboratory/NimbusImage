@@ -247,6 +247,10 @@ beforeEach(() => {
   mockProperties.computedPropertyPaths = [];
   mockProperties.propertyStatuses = {};
   mockProperties.getWorkerInterface = vi.fn(() => ({}));
+  // Reassigned (not just cleared) by tests that make a persist reject, so
+  // reset them here — clearAllMocks only resets call history.
+  mockMain.syncConfiguration = vi.fn();
+  mockMain.setViewContrastOverrides = vi.fn();
   mockMain.drawAnnotations = true;
   mockMain.annotationOpacity = 0.5;
   mockMain.showScalebar = true;
@@ -2124,6 +2128,48 @@ describe("snapshotViewState / restoreViewState", () => {
       expect.objectContaining({ layerId: "l1", sync: false }),
     );
     expect(mockMain.syncConfiguration).toHaveBeenCalledTimes(1);
+    // The revert must opt into error propagation, otherwise a rejected write
+    // is swallowed and revertViewChanges still reports "Reverted the view
+    // changes" for a change that only applied locally (issue #1239).
+    expect(mockMain.syncConfiguration).toHaveBeenCalledWith({
+      key: "layers",
+      throwOnError: true,
+    });
+  });
+
+  it("rejects when the revert's configuration sync fails", async () => {
+    mockMain.configuration.layers = [
+      {
+        id: "l1",
+        name: "DAPI",
+        color: "#0000ff",
+        visible: true,
+        contrast: { mode: "percentile", blackPoint: 0, whitePoint: 100 },
+      },
+    ];
+    mockMain.getConfigurationLayerFromId = vi.fn(
+      () => mockMain.configuration.layers[0],
+    );
+    const snapshot = snapshotViewState();
+    mockMain.configuration.layers[0].color = "#00ff00";
+    mockMain.syncConfiguration = vi.fn(async () => {
+      throw new Error("Read-only collection");
+    });
+
+    await expect(restoreViewState(snapshot)).rejects.toBeInstanceOf(
+      ToolExecutionError,
+    );
+  });
+
+  it("rejects when the revert's view-contrast persist fails", async () => {
+    const snapshot = snapshotViewState();
+    mockMain.setViewContrastOverrides = vi.fn(async () => {
+      throw new Error("Dataset view is read-only");
+    });
+
+    await expect(restoreViewState(snapshot)).rejects.toBeInstanceOf(
+      ToolExecutionError,
+    );
   });
 
   it("reverts property filters added or changed during the turn", async () => {

@@ -2580,7 +2580,10 @@ export class Main extends VuexModule {
   // Replace the whole per-view contrast override map in one backend sync,
   // instead of one saveContrastInView call (and dataset-view update) per
   // layer. Used by the AI panel's revert-view-changes.
-  @Action
+  // rawError: true because this action propagates a failed persist to its only
+  // caller (the AI panel's revert) rather than swallowing it, and that caller
+  // logs the reason (see syncConfiguration).
+  @Action({ rawError: true })
   async setViewContrastOverrides(layerContrasts: {
     [layerId: string]: IContrast;
   }) {

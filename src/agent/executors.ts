@@ -2389,7 +2389,12 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   await main.setZ(snapshot.location.z);
   await main.setTime(snapshot.location.time);
   if (main.layerMode !== snapshot.layerMode) {
-    await main.setLayerMode(snapshot.layerMode);
+    // throwOnError like the forward-direction tools: revertViewChanges tells
+    // the user "Reverted the view changes", so a revert that only applied
+    // locally must not be reported as a success either (issue #1239).
+    await persistOrThrow("layer mode", () =>
+      main.setLayerMode({ mode: snapshot.layerMode, throwOnError: true }),
+    );
   }
   await main.setUnrollXY(snapshot.unroll.xy);
   await main.setUnrollZ(snapshot.unroll.z);
@@ -2422,9 +2427,15 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
     }
   }
   if (layersChanged) {
-    await main.syncConfiguration("layers");
+    await persistOrThrow("layer changes", () =>
+      main.syncConfiguration({ key: "layers", throwOnError: true }),
+    );
   }
-  await main.setViewContrastOverrides(snapshot.viewContrasts);
+  // setViewContrastOverrides already rejects on a failed persist (it awaits
+  // updateDatasetView without catching); wrap it for a consistent message.
+  await persistOrThrow("view contrast overrides", () =>
+    main.setViewContrastOverrides(snapshot.viewContrasts),
+  );
   filterStore.setTagFilter(snapshot.tagFilter);
   filterStore.setOnlyCurrentFrame(snapshot.onlyCurrentFrame);
   // Restore property filters: disable any added since the snapshot (matching
