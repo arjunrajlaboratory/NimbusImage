@@ -1329,6 +1329,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       channelName?: string;
       name?: string;
       tags?: string[];
+      workerInterfaceValues?: IWorkerInterfaceValues;
     }) => {
       requireLogin();
       if (!main.configuration) {
@@ -1339,6 +1340,11 @@ const registry: { [name: string]: IAgentToolEntry } = {
       if (hasManual === hasWorker) {
         throw new ToolExecutionError(
           "Provide exactly one of manualShape or workerImage",
+        );
+      }
+      if (hasManual && input.workerInterfaceValues != null) {
+        throw new ToolExecutionError(
+          "workerInterfaceValues only applies to worker tools",
         );
       }
       let entry;
@@ -1384,10 +1390,21 @@ const registry: { [name: string]: IAgentToolEntry } = {
           }`,
         );
       }
+      // Worker tools are saved with fully-resolved parameter values (model
+      // overrides on top of interface defaults), so the tool is runnable from
+      // the UI and pipelines with the intended parameters, not blank slots.
+      let workerInterfaceValues: IWorkerInterfaceValues | undefined;
+      if (input.workerImage != null) {
+        workerInterfaceValues = await resolveWorkerInterfaceValues(
+          input.workerImage,
+          input.workerInterfaceValues ?? {},
+        );
+      }
       const tool = buildToolConfiguration(entry, {
         channelName: input.channelName,
         name: input.name,
         tags: input.tags,
+        workerInterfaceValues,
       });
       if (!tool) {
         throw new ToolExecutionError(
@@ -1402,6 +1419,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
           type: tool.type,
           channelName: input.channelName ?? null,
           tags: input.tags ?? [],
+          parameters: workerInterfaceValues ?? null,
         },
       };
     },
@@ -2094,7 +2112,14 @@ export function describeAgentToolCall(name: string, input: any): string {
         Array.isArray(input?.tags) && input.tags.length
           ? ` tagging ${joinList(input.tags)}`
           : "";
-      return `Set up a ${kind} tool${channel}${tags}`;
+      const parameterNames =
+        typeof input?.workerInterfaceValues === "object"
+          ? Object.keys(input.workerInterfaceValues ?? {})
+          : [];
+      const parameters = parameterNames.length
+        ? ` (setting ${joinList(parameterNames)})`
+        : "";
+      return `Set up a ${kind} tool${channel}${tags}${parameters}`;
     }
     case "set_display_options":
       return "Change viewer display options";

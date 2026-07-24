@@ -502,7 +502,7 @@
   },
   {
     "name": "create_tool",
-    "description": "Add a new annotation tool to the current collection's toolset (e.g. 'set up a DAPI blob tool'). Provide EITHER manualShape for a hand-drawing tool OR workerImage for an automated worker tool (from list_workers), not both. ALWAYS provide tags: annotations the tool creates carry these tags, and tags are how annotations are filtered, measured and analyzed downstream — an untagged tool produces annotations that are hard to work with. Optionally bind it to a channel with channelName and give it a name. Gated: the user approves before the tool is created. The tool is added but NOT activated; use select_tool to make it active, or run_worker to run a worker tool.",
+    "description": "Add a new annotation tool to the current collection's toolset (e.g. 'set up a DAPI blob tool'). Provide EITHER manualShape for a hand-drawing tool OR workerImage for an automated worker tool (from list_workers), not both. ALWAYS provide tags: annotations the tool creates carry these tags, and tags are how annotations are filtered, measured and analyzed downstream — an untagged tool produces annotations that are hard to work with. For a worker tool, FIRST call get_worker_interface for the image and pass workerInterfaceValues: the values are saved with the tool (used when it is run from the UI, pipelines, or run_worker), and unset parameters fall back to defaults that are often wrong for the dataset. Optionally bind it to a channel with channelName and give it a name. Gated: the user approves before the tool is created. The tool is added but NOT activated; use select_tool to make it active, or run_worker to run a worker tool.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -527,6 +527,10 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Tags applied to every annotation the tool creates (e.g. [\"nucleus\"]). Always provide at least one tag describing what the tool annotates."
+        },
+        "workerInterfaceValues": {
+          "type": "object",
+          "description": "For worker tools only: parameter values keyed by parameter name, saved with the tool (call get_worker_interface first for the schema). Set every required parameter and any channel/select parameter — their built-in defaults (channel 0, empty selection) are usually wrong for the dataset. Anything omitted uses the interface default."
         }
       },
       "additionalProperties": false

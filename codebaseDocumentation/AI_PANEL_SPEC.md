@@ -11,7 +11,9 @@
 > **Tool surface as built (~28 tools)** — beyond the original Tier tables
 > below, the following were since implemented and verified live:
 > - **`create_tool`** — add a manual (blob/point/line) or worker tool to the
->   toolset (gated).
+>   toolset (gated). Worker tools accept `workerInterfaceValues`; the resolved
+>   values (overrides on top of interface defaults) are saved on the tool as
+>   `tool.values.workerInterfaceValues`.
 > - **Property chain** — `list_properties`, `create_property` (gated),
 >   `compute_property` (gated), `get_property_values` (summary stats).
 > - **`set_display_options`** (draw/opacity/scalebar/background/connections),
