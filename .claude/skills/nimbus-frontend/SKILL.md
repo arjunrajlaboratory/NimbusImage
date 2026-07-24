@@ -53,6 +53,24 @@ Store modules still use `vuex-module-decorators` with `@Module`, `@Mutation`, an
 
 For advanced store patterns (routeMapper, form change detection, caching with batch loading): read `references/store-module-patterns.md`
 
+### Driving the AI panel (agent) from the console
+
+To test the Nimbus AI panel (`src/store/aiPanel.ts`, `AiPanel.vue`) end-to-end without clicking, dispatch its actions on the live store. Two traps:
+
+- **The actions register UNNAMESPACED.** `vuex-module-decorators` puts them in the global action map as `sendUserMessage`, `handleAuthenticatedUserChange`, etc. — NOT `aiPanel/sendUserMessage`. A namespaced dispatch is silently dropped (Vuex warns, resolves a no-op promise, nothing runs). Confirm with `store._actions['sendUserMessage']`.
+- `sendUserMessage` runs the whole agent loop and only resolves when the turn ends — **don't await it** if you want to poll progress; fire it and read `store.state.aiPanel.items` / `.running` on a timer.
+
+```js
+const store = document.querySelector('#app').__vue_app__.config.globalProperties.$store;
+store.commit('setAutoApprove', true);              // skip gated-action approval clicks
+await store.dispatch('clearConversationAndStorage'); // full reset (memory + IndexedDB)
+store.dispatch('sendUserMessage', 'Find the nuclei in this image.'); // fire, don't await
+```
+
+**Send exactly once, from a clean/hydrated state.** Two `sendUserMessage`s in quick succession start two overlapping runs that both push to the module-level `wireMessages`, nesting the tool-result blocks (`content: [[tool_result,…]]`). The next request then fails with Anthropic `400 … messages.N.content.0: Input should be an object`. This is not a create/run bug — it's conversation corruption from concurrent turns. (The UI's `send()` and the `sendUserMessage` guard both check `running`, but a stale in-flight run or leftover persisted conversation can still bite; a hard reload + `clearConversationAndStorage` gives a truly clean slate.) Related: `hydrating` (module var) blocks sends until a reloaded conversation finishes restoring — a dispatch right after reload can no-op; wait a beat. `clearConversation()` (no `force`) no-ops while `running`; use `clearConversationAndStorage`.
+
+Agent tool executors live in `src/agent/executors.ts` (`executeAgentTool(name, input, ctx)`), importable in the Vite dev page for isolated testing: `await import('/src/agent/executors.ts?t=' + Date.now())` (the query-bust avoids a stale module cache). Worker tools save parameters under `tool.values.workerInterfaceValues`; `channelCheckboxes` values are `{channelIndex: true}` maps (a `true` value selects — key-presence alone does not).
+
 ### Store Edits Break HMR — Hard-Reload
 
 Editing any `src/store/*.ts` while `pnpm run dev` runs corrupts the store: vuex-module-decorators registers getters at import time with no HMR accept handler, so a hot re-import double-registers → `[vuex] duplicate getter key` cascade and broken state (e.g. annotations stuck at 0). **Hard-reload the page after every store-module edit** before trusting any in-browser behavior. Component `.vue` edits HMR fine — prefer putting temporary instrumentation in `.vue` files.
