@@ -88,6 +88,7 @@ export { default as store } from "./root";
 // NOTE: router is imported lazily where needed to avoid circular dependency with main.ts
 
 import { Debounce } from "@/utils/debounce";
+import { quotaExceededMessage } from "@/utils/quota";
 import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
 import {
@@ -1783,7 +1784,12 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true is required here because this action throws on failure
+  // (e.g. a storage quota breach) and callers rely on reading the original
+  // Error's message. Without it, vuex-module-decorators wraps any thrown
+  // error in a generic "ERR_ACTION_ACCESS_UNDEFINED" message, discarding the
+  // actual failure reason.
+  @Action({ rawError: true })
   async addMultiSourceMetadata({
     parentId,
     metadata,
@@ -1834,19 +1840,32 @@ export class Main extends VuexModule {
             "Failed to transcode the large image: no job received",
           );
         }
+        // Accumulate the job log so that on failure we can tell the user
+        // why the job failed (e.g. a storage quota breach during the
+        // server-side upload of the transcoded file).
+        let jobLog = "";
         const success = await jobs.addJob({
           jobId,
           datasetId: parentId,
-          eventCallback,
+          eventCallback: (jobData: IJobEventData) => {
+            if (typeof jobData.text === "string") {
+              jobLog += jobData.text;
+            }
+            eventCallback?.(jobData);
+          },
         });
         if (!success) {
-          throw new Error("Failed to transcode the large image: job failed");
+          throw new Error(
+            quotaExceededMessage(jobLog) ??
+              "Failed to transcode the large image: the transcoding job " +
+                "failed. See the transcoding log for details.",
+          );
         }
       }
       return itemId;
     } catch (error) {
       sync.setSaving(error as Error);
-      return null;
+      throw error;
     }
   }
 
