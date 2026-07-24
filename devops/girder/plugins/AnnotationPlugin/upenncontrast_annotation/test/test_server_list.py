@@ -39,6 +39,37 @@ def postList(server, user, path, body):
     )
 
 
+def assertAnchorPagesSelfConsistent(server, admin, datasetId, annotationIds,
+                                    sort, limit, filters=None,
+                                    propertyPaths=None):
+    """For every annotation: the anchor page must be page-aligned, contain
+    the anchor, and be byte-identical to the plain offset-paged request at
+    the returned offset — i.e. listPosition agrees with listPage ordering."""
+    base = {
+        "datasetId": str(datasetId),
+        "filters": filters or {},
+        "sort": sort,
+        "propertyPaths": propertyPaths or [],
+        "limit": limit,
+    }
+    for annotationId in annotationIds:
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            **base, "offset": 0, "anchorId": str(annotationId),
+        })
+        assertStatusOk(resp)
+        anchored = parseStreaming(resp)
+        assert anchored["offset"] is not None
+        assert anchored["offset"] % limit == 0
+        anchoredIds = [str(r["_id"]) for r in anchored["rows"]]
+        assert str(annotationId) in anchoredIds
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            **base, "offset": anchored["offset"],
+        })
+        assertStatusOk(resp)
+        paged = [str(r["_id"]) for r in parseStreaming(resp)["rows"]]
+        assert anchoredIds == paged
+
+
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
 class TestServerListIds:
@@ -133,6 +164,129 @@ class TestServerListPage:
         xys = [r["location"]["XY"] for r in result["rows"]]
         assert xys == [2, 1, 0]
 
+    def testListAnchorReturnsContainingPage(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        annotations = []
+        for i in range(5):
+            annotations.append(makeAnnotation(
+                folder["_id"], location={"XY": i, "Z": 0, "Time": 0}
+            ))
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "location.XY",
+                     "order": "asc"},
+            "propertyPaths": [], "offset": 0, "limit": 2,
+            "anchorId": str(annotations[3]["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 2
+        assert [r["location"]["XY"] for r in result["rows"]] == [2, 3]
+
+    def testListAnchorOutsideFiltersReturnsNoPage(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        target = makeAnnotation(folder["_id"], tags=["excluded"])
+        makeAnnotation(folder["_id"], tags=["included"])
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"tags": {
+                "values": ["included"], "exclusive": False,
+            }},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+            "anchorId": str(target["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == 1
+        assert result["offset"] is None
+        assert result["rows"] == []
+
+    def testListAnchorFieldSortDescending(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        annotations = [
+            makeAnnotation(folder["_id"], location={"XY": i, "Z": 0,
+                                                    "Time": 0})
+            for i in range(5)
+        ]
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "location.XY",
+                     "order": "desc"},
+            "propertyPaths": [], "offset": 0, "limit": 2,
+            # Descending order is 4,3,2,1,0 so XY=1 is at position 3.
+            "anchorId": str(annotations[1]["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 2
+        assert [r["location"]["XY"] for r in result["rows"]] == [2, 1]
+
+    def testListAnchorEqualSortValuesTieBrokenById(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        annotations = [
+            makeAnnotation(folder["_id"], location={"XY": 7, "Z": 0,
+                                                    "Time": 0})
+            for _ in range(3)
+        ]
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "location.XY", "order": "asc"},
+            "propertyPaths": [], "offset": 0, "limit": 1,
+            # All XY equal: order falls back to _id asc (creation order).
+            "anchorId": str(annotations[1]["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 1
+        assert str(result["rows"][0]["_id"]) == str(annotations[1]["_id"])
+
+    def testListAnchorNameSortWithMissingNames(self, admin, server):
+        # `name` is a nullable sort field: a missing name must order
+        # identically in the anchor position query and in the page sort
+        # (both treat missing as null).
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        annotations = [makeAnnotation(folder["_id"]) for _ in range(6)]
+        for unnamed in annotations[::2]:
+            Annotation().collection.update_one(
+                {"_id": unnamed["_id"]}, {"$unset": {"name": ""}}
+            )
+
+        for order in ("asc", "desc"):
+            assertAnchorPagesSelfConsistent(
+                server, admin, folder["_id"],
+                [a["_id"] for a in annotations],
+                {"type": "field", "key": "name", "order": order},
+                limit=2,
+            )
+
+    def testListRejectsInvalidAnchorId(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {}, "offset": 0, "limit": 10,
+            "anchorId": "not-an-object-id",
+        })
+        assertStatus(resp, 400)
+
     def testInvalidFieldSortReturns400(self, admin, server):
         folder = utilities.createFolder(
             admin, "ds", upenn_utilities.datasetMetadata
@@ -219,6 +373,71 @@ class TestServerListProperties:
         vals = [r["values"]["p"]["Area"] for r in result["rows"][:3]]
         assert vals == [30, 20, 10]
         assert str(result["rows"][-1]["_id"]) == str(noval["_id"])
+
+    def testPropertySortAnchorReturnsContainingPage(self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 2,
+            # anns[0] has Area=30, at position 2 after 10 and 20.
+            "anchorId": str(anns[0]["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 2
+        assert str(result["rows"][0]["_id"]) == str(anns[0]["_id"])
+        assert str(result["rows"][1]["_id"]) == str(noval["_id"])
+
+    def testPropertySortAnchorWithoutValueLandsOnTailPage(
+            self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 2,
+            # noval has no Area value, so it sorts last: position 3.
+            "anchorId": str(noval["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 2
+        assert str(result["rows"][1]["_id"]) == str(noval["_id"])
+
+    def testPropertySortDescAnchorsSelfConsistent(self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        assertAnchorPagesSelfConsistent(
+            server, admin, folder["_id"],
+            [a["_id"] for a in anns] + [noval["_id"]],
+            {"type": "property", "key": ["p", "Area"], "order": "desc"},
+            limit=2, propertyPaths=[["p", "Area"]],
+        )
+
+    def testPropertyFilterWithAnchor(self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        propertyFilters = [{
+            "path": ["p", "Area"], "mode": "range", "min": 15,
+        }]
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": propertyFilters},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 1,
+            # Filtered set is Area 20, 30 (asc): anns[0] (30) is position 1.
+            "anchorId": str(anns[0]["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 1
+        assert str(result["rows"][0]["_id"]) == str(anns[0]["_id"])
 
     def testPureSortNoDuplicateWhenPvDocLacksSortKey(self, admin, server):
         # Regression (Codex finding #4): on a pure property sort, an annotation

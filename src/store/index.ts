@@ -73,7 +73,12 @@ import {
   NotificationType,
   IDimensionStrategy,
   IVisibilityConfig,
+  IAnnotationBrowserConfig,
 } from "./model";
+import {
+  buildAnnotationBrowserConfig,
+  resolveAnnotationBrowserConfig,
+} from "@/utils/annotationBrowserConfig";
 
 import persister from "./Persister";
 import store from "./root";
@@ -212,6 +217,10 @@ function createGirderRestClient(options: {
 // Without this, a slower request with a different filter can land last and
 // overwrite the result of a newer request.
 let recentDatasetViewsRequestId = 0;
+
+// Annotation-browser persistence bookkeeping. Module-level rather than Vuex
+// state because the debounce timer is never read by the UI.
+let annotationBrowserSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
@@ -1135,6 +1144,7 @@ export class Main extends VuexModule {
   }) {
     this.setConfigurationImpl({ id, data });
     this.context.dispatch("loadVisibilityConfig", data?.visibilityConfig);
+    this.hydrateAnnotationBrowserState();
     // Warm the SAM model cache in the background: encoder downloads are
     // large, this way they are usually cached before a SAM tool is selected
     const samModels = new Set(
@@ -1453,6 +1463,9 @@ export class Main extends VuexModule {
     // this.dataset still holds the previously selected dataset here (setDataset
     // runs later), so this detects a genuine switch vs. a same-dataset refresh.
     const datasetChanged = id !== this.dataset?.id;
+    // Persist any pending annotation-browser change before the resets below
+    // wipe the state it would capture.
+    await this.flushAnnotationBrowserSave();
     this.api.flushCaches();
     this.context.dispatch("resetAnnotationState");
     this.context.dispatch("resetPropertyState");
@@ -1481,6 +1494,11 @@ export class Main extends VuexModule {
       });
       this.setDataset({ id, data: r });
       await this.loadLargeImages();
+      // setConfiguration only re-fires when the configuration changes; on a
+      // same-dataset refresh (unroll toggles) or a switch that keeps the same
+      // configuration, re-hydrate here to restore the browser state the
+      // resets above wiped.
+      this.hydrateAnnotationBrowserState();
       sync.setLoading(false);
       sync.setDatasetLoading(false);
     } catch (error) {
@@ -1502,6 +1520,13 @@ export class Main extends VuexModule {
     try {
       sync.setLoading(true);
       const configuration = await this.context.dispatch("getConfiguration", id);
+      // Flush any pending annotation-browser save while the previous
+      // configuration is still loaded.
+      // setConfiguration below flips this.configuration to the new one, after
+      // which the debounced save would write to the wrong configuration. This
+      // matters for same-dataset configuration switches within the 500 ms
+      // debounce window, which never pass through setSelectedDataset.
+      await this.flushAnnotationBrowserSave();
       if (!configuration) {
         this.setConfiguration({ id: null, data: null });
       } else {
@@ -2088,6 +2113,88 @@ export class Main extends VuexModule {
     }
     this.setConfigurationVisibilityConfig(config);
     await this.syncConfiguration("visibilityConfig");
+  }
+
+  // Debounced entry point called by the properties/filters stores whenever
+  // the user changes displayed columns or property filters. Debounced because
+  // dragging a filter histogram slider emits a continuous stream of updates.
+  @Action
+  scheduleAnnotationBrowserSave() {
+    if (annotationBrowserSaveTimer !== null) {
+      clearTimeout(annotationBrowserSaveTimer);
+    }
+    annotationBrowserSaveTimer = setTimeout(() => {
+      annotationBrowserSaveTimer = null;
+      this.saveAnnotationBrowserConfig();
+    }, 500);
+  }
+
+  // Run any pending debounced save immediately. Called before dataset-switch
+  // resets wipe the state the save would capture.
+  @Action
+  async flushAnnotationBrowserSave() {
+    if (annotationBrowserSaveTimer === null) {
+      return;
+    }
+    clearTimeout(annotationBrowserSaveTimer);
+    annotationBrowserSaveTimer = null;
+    await this.saveAnnotationBrowserConfig();
+  }
+
+  @Action
+  private async saveAnnotationBrowserConfig() {
+    const configuration = this.configuration;
+    if (!configuration) {
+      return;
+    }
+    // index.ts cannot statically import the properties/filters modules (they
+    // import this one), so pull their typed instances lazily. buildAnnotation-
+    // BrowserConfig keeps only the filters backing a visible row.
+    const properties = (await import("./properties")).default;
+    const filters = (await import("./filters")).default;
+    this.setConfigurationAnnotationBrowserConfig(
+      buildAnnotationBrowserConfig(
+        properties.displayedPropertyPaths,
+        filters.filterPaths,
+        filters.propertyFilters,
+      ),
+    );
+    await this.syncConfiguration("annotationBrowserConfig");
+  }
+
+  @Mutation
+  private setConfigurationAnnotationBrowserConfig(
+    config: IAnnotationBrowserConfig,
+  ) {
+    if (this.configuration) {
+      this.configuration.annotationBrowserConfig = config;
+    }
+  }
+
+  // Push the configuration's persisted annotation-browser state into the
+  // properties and filters stores. Idempotent; called both when a
+  // configuration loads and at the end of
+  // setSelectedDataset, which covers the paths where setConfiguration never
+  // re-fires (same-dataset refresh, or a dataset switch that keeps the same
+  // configuration).
+  @Action
+  hydrateAnnotationBrowserState() {
+    const configuration = this.configuration;
+    if (!configuration) {
+      return;
+    }
+    const config = resolveAnnotationBrowserConfig(
+      configuration.annotationBrowserConfig,
+      configuration.propertyIds,
+    );
+    this.context.dispatch(
+      "hydrateDisplayedPropertyPaths",
+      config.displayedPropertyPaths,
+    );
+    this.context.dispatch("hydrateAnnotationBrowserFilters", {
+      filterPaths: config.filterPaths,
+      propertyFilters: config.propertyFilters,
+    });
   }
 
   @Action

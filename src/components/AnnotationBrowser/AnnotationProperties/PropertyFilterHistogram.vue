@@ -105,14 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import {
-  ref,
-  computed,
-  watch,
-  onMounted,
-  onBeforeUnmount,
-  nextTick,
-} from "vue";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { arePathEquals } from "@/utils/paths";
@@ -142,7 +135,11 @@ const width = ref(400);
 const height = ref(60);
 const useLog = ref(false);
 const useCDF = ref(false);
-const defaultMinMax = ref(true);
+const defaultMinMax = ref(
+  !filterStore.propertyFilters.some((filter) =>
+    arePathEquals(filter.propertyPath, props.propertyPath),
+  ),
+);
 const valuesInput = ref("");
 
 const histToPixel = computed(() => {
@@ -371,28 +368,7 @@ onMounted(() => {
   }
 
   filterStore.updateHistograms();
-  if (!propertyFilter.value.enabled) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      enabled: true,
-    });
-  }
   initializeHandles();
-});
-
-onBeforeUnmount(() => {
-  // Disabling on unmount is load-bearing: when a filter is removed
-  // (removeFilter drops its path from filterPaths but leaves the entry in
-  // propertyFilters), this is what stops the orphaned entry from continuing
-  // to filter. Do not remove it. Side effect: on a dataset switch,
-  // resetFilterState clears propertyFilters first, then this re-adds one
-  // disabled (inert) orphan — see filters.ts resetFilterStateImpl.
-  if (propertyFilter.value.enabled) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      enabled: false,
-    });
-  }
 });
 
 defineExpose({

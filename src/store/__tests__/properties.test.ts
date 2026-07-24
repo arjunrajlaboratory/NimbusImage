@@ -17,6 +17,7 @@ vi.mock("@/store/index", () => ({
     propertiesAPI: {
       getPropertyValuesForIds: (...a: any[]) => getPropertyValuesForIds(...a),
     },
+    scheduleAnnotationBrowserSave: () => {},
   },
 }));
 

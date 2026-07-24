@@ -17,7 +17,13 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // that this test does not exercise, but they must be importable so the module
 // evaluates. Mock them to avoid pulling in the full store/geojs graph.
 vi.mock("./index", () => ({
-  default: { xy: 0, z: 0, time: 0, dataset: null },
+  default: {
+    xy: 0,
+    z: 0,
+    time: 0,
+    dataset: null,
+    scheduleAnnotationBrowserSave: () => {},
+  },
 }));
 vi.mock("./annotation", () => ({
   default: { annotations: [], selectedAnnotationIds: ["a", "b"] },
