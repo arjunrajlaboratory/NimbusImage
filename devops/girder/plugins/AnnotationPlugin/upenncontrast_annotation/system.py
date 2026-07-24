@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 
 conversionJobs = {}
 
-# Look-back window units accepted by the active-users endpoint, expressed in
-# seconds.
-ACTIVE_USERS_WINDOW_UNITS = {
+# Look-back window units accepted by the authenticated-users endpoint,
+# expressed in seconds.
+WINDOW_UNITS = {
     "s": 1,
     "m": 60,
     "h": 3600,
@@ -40,7 +40,7 @@ ACTIVE_USERS_WINDOW_UNITS = {
 # (default ~180 days), so counts for windows longer than the token lifetime
 # are inherently limited by token retention; this cap keeps an unbounded
 # client-supplied value from scanning an arbitrarily large token range.
-MAX_ACTIVE_USERS_WINDOW_SECONDS = 366 * 86400
+MAX_WINDOW_SECONDS = 366 * 86400
 
 
 def addSystemEndpoints(apiRoot):
@@ -55,7 +55,9 @@ def addSystemEndpoints(apiRoot):
     # Added to the folder route
     apiRoot.folder.route("GET", ("query",), getFoldersByQuery)
     # Added to the system route (admin-only usage metrics)
-    apiRoot.system.route("GET", ("active_users",), getActiveUsers)
+    apiRoot.system.route(
+        "GET", ("authenticated_users",), getAuthenticatedUsers
+    )
 
     # Also bind some events
     events.bind(
@@ -112,25 +114,26 @@ def getFoldersByQuery(self, query, limit, offset, sort):
     )
 
 
-def _parseActiveUsersWindow(window):
+def _parseAuthenticatedUsersWindow(window):
     """
     Convert a window string (e.g. "1d", "24h", "7d") to a number of seconds.
 
-    :param window: an integer amount followed by a unit (s, m, h, d, w).
+    :param window: a normalized (stripped, lower-cased) window string: an
+        integer amount followed by a unit (s, m, h, d, w).
     :returns: the window length in seconds.
     :raises RestException: if the value is malformed or out of range.
     """
-    match = re.fullmatch(r"(\d+)([smhdw])", window.strip().lower())
+    match = re.fullmatch(r"(\d+)([smhdw])", window)
     if not match:
         raise RestException(
             "window must be a positive integer followed by one of "
             "s, m, h, d, w (e.g. '1d', '7d', '24h').",
             code=400,
         )
-    seconds = int(match.group(1)) * ACTIVE_USERS_WINDOW_UNITS[match.group(2)]
+    seconds = int(match.group(1)) * WINDOW_UNITS[match.group(2)]
     if seconds <= 0:
         raise RestException("window must be greater than zero.", code=400)
-    if seconds > MAX_ACTIVE_USERS_WINDOW_SECONDS:
+    if seconds > MAX_WINDOW_SECONDS:
         raise RestException(
             "window is too large; the maximum is 366d.", code=400
         )
@@ -139,12 +142,16 @@ def _parseActiveUsersWindow(window):
 
 @access.admin
 @autoDescribeRoute(
-    Description("Count distinct authenticated users active within a window.")
+    Description("Count distinct users who authenticated within a window.")
     .notes(
         "Returns the number of distinct users who obtained an authentication "
-        "token within the given look-back window. This counts users who "
-        "authenticated (logged in or refreshed a session) during the window, "
-        "deduplicated per user. Requires site administrator access.\n\n"
+        "token within the given look-back window, i.e. who authenticated "
+        "(logged in or refreshed a session) during the window, deduplicated "
+        "per user. Requires site administrator access.\n\n"
+        "This is NOT a count of users who merely used the app: clients reuse "
+        "a stored token across requests, so a user only produces a new token "
+        "when they log in afresh (or their token expires). Treat this as a "
+        "distinct-authentications metric, not a general activity metric.\n\n"
         "Because Girder deletes tokens once they expire (default ~180 days), "
         "counts for windows longer than the token lifetime are limited by "
         "token retention."
@@ -160,8 +167,11 @@ def _parseActiveUsersWindow(window):
     .errorResponse("The window parameter is invalid.", 400)
 )
 @boundHandler()
-def getActiveUsers(self, window):
-    windowSeconds = _parseActiveUsersWindow(window)
+def getAuthenticatedUsers(self, window):
+    # Normalize the client-supplied window once at the API boundary so the
+    # value echoed in the response matches the parsed windowSeconds.
+    window = window.strip().lower()
+    windowSeconds = _parseAuthenticatedUsersWindow(window)
     end = datetime.datetime.utcnow()
     start = end - datetime.timedelta(seconds=windowSeconds)
     # Aggregation is the one sanctioned use of collection directly; Girder's
@@ -177,7 +187,7 @@ def getActiveUsers(self, window):
         "windowSeconds": windowSeconds,
         "start": start,
         "end": end,
-        "activeUsers": aggregation[0]["count"] if aggregation else 0,
+        "authenticatedUsers": aggregation[0]["count"] if aggregation else 0,
     }
 
 
