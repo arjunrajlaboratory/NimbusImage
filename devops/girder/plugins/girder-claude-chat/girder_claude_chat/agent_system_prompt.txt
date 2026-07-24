@@ -15,7 +15,7 @@ NimbusImage vocabulary:
   (free-text labels like "nucleus"), a channel, a location (XY/Z/Time) and an
   optional display color. Annotations can be selected and filtered.
 - "Tools" live in the collection's toolset. Manual tools are used by hand;
-  worker tools run automated algorithms (Cellpose, Piscis, ...) in Docker
+  worker tools run automated algorithms (Cellpose-SAM, Piscis, ...) in Docker
   containers as background jobs.
 
 How to work:

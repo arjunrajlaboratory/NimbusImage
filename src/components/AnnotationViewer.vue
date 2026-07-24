@@ -1926,13 +1926,18 @@ function shouldSelectStub(
   annotationStyle: IGeoJSPointFeatureStyle,
   unitsPerPixel: number,
 ): boolean {
-  return pointNearPoint(
-    clickPosition,
-    stub.centroid,
-    (annotationStyle.radius as number) ?? 0,
-    (annotationStyle.strokeWidth as number) ?? 0,
-    unitsPerPixel,
-  );
+  // Unlike a normal point feature (whose radius is in display pixels), the stub
+  // dot renders world-locked: its style.radius is estimatedRadius in world
+  // (image-pixel) units, via `scaled` (getStubStyleFromBaseStyle). clickPosition
+  // and stub.centroid are also world units, so compare directly — do NOT route
+  // through pointNearPoint, which multiplies the radius by unitsPerPixel and
+  // would shrink/expand the hit area relative to the rendered dot at any zoom
+  // where unitsPerPixel !== 1. Only strokeWidth is in display pixels, so convert
+  // just that term.
+  const radius = (annotationStyle.radius as number) ?? 0;
+  const strokeWidth = (annotationStyle.strokeWidth as number) ?? 0;
+  const hitRadius = radius + strokeWidth * unitsPerPixel;
+  return pointDistance(clickPosition, stub.centroid) < hitRadius;
 }
 
 function getSelectedAnnotationsFromAnnotation(
@@ -2961,27 +2966,37 @@ function handleInteractionModeChange(evt: any) {
 function setHoveredAnnotationFromCoordinates(gcsCoordinates: IGeoJSPosition) {
   const geoAnnotations: IGeoJSAnnotation[] =
     props.annotationLayer.annotations();
-  let annotationToToggle: IAnnotation | null = null;
+  let annotationToToggle: TAnnotationOrStub | null = null;
+  const unitsPerPixel = getMapUnitsPerPixel();
   for (let i = 0; i < geoAnnotations.length; ++i) {
     const geoAnnotation = geoAnnotations[i];
-    const id = geoAnnotation.options("girderId");
-    if (!id) {
+    const { girderId, isConnection } = geoAnnotation.options();
+    if (!girderId || isConnection) {
       continue;
     }
-    const annotation = getAnnotationFromId.value(id);
-    if (!annotation) {
+    // Mirror the point-click selection path: unhydrated annotations render as
+    // stub dots, so resolve to the stub and hit-test the dot — otherwise every
+    // stub-rendered annotation is silently unclickable.
+    const candidate = resolveSelectionCandidate(girderId);
+    if (!candidate) {
       continue;
     }
-    const unitsPerPixel = getMapUnitsPerPixel();
-    const shouldSelect = shouldSelectAnnotation(
-      AnnotationShape.Point,
-      [gcsCoordinates],
-      annotation,
-      geoAnnotation.style(),
-      unitsPerPixel,
-    );
-    if (shouldSelect) {
-      annotationToToggle = annotation;
+    const hit = isHydratedAnnotation(candidate)
+      ? shouldSelectAnnotation(
+          AnnotationShape.Point,
+          [gcsCoordinates],
+          candidate,
+          geoAnnotation.style(),
+          unitsPerPixel,
+        )
+      : shouldSelectStub(
+          gcsCoordinates,
+          candidate,
+          geoAnnotation.style(),
+          unitsPerPixel,
+        );
+    if (hit) {
+      annotationToToggle = candidate;
       break;
     }
   }
@@ -4545,6 +4560,7 @@ defineExpose({
   pointNearPoint,
   pointNearLine,
   shouldSelectAnnotation,
+  shouldSelectStub,
   getSelectedAnnotationsFromAnnotation,
   shouldSelectGeoJSAnnotation,
   getTimelapseAnnotationsFromAnnotation,
