@@ -172,7 +172,8 @@
         class="mb-2"
       >
         Region (ROI) filters are not applied to this list while browsing a large
-        dataset. Use tag, property, or annotation ID filters to narrow results.
+        dataset (they still apply to the image view). Use tag, property, or
+        annotation ID filters to narrow results.
       </v-alert>
       <!-- Per-query feedback (B2): a server /list query can take ~1s+ at scale,
            so show a clear in-flight affordance with the matched count. The
@@ -348,6 +349,7 @@ import {
   IAnnotationListSort,
   IAnnotationPropertyValues,
   isHydratedAnnotation,
+  ANNOTATION_LIST_SERVER_THRESHOLD,
 } from "@/store/model";
 
 const allHeaders = [
@@ -477,7 +479,7 @@ const isDeletingAnnotations = computed(() => {
 // derived from it): that getter iterates ALL stubs client-side and applies
 // property filters without property values loaded, so it is both expensive and
 // wrong in server mode. Every shared computed has an isServerMode branch.
-const isServerMode = computed(() => annotationStore.stubOnlyMode);
+const isServerMode = computed(() => annotationStore.isListServerMode);
 
 const serverItemsLength = computed(() => annotationListServer.total);
 
@@ -626,13 +628,12 @@ const listedAnnotations = computed(() => {
   return annotations;
 });
 
-// Defensive scale guard, superseded in practice by stubOnlyMode (server mode):
-// server mode activates at maxVisible = 10,000, below this 20,000 threshold, so
-// the client-side `tooManyToList` branch is effectively unreachable now that the
-// server-driven list (Option B) handles large datasets. Kept as a safety net for
-// any client-mode path that materializes one item per filtered annotation and
+// Defensive scale guard, unreachable in practice: isListServerMode routes any
+// dataset above this same threshold to the server list, so the client path
+// never holds more than this many annotations. Kept as a safety net for any
+// client-mode path that materializes one item per filtered annotation and
 // sorts client-side (which would hang the tab above this many).
-const LIST_ITEM_LIMIT = 20000;
+const LIST_ITEM_LIMIT = ANNOTATION_LIST_SERVER_THRESHOLD;
 
 const tooManyToList = computed(
   () => listedAnnotations.value.length > LIST_ITEM_LIMIT,
@@ -948,18 +949,26 @@ watch(localIdFilter, (value) => {
   debouncedServerRefetch();
 });
 
+// Watch a JSON-serialized snapshot rather than the raw getters with
+// { deep: true }: filterStore/propertyStore rebuild fresh array/object
+// references on every genuine mutation, so deep-watching them fires on every
+// unrelated reactive touch, not just real changes (same trap as the
+// currentFilters watch below — see its comment). That spurious refiring calls
+// setOptions({page: 1}) within tens of ms of any real click-to-row
+// navigation, silently resetting the page the user just navigated to.
 watch(
-  [
-    () => filterStore.tagFilter,
-    () => filterStore.propertyFilters,
-    () => filterStore.onlyCurrentFrame,
-    () => filterStore.selectionFilter,
-    () => filterStore.annotationIdFilters,
-    () => propertyStore.displayedPropertyPaths,
-    () => store.xy,
-    () => store.z,
-    () => store.time,
-  ],
+  () =>
+    JSON.stringify([
+      filterStore.tagFilter,
+      filterStore.propertyFilters,
+      filterStore.onlyCurrentFrame,
+      filterStore.selectionFilter,
+      filterStore.annotationIdFilters,
+      propertyStore.displayedPropertyPaths,
+      store.xy,
+      store.z,
+      store.time,
+    ]),
   () => {
     if (!isServerMode.value) {
       return;
@@ -967,7 +976,6 @@ watch(
     annotationListServer.setOptions({ page: 1 });
     debouncedServerRefetch();
   },
-  { deep: true },
 );
 
 // Scope server-mode selection to the current query. The selection set is
@@ -996,6 +1004,32 @@ watch(
       return;
     }
     annotationStore.setSelected([]);
+  },
+);
+
+// Server mode can now engage outside stub-only mode (fully-fetched dataset
+// above the list threshold), so the mode can flip mid-session: crossing the
+// threshold by creating/deleting annotations, or the initial fetch completing
+// after mount. Fetch page 1 on entry so the table isn't empty/stale.
+watch(isServerMode, (value) => {
+  if (value) {
+    annotationListServer.setOptions({ page: 1 });
+    annotationListServer.fetchPage();
+  }
+});
+
+// In non-stub server mode the dataset is fully loaded client-side, so
+// annotations can be created/edited/deleted locally (drawing tools, undo)
+// without going through this component's server-aware code paths. The server
+// rows would silently go stale; refetch when the client set changes. Stub mode
+// is excluded: annotations[] is empty there and stub-mode mutations already
+// refetch explicitly where needed.
+watch(
+  () => annotationStore.annotations.length,
+  () => {
+    if (isServerMode.value && !annotationStore.stubOnlyMode) {
+      debouncedServerRefetch();
+    }
   },
 );
 
