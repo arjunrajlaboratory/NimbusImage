@@ -1037,11 +1037,21 @@ export class Main extends VuexModule {
   @Action
   async fetchUserStorageInfo() {
     const user = this.girderUser;
-    // getUserStorageQuota returns null when there is no user or the quota
-    // cannot be fetched (e.g. the user_quota plugin is not enabled).
-    this.setUserStorageInfo(
-      user ? await this.api.getUserStorageQuota(user._id) : null,
-    );
+    if (!user) {
+      this.setUserStorageInfo(null);
+      return;
+    }
+    const userId = user._id;
+    // getUserStorageQuota returns null when the quota cannot be fetched
+    // (e.g. the user_quota plugin is not enabled on the backend).
+    const info = await this.api.getUserStorageQuota(userId);
+    // This action fires on login and on every profile-menu open, so a slow
+    // response can resolve after the user logged out or switched accounts.
+    // Discard it in that case so we never show one user's quota to another.
+    if (this.girderUser?._id !== userId) {
+      return;
+    }
+    this.setUserStorageInfo(info);
   }
 
   @Mutation
