@@ -61,16 +61,18 @@ const mockMap = () => {
 };
 
 // GeoJS dom widget: a real element so the label code can set its class, text
-// and click handler.
-const mockDomWidget = () => {
-  const element = document.createElement("div");
+// and click handler. GeoJS builds it from `arg.el`, defaulting to a div.
+const mockDomWidget = (el?: string) => {
+  const element = document.createElement(el || "div");
   return { canvas: vi.fn(() => element) };
 };
 
 const mockLayer = () => ({
   node: vi.fn().mockReturnValue({ css: vi.fn() }),
   createFeature: vi.fn().mockReturnValue({}),
-  createWidget: vi.fn(() => mockDomWidget()),
+  createWidget: vi.fn((_widgetName: string, arg?: any) =>
+    mockDomWidget(arg?.el),
+  ),
   deleteWidget: vi.fn(),
   moveToTop: vi.fn(),
   zIndex: vi.fn().mockReturnValue(0),
@@ -118,6 +120,9 @@ vi.mock("@/store", () => {
       unrollXY: false,
       unrollZ: false,
       unrollT: false,
+      showXYLabels: true,
+      showZLabels: true,
+      showTimeLabels: true,
       selectedTool: null as any,
       layerStackImages: [] as any[],
       layerMode: "multiple",
@@ -319,6 +324,9 @@ describe("ImageViewer", () => {
     mockedStore.unrollXY = false;
     mockedStore.unrollZ = false;
     mockedStore.unrollT = false;
+    mockedStore.showXYLabels = true;
+    mockedStore.showZLabels = true;
+    mockedStore.showTimeLabels = true;
     mockedStore.selectedTool = null;
     mockedStore.layerStackImages = [];
     mockedStore.layerMode = "multiple" as any;
@@ -352,8 +360,11 @@ describe("ImageViewer", () => {
 
   afterEach(() => {
     vi.useRealTimers();
-    if (wrapper) {
-    }
+    // Unmount, or every mounted instance keeps reacting to the shared reactive
+    // store mock: a store change in a later test then runs the watchers of
+    // every earlier test's component, all of them writing to the same
+    // mockedStore.maps entries.
+    wrapper?.unmount();
   });
 
   // ---- 1. Mounting & Lifecycle ----
@@ -1269,7 +1280,7 @@ describe("ImageViewer", () => {
   describe("unroll frame labels", () => {
     // A grid of XY frames: unrollW is ceil(sqrt(count)) for square images, so
     // the default 4 frames lay out 2x2.
-    function unrolledXYStack(count = 4) {
+    function unrolledXYStack(count = 4, overrides: any = {}) {
       const baseImage = createLayerStackImage().images[0];
       const images = Array.from({ length: count }, (_unused, IndexXY) => ({
         ...baseImage,
@@ -1277,6 +1288,7 @@ describe("ImageViewer", () => {
         frame: { IndexXY },
       }));
       return createLayerStackImage({
+        ...overrides,
         images,
         urls: images.map((_image, i) => `http://localhost/${i}/{z}/{x}/{y}`),
         fullUrls: images.map(
@@ -1294,13 +1306,28 @@ describe("ImageViewer", () => {
       return (mockedStore.maps[0] as any).uiLayer;
     }
 
-    // The ui layer also hosts the scale widgets, so pick out the labels.
+    // The labels a layer still has: created minus deleted. The creation log
+    // alone would also count labels a rebuild has since removed — and the ui
+    // layer hosts the scale widgets too, hence the class filter.
     function labelElements(uiLayer: any): HTMLElement[] {
+      const deleted = new Set(
+        uiLayer.deleteWidget.mock.calls.map((call: any[]) => call[0]),
+      );
       return uiLayer.createWidget.mock.results
-        .map((result: any) => result.value.canvas())
+        .map((result: any) => result.value)
+        .filter((widget: any) => !deleted.has(widget))
+        .map((widget: any) => widget.canvas())
         .filter((element: HTMLElement) =>
           element.classList.contains("unroll-frame-label"),
         );
+    }
+
+    // Labels on the map as it exists now: draw() can replace a map entry, and
+    // with it the layer the labels live on.
+    function labelTexts(mapIndex = 0): (string | null)[] {
+      return labelElements((mockedStore.maps[mapIndex] as any).uiLayer).map(
+        (element) => element.textContent,
+      );
     }
 
     it("labels each cell of the grid at its upper-left corner", () => {
@@ -1345,7 +1372,116 @@ describe("ImageViewer", () => {
       expect(
         (mockedStore.maps[0] as any).uiLayer.createWidget,
       ).not.toHaveBeenCalled();
-      expect((wrapper.vm as any).unrollCells).toEqual([]);
+      expect((wrapper.vm as any).unrollCellsByMap).toEqual([]);
+    });
+
+    it("makes each label a real button", () => {
+      const uiLayer = mountUnrolled();
+
+      expect(uiLayer.createWidget).toHaveBeenCalledWith(
+        "dom",
+        expect.objectContaining({ el: "button" }),
+      );
+      const [label] = labelElements(uiLayer);
+      expect(label.getAttribute("type")).toBe("button");
+      expect(label.getAttribute("aria-label")).toBe("Show XY 1 on its own");
+    });
+
+    it("ranks frames over the dataset, not over the drawn layer", () => {
+      // The layer covers XY 0 and 5; the dataset's frames cover 0, 2 and 5, and
+      // store.xy indexes into that. So the second cell is dataset index 2.
+      const cellFrames = [0, 5];
+      const stack = unrolledXYStack(2);
+      stack.images.forEach((image: any, i: number) => {
+        image.frame = { IndexXY: cellFrames[i] };
+      });
+      mockedStore.dataset = {
+        ...(mockedStore.dataset as any),
+        allImages: [0, 2, 5].map((IndexXY) => ({ frame: { IndexXY } })),
+      } as any;
+      mockedStore.unroll = true;
+      mockedStore.unrollXY = true;
+      mockedStore.layerStackImages = [stack];
+
+      wrapper = mountComponent();
+      const uiLayer = (mockedStore.maps[0] as any).uiLayer;
+
+      expect(
+        labelElements(uiLayer).map((element) => element.textContent),
+      ).toEqual(["XY 1", "XY 3"]);
+      labelElements(uiLayer)[1].click();
+      expect(mockedStore.setXY).toHaveBeenCalledWith(2);
+    });
+
+    it("includes the dataset's dimension label when that axis is switched on", () => {
+      mockedStore.dataset = {
+        ...(mockedStore.dataset as any),
+        dimensionLabels: { xy: ["19263, -6626", "18743, -8631"] },
+      } as any;
+      mountUnrolled(2);
+
+      expect(labelTexts()).toEqual([
+        "XY 1 (19263, -6626)",
+        "XY 2 (18743, -8631)",
+      ]);
+    });
+
+    it("rebuilds the labels when a viewer label setting is toggled", async () => {
+      // Toggling "Show XY labels" changes only label text, so it never
+      // triggers a redraw — the labels have to react to the setting itself.
+      mockedStore.dataset = {
+        ...(mockedStore.dataset as any),
+        dimensionLabels: { xy: ["19263, -6626", "18743, -8631"] },
+      } as any;
+      mountUnrolled(2);
+      expect(labelTexts()).toEqual([
+        "XY 1 (19263, -6626)",
+        "XY 2 (18743, -8631)",
+      ]);
+
+      mockedStore.showXYLabels = false;
+      await nextTick();
+
+      expect(labelTexts()).toEqual(["XY 1", "XY 2"]);
+    });
+
+    it("drops the dimension label when the viewer setting is off", () => {
+      mockedStore.dataset = {
+        ...(mockedStore.dataset as any),
+        dimensionLabels: { xy: ["19263, -6626", "18743, -8631"] },
+      } as any;
+      mockedStore.showXYLabels = false;
+      mountUnrolled(2);
+
+      expect(labelTexts()).toEqual(["XY 1", "XY 2"]);
+    });
+
+    it("labels each map from its own layer group in unroll layer mode", () => {
+      // Two visible layers, so mapLayerList has two groups and each gets a map.
+      // The second layer covers fewer frames than the first.
+      mockedStore.layerMode = "unroll" as any;
+      mockedStore.unroll = true;
+      mockedStore.unrollXY = true;
+      mockedStore.dataset = {
+        ...(mockedStore.dataset as any),
+        allImages: [0, 1, 2, 3].map((IndexXY) => ({ frame: { IndexXY } })),
+      } as any;
+      mockedStore.layerStackImages = [
+        unrolledXYStack(4, { layer: { id: "layer1" } }),
+        unrolledXYStack(2, { layer: { id: "layer2" } }),
+      ];
+
+      wrapper = mountComponent();
+
+      expect(mockedStore.maps).toHaveLength(2);
+      expect(
+        mockedStore.maps.map((mapentry: any) =>
+          labelElements(mapentry.uiLayer).map((el) => el.textContent),
+        ),
+      ).toEqual([
+        ["XY 1", "XY 2", "XY 3", "XY 4"],
+        ["XY 1", "XY 2"],
+      ]);
     });
 
     it("keeps the labels of an unchanged grid instead of rebuilding them", () => {
@@ -1371,7 +1507,7 @@ describe("ImageViewer", () => {
 
       expect(uiLayer.createWidget).not.toHaveBeenCalled();
       // The cells still exist; only the labels are dropped.
-      expect((wrapper.vm as any).unrollCells).toHaveLength(401);
+      expect((wrapper.vm as any).unrollCellsByMap[0]).toHaveLength(401);
       expect(vi.mocked(logWarning)).toHaveBeenCalledWith(
         expect.stringContaining("401 frames exceeds"),
       );

@@ -481,19 +481,41 @@ const mapLayerList = computed<ILayerStackImage[][]>(() => {
 
 // ---- Computed Properties - Unroll Labels ----
 
-const unrollCells = computed<IUnrollCell[]>(() => {
+// One entry per map, index-aligned with mapLayerList (and so with maps): each
+// map draws its own layer group in the "unroll" layer mode, and a group can
+// cover different frames than its neighbour, so cells are derived per map from
+// the layer whose tiles that map shows.
+const unrollCellsByMap = computed<IUnrollCell[][]>(() => {
   if (!unrolling.value) {
     return [];
   }
-  // The layer draw() lays the grid out from, so cell order matches the tiles.
-  const someImages = layerStackImages.value.find((lsi) => lsi.images[0]);
-  if (!someImages) {
-    return [];
-  }
-  return getUnrollCells(someImages.images, {
+  const dataset = store.dataset;
+  const flags = {
     unrollXY: store.unrollXY,
     unrollZ: store.unrollZ,
     unrollT: store.unrollT,
+  };
+  const showDimensionLabels = {
+    xy: store.showXYLabels,
+    z: store.showZLabels,
+    time: store.showTimeLabels,
+  };
+  return mapLayerList.value.map((mll) => {
+    const someImages = mll.find((lsi) => lsi.images[0]);
+    if (!someImages) {
+      return [];
+    }
+    return getUnrollCells({
+      cellImages: someImages.images,
+      flags,
+      // Axis indices have to be ranked over every frame of the dataset, since
+      // that is the set store.xy / .z / .time index into.
+      axisImages: dataset?.allImages?.length
+        ? dataset.allImages
+        : someImages.images,
+      dimensionLabels: dataset?.dimensionLabels,
+      showDimensionLabels,
+    });
   });
 });
 
@@ -883,10 +905,12 @@ const unrollLabelStates = new WeakMap<IGeoJSMap, IUnrollLabelState>();
 // once per grid rather than on every draw.
 let warnedUnrollLabelCells = 0;
 
-// The cells that get a label: unlabelled ones (every unrolled dimension has a
-// single value) and grids too dense to label are dropped.
-function labelledUnrollCells(): IUnrollCell[] {
-  const cells = unrollCells.value.filter((cell) => cell.label);
+// The cells of one map's grid that get a label: unlabelled ones (every unrolled
+// dimension has a single value) and grids too dense to label are dropped.
+function labelledUnrollCells(mapIndex: number): IUnrollCell[] {
+  const cells = (unrollCellsByMap.value[mapIndex] ?? []).filter(
+    (cell) => cell.label,
+  );
   if (cells.length > MAX_UNROLL_LABEL_CELLS) {
     if (warnedUnrollLabelCells !== cells.length) {
       warnedUnrollLabelCells = cells.length;
@@ -932,15 +956,20 @@ function createUnrollLabel(
   someImage: IImage,
 ) {
   const widget = uiLayer.createWidget("dom", {
+    // A real button, so the label is reachable by keyboard and reads as a
+    // control; GeoJS creates whatever element `el` names.
+    el: "button",
     position: {
       x: someImage.sizeX * (cell.index % unrollW.value),
       y: someImage.sizeY * Math.floor(cell.index / unrollW.value),
     },
   });
-  const element = widget.canvas();
+  const element = widget.canvas() as HTMLButtonElement;
+  element.type = "button";
   element.classList.add("unroll-frame-label");
   element.textContent = cell.label;
   element.title = `Show ${cell.label} on its own`;
+  element.setAttribute("aria-label", `Show ${cell.label} on its own`);
   element.onclick = (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -960,29 +989,36 @@ function clearUnrollLabels() {
   }
 }
 
-function updateUnrollLabels(someImage: IImage) {
-  const cells = labelledUnrollCells();
-  const signature = JSON.stringify([
-    cells.map((cell) => [cell.index, cell.label]),
-    unrollW.value,
-    someImage.sizeX,
-    someImage.sizeY,
-  ]);
-  for (const mapentry of maps.value) {
+function updateUnrollLabels() {
+  // The same image draw() sizes the grid from, so a cell's corner is at a
+  // multiple of this image's size.
+  const someImage = layerStackImages.value.find((lsi) => lsi.images[0])
+    ?.images[0];
+  if (!someImage) {
+    return;
+  }
+  maps.value.forEach((mapentry, mapIndex) => {
     const uiLayer = mapentry.uiLayer;
     if (!uiLayer) {
-      continue;
+      return;
     }
+    const cells = labelledUnrollCells(mapIndex);
+    const signature = JSON.stringify([
+      cells.map((cell) => [cell.index, cell.label]),
+      unrollW.value,
+      someImage.sizeX,
+      someImage.sizeY,
+    ]);
     const state = unrollLabelStates.get(mapentry.map);
     if (state?.signature === signature) {
-      continue;
+      return;
     }
     state?.widgets.forEach((widget) => uiLayer.deleteWidget(widget));
     unrollLabelStates.set(mapentry.map, {
       widgets: cells.map((cell) => createUnrollLabel(uiLayer, cell, someImage)),
       signature,
     });
-  }
+  });
 }
 
 function _setupMap(
@@ -1503,7 +1539,7 @@ function draw() {
     map.draw();
   });
 
-  updateUnrollLabels(someImage);
+  updateUnrollLabels();
 
   // Track progress of layers.
   // Two-pass approach: first build the array and assign the ref, THEN register
@@ -1683,6 +1719,13 @@ watch([showScalebar, pixelSize], updateScaleWidget);
 
 watch([showPixelScalebar, pixelSize], updateScalePixelWidget);
 
+// Rebuild the labels whenever what they should say changes. Watching the cells
+// rather than draw() matters for the inputs that never trigger a redraw — the
+// "Show XY / Z / Time labels" viewer settings, which only change label text.
+// Redundant calls are cheap: updateUnrollLabels no-ops on an unchanged
+// signature.
+watch(unrollCellsByMap, () => updateUnrollLabels());
+
 watch(dataset, () => {
   resetMapsOnDraw.value = true;
   datasetReset();
@@ -1777,7 +1820,7 @@ defineExpose({
   layersReady,
   mouseMap,
   mapLayerList,
-  unrollCells,
+  unrollCellsByMap,
   mousetrapAnnotations,
   refsMounted,
   readyLayers,
@@ -1858,7 +1901,9 @@ defineExpose({
    upper-left corner; the translate insets it into the cell. Unscoped because
    the element is created by GeoJS, not rendered by this component. */
 .unroll-frame-label {
+  appearance: none;
   transform: translate(5px, 5px);
+  border: 0;
   padding: 0 6px;
   border-radius: 3px;
   background: rgb(0 0 0 / 55%);
@@ -1877,6 +1922,12 @@ defineExpose({
 .unroll-frame-label:hover {
   background: rgb(0 0 0 / 85%);
   box-shadow: 0 0 0 1px rgb(255 255 255 / 65%);
+}
+
+.unroll-frame-label:focus-visible {
+  background: rgb(0 0 0 / 85%);
+  outline: 2px solid #fff;
+  outline-offset: 1px;
 }
 </style>
 
