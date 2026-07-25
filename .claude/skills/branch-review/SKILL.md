@@ -104,6 +104,8 @@ This keeps every actionable item discoverable from the Findings Summary table by
 | **Frontend compensating for backend** | Frontend fallback logic that masks backend issues or duplicates backend access control |
 | **Store Organization** | New state added to `src/store/index.ts` instead of a focused store module |
 | **Naming** | Generic variable names or function names that no longer match their behavior |
+| **Partial Persistence** | One logical change issuing several writes of the same key, so a mid-sequence failure leaves the resource partially updated |
+| **Error Message Mangling** | Store action throwing or propagating without `rawError: true`, so callers get `ERR_ACTION_ACCESS_UNDEFINED` instead of the reason |
 
 ## Backend-Specific Checks
 
@@ -182,6 +184,17 @@ Flag diffs in generated or documentation trees the branch shouldn't touch (e.g. 
 ### 7. Stale Selection / State Feeding Bulk Actions
 For list/selection UIs: can a selected set survive a filter or mode change and then feed a bulk destructive action (delete/tag/hydrate)? Check that selection is scoped or cleared when the visible set's definition changes, and that select-all paths respect lazy-mode/budget caps instead of operating on the entire dataset.
 
+### 8. Partial Persistence: One Logical Change Writing the Same Key Twice
+`syncConfiguration(key)` PUTs the whole key, so N single-field calls in one operation = N writes of the same key, and a failure part-way leaves the shared collection partially updated **while the operation reports failure**. Distinct from the looped-call check (#2): the repeats here are sequential `await`s on *different* fields, not a `.map()`, so they don't look like a loop.
+
+For any handler that changes several fields of one resource, check:
+- Are all inputs **validated before** the first write? Interleaved validation is the easier half to miss — it produces a partial update with no backend failure involved, so backend-rejection tests can't catch it.
+- Do two different actions in the same handler both end up syncing the same key? (`changeLayer` and `saveContrastInConfiguration` both write `layers`.)
+- Writes to genuinely different resources (configuration vs dataset view) can't be merged — expect a comment saying so, don't flag it.
+
+### 9. Store Actions That Throw or Propagate Without `rawError: true`
+`vuex-module-decorators` replaces any error escaping a bare `@Action` with a generic `ERR_ACTION_ACCESS_UNDEFINED` message. Flag a new/edited action if it throws **or merely propagates** (awaits an API call or another action) and any caller reads `error.message`. Errors are re-wrapped at every boundary they cross, across modules, so check the whole chain, not just the action in the diff. `tsc`/lint/tests stay green either way, and a test that mocks the action bypasses the decorator entirely — so a real-dispatch test asserting the **exact** message is the only regression guard (substring assertions pass regardless; the wrapper embeds the original message in its stack). See nimbus-frontend skill.
+
 ## Example Output Format
 
 The output has exactly four sections, in this order: **Overall Assessment**, **Findings**, **Findings Summary**, **Checklist Coverage**. **Questions for Clarification** is optional and appears only if there are open questions. There is no separate "Minor Observations" section — small items become findings with Severity Nit.
@@ -250,6 +263,8 @@ The two tables are numbered and serve different purposes:
 | Frontend compensating for backend | pass | — |
 | Store Organization | pass | — |
 | Naming | pass | — |
+| Partial persistence (same key written twice) | pass | — |
+| Actions that throw/propagate without rawError | pass | — |
 
 ### Questions for Clarification
 [Only include this section if there are open questions. Otherwise omit it.]
