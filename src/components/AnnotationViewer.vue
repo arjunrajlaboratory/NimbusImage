@@ -3183,11 +3183,20 @@ function setHoveredAnnotationFromCoordinates(gcsCoordinates: IGeoJSPosition) {
   // connection line — the line is skipped above — which reads as the feature
   // being broken. Objects still win: connections are only considered when the
   // click hit no object.
-  if (annotationToToggle) {
+  // Objects normally win, so a line crossing an object never steals its click.
+  // TIMELAPSE MODE INVERTS THAT: there the track segments are the thing being
+  // looked at and the annotation-layer dots sit underneath them, so a segment
+  // almost always crosses a dot and clicking a track did nothing at all for the
+  // connection. Prefer the connection there, and only fall back to the object.
+  const connectionId = findConnectionIdAtPoint(gcsCoordinates);
+  if (annotationToToggle && !(showTimelapseMode.value && connectionId)) {
     connectionListStore.setHoveredConnectionId(null);
     return;
   }
-  const connectionId = findConnectionIdAtPoint(gcsCoordinates);
+  if (annotationToToggle) {
+    // The connection won: undo the object hover set above.
+    annotationStore.setHoveredAnnotationId(null);
+  }
   connectionListStore.setHoveredConnectionId(
     connectionId && connectionId !== connectionListStore.hoveredConnectionId
       ? connectionId
@@ -4236,10 +4245,19 @@ watch([hoveredAnnotationId, selectedAnnotationIds], () => {
   onAnnotationStateChanged();
 });
 
-// Connection selection/hover restyles normal-mode connection lines in place,
-// and rebuilds the timelapse layer (which bakes the selection in at draw time).
+// Connection selection/hover restyles normal-mode connection lines in place —
+// that path is throttled and touches only the affected features.
 watch([selectedConnectionIds, hoveredConnectionId], () => {
   onAnnotationStateChanged();
+});
+
+// The timelapse layer bakes styling in at draw time, so reflecting a change
+// there means rebuilding every segment. Do that for SELECTION only: hover
+// changes continuously while the pointer moves down the connection list, and
+// rebuilding ~2,500 line features per row made the list feel sluggish. The
+// cost is that a hovered track segment does not widen until something else
+// triggers a redraw, which is the trade the slowness is not worth paying.
+watch(selectedConnectionIds, () => {
   if (showTimelapseMode.value) {
     onTimelapseModeChanged();
   }

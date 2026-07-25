@@ -1287,6 +1287,105 @@ describe("AnnotationViewer", () => {
         expect(wrapper.html()).not.toContain("connection-action-panel");
       });
 
+      // In timelapse mode the track segments ARE the visual; the annotation
+      // layer's dots sit under them. Clicking a segment that crosses a dot must
+      // select the link, not the dot — otherwise clicking a track does nothing
+      // for the connection, which is what users hit.
+      // Puts a drawn OBJECT feature and a connection line on the layer at the
+      // same spot, so the hover handler genuinely has to choose between them.
+      // Building them explicitly beats driving the whole draw pipeline: the
+      // point of the test is the precedence rule, not the drawing.
+      function mountWithOverlappingObjectAndConnection() {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(1);
+        // pointDistance is a bare vi.fn() returning undefined, so the object
+        // hit-test can never succeed until the test says otherwise — 0 means
+        // "the click is dead on the object".
+        (pointDistance as any).mockReturnValue(0);
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.removeAllAnnotations();
+
+        // Object a1 renders at (10, 20) with radius 5 — a click there hits it.
+        const objectFeature = mockGeoJSAnnotation("point");
+        objectFeature.options({ girderId: "a1", layerId: "l1" });
+        (objectFeature.style as any).mockReturnValue({
+          radius: 5,
+          strokeWidth: 2,
+        });
+        aLayer.addAnnotation(objectFeature);
+
+        // A connection line passing straight through the same point.
+        const lineFeature = mockGeoJSAnnotation("line");
+        lineFeature.options({ girderId: "c1", isConnection: true });
+        (lineFeature.coordinates as any).mockReturnValue([
+          { x: 0, y: 0 },
+          { x: 100, y: 100 },
+        ]);
+        aLayer.addAnnotation(lineFeature);
+
+        connectionListStore.setHoveredConnectionId(null);
+        mockedAnnotationStore.hoveredAnnotationId = null;
+      }
+
+      it("prefers the connection over an object in timelapse mode", () => {
+        mockedStore.showTimelapseMode = true;
+        mountWithOverlappingObjectAndConnection();
+
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 10,
+          y: 20,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBe("c1");
+      });
+
+      it("still prefers the object outside timelapse mode", () => {
+        mockedStore.showTimelapseMode = false;
+        mountWithOverlappingObjectAndConnection();
+
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 10,
+          y: 20,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBeNull();
+      });
+
+      // Hovering must not rebuild the timelapse layer. It is one line feature
+      // per connection — ~2,500 on a real dataset — and hovering rows in the
+      // list changes hoveredConnectionId continuously, so rebuilding per hover
+      // made the list feel sluggish. Selection still rebuilds.
+      it("does not rebuild the timelapse layer on hover", async () => {
+        mockedStore.showTimelapseMode = true;
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        await wrapper.vm.$nextTick();
+
+        tLayer.removeAllAnnotations.mockClear();
+        connectionListStore.setHoveredConnectionId("c1");
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const rebuildsOnHover = tLayer.removeAllAnnotations.mock.calls.length;
+
+        tLayer.removeAllAnnotations.mockClear();
+        connectionListStore.setSelectedConnectionIds(["c1"]);
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const rebuildsOnSelect = tLayer.removeAllAnnotations.mock.calls.length;
+
+        expect(rebuildsOnHover).toBe(0);
+        expect(rebuildsOnSelect).toBeGreaterThan(0);
+      });
+
       it("skips a connection whose centroid is missing rather than drawing NaN", () => {
         setupTwoDisplayedAnnotations();
         (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
