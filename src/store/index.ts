@@ -1480,7 +1480,13 @@ export class Main extends VuexModule {
     await this.initFromUrl();
   }
 
-  @Action
+  // rawError: true because the catch below turns the server's response into a
+  // user-facing message ("login already in use", ...) that
+  // UserMenuLoginForm.vue renders in its error alert. A bare @Action would
+  // replace it with vuex-module-decorators' generic
+  // ERR_ACTION_ACCESS_UNDEFINED text, so the user would see that instead of
+  // the reason their sign-up failed. See syncConfiguration.
+  @Action({ rawError: true })
   async signUp({
     domain,
     ...user
@@ -2139,7 +2145,11 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true because this rolls back and rethrows so the caller can
+  // report the real reason. The pipeline UI shows generic text but logs the
+  // error, so without this the log holds the ERR_ACTION_ACCESS_UNDEFINED blob
+  // instead of the failure. Mirrors updateConfigurationProperties.
+  @Action({ rawError: true })
   async updateConfigurationPipelines(pipelines: IPipeline[]) {
     const configuration = this.configuration;
     if (!configuration) {
@@ -3164,7 +3174,9 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true because this logs and rethrows so the caller sees the real
+  // reason (UserColorSettings.vue logs it). See syncConfiguration.
+  @Action({ rawError: true })
   async saveUserColors(channelColors: {
     [key: string]: string;
   }): Promise<void> {

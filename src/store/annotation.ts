@@ -1359,7 +1359,13 @@ export class Annotations extends VuexModule {
    * would corrupt the stored annotation, defeat patch diffing in
    * getAnnotationUpdatePatch, and prevent rollback on error.
    */
-  @Action
+  // rawError: true because both paths below rethrow after rolling back, so the
+  // real reason reaches the caller (and the console/Sentry) instead of
+  // vuex-module-decorators' generic ERR_ACTION_ACCESS_UNDEFINED text. The
+  // sync indicator is unaffected either way: setSaving receives the error
+  // caught inside this action, before any wrapping. See index.ts
+  // syncConfiguration.
+  @Action({ rawError: true })
   public async updateAnnotationsPerId({
     annotationIds,
     editFunction,
