@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
 
 const mockListCollections = vi.fn();
@@ -203,7 +202,8 @@ describe("CollectionList", () => {
     const vm = mountComponent().vm as any;
     expect(vm.tableHeaders.map((h: any) => h.key)).not.toContain("folderName");
     vm.scope = "all";
-    await nextTick();
+    // Let the refetch the scope watcher kicks off settle first.
+    await new Promise((r) => setTimeout(r, 0));
     expect(vm.tableHeaders.map((h: any) => h.key)).toContain("folderName");
   });
 
@@ -297,8 +297,38 @@ describe("CollectionList", () => {
 
   // --- resolveFolderNames ---
 
+  it("resolveFolderNames does nothing in the folder scope", async () => {
+    const vm = mountComponent().vm as any;
+    vm.collections = [collection("c1", { folderId: "f1" })];
+    mockBatchResources.mockClear();
+    await vm.resolveFolderNames();
+    expect(mockBatchResources).not.toHaveBeenCalled();
+    expect(vm.folderNames).toEqual({});
+  });
+
+  it("resolveFolderNames chunks large id sets across requests", async () => {
+    const vm = mountComponent().vm as any;
+    vm.scope = "all";
+    // Let the refetch the scope watcher kicks off settle first.
+    await new Promise((r) => setTimeout(r, 0));
+    // One collection per folder, more folders than fit in a single request.
+    vm.collections = Array.from({ length: 1200 }, (_unused, i) =>
+      collection(`c${i}`, { folderId: `f${i}` }),
+    );
+    mockBatchResources.mockResolvedValue({ folder: {} });
+    mockBatchResources.mockClear();
+    await vm.resolveFolderNames();
+    expect(mockBatchResources).toHaveBeenCalledTimes(3);
+    expect(mockBatchResources.mock.calls[0][0].folder).toHaveLength(500);
+    expect(mockBatchResources.mock.calls[2][0].folder).toHaveLength(200);
+    expect(Object.keys(vm.folderNames)).toHaveLength(1200);
+  });
+
   it("resolveFolderNames batch-resolves unseen folders only", async () => {
     const vm = mountComponent().vm as any;
+    vm.scope = "all";
+    // Let the refetch the scope watcher kicks off settle first.
+    await new Promise((r) => setTimeout(r, 0));
     vm.collections = [
       collection("c1", { folderId: "f1" }),
       collection("c2", { folderId: "f1" }),
@@ -370,7 +400,8 @@ describe("CollectionList", () => {
     const vm = mountComponent().vm as any;
     mockListCollections.mockClear();
     vm.scope = "all";
-    await nextTick();
+    // Let the refetch the scope watcher kicks off settle first.
+    await new Promise((r) => setTimeout(r, 0));
     expect(Persister.get("collectionBrowseScope", "folder")).toBe("all");
     expect(mockListCollections).toHaveBeenCalled();
   });

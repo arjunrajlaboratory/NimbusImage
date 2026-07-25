@@ -22,7 +22,7 @@ function mountComponent(props = {}) {
   return mount(CollectionDatasetChips, {
     props: {
       collectionId: "col1",
-      debouncedChipsPerItemId: sampleChips,
+      chipsPerCollectionId: sampleChips,
       ...props,
     },
     global: {
@@ -45,7 +45,7 @@ describe("CollectionDatasetChips", () => {
     const wrapper = mount(CollectionDatasetChips, {
       props: {
         collectionId: "col1",
-        debouncedChipsPerItemId: sampleChips,
+        chipsPerCollectionId: sampleChips,
       },
       global: {
         provide: { ...routerProvider(mockRouter) },
@@ -60,7 +60,7 @@ describe("CollectionDatasetChips", () => {
     const wrapper = mount(CollectionDatasetChips, {
       props: {
         collectionId: "col1",
-        debouncedChipsPerItemId: sampleChips,
+        chipsPerCollectionId: sampleChips,
       },
       global: {
         provide: { ...routerProvider(mockRouter) },
@@ -71,13 +71,13 @@ describe("CollectionDatasetChips", () => {
   });
 
   it("shows the loading state while chips have not been resolved", () => {
-    const wrapper = mountComponent({ debouncedChipsPerItemId: {} });
+    const wrapper = mountComponent({ chipsPerCollectionId: {} });
     expect(wrapper.text()).toContain("Loading datasets...");
   });
 
   it("shows 'No datasets' once resolved to an empty chip list", () => {
     const wrapper = mountComponent({
-      debouncedChipsPerItemId: { col1: { type: "collection", chips: [] } },
+      chipsPerCollectionId: { col1: { type: "collection", chips: [] } },
     });
     expect(wrapper.text()).toContain("No datasets");
     expect(wrapper.text()).not.toContain("Loading datasets...");

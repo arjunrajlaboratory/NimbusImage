@@ -1,11 +1,16 @@
-from bson import ObjectId
 from girder.api import access
-from girder.api.rest import Resource, RestException, filtermodel, loadmodel
+from girder.api.rest import Resource, filtermodel, loadmodel
 from girder.api.describe import Description, autoDescribeRoute
 from girder.constants import AccessType, SortDir, TokenScope
+from girder.exceptions import RestException
 
 from girder.models.folder import Folder
 
+from upenncontrast_annotation.server.helpers.validation import (
+    requireCountWithin,
+    requireList,
+    requireObjectId,
+)
 from upenncontrast_annotation.server.models.collection import \
     Collection as CollectionModel
 
@@ -13,6 +18,7 @@ from upenncontrast_annotation.server.models.collection import \
 # document embeds "meta" (layers, tools, snapshots, property ids), which is
 # far too heavy to ship for thousands of collections at once.
 COLLECTION_SUMMARY_FIELDS = (
+    '_id',
     'name',
     'description',
     'folderId',
@@ -94,8 +100,8 @@ class Collection(Resource):
             # endpoint that does support folder-less listing.
             raise RestException(
                 'folderId is required. Use GET /upenn_collection/list to '
-                'list collections across folders.', 400)
-        query = {"folderId": ObjectId(folderId)}
+                'list collections across folders.', code=400)
+        query = {"folderId": requireObjectId(folderId, 'folderId')}
         return self._collectionModel.findWithPermissions(
             query, offset, limit, sort=sort, user=self.getCurrentUser())
 
@@ -120,10 +126,29 @@ class Collection(Resource):
         .errorResponse()
     )
     def listCollections(self, folderId, limit, offset, sort):
-        query = {'folderId': ObjectId(folderId)} if folderId else {}
-        # limit=0 means "no limit" to Girder's paging params; cap it instead.
-        limit = min(limit or MAX_COLLECTION_LIST_LIMIT,
-                    MAX_COLLECTION_LIST_LIMIT)
+        query = (
+            {'folderId': requireObjectId(folderId, 'folderId')}
+            if folderId else {}
+        )
+        # Girder converts limit/offset to ints (a clean 400 on garbage) but
+        # passes negatives straight through: a negative offset makes PyMongo
+        # raise, and a negative limit would silently truncate the slice below.
+        # limit=0 means "unlimited" to Girder's paging params, so clamp that
+        # to the ceiling rather than honoring it — an unauthenticated caller
+        # must not be able to ask for every collection in one response.
+        offset = max(0, offset)
+        limit = min(
+            max(1, limit or MAX_COLLECTION_LIST_LIMIT),
+            MAX_COLLECTION_LIST_LIMIT,
+        )
+        # Only the returned fields may be sorted on. Anything else lets a
+        # public caller sort the whole collection on an unindexed key (or on
+        # the large 'meta' document) and pay for a blocking sort.
+        for field, _direction in sort or []:
+            if field not in COLLECTION_SUMMARY_FIELDS:
+                raise RestException(
+                    'sort must be one of: %s'
+                    % ', '.join(COLLECTION_SUMMARY_FIELDS), code=400)
         # Read one extra document to tell the client whether paging further
         # would yield anything, without paying for a separate count query.
         documents = list(self._collectionModel.findWithPermissions(
@@ -131,17 +156,14 @@ class Collection(Resource):
             offset=offset,
             limit=limit + 1,
             sort=sort,
-            fields=('_id',) + COLLECTION_SUMMARY_FIELDS,
+            fields=COLLECTION_SUMMARY_FIELDS,
             user=self.getCurrentUser(),
         ))
         return {
             'collections': [
                 {
-                    '_id': document['_id'],
-                    **{
-                        field: document.get(field)
-                        for field in COLLECTION_SUMMARY_FIELDS
-                    },
+                    field: document.get(field)
+                    for field in COLLECTION_SUMMARY_FIELDS
                 }
                 for document in documents[:limit]
             ],
@@ -242,9 +264,19 @@ class Collection(Resource):
         .errorResponse()
     )
     def findByFolders(self, body, limit, offset, sort):
-        folderIds = body.get('folderIds')
+        # This endpoint is public, so every shape assumption has to produce a
+        # 400 rather than an uncaught error: a bare ValueError, a string
+        # folderIds (which would iterate per character) or a malformed id all
+        # surfaced as a 500 before.
+        folderIds = requireList(body.get('folderIds') or [], 'folderIds')
         if not folderIds:
-            raise ValueError("folderIds is required in the request body")
-        query = {"folderId": {"$in": [ObjectId(x) for x in folderIds]}}
+            raise RestException(
+                'folderIds is required in the request body', code=400)
+        requireCountWithin(
+            len(folderIds), MAX_COLLECTION_LIST_LIMIT, 'folderIds')
+        query = {'folderId': {
+            '$in': [requireObjectId(x, 'folderIds') for x in folderIds]
+        }}
         return self._collectionModel.findWithPermissions(
-            query, offset, limit, sort=sort, user=self.getCurrentUser())
+            query, max(0, offset), limit, sort=sort,
+            user=self.getCurrentUser())

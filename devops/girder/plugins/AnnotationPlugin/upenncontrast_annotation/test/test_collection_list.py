@@ -2,6 +2,8 @@
 Tests for GET /upenn_collection/list, the lightweight cross-folder listing
 endpoint, and for the folderId requirement on GET /upenn_collection.
 """
+import json
+
 import pytest
 
 from pytest_girder.assertions import assertStatus, assertStatusOk
@@ -193,3 +195,74 @@ class TestCollectionList:
             path="/upenn_collection", method="GET", user=admin
         )
         assertStatus(resp, 400)
+
+    @pytest.mark.parametrize("path", ["/upenn_collection/list",
+                                      "/upenn_collection"])
+    def testMalformedFolderIdIsA400(self, admin, server, path):
+        """A bad folderId is a clean 400, never an uncaught InvalidId 500."""
+        resp = server.request(
+            path=path,
+            method="GET",
+            user=admin,
+            params={"folderId": "not-an-object-id"},
+        )
+        assertStatus(resp, 400)
+
+    @pytest.mark.parametrize("params", [
+        {"limit": -5},
+        {"offset": -5},
+        {"limit": "abc"},
+        {"offset": "abc"},
+    ])
+    def testDegeneratePagingParamsNeverReachMongo(
+        self, admin, server, params
+    ):
+        """Negative paging is clamped; non-numeric paging is a 400."""
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        createCollection(admin, folder, "collection_a")
+
+        resp = server.request(
+            path="/upenn_collection/list",
+            method="GET",
+            user=admin,
+            params=params,
+        )
+        if isinstance(params.get("limit"), str) or isinstance(
+            params.get("offset"), str
+        ):
+            assertStatus(resp, 400)
+        else:
+            assertStatusOk(resp)
+            assert len(resp.json["collections"]) == 1
+
+    def testSortIsRestrictedToReturnedFields(self, admin, server):
+        """A sort key outside the returned fields is rejected."""
+        resp = server.request(
+            path="/upenn_collection/list",
+            method="GET",
+            user=admin,
+            params={"sort": "meta"},
+        )
+        assertStatus(resp, 400)
+
+        resp = server.request(
+            path="/upenn_collection/list",
+            method="GET",
+            user=admin,
+            params={"sort": "name"},
+        )
+        assertStatusOk(resp)
+
+    def testFindByFoldersRejectsMalformedBodies(self, admin, server):
+        """findByFolders answers 400, not 500, on a degenerate payload."""
+        for body in [{}, {"folderIds": "abc"}, {"folderIds": ["nope"]}]:
+            resp = server.request(
+                path="/upenn_collection/by_folders",
+                method="POST",
+                user=admin,
+                body=json.dumps(body),
+                type="application/json",
+            )
+            assertStatus(resp, 400)

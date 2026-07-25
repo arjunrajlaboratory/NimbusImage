@@ -133,7 +133,7 @@
         <template v-slot:item.datasets="{ item }">
           <collection-dataset-chips
             :collection-id="item._id"
-            :debounced-chips-per-item-id="debouncedChipsPerItemId"
+            :chips-per-collection-id="debouncedChipsPerItemId"
           />
         </template>
 
@@ -174,6 +174,10 @@ void GirderBreadcrumb;
 // Matches MAX_COLLECTION_LIST_LIMIT on the server. Users with more than this
 // many collections page through them with the "Load more" button.
 const COLLECTION_PAGE_SIZE = 10000;
+
+// How many folder ids to resolve per batchResources request. Bounds the
+// response size, since that endpoint returns whole folder documents.
+const FOLDER_BATCH_SIZE = 500;
 
 type TCollectionScope = "folder" | "all";
 
@@ -337,10 +341,12 @@ async function loadMore() {
   }
 }
 
-// The Folder column needs names, and sorting/searching on it needs them for
-// every loaded row, not just the visible page. One batch request covers all of
-// the folders we haven't already resolved.
+// The Folder column needs names, and sorting and searching on it need them for
+// every loaded row rather than just the visible page. Only the all-folders
+// scope renders that column, so folder-scope listings skip the work entirely.
 async function resolveFolderNames() {
+  if (scope.value !== "all") return;
+
   const unresolvedIds = Array.from(
     new Set(
       collections.value
@@ -350,12 +356,19 @@ async function resolveFolderNames() {
   );
   if (unresolvedIds.length === 0) return;
 
+  // batchResources returns whole folder documents, so a user whose
+  // collections each live in their own dataset folder would otherwise pull
+  // thousands of them in a single response. Chunk the ids instead: still one
+  // query per request on the backend, just bounded in size.
   try {
-    const folders =
-      (await store.api.batchResources({ folder: unresolvedIds })).folder ?? {};
     const resolved = { ...folderNames.value };
-    for (const folderId of unresolvedIds) {
-      resolved[folderId] = folders[folderId]?.name ?? "Unknown folder";
+    for (let i = 0; i < unresolvedIds.length; i += FOLDER_BATCH_SIZE) {
+      const batchIds = unresolvedIds.slice(i, i + FOLDER_BATCH_SIZE);
+      const folders =
+        (await store.api.batchResources({ folder: batchIds })).folder ?? {};
+      for (const folderId of batchIds) {
+        resolved[folderId] = folders[folderId]?.name ?? "Unknown folder";
+      }
     }
     folderNames.value = resolved;
   } catch (error) {
@@ -377,11 +390,16 @@ function onCurrentItemsChange(items: ICollectionRow[]) {
   );
 
   ++pendingChipRequests.value;
+  // The catch terminates the chain so it can never settle rejected: a link
+  // that rejected with no later page change would otherwise sit unhandled
+  // until the next call happened to attach a handler to it.
   chipQueue = chipQueue
-    .catch(() => {})
     .then(() => collectionsToDatasetChips(collectionIds))
     .then((chipsById) => {
       chipsPerItemId.value = { ...chipsPerItemId.value, ...chipsById };
+    })
+    .catch((error) => {
+      logError("Failed to resolve dataset chips:", error);
     })
     .finally(() => {
       // Publish once the whole burst has settled, so rows don't pop in one by

@@ -34,7 +34,7 @@ import type { IChipAttrs, IChipsPerItemId } from "@/utils/collectionChips";
 
 const props = defineProps<{
   collectionId: string;
-  debouncedChipsPerItemId: { [itemId: string]: IChipsPerItemId };
+  chipsPerCollectionId: { [collectionId: string]: IChipsPerItemId };
 }>();
 
 const router = useRouter();
@@ -42,7 +42,7 @@ const router = useRouter();
 // `undefined` means "chips haven't been computed for this collection yet",
 // which is different from a collection that genuinely has no datasets.
 const chips = computed(
-  () => props.debouncedChipsPerItemId[props.collectionId]?.chips,
+  () => props.chipsPerCollectionId[props.collectionId]?.chips,
 );
 
 function navigateToChip(chipItem: IChipAttrs) {
