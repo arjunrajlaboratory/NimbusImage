@@ -122,6 +122,7 @@ beforeEach(() => {
   h.state.connectSelectedTimeTies = [];
   h.state.selectedInScopeConnectionIds = [];
   h.state.lastConnectSkippedAsDuplicate = false;
+  h.state.hoveredConnectionId = null;
   h.state.itemsPerPage = 50;
   h.state.trackRows = [];
   h.state.isTrackExpanded = () => false;
@@ -246,6 +247,57 @@ describe("ConnectionList", () => {
     expect(h.state.setPage).toHaveBeenCalledWith(2);
   });
 
+  // A plain viewer click only HIGHLIGHTS, so reveal has to react to hover as
+  // well as selection — otherwise clicking a line highlights a row on another
+  // page with nothing indicating where it went.
+  it("reveals on hover, not only on selection", async () => {
+    const conns = Array.from({ length: 120 }, (_, i) =>
+      makeConnection(`c${i}`, `a${i}`, `b${i}`),
+    );
+    setRows(
+      conns,
+      conns.flatMap((c, i) => [
+        makeAnnotation(c.parentId, i),
+        makeAnnotation(c.childId, i),
+      ]),
+    );
+    h.state.selectedConnectionIds = new Set();
+    h.state.hoveredConnectionId = null;
+    h.state.page = 1;
+
+    const wrapper = shallowMount(ConnectionList, { props: { isActive: true } });
+    await wrapper.vm.$nextTick();
+    h.state.setPage.mockClear();
+
+    // Hover a row on page 2 with nothing selected. The shared mock state is
+    // intentionally non-reactive in this file, so drive the reveal directly —
+    // this pins the hover BRANCH; the watcher's source list is covered by the
+    // isActive test below.
+    h.state.hoveredConnectionId = "c60";
+    await (wrapper.vm as any).revealCurrentSelection();
+    expect(h.state.setPage).toHaveBeenCalledWith(2);
+  });
+
+  it("prefers the selection over the hover when both are set", async () => {
+    const conns = Array.from({ length: 120 }, (_, i) =>
+      makeConnection(`c${i}`, `a${i}`, `b${i}`),
+    );
+    setRows(
+      conns,
+      conns.flatMap((c, i) => [
+        makeAnnotation(c.parentId, i),
+        makeAnnotation(c.childId, i),
+      ]),
+    );
+    h.state.selectedConnectionIds = new Set(["c110"]); // page 3
+    h.state.hoveredConnectionId = "c10"; // page 1
+    const wrapper = shallowMount(ConnectionList, { props: { isActive: true } });
+    h.state.setPage.mockClear();
+
+    await (wrapper.vm as any).revealCurrentSelection();
+    expect(h.state.setPage).toHaveBeenCalledWith(3);
+  });
+
   it("expands the containing track when revealing in track mode", async () => {
     setRows(
       [makeConnection("c1", "a", "b")],
@@ -358,6 +410,7 @@ describe("ConnectionList", () => {
   it("reports an empty result as a failure when it was not dedupe", async () => {
     h.state.canConnectSelected = true;
     h.state.lastConnectSkippedAsDuplicate = false;
+    h.state.hoveredConnectionId = null;
     h.connectSelectedAnnotations.mockResolvedValue([]);
     const wrapper = mountComponent();
     await wrapper.vm.connectSelected();

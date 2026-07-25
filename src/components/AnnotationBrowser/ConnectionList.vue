@@ -460,6 +460,7 @@ async function connectSelected() {
 }
 
 defineExpose({
+  revealCurrentSelection,
   rows,
   tracks,
   scopedCount,

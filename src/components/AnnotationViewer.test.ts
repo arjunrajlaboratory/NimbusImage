@@ -1235,6 +1235,58 @@ describe("AnnotationViewer", () => {
         expect(connectionListStore.hoveredConnectionId).toBeNull();
       });
 
+      // Regression: the hit test returned the FIRST line within tolerance, so
+      // with parallel or dense tracks a click could select a far segment over
+      // a near one and leave some links unreachable from the canvas.
+      it("selects the closest connection when several are within tolerance", () => {
+        setupTwoDisplayedAnnotations();
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "far", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "near", parentId: "a2", childId: "a1" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        (wrapper.vm as any).drawNewConnections(new Map());
+
+        const lines = aLayer
+          .annotations()
+          .filter((f: any) => f.options().isConnection);
+        // Give each line distinguishable geometry, then make the SECOND one
+        // measurably nearer while both stay inside the 6px tolerance (36).
+        lines.forEach((l: any, i: number) => {
+          l.coordinates = () => [
+            { x: i, y: 0 },
+            { x: i, y: 100 },
+          ];
+        });
+        (geojs.util.distance2dToLineSquared as any).mockImplementation(
+          (_p: any, a: any) => (a.x === 0 ? 25 : 1),
+        );
+
+        const first = lines[0].options().girderId;
+        const nearest = lines[1].options().girderId;
+        expect(
+          (wrapper.vm as any).findConnectionIdAtPoint({ x: 0, y: 50 }),
+        ).toBe(nearest);
+        expect(nearest).not.toBe(first);
+      });
+
+      // ConnectionActionPanel must live in ImageViewer, mounted once: in unroll
+      // mode ImageViewer renders one AnnotationViewer per layer group, and a
+      // per-viewer panel registered N global keydown listeners, so one Delete
+      // press sent N duplicate batch DELETEs.
+      it("does not mount the connection action panel per viewer", () => {
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        expect(
+          wrapper.findComponent({ name: "ConnectionActionPanel" }).exists(),
+        ).toBe(false);
+        expect(wrapper.html()).not.toContain("connection-action-panel");
+      });
+
       it("skips a connection whose centroid is missing rather than drawing NaN", () => {
         setupTwoDisplayedAnnotations();
         (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
@@ -3814,6 +3866,76 @@ describe("AnnotationViewer", () => {
         expect(drawn).toHaveLength(1);
         expect(drawn[0].options().girderId).toBe("dup2");
         expect(drawn[0].options().style.strokeColor).toBe("#00e5ff");
+      });
+
+      // The representative must prefer a HOVERED duplicate too, not only a
+      // selected one — otherwise hovering a later duplicate's row rebuilt the
+      // layer without widening or retagging the segment.
+      it("renders the hovered duplicate as the representative", () => {
+        mockedStore.showTimelapseMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+          }),
+          makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 1 },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "dup1", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "dup2", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _c: any, options: any) => {
+            const f = mockGeoJSAnnotation(shape);
+            if (options) f.options(options);
+            return f;
+          },
+        );
+        connectionListStore.setSelectedConnectionIds([]);
+        connectionListStore.setHoveredConnectionId("dup2");
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const drawn = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(drawn).toHaveLength(1);
+        expect(drawn[0].options().girderId).toBe("dup2");
+        // Hover must also change the rendered width, or the redraw the hover
+        // watcher pays for produces no visible difference.
+        const hoveredWidth = drawn[0].options().style.strokeWidth;
+        connectionListStore.setHoveredConnectionId(null);
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const plain = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection)[0];
+        expect(hoveredWidth).toBeGreaterThan(plain.options().style.strokeWidth);
       });
 
       it("filters connections by displayed annotations", () => {

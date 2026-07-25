@@ -1900,25 +1900,34 @@ function pointNearPoint(
 // behavior, so connections get their own correct comparison instead.
 const CONNECTION_CLICK_TOLERANCE_PX = 6;
 
-function pointNearConnectionLine(
+/**
+ * Squared distance from `position` to the nearest segment of `linePoints`, or
+ * `null` when every segment is outside the click tolerance.
+ *
+ * Returns the distance rather than a boolean so callers can pick the CLOSEST
+ * line among several within tolerance — with parallel or dense tracks, taking
+ * the first match selects whichever happened to be drawn earlier and leaves
+ * some links unreachable from the canvas entirely.
+ */
+function connectionLineHitDistance(
   position: IGeoJSPosition,
   linePoints: IGeoJSPosition[],
   unitsPerPixel: number,
-): boolean {
+): number | null {
   const tolerance = CONNECTION_CLICK_TOLERANCE_PX * unitsPerPixel;
   const toleranceSquared = tolerance * tolerance;
+  let best: number | null = null;
   for (let i = 0; i < linePoints.length - 1; i++) {
-    if (
-      geojs.util.distance2dToLineSquared(
-        position,
-        linePoints[i],
-        linePoints[i + 1],
-      ) < toleranceSquared
-    ) {
-      return true;
+    const distanceSquared = geojs.util.distance2dToLineSquared(
+      position,
+      linePoints[i],
+      linePoints[i + 1],
+    );
+    if (distanceSquared < toleranceSquared) {
+      best = best === null ? distanceSquared : Math.min(best, distanceSquared);
     }
   }
-  return false;
+  return best;
 }
 
 /**
@@ -1934,21 +1943,28 @@ function findConnectionIdAtPoint(position: IGeoJSPosition): string | null {
     : [props.annotationLayer];
   for (const layer of layers) {
     const geoAnnotations = layer.annotations();
+    // Closest wins WITHIN a layer; layer order still decides between layers,
+    // because in timelapse mode the track lines are what the user can see.
+    let closestId: string | null = null;
+    let closestDistance = Infinity;
     for (let i = 0; i < geoAnnotations.length; i++) {
       const geoJSAnnotation = geoAnnotations[i];
       const { girderId, isConnection } = geoJSAnnotation.options();
       if (!isConnection || !girderId) {
         continue;
       }
-      if (
-        pointNearConnectionLine(
-          position,
-          geoJSAnnotation.coordinates(),
-          unitsPerPixel,
-        )
-      ) {
-        return girderId;
+      const distance = connectionLineHitDistance(
+        position,
+        geoJSAnnotation.coordinates(),
+        unitsPerPixel,
+      );
+      if (distance !== null && distance < closestDistance) {
+        closestDistance = distance;
+        closestId = girderId;
       }
+    }
+    if (closestId) {
+      return closestId;
     }
   }
   return null;
@@ -4737,6 +4753,7 @@ defineExpose({
   restyleAnnotations,
   pointNearPoint,
   pointNearLine,
+  findConnectionIdAtPoint,
   shouldSelectAnnotation,
   shouldSelectStub,
   getSelectedAnnotationsFromAnnotation,

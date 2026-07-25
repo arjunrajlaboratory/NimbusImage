@@ -295,6 +295,35 @@ describe("connectionList connect selected", () => {
     expect(createFromBases).not.toHaveBeenCalled();
   });
 
+  // Regression: createConnectionsFromBases sets the app-wide saving flag and is
+  // rawError, so a rejection propagates — without try/finally the indicator
+  // stuck on forever.
+  it("clears the saving state when the create request rejects", async () => {
+    selectAnnotations(2);
+    createFromBases.mockRejectedValueOnce(new Error("backend said no"));
+    await expect(connectionList.connectSelectedAnnotations()).rejects.toThrow(
+      "backend said no",
+    );
+    // The action must not swallow it either — the caller shows the reason.
+  });
+
+  // Regression: an empty RESULT cannot mean dedupe, because the API layer turns
+  // HTTP failures into []. Only an empty CHAIN means "already connected".
+  it("flags dedupe only when the chain was empty before the request", async () => {
+    selectAnnotations(2);
+    const [a0, a1] = [...(annotationStore as any).selectedAnnotationIds];
+    (annotationStore as any).annotationConnections = [
+      makeConnection("existing", a0, a1),
+    ];
+    await connectionList.connectSelectedAnnotations();
+    expect(connectionList.lastConnectSkippedAsDuplicate).toBe(true);
+
+    (annotationStore as any).annotationConnections = [];
+    createFromBases.mockResolvedValueOnce([]); // request failed, not dedupe
+    await connectionList.connectSelectedAnnotations();
+    expect(connectionList.lastConnectSkippedAsDuplicate).toBe(false);
+  });
+
   it("chains earlier→later and tags the result", async () => {
     selectAnnotations(3);
     await connectionList.connectSelectedAnnotations();

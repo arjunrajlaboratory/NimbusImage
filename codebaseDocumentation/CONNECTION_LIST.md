@@ -458,6 +458,52 @@ looks.
 
 ---
 
+## Regression checklist
+
+Every item below was a real defect in this feature, and several were
+**reintroduced while fixing something else** — the construction-time styling
+undid itself on the next redraw, the retention predicate kept a coupling the
+draw path had just dropped, and a per-viewer mount reappeared as duplicate
+delete requests. Each line names the invariant and the test that holds it, so
+changing this code means re-checking the list rather than rediscovering it.
+
+Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camera.test.ts src/utils/__tests__/annotationNavigation.test.ts src/store/__tests__/connectionList.test.ts src/components/AnnotationBrowser src/components/ConnectionActionPanel.test.ts src/components/AnnotationViewer.test.ts`.
+
+### Drawing
+
+- [ ] **Draw and retention agree.** `drawNewConnections` and `clearOldAnnotations`' connection branch must gate on the *same* thing (displayed ids + centroids). If they diverge, every pass deletes what the last one drew. — *"retains stub-backed connection lines through clearOldAnnotations"*
+- [ ] **Nothing in the draw path depends on hydration.** `getAnnotationFromId` returns `undefined` for unhydrated annotations; gate on centroids. — *"still draws when the endpoints are unhydrated stubs"*
+- [ ] **Styles are renderable, not just coloured.** `options("style", …)` replaces; every branch must carry `stroke: true`. — *"styles a selected connection at construction"*, *"draws a line for a connection…"*
+- [ ] **The retained-feature restyle loop skips `isConnection`.** Connection features carry a `girderId`, so they land in `drawnGeoJSAnnotations` and get object styling. — *"keeps a selected connection cyan through a redraw"*
+- [ ] **Equal-time and self links.** A same-time pair must draw exactly once; a self-connection must not draw. — *"draws an equal-time link exactly once"*, *"does not draw a self-connection as a track segment"*
+- [ ] **Duplicate pairs pick the right representative:** selected, then hovered, then first. — *"renders the selected duplicate…"*, *"renders the hovered duplicate…"*
+
+### Interaction
+
+- [ ] **Objects win; lasso never selects connections; empty space clears.** — viewer selection tests
+- [ ] **Closest line wins**, not the first within tolerance. — *"selects the closest connection when several are within tolerance"*
+- [ ] **Plain click highlights, shift+click selects.** A plain click must do *something* on a line. — *"hovers a connection on a plain click…"*
+- [ ] **A row click navigates + highlights, never selects.** — *"navigates and highlights without selecting"*
+- [ ] **Reveal reacts to hover as well as selection**, and selection wins. — *"reveals on hover, not only on selection"*
+- [ ] **Navigation frames both endpoints, with the signed delta.** — *"passes the SIGNED endpoint delta…"*
+
+### Destructive actions
+
+- [ ] **Bulk delete acts only on rows in scope.** Scope *inputs* change without `setScope` firing. — *"stale selection when scope INPUTS change"* (3 tests)
+- [ ] **Selection ignores connections that no longer exist.** Other code deletes without going through this module. — *"ignores selected ids whose connection no longer exists"*
+- [ ] **Connect selected is capped** and refuses above it. — *"refuses a selection larger than the cap"*
+- [ ] **Only one keydown handler, and only bare Delete/Backspace.** `mod+backspace` already deletes objects. — *"ignores the modified object-delete shortcut"*, *"does not mount the connection action panel per viewer"*
+- [ ] **An empty result is not reported as dedupe.** The API layer turns failures into `[]`. — *"flags dedupe only when the chain was empty…"*
+- [ ] **Saving state clears on failure.** — *"clears the saving state when the create request rejects"*
+
+### Before claiming done
+
+- [ ] `pnpm tsc`, `pnpm lint:ci`, `pnpm test`, and `python3 plugins/nimbusimage/scripts/sync_skills.py --check` if any skill changed.
+- [ ] Each new fix has a test **confirmed to fail without it** — use `git stash`, never a `cp` round-trip (an interrupt between revert and restore silently drops the fix).
+- [ ] Verified from a **fresh page load** on a dataset that actually has the property under test (stub-only for hydration, >1 timepoint for timelapse, duplicates for representative selection).
+
+---
+
 ## Testing
 
 **Unit — `src/utils/__tests__/connections.test.ts`** (24 tests)
