@@ -149,8 +149,28 @@ N selected → chained by ascending Time:
 Guards:
 
 - Fewer than 2 selected → the action is disabled.
+- **More than `MAX_CONNECT_SELECTED` (500) selected → the action is disabled**, with an
+  inline note saying so. Without this, a select-all in the Objects tab (routinely tens
+  of thousands of objects) followed by one click would POST that many connections in a
+  single request; the backend's `multipleCreate` has no cap of its own. A real track
+  spans timepoints, not thousands of objects, so the cap is well clear of legitimate
+  use.
 - Pairs already connected in **either** direction are skipped, never duplicated.
 - Created connections carry `tags: [TIMELAPSE_CONNECTION_TAG]`.
+
+### Selection safety
+
+Two rules keep a selection from feeding a destructive action it was never meant for:
+
+- **Changing the scope clears the connection selection.** The scope changes what "the
+  list" *is*, so a selection made under the old scope must not survive into
+  "Delete selected" — otherwise selecting all 4,983 connections, narrowing to a
+  3-row scope, and pressing delete removes 4,983 connections the user cannot see.
+  Changing the flat/track grouping deliberately does **not** clear it: grouping
+  re-arranges the same set rather than redefining it.
+- **The header checkbox counts selected rows that are actually visible**, not the total
+  selection size. A viewer click can select a connection outside the current scope, and
+  a naive size comparison would then read as "all selected" while no visible row is.
 
 ---
 
@@ -385,12 +405,22 @@ click also scrolls the corresponding row into view in the Connections tab.
 (ordering, `parentId` = earlier, tie → selection order, skip pairs already connected in
 either direction), `findTimeTies`.
 
-**Component — `ConnectionList.test.ts`** (13 tests)
+**Store — `src/store/__tests__/connectionList.test.ts`** (14 tests)
+
+Exercises the real module against mocked neighbours. **The mocks must be `reactive()`**:
+these are Vuex getters, so against plain objects they compute once against empty state
+and never recompute — every assertion then passes or fails for the wrong reason. Covers
+the scope predicates, the two selection-safety rules above, batched delete, and the
+Connect-selected cap.
+
+**Component — `ConnectionList.test.ts`** (14 tests), **`ConnectionListRow.test.ts`** (10)
 
 `vi.mock` factories are hoisted above every `const`, so the shared store mock is built
 inside `vi.hoisted` and each test mounts fresh rather than driving a reactive mock.
-Covers per-scope empty messages, navigation (including the dangling-endpoint fallback),
-batched delete, select-all, the tie caption, and all three `connectSelected` outcomes.
+Between them: per-scope empty messages, navigation (including the dangling-endpoint
+fallback), batched delete, select-all incl. the out-of-scope case, the tie caption, all
+three `connectSelected` outcomes, endpoint labelling, `⚠ missing` rendering, and that
+deleting or clicking a tag does not also fire row navigation.
 
 **Regression — `AnnotationViewer.test.ts`**
 
@@ -413,6 +443,8 @@ confirmed to fail when the tagging is removed.
 | Deselect restores line style | back to `#0000ff` / 3 |
 | Connect selected → delete (round trip) | 54 → 55 → 54, confirmed in MongoDB |
 | Panel stacking with objects + connection selected | no overlap |
+| Scope change with 500 connections selected | selection cleared to 0 |
+| Connect selected with all 3,796 objects selected | refused, 0 created |
 
 ---
 

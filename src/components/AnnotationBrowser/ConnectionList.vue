@@ -54,6 +54,22 @@
       </v-btn>
     </div>
 
+    <!-- Chaining an unbounded selection would POST tens of thousands of
+         connections in one request, so the action is capped rather than left
+         to fail slowly. -->
+    <v-alert
+      v-if="connectionListStore.connectSelectedExceedsMax"
+      type="info"
+      variant="tonal"
+      density="compact"
+      class="mb-2"
+    >
+      {{ selectedAnnotationCount.toLocaleString() }} objects are selected.
+      Connect selected chains at most
+      {{ MAX_CONNECT_SELECTED.toLocaleString() }} at a time — narrow the
+      selection to build a track.
+    </v-alert>
+
     <!-- Same-frame pairs carry no direction in the data, so the chain falls
          back to selection order. Surface that rather than silently guessing —
          under drag-select the "order" is effectively arbitrary. -->
@@ -185,6 +201,7 @@ import connectionListStore, {
   CONNECTION_SCOPE_LABELS,
   TConnectionScope,
 } from "@/store/connectionList";
+import { MAX_CONNECT_SELECTED } from "@/store/constants";
 import ConnectionListRow from "@/components/AnnotationBrowser/ConnectionListRow.vue";
 import { goToAnnotationLocation } from "@/utils/annotationNavigation";
 import { logError } from "@/utils/log";
@@ -239,25 +256,33 @@ const tieMessage = computed(() => {
   );
 });
 
-const emptyMessage = computed(() => {
-  switch (connectionListStore.scope) {
-    case "all":
-      return "This dataset has no connections.";
-    case "location":
-      return "No connections touch an object at the current location.";
-    case "selected":
-      return "No connections touch the selected objects.";
-    case "filtered":
-      return "No connections touch an object passing the current filters.";
-  }
-  return "No connections.";
-});
+// A Record rather than a switch: TypeScript enforces a message for every scope,
+// and there is no unreachable fallback branch to keep the linter happy.
+const EMPTY_MESSAGES: Record<TConnectionScope, string> = {
+  all: "This dataset has no connections.",
+  location: "No connections touch an object at the current location.",
+  selected: "No connections touch the selected objects.",
+  filtered: "No connections touch an object passing the current filters.",
+};
 
+const emptyMessage = computed(() => EMPTY_MESSAGES[connectionListStore.scope]);
+
+// Count only the selected rows that are actually in the list. A connection can
+// be selected from the viewer while out of the current scope, so comparing the
+// total selection size against the row count would read as "all selected" when
+// none of the visible rows are. Mirrors AnnotationList's intersection check.
+const selectedVisibleCount = computed(
+  () =>
+    rows.value.filter(({ connection }) =>
+      connectionListStore.isConnectionSelected(connection.id),
+    ).length,
+);
 const selectAllValue = computed(
-  () => rows.value.length > 0 && selectedCount.value >= rows.value.length,
+  () =>
+    rows.value.length > 0 && selectedVisibleCount.value === rows.value.length,
 );
 const selectAllIndeterminate = computed(
-  () => selectedCount.value > 0 && !selectAllValue.value,
+  () => selectedVisibleCount.value > 0 && !selectAllValue.value,
 );
 
 function shortId(id: string) {
@@ -346,6 +371,9 @@ defineExpose({
   tracks,
   scopedCount,
   selectedCount,
+  selectedVisibleCount,
+  selectAllValue,
+  selectAllIndeterminate,
   timeTies,
   tieMessage,
   emptyMessage,

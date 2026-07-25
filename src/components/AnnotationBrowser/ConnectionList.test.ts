@@ -28,7 +28,12 @@ const h = vi.hoisted(() => ({
     trackRows: [] as any[],
     canConnectSelected: false,
     connectSelectedTimeTies: [] as number[],
-    isConnectionSelected: () => false,
+    // Must read the real selection: selectAllValue counts the selected rows
+    // that are actually visible, so a stub returning false would make the
+    // header checkbox look permanently unchecked.
+    isConnectionSelected(id: string) {
+      return this.selectedConnectionIds.has(id);
+    },
     isTrackExpanded: () => false,
     setScope: vi.fn(),
     setGrouping: vi.fn(),
@@ -201,6 +206,23 @@ describe("ConnectionList", () => {
     );
     mountComponent().vm.toggleSelectAll();
     expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1", "c2"]);
+  });
+
+  // A viewer click can select a connection that is outside the current scope,
+  // so the header checkbox must count the selected rows it can actually see —
+  // not compare the total selection size against the row count.
+  it("ignores selected connections that are not in the list", () => {
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    h.state.selectedConnectionIds = new Set(["out-of-scope"]);
+    const wrapper = mountComponent();
+    expect(wrapper.vm.selectedVisibleCount).toBe(0);
+    expect(wrapper.vm.selectAllValue).toBe(false);
+
+    wrapper.vm.toggleSelectAll();
+    expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1"]);
   });
 
   it("clears the selection when every row is already selected", () => {

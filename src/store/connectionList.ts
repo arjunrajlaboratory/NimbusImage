@@ -12,7 +12,7 @@ import main from "./index";
 import annotation from "./annotation";
 import filters from "./filters";
 
-import { TIMELAPSE_CONNECTION_TAG } from "./constants";
+import { MAX_CONNECT_SELECTED, TIMELAPSE_CONNECTION_TAG } from "./constants";
 import { IAnnotationConnection, TAnnotationOrStub } from "./model";
 import {
   IConnectionRow,
@@ -137,7 +137,13 @@ export class ConnectionList extends VuexModule {
   }
 
   get canConnectSelected(): boolean {
-    return main.isLoggedIn && this.selectedAnnotationsInOrder.length >= 2;
+    const count = this.selectedAnnotationsInOrder.length;
+    return main.isLoggedIn && count >= 2 && count <= MAX_CONNECT_SELECTED;
+  }
+
+  /** True when the only thing blocking Connect selected is the size cap. */
+  get connectSelectedExceedsMax(): boolean {
+    return this.selectedAnnotationsInOrder.length > MAX_CONNECT_SELECTED;
   }
 
   /**
@@ -153,6 +159,12 @@ export class ConnectionList extends VuexModule {
   public setScope(scope: TConnectionScope) {
     this.scope = scope;
     this.page = 1;
+    // Changing the scope changes what "the list" means, so a selection made
+    // under the old scope must not survive to feed "Delete selected" — that
+    // would delete connections the user can no longer see. Grouping is left
+    // alone deliberately: it re-arranges the same set rather than redefining
+    // it, so a selection stays meaningful across a flat/track toggle.
+    this.selectedConnectionIds = markRaw(new Set());
   }
 
   @Mutation
@@ -219,21 +231,22 @@ export class ConnectionList extends VuexModule {
     this.resetConnectionListStateImpl();
   }
 
-  @Action
+  @Action({ rawError: true })
   public async deleteConnectionsById(connectionIds: string[]) {
     if (connectionIds.length === 0) {
       return;
     }
     // Single batched request — never a delete-per-id loop.
     await annotation.deleteConnections(connectionIds);
+    // Set membership, not Array.includes: this runs over the whole selection,
+    // and a bulk delete of every selected row would otherwise be quadratic.
+    const deleted = new Set(connectionIds);
     this.setSelectedConnectionIds(
-      [...this.selectedConnectionIds].filter(
-        (id) => !connectionIds.includes(id),
-      ),
+      [...this.selectedConnectionIds].filter((id) => !deleted.has(id)),
     );
   }
 
-  @Action
+  @Action({ rawError: true })
   public async deleteSelectedConnections() {
     await this.deleteConnectionsById([...this.selectedConnectionIds]);
   }
@@ -243,7 +256,9 @@ export class ConnectionList extends VuexModule {
    * ordered by ascending Time (parent = earlier). Ties fall back to selection
    * order; the UI surfaces that via `connectSelectedTimeTies`.
    */
-  @Action
+  // rawError so a backend failure reaches the caller with its real message
+  // instead of vuex-module-decorators' ERR_ACTION_ACCESS_UNDEFINED blob.
+  @Action({ rawError: true })
   public async connectSelectedAnnotations(): Promise<IAnnotationConnection[]> {
     const datasetId = main.dataset?.id;
     if (!datasetId || !this.canConnectSelected) {

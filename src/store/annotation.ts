@@ -1065,7 +1065,9 @@ export class Annotations extends VuexModule {
   // createAllConnections (which builds the full cross product of two id lists),
   // this persists exactly the pairs it is given — used by the connection list's
   // "Connect selected", which chains annotations in time order.
-  @Action
+  // rawError: errors are re-wrapped at every @Action boundary they cross, so
+  // connectionList's rawError alone would not preserve the message.
+  @Action({ rawError: true })
   public async createConnectionsFromBases(
     connectionBases: IAnnotationConnectionBase[],
   ): Promise<IAnnotationConnection[]> {
