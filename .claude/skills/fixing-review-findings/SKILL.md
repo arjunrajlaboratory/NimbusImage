@@ -62,6 +62,20 @@ Its three response signals are easy to confuse when polling:
 
 Poll for all three. Watching only for a new review object plus 👍 reports a false timeout when the answer arrived as a comment. Findings themselves come as inline review comments (`/pulls/{n}/comments`), not in the review body, which only holds boilerplate.
 
+**The bot's login differs between the two GitHub APIs.** GraphQL (`gh pr view --json reviews`) reports `author.login` as `chatgpt-codex-connector`; REST (`gh api .../reviews`, `.../comments`) reports `user.login` as **`chatgpt-codex-connector[bot]`**. A REST poll filtering on the GraphQL spelling matches nothing and reports "no review yet" forever — this produced a confident false negative after the review had already landed. Match on a prefix, and prefer polling by timestamp rather than by author:
+
+```bash
+# Robust: newer than a known timestamp, author matched by prefix.
+gh api repos/OWNER/REPO/pulls/N/reviews \
+  --jq "[.[] | select((.user.login|startswith(\"chatgpt-codex-connector\")) and .submitted_at > \"$LAST\")] | length"
+
+# The findings themselves:
+gh api repos/OWNER/REPO/pulls/N/comments \
+  --jq ".[] | select(.created_at > \"$LAST\") | \"=== \(.path):\(.line // .original_line)\n\(.body)\""
+```
+
+Sanity-check a "nothing yet" result against `gh pr view N --json reviews` (GraphQL) before reporting it — if the two disagree, the filter is wrong, not the bot. Turnaround is typically 1–4 minutes; a poll that runs much longer than that with zero hits is more likely broken than slow.
+
 ### 5. Gates before claiming done
 
 - Frontend: `pnpm tsc`, `pnpm lint:ci`, `pnpm test` (ignore failures under `.tox/**` paths — vitest glob artifact, see nimbus-frontend skill).
@@ -81,3 +95,15 @@ Report per-finding outcomes (fixed / stale / by-design / needs-decision) keyed t
 | Verifying backend fixes with curl after only `docker compose restart girder` | Plugin is baked into the image; you're testing stale code |
 | Committing right after tests pass | User verifies live first in this repo's workflow |
 | Silently choosing a cap/limit/default | Those are user decisions — recommend, then ask |
+| Reverting a fix in a chained `cp bak && revert && test && cp back` command | An interrupt or a rejected call between the revert and the restore leaves the fix silently removed from the working tree. Use `git stash` / `git checkout -- <file>` to restore, and `git diff` against HEAD before continuing |
+| Trusting a probe that passed against drifted state | Re-verify from a **fresh load**: a churn probe reported "no problem" only because everything had hydrated by the time it ran, and a live behavior check disagreed with a passing unit test because the working tree had lost the fix |
+
+### Verifying a fix live: pick a fixture that actually exercises it
+
+A live check on the wrong dataset is worse than none — it produces a confident result about nothing. Before claiming live verification, confirm the fixture has the property under test:
+
+- Timelapse/track behavior needs a dataset with **>1 timepoint**. Forcing `showTimelapseMode` on a single-timepoint dataset "works" but proves nothing about tracks.
+- Stub/lazy-loading behavior needs a dataset over the stub threshold, checked from a **fresh load** (everything hydrates as you interact, and the bug disappears with it).
+- Duplicate/degenerate-data behavior needs a dataset that actually contains duplicates or self-loops — query MongoDB to find one rather than assuming.
+
+When no fixture has the property, **create one**: annotations and connections can be made in seconds via `store.dispatch('createMultipleAnnotations', bases)` and `store.dispatch('createConnectionsFromBases', bases)` (both take a bare array, not a wrapper object). Build the edge cases deliberately — a multi-frame track, a same-frame pair, an off-location pair — rather than hoping existing data covers them.

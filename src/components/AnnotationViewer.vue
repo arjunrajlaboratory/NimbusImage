@@ -1194,7 +1194,17 @@ function drawNewAnnotations(
         isStub,
         annotationShape,
         stubRadius,
+        isConnection,
       } = geoJSAnnotation.options();
+      // Connection lines also carry a girderId, so they land in this map — but
+      // they are object-annotation logic from here down. They never set
+      // isHovered/isSelected, and `undefined != false` is true, so without this
+      // guard every redraw would fire the branch below and overwrite a selected
+      // connection's cyan with getAnnotationStyle(connectionId, …). Connections
+      // are styled at construction and by restyleAnnotations' own branch.
+      if (isConnection) {
+        continue;
+      }
       if (isHovered != isHoveredGT || isSelected != isSelectedGT) {
         const layer = store.getLayerFromId(layerId);
         const newStyle = drawnFeatureUsesDotStyle(isStub, annotationShape)
@@ -1473,6 +1483,23 @@ function drawTimelapseTrack(
       if (drawnLines.has(lineId)) continue;
       drawnLines.add(lineId);
 
+      // One segment is drawn per endpoint PAIR, but the schema allows several
+      // connection documents for the same pair (this repo's own datasets have
+      // them). Whichever record the segment carries is the only one that can be
+      // highlighted or resolved by a click, so prefer a selected duplicate as
+      // the representative — otherwise selecting the second of two identical
+      // links could never turn its segment cyan.
+      const pairConnections = relevantConnections.filter(
+        (candidate) =>
+          (candidate.parentId === annotation.id
+            ? candidate.childId
+            : candidate.parentId) === otherId,
+      );
+      const representative =
+        pairConnections.find(({ id }) =>
+          connectionListStore.isConnectionSelected(id),
+        ) ?? connection;
+
       const points = [
         unrolledCentroids[annotation.id],
         unrolledCentroids[otherId],
@@ -1483,7 +1510,7 @@ function drawTimelapseTrack(
 
       const isBeforeCurrent = annotation.location.Time <= currentTime;
       const isSelected = connectionListStore.isConnectionSelected(
-        connection.id,
+        representative.id,
       );
       const line = geojsAnnotationFactory(AnnotationShape.Line, points, {
         style: {
@@ -1503,7 +1530,7 @@ function drawTimelapseTrack(
         // that link (the timelapse layer draws one line per connection, not one
         // polyline per track). Without this, track segments are unclickable.
         line.options("isConnection", true);
-        line.options("girderId", connection.id);
+        line.options("girderId", representative.id);
         lines.push(line);
       }
     }
