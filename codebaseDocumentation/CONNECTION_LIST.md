@@ -345,6 +345,23 @@ Delete cuts the track in two:
             → Delete splits the track
 ```
 
+### 2b. Drawing under lazy loading (stub-only mode)
+
+`drawNewConnections` gates on the **centroids it actually draws from**, not on
+`getAnnotationFromId`. This matters enormously on lazily-loaded datasets and was a live
+bug before this branch:
+
+> On the 709K-object Xenium dataset, `getAnnotationFromId` returns `undefined` for every
+> unhydrated non-point annotation. Only 4 of 12 connection endpoints resolved through
+> it, so only the single connection whose *both* endpoints happened to be hydrated was
+> drawn — **1 of 11 lines**, even though all 12 centroids were present and all 12
+> endpoints were displayed on screen. Zooming in far enough hydrated the rest and the
+> lines appeared, which made it look like a zoom bug rather than a hydration one.
+
+`drawGeoJSAnnotationFromConnection` therefore takes two `IGeoJSPosition` centroids
+rather than two `IAnnotation`s — the line only ever needed the positions, and taking
+annotations coupled drawing to hydration for no reason. Keep it that way.
+
 ### 3. Styling
 
 `restyleAnnotations` (`:1774`) grows a connection branch: selected → cyan
@@ -445,6 +462,23 @@ confirmed to fail when the tagging is removed.
 | Panel stacking with objects + connection selected | no overlap |
 | Scope change with 500 connections selected | selection cleared to 0 |
 | Connect selected with all 3,796 objects selected | refused, 0 created |
+
+**Lazy-loading (stub-only) verification — Xenium, 708,983 objects, 11 connections:**
+
+| Check | Result |
+|---|---|
+| Fresh load, only 4/12 endpoints hydrated | 11/11 lines drawn, no NaN coordinates |
+| Zoom sweep 0 → 6 → 0 (budget 18,040 ↔ 5,000) | 11/11 lines at every step, no drift |
+| List rows built entirely from stubs | 11 rows, 0 `⚠ missing`, 1 track of 12 |
+| Click tolerance across zoom | 0 missed clicks at any zoom |
+
+**Caveat for dense datasets.** Clicking a connection line is less reliable here, not
+because of tolerance but because of the deliberate *annotations win* rule: at Xenium
+density a line's midpoint frequently sits on top of an unrelated object, so the click
+selects that object instead. Measured at the midpoint of all 11 lines: 10/11 resolved to
+the connection zoomed out, 7/11 at zoom 4, and **nothing was ever missed entirely** —
+every failed click hit an object. On dense data the Connections tab, not the canvas, is
+the dependable way to select a link.
 
 ---
 

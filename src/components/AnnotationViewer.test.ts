@@ -1048,6 +1048,87 @@ describe("AnnotationViewer", () => {
       });
     });
 
+    // --- drawNewConnections ---
+    describe("drawNewConnections", () => {
+      function setupTwoDisplayedAnnotations() {
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({ id: "a1", channel: 0 }),
+          makeAnnotation({ id: "a2", channel: 0 }),
+        ];
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ];
+        (geojsAnnotationFactory as any).mockImplementation((shape: string) =>
+          mockGeoJSAnnotation(shape),
+        );
+      }
+
+      it("draws a line for a connection between two displayed annotations", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const added = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(added).toHaveLength(1);
+        expect(added[0].options().girderId).toBe("c1");
+      });
+
+      // Regression: in stub-only mode getAnnotationFromId returns undefined for
+      // unhydrated annotations. Gating the draw on it silently dropped nearly
+      // every connection on a lazily-loaded dataset (1 of 11 drawn on the 709K
+      // Xenium dataset) even though every centroid was present.
+      it("still draws when the endpoints are unhydrated stubs", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const added = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(added).toHaveLength(1);
+        expect(added[0].options().girderId).toBe("c1");
+      });
+
+      it("skips a connection whose centroid is missing rather than drawing NaN", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        mockedAnnotationStore.annotationCentroids = { a1: { x: 10, y: 20 } };
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const added = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(added).toHaveLength(0);
+      });
+    });
+
     describe("displayedAnnotations", () => {
       it("returns flat array of annotations from layerAnnotations", () => {
         const layer = makeLayer({ id: "l1", channel: 0, visible: true });

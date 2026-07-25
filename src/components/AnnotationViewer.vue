@@ -1208,7 +1208,7 @@ function drawNewConnections(
   drawnGeoJSAnnotations: Map<string, IGeoJSAnnotation[]>,
 ) {
   const dispAnnotationIds = displayedAnnotationIds.value;
-  const getAnnotation = getAnnotationFromId.value;
+  const unrolledCentroids = unrolledCentroidCoordinates.value;
   const connections = annotationConnections.value;
   const len = connections.length;
   for (let i = 0; i < len; i++) {
@@ -1220,15 +1220,21 @@ function drawNewConnections(
     ) {
       continue;
     }
-    const childAnnotation = getAnnotation(connection.childId);
-    const parentAnnotation = getAnnotation(connection.parentId);
-    if (!childAnnotation || !parentAnnotation) {
+    // Gate on the centroids this actually draws from, NOT on
+    // getAnnotationFromId. In stub-only mode that getter returns undefined for
+    // every unhydrated non-point annotation, so on a lazily-loaded dataset it
+    // silently dropped nearly every connection: measured on the 709K-object
+    // Xenium dataset, only 4 of 12 endpoints resolved and just 1 of 11 lines
+    // was drawn, even though all 12 centroids were present.
+    const parentCentroid = unrolledCentroids[connection.parentId];
+    const childCentroid = unrolledCentroids[connection.childId];
+    if (!parentCentroid || !childCentroid) {
       continue;
     }
     drawGeoJSAnnotationFromConnection(
       connection,
-      childAnnotation,
-      parentAnnotation,
+      parentCentroid,
+      childCentroid,
     );
   }
 }
@@ -1698,12 +1704,14 @@ function createGeoJSAnnotation(
 
 function drawGeoJSAnnotationFromConnection(
   connection: IAnnotationConnection,
-  parent: IAnnotation,
-  child: IAnnotation,
+  parentCentroid: IGeoJSPosition,
+  childCentroid: IGeoJSPosition,
 ) {
-  const pA = { ...unrolledCentroidCoordinates.value[child.id] };
+  // Takes centroids rather than annotations: the line only ever needed the two
+  // positions, and looking annotations up here coupled drawing to hydration.
+  const pA = { ...childCentroid };
   delete pA.z;
-  const pB = { ...unrolledCentroidCoordinates.value[parent.id] };
+  const pB = { ...parentCentroid };
   delete pB.z;
   const line = geojs.annotation.lineAnnotation();
   line.options("vertices", [pA, pB]);
