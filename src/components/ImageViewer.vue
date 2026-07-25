@@ -481,14 +481,6 @@ const mapLayerList = computed<ILayerStackImage[][]>(() => {
 
 // ---- Computed Properties - Unroll Labels ----
 
-// Each label is its own element that GeoJS repositions on every pan, so very
-// large grids would pay for labels too small to read at that density anyway.
-const MAX_UNROLL_LABEL_CELLS = 400;
-
-// Cell count of the last grid that went unlabelled, so the warning is logged
-// once per grid instead of on every recompute.
-let warnedUnrollLabelCells = 0;
-
 const unrollCells = computed<IUnrollCell[]>(() => {
   if (!unrolling.value) {
     return [];
@@ -498,22 +490,11 @@ const unrollCells = computed<IUnrollCell[]>(() => {
   if (!someImages) {
     return [];
   }
-  const cells = getUnrollCells(someImages.images, {
+  return getUnrollCells(someImages.images, {
     unrollXY: store.unrollXY,
     unrollZ: store.unrollZ,
     unrollT: store.unrollT,
   });
-  if (cells.length > MAX_UNROLL_LABEL_CELLS) {
-    if (warnedUnrollLabelCells !== cells.length) {
-      warnedUnrollLabelCells = cells.length;
-      logWarning(
-        `Unrolled grid of ${cells.length} frames exceeds the ` +
-          `${MAX_UNROLL_LABEL_CELLS} frame label limit; labels are hidden`,
-      );
-    }
-    return [];
-  }
-  return cells;
 });
 
 // ---- Mousetrap Bindings ----
@@ -886,6 +867,10 @@ function updateScalePixelWidget() {
 // follow both panning and zooming. A dom widget stops mousedown from reaching
 // the GeoJS interactor, so clicking a label never starts an annotation.
 
+// Each label is its own element that GeoJS repositions on every pan, so very
+// large grids would pay for labels too small to read at that density anyway.
+const MAX_UNROLL_LABEL_CELLS = 400;
+
 interface IUnrollLabelState {
   widgets: IGeoJSDomWidget[];
   // Identifies the labelled grid; a change means the widgets are rebuilt.
@@ -893,6 +878,27 @@ interface IUnrollLabelState {
 }
 
 const unrollLabelStates = new WeakMap<IGeoJSMap, IUnrollLabelState>();
+
+// Cell count of the last grid that went unlabelled, so the warning is logged
+// once per grid rather than on every draw.
+let warnedUnrollLabelCells = 0;
+
+// The cells that get a label: unlabelled ones (every unrolled dimension has a
+// single value) and grids too dense to label are dropped.
+function labelledUnrollCells(): IUnrollCell[] {
+  const cells = unrollCells.value.filter((cell) => cell.label);
+  if (cells.length > MAX_UNROLL_LABEL_CELLS) {
+    if (warnedUnrollLabelCells !== cells.length) {
+      warnedUnrollLabelCells = cells.length;
+      logWarning(
+        `Unrolled grid of ${cells.length} frames exceeds the ` +
+          `${MAX_UNROLL_LABEL_CELLS} frame label limit; labels are hidden`,
+      );
+    }
+    return [];
+  }
+  return cells;
+}
 
 // Roll the grid back up at the clicked frame.
 function navigateToUnrolledCell(cell: IUnrollCell) {
@@ -955,9 +961,7 @@ function clearUnrollLabels() {
 }
 
 function updateUnrollLabels(someImage: IImage) {
-  // Unlabelled cells (a grid whose unrolled dimensions all have one value)
-  // get no widget.
-  const cells = unrollCells.value.filter((cell) => cell.label);
+  const cells = labelledUnrollCells();
   const signature = JSON.stringify([
     cells.map((cell) => [cell.index, cell.label]),
     unrollW.value,
@@ -1135,10 +1139,10 @@ function _setupMap(
 
   // Every map gets a ui layer to hold its unroll frame labels — the "unroll"
   // layer mode draws one grid per layer, and each grid labels its own cells.
-  const uiMapEntry = maps.value[mllidx];
-  if (!uiMapEntry.uiLayer) {
-    uiMapEntry.uiLayer = markRaw(uiMapEntry.map.createLayer("ui"));
-    uiMapEntry.uiLayer.node().css({ "mix-blend-mode": "unset" });
+  const mapentry = maps.value[mllidx];
+  if (!mapentry.uiLayer) {
+    mapentry.uiLayer = markRaw(mapentry.map.createLayer("ui"));
+    mapentry.uiLayer.node().css({ "mix-blend-mode": "unset" });
   }
 
   // only have a scale widget on the first map

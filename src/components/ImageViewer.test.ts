@@ -226,6 +226,7 @@ vi.mock("@/pipelines/computePipeline", () => ({
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import progressStore from "@/store/progress";
+import { logWarning } from "@/utils/log";
 import ImageViewer from "./ImageViewer.vue";
 
 const mockedStore = vi.mocked(store);
@@ -1266,10 +1267,11 @@ describe("ImageViewer", () => {
   // ---- 14b. Unroll frame labels ----
 
   describe("unroll frame labels", () => {
-    // A 2x2 grid of XY frames: unrollW is ceil(sqrt(4)) = 2 for square images.
-    function unrolledXYStack() {
+    // A grid of XY frames: unrollW is ceil(sqrt(count)) for square images, so
+    // the default 4 frames lay out 2x2.
+    function unrolledXYStack(count = 4) {
       const baseImage = createLayerStackImage().images[0];
-      const images = [0, 1, 2, 3].map((IndexXY) => ({
+      const images = Array.from({ length: count }, (_unused, IndexXY) => ({
         ...baseImage,
         frameIndex: IndexXY,
         frame: { IndexXY },
@@ -1284,18 +1286,21 @@ describe("ImageViewer", () => {
       });
     }
 
-    function mountUnrolled() {
+    function mountUnrolled(frameCount = 4) {
       mockedStore.unroll = true;
       mockedStore.unrollXY = true;
-      mockedStore.layerStackImages = [unrolledXYStack()];
+      mockedStore.layerStackImages = [unrolledXYStack(frameCount)];
       wrapper = mountComponent();
       return (mockedStore.maps[0] as any).uiLayer;
     }
 
+    // The ui layer also hosts the scale widgets, so pick out the labels.
     function labelElements(uiLayer: any): HTMLElement[] {
-      return uiLayer.createWidget.mock.results.map((result: any) =>
-        result.value.canvas(),
-      );
+      return uiLayer.createWidget.mock.results
+        .map((result: any) => result.value.canvas())
+        .filter((element: HTMLElement) =>
+          element.classList.contains("unroll-frame-label"),
+        );
     }
 
     it("labels each cell of the grid at its upper-left corner", () => {
@@ -1359,6 +1364,17 @@ describe("ImageViewer", () => {
       (wrapper.vm as any).clearUnrollLabels();
 
       expect(uiLayer.deleteWidget).toHaveBeenCalledTimes(4);
+    });
+
+    it("labels nothing, and says so, for a grid past the label limit", () => {
+      const uiLayer = mountUnrolled(401);
+
+      expect(uiLayer.createWidget).not.toHaveBeenCalled();
+      // The cells still exist; only the labels are dropped.
+      expect((wrapper.vm as any).unrollCells).toHaveLength(401);
+      expect(vi.mocked(logWarning)).toHaveBeenCalledWith(
+        expect.stringContaining("401 frames exceeds"),
+      );
     });
   });
 
