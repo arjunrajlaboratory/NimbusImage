@@ -148,6 +148,62 @@ describe("connectionList selection safety", () => {
     expect(connectionList.selectedConnectionIds.size).toBe(2);
   });
 
+  // Clearing on setScope is not enough: the inputs a dynamic scope reads can
+  // change without setScope ever firing, silently replacing the visible rows.
+  // The list's bulk delete is therefore derived from the intersection.
+  describe("stale selection when scope INPUTS change", () => {
+    it("drops rows that leave scope when the current location changes", async () => {
+      setAnnotations([makeAnnotation("here", 0), makeAnnotation("gone", 0)]);
+      (annotationStore as any).annotationConnections = [
+        makeConnection("c1", "here", "here"),
+        makeConnection("c2", "gone", "gone"),
+      ];
+      connectionList.setScope("location");
+      connectionList.setSelectedConnectionIds(["c1", "c2"]);
+      expect(connectionList.selectedInScopeConnectionIds).toEqual(["c1", "c2"]);
+
+      // Scrub to another timepoint: "gone" is no longer at the location.
+      setAnnotations([makeAnnotation("here", 0), makeAnnotation("gone", 7)]);
+      expect(connectionList.selectedInScopeConnectionIds).toEqual(["c1"]);
+
+      await connectionList.deleteSelectedInScopeConnections();
+      expect(deleteConnections).toHaveBeenCalledWith(["c1"]);
+    });
+
+    it("drops rows that leave scope when the object selection changes", async () => {
+      setAnnotations([makeAnnotation("a", 0), makeAnnotation("b", 0)]);
+      (annotationStore as any).annotationConnections = [
+        makeConnection("c1", "a", "a"),
+        makeConnection("c2", "b", "b"),
+      ];
+      (annotationStore as any).selectedAnnotationIds = new Set(["a", "b"]);
+      connectionList.setScope("selected");
+      connectionList.setSelectedConnectionIds(["c1", "c2"]);
+      expect(connectionList.selectedInScopeConnectionIds).toHaveLength(2);
+
+      (annotationStore as any).selectedAnnotationIds = new Set(["a"]);
+      expect(connectionList.selectedInScopeConnectionIds).toEqual(["c1"]);
+
+      await connectionList.deleteSelectedInScopeConnections();
+      expect(deleteConnections).toHaveBeenCalledWith(["c1"]);
+    });
+
+    it("still deletes the raw selection from the viewer action panel", async () => {
+      setAnnotations([makeAnnotation("a", 0)]);
+      (annotationStore as any).annotationConnections = [
+        makeConnection("c1", "a", "a"),
+      ];
+      (annotationStore as any).selectedAnnotationIds = new Set();
+      connectionList.setScope("selected");
+      // Out of scope, but the user clicked this line in the viewer.
+      connectionList.setSelectedConnectionIds(["c1"]);
+      expect(connectionList.selectedInScopeConnectionIds).toEqual([]);
+
+      await connectionList.deleteSelectedConnections();
+      expect(deleteConnections).toHaveBeenCalledWith(["c1"]);
+    });
+  });
+
   it("prunes deleted ids from the selection", async () => {
     connectionList.setSelectedConnectionIds(["c1", "c2", "c3"]);
     await connectionList.deleteConnectionsById(["c1", "c3"]);

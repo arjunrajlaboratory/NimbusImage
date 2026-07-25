@@ -162,12 +162,24 @@ Guards:
 
 Two rules keep a selection from feeding a destructive action it was never meant for:
 
-- **Changing the scope clears the connection selection.** The scope changes what "the
-  list" *is*, so a selection made under the old scope must not survive into
-  "Delete selected" — otherwise selecting all 4,983 connections, narrowing to a
-  3-row scope, and pressing delete removes 4,983 connections the user cannot see.
-  Changing the flat/track grouping deliberately does **not** clear it: grouping
-  re-arranges the same set rather than redefining it.
+- **The list's bulk delete acts on `selectedInScopeConnectionIds`** — the intersection
+  of the selection with the rows currently in scope — not on the raw selection. This is
+  the load-bearing rule, because a dynamic scope's *inputs* change without `setScope`
+  ever firing: scrubbing XY/Z/Time under "current location", changing the object
+  selection under "selected objects", editing filters under "passing filters". Each
+  silently replaces the visible rows. Deriving the delete set from the intersection
+  makes "you can only bulk-delete rows the list is showing" true by construction rather
+  than dependent on catching every input change. The button's count shows the same
+  number, so it never promises more than it will do.
+
+  The viewer's action panel deliberately uses the **raw** selection instead
+  (`deleteSelectedConnections` vs. `deleteSelectedInScopeConnections`): there, deleting
+  the link you just clicked is the intent whether or not it is in the list's scope.
+
+- **Changing the scope also clears the connection selection.** Belt to the intersection's
+  braces, and better UX: an explicit scope switch is a deliberate change of context.
+  Changing the flat/track grouping does **not** clear it — grouping re-arranges the same
+  set rather than redefining it.
 - **The header checkbox counts selected rows that are actually visible**, not the total
   selection size. A viewer click can select a connection outside the current scope, and
   a naive size comparison would then read as "all selected" while no visible row is.
@@ -388,8 +400,14 @@ the Delete key lands, matching the object flow.
 ### List ↔ viewer sync
 
 Both directions go through `connectionList.selectedConnectionIds`. The list writes it
-on row click; the viewer writes it on line click; both read it for styling. A viewer
-click also scrolls the corresponding row into view in the Connections tab.
+on row click; the viewer writes it on line click; both read it for styling.
+
+When the selection becomes a single connection — which is what a viewer click produces —
+`ConnectionList.revealConnection` pages the flat list to the row (or expands the
+containing track) and scrolls it into view via its `data-connection-id`. It deliberately
+does **not** open the Object Browser or switch tabs: a click on the canvas should not
+throw a palette over the image. It only puts the row where it can be found once the user
+looks.
 
 ---
 

@@ -1075,13 +1075,19 @@ export class Annotations extends VuexModule {
       return [];
     }
     sync.setSaving(true);
-    const connections =
-      await this.annotationsAPI.createMultipleConnections(connectionBases);
-    if (connections) {
-      this.addMultipleConnections(connections);
+    // try/finally, because this action is rawError: a rejection propagates to
+    // the caller, and without the finally the app-wide saving indicator would
+    // stay on forever.
+    try {
+      const connections =
+        await this.annotationsAPI.createMultipleConnections(connectionBases);
+      if (connections) {
+        this.addMultipleConnections(connections);
+      }
+      return connections || [];
+    } finally {
+      sync.setSaving(false);
     }
-    sync.setSaving(false);
-    return connections || [];
   }
 
   @Action

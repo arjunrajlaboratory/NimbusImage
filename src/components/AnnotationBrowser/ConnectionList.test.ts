@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   goToAnnotationLocation: vi.fn(),
   deleteConnectionsById: vi.fn(),
   deleteSelectedConnections: vi.fn(),
+  deleteSelectedInScopeConnections: vi.fn(),
   connectSelectedAnnotations: vi.fn(),
   setSelectedConnectionIds: vi.fn(),
   state: {
@@ -62,6 +63,7 @@ vi.mock("@/store/connectionList", () => {
   h.state.setSelectedConnectionIds = h.setSelectedConnectionIds;
   h.state.deleteConnectionsById = h.deleteConnectionsById;
   h.state.deleteSelectedConnections = h.deleteSelectedConnections;
+  h.state.deleteSelectedInScopeConnections = h.deleteSelectedInScopeConnections;
   h.state.connectSelectedAnnotations = h.connectSelectedAnnotations;
   return {
     default: h.state,
@@ -118,6 +120,10 @@ beforeEach(() => {
   h.state.selectedConnectionIds = new Set();
   h.state.canConnectSelected = false;
   h.state.connectSelectedTimeTies = [];
+  h.state.selectedInScopeConnectionIds = [];
+  h.state.itemsPerPage = 50;
+  h.state.trackRows = [];
+  h.state.isTrackExpanded = () => false;
   h.connectSelectedAnnotations.mockResolvedValue([]);
   setRows([], []);
 });
@@ -175,6 +181,62 @@ describe("ConnectionList", () => {
     expect(h.goToAnnotationLocation).not.toHaveBeenCalled();
     // The connection itself is still selectable so it can be deleted.
     expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1"]);
+  });
+
+  // A viewer click only sets the selected id; without this the highlighted link
+  // could sit on any page with nothing indicating where.
+  it("pages to the selected connection so a viewer click is findable", async () => {
+    const conns = Array.from({ length: 120 }, (_, i) =>
+      makeConnection(`c${i}`, `a${i}`, `b${i}`),
+    );
+    const anns = conns.flatMap((c, i) => [
+      makeAnnotation(c.parentId, i),
+      makeAnnotation(c.childId, i),
+    ]);
+    setRows(conns, anns);
+    h.state.itemsPerPage = 50;
+    const wrapper = mountComponent();
+
+    // Index 60 → page 2 at 50 rows per page.
+    await wrapper.vm.revealConnection("c60");
+    expect(h.state.setPage).toHaveBeenLastCalledWith(2);
+
+    await wrapper.vm.revealConnection("c119");
+    expect(h.state.setPage).toHaveBeenLastCalledWith(3);
+
+    // Already on the right page → no redundant page write.
+    h.state.page = 1;
+    h.state.setPage.mockClear();
+    await wrapper.vm.revealConnection("c0");
+    expect(h.state.setPage).not.toHaveBeenCalled();
+  });
+
+  it("expands the containing track when revealing in track mode", async () => {
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    h.state.grouping = "track";
+    h.state.trackRows = [
+      { id: "a", annotationCount: 2, timeRange: null, rows: [] },
+    ];
+    // The track holding c1 is collapsed; revealing must expand it.
+    h.state.trackRows[0].rows = [h.state.connectionRows[0]];
+    h.state.isTrackExpanded = () => false;
+    const wrapper = mountComponent();
+
+    await wrapper.vm.revealConnection("c1");
+    expect(h.state.toggleTrackExpanded).toHaveBeenCalledWith("a");
+  });
+
+  it("does nothing when the selected connection is not in the list", async () => {
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    const wrapper = mountComponent();
+    await wrapper.vm.revealConnection("not-in-list");
+    expect(h.state.setPage).not.toHaveBeenCalled();
   });
 
   it("deletes a single connection through the batched store action", async () => {

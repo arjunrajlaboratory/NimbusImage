@@ -46,11 +46,11 @@
         color="error"
         size="small"
         prepend-icon="mdi-delete"
-        :disabled="!isLoggedIn || selectedCount === 0 || isDeleting"
+        :disabled="!isLoggedIn || selectedInScopeCount === 0 || isDeleting"
         :loading="isDeleting"
         @click="deleteSelected"
       >
-        Delete selected ({{ selectedCount }})
+        Delete selected ({{ selectedInScopeCount }})
       </v-btn>
     </div>
 
@@ -194,7 +194,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import connectionListStore, {
@@ -241,6 +241,11 @@ const scopedCount = computed(
 const hoveredId = computed(() => connectionListStore.hoveredConnectionId);
 const selectedCount = computed(
   () => connectionListStore.selectedConnectionIds.size,
+);
+// The list's bulk delete acts only on rows it is actually showing, so the
+// button's count must match — see selectedInScopeConnectionIds.
+const selectedInScopeCount = computed(
+  () => connectionListStore.selectedInScopeConnectionIds.length,
 );
 const selectedAnnotationCount = computed(
   () => annotationStore.selectedAnnotationIds.size,
@@ -289,6 +294,52 @@ function shortId(id: string) {
   return shortAnnotationId(id);
 }
 
+/**
+ * Bring a connection into view in the list. Clicking a line in the viewer only
+ * sets the selected id, so without this the highlighted link could sit on any
+ * page with nothing indicating where.
+ *
+ * Deliberately does NOT open the Object Browser or switch tabs — a canvas click
+ * should not throw a palette over the image. It only puts the row where it can
+ * be found once the user looks.
+ */
+async function revealConnection(connectionId: string) {
+  if (connectionListStore.grouping === "track") {
+    const track = tracks.value.find((t) =>
+      t.rows.some((row) => row.connection.id === connectionId),
+    );
+    if (track && !connectionListStore.isTrackExpanded(track.id)) {
+      connectionListStore.toggleTrackExpanded(track.id);
+    }
+  } else {
+    const index = rows.value.findIndex(
+      ({ connection }) => connection.id === connectionId,
+    );
+    if (index < 0) {
+      return;
+    }
+    const page = Math.floor(index / connectionListStore.itemsPerPage) + 1;
+    if (page !== connectionListStore.page) {
+      connectionListStore.setPage(page);
+    }
+  }
+  await nextTick();
+  document
+    .querySelector(`[data-connection-id="${connectionId}"]`)
+    ?.scrollIntoView({ block: "nearest" });
+}
+
+// A single selected connection is what a viewer click produces; a multi-select
+// made in the list needs no revealing.
+watch(
+  () => connectionListStore.selectedConnectionIds,
+  (ids) => {
+    if (ids.size === 1) {
+      revealConnection([...ids][0]);
+    }
+  },
+);
+
 function toggleSelectAll() {
   connectionListStore.setSelectedConnectionIds(
     selectAllValue.value
@@ -331,7 +382,7 @@ async function deleteOne(connectionId: string) {
 async function deleteSelected() {
   isDeleting.value = true;
   try {
-    await connectionListStore.deleteSelectedConnections();
+    await connectionListStore.deleteSelectedInScopeConnections();
   } finally {
     isDeleting.value = false;
   }
@@ -371,6 +422,8 @@ defineExpose({
   tracks,
   scopedCount,
   selectedCount,
+  selectedInScopeCount,
+  revealConnection,
   selectedVisibleCount,
   selectAllValue,
   selectAllIndeterminate,

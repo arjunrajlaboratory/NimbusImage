@@ -119,6 +119,30 @@ export class ConnectionList extends VuexModule {
     return (id: string): boolean => this.selectedConnectionIds.has(id);
   }
 
+  /**
+   * Selected connections that are ALSO in the current scope.
+   *
+   * Clearing the selection in `setScope` is not sufficient on its own: the
+   * inputs a dynamic scope reads can change without `setScope` ever firing —
+   * scrubbing XY/Z/Time under "current location", changing the object
+   * selection under "selected objects", editing filters under "passing
+   * filters". Each of those silently replaces the visible rows. So the list's
+   * bulk delete is derived from this intersection rather than from the raw
+   * selection, which makes "you can only bulk-delete rows the list is showing"
+   * true by construction instead of dependent on catching every input change.
+   *
+   * The viewer's action panel deliberately uses the raw selection instead —
+   * there, deleting the link you just clicked is the intent, in scope or not.
+   */
+  get selectedInScopeConnectionIds(): string[] {
+    if (this.selectedConnectionIds.size === 0) {
+      return [];
+    }
+    return this.scopedConnections
+      .filter(({ id }) => this.selectedConnectionIds.has(id))
+      .map(({ id }) => id);
+  }
+
   get isTrackExpanded() {
     return (id: string): boolean => this.expandedTrackIds.has(id);
   }
@@ -246,9 +270,23 @@ export class ConnectionList extends VuexModule {
     );
   }
 
+  /**
+   * Delete every selected connection, in scope or not. Used by the viewer's
+   * action panel, where the selection is whatever line the user clicked.
+   */
   @Action({ rawError: true })
   public async deleteSelectedConnections() {
     await this.deleteConnectionsById([...this.selectedConnectionIds]);
+  }
+
+  /**
+   * Delete only the selected connections the list is currently showing. Used
+   * by the Connections tab so a stale selection can never remove rows that
+   * scrolled out of scope — see `selectedInScopeConnectionIds`.
+   */
+  @Action({ rawError: true })
+  public async deleteSelectedInScopeConnections() {
+    await this.deleteConnectionsById(this.selectedInScopeConnectionIds);
   }
 
   /**

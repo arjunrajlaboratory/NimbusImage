@@ -1,5 +1,6 @@
 <template>
   <tr
+    :data-connection-id="row.connection.id"
     @mouseover="emit('hover', row.connection.id)"
     @mouseleave="emit('hover', null)"
     @click="emit('navigate', row)"
