@@ -221,9 +221,11 @@ import girderResources from "@/store/girderResources";
 import geojs from "geojs";
 
 import {
+  IGeoJSDomWidget,
   IGeoJSPosition,
   IGeoJSScaleWidget,
   IGeoJSTile,
+  IGeoJSUiLayer,
   IImage,
   ILayerStackImage,
   IMapEntry,
@@ -254,6 +256,7 @@ import { convertLength } from "@/utils/conversion";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { NoOutput } from "@/pipelines/computePipeline";
 import { logWarning } from "@/utils/log";
+import { getUnrollCells, IUnrollCell } from "@/utils/unroll";
 
 function generateFilterURL(
   index: number,
@@ -474,6 +477,43 @@ const mapLayerList = computed<ILayerStackImage[][]>(() => {
     });
   }
   return llist;
+});
+
+// ---- Computed Properties - Unroll Labels ----
+
+// Each label is its own element that GeoJS repositions on every pan, so very
+// large grids would pay for labels too small to read at that density anyway.
+const MAX_UNROLL_LABEL_CELLS = 400;
+
+// Cell count of the last grid that went unlabelled, so the warning is logged
+// once per grid instead of on every recompute.
+let warnedUnrollLabelCells = 0;
+
+const unrollCells = computed<IUnrollCell[]>(() => {
+  if (!unrolling.value) {
+    return [];
+  }
+  // The layer draw() lays the grid out from, so cell order matches the tiles.
+  const someImages = layerStackImages.value.find((lsi) => lsi.images[0]);
+  if (!someImages) {
+    return [];
+  }
+  const cells = getUnrollCells(someImages.images, {
+    unrollXY: store.unrollXY,
+    unrollZ: store.unrollZ,
+    unrollT: store.unrollT,
+  });
+  if (cells.length > MAX_UNROLL_LABEL_CELLS) {
+    if (warnedUnrollLabelCells !== cells.length) {
+      warnedUnrollLabelCells = cells.length;
+      logWarning(
+        `Unrolled grid of ${cells.length} frames exceeds the ` +
+          `${MAX_UNROLL_LABEL_CELLS} frame label limit; labels are hidden`,
+      );
+    }
+    return [];
+  }
+  return cells;
 });
 
 // ---- Mousetrap Bindings ----
@@ -838,6 +878,109 @@ function updateScalePixelWidget() {
   }
 }
 
+// ---- Unroll Frame Labels ----
+//
+// One label per cell of the unrolled grid, anchored to the cell's upper-left
+// corner in map coordinates. GeoJS repositions a widget given an { x, y }
+// position on `geo_event.pan`, which its zoom() also fires, so the labels
+// follow both panning and zooming. A dom widget stops mousedown from reaching
+// the GeoJS interactor, so clicking a label never starts an annotation.
+
+interface IUnrollLabelState {
+  widgets: IGeoJSDomWidget[];
+  // Identifies the labelled grid; a change means the widgets are rebuilt.
+  signature: string;
+}
+
+const unrollLabelStates = new WeakMap<IGeoJSMap, IUnrollLabelState>();
+
+// Roll the grid back up at the clicked frame.
+function navigateToUnrolledCell(cell: IUnrollCell) {
+  const { xy, z, time } = cell.location;
+  if (xy !== undefined) {
+    store.setXY(xy);
+  }
+  if (z !== undefined) {
+    store.setZ(z);
+  }
+  if (time !== undefined) {
+    store.setTime(time);
+  }
+  // Clearing the flags is what rolls the grid up: NavigatorPanel watches all
+  // three and refreshes the dataset, the same path snapshot restore and the AI
+  // panel take. Refreshing here as well would load the dataset twice.
+  if (store.unrollXY) {
+    store.setUnrollXY(false);
+  }
+  if (store.unrollZ) {
+    store.setUnrollZ(false);
+  }
+  if (store.unrollT) {
+    store.setUnrollT(false);
+  }
+}
+
+function createUnrollLabel(
+  uiLayer: IGeoJSUiLayer,
+  cell: IUnrollCell,
+  someImage: IImage,
+) {
+  const widget = uiLayer.createWidget("dom", {
+    position: {
+      x: someImage.sizeX * (cell.index % unrollW.value),
+      y: someImage.sizeY * Math.floor(cell.index / unrollW.value),
+    },
+  });
+  const element = widget.canvas();
+  element.classList.add("unroll-frame-label");
+  element.textContent = cell.label;
+  element.title = `Show ${cell.label} on its own`;
+  element.onclick = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    navigateToUnrolledCell(cell);
+  };
+  return widget;
+}
+
+function clearUnrollLabels() {
+  for (const mapentry of maps.value) {
+    const state = unrollLabelStates.get(mapentry.map);
+    if (!state) {
+      continue;
+    }
+    state.widgets.forEach((widget) => mapentry.uiLayer?.deleteWidget(widget));
+    unrollLabelStates.delete(mapentry.map);
+  }
+}
+
+function updateUnrollLabels(someImage: IImage) {
+  // Unlabelled cells (a grid whose unrolled dimensions all have one value)
+  // get no widget.
+  const cells = unrollCells.value.filter((cell) => cell.label);
+  const signature = JSON.stringify([
+    cells.map((cell) => [cell.index, cell.label]),
+    unrollW.value,
+    someImage.sizeX,
+    someImage.sizeY,
+  ]);
+  for (const mapentry of maps.value) {
+    const uiLayer = mapentry.uiLayer;
+    if (!uiLayer) {
+      continue;
+    }
+    const state = unrollLabelStates.get(mapentry.map);
+    if (state?.signature === signature) {
+      continue;
+    }
+    state?.widgets.forEach((widget) => uiLayer.deleteWidget(widget));
+    unrollLabelStates.set(mapentry.map, {
+      widgets: cells.map((cell) => createUnrollLabel(uiLayer, cell, someImage)),
+      signature,
+    });
+  }
+}
+
 function _setupMap(
   mllidx: number,
   someImage: IImage,
@@ -990,13 +1133,16 @@ function _setupMap(
     }
   }
 
+  // Every map gets a ui layer to hold its unroll frame labels — the "unroll"
+  // layer mode draws one grid per layer, and each grid labels its own cells.
+  const uiMapEntry = maps.value[mllidx];
+  if (!uiMapEntry.uiLayer) {
+    uiMapEntry.uiLayer = markRaw(uiMapEntry.map.createLayer("ui"));
+    uiMapEntry.uiLayer.node().css({ "mix-blend-mode": "unset" });
+  }
+
   // only have a scale widget on the first map
   if (mllidx === 0) {
-    const mapentry = maps.value[mllidx];
-    if (!mapentry.uiLayer) {
-      mapentry.uiLayer = markRaw(mapentry.map.createLayer("ui"));
-      mapentry.uiLayer.node().css({ "mix-blend-mode": "unset" });
-    }
     updateScaleWidget();
     updateScalePixelWidget();
 
@@ -1275,6 +1421,9 @@ function draw() {
         layer.node().css("visibility", "hidden");
       });
     });
+    // The labels describe the grid that is being replaced, so drop them with
+    // the tiles rather than leaving them over the loading overlay.
+    clearUnrollLabels();
     return;
   }
   if ((width.value == height.value && width.value == 1) || !dataset.value) {
@@ -1349,6 +1498,8 @@ function draw() {
     baseLayerIndex += mll.length;
     map.draw();
   });
+
+  updateUnrollLabels(someImage);
 
   // Track progress of layers.
   // Two-pass approach: first build the array and assign the ref, THEN register
@@ -1502,6 +1653,7 @@ watch(
           layer.node().css("visibility", "hidden");
         });
       });
+      clearUnrollLabels();
     } else {
       draw();
     }
@@ -1621,6 +1773,7 @@ defineExpose({
   layersReady,
   mouseMap,
   mapLayerList,
+  unrollCells,
   mousetrapAnnotations,
   refsMounted,
   readyLayers,
@@ -1667,6 +1820,9 @@ defineExpose({
   setCorners,
   draw,
   toggleViewLock,
+  navigateToUnrolledCell,
+  updateUnrollLabels,
+  clearUnrollLabels,
   _setupMap,
   _setupTileLayers,
   _setTileUrls,
@@ -1692,6 +1848,31 @@ defineExpose({
 
 .scale-widget:hover {
   cursor: pointer;
+}
+
+/* Frame labels on the unrolled grid. GeoJS positions the element at its cell's
+   upper-left corner; the translate insets it into the cell. Unscoped because
+   the element is created by GeoJS, not rendered by this component. */
+.unroll-frame-label {
+  transform: translate(5px, 5px);
+  padding: 0 6px;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 55%);
+  color: #fff;
+  font:
+    500 12px/1.7 "Helvetica Neue",
+    Arial,
+    Helvetica,
+    sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  pointer-events: auto;
+}
+
+.unroll-frame-label:hover {
+  background: rgb(0 0 0 / 85%);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 65%);
 }
 </style>
 

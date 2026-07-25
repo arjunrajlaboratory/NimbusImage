@@ -60,9 +60,18 @@ const mockMap = () => {
   return m;
 };
 
+// GeoJS dom widget: a real element so the label code can set its class, text
+// and click handler.
+const mockDomWidget = () => {
+  const element = document.createElement("div");
+  return { canvas: vi.fn(() => element) };
+};
+
 const mockLayer = () => ({
   node: vi.fn().mockReturnValue({ css: vi.fn() }),
   createFeature: vi.fn().mockReturnValue({}),
+  createWidget: vi.fn(() => mockDomWidget()),
+  deleteWidget: vi.fn(),
   moveToTop: vi.fn(),
   zIndex: vi.fn().mockReturnValue(0),
   visible: vi.fn(),
@@ -106,6 +115,9 @@ vi.mock("@/store", () => {
       scales: { pixelSize: { value: 0.5, unit: "µm" } },
       overview: false,
       unroll: false,
+      unrollXY: false,
+      unrollZ: false,
+      unrollT: false,
       selectedTool: null as any,
       layerStackImages: [] as any[],
       layerMode: "multiple",
@@ -121,6 +133,12 @@ vi.mock("@/store", () => {
       setCameraInfo: vi.fn(),
       setDrawAnnotations: vi.fn(),
       setShowTooltips: vi.fn(),
+      setXY: vi.fn(),
+      setZ: vi.fn(),
+      setTime: vi.fn(),
+      setUnrollXY: vi.fn(),
+      setUnrollZ: vi.fn(),
+      setUnrollT: vi.fn(),
       getLayerHistogram: vi.fn().mockResolvedValue(null),
     }),
   };
@@ -297,6 +315,9 @@ describe("ImageViewer", () => {
     mockedStore.backgroundColor = "black";
     mockedStore.overview = false;
     mockedStore.unroll = false;
+    mockedStore.unrollXY = false;
+    mockedStore.unrollZ = false;
+    mockedStore.unrollT = false;
     mockedStore.selectedTool = null;
     mockedStore.layerStackImages = [];
     mockedStore.layerMode = "multiple" as any;
@@ -1239,6 +1260,105 @@ describe("ImageViewer", () => {
       expect(mockedStore.popMap).toHaveBeenCalledOnce();
       expect(removedMaps[0].map.exit).toBe(map2.exit);
       expect(mockedStore.maps).toHaveLength(1);
+    });
+  });
+
+  // ---- 14b. Unroll frame labels ----
+
+  describe("unroll frame labels", () => {
+    // A 2x2 grid of XY frames: unrollW is ceil(sqrt(4)) = 2 for square images.
+    function unrolledXYStack() {
+      const baseImage = createLayerStackImage().images[0];
+      const images = [0, 1, 2, 3].map((IndexXY) => ({
+        ...baseImage,
+        frameIndex: IndexXY,
+        frame: { IndexXY },
+      }));
+      return createLayerStackImage({
+        images,
+        urls: images.map((_image, i) => `http://localhost/${i}/{z}/{x}/{y}`),
+        fullUrls: images.map(
+          (_image, i) => `http://localhost/${i}/{z}/{x}/{y}?full=true`,
+        ),
+        singleFrame: null,
+      });
+    }
+
+    function mountUnrolled() {
+      mockedStore.unroll = true;
+      mockedStore.unrollXY = true;
+      mockedStore.layerStackImages = [unrolledXYStack()];
+      wrapper = mountComponent();
+      return (mockedStore.maps[0] as any).uiLayer;
+    }
+
+    function labelElements(uiLayer: any): HTMLElement[] {
+      return uiLayer.createWidget.mock.results.map((result: any) =>
+        result.value.canvas(),
+      );
+    }
+
+    it("labels each cell of the grid at its upper-left corner", () => {
+      const uiLayer = mountUnrolled();
+
+      expect(uiLayer.createWidget).toHaveBeenCalledTimes(4);
+      expect(
+        uiLayer.createWidget.mock.calls.map((call: any[]) => call[1].position),
+      ).toEqual([
+        { x: 0, y: 0 },
+        { x: 1024, y: 0 },
+        { x: 0, y: 1024 },
+        { x: 1024, y: 1024 },
+      ]);
+      expect(
+        labelElements(uiLayer).map((element) => element.textContent),
+      ).toEqual(["XY 1", "XY 2", "XY 3", "XY 4"]);
+      expect(labelElements(uiLayer)[0].classList).toContain(
+        "unroll-frame-label",
+      );
+    });
+
+    it("navigates to the clicked frame and rolls the grid up", () => {
+      const uiLayer = mountUnrolled();
+
+      labelElements(uiLayer)[2].click();
+
+      expect(mockedStore.setXY).toHaveBeenCalledWith(2);
+      expect(mockedStore.setUnrollXY).toHaveBeenCalledWith(false);
+      // Only the unrolled dimension moves, and the reload is left to the
+      // unroll flag watcher.
+      expect(mockedStore.setZ).not.toHaveBeenCalled();
+      expect(mockedStore.setTime).not.toHaveBeenCalled();
+      expect(mockedStore.setUnrollZ).not.toHaveBeenCalled();
+      expect(mockedStore.setUnrollT).not.toHaveBeenCalled();
+    });
+
+    it("creates no labels when nothing is unrolled", () => {
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      wrapper = mountComponent();
+
+      expect(
+        (mockedStore.maps[0] as any).uiLayer.createWidget,
+      ).not.toHaveBeenCalled();
+      expect((wrapper.vm as any).unrollCells).toEqual([]);
+    });
+
+    it("keeps the labels of an unchanged grid instead of rebuilding them", () => {
+      const uiLayer = mountUnrolled();
+      uiLayer.createWidget.mockClear();
+
+      (wrapper.vm as any).draw();
+
+      expect(uiLayer.createWidget).not.toHaveBeenCalled();
+      expect(uiLayer.deleteWidget).not.toHaveBeenCalled();
+    });
+
+    it("clears the labels when the grid goes away", () => {
+      const uiLayer = mountUnrolled();
+
+      (wrapper.vm as any).clearUnrollLabels();
+
+      expect(uiLayer.deleteWidget).toHaveBeenCalledTimes(4);
     });
   });
 
