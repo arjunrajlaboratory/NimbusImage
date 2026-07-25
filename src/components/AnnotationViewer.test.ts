@@ -1180,6 +1180,61 @@ describe("AnnotationViewer", () => {
         expect(lineOf().options().style.stroke).toBe(true);
       });
 
+      // A plain click highlights an object but used to do nothing at all on a
+      // connection line — the hover handler skipped isConnection features —
+      // which reads as the feature being broken.
+      it("hovers a connection on a plain click that hits no object", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        (wrapper.vm as any).drawNewConnections(new Map());
+        connectionListStore.setHoveredConnectionId(null);
+
+        // The GeoJS mock does not derive coordinates() from the vertices
+        // option, so the hit test would see no geometry. Give the drawn line
+        // the segment it represents.
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        const drawnLine = aLayer
+          .annotations()
+          .find((f: any) => f.options().isConnection);
+        drawnLine.coordinates = () => [
+          { x: 0, y: 0 },
+          { x: 1000, y: 1000 },
+        ];
+        // The shared geojs mock returns 100 from distance2dToLineSquared, which
+        // never clears the 6px tolerance; 1 means "the click is on the line".
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(1);
+
+        // Midpoint of the drawn line: on the connection, away from any object.
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 500,
+          y: 500,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBe("c1");
+      });
+
+      it("clears connection hover when the click lands on an object", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        (wrapper.vm as any).drawNewConnections(new Map());
+        connectionListStore.setHoveredConnectionId("c1");
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(100);
+
+        // Far from the line, so no connection is hit either way.
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 9999,
+          y: 9999,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBeNull();
+      });
+
       it("skips a connection whose centroid is missing rather than drawing NaN", () => {
         setupTwoDisplayedAnnotations();
         (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(

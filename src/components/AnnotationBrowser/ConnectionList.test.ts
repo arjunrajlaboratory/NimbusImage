@@ -150,7 +150,9 @@ describe("ConnectionList", () => {
     expect(mountComponent().vm.emptyMessage).toContain("filters");
   });
 
-  it("navigates to the child endpoint and selects both endpoints", () => {
+  // A row click navigates and highlights; the checkbox is what selects. Mirrors
+  // the Objects tab, and avoids silently arming the bulk delete.
+  it("navigates and highlights without selecting", () => {
     setRows(
       [makeConnection("c1", "a", "b")],
       [makeAnnotation("a", 0), makeAnnotation("b", 1)],
@@ -158,20 +160,20 @@ describe("ConnectionList", () => {
     const wrapper = mountComponent();
     wrapper.vm.navigateToConnection(wrapper.vm.rows[0]);
 
-    expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1"]);
-    expect(h.setSelected).toHaveBeenCalledWith(["a", "b"]);
+    expect(h.state.setHoveredConnectionId).toHaveBeenCalledWith("c1");
+    expect(h.setSelectedConnectionIds).not.toHaveBeenCalled();
+    expect(h.setSelected).not.toHaveBeenCalled();
     // Both endpoints are handed to the navigator: a connection is only drawn
     // when both are displayed, so it must frame the pair, not one endpoint.
     expect(h.goToConnection).toHaveBeenCalledWith("a", "b");
   });
 
-  it("selects only the surviving endpoint when the child is missing", () => {
+  it("still navigates when one endpoint is dangling", () => {
     setRows([makeConnection("c1", "a", "gone")], [makeAnnotation("a", 0)]);
     const wrapper = mountComponent();
     wrapper.vm.navigateToConnection(wrapper.vm.rows[0]);
 
-    expect(h.setSelected).toHaveBeenCalledWith(["a"]);
-    // Still delegated with both ids — goToConnection resolves what it can and
+    // Delegated with both ids — goToConnection resolves what it can and
     // degrades to a single-endpoint navigate (covered in its own tests).
     expect(h.goToConnection).toHaveBeenCalledWith("a", "gone");
   });
@@ -182,8 +184,8 @@ describe("ConnectionList", () => {
     wrapper.vm.navigateToConnection(wrapper.vm.rows[0]);
 
     expect(h.goToConnection).not.toHaveBeenCalled();
-    // The connection itself is still selectable so it can be deleted.
-    expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1"]);
+    // Still highlighted, so the dangling row is findable and deletable.
+    expect(h.state.setHoveredConnectionId).toHaveBeenCalledWith("c1");
   });
 
   // A viewer click only sets the selected id; without this the highlighted link

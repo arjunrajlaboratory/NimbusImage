@@ -127,7 +127,8 @@ hydration.
 
 | Action | Behavior |
 |---|---|
-| **Click a row** | Recenters the viewer on the child endpoint, selects both endpoint annotations in the Objects tab, and marks the connection selected (highlighted in the viewer) |
+| **Click a row** | Navigates to the connection (framing both endpoints) and **highlights** it — it does not select. Mirrors the Objects tab, where a row click navigates + hovers and the checkbox is what selects; selecting on a row click would silently arm the bulk delete and the viewer action panel. |
+| **Row checkbox** | Selects the connection for bulk actions |
 | **Row trash icon** | Deletes that one connection |
 | **Delete selected** | Deletes all checked connections in a single batched request |
 | **Connect selected** | Chains the annotations selected in the Objects tab into connections (see below) |
@@ -335,9 +336,24 @@ Three rules:
 - **Both layers.** `findConnectionIdAtPoint` scans `timelapseLayer` first when timelapse
   mode is on (those are the lines the user sees), then `annotationLayer`.
 
-All of this hangs off the existing `selectAnnotations` entry point, so connections are
-selected by the **same gesture as objects**: shift+click on the canvas, or a click with
-the select tool active. No new interaction to learn.
+All of this hangs off the existing `selectAnnotations` entry point, so connections use
+the **same gestures as objects** — there is no connection-specific interaction:
+
+| Gesture | Effect |
+|---|---|
+| **Plain click** on a line | Highlights it (`hoveredConnectionId`) — the line widens and its list row gets `is-hovered`. Mirrors what a plain click already does to an object. |
+| **Shift+click**, or a click with the select tool active | *Selects* it — cyan line, `is-selected` row, the connection action panel, Delete key. |
+| Drag / lasso | Never touches connections (see "Click only" above). |
+
+The plain-click case exists because without it the feature reads as broken: the hover
+handler (`setHoveredAnnotationFromCoordinates`) skipped `isConnection` features, so a
+plain click highlighted an object but did *nothing at all* on a connection line, and
+nothing in the UI hinted that shift was required. Objects still win — connections are
+only considered when the click hit no object.
+
+Selection proper still requires shift because `ImageViewer`'s `isMouseStartEvent`
+(`shiftKey && buttons !== 0`) gates the whole mouse-capture path; a plain drag pans the
+map. Changing that is a global interaction decision, not a connections one.
 
 **Hit geometry uses a dedicated `pointNearConnectionLine`, not `pointNearLine`.** The
 existing helper compares a *squared* distance against an unsquared width

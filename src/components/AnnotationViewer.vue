@@ -3165,6 +3165,22 @@ function setHoveredAnnotationFromCoordinates(gcsCoordinates: IGeoJSPosition) {
   } else {
     annotationStore.setHoveredAnnotationId(annotationToToggle.id);
   }
+
+  // Connections get the same plain-click affordance as objects. Without this a
+  // plain click highlights an object but does nothing whatsoever on a
+  // connection line — the line is skipped above — which reads as the feature
+  // being broken. Objects still win: connections are only considered when the
+  // click hit no object.
+  if (annotationToToggle) {
+    connectionListStore.setHoveredConnectionId(null);
+    return;
+  }
+  const connectionId = findConnectionIdAtPoint(gcsCoordinates);
+  connectionListStore.setHoveredConnectionId(
+    connectionId && connectionId !== connectionListStore.hoveredConnectionId
+      ? connectionId
+      : null,
+  );
 }
 
 function getMapUnitsPerPixel(): number {

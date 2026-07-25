@@ -377,17 +377,16 @@ function toggleTrack(track: ITrackRow) {
 // Navigate to the child (later) endpoint and select both endpoints so the
 // Objects tab agrees with what the viewer is showing.
 function navigateToConnection(row: IConnectionRow) {
-  connectionListStore.setSelectedConnectionIds([row.connection.id]);
+  // Go there and HIGHLIGHT — deliberately not select. This mirrors the Objects
+  // tab, where clicking a row navigates and sets hover while the checkbox is
+  // what selects. Selecting on a mere row click would silently arm the bulk
+  // delete and the connection action panel.
+  connectionListStore.setHoveredConnectionId(row.connection.id);
   if (row.parent.missing && row.child.missing) {
-    // Both endpoints are gone — nowhere to navigate, but the row stays
-    // selected so the dangling link can still be deleted.
+    // Both endpoints are gone — nowhere to navigate. The row is still
+    // checkbox-selectable so the dangling link can be deleted.
     return;
   }
-  annotationStore.setSelected(
-    [row.parent, row.child]
-      .filter((endpoint) => !endpoint.missing)
-      .map(({ id }) => id),
-  );
   // Frames both endpoints when they share a frame — a connection is only drawn
   // when both are displayed, so centering on one would show nothing at zoom.
   goToConnection(row.parent.id, row.child.id);
