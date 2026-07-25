@@ -5,38 +5,53 @@
       <span class="text-high-emphasis ml-1">{{ project.name }}</span>
     </v-card-title>
     <v-card-text class="collection-dialog-content">
-      <!-- Folder chooser -->
-      <div class="d-flex align-center pa-2 folder-chooser">
-        <v-icon class="mr-2" size="20" color="grey-darken-2">mdi-folder</v-icon>
-        <span class="text-body-2 mr-2">Collections in:</span>
-        <girder-breadcrumb
-          v-if="currentFolder"
-          :location="currentFolder"
-          root-location-disabled
-          readonly
-          class="folder-breadcrumb"
-        />
-        <span v-else class="text-body-2 text-grey">Loading...</span>
-        <v-spacer />
-        <girder-location-chooser
-          v-model="currentFolder"
-          title="Choose a folder"
-          :breadcrumb="false"
-          :activator-disabled="false"
-        >
-          <template #activator="{ props: activatorProps }">
-            <v-btn
-              v-bind="activatorProps"
-              variant="outlined"
-              color="primary"
-              size="small"
-              class="ml-2"
-            >
-              <v-icon start size="small">mdi-folder-open</v-icon>
-              Change folder
-            </v-btn>
-          </template>
-        </girder-location-chooser>
+      <!-- Scope toggle and, when browsing one folder, its chooser -->
+      <div class="d-flex align-center flex-wrap ga-2 pa-2 folder-chooser">
+        <v-btn-toggle v-model="scope" mandatory density="compact">
+          <v-btn value="folder" size="small">
+            <v-icon start size="small">mdi-folder</v-icon>
+            This folder
+          </v-btn>
+          <v-btn value="all" size="small">
+            <v-icon start size="small">mdi-file-tree</v-icon>
+            All collections
+          </v-btn>
+        </v-btn-toggle>
+
+        <template v-if="scope === 'folder'">
+          <span class="text-body-2">Collections in:</span>
+          <girder-breadcrumb
+            v-if="currentFolder"
+            :location="currentFolder"
+            root-location-disabled
+            readonly
+            class="folder-breadcrumb"
+          />
+          <span v-else class="text-body-2 text-grey">Loading...</span>
+          <v-spacer />
+          <girder-location-chooser
+            v-model="currentFolder"
+            title="Choose a folder"
+            :breadcrumb="false"
+            :activator-disabled="false"
+          >
+            <template #activator="{ props: activatorProps }">
+              <v-btn
+                v-bind="activatorProps"
+                variant="outlined"
+                color="primary"
+                size="small"
+                class="ml-2"
+              >
+                <v-icon start size="small">mdi-folder-open</v-icon>
+                Change folder
+              </v-btn>
+            </template>
+          </girder-location-chooser>
+        </template>
+        <span v-else class="text-body-2 text-medium-emphasis">
+          Every collection you have access to, across all folders
+        </span>
       </div>
 
       <!-- Search -->
@@ -50,6 +65,18 @@
         class="mb-2 mx-2"
       />
 
+      <v-alert
+        v-if="hasMore"
+        type="info"
+        variant="tonal"
+        density="compact"
+        class="mb-2 mx-2"
+      >
+        Showing the {{ allCollections.length.toLocaleString() }} most recently
+        modified collections; search only covers these. Narrow the scope to a
+        folder to find older ones.
+      </v-alert>
+
       <v-progress-linear v-if="loading" indeterminate />
 
       <div
@@ -61,7 +88,9 @@
           {{
             searchQuery
               ? "No collections match your search"
-              : "No collections in this folder"
+              : scope === "all"
+                ? "You don't have access to any collections yet"
+                : "No collections in this folder"
           }}
         </div>
       </div>
@@ -152,11 +181,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import { IProject } from "@/store/model";
-import { IGirderLocation, IUPennCollection } from "@/girder";
+import { ICollectionSummary, IGirderLocation } from "@/girder";
 import store from "@/store";
 import projects from "@/store/projects";
 import { Breadcrumb as GirderBreadcrumb } from "@/girder/components";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
+import { logError } from "@/utils/log";
 
 // Suppress unused import warning
 void GirderBreadcrumb;
@@ -175,7 +205,9 @@ const emit = defineEmits<{
 const searchQuery = ref("");
 const loading = ref(false);
 const adding = ref(false);
-const allCollections = ref<IUPennCollection[]>([]);
+const scope = ref<"folder" | "all">("folder");
+const allCollections = ref<ICollectionSummary[]>([]);
+const hasMore = ref(false);
 const selectedIds = ref<Set<string>>(new Set());
 const showPermissionConfirm = ref(false);
 const currentFolder = ref<IGirderLocation | null>(null);
@@ -185,7 +217,7 @@ const existingCollectionIds = computed<Set<string>>(() => {
   return new Set(props.project.meta.collections.map((c) => c.collectionId));
 });
 
-const filteredCollections = computed<IUPennCollection[]>(() => {
+const filteredCollections = computed<ICollectionSummary[]>(() => {
   if (!searchQuery.value) {
     return allCollections.value;
   }
@@ -197,7 +229,7 @@ const filteredCollections = computed<IUPennCollection[]>(() => {
   );
 });
 
-const selectedCollections = computed<IUPennCollection[]>(() => {
+const selectedCollections = computed<ICollectionSummary[]>(() => {
   return allCollections.value.filter(
     (c) => selectedIds.value.has(c._id) && !isInProject(c._id),
   );
@@ -219,35 +251,29 @@ function toggleSelection(collectionId: string) {
 }
 
 async function fetchCollections() {
-  const folder = currentFolder.value;
-  let folderId: string | null = null;
-  if (folder && "_id" in folder) {
-    folderId = folder._id;
-  }
-  if (!folderId) {
-    allCollections.value = [];
-    return;
+  let folderId: string | undefined;
+  if (scope.value === "folder") {
+    const folder = currentFolder.value;
+    folderId = folder && "_id" in folder ? folder._id : undefined;
+    if (!folderId) {
+      allCollections.value = [];
+      hasMore.value = false;
+      return;
+    }
   }
 
   const generation = ++fetchGeneration;
   loading.value = true;
   try {
-    const response = await store.api.client.get("upenn_collection", {
-      params: {
-        folderId,
-        limit: 0,
-        sort: "updated",
-        sortdir: -1,
-      },
-    });
+    const page = await store.api.listCollections({ folderId });
     if (generation !== fetchGeneration) return;
-    allCollections.value = response.data.map((item: any) => ({
-      ...item,
-      _modelType: "upenn_collection" as const,
-    }));
+    allCollections.value = page.collections;
+    hasMore.value = page.hasMore;
   } catch (error) {
     if (generation !== fetchGeneration) return;
+    logError("Failed to fetch collections:", error);
     allCollections.value = [];
+    hasMore.value = false;
   } finally {
     if (generation === fetchGeneration) {
       loading.value = false;
@@ -286,7 +312,7 @@ async function addCollections() {
   }
 }
 
-watch(currentFolder, () => {
+watch([currentFolder, scope], () => {
   fetchCollections();
 });
 
@@ -310,7 +336,9 @@ defineExpose({
   searchQuery,
   loading,
   adding,
+  scope,
   allCollections,
+  hasMore,
   selectedIds,
   showPermissionConfirm,
   currentFolder,

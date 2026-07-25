@@ -53,11 +53,17 @@ export interface IGirderFile extends IGirderBase {
   _modelType: "file";
 }
 
-export interface IUPennCollection extends IGirderBase {
+// A collection without its "meta" document. This is what the
+// GET /upenn_collection/list endpoint returns, so that listing thousands of
+// collections doesn't drag along every layer, tool and snapshot.
+export interface ICollectionSummary extends IGirderBase {
   _modelType: "upenn_collection";
   description: string;
   creatorId: string;
   folderId: string;
+}
+
+export interface IUPennCollection extends ICollectionSummary {
   meta: any;
 }
 

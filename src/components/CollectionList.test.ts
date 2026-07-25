@@ -2,31 +2,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
 
-const mockClientGet = vi.fn();
+const mockListCollections = vi.fn();
 const mockGetUserPrivateFolder = vi.fn();
-const mockFindDatasetViews = vi.fn();
 const mockBatchResources = vi.fn();
 
 vi.mock("@/store", () => ({
   default: {
     folderLocation: null as any,
     api: {
-      client: {
-        get: (...args: any[]) => mockClientGet(...args),
-      },
+      listCollections: (...args: any[]) => mockListCollections(...args),
       getUserPrivateFolder: (...args: any[]) =>
         mockGetUserPrivateFolder(...args),
-      findDatasetViews: (...args: any[]) => mockFindDatasetViews(...args),
       batchResources: (...args: any[]) => mockBatchResources(...args),
     },
   },
 }));
 
-const mockGetFolder = vi.fn();
-vi.mock("@/store/girderResources", () => ({
-  default: {
-    getFolder: (...args: any[]) => mockGetFolder(...args),
-  },
+const mockCollectionsToDatasetChips = vi.fn();
+vi.mock("@/utils/collectionChips", () => ({
+  collectionsToDatasetChips: (...args: any[]) =>
+    mockCollectionsToDatasetChips(...args),
 }));
 
 vi.mock("@/utils/log", () => ({
@@ -49,6 +44,7 @@ vi.mock("@/utils/date", () => ({
 import { routeProvider, routerProvider } from "@/test/helpers";
 import CollectionList from "./CollectionList.vue";
 import store from "@/store";
+import Persister from "@/store/Persister";
 
 const mockRouter = { push: vi.fn() };
 
@@ -57,8 +53,8 @@ function mountComponent() {
     global: {
       stubs: {
         "girder-breadcrumb": true,
-        "collection-item-row": true,
-        CollectionItemRow: true,
+        "collection-dataset-chips": true,
+        CollectionDatasetChips: true,
       },
       provide: {
         ...routeProvider({ params: {}, query: {} }),
@@ -68,37 +64,45 @@ function mountComponent() {
   });
 }
 
+function collection(id: string, overrides: Record<string, any> = {}) {
+  return {
+    _id: id,
+    _modelType: "upenn_collection" as const,
+    name: `Collection ${id}`,
+    description: "",
+    folderId: "folder1",
+    creatorId: "u1",
+    created: "2024-01-01T00:00:00Z",
+    updated: "2024-06-15T12:00:00Z",
+    ...overrides,
+  };
+}
+
 describe("CollectionList", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    // Reset store defaults
+    Persister.delete("collectionBrowseScope");
     (store as any).folderLocation = null;
-    mockClientGet.mockResolvedValue({ data: [] });
+    mockListCollections.mockResolvedValue({ collections: [], hasMore: false });
     mockGetUserPrivateFolder.mockResolvedValue({
       _id: "private-folder",
       _modelType: "folder",
     });
-    mockFindDatasetViews.mockResolvedValue([]);
     mockBatchResources.mockResolvedValue({ folder: {} });
-    mockGetFolder.mockResolvedValue(null);
+    mockCollectionsToDatasetChips.mockResolvedValue({});
   });
 
   // --- currentFolderLocation ---
 
   it("currentFolderLocation returns null when store.folderLocation is null", () => {
     (store as any).folderLocation = null;
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
+    const vm = mountComponent().vm as any;
     expect(vm.currentFolderLocation).toBeNull();
   });
 
   it("currentFolderLocation returns location when it has _id and name", () => {
-    (store as any).folderLocation = {
-      _id: "folder1",
-      name: "My Folder",
-    };
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
+    (store as any).folderLocation = { _id: "folder1", name: "My Folder" };
+    const vm = mountComponent().vm as any;
     expect(vm.currentFolderLocation).toEqual({
       _id: "folder1",
       name: "My Folder",
@@ -107,8 +111,7 @@ describe("CollectionList", () => {
 
   it("currentFolderLocation returns null when location missing _id", () => {
     (store as any).folderLocation = { name: "No ID" };
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
+    const vm = mountComponent().vm as any;
     expect(vm.currentFolderLocation).toBeNull();
   });
 
@@ -116,65 +119,55 @@ describe("CollectionList", () => {
 
   it("fallbackFolderPath returns 'Unknown location' when folderLocation is null", () => {
     (store as any).folderLocation = null;
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    expect(vm.fallbackFolderPath).toBe("Unknown location");
+    expect((mountComponent().vm as any).fallbackFolderPath).toBe(
+      "Unknown location",
+    );
   });
 
   it("fallbackFolderPath returns name when folderLocation has name", () => {
     (store as any).folderLocation = { name: "Some Folder" };
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    expect(vm.fallbackFolderPath).toBe("Some Folder");
+    expect((mountComponent().vm as any).fallbackFolderPath).toBe("Some Folder");
   });
 
   it("fallbackFolderPath returns type label for root/users/collections", () => {
     (store as any).folderLocation = { type: "root" };
-    const wrapper = mountComponent();
-    expect((wrapper.vm as any).fallbackFolderPath).toBe("Root");
+    expect((mountComponent().vm as any).fallbackFolderPath).toBe("Root");
 
     (store as any).folderLocation = { type: "users" };
-    const wrapper2 = mountComponent();
-    expect((wrapper2.vm as any).fallbackFolderPath).toBe("Users");
+    expect((mountComponent().vm as any).fallbackFolderPath).toBe("Users");
 
     (store as any).folderLocation = { type: "collections" };
-    const wrapper3 = mountComponent();
-    expect((wrapper3.vm as any).fallbackFolderPath).toBe("Collections");
+    expect((mountComponent().vm as any).fallbackFolderPath).toBe("Collections");
   });
 
   it("fallbackFolderPath returns login's folder for login-based location", () => {
     (store as any).folderLocation = { login: "testuser" };
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    expect(vm.fallbackFolderPath).toBe("testuser's folder");
+    expect((mountComponent().vm as any).fallbackFolderPath).toBe(
+      "testuser's folder",
+    );
   });
 
   it("fallbackFolderPath returns 'Current folder' as final fallback", () => {
     (store as any).folderLocation = { someUnknownProp: true };
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    expect(vm.fallbackFolderPath).toBe("Current folder");
+    expect((mountComponent().vm as any).fallbackFolderPath).toBe(
+      "Current folder",
+    );
   });
 
   // --- filteredCollections ---
 
   it("filteredCollections returns all collections when searchQuery is empty", () => {
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    vm.collections = [
-      { _id: "c1", name: "Alpha", description: "" },
-      { _id: "c2", name: "Beta", description: "" },
-    ];
+    const vm = mountComponent().vm as any;
+    vm.collections = [collection("c1"), collection("c2")];
     vm.searchQuery = "";
     expect(vm.filteredCollections).toHaveLength(2);
   });
 
   it("filteredCollections filters by name (case-insensitive)", () => {
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
+    const vm = mountComponent().vm as any;
     vm.collections = [
-      { _id: "c1", name: "Alpha Project", description: "" },
-      { _id: "c2", name: "Beta Test", description: "" },
+      collection("c1", { name: "Alpha Project" }),
+      collection("c2", { name: "Beta Test" }),
     ];
     vm.searchQuery = "alpha";
     expect(vm.filteredCollections).toHaveLength(1);
@@ -182,81 +175,178 @@ describe("CollectionList", () => {
   });
 
   it("filteredCollections filters by description", () => {
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
+    const vm = mountComponent().vm as any;
     vm.collections = [
-      { _id: "c1", name: "First", description: "important stuff" },
-      { _id: "c2", name: "Second", description: "unrelated" },
+      collection("c1", { description: "important stuff" }),
+      collection("c2", { description: "unrelated" }),
     ];
     vm.searchQuery = "important";
     expect(vm.filteredCollections).toHaveLength(1);
     expect(vm.filteredCollections[0]._id).toBe("c1");
   });
 
+  it("filteredCollections filters by resolved folder name", () => {
+    const vm = mountComponent().vm as any;
+    vm.collections = [
+      collection("c1", { folderId: "f1" }),
+      collection("c2", { folderId: "f2" }),
+    ];
+    vm.folderNames = { f1: "Experiments", f2: "Archive" };
+    vm.searchQuery = "experi";
+    expect(vm.filteredCollections).toHaveLength(1);
+    expect(vm.filteredCollections[0]._id).toBe("c1");
+  });
+
+  // --- tableHeaders ---
+
+  it("tableHeaders includes the Folder column only in the 'all' scope", async () => {
+    const vm = mountComponent().vm as any;
+    expect(vm.tableHeaders.map((h: any) => h.key)).not.toContain("folderName");
+    vm.scope = "all";
+    await nextTick();
+    expect(vm.tableHeaders.map((h: any) => h.key)).toContain("folderName");
+  });
+
   // --- fetchCollections ---
 
-  it("fetchCollections populates collections from API response", async () => {
+  it("fetchCollections populates collections from the listing endpoint", async () => {
     (store as any).folderLocation = { _id: "folder1", name: "F" };
-    mockClientGet.mockResolvedValue({
-      data: [
-        { _id: "c1", name: "Collection 1" },
-        { _id: "c2", name: "Collection 2" },
-      ],
+    mockListCollections.mockResolvedValue({
+      collections: [collection("c1"), collection("c2")],
+      hasMore: false,
     });
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
+    const vm = mountComponent().vm as any;
     await vm.fetchCollections();
     expect(vm.collections).toHaveLength(2);
-    expect(vm.collections[0]._modelType).toBe("upenn_collection");
+    expect(vm.hasMore).toBe(false);
     expect(vm.loading).toBe(false);
+  });
+
+  it("fetchCollections omits folderId in the 'all' scope", async () => {
+    (store as any).folderLocation = { _id: "folder1", name: "F" };
+    const vm = mountComponent().vm as any;
+    vm.scope = "all";
+    mockListCollections.mockClear();
+    await vm.fetchCollections();
+    expect(mockListCollections).toHaveBeenCalledWith({
+      folderId: undefined,
+      limit: vm.COLLECTION_PAGE_SIZE,
+    });
   });
 
   it("fetchCollections handles error and sets empty collections", async () => {
     (store as any).folderLocation = { _id: "folder1", name: "F" };
-    mockClientGet.mockRejectedValue(new Error("Network error"));
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
+    mockListCollections.mockRejectedValue(new Error("Network error"));
+    const vm = mountComponent().vm as any;
     await vm.fetchCollections();
     expect(vm.collections).toEqual([]);
     expect(vm.loading).toBe(false);
   });
 
-  it("fetchCollections falls back to private folder when no _id in folderLocation", async () => {
+  it("fetchCollections falls back to the private folder when the location has no _id", async () => {
     (store as any).folderLocation = { type: "root" };
-    mockGetUserPrivateFolder.mockResolvedValue({
-      _id: "private-folder",
-      _modelType: "folder",
-    });
-    mockClientGet.mockResolvedValue({ data: [] });
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
+    const vm = mountComponent().vm as any;
+    mockListCollections.mockClear();
     await vm.fetchCollections();
     expect(mockGetUserPrivateFolder).toHaveBeenCalled();
-    expect(mockClientGet).toHaveBeenCalledWith("upenn_collection", {
-      params: {
-        folderId: "private-folder",
-        limit: 0,
-        sort: "updated",
-        sortdir: -1,
-      },
+    expect(mockListCollections).toHaveBeenCalledWith({
+      folderId: "private-folder",
+      limit: vm.COLLECTION_PAGE_SIZE,
     });
   });
 
   it("fetchCollections sets empty collections when no folderId available", async () => {
     (store as any).folderLocation = { type: "root" };
     mockGetUserPrivateFolder.mockResolvedValue(null);
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
+    const vm = mountComponent().vm as any;
     await vm.fetchCollections();
     expect(vm.collections).toEqual([]);
     expect(vm.loading).toBe(false);
   });
 
-  // --- navigateToCollection ---
+  // --- loadMore ---
+
+  it("loadMore appends the next page at the current offset", async () => {
+    (store as any).folderLocation = { _id: "folder1", name: "F" };
+    const vm = mountComponent().vm as any;
+    // Let the on-mount fetch settle so it doesn't clobber the seeded page.
+    await new Promise((r) => setTimeout(r, 0));
+    vm.collections = [collection("c1")];
+    vm.hasMore = true;
+    mockListCollections.mockResolvedValue({
+      collections: [collection("c2")],
+      hasMore: false,
+    });
+    await vm.loadMore();
+    expect(mockListCollections).toHaveBeenLastCalledWith({
+      folderId: "folder1",
+      limit: vm.COLLECTION_PAGE_SIZE,
+      offset: 1,
+    });
+    expect(vm.collections.map((c: any) => c._id)).toEqual(["c1", "c2"]);
+    expect(vm.hasMore).toBe(false);
+  });
+
+  it("loadMore is a no-op when there is nothing more to load", async () => {
+    const vm = mountComponent().vm as any;
+    vm.hasMore = false;
+    mockListCollections.mockClear();
+    await vm.loadMore();
+    expect(mockListCollections).not.toHaveBeenCalled();
+  });
+
+  // --- resolveFolderNames ---
+
+  it("resolveFolderNames batch-resolves unseen folders only", async () => {
+    const vm = mountComponent().vm as any;
+    vm.collections = [
+      collection("c1", { folderId: "f1" }),
+      collection("c2", { folderId: "f1" }),
+      collection("c3", { folderId: "f2" }),
+    ];
+    mockBatchResources.mockResolvedValue({
+      folder: { f1: { name: "Experiments" } },
+    });
+    mockBatchResources.mockClear();
+    await vm.resolveFolderNames();
+    expect(mockBatchResources).toHaveBeenCalledTimes(1);
+    expect(mockBatchResources).toHaveBeenCalledWith({ folder: ["f1", "f2"] });
+    expect(vm.folderNames).toEqual({
+      f1: "Experiments",
+      f2: "Unknown folder",
+    });
+
+    // A second pass has nothing left to resolve.
+    mockBatchResources.mockClear();
+    await vm.resolveFolderNames();
+    expect(mockBatchResources).not.toHaveBeenCalled();
+  });
+
+  // --- chips for the visible page ---
+
+  it("onCurrentItemsChange resolves chips for the visible rows only once", async () => {
+    const vm = mountComponent().vm as any;
+    mockCollectionsToDatasetChips.mockResolvedValue({
+      c1: {
+        chips: [{ text: "Dataset A", color: "dataset" }],
+        type: "collection",
+      },
+    });
+    vm.onCurrentItemsChange([collection("c1")]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockCollectionsToDatasetChips).toHaveBeenCalledWith(["c1"]);
+    expect(vm.debouncedChipsPerItemId.c1.chips).toHaveLength(1);
+
+    // Paging back to the same row does not refetch.
+    mockCollectionsToDatasetChips.mockClear();
+    vm.onCurrentItemsChange([collection("c1")]);
+    expect(mockCollectionsToDatasetChips).not.toHaveBeenCalled();
+  });
+
+  // --- navigation ---
 
   it("navigateToCollection pushes route with configurationId", () => {
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
+    const vm = mountComponent().vm as any;
     vm.navigateToCollection("config123");
     expect(mockRouter.push).toHaveBeenCalledWith({
       name: "configuration",
@@ -264,163 +354,30 @@ describe("CollectionList", () => {
     });
   });
 
-  // --- collectionToChips ---
-
-  it("collectionToChips returns empty chips when no views exist", async () => {
-    mockFindDatasetViews.mockResolvedValue([]);
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    const result = await vm.collectionToChips({
-      _id: "col1",
-      name: "Test",
-    });
-    expect(result.chips).toEqual([]);
-    expect(result.type).toBe("collection");
-  });
-
-  it("collectionToChips creates chips from views with folder info", async () => {
-    mockFindDatasetViews.mockResolvedValue([
-      { id: "v1", datasetId: "ds1", configurationId: "col1" },
-      { id: "v2", datasetId: "ds2", configurationId: "col1" },
-    ]);
-    mockBatchResources.mockResolvedValue({
-      folder: {
-        ds1: { name: "Dataset A" },
-        ds2: { name: "Dataset B" },
-      },
-    });
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    const result = await vm.collectionToChips({
-      _id: "col1",
-      name: "Test Collection",
-    });
-    expect(result.chips).toHaveLength(2);
-    expect(result.chips[0].text).toBe("Dataset A");
-    expect(result.chips[0].color).toBe("dataset");
-    expect(result.chips[0].to).toEqual({
-      name: "dataset",
-      params: { datasetId: "ds1" },
+  it("onRowClick navigates to the clicked collection", () => {
+    const vm = mountComponent().vm as any;
+    mockRouter.push.mockClear();
+    vm.onRowClick(new Event("click"), { item: collection("c9") });
+    expect(mockRouter.push).toHaveBeenCalledWith({
+      name: "configuration",
+      params: { configurationId: "c9" },
     });
   });
 
-  it("collectionToChips handles empty folder info by skipping missing datasets", async () => {
-    mockFindDatasetViews.mockResolvedValue([
-      { id: "v1", datasetId: "ds1", configurationId: "col1" },
-    ]);
-    mockBatchResources.mockResolvedValue({
-      folder: {},
-    });
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    const result = await vm.collectionToChips({
-      _id: "col1",
-      name: "Test",
-    });
-    expect(result.chips).toEqual([]);
-  });
+  // --- scope persistence ---
 
-  // --- addChipPromise ---
-
-  it("addChipPromise increments pendingChips and updates chipsPerItemId", async () => {
-    mockFindDatasetViews.mockResolvedValue([]);
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    vm.addChipPromise({ _id: "col1", name: "Test" });
-    // pendingChips was incremented (may have already resolved)
-    // Wait for all promises to complete
+  it("persists the scope choice and refetches when it changes", async () => {
+    const vm = mountComponent().vm as any;
+    mockListCollections.mockClear();
+    vm.scope = "all";
     await nextTick();
-    await nextTick();
-    await new Promise((r) => setTimeout(r, 10));
-    expect(vm.chipsPerItemId).toHaveProperty("col1");
+    expect(Persister.get("collectionBrowseScope", "folder")).toBe("all");
+    expect(mockListCollections).toHaveBeenCalled();
   });
 
-  // --- bulkCollectionsToChips ---
-
-  it("bulkCollectionsToChips returns empty result for empty array", async () => {
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    const result = await vm.bulkCollectionsToChips([]);
-    expect(result).toEqual({});
-  });
-
-  it("bulkCollectionsToChips batches view fetching for multiple collections", async () => {
-    mockFindDatasetViews.mockResolvedValue([
-      { id: "v1", datasetId: "ds1", configurationId: "col1" },
-      { id: "v2", datasetId: "ds2", configurationId: "col2" },
-    ]);
-    mockBatchResources.mockResolvedValue({
-      folder: {
-        ds1: { name: "Dataset A" },
-        ds2: { name: "Dataset B" },
-      },
-    });
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    const result = await vm.bulkCollectionsToChips([
-      { _id: "col1", name: "Col 1" },
-      { _id: "col2", name: "Col 2" },
-    ]);
-    expect(result).toHaveProperty("col1");
-    expect(result).toHaveProperty("col2");
-    expect(result.col1.chips).toHaveLength(1);
-    expect(result.col1.chips[0].text).toBe("Dataset A");
-    expect(result.col2.chips).toHaveLength(1);
-    expect(result.col2.chips[0].text).toBe("Dataset B");
-  });
-
-  it("bulkCollectionsToChips falls back to individual collectionToChips on error", async () => {
-    mockFindDatasetViews
-      .mockRejectedValueOnce(new Error("Batch failed"))
-      .mockResolvedValue([]);
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    const result = await vm.bulkCollectionsToChips([
-      { _id: "col1", name: "Col 1" },
-    ]);
-    expect(result).toHaveProperty("col1");
-    expect(result.col1.chips).toEqual([]);
-    expect(result.col1.type).toBe("collection");
-  });
-
-  // --- watcher: filteredCollections -> chips ---
-
-  it("watcher triggers chip computation for new filtered collections", async () => {
-    mockFindDatasetViews.mockResolvedValue([]);
-    mockBatchResources.mockResolvedValue({ folder: {} });
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    // Simulate collections appearing
-    vm.collections = [
-      {
-        _id: "c1",
-        name: "Test",
-        description: "",
-        _modelType: "upenn_collection",
-      },
-    ];
-    await nextTick();
-    await nextTick();
-    // The watcher should have added c1 to computedChipsIds
-    expect(vm.computedChipsIds.has("c1")).toBe(true);
-  });
-
-  it("fetchCollections retries without folderId on folder error", async () => {
-    (store as any).folderLocation = { _id: "folder1", name: "F" };
-    const wrapper = mountComponent();
-    const vm = wrapper.vm as any;
-    // Wait for initial mount fetchCollections to complete
-    await nextTick();
-    await nextTick();
-    mockClientGet.mockReset();
-    mockClientGet
-      .mockRejectedValueOnce(new Error("Folder not accessible"))
-      .mockResolvedValueOnce({
-        data: [{ _id: "c1", name: "Fallback Collection" }],
-      });
-    await vm.fetchCollections();
-    expect(mockClientGet).toHaveBeenCalledTimes(2);
-    expect(vm.collections).toHaveLength(1);
-    expect(vm.collections[0].name).toBe("Fallback Collection");
+  it("restores the persisted scope on mount", () => {
+    Persister.set("collectionBrowseScope", "all");
+    const vm = mountComponent().vm as any;
+    expect(vm.scope).toBe("all");
   });
 });

@@ -1,22 +1,35 @@
 <template>
   <div class="collection-list-wrapper">
-    <!-- Current folder path display -->
+    <!-- Scope toggle: the folder being browsed, or every folder at once -->
     <div class="folder-path-display pa-2">
-      <div class="d-flex align-center">
-        <v-icon class="mr-2" size="20" color="secondary">mdi-folder</v-icon>
-        <span class="text-body-2 text-medium-emphasis mr-2"
-          >Collections in:</span
-        >
-        <girder-breadcrumb
-          v-if="currentFolderLocation"
-          :location="currentFolderLocation"
-          root-location-disabled
-          readonly
-          class="folder-breadcrumb"
-        />
-        <span v-else class="text-body-2 text-medium-emphasis">{{
-          fallbackFolderPath
-        }}</span>
+      <div class="d-flex align-center flex-wrap ga-2">
+        <v-btn-toggle v-model="scope" mandatory density="compact">
+          <v-btn value="folder" size="small">
+            <v-icon start size="small">mdi-folder</v-icon>
+            This folder
+          </v-btn>
+          <v-btn value="all" size="small">
+            <v-icon start size="small">mdi-file-tree</v-icon>
+            All collections
+          </v-btn>
+        </v-btn-toggle>
+
+        <template v-if="scope === 'folder'">
+          <span class="text-body-2 text-medium-emphasis">Collections in:</span>
+          <girder-breadcrumb
+            v-if="currentFolderLocation"
+            :location="currentFolderLocation"
+            root-location-disabled
+            readonly
+            class="folder-breadcrumb"
+          />
+          <span v-else class="text-body-2 text-medium-emphasis">{{
+            fallbackFolderPath
+          }}</span>
+        </template>
+        <span v-else class="text-body-2 text-medium-emphasis">
+          Every collection you have access to, across all folders
+        </span>
       </div>
     </div>
 
@@ -33,6 +46,34 @@
         />
       </div>
     </div>
+
+    <!-- The server caps a listing request; tell the user when there is more
+         than what search and sorting are currently working over. -->
+    <v-alert
+      v-if="hasMore"
+      type="info"
+      variant="tonal"
+      density="compact"
+      class="mx-2 mb-2"
+    >
+      <div class="d-flex align-center flex-wrap ga-2">
+        <span class="text-body-2">
+          Showing the {{ collections.length.toLocaleString() }} most recently
+          modified collections. Search and sorting only cover what is loaded.
+        </span>
+        <v-spacer />
+        <v-btn
+          variant="outlined"
+          color="primary"
+          size="small"
+          :loading="loadingMore"
+          :disabled="loadingMore"
+          @click="loadMore"
+        >
+          Load {{ COLLECTION_PAGE_SIZE.toLocaleString() }} more
+        </v-btn>
+      </div>
+    </v-alert>
 
     <div class="collection-list-content">
       <v-progress-linear v-if="loading" indeterminate />
@@ -54,30 +95,60 @@
         </div>
       </div>
 
-      <v-list v-else-if="!loading" class="collection-list">
-        <v-list-item
-          v-for="collection in filteredCollections"
-          :key="collection._id"
-          @click="navigateToCollection(collection._id)"
-          class="collection-item"
-          :class="{ 'collection-item-hover': !loading }"
-        >
-          <v-icon color="collection" size="24">mdi-file-tree</v-icon>
+      <v-data-table
+        v-else-if="!loading"
+        :items="filteredCollections"
+        :headers="tableHeaders"
+        item-value="_id"
+        density="compact"
+        hover
+        v-model:sort-by="sortBy"
+        v-model:items-per-page="itemsPerPage"
+        :items-per-page-options="[10, 25, 50, 100]"
+        class="collection-table"
+        @update:current-items="onCurrentItemsChange"
+        @click:row="onRowClick"
+      >
+        <template v-slot:item.name="{ item }">
+          <div class="d-flex align-center">
+            <v-icon color="collection" size="18" class="mr-2"
+              >mdi-file-tree</v-icon
+            >
+            <span class="collection-title">{{ item.name }}</span>
+          </div>
+        </template>
 
-          <v-list-item-title class="collection-title">
-            {{ collection.name }}
-          </v-list-item-title>
-          <v-list-item-subtitle v-if="collection.description">
-            {{ collection.description }}
-          </v-list-item-subtitle>
+        <template v-slot:item.description="{ item }">
+          <span class="text-caption text-medium-emphasis">
+            {{ item.description }}
+          </span>
+        </template>
 
-          <collection-item-row
-            :collection="collection"
-            :debouncedChipsPerItemId="debouncedChipsPerItemId"
-            :computedChipsIds="computedChipsIds"
+        <template v-slot:item.folderName="{ item }">
+          <span class="text-caption text-medium-emphasis">
+            {{ item.folderName || "…" }}
+          </span>
+        </template>
+
+        <template v-slot:item.datasets="{ item }">
+          <collection-dataset-chips
+            :collection-id="item._id"
+            :debounced-chips-per-item-id="debouncedChipsPerItemId"
           />
-        </v-list-item>
-      </v-list>
+        </template>
+
+        <template v-slot:item.updated="{ item }">
+          <span class="text-caption text-no-wrap">{{
+            item.updated ? formatDateString(item.updated) : "Unknown"
+          }}</span>
+        </template>
+
+        <template v-slot:item.created="{ item }">
+          <span class="text-caption text-no-wrap">{{
+            item.created ? formatDateString(item.created) : "Unknown"
+          }}</span>
+        </template>
+      </v-data-table>
     </div>
   </div>
 </template>
@@ -86,41 +157,58 @@
 import { ref, computed, watch, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import store from "@/store";
-import girderResources from "@/store/girderResources";
-import { IUPennCollection } from "@/girder";
+import Persister from "@/store/Persister";
+import { ICollectionSummary } from "@/girder";
 import { Breadcrumb as GirderBreadcrumb } from "@/girder/components";
 import { formatDateString } from "@/utils/date";
-import CollectionItemRow from "./CollectionItemRow.vue";
-import type { RouteLocationRaw } from "vue-router";
-import { logError, logWarning } from "@/utils/log";
-import { IDatasetView } from "@/store/model";
+import CollectionDatasetChips from "./CollectionDatasetChips.vue";
+import {
+  collectionsToDatasetChips,
+  IChipsPerItemId,
+} from "@/utils/collectionChips";
+import { logError } from "@/utils/log";
 
 // Suppress unused import warnings
 void GirderBreadcrumb;
-void formatDateString;
 
-interface IChipAttrs {
-  text: string;
-  color: string;
-  to?: RouteLocationRaw;
-}
+// Matches MAX_COLLECTION_LIST_LIMIT on the server. Users with more than this
+// many collections page through them with the "Load more" button.
+const COLLECTION_PAGE_SIZE = 10000;
 
-interface IChipsPerItemId {
-  chips: IChipAttrs[];
-  type: string;
+type TCollectionScope = "folder" | "all";
+
+interface ICollectionRow extends ICollectionSummary {
+  folderName: string;
 }
 
 const router = useRouter();
 
-const collections = ref<IUPennCollection[]>([]);
+const scope = ref<TCollectionScope>(
+  Persister.get("collectionBrowseScope", "folder") as TCollectionScope,
+);
+const collections = ref<ICollectionSummary[]>([]);
+const folderNames = ref<{ [folderId: string]: string }>({});
+const hasMore = ref(false);
 const loading = ref(true);
+const loadingMore = ref(false);
 const searchQuery = ref("");
+const sortBy = ref<{ key: string; order: "asc" | "desc" }[]>([
+  { key: "updated", order: "desc" },
+]);
+const itemsPerPage = ref(25);
 
 const chipsPerItemId = ref<{ [itemId: string]: IChipsPerItemId }>({});
 const debouncedChipsPerItemId = ref<{ [itemId: string]: IChipsPerItemId }>({});
-const pendingChips = ref(0);
-let lastPendingChip: Promise<any> = Promise.resolve();
-const computedChipsIds = ref<Set<string>>(new Set());
+const requestedChipIds = ref<Set<string>>(new Set());
+const pendingChipRequests = ref(0);
+let chipQueue: Promise<unknown> = Promise.resolve();
+
+// Bumped on every fetch so a slow response for a scope/folder the user has
+// already navigated away from doesn't overwrite the current listing.
+let fetchGeneration = 0;
+// The folderId the loaded page was fetched with, so "Load more" can page
+// without resolving the folder a second time.
+let loadedFolderId: string | undefined;
 
 const currentFolderLocation = computed(() => {
   const currentFolder = store.folderLocation;
@@ -152,70 +240,160 @@ const fallbackFolderPath = computed(() => {
   return "Current folder";
 });
 
+const tableHeaders = computed(() => [
+  { title: "Name", key: "name", sortable: true },
+  { title: "Description", key: "description", sortable: true },
+  ...(scope.value === "all"
+    ? [{ title: "Folder", key: "folderName", sortable: true }]
+    : []),
+  { title: "Datasets", key: "datasets", sortable: false },
+  { title: "Modified", key: "updated", sortable: true },
+  { title: "Created", key: "created", sortable: true },
+]);
+
+const collectionRows = computed<ICollectionRow[]>(() =>
+  collections.value.map((collection) => ({
+    ...collection,
+    folderName: folderNames.value[collection.folderId] ?? "",
+  })),
+);
+
 const filteredCollections = computed(() => {
-  if (!searchQuery.value) return collections.value;
+  if (!searchQuery.value) return collectionRows.value;
   const query = searchQuery.value.toLowerCase();
-  return collections.value.filter(
+  return collectionRows.value.filter(
     (collection) =>
       collection.name.toLowerCase().includes(query) ||
-      (collection.description &&
-        collection.description.toLowerCase().includes(query)),
+      collection.description?.toLowerCase().includes(query) ||
+      collection.folderName.toLowerCase().includes(query),
   );
 });
 
+// The folder the "This folder" scope lists, falling back to the user's private
+// folder when the browser is parked somewhere without an id (root, users, ...).
+async function resolveCurrentFolderId(): Promise<string | null> {
+  const currentFolder = store.folderLocation;
+  if (currentFolder && "_id" in currentFolder) {
+    return currentFolder._id;
+  }
+  return (await store.api.getUserPrivateFolder())?._id ?? null;
+}
+
 async function fetchCollections() {
+  const generation = ++fetchGeneration;
   loading.value = true;
   try {
-    const currentFolder = store.folderLocation;
-    let folderId = null;
-    if (currentFolder && "_id" in currentFolder) {
-      folderId = currentFolder._id;
-    } else {
-      const privateFolder = await store.api.getUserPrivateFolder();
-      if (privateFolder) {
-        folderId = privateFolder._id;
+    let folderId: string | undefined;
+    if (scope.value === "folder") {
+      folderId = (await resolveCurrentFolderId()) ?? undefined;
+      if (generation !== fetchGeneration) return;
+      if (!folderId) {
+        collections.value = [];
+        hasMore.value = false;
+        return;
       }
     }
 
-    if (!folderId) {
-      collections.value = [];
-      return;
-    }
-
-    let response;
-    try {
-      response = await store.api.client.get("upenn_collection", {
-        params: {
-          folderId: folderId,
-          limit: 0,
-          sort: "updated",
-          sortdir: -1,
-        },
-      });
-    } catch (folderError) {
-      try {
-        response = await store.api.client.get("upenn_collection", {
-          params: {
-            limit: 0,
-            sort: "updated",
-            sortdir: -1,
-          },
-        });
-      } catch (noFolderError) {
-        throw noFolderError;
-      }
-    }
-
-    collections.value = response.data.map((item: any) => ({
-      ...item,
-      _modelType: "upenn_collection" as const,
-    }));
+    const page = await store.api.listCollections({
+      folderId,
+      limit: COLLECTION_PAGE_SIZE,
+    });
+    if (generation !== fetchGeneration) return;
+    loadedFolderId = folderId;
+    collections.value = page.collections;
+    hasMore.value = page.hasMore;
+    await resolveFolderNames();
   } catch (error) {
+    if (generation !== fetchGeneration) return;
     logError("Failed to fetch collections:", error);
     collections.value = [];
+    hasMore.value = false;
   } finally {
-    loading.value = false;
+    if (generation === fetchGeneration) {
+      loading.value = false;
+    }
   }
+}
+
+async function loadMore() {
+  if (loadingMore.value || !hasMore.value) return;
+  const generation = fetchGeneration;
+  loadingMore.value = true;
+  try {
+    const page = await store.api.listCollections({
+      folderId: loadedFolderId,
+      limit: COLLECTION_PAGE_SIZE,
+      offset: collections.value.length,
+    });
+    if (generation !== fetchGeneration) return;
+    collections.value = [...collections.value, ...page.collections];
+    hasMore.value = page.hasMore;
+    await resolveFolderNames();
+  } catch (error) {
+    if (generation !== fetchGeneration) return;
+    logError("Failed to load more collections:", error);
+  } finally {
+    loadingMore.value = false;
+  }
+}
+
+// The Folder column needs names, and sorting/searching on it needs them for
+// every loaded row, not just the visible page. One batch request covers all of
+// the folders we haven't already resolved.
+async function resolveFolderNames() {
+  const unresolvedIds = Array.from(
+    new Set(
+      collections.value
+        .map((collection) => collection.folderId)
+        .filter((folderId) => folderId && !(folderId in folderNames.value)),
+    ),
+  );
+  if (unresolvedIds.length === 0) return;
+
+  try {
+    const folders =
+      (await store.api.batchResources({ folder: unresolvedIds })).folder ?? {};
+    const resolved = { ...folderNames.value };
+    for (const folderId of unresolvedIds) {
+      resolved[folderId] = folders[folderId]?.name ?? "Unknown folder";
+    }
+    folderNames.value = resolved;
+  } catch (error) {
+    logError("Failed to resolve collection folder names:", error);
+  }
+}
+
+// Dataset chips are resolved for the rows the table is actually showing, so a
+// listing of thousands of collections doesn't fan out into thousands of
+// dataset lookups up front.
+function onCurrentItemsChange(items: ICollectionRow[]) {
+  const collectionIds = items
+    .map((item) => item._id)
+    .filter((collectionId) => !requestedChipIds.value.has(collectionId));
+  if (collectionIds.length === 0) return;
+
+  collectionIds.forEach((collectionId) =>
+    requestedChipIds.value.add(collectionId),
+  );
+
+  ++pendingChipRequests.value;
+  chipQueue = chipQueue
+    .catch(() => {})
+    .then(() => collectionsToDatasetChips(collectionIds))
+    .then((chipsById) => {
+      chipsPerItemId.value = { ...chipsPerItemId.value, ...chipsById };
+    })
+    .finally(() => {
+      // Publish once the whole burst has settled, so rows don't pop in one by
+      // one while the user is scanning the page.
+      if (--pendingChipRequests.value === 0) {
+        debouncedChipsPerItemId.value = { ...chipsPerItemId.value };
+      }
+    });
+}
+
+function onRowClick(_event: Event, { item }: { item: ICollectionRow }) {
+  navigateToCollection(item._id);
 }
 
 function navigateToCollection(configurationId: string) {
@@ -225,256 +403,50 @@ function navigateToCollection(configurationId: string) {
   });
 }
 
-function addChipPromise(collection: IUPennCollection) {
-  lastPendingChip = lastPendingChip
-    .finally()
-    .then(() => collectionToChips(collection))
-    .then((chipAttrs) => {
-      chipsPerItemId.value = {
-        ...chipsPerItemId.value,
-        [collection._id]: chipAttrs,
-      };
-    });
+watch(scope, (newScope) => {
+  Persister.set("collectionBrowseScope", newScope);
+  fetchCollections();
+});
 
-  ++pendingChips.value;
-  lastPendingChip.finally(() => {
-    if (--pendingChips.value === 0) {
-      debouncedChipsPerItemId.value = { ...chipsPerItemId.value };
+watch(
+  () => store.folderLocation,
+  () => {
+    if (scope.value === "folder") {
+      fetchCollections();
     }
-  });
-}
-
-function addBulkChipPromise(bulkCollections: IUPennCollection[]) {
-  lastPendingChip = lastPendingChip
-    .finally()
-    .then(() => bulkCollectionsToChips(bulkCollections))
-    .then((allChipAttrs) => {
-      let updated = { ...chipsPerItemId.value };
-      for (const [collectionId, chipAttrs] of Object.entries(allChipAttrs)) {
-        updated[collectionId] = chipAttrs;
-      }
-      chipsPerItemId.value = updated;
-    })
-    .catch((error) => {
-      logError("Error in bulkCollectionsToChips:", error);
-    });
-
-  ++pendingChips.value;
-  lastPendingChip.finally(() => {
-    if (--pendingChips.value === 0) {
-      debouncedChipsPerItemId.value = { ...chipsPerItemId.value };
-    }
-  });
-}
-
-async function collectionToChips(collection: IUPennCollection) {
-  const ret: IChipAttrs[] = [];
-
-  try {
-    const views = await store.api.findDatasetViews({
-      configurationId: collection._id,
-    });
-
-    if (views.length === 0) {
-      return { chips: ret, type: "collection" };
-    }
-
-    const datasetIds: string[] = Array.from(
-      new Set(views.map((view: IDatasetView) => String(view.datasetId))),
-    );
-
-    let folderInfoMap: { [id: string]: any } = {};
-    try {
-      const batchResponse = await store.api.batchResources({
-        folder: datasetIds,
-      });
-      folderInfoMap = batchResponse.folder || {};
-    } catch (error) {
-      logError("Failed to batch fetch folder info:", error);
-      for (const datasetId of datasetIds as string[]) {
-        try {
-          const folderInfo = await girderResources.getFolder(datasetId);
-          if (folderInfo) {
-            folderInfoMap[datasetId] = folderInfo;
-          }
-        } catch (individualError) {
-          logError(`Failed to fetch folder ${datasetId}:`, individualError);
-        }
-      }
-    }
-
-    const datasetChips: IChipAttrs[] = [];
-    for (const view of views) {
-      const datasetInfo = folderInfoMap[String(view.datasetId)];
-      if (!datasetInfo) {
-        logWarning(
-          `Dataset ${view.datasetId} not found for collection ${collection._id} (may have been deleted)`,
-        );
-        continue;
-      }
-
-      const chip: IChipAttrs = {
-        text: datasetInfo.name,
-        color: "dataset",
-      };
-
-      chip.to = {
-        name: "dataset",
-        params: { datasetId: String(view.datasetId) },
-      };
-
-      datasetChips.push(chip);
-    }
-
-    ret.push(...datasetChips);
-  } catch (error) {
-    logError(
-      "Failed to fetch dataset views for collection:",
-      collection._id,
-      error,
-    );
-  }
-
-  return {
-    chips: ret,
-    type: "collection",
-  };
-}
-
-async function bulkCollectionsToChips(
-  bulkCollections: IUPennCollection[],
-): Promise<{ [collectionId: string]: IChipsPerItemId }> {
-  const result: { [collectionId: string]: IChipsPerItemId } = {};
-
-  if (bulkCollections.length === 0) return result;
-
-  try {
-    const configurationIds = bulkCollections.map((c) => c._id);
-    const allViews = await store.api.findDatasetViews({
-      configurationIds: configurationIds,
-    });
-
-    const viewsByConfigId: { [configId: string]: IDatasetView[] } = {};
-    for (const view of allViews) {
-      const configId = String(view.configurationId);
-      if (!viewsByConfigId[configId]) {
-        viewsByConfigId[configId] = [];
-      }
-      viewsByConfigId[configId].push(view);
-    }
-
-    const allDatasetIds: string[] = Array.from(
-      new Set(allViews.map((view: IDatasetView) => String(view.datasetId))),
-    );
-
-    let folderInfoMap: { [id: string]: any } = {};
-    if (allDatasetIds.length > 0) {
-      try {
-        const batchResponse = await store.api.batchResources({
-          folder: allDatasetIds,
-        });
-        folderInfoMap = batchResponse.folder || {};
-      } catch (error) {
-        logError("Failed to batch fetch folder info:", error);
-        for (const datasetId of allDatasetIds as string[]) {
-          try {
-            const folderInfo = await girderResources.getFolder(datasetId);
-            if (folderInfo) {
-              folderInfoMap[datasetId] = folderInfo;
-            }
-          } catch (individualError) {
-            logError(`Failed to fetch folder ${datasetId}:`, individualError);
-          }
-        }
-      }
-    }
-
-    for (const collection of bulkCollections) {
-      const views = viewsByConfigId[collection._id] || [];
-      const chips: IChipAttrs[] = [];
-
-      for (const view of views) {
-        const datasetInfo = folderInfoMap[String(view.datasetId)];
-        if (!datasetInfo) {
-          logWarning(
-            `Dataset ${view.datasetId} not found for collection ${collection._id} (may have been deleted)`,
-          );
-          continue;
-        }
-
-        const chip: IChipAttrs = {
-          text: datasetInfo.name,
-          color: "dataset",
-          to: {
-            name: "dataset",
-            params: { datasetId: String(view.datasetId) },
-          },
-        };
-
-        chips.push(chip);
-      }
-
-      result[collection._id] = {
-        chips,
-        type: "collection",
-      };
-    }
-  } catch (error) {
-    logError("Failed to bulk fetch dataset views:", error);
-
-    for (const collection of bulkCollections) {
-      try {
-        result[collection._id] = await collectionToChips(collection);
-      } catch (individualError) {
-        logError(
-          `Failed to process collection ${collection._id}:`,
-          individualError,
-        );
-        result[collection._id] = { chips: [], type: "collection" };
-      }
-    }
-  }
-
-  return result;
-}
-
-async function onFilteredCollectionsChange() {
-  const collectionsNeedingChips = filteredCollections.value.filter(
-    (collection) => !computedChipsIds.value.has(collection._id),
-  );
-
-  if (collectionsNeedingChips.length === 0) return;
-
-  collectionsNeedingChips.forEach((collection) => {
-    computedChipsIds.value.add(collection._id);
-  });
-
-  addBulkChipPromise(collectionsNeedingChips);
-}
-
-watch(filteredCollections, () => onFilteredCollectionsChange());
+  },
+);
 
 onMounted(async () => {
   await fetchCollections();
 });
 
 defineExpose({
+  COLLECTION_PAGE_SIZE,
+  scope,
   collections,
+  folderNames,
+  collectionRows,
+  hasMore,
   loading,
+  loadingMore,
   searchQuery,
+  sortBy,
+  itemsPerPage,
+  tableHeaders,
   chipsPerItemId,
   debouncedChipsPerItemId,
-  pendingChips,
-  computedChipsIds,
+  requestedChipIds,
+  pendingChipRequests,
   currentFolderLocation,
   fallbackFolderPath,
   filteredCollections,
   fetchCollections,
+  loadMore,
+  resolveFolderNames,
+  onCurrentItemsChange,
+  onRowClick,
   navigateToCollection,
-  addChipPromise,
-  addBulkChipPromise,
-  collectionToChips,
-  bulkCollectionsToChips,
 });
 </script>
 
@@ -492,18 +464,8 @@ defineExpose({
   min-height: 0;
 }
 
-.collection-list {
-  padding: 0;
-}
-
-.collection-item {
-  border-bottom: 1px solid var(--nimbus-border);
-  transition: background-color 0.2s;
+.collection-table :deep(tbody tr) {
   cursor: pointer;
-
-  &:hover.collection-item-hover {
-    background-color: var(--nimbus-glass-hover);
-  }
 }
 
 .collection-title {
@@ -523,13 +485,10 @@ defineExpose({
 
 .folder-breadcrumb :deep(.v-breadcrumbs__item) {
   font-size: 14px;
+  color: var(--nimbus-text-secondary);
 }
 
 .folder-breadcrumb :deep(.v-breadcrumbs__divider) {
   color: var(--nimbus-text-faint);
-}
-
-.folder-breadcrumb :deep(.v-breadcrumbs__item) {
-  color: var(--nimbus-text-secondary);
 }
 </style>

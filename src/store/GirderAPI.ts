@@ -8,6 +8,7 @@ import {
   IGirderAssetstore,
   IGirderLargeImage,
   IGirderApiKey,
+  ICollectionSummary,
   IUPennCollection,
   IGirderLocation,
 } from "@/girder";
@@ -621,6 +622,37 @@ export default class GirderAPI {
       // Re-throw other errors
       throw error;
     }
+  }
+
+  /**
+   * List collections without their (potentially very large) "meta" document.
+   * Omit folderId to list every collection the user can read, across folders.
+   * The server caps a single response at MAX_COLLECTION_LIST_LIMIT entries and
+   * reports `hasMore` so the caller knows whether to page with `offset`.
+   */
+  async listCollections(options: {
+    folderId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ collections: ICollectionSummary[]; hasMore: boolean }> {
+    const response = await this.client.get("upenn_collection/list", {
+      params: {
+        folderId: options.folderId,
+        limit: options.limit,
+        offset: options.offset,
+        sort: "updated",
+        sortdir: -1,
+      },
+    });
+    return {
+      collections: response.data.collections.map(
+        (collection: Omit<ICollectionSummary, "_modelType">) => ({
+          ...collection,
+          _modelType: "upenn_collection" as const,
+        }),
+      ),
+      hasMore: response.data.hasMore,
+    };
   }
 
   // Bulk fetch collections by multiple folder ids

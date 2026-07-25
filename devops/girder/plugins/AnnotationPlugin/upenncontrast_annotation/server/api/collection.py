@@ -1,13 +1,29 @@
 from bson import ObjectId
 from girder.api import access
-from girder.api.rest import Resource, filtermodel, loadmodel
+from girder.api.rest import Resource, RestException, filtermodel, loadmodel
 from girder.api.describe import Description, autoDescribeRoute
-from girder.constants import AccessType, TokenScope
+from girder.constants import AccessType, SortDir, TokenScope
 
 from girder.models.folder import Folder
 
 from upenncontrast_annotation.server.models.collection import \
     Collection as CollectionModel
+
+# Fields returned by the lightweight listing endpoint. A full collection
+# document embeds "meta" (layers, tools, snapshots, property ids), which is
+# far too heavy to ship for thousands of collections at once.
+COLLECTION_SUMMARY_FIELDS = (
+    'name',
+    'description',
+    'folderId',
+    'creatorId',
+    'created',
+    'updated',
+)
+
+# Upper bound on the number of collections a single listing request returns.
+# Clients page past this with the offset parameter.
+MAX_COLLECTION_LIST_LIMIT = 10000
 
 
 class Collection(Resource):
@@ -19,6 +35,7 @@ class Collection(Resource):
         self._collectionModel = CollectionModel()
 
         self.route("POST", (), self.create)
+        self.route("GET", ("list",), self.listCollections)
         self.route("GET", (":id",), self.get)
         self.route("GET", (), self.find)
         self.route('PUT', (':id', 'metadata'), self.setMetadata)
@@ -71,9 +88,65 @@ class Collection(Resource):
         if text:
             raise NotImplementedError(
                 "Text search not implemented for collections")
+        if not folderId:
+            # ObjectId(None) mints a brand new id, so omitting folderId used
+            # to silently match nothing. Fail loudly and point callers at the
+            # endpoint that does support folder-less listing.
+            raise RestException(
+                'folderId is required. Use GET /upenn_collection/list to '
+                'list collections across folders.', 400)
         query = {"folderId": ObjectId(folderId)}
         return self._collectionModel.findWithPermissions(
             query, offset, limit, sort=sort, user=self.getCurrentUser())
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @autoDescribeRoute(
+        Description('List collections without their metadata.')
+        .notes(
+            'Returns {"collections": [...], "hasMore": <bool>}. Each entry '
+            'carries only its identifying fields, not the "meta" document, '
+            'so large numbers of collections can be listed cheaply. Omit '
+            'folderId to list every collection the user can read. At most '
+            '%d collections come back per request; page with offset.'
+            % MAX_COLLECTION_LIST_LIMIT
+        )
+        .param('folderId',
+               'Restrict the listing to a single folder. Omit to list '
+               'collections from every folder the user can read.',
+               required=False)
+        .pagingParams(defaultSort='updated',
+                      defaultLimit=MAX_COLLECTION_LIST_LIMIT,
+                      defaultSortDir=SortDir.DESCENDING)
+        .errorResponse()
+    )
+    def listCollections(self, folderId, limit, offset, sort):
+        query = {'folderId': ObjectId(folderId)} if folderId else {}
+        # limit=0 means "no limit" to Girder's paging params; cap it instead.
+        limit = min(limit or MAX_COLLECTION_LIST_LIMIT,
+                    MAX_COLLECTION_LIST_LIMIT)
+        # Read one extra document to tell the client whether paging further
+        # would yield anything, without paying for a separate count query.
+        documents = list(self._collectionModel.findWithPermissions(
+            query,
+            offset=offset,
+            limit=limit + 1,
+            sort=sort,
+            fields=('_id',) + COLLECTION_SUMMARY_FIELDS,
+            user=self.getCurrentUser(),
+        ))
+        return {
+            'collections': [
+                {
+                    '_id': document['_id'],
+                    **{
+                        field: document.get(field)
+                        for field in COLLECTION_SUMMARY_FIELDS
+                    },
+                }
+                for document in documents[:limit]
+            ],
+            'hasMore': len(documents) > limit,
+        }
 
     @access.public(scope=TokenScope.DATA_READ)
     @filtermodel(model=CollectionModel)
