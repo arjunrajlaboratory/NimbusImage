@@ -721,3 +721,14 @@ Get the DSN value from the Sentry project's Settings → Client Keys (DSN) page.
 ## Agent Tooling Notes
 
 Tool permissions are controlled by the active agent environment, not by this file. Common development commands include `docker compose`, `curl`, `tox`, and standard Git commands. Follow the host's sandbox and approval policy when running them.
+
+### Editing skills: mirror them or CI fails
+
+Skills live in **two** places — `.claude/skills/` (Claude) and `.agents/skills/` (Codex) — and the `sync` CI job enforces that they match. Editing only `.claude/skills/` fails the build with `ERROR: stale file: .agents/skills/<name>/SKILL.md`.
+
+After changing anything under `.claude/skills/`, regenerate the mirror and commit both trees:
+
+```bash
+python3 plugins/nimbusimage/scripts/sync_skills.py --write
+python3 plugins/nimbusimage/scripts/sync_skills.py --check   # what CI runs
+```
