@@ -1111,6 +1111,7 @@ describe("AnnotationViewer", () => {
           .filter((f: any) => f?.options?.().isConnection);
         expect(added).toHaveLength(1);
         expect(added[0].options().girderId).toBe("c1");
+        expect(added[0].options().style.stroke).toBe(true);
       });
 
       // Retention must use the same criteria as the draw path, or every draw
@@ -1146,6 +1147,10 @@ describe("AnnotationViewer", () => {
           .map((call: any[]) => call[0])
           .find((f: any) => f?.options?.().isConnection);
         expect(line.options().style.strokeColor).toBe("#00e5ff");
+        // Asserting colour alone is not enough: options("style", …) REPLACES
+        // the style, so dropping `stroke` yields a correctly-positioned,
+        // correctly-coloured, completely invisible line.
+        expect(line.options().style.stroke).toBe(true);
       });
 
       // Regression: connection lines carry a girderId, so they land in
@@ -1165,12 +1170,14 @@ describe("AnnotationViewer", () => {
         const lineOf = () =>
           aLayer.annotations().find((f: any) => f.options().isConnection);
         expect(lineOf().options().style.strokeColor).toBe("#00e5ff");
+        expect(lineOf().options().style.stroke).toBe(true);
 
         // A plain redraw must not clobber it.
         (wrapper.vm as any).drawAnnotationsNoThrottle();
         vi.advanceTimersByTime(101);
         await wrapper.vm.$nextTick();
         expect(lineOf().options().style.strokeColor).toBe("#00e5ff");
+        expect(lineOf().options().style.stroke).toBe(true);
       });
 
       it("skips a connection whose centroid is missing rather than drawing NaN", () => {

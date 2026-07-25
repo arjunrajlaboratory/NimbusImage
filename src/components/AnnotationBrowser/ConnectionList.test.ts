@@ -11,7 +11,7 @@ import {
 // each test sets it up and mounts fresh rather than driving updates post-mount.
 const h = vi.hoisted(() => ({
   setSelected: vi.fn(),
-  goToAnnotationLocation: vi.fn(),
+  goToConnection: vi.fn(),
   deleteConnectionsById: vi.fn(),
   deleteSelectedConnections: vi.fn(),
   deleteSelectedInScopeConnections: vi.fn(),
@@ -56,7 +56,7 @@ vi.mock("@/store/annotation", () => ({
 }));
 
 vi.mock("@/utils/annotationNavigation", () => ({
-  goToAnnotationLocation: h.goToAnnotationLocation,
+  goToConnection: h.goToConnection,
 }));
 
 vi.mock("@/store/connectionList", () => {
@@ -160,17 +160,20 @@ describe("ConnectionList", () => {
 
     expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1"]);
     expect(h.setSelected).toHaveBeenCalledWith(["a", "b"]);
-    // The child is the later endpoint — that's where the viewer lands.
-    expect(h.goToAnnotationLocation).toHaveBeenCalledWith("b");
+    // Both endpoints are handed to the navigator: a connection is only drawn
+    // when both are displayed, so it must frame the pair, not one endpoint.
+    expect(h.goToConnection).toHaveBeenCalledWith("a", "b");
   });
 
-  it("falls back to the parent when the child endpoint is missing", () => {
+  it("selects only the surviving endpoint when the child is missing", () => {
     setRows([makeConnection("c1", "a", "gone")], [makeAnnotation("a", 0)]);
     const wrapper = mountComponent();
     wrapper.vm.navigateToConnection(wrapper.vm.rows[0]);
 
     expect(h.setSelected).toHaveBeenCalledWith(["a"]);
-    expect(h.goToAnnotationLocation).toHaveBeenCalledWith("a");
+    // Still delegated with both ids — goToConnection resolves what it can and
+    // degrades to a single-endpoint navigate (covered in its own tests).
+    expect(h.goToConnection).toHaveBeenCalledWith("a", "gone");
   });
 
   it("does not navigate when both endpoints are missing", () => {
@@ -178,7 +181,7 @@ describe("ConnectionList", () => {
     const wrapper = mountComponent();
     wrapper.vm.navigateToConnection(wrapper.vm.rows[0]);
 
-    expect(h.goToAnnotationLocation).not.toHaveBeenCalled();
+    expect(h.goToConnection).not.toHaveBeenCalled();
     // The connection itself is still selectable so it can be deleted.
     expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1"]);
   });

@@ -1,7 +1,10 @@
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import { simpleCentroid } from "@/utils/annotation";
-import { recenterCameraInfo } from "@/utils/camera";
+import { frameCameraInfo, recenterCameraInfo } from "@/utils/camera";
+
+/** Fraction of the viewport a framed connection should occupy. */
+const CONNECTION_FRAME_PADDING = 1.6;
 
 /**
  * Move the viewer to an annotation's location and recenter on it.
@@ -38,4 +41,72 @@ export function goToAnnotationLocation(annotationId: string) {
   // Guarantee the navigated-to annotation renders as a full shape, even if it
   // falls outside the viewport hydration budget at the destination (C3).
   annotationStore.ensureHydrated([annotationId]);
+}
+
+function resolveEndpoint(id: string) {
+  const annotation = annotationStore.getAnnotationFromId(id);
+  const stub = annotationStore.getStub(id);
+  const location = annotation?.location ?? stub?.location;
+  if (!location) {
+    return null;
+  }
+  const centroid = annotation?.coordinates
+    ? simpleCentroid(annotation.coordinates)
+    : stub?.centroid ?? annotationStore.annotationCentroids[id];
+  return centroid ? { id, location, centroid } : null;
+}
+
+/**
+ * Navigate to a connection, framing BOTH endpoints rather than centering on one.
+ *
+ * A connection is only drawn when both of its endpoints are displayed, so
+ * recentering on a single endpoint while zoomed in leaves the other outside the
+ * viewport and the user sees no connection at all — the exact thing they clicked
+ * the row to look at. Measured on the Xenium dataset at max zoom: viewport span
+ * 51 world units, endpoints 139 apart, line not drawn.
+ *
+ * Endpoints on DIFFERENT frames can't both be displayed in normal mode no matter
+ * the zoom — that is what timelapse mode is for — so this only zooms to fit when
+ * the two share a frame, and otherwise behaves like a plain navigate.
+ */
+export function goToConnection(parentId: string, childId: string) {
+  const parent = resolveEndpoint(parentId);
+  const child = resolveEndpoint(childId);
+  const target = child ?? parent;
+  if (!target) {
+    return;
+  }
+  const sameFrame =
+    parent !== null &&
+    child !== null &&
+    parent.location.XY === child.location.XY &&
+    parent.location.Z === child.location.Z &&
+    parent.location.Time === child.location.Time;
+
+  if (!sameFrame) {
+    // Nothing to frame — one endpoint is missing, or they live on different
+    // frames and only one can ever be on screen here.
+    goToAnnotationLocation(target.id);
+    return;
+  }
+
+  store.setXY(target.location.XY);
+  store.setZ(target.location.Z);
+  store.setTime(target.location.Time);
+  const midpoint = {
+    x: (parent!.centroid.x + child!.centroid.x) / 2,
+    y: (parent!.centroid.y + child!.centroid.y) / 2,
+  };
+  store.setCameraInfo(
+    frameCameraInfo(
+      store.cameraInfo,
+      midpoint,
+      Math.abs(parent!.centroid.x - child!.centroid.x) *
+        CONNECTION_FRAME_PADDING,
+      Math.abs(parent!.centroid.y - child!.centroid.y) *
+        CONNECTION_FRAME_PADDING,
+    ),
+  );
+  annotationStore.setHoveredAnnotationId(target.id);
+  annotationStore.ensureHydrated([parentId, childId]);
 }

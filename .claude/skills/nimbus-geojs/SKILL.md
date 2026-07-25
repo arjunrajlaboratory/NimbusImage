@@ -19,6 +19,8 @@ GeoJS's annotation layer has several asymmetric, mutating APIs. Each trap below 
 | Connection lines mostly missing on a big (stub-only) dataset; more appear as you zoom in | Draw/retention gated on `getAnnotationFromId`, which returns `undefined` for unhydrated non-point annotations | Gate on what you actually draw from (the centroid map), never on hydration — see "Hydration-coupled draw paths" |
 | A specially styled feature reverts to the default style after a pan/zoom | The retained-feature restyle loop in `drawNewAnnotations` treats every `girderId`-bearing feature as an object annotation | `continue` on `isConnection` (or your own marker) in that loop |
 | A drawn feature can't be selected even though its record exists | One feature drawn per *pair/group* while several records map to it; the feature carries only the first record's id | Choose the selected record as the drawn representative |
+| Feature is in `layer.annotations()`, on-screen, right colour — and paints nothing | `options("style", {...})` **replaces** the style, dropping GeoJS's default `stroke: true` / `fill: true` | Include `stroke: true` explicitly, and merge: `options("style", {...a.options("style"), ...next})` |
+| Clicking a list row shows no connection at high zoom | A connection draws only when BOTH endpoints are displayed; recentering on one leaves the other outside the viewport | Frame both endpoints (`frameCameraInfo`) instead of recentering on one |
 
 ## Coordinate systems
 
@@ -72,6 +74,26 @@ So a feature styled at construction needs both: style it when you build it (a re
 feature must come back correct without waiting for a selection change), and skip it in
 that loop. Doing only one of the two produces a highlight that survives until the next
 pan.
+
+**`options("style", …)` replaces, it does not merge.** GeoJS supplies `stroke: true`,
+`fill: true` and friends through its annotation defaults; assigning a style object that
+omits them silently turns rendering off for that feature. This shipped: adding
+construction-time styling with `{strokeColor, strokeWidth, strokeOpacity}` made every
+connection line invisible at every zoom — present in `layer.annotations()`, correctly
+positioned, correct colour in `options().style`, and never painted. The tell is
+`annotation.style().stroke === undefined` where a working feature reads `true`.
+
+Always spread the existing style, and assert renderability in tests, not just colour:
+
+```ts
+line.options("style", { ...line.options("style"), ...getConnectionStyle(sel, hov) });
+// test: expect(line.options().style.stroke).toBe(true)  // not only strokeColor
+```
+
+When a feature is invisible, check in this order — each step rules out a whole class:
+`layer.annotations()` contains it → its display coords are on screen →
+`annotation.style().stroke` is true → the layer was `modified()` before `draw()`.
+A screenshot alone cannot distinguish these.
 
 ## One feature per group ⇒ pick the representative deliberately
 

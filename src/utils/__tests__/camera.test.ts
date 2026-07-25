@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { recenterCameraInfo, cameraRefreshNeeded } from "@/utils/camera";
+import {
+  recenterCameraInfo,
+  frameCameraInfo,
+  cameraRefreshNeeded,
+} from "@/utils/camera";
 import type { ICameraInfo } from "@/store/model";
 
 function makeCameraInfo(): ICameraInfo {
@@ -166,5 +170,51 @@ describe("cameraRefreshNeeded", () => {
         0.2,
       ),
     ).toBe(false);
+  });
+});
+
+describe("frameCameraInfo", () => {
+  // A connection is only drawn when BOTH endpoints are displayed, so
+  // navigating to one at high zoom must widen the view to include the other.
+  it("zooms out to fit a span wider than the viewport", () => {
+    const info = makeCameraInfo(); // 20 wide x 10 tall, zoom 3
+    const framed = frameCameraInfo(info, { x: 100, y: 100 }, 40, 10);
+    // Needs 2x the width => one zoom level out.
+    expect(framed.zoom).toBeCloseTo(2);
+    const xs = framed.gcsBounds.map((p) => p.x);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(40);
+  });
+
+  it("uses whichever axis needs the most room", () => {
+    const info = makeCameraInfo(); // 20 x 10
+    // Height needs 4x; width needs only 1x.
+    const framed = frameCameraInfo(info, { x: 100, y: 100 }, 5, 40);
+    expect(framed.zoom).toBeCloseTo(1);
+    const ys = framed.gcsBounds.map((p) => p.y);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(40);
+  });
+
+  it("never zooms IN when the span already fits", () => {
+    const info = makeCameraInfo();
+    const framed = frameCameraInfo(info, { x: 150, y: 150 }, 2, 2);
+    expect(framed.zoom).toBe(info.zoom);
+    expect(framed.center).toEqual({ x: 150, y: 150 });
+  });
+
+  it("recenters on the given point while scaling", () => {
+    const info = makeCameraInfo();
+    const framed = frameCameraInfo(info, { x: 300, y: 400 }, 40, 10);
+    expect(framed.center).toEqual({ x: 300, y: 400 });
+    const xs = framed.gcsBounds.map((p) => p.x);
+    const ys = framed.gcsBounds.map((p) => p.y);
+    expect((Math.min(...xs) + Math.max(...xs)) / 2).toBeCloseTo(300);
+    expect((Math.min(...ys) + Math.max(...ys)) / 2).toBeCloseTo(400);
+  });
+
+  it("preserves rotation rather than rebuilding an axis-aligned box", () => {
+    const info = makeCameraInfo();
+    expect(frameCameraInfo(info, { x: 100, y: 100 }, 40, 10).rotate).toBe(
+      info.rotate,
+    );
   });
 });

@@ -203,7 +203,7 @@ import connectionListStore, {
 } from "@/store/connectionList";
 import { MAX_CONNECT_SELECTED } from "@/store/constants";
 import ConnectionListRow from "@/components/AnnotationBrowser/ConnectionListRow.vue";
-import { goToAnnotationLocation } from "@/utils/annotationNavigation";
+import { goToConnection } from "@/utils/annotationNavigation";
 import { logError } from "@/utils/log";
 import {
   IConnectionRow,
@@ -378,10 +378,9 @@ function toggleTrack(track: ITrackRow) {
 // Objects tab agrees with what the viewer is showing.
 function navigateToConnection(row: IConnectionRow) {
   connectionListStore.setSelectedConnectionIds([row.connection.id]);
-  // Prefer the child (later) endpoint; fall back to the parent when the child
-  // is dangling. If both are gone there is nowhere to navigate.
-  const target = row.child.missing ? row.parent : row.child;
-  if (target.missing) {
+  if (row.parent.missing && row.child.missing) {
+    // Both endpoints are gone — nowhere to navigate, but the row stays
+    // selected so the dangling link can still be deleted.
     return;
   }
   annotationStore.setSelected(
@@ -389,7 +388,9 @@ function navigateToConnection(row: IConnectionRow) {
       .filter((endpoint) => !endpoint.missing)
       .map(({ id }) => id),
   );
-  goToAnnotationLocation(target.id);
+  // Frames both endpoints when they share a frame — a connection is only drawn
+  // when both are displayed, so centering on one would show nothing at zoom.
+  goToConnection(row.parent.id, row.child.id);
 }
 
 async function deleteOne(connectionId: string) {

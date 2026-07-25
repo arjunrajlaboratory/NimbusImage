@@ -79,3 +79,49 @@ export function recenterCameraInfo(
     })),
   };
 }
+
+/**
+ * Recenter, and zoom OUT if needed so a span of `requiredWidth`×`requiredHeight`
+ * around the new center fits in the viewport. Never zooms in.
+ *
+ * Needed when navigating to something that occupies two points rather than one —
+ * a connection between annotations. Recentering alone leaves the far endpoint
+ * off-screen at high zoom, and an endpoint that isn't displayed isn't drawn, so
+ * the connection the user asked to see renders as nothing at all.
+ *
+ * Corners are scaled about the new center rather than recomputed from a
+ * width/height, so any camera rotation is preserved.
+ */
+export function frameCameraInfo(
+  info: ICameraInfo,
+  center: IGeoJSPosition,
+  requiredWidth: number,
+  requiredHeight: number,
+): ICameraInfo {
+  const recentered = recenterCameraInfo(info, center);
+  const xs = info.gcsBounds.map((pt) => pt.x);
+  const ys = info.gcsBounds.map((pt) => pt.y);
+  const currentWidth = Math.max(...xs) - Math.min(...xs);
+  const currentHeight = Math.max(...ys) - Math.min(...ys);
+  if (currentWidth <= 0 || currentHeight <= 0) {
+    return recentered;
+  }
+  const scale = Math.max(
+    requiredWidth / currentWidth,
+    requiredHeight / currentHeight,
+    1,
+  );
+  if (scale === 1) {
+    return recentered;
+  }
+  return {
+    ...recentered,
+    // Each zoom level halves the visible span.
+    zoom: info.zoom - Math.log2(scale),
+    gcsBounds: recentered.gcsBounds.map((pt) => ({
+      ...pt,
+      x: center.x + (pt.x - center.x) * scale,
+      y: center.y + (pt.y - center.y) * scale,
+    })),
+  };
+}

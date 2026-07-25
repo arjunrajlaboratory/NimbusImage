@@ -78,7 +78,12 @@ const CONNECTION_SELECTED_COLOR = "#00e5ff";
 // reproduce GeoJS's own line-annotation defaults (blue, width 3), which is what
 // connections rendered with before they became restyleable — so restyling an
 // untouched line is a visual no-op.
+// `stroke: true` is mandatory here. GeoJS supplies it via its own annotation
+// defaults, but assigning `options("style", …)` REPLACES the style object
+// rather than merging, so a style that omits it produces a line that is present
+// in layer.annotations(), correctly positioned, and completely unpainted.
 const CONNECTION_BASE_STYLE = {
+  stroke: true,
   strokeColor: "#0000ff",
   strokeWidth: 3,
   strokeOpacity: 1,
@@ -1767,13 +1772,13 @@ function drawGeoJSAnnotationFromConnection(
   // connection that gets torn down and rebuilt (panning away and back, or
   // toggling connection rendering) would otherwise come back default-blue and
   // stay that way until the next selection or hover change.
-  line.options(
-    "style",
-    getConnectionStyle(
+  line.options("style", {
+    ...line.options("style"),
+    ...getConnectionStyle(
       connectionListStore.isConnectionSelected(connection.id),
       connection.id === connectionListStore.hoveredConnectionId,
     ),
-  );
+  });
   line.options("isConnection", true);
   line.options("childId", connection.childId);
   line.options("parentId", connection.parentId);
@@ -1849,6 +1854,7 @@ function restyleAnnotations() {
 function getConnectionStyle(isSelected: boolean, isHovered: boolean) {
   if (isSelected) {
     return {
+      stroke: true,
       strokeColor: CONNECTION_SELECTED_COLOR,
       strokeWidth: 6,
       strokeOpacity: 1,
