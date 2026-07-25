@@ -129,6 +129,72 @@ describe("connectionList scoping", () => {
   });
 });
 
+describe("connectionList cost guards", () => {
+  // Regression: the location scope built a set of ids by scanning
+  // annotationsForIteration, which in stub-only mode materializes an array of
+  // every stub (709K on a real dataset) on every XY/Z/Time scrub. Resolving
+  // the connections' own endpoints is O(connections) instead.
+  //
+  // The test leaves annotationsForIteration EMPTY while the endpoints remain
+  // resolvable, so an implementation that scans it finds nothing.
+  it("scopes by location without scanning every annotation", () => {
+    const here = makeAnnotation("here", 0);
+    const there = makeAnnotation("there", 0);
+    there.location = { XY: 9, Z: 9, Time: 9 };
+    const byId = new Map([
+      ["here", here],
+      ["there", there],
+    ]);
+    (annotationStore as any).getAnnotationFromId = (id: string) => byId.get(id);
+    (annotationStore as any).annotationsForIteration = [];
+    (annotationStore as any).annotationConnections = [
+      makeConnection("atLocation", "here", "here"),
+      makeConnection("elsewhere", "there", "there"),
+    ];
+
+    connectionList.setScope("location");
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual([
+      "atLocation",
+    ]);
+  });
+
+  // Regression: the cap resolved every selected id before checking the limit,
+  // so a server-mode select-all materialized hundreds of thousands of
+  // annotations just to conclude "too many".
+  it("rejects an oversized selection without resolving it", () => {
+    let resolveCalls = 0;
+    (annotationStore as any).getAnnotationFromId = (id: string) => {
+      resolveCalls++;
+      return makeAnnotation(id, 0);
+    };
+    (annotationStore as any).selectedAnnotationIds = new Set(
+      Array.from({ length: MAX_CONNECT_SELECTED + 50 }, (_, i) => `a${i}`),
+    );
+
+    expect(connectionList.connectSelectedExceedsMax).toBe(true);
+    expect(connectionList.canConnectSelected).toBe(false);
+    // Tie detection must not walk the oversized selection either.
+    expect(connectionList.connectSelectedTimeTies).toEqual([]);
+    expect(resolveCalls).toBe(0);
+  });
+
+  it("still resolves a selection within the cap", () => {
+    let resolveCalls = 0;
+    const byId = new Map([
+      ["a0", makeAnnotation("a0", 0)],
+      ["a1", makeAnnotation("a1", 1)],
+    ]);
+    (annotationStore as any).getAnnotationFromId = (id: string) => {
+      resolveCalls++;
+      return byId.get(id);
+    };
+    (annotationStore as any).selectedAnnotationIds = new Set(["a0", "a1"]);
+
+    expect(connectionList.canConnectSelected).toBe(true);
+    expect(resolveCalls).toBeGreaterThan(0);
+  });
+});
+
 describe("connectionList selection safety", () => {
   // Regression: a selection made under one scope must not survive to feed
   // "Delete selected" under another, or the user deletes rows they can't see.

@@ -53,50 +53,56 @@ export class ConnectionList extends VuexModule {
   expandedTrackIds: Set<string> = markRaw(new Set());
 
   /**
-   * Ids of annotations that qualify under the current scope. `null` means the
-   * scope is unrestricted, so callers skip the per-connection membership test
-   * entirely rather than building a set of every annotation id.
+   * Predicate deciding whether ONE connection is in scope.
+   *
+   * A predicate, not a set of qualifying annotation ids: building that set
+   * meant scanning every annotation, and `annotationsForIteration`
+   * materializes an array of all 709K stubs in stub-only mode — paid again on
+   * every XY/Z/Time scrub while the tab is open. Connections are the far
+   * smaller collection, so resolve their two endpoints instead.
+   *
+   * A connection qualifies when EITHER endpoint does — the same "touching"
+   * rule the bulk delete dialog uses, and for the filtered scope it
+   * deliberately surfaces links leaving the filtered set, which is where
+   * mis-tracked objects hide.
    */
-  get scopeAnnotationIds(): Set<string> | null {
+  get connectionInScope(): (connection: IAnnotationConnection) => boolean {
     switch (this.scope) {
       case "all":
-        return null;
-      case "selected":
-        return annotation.selectedAnnotationIds;
+        return () => true;
+      case "selected": {
+        const ids = annotation.selectedAnnotationIds;
+        return ({ parentId, childId }) => ids.has(parentId) || ids.has(childId);
+      }
+      case "filtered": {
+        // Reuse the filters module's own id map rather than rebuilding a set
+        // from filteredAnnotations, which can be hundreds of thousands long.
+        const ids = filters.filteredAnnotationIdToIdx;
+        return ({ parentId, childId }) => ids.has(parentId) || ids.has(childId);
+      }
       case "location": {
         const { xy, z, time } = main.currentLocation;
-        const ids = new Set<string>();
-        for (const { id, location } of annotation.annotationsForIteration) {
-          if (
-            location.XY === xy &&
-            location.Z === z &&
-            location.Time === time
-          ) {
-            ids.add(id);
-          }
-        }
-        return ids;
+        const resolve = this.resolveAnnotation;
+        const atLocation = (id: string): boolean => {
+          const found = resolve(id);
+          return (
+            !!found &&
+            found.location.XY === xy &&
+            found.location.Z === z &&
+            found.location.Time === time
+          );
+        };
+        return ({ parentId, childId }) =>
+          atLocation(parentId) || atLocation(childId);
       }
-      case "filtered":
-        return new Set(filters.filteredAnnotations.map(({ id }) => id));
     }
   }
 
-  /**
-   * Connections in the current scope. A connection qualifies when EITHER
-   * endpoint does — the same "touching" rule the bulk delete dialog uses, and
-   * for the filtered scope it deliberately surfaces links leaving the filtered
-   * set, which is where mis-tracked objects hide.
-   */
   get scopedConnections(): IAnnotationConnection[] {
-    const scopeIds = this.scopeAnnotationIds;
-    if (scopeIds === null) {
+    if (this.scope === "all") {
       return annotation.annotationConnections;
     }
-    return annotation.annotationConnections.filter(
-      ({ parentId, childId }) =>
-        scopeIds.has(parentId) || scopeIds.has(childId),
-    );
+    return annotation.annotationConnections.filter(this.connectionInScope);
   }
 
   get resolveAnnotation() {
@@ -183,13 +189,24 @@ export class ConnectionList extends VuexModule {
   }
 
   get canConnectSelected(): boolean {
-    const count = this.selectedAnnotationsInOrder.length;
-    return main.isLoggedIn && count >= 2 && count <= MAX_CONNECT_SELECTED;
+    // Check the RAW id count first. Resolving the selection materializes an
+    // annotation per id, and a server-mode select-all can be hundreds of
+    // thousands — the cap exists to prevent that work, so it must not do the
+    // work in order to apply itself.
+    const selectedCount = annotation.selectedAnnotationIds.size;
+    if (
+      !main.isLoggedIn ||
+      selectedCount < 2 ||
+      selectedCount > MAX_CONNECT_SELECTED
+    ) {
+      return false;
+    }
+    return this.selectedAnnotationsInOrder.length >= 2;
   }
 
   /** True when the only thing blocking Connect selected is the size cap. */
   get connectSelectedExceedsMax(): boolean {
-    return this.selectedAnnotationsInOrder.length > MAX_CONNECT_SELECTED;
+    return annotation.selectedAnnotationIds.size > MAX_CONNECT_SELECTED;
   }
 
   /**
@@ -198,6 +215,11 @@ export class ConnectionList extends VuexModule {
    * from the data and will fall back to selection order.
    */
   get connectSelectedTimeTies(): number[] {
+    // Nothing will be chained above the cap, so don't traverse a selection
+    // that Connect selected has already refused.
+    if (annotation.selectedAnnotationIds.size > MAX_CONNECT_SELECTED) {
+      return [];
+    }
     return findTimeTies(this.selectedAnnotationsInOrder);
   }
 
