@@ -326,6 +326,20 @@ GirderFileManager (from `@girder/components`) uses **Vuetify 3 prop naming**, no
 
 These props are defined in `node_modules/@girder/components/src/components/FileManager.vue`. If you use a wrong prop name, it silently falls through as an unrecognized attribute and the component uses its internal default (10).
 
+### Doing per-page work in a client-side `v-data-table`
+
+When each visible row needs an async lookup (dataset chips, resolved names), fetch for the **current page** rather than for every item — otherwise a listing of thousands of rows fans out into thousands of lookups on mount. `VDataTable` emits `update:currentItems` with the **post-filter, post-sort, post-pagination** slice, which is exactly the set you want:
+
+```vue
+<v-data-table :items="filteredRows" @update:current-items="onCurrentItemsChange" />
+```
+
+Don't try to derive the page slice yourself from `v-model:page` / `v-model:sort-by` — that means reimplementing Vuetify's sort and filter to stay in sync. Keep a `Set` of already-requested ids so paging back to a visited page doesn't refetch, and enqueue the work through a serialized, non-rejecting promise chain (see the promise section above).
+
+Two related gotchas:
+- The `hover` prop gives row hover styling, but row clicks need `@click:row="(event, { item }) => …"` — the payload's second argument is an object, not the item.
+- Sorting a column whose values are resolved asynchronously (a name looked up after the rows load) only works if the resolution covers **every loaded row**, not just the visible page — otherwise the sort silently orders by whatever happens to be resolved. Either resolve for the whole loaded set, or make the column non-sortable.
+
 ### Overriding Girder DataTable Row Styles
 
 Girder's `DataTable.vue` renders a `v-data-table-server` with `<tr>` > `<td>` rows. The DOM structure is:
@@ -516,6 +530,36 @@ const gated = chain.then(() =>
   }),
 );
 ```
+
+**The serialized-queue variant of the same bug (PR #1278).** A "run these one at a time" queue built by reassigning a module/closure promise has the identical failure mode, and it hides behind a `.catch` that looks like it handles things but is in the wrong position:
+
+```typescript
+// BAD: the leading .catch absorbs only the PREVIOUS link. If this link
+// rejects and no further enqueue ever happens, its rejection is never
+// handled -> unhandled rejection.
+queue = queue
+  .catch(() => {})
+  .then(() => doWork(items))
+  .then(applyResult)
+  .finally(bookkeeping);
+
+// GOOD: terminate the chain with .catch, so the promise stored in `queue`
+// can never settle rejected. The leading .catch then becomes unnecessary.
+queue = queue
+  .then(() => doWork(items))
+  .then(applyResult)
+  .catch((error) => logError("...", error))
+  .finally(bookkeeping);
+```
+
+Rule of thumb: whatever promise you *store* for the next link to chain onto must be non-rejecting. `.finally()` passes rejections through, so it can never be the terminator. Note this is invisible to `tsc`, lint, and tests — a test that always resolves the work function never exercises the reject path.
+
+### `batchResources` returns whole documents, not names
+
+`store.api.batchResources({ folder: ids })` resolves ids in a single backend `$in` query (good — not an N+1), but it returns **full** Girder documents including `meta`. Callers that only want display names still pay for everything. That's fine for a page of rows; it is not fine for a whole listing. One collection per dataset folder is the common case, so "resolve names for all loaded collections" can mean thousands of full folder documents in one response.
+
+- Resolve only what the UI actually renders. If a column is scope- or mode-conditional, skip the resolution entirely in the modes that don't show it.
+- When you genuinely need names for a large set (sorting/searching a column needs them for every loaded row, not just the visible page), chunk the ids against a named constant and loop the chunks sequentially. This is batch-chunking, not the looped-API-call antipattern — say so in a comment, since it looks like the latter to a reviewer.
 
 ## Native File / Folder Pickers (`src/utils/fileUpload.ts`)
 

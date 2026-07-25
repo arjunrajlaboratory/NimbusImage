@@ -42,6 +42,44 @@ docs = model.findWithPermissions(
 )
 ```
 
+### Projecting fields is safe with findWithPermissions
+
+`findWithPermissions` accepts `fields=` and forwards it to `find()` as the Mongo projection. It is safe to project away `access` and `public`: the method builds `{'$and': [query, self.permissionClauses(user, level)]}` and hands that to `find()`, so permission filtering happens **inside the Mongo query**, not in Python over the returned documents. Nothing post-filters on fields you excluded.
+
+This matters for listing endpoints on models with a fat subdocument (`upenn_collection.meta` holds layers, tools, snapshots). Projecting to a summary tuple is the difference between a listing that scales to thousands of rows and one that can't be used across folders at all:
+
+```python
+COLLECTION_SUMMARY_FIELDS = (
+    '_id', 'name', 'description', 'folderId', 'creatorId', 'created', 'updated',
+)
+
+documents = list(model.findWithPermissions(
+    query, offset=offset, limit=limit + 1, sort=sort,
+    fields=COLLECTION_SUMMARY_FIELDS, user=self.getCurrentUser(),
+))
+return {
+    'collections': [
+        {f: d.get(f) for f in COLLECTION_SUMMARY_FIELDS}
+        for d in documents[:limit]
+    ],
+    'hasMore': len(documents) > limit,
+}
+```
+
+Keep `_id` **in** the field tuple rather than special-casing it around the comprehension.
+
+**No reliable `count()`.** The docstring says the return "may be a CommandCursor augmented with a count function," but the non-admin path returns a plain PyMongo cursor, and `Cursor.count()` was removed in PyMongo 4. Don't build a response contract on it. Fetch `limit + 1` documents and report `hasMore = len(documents) > limit` instead — one query, no count aggregation. See the SKILL.md warning about how `limit + 1` interacts with Girder's `limit=0`-means-unlimited sentinel.
+
+**Index the sort field.** A cross-folder listing sorted on an unindexed key makes Mongo blocking-sort every accessible document. Add the plain field and the scoped compound:
+
+```python
+self.ensureIndices((
+    'folderId', 'name', 'lowerName', 'updated',
+    ([('folderId', 1), ('name', 1)], {}),
+    ([('folderId', 1), ('updated', -1)], {}),
+))
+```
+
 ## ObjectId Handling
 
 ```python

@@ -208,6 +208,31 @@ class TestCollectionList:
         )
         assertStatus(resp, 400)
 
+    def testNegativeOneLimitCannotBypassTheCap(self, admin, server):
+        """limit=-1 must not reach Mongo as the unlimited sentinel.
+
+        The endpoint reads limit+1 rows to compute hasMore, so an unclamped
+        limit=-1 becomes limit+1 == 0 -- which Girder treats as "no limit".
+        That would materialize every accessible collection and return all but
+        the last, bypassing MAX_COLLECTION_LIST_LIMIT entirely.
+        """
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        for index in range(3):
+            createCollection(admin, folder, "collection_%d" % index)
+
+        resp = server.request(
+            path="/upenn_collection/list",
+            method="GET",
+            user=admin,
+            params={"limit": -1},
+        )
+        assertStatusOk(resp)
+        # Clamped to a page of 1, not "everything but the last row".
+        assert len(resp.json["collections"]) == 1
+        assert resp.json["hasMore"] is True
+
     @pytest.mark.parametrize("params", [
         {"limit": -5},
         {"offset": -5},

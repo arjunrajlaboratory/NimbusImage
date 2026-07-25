@@ -305,6 +305,53 @@ Match each kind of request-data access to its helper:
 
 Rules: validation and `RestException` live in the API layer, never in models. Validate NESTED elements, not just the top-level container — each list entry (`[123]`) and nested map (`propertyValues: {"a1": 5}`) is caller-supplied; `.get()`/`.items()` on a non-dict entry → 500. Add a backend test per malformed-input case (malformed body → 400, not 500); `test/test_validation.py` unit-tests the helpers directly, and endpoint tests assert the 400. When you fix one endpoint, sweep the other endpoints in the same file for the identical gap — reviewers flag one instance per round.
 
+### `autoDescribeRoute` + `pagingParams` does NOT validate for you
+
+Everything above is written around **body**-parsing endpoints (`describeRoute` + `getBodyJson()` + `requireObjectBody`). That framing is a trap: on an `autoDescribeRoute` endpoint with `.param()` / `.pagingParams()`, Girder declares param types and coerces some of them, which *feels* like the boundary is covered. It isn't, and this shipped a P1 (PR #1278) even though the helpers above were already documented. What Girder actually does:
+
+| Declared | Girder's behavior | Still your job |
+|---|---|---|
+| `.param('folderId', ...)` (no dataType) | passes the raw **string** through | `requireObjectId` — `ObjectId('nope')` raises `InvalidId` → 500 |
+| `.pagingParams(...)` → `limit`, `offset` | `_handleInt` → clean `RestException` on non-numeric | **negatives pass straight through** — clamp them |
+| `.pagingParams(...)` → `sort` | passes any field name through as `[(field, dir)]` | restrict to an allowlist (see below) |
+| `.jsonParam(..., requireObject=True)` | 400 if the body isn't a dict/array | nested elements inside it |
+
+So the clamp idiom is required even when the params look framework-managed:
+
+```python
+offset = max(0, offset)                       # a negative offset makes PyMongo raise
+limit = min(max(1, limit or MAX_X_LIMIT), MAX_X_LIMIT)
+```
+
+### `limit + 1` for `hasMore` interacts with Girder's limit=0 sentinel
+
+Reading one extra row to compute `hasMore` avoids a second count query, but `limit=0` means **unlimited** to Girder. So an unclamped negative limit becomes a total bypass of the cap, not merely a wrong page size:
+
+```python
+# BAD: limit=-1 -> min(-1, MAX) == -1 -> limit+1 == 0 -> Girder "unlimited"
+# -> materializes EVERY accessible document, returns all but the last via
+# documents[:-1]. The MAX_* cap is gone, on a public endpoint.
+limit = min(limit or MAX_X_LIMIT, MAX_X_LIMIT)
+
+# GOOD: every input lands in [1, MAX_X_LIMIT], so limit+1 is never 0
+limit = min(max(1, limit or MAX_X_LIMIT), MAX_X_LIMIT)
+```
+
+Whenever you write `limit + 1` (or any arithmetic on a limit), trace the value for **`-1`, `0`, and `MAX+1`** by hand. `-1` is the dangerous one and the easiest to skip: `0` and `MAX+1` both behave, so a spot-check of "does a MAX_ constant exist" passes while the bypass sits there. Regression-test `limit=-1` specifically, asserting a clamped page — not just "no 500".
+
+### Sort keys are caller input too
+
+`pagingParams` exposes `sort` as a free-form field name. Clamping `limit` while leaving `sort` open still lets an unauthenticated caller force a blocking sort over every accessible document — including on a large `meta` subdocument. This is especially easy to miss right after adding an index for the *default* sort: the index covers `?sort=updated` and nothing else.
+
+```python
+for field, _direction in sort or []:
+    if field not in X_SUMMARY_FIELDS:
+        raise RestException(
+            'sort must be one of: %s' % ', '.join(X_SUMMARY_FIELDS), code=400)
+```
+
+Restricting the allowlist to the fields the endpoint actually returns is usually the right scope, and turns a typo into a clean 400.
+
 ## Loading Plugin Changes Into the Running Backend
 
 The `girder` container bakes the plugin into its image (no source mount). After editing backend plugin code:
