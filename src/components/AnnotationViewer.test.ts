@@ -402,6 +402,7 @@ import {
 } from "@/store/model";
 import { samPromptToAnnotation } from "@/pipelines/samPipeline";
 import { NoOutput } from "@/pipelines/computePipeline";
+import connectionListStore from "@/store/connectionList";
 import AnnotationViewer from "./AnnotationViewer.vue";
 
 const mockedStore = vi.mocked(store);
@@ -1110,6 +1111,41 @@ describe("AnnotationViewer", () => {
           .filter((f: any) => f?.options?.().isConnection);
         expect(added).toHaveLength(1);
         expect(added[0].options().girderId).toBe("c1");
+      });
+
+      // Retention must use the same criteria as the draw path, or every draw
+      // removes the lines it just created and rebuilds them next pass.
+      it("retains stub-backed connection lines through clearOldAnnotations", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        const countLines = () =>
+          aLayer.annotations().filter((f: any) => f.options().isConnection)
+            .length;
+        const before = countLines();
+        expect(before).toBeGreaterThan(0);
+
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+        expect(countLines()).toBe(before);
+      });
+
+      it("styles a selected connection at construction, not only on restyle", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        connectionListStore.setSelectedConnectionIds(["c1"]);
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const line = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .find((f: any) => f?.options?.().isConnection);
+        expect(line.options().style.strokeColor).toBe("#00e5ff");
       });
 
       it("skips a connection whose centroid is missing rather than drawing NaN", () => {

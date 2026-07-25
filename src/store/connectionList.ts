@@ -120,6 +120,28 @@ export class ConnectionList extends VuexModule {
   }
 
   /**
+   * Selected ids that still correspond to a connection that exists.
+   *
+   * Other code deletes connections without going through this module —
+   * `DeleteConnections.vue`'s bulk dialog and `deleteAllTimelapseConnections`
+   * both call `annotationStore.deleteConnections` directly — so pruning only
+   * inside `deleteConnectionsById` would leave ids here for links that are
+   * gone, keeping the viewer's action panel open for a nonexistent connection
+   * and allowing a second delete request for a stale id. Deriving existence
+   * rather than reacting to every deletion path keeps this correct no matter
+   * who does the deleting.
+   */
+  get selectedExistingConnectionIds(): string[] {
+    if (this.selectedConnectionIds.size === 0) {
+      return [];
+    }
+    const existing = new Set(
+      annotation.annotationConnections.map(({ id }) => id),
+    );
+    return [...this.selectedConnectionIds].filter((id) => existing.has(id));
+  }
+
+  /**
    * Selected connections that are ALSO in the current scope.
    *
    * Clearing the selection in `setScope` is not sufficient on its own: the
@@ -276,7 +298,7 @@ export class ConnectionList extends VuexModule {
    */
   @Action({ rawError: true })
   public async deleteSelectedConnections() {
-    await this.deleteConnectionsById([...this.selectedConnectionIds]);
+    await this.deleteConnectionsById(this.selectedExistingConnectionIds);
   }
 
   /**

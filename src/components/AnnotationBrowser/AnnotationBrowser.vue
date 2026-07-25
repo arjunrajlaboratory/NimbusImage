@@ -16,7 +16,14 @@
         <annotation-list @clickedTag="clickedTag" />
       </v-window-item>
       <v-window-item value="connections" class="browser-window-item">
-        <connection-list @clickedTag="clickedTag" />
+        <!-- is-active drives the reveal-on-show retry: this component mounts
+             lazily on first activation and is hidden (not unmounted) after, so
+             a viewer click made while the tab was never opened — or while it
+             was hidden and unlaid-out — must be re-revealed when it shows. -->
+        <connection-list
+          :is-active="activeTab === 'connections'"
+          @clickedTag="clickedTag"
+        />
       </v-window-item>
     </v-window>
   </div>

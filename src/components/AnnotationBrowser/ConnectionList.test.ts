@@ -211,6 +211,35 @@ describe("ConnectionList", () => {
     expect(h.state.setPage).not.toHaveBeenCalled();
   });
 
+  // The tab mounts lazily and is only hidden (not unmounted) afterwards, so a
+  // selection made while it was closed never reaches the selection watcher and
+  // one made while hidden cannot scroll. Becoming active has to retry.
+  it("reveals the current selection when the tab becomes active", async () => {
+    const conns = Array.from({ length: 120 }, (_, i) =>
+      makeConnection(`c${i}`, `a${i}`, `b${i}`),
+    );
+    setRows(
+      conns,
+      conns.flatMap((c, i) => [
+        makeAnnotation(c.parentId, i),
+        makeAnnotation(c.childId, i),
+      ]),
+    );
+    h.state.selectedConnectionIds = new Set(["c60"]);
+    h.state.page = 1;
+
+    // Mounted inactive: nothing revealed yet.
+    const wrapper = shallowMount(ConnectionList, {
+      props: { isActive: false },
+    });
+    await wrapper.vm.$nextTick();
+    expect(h.state.setPage).not.toHaveBeenCalled();
+
+    // Tab becomes visible → the pending selection is paged to.
+    await wrapper.setProps({ isActive: true });
+    expect(h.state.setPage).toHaveBeenCalledWith(2);
+  });
+
   it("expands the containing track when revealing in track mode", async () => {
     setRows(
       [makeConnection("c1", "a", "b")],

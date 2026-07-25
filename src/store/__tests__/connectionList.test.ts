@@ -204,6 +204,28 @@ describe("connectionList selection safety", () => {
     });
   });
 
+  // Connections can be deleted by paths that never touch this module — the
+  // bulk Delete-connections dialog, deleteAllTimelapseConnections. Existence is
+  // therefore derived, not maintained by reacting to each deletion path.
+  it("ignores selected ids whose connection no longer exists", async () => {
+    (annotationStore as any).annotationConnections = [
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+    ];
+    connectionList.setSelectedConnectionIds(["c1", "c2"]);
+    expect(connectionList.selectedExistingConnectionIds).toEqual(["c1", "c2"]);
+
+    // Something else deleted c2 straight from the annotation store.
+    (annotationStore as any).annotationConnections = [
+      makeConnection("c1", "a", "b"),
+    ];
+    expect(connectionList.selectedExistingConnectionIds).toEqual(["c1"]);
+
+    // The viewer panel's delete must not re-request the vanished id.
+    await connectionList.deleteSelectedConnections();
+    expect(deleteConnections).toHaveBeenCalledWith(["c1"]);
+  });
+
   it("prunes deleted ids from the selection", async () => {
     connectionList.setSelectedConnectionIds(["c1", "c2", "c3"]);
     await connectionList.deleteConnectionsById(["c1", "c3"]);
@@ -212,6 +234,11 @@ describe("connectionList selection safety", () => {
   });
 
   it("deletes in a single batched call, never one request per id", async () => {
+    (annotationStore as any).annotationConnections = [
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+      makeConnection("c3", "c", "d"),
+    ];
     connectionList.setSelectedConnectionIds(["c1", "c2", "c3"]);
     await connectionList.deleteSelectedConnections();
     expect(deleteConnections).toHaveBeenCalledTimes(1);

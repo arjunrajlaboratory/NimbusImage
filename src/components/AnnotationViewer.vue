@@ -17,8 +17,11 @@
       @color-selected="showColorDialog = true"
       @deselect-all="handleDeselectAll"
     />
+    <!-- Keyed off connections that still exist, so a bulk delete elsewhere
+         (the Delete connections dialog, delete-all-timelapse) can't leave this
+         panel open for a link that is gone. -->
     <connection-action-panel
-      v-if="selectedConnectionIds.size > 0"
+      v-if="selectedExistingConnectionCount > 0"
       :stacked="selectedAnnotationIds.size > 0"
     />
 
@@ -338,6 +341,9 @@ const selectedConnectionIds = computed(
 );
 const hoveredConnectionId = computed(
   () => connectionListStore.hoveredConnectionId,
+);
+const selectedExistingConnectionCount = computed(
+  () => connectionListStore.selectedExistingConnectionIds.length,
 );
 const shouldDrawAnnotations = computed((): boolean => store.drawAnnotations);
 const shouldDrawConnections = computed(
@@ -1050,15 +1056,20 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
       }
 
       if (isConnection) {
-        const parent = getAnnotationFromId.value(parentId);
-        const child = getAnnotationFromId.value(childId);
+        // Retention MUST use the same criteria as drawNewConnections. It used
+        // to require getAnnotationFromId for both endpoints, which returns
+        // undefined for unhydrated annotations in stub-only mode — so on a
+        // lazily-loaded dataset every draw pass removed the very lines the draw
+        // path had just created (measured: 10 of 11 removed at 4/12 endpoints
+        // hydrated), churning GeoJS features on every pan.
+        const centroids = unrolledCentroidCoordinates.value;
         if (
           !connectionIdsSet.value.has(girderId) ||
           !shouldDrawConnections.value ||
-          !parent ||
-          !child ||
-          !displayedAnnotationIds.value.has(parent.id) ||
-          !displayedAnnotationIds.value.has(child.id)
+          !displayedAnnotationIds.value.has(parentId) ||
+          !displayedAnnotationIds.value.has(childId) ||
+          !centroids[parentId] ||
+          !centroids[childId]
         ) {
           toRemove.push(geoJsAnnotation);
         }
@@ -1441,9 +1452,19 @@ function drawTimelapseTrack(
           : connection.parentId;
 
       const otherAnnotation = annotationsById.get(otherId);
+      if (!otherAnnotation) {
+        continue;
+      }
+      // Each undirected segment is drawn from exactly one of its two endpoints:
+      // normally the later one. Equal-time links — which "Connect selected"
+      // creates for same-frame pairs — used to be skipped from BOTH sides and
+      // so never appeared in timelapse mode at all, despite the UI advertising
+      // tie handling. Break the tie on id so exactly one traversal draws them.
+      const otherTime = otherAnnotation.location.Time;
+      const thisTime = annotation.location.Time;
       if (
-        !otherAnnotation ||
-        otherAnnotation.location.Time >= annotation.location.Time
+        otherTime > thisTime ||
+        (otherTime === thisTime && otherId >= annotation.id)
       ) {
         continue;
       }
@@ -1715,6 +1736,17 @@ function drawGeoJSAnnotationFromConnection(
   delete pB.z;
   const line = geojs.annotation.lineAnnotation();
   line.options("vertices", [pA, pB]);
+  // Style at construction, not only via restyleAnnotations: a selected
+  // connection that gets torn down and rebuilt (panning away and back, or
+  // toggling connection rendering) would otherwise come back default-blue and
+  // stay that way until the next selection or hover change.
+  line.options(
+    "style",
+    getConnectionStyle(
+      connectionListStore.isConnectionSelected(connection.id),
+      connection.id === connectionListStore.hoveredConnectionId,
+    ),
+  );
   line.options("isConnection", true);
   line.options("childId", connection.childId);
   line.options("parentId", connection.parentId);

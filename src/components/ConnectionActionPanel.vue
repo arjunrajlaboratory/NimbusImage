@@ -41,8 +41,10 @@ defineProps<{
 
 const isLoggedIn = computed(() => store.isLoggedIn);
 const isDeleting = ref(false);
+// Count links that still exist, matching what Delete Selected will act on —
+// connections can be removed by paths that never touch this module.
 const selectedCount = computed(
-  () => connectionListStore.selectedConnectionIds.size,
+  () => connectionListStore.selectedExistingConnectionIds.length,
 );
 
 async function deleteSelected() {

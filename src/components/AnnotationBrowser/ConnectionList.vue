@@ -211,6 +211,14 @@ import {
   shortAnnotationId,
 } from "@/utils/connections";
 
+const props = withDefaults(
+  defineProps<{
+    /** True while the Connections tab is the visible one. */
+    isActive?: boolean;
+  }>(),
+  { isActive: false },
+);
+
 const emit = defineEmits<{
   (e: "clickedTag", tag: string): void;
 }>();
@@ -329,15 +337,29 @@ async function revealConnection(connectionId: string) {
     ?.scrollIntoView({ block: "nearest" });
 }
 
-// A single selected connection is what a viewer click produces; a multi-select
-// made in the list needs no revealing.
+function revealCurrentSelection() {
+  const ids = connectionListStore.selectedConnectionIds;
+  // A single selected connection is what a viewer click produces; a
+  // multi-select made in the list needs no revealing.
+  if (ids.size === 1) {
+    revealConnection([...ids][0]);
+  }
+}
+
+watch(() => connectionListStore.selectedConnectionIds, revealCurrentSelection);
+
+// Retry on show. A selection made while this tab was closed could not be
+// revealed (the component had not mounted yet), and one made while it was
+// merely hidden could not scroll, because a hidden row has no layout. Neither
+// changes the selection, so the watcher above would never fire again.
 watch(
-  () => connectionListStore.selectedConnectionIds,
-  (ids) => {
-    if (ids.size === 1) {
-      revealConnection([...ids][0]);
+  () => props.isActive,
+  (isActive) => {
+    if (isActive) {
+      revealCurrentSelection();
     }
   },
+  { immediate: true },
 );
 
 function toggleSelectAll() {

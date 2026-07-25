@@ -374,6 +374,18 @@ bug before this branch:
 rather than two `IAnnotation`s — the line only ever needed the positions, and taking
 annotations coupled drawing to hydration for no reason. Keep it that way.
 
+**`clearOldAnnotations`' connection branch must use the same criteria.** It had the
+identical `getAnnotationFromId` coupling, so fixing only the draw path left every draw
+removing the lines it had just created: measured at 4/12 endpoints hydrated,
+`clearOldAnnotations` dropped **10 of 11** lines, which `drawNewConnections` then rebuilt
+on the next pass — pure GeoJS churn that scales with connection count. Draw and
+retention are a pair; change them together.
+
+Connection lines are also **styled at construction**, not only by `restyleAnnotations`.
+A selected connection that is torn down and rebuilt (panning away and back, toggling
+connection rendering) would otherwise return default-blue and stay that way until the
+next selection or hover event, because the restyle watcher only fires on *changes*.
+
 ### 3. Styling
 
 `restyleAnnotations` (`:1774`) grows a connection branch: selected → cyan
