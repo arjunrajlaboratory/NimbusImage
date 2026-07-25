@@ -24,6 +24,7 @@ const h = vi.hoisted(() => ({
     itemsPerPage: 50,
     hoveredConnectionId: null as string | null,
     selectedConnectionIds: new Set<string>(),
+    selectedExistingConnectionIds: [] as string[],
     scopedConnections: [] as any[],
     connectionRows: [] as any[],
     trackRows: [] as any[],
@@ -123,6 +124,7 @@ beforeEach(() => {
   h.state.canConnectSelected = false;
   h.state.connectSelectedTimeTies = [];
   h.state.selectedInScopeConnectionIds = [];
+  h.state.selectedExistingConnectionIds = [];
   h.state.lastConnectSkippedAsDuplicate = false;
   h.state.hoveredConnectionId = null;
   h.state.itemsPerPage = 50;
@@ -278,6 +280,7 @@ describe("ConnectionList", () => {
       ]),
     );
     h.state.selectedConnectionIds = new Set(["c60"]);
+    h.state.selectedExistingConnectionIds = ["c60"];
     h.state.page = 1;
 
     // Mounted inactive: nothing revealed yet.
@@ -323,6 +326,33 @@ describe("ConnectionList", () => {
     expect(h.state.setPage).toHaveBeenCalledWith(2);
   });
 
+  // Regression: selection deliberately keeps ids for connections deleted
+  // through other paths (existence is derived, not pruned). If the reveal
+  // priority looked at the RAW selection, one externally deleted selected
+  // connection blocked hover-based reveal permanently — every later click
+  // highlighted a row the list would never page to.
+  it("ignores a deleted selection when revealing on hover", async () => {
+    const conns = Array.from({ length: 120 }, (_, i) =>
+      makeConnection(`c${i}`, `a${i}`, `b${i}`),
+    );
+    setRows(
+      conns,
+      conns.flatMap((c, i) => [
+        makeAnnotation(c.parentId, i),
+        makeAnnotation(c.childId, i),
+      ]),
+    );
+    // Selected, but the connection itself is gone.
+    h.state.selectedConnectionIds = new Set(["deleted-elsewhere"]);
+    h.state.selectedExistingConnectionIds = [];
+    h.state.hoveredConnectionId = "c60"; // page 2
+    const wrapper = mountComponent();
+    h.state.setPage.mockClear();
+
+    await (wrapper.vm as any).revealCurrentSelection();
+    expect(h.state.setPage).toHaveBeenCalledWith(2);
+  });
+
   it("prefers the selection over the hover when both are set", async () => {
     const conns = Array.from({ length: 120 }, (_, i) =>
       makeConnection(`c${i}`, `a${i}`, `b${i}`),
@@ -335,6 +365,7 @@ describe("ConnectionList", () => {
       ]),
     );
     h.state.selectedConnectionIds = new Set(["c110"]); // page 3
+    h.state.selectedExistingConnectionIds = ["c110"];
     h.state.hoveredConnectionId = "c10"; // page 1
     const wrapper = shallowMount(ConnectionList, { props: { isActive: true } });
     h.state.setPage.mockClear();

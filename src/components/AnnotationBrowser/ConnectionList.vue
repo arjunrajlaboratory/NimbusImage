@@ -348,11 +348,16 @@ async function revealConnection(connectionId: string) {
 }
 
 function revealCurrentSelection() {
-  const ids = connectionListStore.selectedConnectionIds;
+  // EXISTING, not raw: the selection deliberately keeps ids for connections
+  // deleted through other paths (existence is derived, not pruned). Using the
+  // raw set meant one externally deleted selected connection blocked
+  // hover-based reveal forever — every later click highlighted a row the list
+  // would never page to.
+  const selected = connectionListStore.selectedExistingConnectionIds;
   // A single selected connection is what a shift+click produces; a multi-select
   // made in the list needs no revealing.
-  if (ids.size === 1) {
-    revealConnection([...ids][0]);
+  if (selected.length === 1) {
+    revealConnection(selected[0]);
     return;
   }
   // A plain click in the viewer only HIGHLIGHTS, so hover has to reveal too —

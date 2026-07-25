@@ -485,7 +485,7 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **Plain click highlights, shift+click selects.** A plain click must do *something* on a line. — *"hovers a connection on a plain click…"*
 - [ ] **Timelapse inverts the objects-win rule.** Track segments are the visual there and the annotation dots sit under them, so a segment almost always crosses a dot; without the inversion, clicking a track did nothing at all. Normal mode keeps objects winning. — *"prefers the connection over an object in timelapse mode"*, *"still prefers the object outside timelapse mode"*
 - [ ] **A row click navigates + highlights, never selects.** — *"navigates and highlights without selecting"*
-- [ ] **Reveal reacts to hover as well as selection**, and selection wins. — *"reveals on hover, not only on selection"*
+- [ ] **Reveal reacts to hover as well as selection**, and selection wins — but only an *existing* selection. Selection deliberately keeps ids for connections deleted elsewhere, so priority based on the raw set let one deleted selection block hover reveal forever. — *"reveals on hover, not only on selection"*, *"ignores a deleted selection when revealing on hover"*
 - [ ] **Navigation frames both endpoints, with the signed delta.** — *"passes the SIGNED endpoint delta…"*
 
 ### Cost
