@@ -186,6 +186,39 @@ describe("ConnectionList", () => {
     h.state.trackRows = [];
   });
 
+  // Regression: gating only the row getters left scopedCount consuming
+  // scopedConnections, whose scopeAnnotationIds scans annotationsForIteration
+  // for the dynamic scopes. On a 700K-object dataset that is a full scan on
+  // every XY/Z/Time scrub, from a tab the user is not even looking at.
+  it("does not read the scope getters while the tab is hidden", () => {
+    let scopeReads = 0;
+    Object.defineProperty(h.state, "scopedConnections", {
+      configurable: true,
+      get() {
+        scopeReads++;
+        return [];
+      },
+    });
+    Object.defineProperty(h.state, "selectedInScopeConnectionIds", {
+      configurable: true,
+      get() {
+        scopeReads++;
+        return [];
+      },
+    });
+
+    mountComponent(false);
+    expect(scopeReads).toBe(0);
+
+    mountComponent(true);
+    expect(scopeReads).toBeGreaterThan(0);
+
+    delete (h.state as any).scopedConnections;
+    delete (h.state as any).selectedInScopeConnectionIds;
+    h.state.scopedConnections = [];
+    h.state.selectedInScopeConnectionIds = [];
+  });
+
   it("explains an empty list differently for each scope", () => {
     expect(mountComponent().vm.emptyMessage).toContain("no connections");
 

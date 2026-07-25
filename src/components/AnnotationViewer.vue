@@ -2319,27 +2319,34 @@ function selectAnnotations(selectAnnotation: IGeoJSAnnotation) {
   const selected = getSelectedAnnotationsFromAnnotation(selectAnnotation);
   const selectedIds = selected.map((a) => a.id);
 
-  // Connections are only selectable by CLICK, and only when the click hit no
-  // annotation. Two deliberate rules:
-  //  - annotations win, so a line crossing an object never steals its click;
-  //  - drag/lasso never selects connections — a box select is for objects, and
-  //    letting it grab lines would make every one of them ambiguous.
-  if (
-    selectedIds.length === 0 &&
-    selectAnnotation.type() === AnnotationShape.Point
-  ) {
+  // Connections are only selectable by CLICK — drag/lasso never selects them,
+  // because a box select is for objects and letting it grab lines would make
+  // every one of them ambiguous.
+  if (selectAnnotation.type() === AnnotationShape.Point) {
     const clickPosition = selectAnnotation.coordinates()[0];
     const connectionId = clickPosition
       ? findConnectionIdAtPoint(clickPosition)
       : null;
-    if (connectionId) {
+    // Objects normally win, so a line crossing an object never steals its
+    // click. Timelapse mode inverts that for the same reason the hover path
+    // does: the track segments are the visual and the annotation dots sit
+    // underneath, so a segment almost always overlaps one and object-first
+    // would make most track links unselectable. Keep the two paths in step —
+    // this rule has to hold for shift+click and the select tool, not just for
+    // plain-click highlighting.
+    const connectionWins =
+      connectionId && (selectedIds.length === 0 || showTimelapseMode.value);
+    if (connectionWins) {
       connectionListStore.setSelectedConnectionIds([connectionId]);
       props.interactionLayer.removeAnnotation(selectAnnotation);
       return;
     }
     // Clicking empty space clears the connection selection, matching how
     // clicking away deselects annotations.
-    if (connectionListStore.selectedConnectionIds.size > 0) {
+    if (
+      selectedIds.length === 0 &&
+      connectionListStore.selectedConnectionIds.size > 0
+    ) {
       connectionListStore.setSelectedConnectionIds([]);
     }
   }

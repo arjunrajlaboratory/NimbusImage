@@ -253,8 +253,12 @@ const rows = computed(() =>
 const tracks = computed(() =>
   props.isActive ? connectionListStore.trackRows : [],
 );
-const scopedCount = computed(
-  () => connectionListStore.scopedConnections.length,
+// Gated for the same reason as the rows: scopedConnections resolves
+// scopeAnnotationIds, which scans every annotation for the dynamic scopes, so
+// an ungated read is a full-dataset scan on every XY/Z/Time scrub from a tab
+// nobody is looking at.
+const scopedCount = computed(() =>
+  props.isActive ? connectionListStore.scopedConnections.length : 0,
 );
 const hoveredId = computed(() => connectionListStore.hoveredConnectionId);
 const selectedCount = computed(
@@ -262,8 +266,8 @@ const selectedCount = computed(
 );
 // The list's bulk delete acts only on rows it is actually showing, so the
 // button's count must match — see selectedInScopeConnectionIds.
-const selectedInScopeCount = computed(
-  () => connectionListStore.selectedInScopeConnectionIds.length,
+const selectedInScopeCount = computed(() =>
+  props.isActive ? connectionListStore.selectedInScopeConnectionIds.length : 0,
 );
 const selectedAnnotationCount = computed(
   () => annotationStore.selectedAnnotationIds.size,

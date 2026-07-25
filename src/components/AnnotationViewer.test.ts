@@ -1386,6 +1386,40 @@ describe("AnnotationViewer", () => {
         expect(rebuildsOnSelect).toBeGreaterThan(0);
       });
 
+      // The timelapse precedence inversion must apply to SELECTION too, not
+      // only to plain-click highlighting: shift+click and the select tool go
+      // through selectAnnotations, and a track segment almost always overlaps
+      // a dot, so without this most timelapse connections cannot be selected.
+      it("selects the connection over an object in timelapse mode", () => {
+        mockedStore.showTimelapseMode = true;
+        mountWithOverlappingObjectAndConnection();
+        connectionListStore.setSelectedConnectionIds([]);
+
+        (wrapper.vm as any).selectAnnotations({
+          type: () => "point",
+          coordinates: () => [{ x: 10, y: 20 }],
+        });
+
+        expect([...connectionListStore.selectedConnectionIds]).toEqual(["c1"]);
+        // The object must NOT also be selected — the mocked store uses the ADD
+        // selection type, so that path calls selectAnnotations.
+        expect(mockedAnnotationStore.selectAnnotations).not.toHaveBeenCalled();
+      });
+
+      it("still selects the object outside timelapse mode", () => {
+        mockedStore.showTimelapseMode = false;
+        mountWithOverlappingObjectAndConnection();
+        connectionListStore.setSelectedConnectionIds([]);
+
+        (wrapper.vm as any).selectAnnotations({
+          type: () => "point",
+          coordinates: () => [{ x: 10, y: 20 }],
+        });
+
+        expect(connectionListStore.selectedConnectionIds.size).toBe(0);
+        expect(mockedAnnotationStore.selectAnnotations).toHaveBeenCalled();
+      });
+
       it("skips a connection whose centroid is missing rather than drawing NaN", () => {
         setupTwoDisplayedAnnotations();
         (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
