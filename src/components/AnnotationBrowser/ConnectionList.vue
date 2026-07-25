@@ -339,14 +339,29 @@ async function revealConnection(connectionId: string) {
 
 function revealCurrentSelection() {
   const ids = connectionListStore.selectedConnectionIds;
-  // A single selected connection is what a viewer click produces; a
-  // multi-select made in the list needs no revealing.
+  // A single selected connection is what a shift+click produces; a multi-select
+  // made in the list needs no revealing.
   if (ids.size === 1) {
     revealConnection([...ids][0]);
+    return;
+  }
+  // A plain click in the viewer only HIGHLIGHTS, so hover has to reveal too —
+  // otherwise clicking a line highlights a row the user cannot see. Safe to do
+  // on hover: a row hovered in the list is by definition already on the current
+  // page and on screen, so both the paging and the scroll are no-ops there.
+  const hovered = connectionListStore.hoveredConnectionId;
+  if (hovered) {
+    revealConnection(hovered);
   }
 }
 
-watch(() => connectionListStore.selectedConnectionIds, revealCurrentSelection);
+watch(
+  [
+    () => connectionListStore.selectedConnectionIds,
+    () => connectionListStore.hoveredConnectionId,
+  ],
+  revealCurrentSelection,
+);
 
 // Retry on show. A selection made while this tab was closed could not be
 // revealed (the component had not mounted yet), and one made while it was
@@ -427,8 +442,13 @@ async function connectSelected() {
   try {
     const created = await connectionListStore.connectSelectedAnnotations();
     if (created.length === 0) {
-      connectError.value =
-        "No new connections were created — the selected objects are already connected.";
+      // Distinguish dedupe from failure: the API layer catches HTTP errors and
+      // returns null, which arrives here as an empty array, so an empty result
+      // alone would misreport a permissions or server error as "already
+      // connected". Only the store knows which happened.
+      connectError.value = connectionListStore.lastConnectSkippedAsDuplicate
+        ? "No new connections were created — the selected objects are already connected."
+        : "Failed to create connections. See console for details.";
     }
   } catch (error) {
     logError("Failed to connect selected annotations", error);

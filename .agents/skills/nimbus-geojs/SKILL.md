@@ -144,6 +144,15 @@ Full guide: `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`. Non-obvious c
 - **`geojsAnnotationFactory` mock ignores its args** — to read drawn features by id, `mockImplementation((shape, coords, options) => { const f = mockGeoJSAnnotation(shape); if (options) f.options(options); return f; })`.
 - **`@/utils/annotation` is mocked with hand-copied pure helpers** (importing the real module OOMs the file). If the component starts using a new exported helper, add it to the mock or you get "No export defined on the mock".
 - `layerSliceIndexes` is a constant `vi.fn` by default; `mockImplementation(() => ({ zIndex: mockedStore.z, ... }))` to make the displayed set turn over per frame.
+- **`geojs.util` geometry is stubbed with fixed return values, so a hit test never hits by default.** `distance2dToLineSquared` returns **100** and `pointInPolygon` returns **false**. A line hit test compares against a squared tolerance (connections use `6 px`, i.e. 36), so 100 never matches and the test fails with a symptom that looks like a product bug — the code under test appears to find nothing. Set it per test:
+
+  ```ts
+  (geojs.util.distance2dToLineSquared as any).mockReturnValue(1);   // "on the line"
+  (geojs.util.distance2dToLineSquared as any).mockReturnValue(100); // "nowhere near"
+  ```
+
+  Reset it in the same test when you assert both a hit and a miss. Cost three failed debugging attempts chasing hit-test math that was already correct.
+- **`mockGeoJSAnnotation` does not derive `coordinates()` from the `vertices` option.** A feature built by the draw path has the right `options()` but returns nothing useful from `coordinates()`, so anything geometric (hit tests, on-screen checks) sees an empty segment. Override it: `feature.coordinates = () => [{x:0,y:0},{x:1000,y:1000}]`.
 
 ## Related
 

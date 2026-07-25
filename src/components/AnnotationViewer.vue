@@ -17,13 +17,6 @@
       @color-selected="showColorDialog = true"
       @deselect-all="handleDeselectAll"
     />
-    <!-- Keyed off connections that still exist, so a bulk delete elsewhere
-         (the Delete connections dialog, delete-all-timelapse) can't leave this
-         panel open for a link that is gone. -->
-    <connection-action-panel
-      v-if="selectedExistingConnectionCount > 0"
-      :stacked="selectedAnnotationIds.size > 0"
-    />
 
     <tag-selection-dialog
       v-model:show="showTagDialog"
@@ -161,7 +154,6 @@ import { NoOutput, readManualInputOr } from "@/pipelines/computePipeline";
 
 import AnnotationContextMenu from "@/components/AnnotationContextMenu.vue";
 import AnnotationActionPanel from "@/components/AnnotationActionPanel.vue";
-import ConnectionActionPanel from "@/components/ConnectionActionPanel.vue";
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 
@@ -346,9 +338,6 @@ const selectedConnectionIds = computed(
 );
 const hoveredConnectionId = computed(
   () => connectionListStore.hoveredConnectionId,
-);
-const selectedExistingConnectionCount = computed(
-  () => connectionListStore.selectedExistingConnectionIds.length,
 );
 const shouldDrawAnnotations = computed((): boolean => store.drawAnnotations);
 const shouldDrawConnections = computed(
@@ -1500,10 +1489,17 @@ function drawTimelapseTrack(
             ? candidate.childId
             : candidate.parentId) === otherId,
       );
+      // Selected wins, then hovered, then the first. Without the hovered
+      // branch, hovering a later duplicate's row triggered a full redraw whose
+      // segment neither widened nor carried that connection's id.
       const representative =
         pairConnections.find(({ id }) =>
           connectionListStore.isConnectionSelected(id),
-        ) ?? connection;
+        ) ??
+        pairConnections.find(
+          ({ id }) => id === connectionListStore.hoveredConnectionId,
+        ) ??
+        connection;
 
       const points = [
         unrolledCentroids[annotation.id],

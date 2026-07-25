@@ -229,6 +229,17 @@ export class ConnectionList extends VuexModule {
     this.itemsPerPage = itemsPerPage;
   }
 
+  /**
+   * True when the last Connect selected produced no connections *because the
+   * pairs already existed*, as opposed to because the request failed.
+   */
+  lastConnectSkippedAsDuplicate: boolean = false;
+
+  @Mutation
+  public setLastConnectSkippedAsDuplicate(value: boolean) {
+    this.lastConnectSkippedAsDuplicate = value;
+  }
+
   @Mutation
   public setHoveredConnectionId(id: string | null) {
     this.hoveredConnectionId = id;
@@ -330,6 +341,11 @@ export class ConnectionList extends VuexModule {
       tags: [TIMELAPSE_CONNECTION_TAG],
       existingConnections: annotation.annotationConnections,
     });
+    // Empty bases means every pair was already connected — that is the ONLY
+    // way to conclude "nothing to do". The API layer swallows HTTP failures
+    // and returns null, which becomes [], so an empty *result* cannot be
+    // distinguished from dedupe and must not be reported as such.
+    this.setLastConnectSkippedAsDuplicate(bases.length === 0);
     return await annotation.createConnectionsFromBases(bases);
   }
 }

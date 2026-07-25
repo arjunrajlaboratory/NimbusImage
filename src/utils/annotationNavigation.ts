@@ -101,10 +101,10 @@ export function goToConnection(parentId: string, childId: string) {
     frameCameraInfo(
       store.cameraInfo,
       midpoint,
-      Math.abs(parent!.centroid.x - child!.centroid.x) *
-        CONNECTION_FRAME_PADDING,
-      Math.abs(parent!.centroid.y - child!.centroid.y) *
-        CONNECTION_FRAME_PADDING,
+      // Signed delta: frameCameraInfo projects it onto the camera axes, and
+      // under rotation the sign changes the result.
+      (child!.centroid.x - parent!.centroid.x) * CONNECTION_FRAME_PADDING,
+      (child!.centroid.y - parent!.centroid.y) * CONNECTION_FRAME_PADDING,
     ),
   );
   annotationStore.setHoveredAnnotationId(target.id);

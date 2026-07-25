@@ -121,6 +121,7 @@ beforeEach(() => {
   h.state.canConnectSelected = false;
   h.state.connectSelectedTimeTies = [];
   h.state.selectedInScopeConnectionIds = [];
+  h.state.lastConnectSkippedAsDuplicate = false;
   h.state.itemsPerPage = 50;
   h.state.trackRows = [];
   h.state.isTrackExpanded = () => false;
@@ -343,10 +344,25 @@ describe("ConnectionList", () => {
 
   it("reports when connecting produced nothing because links already existed", async () => {
     h.state.canConnectSelected = true;
+    // The store flags dedupe explicitly — an empty result alone cannot mean
+    // "already connected", because the API layer turns HTTP failures into [].
+    h.state.lastConnectSkippedAsDuplicate = true;
     h.connectSelectedAnnotations.mockResolvedValue([]);
     const wrapper = mountComponent();
     await wrapper.vm.connectSelected();
     expect(wrapper.vm.connectError).toContain("already connected");
+  });
+
+  // Regression: a failed batch POST returns [] via the API layer's catch, and
+  // used to be reported to the user as successful deduplication.
+  it("reports an empty result as a failure when it was not dedupe", async () => {
+    h.state.canConnectSelected = true;
+    h.state.lastConnectSkippedAsDuplicate = false;
+    h.connectSelectedAnnotations.mockResolvedValue([]);
+    const wrapper = mountComponent();
+    await wrapper.vm.connectSelected();
+    expect(wrapper.vm.connectError).toContain("Failed to create connections");
+    expect(wrapper.vm.connectError).not.toContain("already connected");
   });
 
   it("clears the error when connecting succeeds", async () => {

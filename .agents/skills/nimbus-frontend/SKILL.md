@@ -545,6 +545,18 @@ Before claiming a frontend change done:
 
 Component-level test patterns (AnnotationViewer harness, GeoJS mocks): see the nimbus-geojs skill and `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`.
 
+### A mock that returns a fixed value can fail your test for the wrong reason
+
+Shared mocks in this repo return constants chosen for the tests that existed when they were written, and a new test inherits them silently. The failure looks like a bug in the code under test, not in the harness.
+
+- `geojs.util.distance2dToLineSquared` returns **100** and `pointInPolygon` returns **false** in `AnnotationViewer.test.ts`. Any line hit test compares against a squared tolerance (36 for the 6 px connection tolerance), so it can never match until the test sets `mockReturnValue(1)`.
+- `mockGeoJSAnnotation` doesn't derive `coordinates()` from the `vertices` option, so a feature built by the real draw path has correct `options()` and no usable geometry.
+- `geojsAnnotationFactory` drops its options argument unless you re-forward it — assertions on a feature's constructed `style` see `undefined`.
+
+Before concluding "the code doesn't work", check what the relevant mock actually returns. Equally: when a component test needs a *component* to do something, prefer asserting the side effect the component owns over re-deriving geometry through the mock.
+
+**Unmount components that register global listeners.** A wrapper left mounted by an earlier test keeps its `window` listener attached, so the next test's dispatch fires it too and a spy is called twice. Track the wrapper and unmount it in `afterEach`. If you see "expected 1 call, got 2", suspect a leaked mount before suspecting the code — and then ask whether the *product* can also mount that component more than once, because that is the same bug in production.
+
 ## Codebase Documentation References
 
 - Vuetify 4 migration details: read `codebaseDocumentation/VUETIFY4_MIGRATION.md`

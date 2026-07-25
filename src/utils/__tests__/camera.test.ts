@@ -242,6 +242,38 @@ describe("frameCameraInfo", () => {
     );
   });
 
+  // The span is a signed VECTOR, not absolute extents. On a rotated
+  // non-square viewport the two diagonals project very differently, so taking
+  // |dx|,|dy| collapses two different cases into one and under-scales.
+  it("distinguishes opposite-signed spans on a rotated non-square viewport", () => {
+    // A 20x10 viewport rotated 45 degrees: long axis along (1,1), short along
+    // (-1,1). Corners are listed in order, so the edge vectors come out as
+    // u = (14.14, 14.14) with |u| = 20 and v = (-7.07, 7.07) with |v| = 10.
+    const h = 10 / Math.SQRT2;
+    const w = 20 / Math.SQRT2;
+    const rotated: ICameraInfo = {
+      center: { x: 0, y: 0 },
+      zoom: 5,
+      rotate: Math.PI / 4,
+      gcsBounds: [
+        { x: (-w + h) / 2, y: (-w - h) / 2 },
+        { x: (w + h) / 2, y: (w - h) / 2 },
+        { x: (w - h) / 2, y: (w + h) / 2 },
+        { x: (-w - h) / 2, y: (-w + h) / 2 },
+      ],
+    };
+
+    // (23, 11) lies mostly along the LONG axis: needs ~1.20x.
+    const alongLong = frameCameraInfo(rotated, { x: 0, y: 0 }, 23, 11);
+    // (-23, 11) lies mostly along the SHORT axis: needs ~2.40x — twice as
+    // much. With absolute values both would compute as the first case.
+    const alongShort = frameCameraInfo(rotated, { x: 0, y: 0 }, -23, 11);
+
+    expect(rotated.zoom - alongLong.zoom).toBeCloseTo(Math.log2(1.2), 1);
+    expect(rotated.zoom - alongShort.zoom).toBeCloseTo(Math.log2(2.4), 1);
+    expect(alongShort.zoom).toBeLessThan(alongLong.zoom);
+  });
+
   it("preserves rotation rather than rebuilding an axis-aligned box", () => {
     const info = makeCameraInfo();
     expect(frameCameraInfo(info, { x: 100, y: 100 }, 40, 10).rotate).toBe(
