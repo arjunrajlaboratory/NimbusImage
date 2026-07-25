@@ -17,6 +17,10 @@
       @color-selected="showColorDialog = true"
       @deselect-all="handleDeselectAll"
     />
+    <connection-action-panel
+      v-if="selectedConnectionIds.size > 0"
+      :stacked="selectedAnnotationIds.size > 0"
+    />
 
     <tag-selection-dialog
       v-model:show="showTagDialog"
@@ -51,6 +55,7 @@ import {
 } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
+import connectionListStore from "@/store/connectionList";
 import propertiesStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import lineScanStore from "@/store/lineScan";
@@ -60,6 +65,21 @@ import { snapCoordinates } from "@/utils/itk";
 
 import { throttle, debounce } from "lodash";
 const THROTTLE = 100;
+
+// Highlight for the connection selected in the Connections tab / by clicking a
+// line. Bright and distinct from both the per-track colors (hash-derived) and
+// the red time-jump lines, so a selected link reads at a glance.
+const CONNECTION_SELECTED_COLOR = "#00e5ff";
+
+// The unselected appearance of a normal-mode connection line. These values
+// reproduce GeoJS's own line-annotation defaults (blue, width 3), which is what
+// connections rendered with before they became restyleable — so restyling an
+// untouched line is a visual no-op.
+const CONNECTION_BASE_STYLE = {
+  strokeColor: "#0000ff",
+  strokeWidth: 3,
+  strokeOpacity: 1,
+};
 
 // Incremental draw (clearOldAnnotations): GeoJS removeAnnotation is ~O(n) per
 // call, so when more than this fraction of drawn features must be removed (e.g. a
@@ -123,6 +143,7 @@ import {
   shouldRetainFeature,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
+import { findConnectedComponents } from "@/utils/connections";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
   mouseStateToSamPrompt,
@@ -132,6 +153,7 @@ import { NoOutput, readManualInputOr } from "@/pipelines/computePipeline";
 
 import AnnotationContextMenu from "@/components/AnnotationContextMenu.vue";
 import AnnotationActionPanel from "@/components/AnnotationActionPanel.vue";
+import ConnectionActionPanel from "@/components/ConnectionActionPanel.vue";
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 
@@ -194,31 +216,6 @@ function filterAnnotations<T extends TAnnotationOrStub>(
     }
   }
   return output;
-}
-
-// Custom class to ensure type safety for the parent map
-class ParentMap {
-  private map = new Map<string, string>();
-
-  set(key: string, value: string) {
-    this.map.set(key, value);
-  }
-
-  get(key: string): string {
-    const value = this.map.get(key);
-    if (value === undefined) {
-      throw new Error(`Key not found in ParentMap: ${key}`);
-    }
-    return value;
-  }
-
-  has(key: string): boolean {
-    return this.map.has(key);
-  }
-
-  forEach(callback: (value: string, key: string) => void) {
-    this.map.forEach(callback);
-  }
 }
 
 // ---- Props ----
@@ -335,6 +332,12 @@ const showAnnotationsFromHiddenLayers = computed(
 const hoveredAnnotationId = computed(() => annotationStore.hoveredAnnotationId);
 const selectedAnnotationIds = computed(
   () => annotationStore.selectedAnnotationIds,
+);
+const selectedConnectionIds = computed(
+  () => connectionListStore.selectedConnectionIds,
+);
+const hoveredConnectionId = computed(
+  () => connectionListStore.hoveredConnectionId,
 );
 const shouldDrawAnnotations = computed((): boolean => store.drawAnnotations);
 const shouldDrawConnections = computed(
@@ -1230,62 +1233,6 @@ function drawNewConnections(
   }
 }
 
-function findConnectedComponents(
-  connections: IAnnotationConnection[],
-): { annotations: Set<string>; connections: IAnnotationConnection[] }[] {
-  const parent = new ParentMap();
-
-  function find(x: string): string {
-    if (!parent.has(x)) {
-      parent.set(x, x);
-      return x;
-    }
-    const currentParent = parent.get(x);
-    if (currentParent === x) {
-      return x;
-    }
-    const root = find(currentParent);
-    if (root !== currentParent) {
-      parent.set(x, root);
-    }
-    return root;
-  }
-
-  function union(x: string, y: string): void {
-    parent.set(find(x), find(y));
-  }
-
-  connections.forEach((conn) => {
-    union(conn.parentId, conn.childId);
-  });
-
-  const components = new Map<
-    string,
-    {
-      annotations: Set<string>;
-      connections: IAnnotationConnection[];
-    }
-  >();
-
-  parent.forEach((_, node) => {
-    const root = find(node);
-    if (!components.has(root)) {
-      components.set(root, {
-        annotations: new Set(),
-        connections: [],
-      });
-    }
-    components.get(root)!.annotations.add(node);
-  });
-
-  connections.forEach((conn) => {
-    const root = find(conn.parentId);
-    components.get(root)!.connections.push(conn);
-  });
-
-  return Array.from(components.values());
-}
-
 function getDisplayedAnnotationIdsAcrossTime(): Set<string> {
   const totalAnnotationIdsSet: Set<string> = new Set();
   for (const layer of validLayers.value) {
@@ -1508,16 +1455,28 @@ function drawTimelapseTrack(
       const isTimeJump = timeDiff > 1;
 
       const isBeforeCurrent = annotation.location.Time <= currentTime;
+      const isSelected = connectionListStore.isConnectionSelected(
+        connection.id,
+      );
       const line = geojsAnnotationFactory(AnnotationShape.Line, points, {
         style: {
-          strokeColor: isTimeJump ? "#ff6b6b" : color,
-          strokeWidth: isBeforeCurrent ? 3 : 6,
-          strokeOpacity: isTimeJump ? 0.7 : 1,
+          strokeColor: isSelected
+            ? CONNECTION_SELECTED_COLOR
+            : isTimeJump
+              ? "#ff6b6b"
+              : color,
+          strokeWidth: (isBeforeCurrent ? 3 : 6) + (isSelected ? 3 : 0),
+          strokeOpacity: isTimeJump && !isSelected ? 0.7 : 1,
           lineDash: isTimeJump ? [5, 5] : undefined,
         },
       });
 
       if (line) {
+        // Tag the segment with its connection so a click resolves to exactly
+        // that link (the timelapse layer draws one line per connection, not one
+        // polyline per track). Without this, track segments are unclickable.
+        line.options("isConnection", true);
+        line.options("girderId", connection.id);
         lines.push(line);
       }
     }
@@ -1800,9 +1759,41 @@ function restyleAnnotations() {
           )
         : getAnnotationStyle(girderId, customColor, layer?.color);
       geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
+    } else if (girderId && isConnection) {
+      // Normal-mode connection lines are restyled in place. (Timelapse track
+      // lines are rebuilt on every draw instead, so they pick up the selection
+      // at build time in drawTimelapseTrack.)
+      geoJSAnnotation.options(
+        "style",
+        Object.assign(
+          {},
+          style,
+          getConnectionStyle(
+            connectionListStore.isConnectionSelected(girderId),
+            girderId === connectionListStore.hoveredConnectionId,
+          ),
+        ),
+      );
     }
   }
   props.annotationLayer.draw();
+}
+
+function getConnectionStyle(isSelected: boolean, isHovered: boolean) {
+  if (isSelected) {
+    return {
+      strokeColor: CONNECTION_SELECTED_COLOR,
+      strokeWidth: 6,
+      strokeOpacity: 1,
+    };
+  }
+  // Every branch must set strokeColor AND strokeWidth: restyle merges over the
+  // feature's existing style, so a branch that omits strokeColor would leave a
+  // deselected line stuck on the selection highlight.
+  return {
+    ...CONNECTION_BASE_STYLE,
+    strokeWidth: isHovered ? 5 : CONNECTION_BASE_STYLE.strokeWidth,
+  };
 }
 
 // C4: restyle iterates every drawn feature and redraws the layer, so rapid
@@ -1824,6 +1815,67 @@ function pointNearPoint(
   return (
     pointDistance(selectionPosition, annotationPosition) < annotationRadius
   );
+}
+
+// Click tolerance for connection lines, in display pixels. Deliberately not
+// routed through pointNearLine: that helper compares a *squared* distance
+// against an unsquared width, so its effective tolerance shrinks as you zoom
+// out and connection lines become unclickable. Existing callers depend on that
+// behavior, so connections get their own correct comparison instead.
+const CONNECTION_CLICK_TOLERANCE_PX = 6;
+
+function pointNearConnectionLine(
+  position: IGeoJSPosition,
+  linePoints: IGeoJSPosition[],
+  unitsPerPixel: number,
+): boolean {
+  const tolerance = CONNECTION_CLICK_TOLERANCE_PX * unitsPerPixel;
+  const toleranceSquared = tolerance * tolerance;
+  for (let i = 0; i < linePoints.length - 1; i++) {
+    if (
+      geojs.util.distance2dToLineSquared(
+        position,
+        linePoints[i],
+        linePoints[i + 1],
+      ) < toleranceSquared
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The connection whose drawn line is under `position`, or null.
+ *
+ * Timelapse mode draws its own connection lines on a separate layer; when it is
+ * on, those are what the user sees, so search it first.
+ */
+function findConnectionIdAtPoint(position: IGeoJSPosition): string | null {
+  const unitsPerPixel = getMapUnitsPerPixel();
+  const layers = showTimelapseMode.value
+    ? [props.timelapseLayer, props.annotationLayer]
+    : [props.annotationLayer];
+  for (const layer of layers) {
+    const geoAnnotations = layer.annotations();
+    for (let i = 0; i < geoAnnotations.length; i++) {
+      const geoJSAnnotation = geoAnnotations[i];
+      const { girderId, isConnection } = geoJSAnnotation.options();
+      if (!isConnection || !girderId) {
+        continue;
+      }
+      if (
+        pointNearConnectionLine(
+          position,
+          geoJSAnnotation.coordinates(),
+          unitsPerPixel,
+        )
+      ) {
+        return girderId;
+      }
+    }
+  }
+  return null;
 }
 
 function pointNearLine(
@@ -2174,6 +2226,31 @@ function selectAnnotations(selectAnnotation: IGeoJSAnnotation) {
   }
   const selected = getSelectedAnnotationsFromAnnotation(selectAnnotation);
   const selectedIds = selected.map((a) => a.id);
+
+  // Connections are only selectable by CLICK, and only when the click hit no
+  // annotation. Two deliberate rules:
+  //  - annotations win, so a line crossing an object never steals its click;
+  //  - drag/lasso never selects connections — a box select is for objects, and
+  //    letting it grab lines would make every one of them ambiguous.
+  if (
+    selectedIds.length === 0 &&
+    selectAnnotation.type() === AnnotationShape.Point
+  ) {
+    const clickPosition = selectAnnotation.coordinates()[0];
+    const connectionId = clickPosition
+      ? findConnectionIdAtPoint(clickPosition)
+      : null;
+    if (connectionId) {
+      connectionListStore.setSelectedConnectionIds([connectionId]);
+      props.interactionLayer.removeAnnotation(selectAnnotation);
+      return;
+    }
+    // Clicking empty space clears the connection selection, matching how
+    // clicking away deselects annotations.
+    if (connectionListStore.selectedConnectionIds.size > 0) {
+      connectionListStore.setSelectedConnectionIds([]);
+    }
+  }
 
   switch (annotationSelectionType.value) {
     case AnnotationSelectionTypes.ADD:
@@ -4049,6 +4126,15 @@ watch(
 
 watch([hoveredAnnotationId, selectedAnnotationIds], () => {
   onAnnotationStateChanged();
+});
+
+// Connection selection/hover restyles normal-mode connection lines in place,
+// and rebuilds the timelapse layer (which bakes the selection in at draw time).
+watch([selectedConnectionIds, hoveredConnectionId], () => {
+  onAnnotationStateChanged();
+  if (showTimelapseMode.value) {
+    onTimelapseModeChanged();
+  }
 });
 
 // Rebuild spatial index asynchronously when displayed annotations change

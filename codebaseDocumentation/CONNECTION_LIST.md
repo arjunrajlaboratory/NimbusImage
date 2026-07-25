@@ -1,6 +1,6 @@
 # Connection List Feature Documentation
 
-> **Status:** Design spec — not yet implemented.
+> **Status:** Implemented.
 > **Issue:** [#554 — Probably need some sort of list view for connections](https://github.com/arjunrajlaboratory/NimbusImage/issues/554)
 
 ## Overview
@@ -300,13 +300,19 @@ Three rules:
   objects; letting it grab lines would make every box-select ambiguous.
 - **Annotations win.** Connections are tested only when no annotation was hit, so a
   line crossing an object never steals its click.
-- **Both layers.** Normal mode scans `annotationLayer`; timelapse mode scans
-  `timelapseLayer` through the existing `getTimelapseAnnotationsFromAnnotation` loop
-  (`:2135`), which already dispatches on an options flag (`isTimelapsePoint`) — add the
-  parallel connection branch.
+- **Both layers.** `findConnectionIdAtPoint` scans `timelapseLayer` first when timelapse
+  mode is on (those are the lines the user sees), then `annotationLayer`.
 
-Geometry comes from the existing `shouldSelectGeoJSAnnotation` (`:2090`), which already
-routes `AnnotationShape.Line` to `pointNearLine`.
+All of this hangs off the existing `selectAnnotations` entry point, so connections are
+selected by the **same gesture as objects**: shift+click on the canvas, or a click with
+the select tool active. No new interaction to learn.
+
+**Hit geometry uses a dedicated `pointNearConnectionLine`, not `pointNearLine`.** The
+existing helper compares a *squared* distance against an unsquared width
+(`AnnotationViewer.vue:1829`), so its effective tolerance shrinks as you zoom out —
+fine for the callers that depend on it, but it would make connection lines
+progressively unclickable. Connections get a correct squared comparison against an
+explicit `CONNECTION_CLICK_TOLERANCE_PX = 6`.
 
 In timelapse mode this means clicking a track segment selects exactly that link, and
 Delete cuts the track in two:
@@ -321,10 +327,19 @@ Delete cuts the track in two:
 
 ### 3. Styling
 
-`restyleAnnotations` (`:1774`) currently guards `if (girderId && !isConnection)`. Add
-the connection branch: selected → accent/thicker stroke, hovered → intermediate. The
-timelapse layer rebuilds its lines on every draw, so it reads `selectedConnectionIds`
-at build time instead of being restyled in place.
+`restyleAnnotations` (`:1774`) grows a connection branch: selected → cyan
+(`CONNECTION_SELECTED_COLOR`) at width 6, hovered → width 5, otherwise
+`CONNECTION_BASE_STYLE`. The timelapse layer rebuilds its lines on every draw, so it
+reads `selectedConnectionIds` at build time instead of being restyled in place.
+
+Two traps worth keeping in mind if you touch `getConnectionStyle`:
+
+- **Every branch must set both `strokeColor` and `strokeWidth`.** Restyle merges over
+  the feature's existing style, so a branch that omits `strokeColor` leaves a
+  deselected line stuck on the cyan highlight.
+- **`CONNECTION_BASE_STYLE` reproduces GeoJS's own line-annotation defaults** (blue
+  `#0000ff`, width 3). Connections previously had no explicit style at all, so matching
+  those values keeps an untouched line looking exactly as it did before.
 
 ### 4. Action panel
 
@@ -347,6 +362,12 @@ click also scrolls the corresponding row into view in the Connections tab.
 - **Dangling endpoint** (annotation deleted out from under a connection) → the row
   renders `⚠ missing` for that side and remains deletable. This must never throw —
   cleaning up exactly this kind of bad data is the point of the feature.
+
+  This is not hypothetical. The first real timelapse dataset checked
+  (`69f4eb65aaba948c2d7b9b24`) has **2,616 of 5,230 connection endpoints pointing at
+  annotations that no longer exist** — verified identically from the client store and
+  from MongoDB. Expect `⚠ missing` rows to be common in older datasets, and do not
+  mistake them for a rendering bug.
 - **Batch failures** surface through the existing `logError` / `sync` saving-state
   path. The store mutation is the source of truth; the list does not refetch.
 - **Dataset switch** resets `connectionList` state (mirroring `annotation.ts:427-432`)
@@ -356,29 +377,42 @@ click also scrolls the corresponding row into view in the Connections tab.
 
 ## Testing
 
-**Unit — `src/utils/connections.test.ts`**
+**Unit — `src/utils/__tests__/connections.test.ts`** (24 tests)
 
-- `findConnectedComponents`: branching tracks, cycles, singletons, empty input
-- `chainAnnotationsByTime`: ascending-time ordering; `parentId` = earlier;
-  tie → selection order; skip pairs already connected in either direction
+`findConnectedComponents` (chains, disjoint sets, branching, cycles, self-loops),
+`buildConnectionRows` (name vs. short-id label, stub endpoints, missing endpoints),
+`buildTrackRows` (grouping, time range, ordering, stable ids), `chainAnnotationsByTime`
+(ordering, `parentId` = earlier, tie → selection order, skip pairs already connected in
+either direction), `findTimeTies`.
 
-**Component — `ConnectionList.test.ts`, `ConnectionListRow.test.ts`**
+**Component — `ConnectionList.test.ts`** (13 tests)
 
-Follow the existing reactive-store-mock pattern used by `AnnotationList.test.ts`
-(see `FRONTEND_COMPONENT_TESTING.md`). Cover: scope switching, flat↔track toggle,
-dangling-endpoint rendering, Connect-selected guards and the tie caption.
+`vi.mock` factories are hoisted above every `const`, so the shared store mock is built
+inside `vi.hoisted` and each test mounts fresh rather than driving a reactive mock.
+Covers per-scope empty messages, navigation (including the dangling-endpoint fallback),
+batched delete, select-all, the tie caption, and all three `connectSelected` outcomes.
 
 **Regression — `AnnotationViewer.test.ts`**
 
-Moving `findConnectedComponents` out of the viewer must not change timelapse output.
-Add coverage before the move.
+The six pre-existing `findConnectedComponents` tests call the viewer's exposed binding,
+which now delegates to the shared util — they are the regression guard for the move. A
+new test asserts each timelapse track segment is tagged with its `girderId`; it was
+confirmed to fail when the tagging is removed.
 
-**Browser verification** (required before claiming done — `tsc`/lint/vitest green does
-not mean the UI works):
+**Browser verification performed** (`tsc`/lint/vitest green does not mean the UI works):
 
-- Small dataset (~54 connections) for correctness of rows, direction, and deletion
-- Large dataset (~4,983 connections) for list responsiveness and paging
-- Click a connection line in **both** normal and timelapse mode
+| Check | Result |
+|---|---|
+| 54-connection dataset: rows, labels, 1-based locations, direction | correct |
+| 4,983-connection dataset: `connectionRows` / `trackRows` build time | 6.7 ms / 6.1 ms |
+| Click a connection line (normal mode) | selects that link, 0 annotations |
+| Click a track segment (timelapse mode) | selects that link, highlights cyan |
+| Annotations win (click an endpoint object) | 2 objects, 0 connections |
+| Lasso over a connection | 48 objects, 0 connections |
+| Click empty space | connection selection cleared |
+| Deselect restores line style | back to `#0000ff` / 3 |
+| Connect selected → delete (round trip) | 54 → 55 → 54, confirmed in MongoDB |
+| Panel stacking with objects + connection selected | no overlap |
 
 ---
 

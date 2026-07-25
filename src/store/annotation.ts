@@ -62,6 +62,7 @@ import {
   type IStubFieldUpdate,
 } from "@/utils/annotationUpdate";
 import { logError } from "@/utils/log";
+import { TIMELAPSE_CONNECTION_TAG } from "./constants";
 import { stubPerf } from "@/utils/stubPerf";
 import { annotationLoadingTitle } from "@/utils/loadingLabels";
 import progress from "./progress";
@@ -1060,6 +1061,27 @@ export class Annotations extends VuexModule {
     return connections || [];
   }
 
+  // Create connections from explicit parent/child pairs. Unlike
+  // createAllConnections (which builds the full cross product of two id lists),
+  // this persists exactly the pairs it is given — used by the connection list's
+  // "Connect selected", which chains annotations in time order.
+  @Action
+  public async createConnectionsFromBases(
+    connectionBases: IAnnotationConnectionBase[],
+  ): Promise<IAnnotationConnection[]> {
+    if (!main.isLoggedIn || connectionBases.length === 0) {
+      return [];
+    }
+    sync.setSaving(true);
+    const connections =
+      await this.annotationsAPI.createMultipleConnections(connectionBases);
+    if (connections) {
+      this.addMultipleConnections(connections);
+    }
+    sync.setSaving(false);
+    return connections || [];
+  }
+
   @Action
   public async deleteAllConnections({
     parentIds,
@@ -1100,7 +1122,7 @@ export class Annotations extends VuexModule {
       return;
     }
     const connectionsToDelete = this.annotationConnections.filter(
-      (connection) => connection.tags.includes("Time lapse connection"),
+      (connection) => connection.tags.includes(TIMELAPSE_CONNECTION_TAG),
     );
     await this.deleteConnections(connectionsToDelete.map(({ id }) => id));
   }

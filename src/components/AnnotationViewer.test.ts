@@ -3395,6 +3395,63 @@ describe("AnnotationViewer", () => {
         expect(tLayer.draw).toHaveBeenCalled();
       });
 
+      // Track segments must carry their connection id, or clicking a segment
+      // cannot resolve to the link it represents and tracks stay uncuttable.
+      it("tags each track segment with its connection id", () => {
+        mockedStore.showTimelapseMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        const ann1 = makeAnnotation({
+          id: "a1",
+          channel: 0,
+          location: { XY: 0, Z: 0, Time: 0 },
+        });
+        const ann2 = makeAnnotation({
+          id: "a2",
+          channel: 0,
+          location: { XY: 0, Z: 0, Time: 1 },
+        });
+        mockedAnnotationStore.annotations = [ann1, ann2];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        // The factory mock ignores its args by default, so give each created
+        // feature a real options bag to read back.
+        (geojsAnnotationFactory as any).mockImplementation((shape: string) =>
+          mockGeoJSAnnotation(shape),
+        );
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const lineBatches = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((lines: any[]) =>
+            lines?.some((line: any) => line.options()?.isConnection),
+          );
+        expect(lineBatches.length).toBeGreaterThan(0);
+        const tagged = lineBatches
+          .flat()
+          .filter((line: any) => line.options().isConnection);
+        expect(tagged).toHaveLength(1);
+        expect(tagged[0].options().girderId).toBe("c1");
+      });
+
       it("filters connections by displayed annotations", () => {
         mockedStore.showTimelapseMode = true;
         const layer = makeLayer({ id: "l1", channel: 0, visible: true });
