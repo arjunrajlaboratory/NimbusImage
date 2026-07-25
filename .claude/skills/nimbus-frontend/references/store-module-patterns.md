@@ -182,6 +182,61 @@ async addMultiSourceMetadata(payload: IAddMultiSourceMetadataPayload) {
 
 Default to a bare `@Action` (log-and-return-null/false on failure) unless a caller specifically needs to branch on or display the failure reason. Reach for `rawError: true` only when the action throws on purpose.
 
+### Propagating counts as throwing
+
+An action does not need a `throw` of its own to need `rawError: true`. Any action that `await`s something that rejects — an API call, or another action — re-throws that rejection through its own decorator, which wraps it. `propertyStore.createProperty` has no `throw` anywhere in its body and still returned the `ERR_ACTION_ACCESS_UNDEFINED` blob:
+
+```typescript
+// Needs rawError: true — both awaits propagate on failure.
+@Action({ rawError: true })
+async createProperty(property: IAnnotationPropertyConfiguration) {
+  const newProperty = await this.propertiesAPI.createProperty(property); // rejects
+  if (newProperty) {
+    await this.setProperties([...this.properties, newProperty]); // also rejects
+  }
+  return newProperty;
+}
+```
+
+This is the blind spot that let a real defect through: an audit that greps action bodies for `throw` finds the deliberate throwers and misses every pure propagator. Grep for the *callers* that read a message instead (below).
+
+### Every boundary in the chain needs it
+
+`this.someOtherAction()` inside an `@Action` dispatches through the store again (these are dynamic modules), so it passes through that action's decorator too. An error therefore gets re-wrapped once per boundary it crosses, and **one missing `rawError` anywhere in the chain mangles the message** — fixing only the outermost or innermost action does nothing. The `create_property` chain crosses four:
+
+```
+createProperty → setProperties → updateConfigurationProperties → syncConfiguration
+(properties.ts)  (properties.ts)  (index.ts)                      (index.ts)
+```
+
+Chains cross module boundaries, so audit **every** `src/store/*.ts`, not just `index.ts`. A sweep limited to `index.ts` is what left `properties.ts` broken.
+
+### Deciding whether a caller actually needs the message
+
+`rawError: true` is safe to add — it never changes *whether* an action throws, only which error object escapes — but check the caller so the comment you write is true, and so you know the user impact:
+
+- **Renders it** → user-facing bug. `UserMenuLoginForm.vue` does `errorMessage.value = (error as Error).message` and shows it in a `v-alert`, so a failed `signUp` displayed the blob instead of "login already in use".
+- **Logs it** (`logError("...", error)`) → console/Sentry quality only.
+- **Shows generic text** ("See the console for details") → log quality only; the UI string is unaffected.
+
+One thing that looks like a gap but is not: `ServerStatus.vue` renders `sync.lastError.message`, yet the sync indicator was never affected by missing `rawError`. `setSaving(error)` is called from *inside* the action's own catch, so it receives the original error before any decorator wrapping. Don't "fix" that path.
+
+### Auditing
+
+```bash
+# 1. Bare @Action with a throw close below it — the deliberate throwers.
+#    Returns nothing as of this writing: every such action now has the flag,
+#    so any hit is a new one. Misses propagators (see above).
+grep -rn "@Action$" -A8 src/store/*.ts | grep "throw "
+
+# 2. Higher-signal, and catches propagators: callers that display a store
+#    error's message. Quote --include — zsh expands it bare and the command
+#    fails with "no matches found".
+grep -rn "as Error).message" src/ --include="*.vue"
+```
+
+Query 2 is the one that matters: trace each hit back through **every** action on the path and confirm each boundary is `{ rawError: true }`. Query 1 is a cheap supplement, not a substitute — it structurally cannot see the propagator case, which is how the last defect reached review.
+
 ### Testing the real dispatch path (not a mocked one)
 
 Most store tests mock `@/store`/`./index` entirely (see `aiPanel.test.ts`, `toolSuggestions.test.ts`, `MultiSourceConfiguration.test.ts`) because `Main` is heavy to construct. That's fine for testing *callers* of an action, but it can't catch a missing `rawError: true` — the mock just returns/throws whatever the test tells it to, bypassing vuex-module-decorators entirely.
@@ -203,6 +258,21 @@ async function messageOf(promise: Promise<unknown>): Promise<string> {
 const message = await messageOf(main.addMultiSourceMetadata({ ...payload }));
 expect(message).toBe("This operation needs 9.7 MB of storage, ...");
 ```
+
+Two setup details for these real-dispatch tests:
+
+**Getters and state on the accessor are non-configurable.** `vi.spyOn(main, "isLoggedIn", "get")` throws `TypeError: Cannot redefine property`, and `(main as any).girderUser = ...` throws `Cannot set property ... which has only a getter`. Set the underlying Vuex state instead:
+
+```typescript
+import store from "./root";
+function setLoggedIn(loggedIn: boolean) {
+  (store.state as any).main.girderUser = loggedIn ? { _id: "u1" } : null;
+}
+```
+
+Protected mutations are reachable for setup via a cast — `(main as any).setConfigurationImpl({ id, data })` — which is usually less work than driving the real load path.
+
+**Some actions can't be reached this way.** `signUp` builds its own `RestClient` internally, and `RestClient` assigns `post`/`get` as *own instance properties* in its constructor (not on the prototype), so there is no seam: `vi.spyOn(RestClient.prototype, "post")` doesn't exist to spy on, and mocking `@/girder` wholesale collides with `store/index.ts`'s module-level girder init. Don't sink time into it — verify that one by inspection and lean on the coverage of the sibling actions.
 
 ## Reference
 

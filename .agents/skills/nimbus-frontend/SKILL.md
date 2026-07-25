@@ -98,6 +98,42 @@ async doThing() {
 
 When writing a test for an action's thrown-error message, `expect(...).rejects.toThrow("substring")` is not a reliable regression check here: the wrapped error's message embeds the original error's `.stack` (which starts with `"Error: <original message>"`), so a substring match can pass even when `rawError` is missing. Assert the exact `.message` instead. See `src/store/index.test.ts` for the pattern (dispatches the real action instead of mocking `@/store`).
 
+Two traps that let this ship a real bug even after the rule above was documented:
+
+- **An action needs the flag if it merely *propagates*, not only if it contains `throw`.** Awaiting an API call or another action re-throws through your own decorator. `createProperty` has no `throw` and still emitted the blob — so a "grep action bodies for `throw`" audit misses exactly these.
+- **Errors get re-wrapped at every `@Action` boundary they cross, across modules.** `createProperty → setProperties → updateConfigurationProperties → syncConfiguration` is four boundaries; one bare `@Action` anywhere on the path mangles the message. Audit every `src/store/*.ts`, not just `index.ts`.
+
+See `references/store-module-patterns.md` for the audit commands, how to tell which callers actually display the message, and the vitest setup details (accessor getters are non-configurable — set `store.state.main.*` directly).
+
+### One Logical Change → One Config Write
+
+`syncConfiguration(key)` PUTs the **whole** key. So a caller that changes three fields by calling a single-field action three times issues three writes of the same key, and a rejection part-way through leaves the shared collection **partially updated while reporting failure** — the same false-reporting `rawError` exists to prevent, one level up. Two instances shipped before this was caught (`set_scale` writing `scales` up to 3×, `update_layer` writing `layers` 2× via `changeLayer` + `saveContrastInConfiguration`).
+
+Validate everything first, then write once:
+
+```typescript
+// BAD: validates and persists per field. An invalid tStep leaves pixelSize
+// already written — a partial update with no backend failure involved.
+if (input.pixelSize) await apply("pixelSize", input.pixelSize);
+if (input.tStep) await apply("tStep", input.tStep); // throws on a bad unit
+
+// GOOD: validate all → assign all → one sync
+const scales = {};
+if (input.pixelSize) scales.pixelSize = validate("pixelSize", input.pixelSize);
+if (input.tStep) scales.tStep = validate("tStep", input.tStep);
+await main.saveScalesInConfiguration({ scales, throwOnError: true });
+```
+
+Interleaved *validation* is the easier half to miss: it fails with no backend involvement at all, so it can't be caught by testing backend rejections. When adding a batch action, keep the singular one — the interactive UI edits one field at a time and legitimately wants it (`ScaleSettings.vue`).
+
+Existing in-codebase idioms for writing once:
+
+- `changeLayer({ ..., sync: false })` per item, then a single `syncConfiguration({ key: "layers", throwOnError: true })` — see `set_layer_visibility`.
+- A plural action that assigns all entries then syncs once — `saveScalesInConfiguration`, `setViewContrastOverrides`.
+- An optional `delta` merged into an existing action's single write — `saveContrastInConfiguration({ layerId, contrast, delta })`.
+
+Writes to genuinely *different* resources can't be merged (the configuration vs the dataset view are separate endpoints); say so at the call site rather than leaving it looking like an oversight.
+
 ### Watching Getters That Rebuild Their Return Object
 
 `watch(() => someGetter, cb, { deep: true })` on a getter that returns a **new object on every read** fires on every dependency touch — including dependencies the getter reads but that don't change the output (`deep: true` skips the value comparison entirely). This shipped a real bug: a deep watch on `currentFilters` cleared the selection on every Z-scrub because the getter read `z` unconditionally. tsc/lint/reasoning all passed; only the live app caught it.

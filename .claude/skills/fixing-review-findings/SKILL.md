@@ -43,6 +43,24 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | Stale selection driving bulk destructive actions | List/selection UIs with filters | Does the selected set survive a filter change and then feed a delete/tag/bulk action? |
 | Budget/lazy-mode bypass on select-all paths | Anything calling hydrate/fetch with a user-controlled id set | Is there a cap, or can one click request 700K items? |
 | Stale comments/tests describing pre-fix behavior | Wherever behavior changed | Grep for the old function contract in comments and test names |
+| Partial persistence: one change writing the same config key twice | Handlers that change several fields of one resource | All inputs validated *before* the first write? Two actions in the handler both syncing the same key? (see nimbus-frontend skill) |
+| Store action throws/propagates without `rawError: true` | Any `src/store/*.ts` | Audit **every** store module and the **whole** chain — errors re-wrap at each `@Action` boundary, and an action needs the flag when it merely propagates (no `throw` of its own) |
+
+When you generalize, check the *shape* of your sweep too, not just its target. A grep for `throw` in action bodies found the deliberate throwers and missed every pure propagator — so the sweep reported "clean" and the next Codex round flagged the one it missed. If a sweep comes back clean, ask what the query structurally cannot see.
+
+### Codex round mechanics
+
+Codex does **not** review on push. It reviews on PR open, on draft→ready, or on a `@codex review` comment — so pushing a fix and waiting will wait forever. Post the trigger comment (safe to do without asking if Codex has already reviewed that PR; otherwise ask first, since it's outward-facing).
+
+Its three response signals are easy to confuse when polling:
+
+| Signal | Meaning |
+|---|---|
+| 👀 on your trigger comment | Picked it up, working — **not** a verdict. Removed when done. |
+| 👍 | Reviewed, no suggestions. |
+| A plain PR comment ("Didn't find any major issues") | Also a clean result — arrives as an issue comment, *not* a review object with inline comments. |
+
+Poll for all three. Watching only for a new review object plus 👍 reports a false timeout when the answer arrived as a comment. Findings themselves come as inline review comments (`/pulls/{n}/comments`), not in the review body, which only holds boilerplate.
 
 ### 5. Gates before claiming done
 
