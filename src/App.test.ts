@@ -308,6 +308,14 @@ describe("App", () => {
     expect((wrapper.vm as any).filtersTooltip).toContain("(4 active filters)");
   });
 
+  it("filtersAriaLabel stays terse and gains the count when filters are on", () => {
+    let wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).filtersAriaLabel).toBe("Filters");
+    (filterStore as any).activeFilterCount = 2;
+    wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).filtersAriaLabel).toBe("Filters (2 active)");
+  });
+
   // -- Filter-count badge on the Filters button --
   it("renders no badge on the Filters button when no filter is active", () => {
     const wrapper = mountWithAppBar();
@@ -320,10 +328,12 @@ describe("App", () => {
     const badge = wrapper.find(".palette-ibtn-badge");
     expect(badge.exists()).toBe(true);
     expect(badge.text()).toBe("3");
-    // The badge belongs to the Filters button, not a neighbouring palette one.
-    expect(
-      badge.element.closest("button")?.getAttribute("aria-label"),
-    ).toContain("Filter objects");
+    // The badge belongs to the Filters button, not a neighbouring palette one,
+    // and the count is mirrored into the label so it is not hidden from
+    // assistive tech (aria-label overrides the button's rendered content).
+    expect(badge.element.closest("button")?.getAttribute("aria-label")).toBe(
+      "Filters (3 active)",
+    );
   });
 
   it("caps the badge at 9+ so it stays inside the icon button", () => {

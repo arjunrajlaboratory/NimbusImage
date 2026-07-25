@@ -205,7 +205,7 @@
                 type="button"
                 class="palette-ibtn"
                 :class="{ active: filtersPanel }"
-                :aria-label="filtersTooltip"
+                :aria-label="filtersAriaLabel"
                 @click.stop="togglePalette('filtersPanel')"
               >
                 <v-icon size="18">mdi-filter-variant</v-icon>
@@ -878,6 +878,16 @@ const filtersTooltip = computed(() => {
   return `${base} (${count} active filter${count === 1 ? "" : "s"})`;
 });
 
+// The aria-label stays terse to match the sibling palette buttons ("Object
+// list", "Snapshots", "Settings"); the descriptive sentence belongs in the
+// hover tooltip. It carries the count because aria-label overrides the
+// button's content, which would otherwise hide the badge from assistive tech.
+const filtersAriaLabel = computed(() =>
+  activeFilterCount.value === 0
+    ? "Filters"
+    : `Filters (${activeFilterCount.value} active)`,
+);
+
 const hasUncomputedProperties = computed(() => {
   const counts = propertyStore.uncomputedCountByProperty;
   for (const id in counts) {
@@ -1043,6 +1053,7 @@ defineExpose({
   routeName,
   activeFilterCount,
   filtersTooltip,
+  filtersAriaLabel,
   hasUncomputedProperties,
   filteredToursByCategory,
   filtersStacked,
@@ -1066,6 +1077,10 @@ defineExpose({
   flex: 0 0 auto;
 }
 
+/* Base tone of the palette cluster, deliberately theme-independent. The badge
+   below reuses it opaque as a separating ring, so the two must stay in sync. */
+$palette-cluster-tone: #0f1217;
+
 /* Cluster of palette-toggle icon buttons in the app bar.
    Pill-shaped group with hairline border; each button is a 32px circle. */
 .palette-cluster {
@@ -1075,7 +1090,7 @@ defineExpose({
   padding: 4px;
   margin-left: 12px;
   border-radius: 100px;
-  background: rgba(15, 18, 23, 0.55);
+  background: rgba($palette-cluster-tone, 0.55);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
@@ -1134,7 +1149,7 @@ defineExpose({
   min-width: 15px;
   height: 15px;
   padding: 0 3px;
-  border: 1.5px solid #0f1217;
+  border: 1.5px solid $palette-cluster-tone;
   border-radius: 8px;
   background: rgb(var(--v-theme-primary));
   color: rgb(var(--v-theme-on-primary));
