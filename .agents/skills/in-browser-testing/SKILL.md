@@ -9,12 +9,18 @@ description: "Use when verifying NimbusImage changes in a live browser tab (loca
 
 Multiple real bugs in this repo passed tsc, lint, all unit tests, and code reasoning — and only broke in the live app (pointer-events layering, deep-watch over-firing, HMR-corrupted store, background-tab false-passes). For any user-facing change, in-browser verification is a required gate, and it must be done in a way that can actually fail. The traps below each produced a false "it works" at least once.
 
-## The four false-pass traps
+## The five false-pass traps
 
 1. **Synthetic clicks lie.** `element.dispatchEvent(new MouseEvent('click'))` bypasses hit-testing, `pointer-events`, z-index, and overlays. A synthetic-click walkthrough once reported a tour "working" while real user clicks did nothing. Verify clickability with `document.elementFromPoint(cx, cy)` (is the intended element the topmost hit target?), then click with the real `computer` tool. Reserve synthetic dispatch for *driving* flows fast only after clickability is independently confirmed.
 2. **Background tabs lie.** A hidden tab pauses `requestAnimationFrame`, throttles `setTimeout` to ~1 Hz, and never composites — perf probes report 0 long tasks and event loops stall/time out. The tab must be foreground/visible for any timing or rendering claim. If a paced loop must survive a background tab, use busy-wait gaps (`while (performance.now() < end) {}`), not setTimeout.
 3. **A stale store lies.** Editing any `src/store/*.ts` while `pnpm run dev` runs breaks HMR (`[vuex] duplicate getter key`, annotations stuck at 0). Hard-reload the page after every store-module edit before trusting anything. (Component `.vue` edits HMR fine.)
 4. **A stale backend lies.** After backend plugin edits, `docker compose restart girder` does NOT load the new code (plugin is baked into the image) — new routes 404 while tox passes. Rebuild: `docker compose build girder && docker compose up -d girder`.
+5. **Screenshots lie about the image itself.** The tile layers are WebGL canvases without `preserveDrawingBuffer`, so a captured screenshot can show the image area **solid black** while the page renders it normally for the user — DOM overlays in the same shot look fine, which makes it read as "the image failed to load". Don't debug that; confirm pixels through GeoJS's own compositing instead:
+   ```js
+   const dataUrl = await map.screenshot(undefined, 'image/png');  // re-renders into a 2D canvas
+   // draw to an offscreen canvas, then getImageData → report max/mean channel value
+   ```
+   A non-zero max means the tiles are there. Note that a fluorescence dataset is *legitimately* near-black at fit-to-view zoom (sparse bright cells, `hist.max` pinned to 65535 by a few saturated pixels), so a low mean is not evidence of a bug either. Verify tile health from `statusCode`s in `read_network_requests` (`/tiles/zxy/` → 200) plus the layers' `idle`/`_imageUrls`, and verify overlays from live DOM state — not from the picture.
 
 ## Console handles (javascript_tool)
 
