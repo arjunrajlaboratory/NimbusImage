@@ -1517,6 +1517,12 @@ function drawTimelapseTrack(
       const isSelected = connectionListStore.isConnectionSelected(
         representative.id,
       );
+      // Hover must be honoured here too: the selection/hover watcher rebuilds
+      // this whole layer on a hover change, so styling from isSelected alone
+      // paid for a full redraw that produced no visible difference, while
+      // normal-mode connections do widen on hover.
+      const isHovered =
+        representative.id === connectionListStore.hoveredConnectionId;
       const line = geojsAnnotationFactory(AnnotationShape.Line, points, {
         style: {
           strokeColor: isSelected
@@ -1524,8 +1530,9 @@ function drawTimelapseTrack(
             : isTimeJump
               ? "#ff6b6b"
               : color,
-          strokeWidth: (isBeforeCurrent ? 3 : 6) + (isSelected ? 3 : 0),
-          strokeOpacity: isTimeJump && !isSelected ? 0.7 : 1,
+          strokeWidth:
+            (isBeforeCurrent ? 3 : 6) + (isSelected ? 3 : isHovered ? 2 : 0),
+          strokeOpacity: isTimeJump && !isSelected && !isHovered ? 0.7 : 1,
           lineDash: isTimeJump ? [5, 5] : undefined,
         },
       });

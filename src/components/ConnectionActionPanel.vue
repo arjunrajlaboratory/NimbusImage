@@ -66,6 +66,13 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key !== "Delete" && event.key !== "Backspace") {
     return;
   }
+  // Bare Delete/Backspace only. `mod+backspace` is already bound to "delete
+  // selected objects" (ImageViewer.vue), and clicking a connection row selects
+  // both endpoint objects AND the connection — so matching the modified combo
+  // here would make one keystroke fire two destructive operations at once.
+  if (event.metaKey || event.ctrlKey || event.altKey) {
+    return;
+  }
   const target = event.target as HTMLElement | null;
   if (
     target &&
