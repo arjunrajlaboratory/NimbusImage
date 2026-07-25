@@ -211,6 +211,37 @@ describe("frameCameraInfo", () => {
     expect((Math.min(...ys) + Math.max(...ys)) / 2).toBeCloseTo(400);
   });
 
+  // Under rotation the axis-aligned bounding box of gcsBounds is larger than
+  // the real viewport, so comparing against it under-scales and leaves an
+  // endpoint outside the view.
+  it("scales in the camera basis when the viewport is rotated", () => {
+    // A 45-degree-rotated square viewport: edges of length ~14.1 along the
+    // diagonals, but an axis-aligned bounding box of 20x20.
+    const rotated: ICameraInfo = {
+      center: { x: 0, y: 0 },
+      zoom: 3,
+      rotate: Math.PI / 4,
+      gcsBounds: [
+        { x: 0, y: -10 },
+        { x: 10, y: 0 },
+        { x: 0, y: 10 },
+        { x: -10, y: 0 },
+      ],
+    };
+    // A span along the diamond's EDGE direction (14, 14). Its endpoints
+    // (-7,-7) and (7,7) satisfy |x|+|y| = 14 > 10, so they sit outside the
+    // viewport and it must zoom out. The old axis-aligned test compared 14
+    // against the 20x20 bounding box and wrongly concluded it fit.
+    const framed = frameCameraInfo(rotated, { x: 0, y: 0 }, 14, 14);
+    expect(framed.zoom).toBeLessThan(rotated.zoom);
+
+    // A horizontal span of 20 reaches exactly the left/right vertices, so it
+    // genuinely fits and must NOT zoom out.
+    expect(frameCameraInfo(rotated, { x: 0, y: 0 }, 20, 0).zoom).toBe(
+      rotated.zoom,
+    );
+  });
+
   it("preserves rotation rather than rebuilding an axis-aligned box", () => {
     const info = makeCameraInfo();
     expect(frameCameraInfo(info, { x: 100, y: 100 }, 40, 10).rotate).toBe(

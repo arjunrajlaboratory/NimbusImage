@@ -99,18 +99,22 @@ export function frameCameraInfo(
   requiredHeight: number,
 ): ICameraInfo {
   const recentered = recenterCameraInfo(info, center);
-  const xs = info.gcsBounds.map((pt) => pt.x);
-  const ys = info.gcsBounds.map((pt) => pt.y);
-  const currentWidth = Math.max(...xs) - Math.min(...xs);
-  const currentHeight = Math.max(...ys) - Math.min(...ys);
-  if (currentWidth <= 0 || currentHeight <= 0) {
+  // Work in the camera's OWN basis, not axis-aligned min/max. Under rotation
+  // gcsBounds is a rotated quadrilateral whose bounding box is larger than the
+  // usable viewport, so an axis-aligned comparison under-scales — a span along
+  // the diamond's diagonal would still fall outside the real viewport.
+  const [c0, c1, , c3] = info.gcsBounds;
+  const u = { x: c1.x - c0.x, y: c1.y - c0.y };
+  const v = { x: c3.x - c0.x, y: c3.y - c0.y };
+  const uLen = Math.hypot(u.x, u.y);
+  const vLen = Math.hypot(v.x, v.y);
+  if (uLen <= 0 || vLen <= 0) {
     return recentered;
   }
-  const scale = Math.max(
-    requiredWidth / currentWidth,
-    requiredHeight / currentHeight,
-    1,
-  );
+  // Project the required span onto each viewport edge direction.
+  const alongU = Math.abs((requiredWidth * u.x + requiredHeight * u.y) / uLen);
+  const alongV = Math.abs((requiredWidth * v.x + requiredHeight * v.y) / vLen);
+  const scale = Math.max(alongU / uLen, alongV / vLen, 1);
   if (scale === 1) {
     return recentered;
   }
