@@ -16,6 +16,11 @@ GeoJS's annotation layer has several asymmetric, mutating APIs. Each trap below 
 | Annotation renders mirrored above the image / invisible after coordinate update | `annotation._coordinates(v)` sets raw **gcs** (y-up) with NO conversion, but `coordinates()` and `evt.geo` return **ingcs** (image px, y-down) | Never mutate an added annotation's coords — remove and recreate via factory + `addAnnotation` so conversion happens exactly once |
 | No position updates during a drag | GeoJS suppresses `mousemove` during an active drag action; it fires `actionmove` instead | Bind both `geo_event.mousemove` and `geo_event.actionmove` if you need live drag positions |
 | `currentAnnotation` non-null but user isn't drawing | Completing an annotation resets layer mode to null; `refreshAnnotationMode` re-arms with a fresh EMPTY in-create annotation | Non-null ≠ drawing — check `currentAnnotation.coordinates().length` |
+| Connection lines mostly missing on a big (stub-only) dataset; more appear as you zoom in | Draw/retention gated on `getAnnotationFromId`, which returns `undefined` for unhydrated non-point annotations | Gate on what you actually draw from (the centroid map), never on hydration — see "Hydration-coupled draw paths" |
+| A specially styled feature reverts to the default style after a pan/zoom | The retained-feature restyle loop in `drawNewAnnotations` treats every `girderId`-bearing feature as an object annotation | `continue` on `isConnection` (or your own marker) in that loop |
+| A drawn feature can't be selected even though its record exists | One feature drawn per *pair/group* while several records map to it; the feature carries only the first record's id | Choose the selected record as the drawn representative |
+| Feature is in `layer.annotations()`, on-screen, right colour — and paints nothing | `options("style", {...})` **replaces** the style, dropping GeoJS's default `stroke: true` / `fill: true` | Include `stroke: true` explicitly, and merge: `options("style", {...a.options("style"), ...next})` |
+| Clicking a list row shows no connection at high zoom | A connection draws only when BOTH endpoints are displayed; recentering on one leaves the other outside the viewport | Frame both endpoints (`frameCameraInfo`) instead of recentering on one |
 
 ## Coordinate systems
 
@@ -30,6 +35,74 @@ The image map has `ingcs !== gcs` (y-flipped/scaled pixel system from `geojs.uti
 ## Render gating
 
 `_update` (the WebGL feature-data rebuild) only runs when the layer's `modified()` timestamp advanced. `clearOldAnnotations` marks modified only when it *removes* something; a pure add pass with `update=false` marks nothing → invisible features. Debugging tell: run `layer.modified(); layer.draw()` in the console — if features appear instantly, it's this, not missing data. Guard the `modified()` call on "count actually grew" so pure pans keep the incremental-draw optimization.
+
+## Hydration-coupled draw paths (stub-only datasets)
+
+`getAnnotationFromId` returns `undefined` for every unhydrated non-point annotation once
+a dataset is in stub-only mode. Any draw path that calls it merely to null-check an
+endpoint silently drops most of its output on large datasets, and the loss looks like a
+*zoom* bug because zooming in hydrates more annotations and the features appear.
+
+Measured on the 709K-object Xenium dataset: 4 of 12 connection endpoints resolved, so
+1 of 11 connection lines was drawn — with every centroid present the whole time.
+
+Rules:
+
+- **Gate on the data you actually consume.** Connection lines need only the two
+  centroids, so `drawNewConnections` checks `unrolledCentroidCoordinates`, and
+  `drawGeoJSAnnotationFromConnection` takes two `IGeoJSPosition`s rather than two
+  `IAnnotation`s. If you need the annotation, fall back to the stub
+  (`getAnnotationFromId(id) ?? getStub(id)`), which is what the selection and navigation
+  paths do.
+- **Draw and retention are a pair.** `clearOldAnnotations` has its own predicate per
+  feature kind; if it disagrees with the draw path, every pass deletes what the previous
+  one created and rebuilds it next frame — invisible except as churn. Fixing only the
+  draw path left retention removing 10 of 11 lines per pass.
+- **Verify from a fresh page load.** Interacting hydrates things; a probe run after a
+  few pans and zooms will pass on a dataset where a fresh load fails.
+
+## Per-feature style survives only if the redraw loop skips it
+
+`drawNewAnnotations` builds `drawnGeoJSAnnotations` from **every** feature carrying a
+`girderId` — including ones that aren't object annotations. Its retained-feature loop
+then compares `isHovered`/`isSelected` against ground truth and restyles on mismatch.
+A feature that never sets those options has them `undefined`, and `undefined != false`
+is **true**, so the branch fires on every redraw and overwrites the feature's style with
+`getAnnotationStyle(...)`.
+
+So a feature styled at construction needs both: style it when you build it (a rebuilt
+feature must come back correct without waiting for a selection change), and skip it in
+that loop. Doing only one of the two produces a highlight that survives until the next
+pan.
+
+**`options("style", …)` replaces, it does not merge.** GeoJS supplies `stroke: true`,
+`fill: true` and friends through its annotation defaults; assigning a style object that
+omits them silently turns rendering off for that feature. This shipped: adding
+construction-time styling with `{strokeColor, strokeWidth, strokeOpacity}` made every
+connection line invisible at every zoom — present in `layer.annotations()`, correctly
+positioned, correct colour in `options().style`, and never painted. The tell is
+`annotation.style().stroke === undefined` where a working feature reads `true`.
+
+Always spread the existing style, and assert renderability in tests, not just colour:
+
+```ts
+line.options("style", { ...line.options("style"), ...getConnectionStyle(sel, hov) });
+// test: expect(line.options().style.stroke).toBe(true)  // not only strokeColor
+```
+
+When a feature is invisible, check in this order — each step rules out a whole class:
+`layer.annotations()` contains it → its display coords are on screen →
+`annotation.style().stroke` is true → the layer was `modified()` before `draw()`.
+A screenshot alone cannot distinguish these.
+
+## One feature per group ⇒ pick the representative deliberately
+
+When several records map to one drawn feature (segments deduped by endpoint pair, glyphs
+merged by position), the feature can carry only one record's `girderId`. That id is the
+only one selection-highlighting and click-resolution can ever reach. If duplicates are
+possible in the schema — they are for connections, and real datasets here contain them —
+prefer the *selected* record as the representative, otherwise selecting the second
+duplicate can never highlight anything.
 
 ## Clickable overlays anchored to image coordinates (ui-layer dom widgets)
 
