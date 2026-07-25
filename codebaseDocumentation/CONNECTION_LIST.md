@@ -487,6 +487,11 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **Reveal reacts to hover as well as selection**, and selection wins. — *"reveals on hover, not only on selection"*
 - [ ] **Navigation frames both endpoints, with the signed delta.** — *"passes the SIGNED endpoint delta…"*
 
+### Cost
+
+- [ ] **Row building is gated on the tab being visible.** `connectionRows` depends on hydration through `resolveAnnotation`, so every pan invalidates it. `FloatingPalette` uses `v-show` and `v-window-item` keeps both tabs mounted, so an ungated read makes a user who opened the tab once rebuild all rows on every pan for the rest of the session — ~6.7 ms at 4,983 connections, scaling linearly, with none of the rows rendered. — *"does not read the row getters while the tab is hidden"*
+- [ ] **Counts don't allocate.** The tab badges use `annotationStore.annotationCount`, never `annotationsForIteration.length`, which materializes an array from the 700K-entry stub map. — *"badges both tabs with dataset-wide totals"*
+
 ### Destructive actions
 
 - [ ] **Bulk delete acts only on rows in scope.** Scope *inputs* change without `setScope` firing. — *"stale selection when scope INPUTS change"* (3 tests)
@@ -495,6 +500,7 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **Only one keydown handler, and only bare Delete/Backspace.** `mod+backspace` already deletes objects. — *"ignores the modified object-delete shortcut"*, *"does not mount the connection action panel per viewer"*
 - [ ] **An empty result is not reported as dedupe.** The API layer turns failures into `[]`. — *"flags dedupe only when the chain was empty…"*
 - [ ] **Saving state clears on failure.** — *"clears the saving state when the create request rejects"*
+- [ ] **Per-dataset state resets**, including the dedupe flag. — *"clears the dedupe flag on a dataset switch"*
 
 ### Before claiming done
 

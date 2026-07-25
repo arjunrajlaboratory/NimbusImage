@@ -109,8 +109,10 @@ function setRows(connections: IAnnotationConnection[], known: IAnnotation[]) {
   );
 }
 
-function mountComponent() {
-  return shallowMount(ConnectionList, {});
+// Default to the visible tab: rows are gated on isActive, so a default-false
+// mount would leave every list assertion looking at an empty table.
+function mountComponent(isActive = true) {
+  return shallowMount(ConnectionList, { props: { isActive } });
 }
 
 beforeEach(() => {
@@ -137,6 +139,49 @@ describe("ConnectionList", () => {
       [makeAnnotation("a", 0), makeAnnotation("b", 1)],
     );
     expect(mountComponent().vm.scopedCount).toBe(1);
+  });
+
+  // Regression: building rows depends on hydration, so it is invalidated by
+  // every pan. Reading the getter while the tab is hidden made a user who
+  // opened the tab once pay to rebuild every row on every pan for the rest of
+  // the session, with none of them rendered.
+  it("does not read the row getters while the tab is hidden", () => {
+    const conns = [makeConnection("c1", "a", "b")];
+    const anns = [makeAnnotation("a", 0), makeAnnotation("b", 1)];
+    setRows(conns, anns);
+
+    let rowReads = 0;
+    let trackReads = 0;
+    Object.defineProperty(h.state, "connectionRows", {
+      configurable: true,
+      get() {
+        rowReads++;
+        return buildConnectionRows(conns, (id) =>
+          anns.find((a) => a.id === id),
+        );
+      },
+    });
+    Object.defineProperty(h.state, "trackRows", {
+      configurable: true,
+      get() {
+        trackReads++;
+        return [];
+      },
+    });
+
+    const hidden = mountComponent(false);
+    expect(rowReads).toBe(0);
+    expect(trackReads).toBe(0);
+    expect((hidden.vm as any).rows).toEqual([]);
+    hidden.unmount();
+
+    mountComponent(true);
+    expect(rowReads).toBeGreaterThan(0);
+
+    delete (h.state as any).connectionRows;
+    delete (h.state as any).trackRows;
+    h.state.connectionRows = [];
+    h.state.trackRows = [];
   });
 
   it("explains an empty list differently for each scope", () => {

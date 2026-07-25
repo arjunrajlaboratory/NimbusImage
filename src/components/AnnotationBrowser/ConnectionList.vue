@@ -241,8 +241,18 @@ const isConnecting = ref(false);
 const connectError = ref<string | null>(null);
 
 const isLoggedIn = computed(() => store.isLoggedIn);
-const rows = computed(() => connectionListStore.connectionRows);
-const tracks = computed(() => connectionListStore.trackRows);
+// Gated on isActive so the store getters are never READ while the tab is
+// hidden — an unread Vuex getter is never evaluated. Building rows depends on
+// hydration (through resolveAnnotation), so it is invalidated by every pan;
+// without this gate a user who opened the tab once kept paying to rebuild all
+// rows on every pan for the rest of the session, with none of them rendered.
+// Measured at ~6.7 ms for 4,983 connections, and it scales linearly.
+const rows = computed(() =>
+  props.isActive ? connectionListStore.connectionRows : [],
+);
+const tracks = computed(() =>
+  props.isActive ? connectionListStore.trackRows : [],
+);
 const scopedCount = computed(
   () => connectionListStore.scopedConnections.length,
 );

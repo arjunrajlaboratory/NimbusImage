@@ -189,6 +189,18 @@ export class Annotations extends VuexModule {
     return tagSet;
   }
 
+  /**
+   * How many objects the dataset has, without allocating. Deliberately not
+   * `annotationsForIteration.length`: that materializes an array from the stub
+   * map, which is 700K+ entries on a large dataset — far too expensive for a
+   * count rendered in a tab badge.
+   */
+  get annotationCount(): number {
+    return this.stubOnlyMode
+      ? this.annotationStubs.size
+      : this.annotations.length;
+  }
+
   get annotationsForIteration(): TAnnotationOrStub[] {
     if (!this.stubOnlyMode) {
       return this.annotations;

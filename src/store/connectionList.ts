@@ -278,6 +278,9 @@ export class ConnectionList extends VuexModule {
     this.hoveredConnectionId = null;
     this.expandedTrackIds = markRaw(new Set());
     this.page = 1;
+    // Per-dataset like the rest: a stale "was dedupe" flag would mislabel the
+    // next empty result in a different dataset as "already connected".
+    this.lastConnectSkippedAsDuplicate = false;
   }
 
   // Clear per-dataset connection view state. Scope and grouping survive: they

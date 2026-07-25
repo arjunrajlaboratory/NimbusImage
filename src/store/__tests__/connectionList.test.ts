@@ -226,6 +226,14 @@ describe("connectionList selection safety", () => {
     expect(deleteConnections).toHaveBeenCalledWith(["c1"]);
   });
 
+  it("clears the dedupe flag on a dataset switch", () => {
+    connectionList.setLastConnectSkippedAsDuplicate(true);
+    connectionList.resetConnectionListState();
+    // Otherwise a stale flag mislabels the next empty result in a different
+    // dataset as "already connected".
+    expect(connectionList.lastConnectSkippedAsDuplicate).toBe(false);
+  });
+
   it("prunes deleted ids from the selection", async () => {
     connectionList.setSelectedConnectionIds(["c1", "c2", "c3"]);
     await connectionList.deleteConnectionsById(["c1", "c3"]);

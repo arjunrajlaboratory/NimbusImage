@@ -1,7 +1,12 @@
 <template>
   <div class="annotation-browser">
     <v-tabs v-model="activeTab" density="compact" class="browser-tabs">
-      <v-tab value="objects">Objects</v-tab>
+      <v-tab value="objects">
+        Objects
+        <v-chip v-if="objectCount > 0" size="x-small" class="ml-2">
+          {{ objectCount.toLocaleString() }}
+        </v-chip>
+      </v-tab>
       <v-tab value="connections">
         Connections
         <v-chip v-if="connectionCount > 0" size="x-small" class="ml-2">
@@ -38,6 +43,9 @@ import filterStore from "@/store/filters";
 
 const activeTab = ref("objects");
 
+// Both badges are dataset-wide totals, not the scoped/filtered counts shown
+// inside each tab — they answer "does this dataset have any?" at a glance.
+const objectCount = computed(() => annotationStore.annotationCount);
 const connectionCount = computed(
   () => annotationStore.annotationConnections.length,
 );
@@ -46,7 +54,7 @@ function clickedTag(tag: string) {
   filterStore.addTagToTagFilter(tag);
 }
 
-defineExpose({ clickedTag, activeTab, connectionCount });
+defineExpose({ clickedTag, activeTab, connectionCount, objectCount });
 </script>
 
 <style lang="scss" scoped>
