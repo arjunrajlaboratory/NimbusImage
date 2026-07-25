@@ -181,4 +181,31 @@ describe("configuration mutators propagate the backend error unmangled", () => {
   it("still swallows the error for callers that do not opt in", async () => {
     await expect(main.syncConfiguration("layers")).resolves.toBeUndefined();
   });
+
+  // addToolToConfiguration accepts either a bare tool (interactive callers) or
+  // {tool, throwOnError} (the AI panel). The executors test mocks the action,
+  // so only a real dispatch exercises which branch a payload takes. The
+  // `tool: "future-field"` below stands in for IToolConfiguration one day
+  // gaining a "tool" key, which would silently misroute a bare payload if the
+  // discrimination keyed off "tool" in payload instead of "template".
+  it("adds the tool for both the bare and wrapped payload forms", async () => {
+    (main as any).api.updateConfigurationKey = vi.fn(async () => ({}));
+    const bare = {
+      id: "bare",
+      name: "bare tool",
+      type: "create",
+      template: { name: "t", interface: [] },
+      values: {},
+      hotkey: null,
+      tool: "future-field",
+    } as any;
+    await main.addToolToConfiguration(bare);
+    expect(main.configuration?.tools.map((t) => t.id)).toContain("bare");
+
+    await main.addToolToConfiguration({
+      tool: { ...bare, id: "wrapped" },
+      throwOnError: true,
+    });
+    expect(main.configuration?.tools.map((t) => t.id)).toContain("wrapped");
+  });
 });

@@ -14,6 +14,7 @@ import {
   IProgressInfo,
   IPropertyAnnotationFilter,
   IScaleInformation,
+  IScales,
   IToolConfiguration,
   IWorkerInterfaceValues,
   PropertyFilterMode,
@@ -1061,7 +1062,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       // collection partially updated when a later field was rejected - by the
       // backend, or by this validation (Codex P2 on PR #1262).
       const validate = (
-        itemId: "pixelSize" | "zStep" | "tStep",
+        itemId: keyof IScales,
         scale: { value: number; unit: string },
         units: string[],
       ) => {
@@ -1083,10 +1084,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
         } as IScaleInformation<TUnitLength | TUnitTime>;
       };
       const scales: Partial<
-        Record<
-          "pixelSize" | "zStep" | "tStep",
-          IScaleInformation<TUnitLength | TUnitTime>
-        >
+        Record<keyof IScales, IScaleInformation<TUnitLength | TUnitTime>>
       > = {};
       if (input.pixelSize) {
         scales.pixelSize = validate("pixelSize", input.pixelSize, LENGTH_UNITS);
@@ -1167,13 +1165,17 @@ const registry: { [name: string]: IAgentToolEntry } = {
         // Both target the configuration's "layers" key, so write them
         // together: two separate writes could leave the shared collection
         // partially updated if the second failed (Codex P2 on PR #1262).
-        await persistOrThrow("layer update", () =>
-          main.saveContrastInConfiguration({
-            layerId: layer.id,
-            contrast,
-            delta,
-            throwOnError: true,
-          }),
+        // Label by what actually changed: this one call may carry only the
+        // contrast, and the message becomes the model's failure reason.
+        await persistOrThrow(
+          Object.keys(delta).length > 0 ? "layer update" : "contrast",
+          () =>
+            main.saveContrastInConfiguration({
+              layerId: layer.id,
+              contrast,
+              delta,
+              throwOnError: true,
+            }),
         );
       } else {
         if (Object.keys(delta).length > 0) {

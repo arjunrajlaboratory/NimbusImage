@@ -918,8 +918,7 @@ export class Main extends VuexModule {
   async addToolToConfiguration(
     // Accept a bare tool or {tool, throwOnError}. throwOnError lets the AI
     // panel surface a failed persist (issue #1239); existing callers pass the
-    // bare tool and keep the swallow behavior. IToolConfiguration has no
-    // "tool" key, so its presence unambiguously marks the options form.
+    // bare tool and keep the swallow behavior.
     payload:
       | IToolConfiguration
       | {
@@ -927,9 +926,13 @@ export class Main extends VuexModule {
           throwOnError?: boolean;
         },
   ) {
-    const tool = "tool" in payload ? payload.tool : payload;
-    const throwOnError =
-      "tool" in payload ? payload.throwOnError ?? false : false;
+    // Discriminate on a field the bare tool is REQUIRED to have rather than on
+    // "tool" in payload: the latter would silently misroute (with no type
+    // error, since both union members would match) if IToolConfiguration ever
+    // gained a "tool" field.
+    const isWrapped = !("template" in payload);
+    const tool = isWrapped ? payload.tool : payload;
+    const throwOnError = isWrapped ? payload.throwOnError ?? false : false;
     if (this.configuration) {
       this.setConfigurationTools([...this.configuration.tools, tool]);
       // Fetch the worker interface for this new tool if there is one
