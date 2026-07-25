@@ -196,9 +196,7 @@
               </button>
             </template>
           </v-tooltip>
-          <v-tooltip
-            text="Filter objects by tags, scope, properties, ID and region"
-          >
+          <v-tooltip :text="filtersTooltip">
             <template v-slot:activator="{ props: activatorProps }">
               <button
                 v-bind="activatorProps"
@@ -207,10 +205,15 @@
                 type="button"
                 class="palette-ibtn"
                 :class="{ active: filtersPanel }"
-                aria-label="Filters"
+                :aria-label="filtersAriaLabel"
                 @click.stop="togglePalette('filtersPanel')"
               >
                 <v-icon size="18">mdi-filter-variant</v-icon>
+                <!-- Count of active filters, so the user can tell filters are
+                     narrowing the object set even with the panel closed. -->
+                <span v-if="activeFilterCount > 0" class="palette-ibtn-badge">
+                  {{ activeFilterCount > 9 ? "9+" : activeFilterCount }}
+                </span>
               </button>
             </template>
           </v-tooltip>
@@ -482,6 +485,7 @@ import HelpPanel from "./components/HelpPanel.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
+import filterStore from "@/store/filters";
 import volumeViewStore from "@/store/volumeView";
 import aiPanelStore from "@/store/aiPanel";
 import { logError } from "@/utils/log";
@@ -863,6 +867,27 @@ function onShowInList() {
 const routeName = computed(() => route.name);
 const isDatasetView = computed(() => routeName.value === "datasetview");
 
+const activeFilterCount = computed(() => filterStore.activeFilterCount);
+
+const filtersTooltip = computed(() => {
+  const base = "Filter objects by tags, scope, properties, ID and region";
+  const count = activeFilterCount.value;
+  if (count === 0) {
+    return base;
+  }
+  return `${base} (${count} active filter${count === 1 ? "" : "s"})`;
+});
+
+// The aria-label stays terse to match the sibling palette buttons ("Object
+// list", "Snapshots", "Settings"); the descriptive sentence belongs in the
+// hover tooltip. It carries the count because aria-label overrides the
+// button's content, which would otherwise hide the badge from assistive tech.
+const filtersAriaLabel = computed(() =>
+  activeFilterCount.value === 0
+    ? "Filters"
+    : `Filters (${activeFilterCount.value} active)`,
+);
+
 const hasUncomputedProperties = computed(() => {
   const counts = propertyStore.uncomputedCountByProperty;
   for (const id in counts) {
@@ -1026,6 +1051,9 @@ defineExpose({
   helpPanelIsOpen,
   appHotkeys,
   routeName,
+  activeFilterCount,
+  filtersTooltip,
+  filtersAriaLabel,
   hasUncomputedProperties,
   filteredToursByCategory,
   filtersStacked,
@@ -1049,6 +1077,10 @@ defineExpose({
   flex: 0 0 auto;
 }
 
+/* Base tone of the palette cluster, deliberately theme-independent. The badge
+   below reuses it opaque as a separating ring, so the two must stay in sync. */
+$palette-cluster-tone: #0f1217;
+
 /* Cluster of palette-toggle icon buttons in the app bar.
    Pill-shaped group with hairline border; each button is a 32px circle. */
 .palette-cluster {
@@ -1058,7 +1090,7 @@ defineExpose({
   padding: 4px;
   margin-left: 12px;
   border-radius: 100px;
-  background: rgba(15, 18, 23, 0.55);
+  background: rgba($palette-cluster-tone, 0.55);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
@@ -1102,6 +1134,33 @@ defineExpose({
     background: rgb(var(--v-theme-primary));
     box-shadow: 0 0 6px rgba(var(--v-theme-primary), 0.6);
   }
+}
+
+/* Count badge pinned to the top-right of a palette-toggle button (used by
+   Filters to surface the number of active filters while the panel is closed).
+   The ring reuses the cluster's own tone, opaque, so the count reads as
+   separate from the icon glyph it overlaps. It stays within the cluster's 4px
+   padding and its 2px inter-button gap, so it never covers a neighbour. */
+.palette-ibtn-badge {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  box-sizing: border-box;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border: 1.5px solid $palette-cluster-tone;
+  border-radius: 8px;
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--nimbus-font);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
 }
 </style>
 <style lang="scss">

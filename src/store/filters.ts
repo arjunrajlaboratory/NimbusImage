@@ -21,6 +21,7 @@ import { createSequenceGuard } from "@/utils/sequenceGuard";
 
 import {
   TAnnotationOrStub,
+  IAnnotationFilter,
   ITagAnnotationFilter,
   IPropertyAnnotationFilter,
   IROIAnnotationFilter,
@@ -280,6 +281,27 @@ export class Filters extends VuexModule {
   get hasActivePropertyFilter() {
     return this.propertyFilters.some(
       (filter: IPropertyAnnotationFilter) => filter.enabled,
+    );
+  }
+
+  // How many filters are currently narrowing the set of visible objects.
+  // Drives the count badge on the app-bar Filters button, so active filters
+  // stay discoverable while the panel is closed. Each enabled filter row
+  // counts once; the boolean toggles count once when set away from their
+  // permissive default (showAnnotationsFromHiddenLayers defaults to true, so
+  // it only counts when off). `emptyROIFilter` is a region still being drawn
+  // and filters nothing yet, so it is excluded.
+  get activeFilterCount() {
+    const countEnabled = (filterList: IAnnotationFilter[]) =>
+      filterList.filter((filter: IAnnotationFilter) => filter.enabled).length;
+    return (
+      (this.tagFilter.enabled ? 1 : 0) +
+      (this.onlyCurrentFrame ? 1 : 0) +
+      (this.selectionFilter.enabled ? 1 : 0) +
+      (main.showAnnotationsFromHiddenLayers ? 0 : 1) +
+      countEnabled(this.propertyFilters) +
+      countEnabled(this.roiFilters) +
+      countEnabled(this.annotationIdFilters)
     );
   }
 

@@ -28,6 +28,12 @@ vi.mock("@/store/properties", () => ({
   },
 }));
 
+vi.mock("@/store/filters", () => ({
+  default: {
+    activeFilterCount: 0,
+  },
+}));
+
 vi.mock("axios", () => ({
   default: {
     get: vi
@@ -52,6 +58,7 @@ import { routeProvider, routerProvider } from "@/test/helpers";
 import App from "./App.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
+import filterStore from "@/store/filters";
 import axios from "axios";
 import { logError } from "@/utils/log";
 
@@ -64,7 +71,10 @@ const mockRouter = {
   push: vi.fn(),
 };
 
-function mountComponent(routeOverrides: Record<string, any> = {}) {
+function mountComponent(
+  routeOverrides: Record<string, any> = {},
+  extraStubs: Record<string, any> = {},
+) {
   return shallowMount(App, {
     global: {
       mocks: {
@@ -86,9 +96,25 @@ function mountComponent(routeOverrides: Record<string, any> = {}) {
         "bread-crumbs": true,
         "chat-component": true,
         "router-view": true,
+        ...extraStubs,
       },
     },
   });
+}
+
+// shallowMount stubs every Vuetify component, so App.vue's own app-bar markup
+// never renders. These pass-through stubs open up just the chain down to the
+// palette buttons (v-app > v-app-bar > v-tooltip activator slot) so the
+// filter-count badge is asserted against real rendered output.
+const renderAppBarStubs = {
+  VApp: { template: "<div><slot /></div>" },
+  VAppBar: { template: "<div><slot /></div>" },
+  VTooltip: { template: '<div><slot name="activator" :props="{}" /></div>' },
+};
+
+function mountWithAppBar() {
+  (store as any).dataset = { id: "ds1", name: "Dataset" };
+  return mountComponent({ name: "datasetview" }, renderAppBarStubs);
 }
 
 describe("App", () => {
@@ -104,6 +130,7 @@ describe("App", () => {
       getUserPrivateFolder: vi.fn().mockResolvedValue({ _id: "folder-1" }),
     };
     (propertyStore as any).uncomputedCountByProperty = {};
+    (filterStore as any).activeFilterCount = 0;
     (axios.get as any) = vi
       .fn()
       .mockResolvedValue({ data: [{ name: "Tool1", type: "create" }] });
@@ -253,6 +280,66 @@ describe("App", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.hasUncomputedProperties).toBe(false);
+  });
+
+  // -- Computed: activeFilterCount / filtersTooltip --
+  it("activeFilterCount mirrors the filters store", () => {
+    (filterStore as any).activeFilterCount = 3;
+    const wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).activeFilterCount).toBe(3);
+  });
+
+  it("filtersTooltip omits the count when no filter is active", () => {
+    const wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).filtersTooltip).toBe(
+      "Filter objects by tags, scope, properties, ID and region",
+    );
+  });
+
+  it("filtersTooltip uses the singular form for one active filter", () => {
+    (filterStore as any).activeFilterCount = 1;
+    const wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).filtersTooltip).toContain("(1 active filter)");
+  });
+
+  it("filtersTooltip uses the plural form for several active filters", () => {
+    (filterStore as any).activeFilterCount = 4;
+    const wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).filtersTooltip).toContain("(4 active filters)");
+  });
+
+  it("filtersAriaLabel stays terse and gains the count when filters are on", () => {
+    let wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).filtersAriaLabel).toBe("Filters");
+    (filterStore as any).activeFilterCount = 2;
+    wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).filtersAriaLabel).toBe("Filters (2 active)");
+  });
+
+  // -- Filter-count badge on the Filters button --
+  it("renders no badge on the Filters button when no filter is active", () => {
+    const wrapper = mountWithAppBar();
+    expect(wrapper.find(".palette-ibtn-badge").exists()).toBe(false);
+  });
+
+  it("renders the active filter count on the Filters button", () => {
+    (filterStore as any).activeFilterCount = 3;
+    const wrapper = mountWithAppBar();
+    const badge = wrapper.find(".palette-ibtn-badge");
+    expect(badge.exists()).toBe(true);
+    expect(badge.text()).toBe("3");
+    // The badge belongs to the Filters button, not a neighbouring palette one,
+    // and the count is mirrored into the label so it is not hidden from
+    // assistive tech (aria-label overrides the button's rendered content).
+    expect(badge.element.closest("button")?.getAttribute("aria-label")).toBe(
+      "Filters (3 active)",
+    );
+  });
+
+  it("caps the badge at 9+ so it stays inside the icon button", () => {
+    (filterStore as any).activeFilterCount = 12;
+    const wrapper = mountWithAppBar();
+    expect(wrapper.find(".palette-ibtn-badge").text()).toBe("9+");
   });
 
   // -- Computed: filteredToursByCategory --
