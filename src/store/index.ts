@@ -912,8 +912,27 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
-  addToolToConfiguration(tool: IToolConfiguration) {
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
+  async addToolToConfiguration(
+    // Accept a bare tool or {tool, throwOnError}. throwOnError lets the AI
+    // panel surface a failed persist (issue #1239); existing callers pass the
+    // bare tool and keep the swallow behavior.
+    payload:
+      | IToolConfiguration
+      | {
+          tool: IToolConfiguration;
+          throwOnError?: boolean;
+        },
+  ) {
+    // Discriminate on a field the bare tool is REQUIRED to have rather than on
+    // "tool" in payload: the latter would silently misroute (with no type
+    // error, since both union members would match) if IToolConfiguration ever
+    // gained a "tool" field.
+    const isWrapped = !("template" in payload);
+    const tool = isWrapped ? payload.tool : payload;
+    const throwOnError = isWrapped ? payload.throwOnError ?? false : false;
     if (this.configuration) {
       this.setConfigurationTools([...this.configuration.tools, tool]);
       // Fetch the worker interface for this new tool if there is one
@@ -921,7 +940,7 @@ export class Main extends VuexModule {
       if (image) {
         this.context.dispatch("requestWorkerInterface", image);
       }
-      this.syncConfiguration("tools");
+      await this.syncConfiguration({ key: "tools", throwOnError });
     }
   }
 
@@ -1464,7 +1483,13 @@ export class Main extends VuexModule {
     await this.initFromUrl();
   }
 
-  @Action
+  // rawError: true because the catch below turns the server's response into a
+  // user-facing message ("login already in use", ...) that
+  // UserMenuLoginForm.vue renders in its error alert. A bare @Action would
+  // replace it with vuex-module-decorators' generic
+  // ERR_ACTION_ACCESS_UNDEFINED text, so the user would see that instead of
+  // the reason their sign-up failed. See syncConfiguration.
+  @Action({ rawError: true })
   async signUp({
     domain,
     ...user
@@ -2104,7 +2129,10 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true because this rolls back and rethrows so the caller can
+  // report the real reason (see syncConfiguration). Third link in the
+  // create_property chain the AI panel reports on (#1239).
+  @Action({ rawError: true })
   async updateConfigurationProperties(propertyIds: string[]) {
     const configuration = this.configuration;
     if (!configuration) {
@@ -2120,7 +2148,11 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true because this rolls back and rethrows so the caller can
+  // report the real reason. The pipeline UI shows generic text but logs the
+  // error, so without this the log holds the ERR_ACTION_ACCESS_UNDEFINED blob
+  // instead of the failure. Mirrors updateConfigurationProperties.
+  @Action({ rawError: true })
   async updateConfigurationPipelines(pipelines: IPipeline[]) {
     const configuration = this.configuration;
     if (!configuration) {
@@ -2136,7 +2168,13 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true is required because the throwOnError path rethrows the
+  // backend error and callers (the AI panel) read the original message.
+  // Without it, vuex-module-decorators replaces the error with a generic
+  // "ERR_ACTION_ACCESS_UNDEFINED" message. Same rationale as
+  // addMultiSourceMetadata. It is a no-op for the default swallow path,
+  // which never throws.
+  @Action({ rawError: true })
   async syncConfiguration(
     payload:
       | keyof IDatasetConfigurationBase
@@ -2402,8 +2440,20 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
-  async setLayerMode(mode: TLayerMode) {
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
+  async setLayerMode(
+    // Accept either a bare mode or {mode, throwOnError}, mirroring
+    // syncConfiguration's payload shape. throwOnError lets the AI panel
+    // surface a failed persist instead of reporting success (issue #1239);
+    // existing callers pass the bare mode and keep the swallow behavior.
+    payload: TLayerMode | { mode: TLayerMode; throwOnError?: boolean },
+  ) {
+    const mode = typeof payload === "string" ? payload : payload.mode;
+    const throwOnError =
+      typeof payload === "string" ? false : payload.throwOnError ?? false;
+
     // Store current visibility state before changing mode
     this.storeLayerVisibility(mode);
 
@@ -2420,7 +2470,7 @@ export class Main extends VuexModule {
 
     // Sync the configuration with the backend
     if (this.isLoggedIn) {
-      await this.syncConfiguration("layers");
+      await this.syncConfiguration({ key: "layers", throwOnError });
     }
   }
 
@@ -2468,36 +2518,76 @@ export class Main extends VuexModule {
     });
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async saveContrastInConfiguration({
     layerId,
     contrast,
+    delta,
+    throwOnError,
   }: {
     layerId: string;
     contrast: IContrast;
+    // Extra layer fields to write in the SAME configuration sync as the
+    // contrast. The AI panel's update_layer can change colour/name/visibility
+    // and a collection-scoped contrast in one call; sending them as two
+    // changeLayer calls wrote the "layers" key twice and could leave the
+    // collection partially updated when the second failed (Codex P2 on
+    // PR #1262).
+    delta?: Partial<IDisplayLayer>;
+    // See changeLayer: opt-in error propagation for the AI panel (#1239).
+    throwOnError?: boolean;
   }) {
-    this.changeLayer({ layerId, delta: { contrast }, sync: true });
+    await this.changeLayer({
+      layerId,
+      delta: { ...delta, contrast },
+      sync: true,
+      throwOnError,
+    });
     if (this.datasetView) {
       delete this.datasetView.layerContrasts[layerId];
       if (this.canEditDatasetView) {
-        this.api.updateDatasetView(this.datasetView);
+        const update = this.api.updateDatasetView(this.datasetView);
+        if (throwOnError) {
+          await update;
+        }
       }
     }
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async saveContrastInView({
     layerId,
     contrast,
+    throwOnError,
   }: {
     layerId: string;
     contrast: IContrast;
+    // See changeLayer: opt-in error propagation for the AI panel (#1239).
+    throwOnError?: boolean;
   }) {
     if (this.datasetView) {
       this.datasetView.layerContrasts[layerId] = contrast;
       if (this.canEditDatasetView) {
-        this.api.updateDatasetView(this.datasetView);
+        const update = this.api.updateDatasetView(this.datasetView);
+        if (throwOnError) {
+          await update;
+        }
+      } else if (throwOnError) {
+        // The local override was applied, but it can't be persisted (a
+        // read-only / public dataset view). Callers opting into throwOnError
+        // (the AI panel) must not report success for a change that won't
+        // survive a reload -- see issue #1239.
+        throw new Error(
+          "Cannot save the contrast: you do not have permission to edit " +
+            "this dataset view",
+        );
       }
+    } else if (throwOnError) {
+      throw new Error("Cannot save the contrast: no dataset view is open");
     }
   }
 
@@ -2514,7 +2604,10 @@ export class Main extends VuexModule {
   // Replace the whole per-view contrast override map in one backend sync,
   // instead of one saveContrastInView call (and dataset-view update) per
   // layer. Used by the AI panel's revert-view-changes.
-  @Action
+  // rawError: true because this action propagates a failed persist to its only
+  // caller (the AI panel's revert) rather than swallowing it, and that caller
+  // logs the reason (see syncConfiguration).
+  @Action({ rawError: true })
   async setViewContrastOverrides(layerContrasts: {
     [layerId: string]: IContrast;
   }) {
@@ -2527,18 +2620,49 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
-  saveScaleInConfiguration({
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
+  async saveScaleInConfiguration({
     itemId,
     scale,
+    throwOnError,
   }: {
     itemId: keyof IScales;
     scale: IScaleInformation<TUnitLength | TUnitTime>;
+    // Opt-in error propagation for the AI panel (issue #1239); existing
+    // callers omit it and keep the swallow behavior.
+    throwOnError?: boolean;
   }) {
     if (this.configuration) {
       (this.configuration.scales as any)[itemId] = scale;
-      this.syncConfiguration("scales");
+      await this.syncConfiguration({ key: "scales", throwOnError });
     }
+  }
+
+  // Batch sibling of saveScaleInConfiguration: assigns every provided scale
+  // and syncs once. The AI panel's set_scale can set pixelSize, zStep and
+  // tStep in a single call; saving them one at a time issued a backend write
+  // per field and could leave the collection partially updated when a later
+  // one failed (Codex P2 on PR #1262). The interactive UI edits one field at
+  // a time and keeps using the singular action.
+  @Action({ rawError: true })
+  async saveScalesInConfiguration({
+    scales,
+    throwOnError,
+  }: {
+    scales: Partial<
+      Record<keyof IScales, IScaleInformation<TUnitLength | TUnitTime>>
+    >;
+    throwOnError?: boolean;
+  }) {
+    if (!this.configuration) {
+      return;
+    }
+    for (const [itemId, scale] of Object.entries(scales)) {
+      (this.configuration.scales as any)[itemId] = scale;
+    }
+    await this.syncConfiguration({ key: "scales", throwOnError });
   }
 
   @Action
@@ -2587,15 +2711,25 @@ export class Main extends VuexModule {
     confLayers.splice(index, 1, Object.assign({}, layer, delta));
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async changeLayer(args: {
     layerId: string;
     delta: Partial<IDisplayLayer>;
     sync?: boolean;
+    // Opt-in: propagate a failed backend persist to the caller (default is
+    // the app-wide swallow-and-surface-in-the-saving-indicator behavior).
+    // Used by the AI panel so a rejected write isn't reported as success
+    // (issue #1239).
+    throwOnError?: boolean;
   }) {
     this.changeLayerImpl(args);
     if (args.sync !== false && this.isLoggedIn) {
-      await this.syncConfiguration("layers");
+      await this.syncConfiguration({
+        key: "layers",
+        throwOnError: args.throwOnError,
+      });
     }
   }
 
@@ -3043,7 +3177,9 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true because this logs and rethrows so the caller sees the real
+  // reason (UserColorSettings.vue logs it). See syncConfiguration.
+  @Action({ rawError: true })
   async saveUserColors(channelColors: {
     [key: string]: string;
   }): Promise<void> {
