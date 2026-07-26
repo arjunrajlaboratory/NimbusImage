@@ -3,6 +3,25 @@ import { shallowMount } from "@vue/test-utils";
 
 // ---- Hoisted mocks ----
 
+// Records every throttle/debounce wrapper the component creates, so the
+// teardown test can find them without a hand-maintained list. Delegates to the
+// real lodash so timing behaviour (and every test that advances fake timers
+// through a throttle) is unchanged.
+const createdThrottles = vi.hoisted(() => [] as any[]);
+
+vi.mock("lodash", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lodash")>();
+  const record = (wrapper: any) => {
+    createdThrottles.push(wrapper);
+    return wrapper;
+  };
+  return {
+    ...actual,
+    throttle: (...args: any[]) => record((actual.throttle as any)(...args)),
+    debounce: (...args: any[]) => record((actual.debounce as any)(...args)),
+  };
+});
+
 vi.mock("onnxruntime-web/webgpu", () => ({
   InferenceSession: { create: vi.fn() },
   Tensor: vi.fn(),
@@ -5900,30 +5919,38 @@ describe("AnnotationViewer", () => {
     // onBeforeUnmount cleanup (Finding 4)
     // =======================================================================
     describe("onBeforeUnmount cleanup", () => {
-      // This test used to name the five throttles that existed when it was
-      // written, which is precisely how two more shipped uncancelled: adding a
-      // throttle and forgetting its teardown left the test green. Discover them
-      // from the exposed surface instead, so a new one is covered the moment it
-      // is added. A trailing fire after teardown runs against a dead GeoJS view.
+      // A trailing fire after teardown runs against a dead GeoJS view. This
+      // test twice failed to catch that, each time because it looked at a
+      // hand-maintained list:
+      //   1. it named the five throttles that existed when it was written, so
+      //      two later ones shipped uncancelled with the suite green;
+      //   2. scanning `wrapper.vm` instead moved the dependency to
+      //      defineExpose — an unexposed throttle is invisible there, and the
+      //      already-exposed ones keep any count floor satisfied.
+      // So record the wrappers where they are actually made: the lodash mock
+      // above captures every throttle/debounce this component constructs.
+      // (Wrappers built lazily inside a handler are still missed until that
+      // handler runs; all seven today are created in setup.)
       it("cancels every pending debounced/throttled callback so none fire after teardown", () => {
+        createdThrottles.length = 0;
         wrapper = mountComponent();
         const vm = wrapper.vm as any;
-        const isThrottled = (value: any) =>
-          typeof value === "function" &&
-          typeof value.cancel === "function" &&
-          typeof value.flush === "function";
-        const names = Object.keys(vm).filter((key) => isThrottled(vm[key]));
-        // Floor guards against the discovery itself silently breaking (an
-        // un-exposed throttle, or a Vue change to what wrapper.vm enumerates).
-        expect(names.length).toBeGreaterThanOrEqual(7);
-        const spies = names.map(
-          (name) => [name, vi.spyOn(vm[name], "cancel")] as const,
+        // Floor guards against the recording itself breaking (a lodash import
+        // that bypasses the mock would silently record nothing).
+        expect(createdThrottles.length).toBeGreaterThanOrEqual(7);
+        // Names purely for the failure message; unexposed wrappers still count.
+        const named = createdThrottles.map(
+          (fn, i) =>
+            [
+              Object.keys(vm).find((key) => vm[key] === fn) ?? `unexposed#${i}`,
+              vi.spyOn(fn, "cancel"),
+            ] as const,
         );
 
         wrapper.unmount();
 
         expect(
-          spies
+          named
             .filter(([, spy]) => spy.mock.calls.length === 0)
             .map(([n]) => n),
         ).toEqual([]);

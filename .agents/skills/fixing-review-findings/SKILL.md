@@ -77,10 +77,40 @@ When you fix something, ask **"what is the other one?"** before moving on:
 teardown-cancel test named the five throttles that existed when it was written,
 so adding a sixth and forgetting its `cancel()` left the suite green — and a
 seventh had been missing all along. Where the invariant is "every X does Y",
-discover the Xs at runtime (filter the component's exposed surface for
-`typeof v.cancel === 'function' && typeof v.flush === 'function'`) and assert a
-count floor so the discovery itself can't silently break. Same reasoning as
-grepping for the twin instead of fixing the one instance reported.
+discover the Xs at runtime instead of listing them.
+
+**Then check where the discovery gets its list from.** The first rewrite scanned
+the component's exposed surface for `typeof v.cancel === 'function' && typeof
+v.flush === 'function'` — which only moved the hand-maintained list from the
+test to `defineExpose`. A throttle nobody exposed stays invisible, and the
+already-exposed ones keep any count floor satisfied, so the test reads as
+comprehensive while covering exactly the cases that were never at risk. Codex
+caught this one round after the rewrite.
+
+Record instances **where they are created**, not where they are published — mock
+the constructor (`vi.mock("lodash", …)` delegating to `importOriginal` so timing
+behaviour is unchanged) and push each wrapper into an array:
+
+```ts
+const createdThrottles = vi.hoisted(() => [] as any[]);
+vi.mock("lodash", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lodash")>();
+  const record = (w: any) => { createdThrottles.push(w); return w; };
+  return { ...actual,
+    throttle: (...a: any[]) => record((actual.throttle as any)(...a)),
+    debounce: (...a: any[]) => record((actual.debounce as any)(...a)) };
+});
+```
+
+Keep a count floor (the recording can break too) and label failures with the
+exposed name when there is one, `unexposed#N` otherwise — the label is what
+turns a red test into a fix. Verify the test can fail on the case that motivated
+it: here, un-exposing *and* un-cancelling one throttle, which the exposed-surface
+version passed and this one reports as `unexposed#4`.
+
+The general rule: when a test discovers what it checks, ask what feeds the
+discovery, and whether that feed is itself a list a human has to remember to
+update.
 
 A performance decision can create this shape on its own. Skipping work for one
 state ("hover won't rebuild the layer — too expensive") is a correctness

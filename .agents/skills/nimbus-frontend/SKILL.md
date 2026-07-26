@@ -162,23 +162,37 @@ The teardown block already cancels them; the failure mode is *forgetting to add
 the new one*, which nothing catches because the component unmounts fine and the
 trailing call usually lands harmlessly.
 
-Guard it with a test that **discovers** the throttles instead of listing them —
-the listed version stayed green while two uncancelled ones shipped:
+Guard it with a test that records the throttles **at construction** — the
+version that listed them by name stayed green while two uncancelled ones
+shipped, and a version that scanned `wrapper.vm` only moved the hand-maintained
+list to `defineExpose` (an unexposed throttle stays invisible there):
 
 ```ts
-const isThrottled = (v: any) =>
-  typeof v === "function" &&
-  typeof v.cancel === "function" &&
-  typeof v.flush === "function";
-const names = Object.keys(vm).filter((k) => isThrottled(vm[k]));
-expect(names.length).toBeGreaterThanOrEqual(7);   // floor: discovery can break too
-const spies = names.map((n) => [n, vi.spyOn(vm[n], "cancel")] as const);
+// top of the test file — delegates to real lodash, so timing is unchanged
+const createdThrottles = vi.hoisted(() => [] as any[]);
+vi.mock("lodash", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lodash")>();
+  const record = (w: any) => { createdThrottles.push(w); return w; };
+  return { ...actual,
+    throttle: (...a: any[]) => record((actual.throttle as any)(...a)),
+    debounce: (...a: any[]) => record((actual.debounce as any)(...a)) };
+});
+
+// in the test
+createdThrottles.length = 0;
+wrapper = mountComponent();
+expect(createdThrottles.length).toBeGreaterThanOrEqual(7);  // recording can break too
+const named = createdThrottles.map((fn, i) => [
+  Object.keys(vm).find((k) => vm[k] === fn) ?? `unexposed#${i}`,
+  vi.spyOn(fn, "cancel"),
+] as const);
 wrapper.unmount();
-expect(spies.filter(([, s]) => !s.mock.calls.length).map(([n]) => n)).toEqual([]);
+expect(named.filter(([, s]) => !s.mock.calls.length).map(([n]) => n)).toEqual([]);
 ```
 
-This only sees what `defineExpose` exposes, so expose new throttles alongside
-the existing ones (that block is already the component's test surface).
+`<script setup>` bodies run per instance, so setup-scope throttles are created
+during mount and land in the recording. One residual gap: a wrapper built lazily
+inside a handler isn't recorded until that handler runs.
 
 ## Vuetify 4 Patterns
 
