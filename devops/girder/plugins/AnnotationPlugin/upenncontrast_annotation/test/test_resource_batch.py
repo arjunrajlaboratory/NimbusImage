@@ -104,6 +104,37 @@ class TestResourceBatch:
         resp = self._batch(server, admin, {"folder": ["not-an-object-id"]})
         assertStatus(resp, 400)
 
+    # Characterization tests for _getResourceModel, which CustomResource
+    # overrides and which Girder's own inherited /resource routes (search,
+    # lookup, download, move, copy, DELETE) all call with model types this
+    # plugin never enumerates. They pin the resolution order so the override
+    # can be tidied without silently dropping a type.
+    def testGetResourceModelResolvesCoreAndPluginModels(self, server):
+        from upenncontrast_annotation.server.api.resource import (
+            CustomResource,
+        )
+        resource = CustomResource()
+        assert resource._getResourceModel('folder').name == 'folder'
+        assert resource._getResourceModel('item').name == 'item'
+        assert resource._getResourceModel('user').name == 'user'
+        # Registered by this plugin, not by core.
+        assert resource._getResourceModel(
+            'upenn_collection').name == 'upenn_collection'
+        # A core type this plugin never lists, reachable via inherited routes.
+        assert resource._getResourceModel('collection').name == 'collection'
+
+    def testGetResourceModelRejectsUnknownTypeAndMissingMethod(self, server):
+        from girder.exceptions import RestException as GirderRestException
+        from upenncontrast_annotation.server.api.resource import (
+            CustomResource,
+        )
+        resource = CustomResource()
+        with pytest.raises(GirderRestException):
+            resource._getResourceModel('not_a_model')
+        # Known type, but asked for a capability it does not have.
+        with pytest.raises(GirderRestException):
+            resource._getResourceModel('user', 'move')
+
     def testBatchNeverReturnsUnexposedFolderFields(self, admin, user, server):
         """The response must not carry fields filtermodel would strip.
 

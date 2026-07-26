@@ -1168,9 +1168,16 @@ defineExpose({
 });
 </script>
 <style>
-tbody tr:hover,
-tbody tr.is-hovered,
-tbody tr.is-hovered:hover {
+/* This style block is NOT scoped, so a selector starting with an element name
+   applies to every table in the application, not just this one. Both rules here
+   are therefore prefixed with the component's root class. Vuetify 4 puts its
+   utilities in a cascade layer and unlayered rules beat layered ones outright,
+   so a leak from here cannot be undone with a utility class in the affected
+   component — it has to not leak in the first place.
+   `src/globalStyleLeaks.test.ts` guards against new ones. */
+.annotation-list-panel tbody tr:hover,
+.annotation-list-panel tbody tr.is-hovered,
+.annotation-list-panel tbody tr.is-hovered:hover {
   background-color: #616161;
   cursor: pointer;
 }
@@ -1201,7 +1208,7 @@ tbody tr.is-hovered:hover {
     opacity 0.3s;
 }
 
-td span {
+.annotation-list-panel td span {
   display: block;
   text-align: center;
   margin: auto;

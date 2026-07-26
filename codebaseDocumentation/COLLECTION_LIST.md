@@ -118,20 +118,36 @@ So: one fetch of up to 10,000, everything client-side, and above that a warning 
 "Load 10,000 more" that appends. That gives paging without stacking a second level of
 pagination on top of the table's own.
 
-### Untested: the >10,000 path
+### Verifying the >10,000 path without 10,000 collections
 
-**The `hasMore` / "Load 10,000 more" flow has never been exercised against real data.**
 No available dataset comes close to 10,000 collections (the dev database has 44), so
-the frontend append-and-continue path — the alert appearing, the button fetching at
-`offset = collections.length`, results appending without duplicates, `hasMore` clearing
-on the last page — has only ever been covered by unit tests with mocked responses
-(*"loadMore appends the next page at the current offset"*).
+**shrink the page size instead of growing the data.** Temporarily set
+`COLLECTION_PAGE_SIZE = 5` in `CollectionList.vue`, reload, and page through — 44
+collections become 9 pages, which exercises exactly the same code as the real ceiling.
+Revert it afterwards.
 
-The **backend** half of it is verified against a live server, by shrinking the page
-size rather than growing the data: `limit=43` → `hasMore: true`, `limit=44` → `false`,
-`limit=10&offset=40` → 4 rows. Anyone touching the paging path should do the same —
-drive `COLLECTION_PAGE_SIZE` down to a handful in a scratch build and page through 44
-real collections — rather than trusting the mocked tests alone.
+Done that way, the whole flow checks out against the live server:
+
+```
+alert: "Showing the 5 most recently modified collections…"  +  "Load 5 more"
+5 → 10 → 15 → 20 → 25 → 30 → 35 → 40 → 44
+total=44  distinct=44  duplicates=0  hasMore=false  alert gone
+order still strictly descending by `updated`
+```
+
+The zero duplicates across nine offset-paged requests is what confirms the `_id`
+tie-breaker under real data, not just in the unit test. The backend half checks out the
+same way: `limit=43` → `hasMore: true`, `limit=44` → `false`, `limit=10&offset=40` → 4
+rows.
+
+**Not verified:** a real mouse click on the "Load more" button specifically. The button
+renders, is hit-testable (`elementFromPoint` resolves to it) and is not disabled, and
+the handler behind it was driven to exhaustion — but the browser window went
+background-hidden partway through the session, and Chrome does not deliver synthetic
+clicks to a hidden tab. Re-check that one interaction with the window in the
+foreground. Every other interaction in this table *was* driven by real clicks: the
+scope toggle, column-header sorting, the search field, row navigation, and the data
+table's own footer pager.
 
 ---
 

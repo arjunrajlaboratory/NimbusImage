@@ -17,21 +17,36 @@ class CustomResource(Resource):
         # Batch resolve endpoint for multiple resource types
         self.route('POST', ('batch',), self.batchResources)
 
+    # Namespaces to resolve a resource type against, core first so a plugin
+    # model can never shadow a Girder one.
+    MODEL_NAMESPACES = ('_core', 'upenncontrast_annotation')
+
     def _getResourceModel(self, kind, funcName=None):
         """
         Override the function _getResourceModel from Girder`s Resource API to
         allow plugins from 'upenncontrast_annotation'.
+
+        `kind` cannot be narrowed to a fixed set: this class inherits Girder's
+        own /resource routes (search, lookup, download, move, copy, DELETE),
+        which resolve whatever model types their callers pass -- see the
+        characterization tests in test_resource_batch.py.
+
+        The broad `except` is deliberate and is the one place this file waives
+        the catch-specific-exceptions rule: ModelImporter.model raises a bare
+        `Exception` for an unregistered model, so there is no narrower type
+        available. It is kept as tight as the library allows -- a single call
+        inside the try, and the failure surfaces as a 400 rather than being
+        swallowed.
         """
-        try:
-            model = ModelImporter.model(kind)
-        except Exception:
+        for namespace in self.MODEL_NAMESPACES:
             try:
-                model = ModelImporter.model(kind, "upenncontrast_annotation")
+                model = ModelImporter.model(kind, namespace)
             except Exception:
-                model = None
-        if not model or (funcName and not hasattr(model, funcName)):
-            raise RestException('Invalid resources format.')
-        return model
+                continue
+            if funcName and not hasattr(model, funcName):
+                break
+            return model
+        raise RestException('Invalid resources format.')
 
     def _prepareMoveOrCopy(self, resources, parentType, parentId):
         user = self.getCurrentUser()
