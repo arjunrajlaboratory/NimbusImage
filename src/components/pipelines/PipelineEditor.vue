@@ -1,6 +1,6 @@
 <template>
   <v-container class="pa-0">
-    <v-row class="my-0" dense>
+    <v-row class="my-0" density="comfortable">
       <v-col cols="12" class="py-1">
         <v-text-field
           v-model="localPipeline.name"
@@ -11,7 +11,7 @@
         />
       </v-col>
     </v-row>
-    <v-row class="my-0" dense>
+    <v-row class="my-0" density="comfortable">
       <v-col class="py-1">
         <v-textarea
           v-model="localPipeline.description"
@@ -39,7 +39,11 @@
       {{ warning }}
     </v-alert>
 
-    <v-row v-if="localPipeline.steps.length === 0" class="my-2" dense>
+    <v-row
+      v-if="localPipeline.steps.length === 0"
+      class="my-2"
+      density="comfortable"
+    >
       <v-col class="text-caption text-medium-emphasis">
         No steps yet. Add a step to get started.
       </v-col>
@@ -130,7 +134,7 @@
             :auto-wired-caption="stepCaptions[index]"
             @update:model-value="handleStepUpdate(index, $event)"
           />
-          <v-row class="my-0" dense>
+          <v-row class="my-0" density="comfortable">
             <v-col class="d-flex ga-2 py-1 align-center">
               <v-btn
                 variant="text"
@@ -169,7 +173,7 @@
       </v-expansion-panel>
     </v-expansion-panels>
 
-    <v-row class="my-2" dense>
+    <v-row class="my-2" density="comfortable">
       <v-col class="py-1">
         <v-btn
           variant="outlined"
@@ -185,7 +189,7 @@
     </v-row>
 
     <!-- Run options -->
-    <v-row class="my-0" dense>
+    <v-row class="my-0" density="comfortable">
       <v-col class="py-1">
         <v-checkbox
           v-model="controller.continueOnError.value"
@@ -202,7 +206,7 @@
         controller.batchDisabledReason.value
       "
       class="my-0"
-      dense
+      density="comfortable"
     >
       <v-col class="py-1">
         <v-tooltip
@@ -240,7 +244,7 @@
       {{ controller.runNotice.value }}
     </v-alert>
 
-    <v-row class="my-2" dense>
+    <v-row class="my-2" density="comfortable">
       <v-col class="d-flex ga-2 py-1 justify-end align-center">
         <!-- Saved / unsaved chrome, pushed to the left of the action buttons. -->
         <v-chip
