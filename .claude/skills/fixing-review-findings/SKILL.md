@@ -195,6 +195,22 @@ gh api repos/$OWNER/pulls/$PR/reviews \
 git rev-parse --short HEAD
 ```
 
+**Pull the findings by review id, not by timestamp.** An inline comment is
+created a second or so *after* its review's `submitted_at`, so
+`created_at > <previous review's submitted_at>` re-lists that review's own
+findings and a clean round looks like it repeated last round's complaint. Take
+the id of the review you just matched (or, for the clean-comment form, expect no
+inline comments at all):
+
+```bash
+gh api repos/$OWNER/pulls/$PR/comments \
+  --jq ".[] | select(.pull_request_review_id == $NEW_REVIEW_ID) | \"=== \(.path):\(.line // .original_line)\n\(.body)\""
+```
+
+A comment's own `commit_id` is no help for telling rounds apart — GitHub
+re-points it at the current head while the comment is still tracked, so a
+finding from two rounds ago can report the sha you just pushed.
+
 The eyes-reaction transition is the most useful signal: while 👀 is on the trigger comment it is still working, and the moment it clears the verdict exists somewhere — as inline comments, as a "Didn't find any major issues" issue comment, or as 👍 on the PR.
 
 ### 5. Gates before claiming done
