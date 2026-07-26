@@ -21,6 +21,52 @@ GeoJS's annotation layer has several asymmetric, mutating APIs. Each trap below 
 | A drawn feature can't be selected even though its record exists | One feature drawn per *pair/group* while several records map to it; the feature carries only the first record's id | Choose the selected record as the drawn representative |
 | Feature is in `layer.annotations()`, on-screen, right colour — and paints nothing | `options("style", {...})` **replaces** the style, dropping GeoJS's default `stroke: true` / `fill: true` | Include `stroke: true` explicitly, and merge: `options("style", {...a.options("style"), ...next})` |
 | Clicking a list row shows no connection at high zoom | A connection draws only when BOTH endpoints are displayed; recentering on one leaves the other outside the viewport | Frame both endpoints (`frameCameraInfo`) instead of recentering on one |
+| Hover/selection highlight works on one layer and does nothing on another | The second layer rebuilds its features from scratch on every draw and bakes the highlight in at build time, so only the state wired to a rebuild is ever reflected | Give the features a base-style option and restyle them in place — see "Layers that bake style at draw time" |
+
+## Layers that bake style at draw time
+
+A layer that is torn down and rebuilt on every draw (the timelapse track layer:
+`removeAllAnnotations` then one fresh line feature per connection) reflects a state
+change only if something triggers a rebuild. That makes it tempting to skip cheap-looking
+state — rebuilding ~2,500 features per hover genuinely is sluggish — but **skipping the
+repaint is only safe if that state is not a user-facing gesture.** It was: a connection-list
+row click *highlights* (sets hover) rather than selects, so the highlight silently did nothing
+in timelapse mode while working everywhere else.
+
+Restyle in place instead, and give the features what that needs at build time:
+
+- **A base-style option** (`timelapseBaseStyle`) holding the appearance minus the highlight,
+  so the unhighlighted look can be recomputed without knowing which track built it.
+- **Every id that maps to the feature** (`connectionIds`), not just the representative one.
+  One feature per endpoint *pair* but several records per pair means matching on the single
+  baked-in id misses the duplicates — the same trap as the representative row above, one
+  layer over.
+- **Skip features whose style is unchanged.** Setting a style calls `annotation.modified()`
+  → `layer.modified()`, so touching all N features forces a full `_update`; touching only the
+  two that changed (and skipping `draw()` entirely when none did) keeps it cheap.
+- Keep the rebuild for state that changes *which* feature is built (which duplicate
+  represents a pair), and restyle for state that only changes paint.
+
+Measured on 2,364 segments: 0.8 ms to scan them all, 6.6 ms median for the redraw
+(GeoJS aggregates every line annotation into ONE webgl `lineFeature`, so any style change
+rebuilds that feature's data).
+
+Verifying it repainted, not just that the options bag changed: read the resolved
+render-time style off the aggregated feature, which is what the GPU will draw.
+
+```js
+const lineFeature = layer.features().find(f => f.featureType === 'line');
+const acc = lineFeature.style.get('strokeWidth');
+const counts = {};
+lineFeature.data().forEach((line, i) => {
+  const w = acc(lineFeature.line()(line, i)[0], 0, line, i);
+  counts[w] = (counts[w] || 0) + 1;
+});
+// {"3":1312,"5":1,"6":1175} — exactly one segment widened by the hover.
+```
+
+This beats a screenshot diff: `map.screenshot()` hangs in a background tab, and the
+`computer` tool cannot hold the tab foreground across calls.
 
 ## Coordinate systems
 

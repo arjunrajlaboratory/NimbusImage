@@ -477,6 +477,7 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **The retained-feature restyle loop skips `isConnection`.** Connection features carry a `girderId`, so they land in `drawnGeoJSAnnotations` and get object styling. — *"keeps a selected connection cyan through a redraw"*
 - [ ] **Equal-time and self links.** A same-time pair must draw exactly once; a self-connection must not draw. — *"draws an equal-time link exactly once"*, *"does not draw a self-connection as a track segment"*
 - [ ] **Duplicate pairs pick the right representative:** selected, then hovered, then first. — *"renders the selected duplicate…"*, *"renders the hovered duplicate…"*
+- [ ] **Timelapse segments can be repainted without a rebuild.** They bake their appearance in at draw time, so every segment carries `timelapseBaseStyle` (its track colour, width and dash minus the highlight) and `connectionIds` (every document sharing its endpoint pair, not just the representative). Drop either and the hover highlight either cannot be recomputed or misses duplicates. — *"widens a hovered track segment in place…"*, *"restores a time-jump segment's base styling…"*, *"widens the segment when a non-representative duplicate is hovered"*
 
 ### Interaction
 
@@ -492,7 +493,7 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 ### Cost
 
 - [ ] **Row building is gated on the tab being visible.** `connectionRows` depends on hydration through `resolveAnnotation`, so every pan invalidates it. `FloatingPalette` uses `v-show` and `v-window-item` keeps both tabs mounted, so an ungated read makes a user who opened the tab once rebuild all rows on every pan for the rest of the session — ~6.7 ms at 4,983 connections, scaling linearly, with none of the rows rendered. — *"does not read the row getters while the tab is hidden"*
-- [ ] **Hover never rebuilds the timelapse layer.** It is one feature per connection (5,217 measured here) and hover changes continuously as the pointer moves down the list. Selection rebuilds; hover does not. Measured 0.02 ms per hover change after the fix. — *"does not rebuild the timelapse layer on hover"*
+- [ ] **Hover never rebuilds the timelapse layer — but it must still repaint it.** One feature per connection (5,217 measured here) and hover changes continuously as the pointer runs down the list, so selection rebuilds and hover restyles the drawn segments in place. Skipping the repaint entirely was the first attempt, and it silently broke the feature's main gesture: a row click *highlights* rather than selects, so clicking a connection did nothing visible in timelapse mode while it worked everywhere else. Measured on 2,364 segments: 0.8 ms to scan, 6.6 ms median to redraw, throttled to 100 ms. — *"does not rebuild the timelapse layer on hover"*, *"widens a hovered track segment in place, without rebuilding"*, *"does not redraw when the hovered connection is not on the layer"*
 - [ ] **Scoping resolves connections, never scans all annotations.** `connectionInScope` is a per-connection predicate; building a set of qualifying annotation ids meant scanning `annotationsForIteration`, which materializes all 709K stubs in stub-only mode — on every scrub. — *"scopes by location without scanning every annotation"*
 - [ ] **The Connect-selected cap checks the raw id count first.** Resolving the selection to apply a cap that exists to prevent that resolution is self-defeating; a server-mode select-all is hundreds of thousands of ids. Tie detection skips oversized selections too. — *"rejects an oversized selection without resolving it"*
 - [ ] **Every scope-derived computed is gated, not just the rows.** `scopedConnections` resolves `scopeAnnotationIds`, which scans all annotations for the dynamic scopes — an ungated count is a full-dataset scan per scrub from a hidden tab. — *"does not read the scope getters while the tab is hidden"*
@@ -519,6 +520,8 @@ and not its twin. Before considering any change here done, check the pair.
 | styling at construction | the retained-feature restyle loop in `drawNewAnnotations` |
 | `setHoveredAnnotationFromCoordinates` (highlight) | `selectAnnotations` (select) |
 | `selectedConnectionIds` pruning | `hoveredConnectionId` pruning |
+| timelapse **selection** (rebuilds the layer) | timelapse **hover** (restyles in place) |
+| normal-mode restyle (`restyleAnnotations`) | timelapse restyle (`restyleTimelapseConnections`) |
 | flat rendering | track/grouped rendering |
 | normal-mode connection styling | the inline style in `drawTimelapseTrack` |
 

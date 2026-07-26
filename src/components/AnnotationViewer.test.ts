@@ -4071,6 +4071,173 @@ describe("AnnotationViewer", () => {
         expect(hoveredWidth).toBeGreaterThan(plain.options().style.strokeWidth);
       });
 
+      // --- hover highlighting on the timelapse layer ---
+      //
+      // Clicking a row in the connection list HIGHLIGHTS (sets hover) rather
+      // than selecting, so hover is the primary highlight channel, not just an
+      // incidental mouse-over effect. Hover deliberately does not rebuild the
+      // timelapse layer, so it has to restyle the drawn segments in place —
+      // otherwise clicking a connection row does nothing visible in timelapse
+      // mode while it highlights fine everywhere else.
+      function setupOneSegmentTimelapseTrack(
+        connections: any[] = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ],
+        times: [number, number] = [0, 1],
+      ) {
+        mockedStore.showTimelapseMode = true;
+        mockedStore.layers = [
+          makeLayer({ id: "l1", channel: 0, visible: true }),
+        ];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: times[0] },
+          }),
+          makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: times[1] },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = connections;
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        // The default factory mock DROPS its options bag, so the style handed
+        // to it at construction would never reach the feature and every style
+        // assertion below would pass vacuously.
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _c: any, opts: any) => {
+            const f = mockGeoJSAnnotation(shape);
+            if (opts) f.options(opts);
+            return f;
+          },
+        );
+        connectionListStore.setSelectedConnectionIds([]);
+        connectionListStore.setHoveredConnectionId(null);
+      }
+
+      // Draws the track from a clean slate and returns the layer plus its only
+      // segment. Flushes the mount-time draw first: a trailing throttled draw
+      // landing mid-test would rebuild the layer and strand the captured
+      // feature, which reads as "the restyle did nothing".
+      async function drawTrackAndGetSegment() {
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const segments = tLayer
+          .annotations()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(segments).toHaveLength(1);
+        tLayer.removeAllAnnotations.mockClear();
+        tLayer.draw.mockClear();
+        return { tLayer, segment: segments[0] };
+      }
+
+      async function setHoverAndFlush(id: string | null) {
+        connectionListStore.setHoveredConnectionId(id);
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+      }
+
+      it("widens a hovered track segment in place, without rebuilding", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer, segment } = await drawTrackAndGetSegment();
+        const baseWidth = segment.options().style.strokeWidth;
+
+        await setHoverAndFlush("c1");
+
+        expect(segment.options().style.strokeWidth).toBeGreaterThan(baseWidth);
+        // `stroke` must survive: options("style", …) REPLACES the style object,
+        // so a restyle that omits it leaves the segment present, correctly
+        // positioned and completely unpainted.
+        expect(segment.options().style.stroke).toBe(true);
+        expect(tLayer.draw).toHaveBeenCalled();
+        expect(tLayer.removeAllAnnotations).not.toHaveBeenCalled();
+      });
+
+      // The other half of the pair: whatever hover paints, un-hover must undo,
+      // and it must not clobber the base styling baked in at draw time.
+      it("restores a time-jump segment's base styling when hover moves off", async () => {
+        // Times 0 → 3 skip a frame: red, dashed, 0.7 opacity.
+        setupOneSegmentTimelapseTrack(undefined, [0, 3]);
+        const { segment } = await drawTrackAndGetSegment();
+        const before = { ...segment.options().style };
+        expect(before.lineDash).toEqual([5, 5]);
+        expect(before.strokeOpacity).toBe(0.7);
+
+        await setHoverAndFlush("c1");
+        expect(segment.options().style.strokeWidth).toBeGreaterThan(
+          before.strokeWidth,
+        );
+
+        await setHoverAndFlush(null);
+        const after = segment.options().style;
+        expect(after.strokeWidth).toBe(before.strokeWidth);
+        expect(after.strokeColor).toBe(before.strokeColor);
+        expect(after.strokeOpacity).toBe(before.strokeOpacity);
+        expect(after.lineDash).toEqual(before.lineDash);
+      });
+
+      // One segment is drawn per endpoint PAIR, but several connection
+      // documents can share that pair. Since hover no longer rebuilds, the
+      // segment keeps the representative it was built with — so matching the
+      // hover on that id alone would leave hovering the other duplicate's row
+      // with no visible effect.
+      it("widens the segment when a non-representative duplicate is hovered", async () => {
+        setupOneSegmentTimelapseTrack([
+          makeConnection({ id: "dup1", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "dup2", parentId: "a1", childId: "a2" }),
+        ]);
+        const { segment } = await drawTrackAndGetSegment();
+        expect(segment.options().girderId).toBe("dup1");
+        const baseWidth = segment.options().style.strokeWidth;
+
+        await setHoverAndFlush("dup2");
+
+        expect(segment.options().style.strokeWidth).toBeGreaterThan(baseWidth);
+      });
+
+      // Hovering a row whose connection is outside the timelapse window must
+      // not force a redraw of the whole layer for a style that did not change.
+      it("does not redraw when the hovered connection is not on the layer", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer } = await drawTrackAndGetSegment();
+
+        await setHoverAndFlush("not-drawn");
+
+        expect(tLayer.draw).not.toHaveBeenCalled();
+      });
+
+      it("leaves the timelapse layer alone on hover outside timelapse mode", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer } = await drawTrackAndGetSegment();
+        // Leaving the mode clears the layer and draws once on its own; the
+        // assertion is about the hover that follows.
+        mockedStore.showTimelapseMode = false;
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        tLayer.draw.mockClear();
+
+        await setHoverAndFlush("c1");
+
+        expect(tLayer.draw).not.toHaveBeenCalled();
+      });
+
       it("filters connections by displayed annotations", () => {
         mockedStore.showTimelapseMode = true;
         const layer = makeLayer({ id: "l1", channel: 0, visible: true });

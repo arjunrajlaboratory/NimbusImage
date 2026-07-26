@@ -1510,27 +1510,23 @@ function drawTimelapseTrack(
       const isTimeJump = timeDiff > 1;
 
       const isBeforeCurrent = annotation.location.Time <= currentTime;
-      const isSelected = connectionListStore.isConnectionSelected(
-        representative.id,
-      );
-      // Hover must be honoured here too: the selection/hover watcher rebuilds
-      // this whole layer on a hover change, so styling from isSelected alone
-      // paid for a full redraw that produced no visible difference, while
-      // normal-mode connections do widen on hover.
-      const isHovered =
-        representative.id === connectionListStore.hoveredConnectionId;
+      // Everything that depends on the track rather than on the user's
+      // selection or hover. Kept on the feature so the segment can be restyled
+      // in place later without knowing which track it came from — a hover
+      // change must not have to rebuild the layer to be visible.
+      const baseStyle: ITimelapseSegmentBaseStyle = {
+        strokeColor: isTimeJump ? "#ff6b6b" : color,
+        strokeWidth: isBeforeCurrent ? 3 : 6,
+        strokeOpacity: isTimeJump ? 0.7 : 1,
+        lineDash: isTimeJump ? [5, 5] : undefined,
+      };
+      const pairIds = pairConnections.map(({ id }) => id);
       const line = geojsAnnotationFactory(AnnotationShape.Line, points, {
-        style: {
-          strokeColor: isSelected
-            ? CONNECTION_SELECTED_COLOR
-            : isTimeJump
-              ? "#ff6b6b"
-              : color,
-          strokeWidth:
-            (isBeforeCurrent ? 3 : 6) + (isSelected ? 3 : isHovered ? 2 : 0),
-          strokeOpacity: isTimeJump && !isSelected && !isHovered ? 0.7 : 1,
-          lineDash: isTimeJump ? [5, 5] : undefined,
-        },
+        style: getTimelapseSegmentStyle(
+          baseStyle,
+          pairIds.some(connectionListStore.isConnectionSelected),
+          pairIds.includes(connectionListStore.hoveredConnectionId ?? ""),
+        ),
       });
 
       if (line) {
@@ -1539,6 +1535,11 @@ function drawTimelapseTrack(
         // polyline per track). Without this, track segments are unclickable.
         line.options("isConnection", true);
         line.options("girderId", representative.id);
+        // Restyling in place needs both: the base to rebuild the unhighlighted
+        // appearance from, and EVERY id sharing this pair — a duplicate that is
+        // not the representative must still light its segment up.
+        line.options("timelapseBaseStyle", baseStyle);
+        line.options("connectionIds", pairIds);
         lines.push(line);
       }
     }
@@ -1878,6 +1879,84 @@ function getConnectionStyle(isSelected: boolean, isHovered: boolean) {
 // leading edge keeps the first change instant, the trailing edge coalesces a
 // burst into one final restyle with the latest state.
 const restyleAnnotationsThrottled = throttle(restyleAnnotations, THROTTLE);
+
+// A timelapse track segment's appearance minus the highlight: colour from its
+// connected component (or the red of a skipped frame), width from whether its
+// frame is before or after the current one. Stored on the feature so a
+// selection or hover change can repaint it without knowing its track.
+interface ITimelapseSegmentBaseStyle {
+  strokeColor?: string;
+  strokeWidth: number;
+  strokeOpacity: number;
+  lineDash?: number[];
+}
+
+function getTimelapseSegmentStyle(
+  base: ITimelapseSegmentBaseStyle,
+  isSelected: boolean,
+  isHovered: boolean,
+) {
+  // Every branch sets every key, for the same reason as getConnectionStyle:
+  // this object replaces the feature's style rather than merging into it, so an
+  // omitted key strands the previous highlight — and an omitted `stroke` leaves
+  // the segment present, correctly positioned and completely unpainted.
+  return {
+    stroke: true,
+    strokeColor: isSelected ? CONNECTION_SELECTED_COLOR : base.strokeColor,
+    strokeWidth: base.strokeWidth + (isSelected ? 3 : isHovered ? 2 : 0),
+    strokeOpacity: isSelected || isHovered ? 1 : base.strokeOpacity,
+    lineDash: base.lineDash,
+  };
+}
+
+// The timelapse counterpart of restyleAnnotations. Selection changes rebuild
+// the whole layer — they also decide which duplicate represents a pair — but
+// hover changes continuously as the pointer runs down the connection list, and
+// rebuilding ~2,500 line features per row made the list feel sluggish. So hover
+// repaints the drawn segments in place instead. This is not a cosmetic nicety:
+// clicking a row HIGHLIGHTS rather than selects, so without it the main way of
+// finding a connection has no visible effect at all in timelapse mode.
+function restyleTimelapseConnections() {
+  const annotations = props.timelapseLayer.annotations();
+  const len = annotations.length;
+  const hoveredId = connectionListStore.hoveredConnectionId;
+  const isConnectionSelected = connectionListStore.isConnectionSelected;
+  let restyled = false;
+  for (let i = 0; i < len; i++) {
+    const geoJSAnnotation = annotations[i];
+    const { isConnection, connectionIds, timelapseBaseStyle, style } =
+      geoJSAnnotation.options();
+    if (!isConnection || !connectionIds || !timelapseBaseStyle) {
+      continue;
+    }
+    const newStyle = getTimelapseSegmentStyle(
+      timelapseBaseStyle,
+      connectionIds.some((id: string) => isConnectionSelected(id)),
+      hoveredId !== null && connectionIds.includes(hoveredId),
+    );
+    // Assigning a style marks the layer modified, which makes GeoJS rebuild
+    // every feature's render data on the next draw. At most two segments change
+    // when the hover moves, so leave the rest untouched and skip the draw
+    // entirely when the hovered connection is not drawn on this layer.
+    if (
+      style?.strokeColor === newStyle.strokeColor &&
+      style?.strokeWidth === newStyle.strokeWidth &&
+      style?.strokeOpacity === newStyle.strokeOpacity
+    ) {
+      continue;
+    }
+    geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
+    restyled = true;
+  }
+  if (restyled) {
+    props.timelapseLayer.draw();
+  }
+}
+
+const restyleTimelapseConnectionsThrottled = throttle(
+  restyleTimelapseConnections,
+  THROTTLE,
+);
 
 function pointNearPoint(
   selectionPosition: IGeoJSPosition,
@@ -4258,15 +4337,23 @@ watch([selectedConnectionIds, hoveredConnectionId], () => {
   onAnnotationStateChanged();
 });
 
-// The timelapse layer bakes styling in at draw time, so reflecting a change
-// there means rebuilding every segment. Do that for SELECTION only: hover
-// changes continuously while the pointer moves down the connection list, and
-// rebuilding ~2,500 line features per row made the list feel sluggish. The
-// cost is that a hovered track segment does not widen until something else
-// triggers a redraw, which is the trade the slowness is not worth paying.
+// The timelapse layer bakes styling in at draw time, so the two highlight
+// channels are reflected differently there. SELECTION rebuilds: it also decides
+// which duplicate represents an endpoint pair, which is a draw-time choice.
+// HOVER restyles the drawn segments in place — it changes continuously while
+// the pointer moves down the connection list, and rebuilding ~2,500 line
+// features per row made the list feel sluggish. Both must do something: a row
+// click highlights via hover, so leaving hover unhandled made clicking a
+// connection look broken in timelapse mode while it worked everywhere else.
 watch(selectedConnectionIds, () => {
   if (showTimelapseMode.value) {
     onTimelapseModeChanged();
+  }
+});
+
+watch(hoveredConnectionId, () => {
+  if (showTimelapseMode.value) {
+    restyleTimelapseConnectionsThrottled();
   }
 });
 

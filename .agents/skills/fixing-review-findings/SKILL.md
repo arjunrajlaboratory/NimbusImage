@@ -58,6 +58,7 @@ flagged four instances of it —
 - Features were styled at construction; the retained-feature restyle loop overwrote it on the next redraw.
 - Timelapse click precedence was fixed for hover (`setHoveredAnnotationFromCoordinates`) and not for selection (`selectAnnotations`).
 - Deleting pruned `selectedConnectionIds` and left `hoveredConnectionId` dangling.
+- Selection was reflected on the timelapse layer (by rebuilding it) and hover was not, so the row click — which highlights via hover — did nothing there.
 
 When you fix something, ask **"what is the other one?"** before moving on:
 
@@ -69,6 +70,14 @@ When you fix something, ask **"what is the other one?"** before moving on:
 | one piece of paired state (selection) | the other (hover, expansion, page) |
 | the flat rendering branch | the grouped/track branch |
 | one scope/mode branch | the other three |
+| how one render path reflects a state | how the *other* render path reflects it |
+
+A performance decision can create this shape on its own. Skipping work for one
+state ("hover won't rebuild the layer — too expensive") is a correctness
+decision wearing a cost argument: it is only safe if nothing user-facing depends
+on that state. Write down which gesture drives each piece of state before
+deciding one of them is cheap to ignore, and prefer a cheaper *reflection* (an
+in-place restyle) over no reflection at all.
 
 Grep for the twin by concept, not by identifier: the two implementations rarely
 share a name, which is exactly why they drift.
