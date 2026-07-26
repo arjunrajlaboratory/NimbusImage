@@ -62,6 +62,7 @@ import {
   type IStubFieldUpdate,
 } from "@/utils/annotationUpdate";
 import { logError } from "@/utils/log";
+import { TIMELAPSE_CONNECTION_TAG } from "./constants";
 import { stubPerf } from "@/utils/stubPerf";
 import { annotationLoadingTitle } from "@/utils/loadingLabels";
 import progress from "./progress";
@@ -186,6 +187,18 @@ export class Annotations extends VuexModule {
       }
     }
     return tagSet;
+  }
+
+  /**
+   * How many objects the dataset has, without allocating. Deliberately not
+   * `annotationsForIteration.length`: that materializes an array from the stub
+   * map, which is 700K+ entries on a large dataset — far too expensive for a
+   * count rendered in a tab badge.
+   */
+  get annotationCount(): number {
+    return this.stubOnlyMode
+      ? this.annotationStubs.size
+      : this.annotations.length;
   }
 
   get annotationsForIteration(): TAnnotationOrStub[] {
@@ -1060,6 +1073,35 @@ export class Annotations extends VuexModule {
     return connections || [];
   }
 
+  // Create connections from explicit parent/child pairs. Unlike
+  // createAllConnections (which builds the full cross product of two id lists),
+  // this persists exactly the pairs it is given — used by the connection list's
+  // "Connect selected", which chains annotations in time order.
+  // rawError: errors are re-wrapped at every @Action boundary they cross, so
+  // connectionList's rawError alone would not preserve the message.
+  @Action({ rawError: true })
+  public async createConnectionsFromBases(
+    connectionBases: IAnnotationConnectionBase[],
+  ): Promise<IAnnotationConnection[]> {
+    if (!main.isLoggedIn || connectionBases.length === 0) {
+      return [];
+    }
+    sync.setSaving(true);
+    // try/finally, because this action is rawError: a rejection propagates to
+    // the caller, and without the finally the app-wide saving indicator would
+    // stay on forever.
+    try {
+      const connections =
+        await this.annotationsAPI.createMultipleConnections(connectionBases);
+      if (connections) {
+        this.addMultipleConnections(connections);
+      }
+      return connections || [];
+    } finally {
+      sync.setSaving(false);
+    }
+  }
+
   @Action
   public async deleteAllConnections({
     parentIds,
@@ -1100,7 +1142,7 @@ export class Annotations extends VuexModule {
       return;
     }
     const connectionsToDelete = this.annotationConnections.filter(
-      (connection) => connection.tags.includes("Time lapse connection"),
+      (connection) => connection.tags.includes(TIMELAPSE_CONNECTION_TAG),
     );
     await this.deleteConnections(connectionsToDelete.map(({ id }) => id));
   }

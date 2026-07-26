@@ -51,6 +51,17 @@
       :layerCount="(mapentry.imageLayers || []).length / 2"
       :key="'annotation-viewer-' + index"
     />
+    <!-- Mounted ONCE, outside the per-map v-for above. In unroll layer mode
+         ImageViewer renders one AnnotationViewer per layer group, so a panel
+         living inside that loop appeared N times over and registered N global
+         keydown listeners — a single Delete then fired N concurrent deletes
+         and sent duplicate batch DELETEs for the same ids. This panel reads
+         only store state, so it has no reason to be per-map. -->
+    <connection-action-panel
+      v-if="selectedExistingConnectionCount > 0"
+      key="connection-action-panel"
+      :stacked="selectedAnnotationCount > 0"
+    />
     <div
       class="map-layout"
       ref="mapLayout"
@@ -213,6 +224,7 @@ import {
   markRaw,
 } from "vue";
 import annotationStore from "@/store/annotation";
+import connectionListStore from "@/store/connectionList";
 import { TOUR_ANCHORS } from "@/tours/anchors";
 import progressStore from "@/store/progress";
 import store from "@/store";
@@ -244,6 +256,7 @@ import {
 import setFrameQuad, { ISetQuadStatus } from "@/utils/setFrameQuad";
 
 import AnnotationViewer from "@/components/AnnotationViewer.vue";
+import ConnectionActionPanel from "@/components/ConnectionActionPanel.vue";
 import LineScanPanel from "@/components/LineScanPanel.vue";
 import ObjectSegmentationPanel from "@/components/ObjectSegmentationPanel.vue";
 import ImageOverview from "@/components/ImageOverview.vue";
@@ -360,6 +373,14 @@ const defaultActions = ref<IGeoJSActionRecord[] | undefined>(undefined);
 const tileWidth = ref(0);
 const tileHeight = ref(0);
 const unrollW = ref(1);
+
+// Drive the single shared ConnectionActionPanel (see its mount in the template).
+const selectedExistingConnectionCount = computed(
+  () => connectionListStore.selectedExistingConnectionIds.length,
+);
+const selectedAnnotationCount = computed(
+  () => annotationStore.selectedAnnotationIds.size,
+);
 const unrollH = ref(1);
 const mapSynchronizationCallbacks = ref(new Map<IGeoJSMap, () => void>());
 let scaleWidget: IGeoJSScaleWidget | null = null;

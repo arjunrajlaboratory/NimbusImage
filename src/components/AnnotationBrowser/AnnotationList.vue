@@ -331,8 +331,7 @@ import annotationListServer from "@/store/annotationListServer";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
-import { simpleCentroid } from "@/utils/annotation";
-import { recenterCameraInfo } from "@/utils/camera";
+import { goToAnnotationLocation } from "@/utils/annotationNavigation";
 import { sortsEqual } from "@/utils/annotationListFilters";
 import { listQueryingMessage } from "@/utils/loadingLabels";
 
@@ -758,35 +757,8 @@ function removePropertyColumn(path: string[]) {
   propertyStore.togglePropertyPathVisibility(path);
 }
 
-function goToAnnotationIdLocation(annotationId: string) {
-  // In stub-only mode getAnnotationFromId returns undefined for non-hydrated
-  // non-point annotations, so fall back to the stub (which carries location +
-  // centroid).
-  const annotation = annotationStore.getAnnotationFromId(annotationId);
-  const stub = annotationStore.getStub(annotationId);
-  const location = annotation?.location ?? stub?.location;
-  if (!location) {
-    return;
-  }
-  store.setXY(location.XY);
-  store.setZ(location.Z);
-  store.setTime(location.Time);
-  // Stubs have no coordinates — recenter on the stub centroid (or the centroid
-  // map); full annotations use their actual coordinate centroid.
-  const center = annotation?.coordinates
-    ? simpleCentroid(annotation.coordinates)
-    : stub?.centroid ?? annotationStore.annotationCentroids[annotationId];
-  if (center) {
-    // Recenter as a pure pan and translate gcsBounds with it. The new location
-    // must be hydrated against the *new* viewport, not the stale pre-click one
-    // (this path bypasses the GeoJS map, so nothing else re-syncs gcsBounds).
-    store.setCameraInfo(recenterCameraInfo(store.cameraInfo, center));
-  }
-  annotationStore.setHoveredAnnotationId(annotationId);
-  // Guarantee the navigated-to annotation renders as a full shape, even if it
-  // falls outside the viewport hydration budget at the destination (C3).
-  annotationStore.ensureHydrated([annotationId]);
-}
+// Shared with the Connections tab — see @/utils/annotationNavigation.
+const goToAnnotationIdLocation = goToAnnotationLocation;
 
 const hoveredId = computed(() => {
   return annotationStore.hoveredAnnotationId;

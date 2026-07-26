@@ -1554,6 +1554,10 @@ export class Main extends VuexModule {
     this.api.flushCaches();
     this.context.dispatch("resetAnnotationState");
     this.context.dispatch("resetPropertyState");
+    // Connection-list selection/hover/expansion reference ids from the
+    // outgoing dataset. Dispatched by name (actions register unnamespaced) to
+    // avoid an import cycle with the connectionList module, which imports main.
+    this.context.dispatch("resetConnectionListState");
     // Filters hold unrecoverable user state (tag/property/ROI/ID filters), so
     // only reset them on an actual dataset change. refreshDataset() re-runs
     // setSelectedDataset with the same id (e.g. NavigatorPanel unroll toggles);
