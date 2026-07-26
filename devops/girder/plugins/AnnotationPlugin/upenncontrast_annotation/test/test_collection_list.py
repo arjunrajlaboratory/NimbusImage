@@ -2,6 +2,7 @@
 Tests for GET /upenn_collection/list, the lightweight cross-folder listing
 endpoint, and for the folderId requirement on GET /upenn_collection.
 """
+import datetime
 import json
 
 import pytest
@@ -150,22 +151,39 @@ class TestCollectionList:
             assert resp.json["hasMore"] is False
 
     def testListSortsByUpdatedDescendingByDefault(self, admin, server):
-        """The default ordering is most recently modified first."""
+        """The default ordering is most recently modified first.
+
+        Do NOT lean on wall-clock ordering here. MongoDB stores datetimes at
+        millisecond resolution, so creating one collection and touching another
+        can easily land both in the same millisecond -- the sort then has a tie
+        and returns an arbitrary order. That made this test pass alone and fail
+        whenever a preceding test file shifted the timing. Write the two
+        timestamps explicitly so the expected order is unambiguous, and scope
+        the request to this folder so collections from elsewhere cannot perturb
+        it.
+        """
         folder = utilities.createPrivateFolder(
             admin, "ds", upenn_utilities.datasetMetadata
         )
-        first = createCollection(admin, folder, "collection_first")
-        createCollection(admin, folder, "collection_second")
-        # Touch the older collection so it becomes the most recent.
-        Collection().updateFields(first, description="touched")
+        older = createCollection(admin, folder, "collection_older")
+        newer = createCollection(admin, folder, "collection_newer")
+
+        base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+        older['updated'] = base
+        newer['updated'] = base + datetime.timedelta(hours=1)
+        Collection().save(older)
+        Collection().save(newer)
 
         resp = server.request(
-            path="/upenn_collection/list", method="GET", user=admin
+            path="/upenn_collection/list",
+            method="GET",
+            user=admin,
+            params={"folderId": str(folder["_id"])},
         )
         assertStatusOk(resp)
         assert [c["name"] for c in resp.json["collections"]] == [
-            "collection_first",
-            "collection_second",
+            "collection_newer",
+            "collection_older",
         ]
 
     def testListExcludesCollectionsTheUserCannotRead(
@@ -291,3 +309,71 @@ class TestCollectionList:
                 type="application/json",
             )
             assertStatus(resp, 400)
+
+    def _byFolders(self, server, admin, folder, params=None):
+        return server.request(
+            path="/upenn_collection/by_folders",
+            method="POST",
+            user=admin,
+            params=params or {},
+            body=json.dumps({"folderIds": [str(folder["_id"])]}),
+            type="application/json",
+        )
+
+    def testFindByFoldersClampsLimit(self, admin, server, monkeypatch):
+        """by_folders is public and returns WHOLE documents, meta included, so
+        an unclamped limit lets one request materialize everything the caller
+        can read. limit=0 is Girder's "unlimited" sentinel and must be capped
+        exactly as /list caps it.
+
+        The real ceiling is 10,000, which no test fixture can exceed, so shrink
+        the constant instead: with a cap of 2 and 3 collections present, an
+        unclamped limit=0 returns 3 and a clamped one returns 2. Without this
+        the assertion is vacuous and passes with or without the clamp.
+        """
+        monkeypatch.setattr(
+            collectionApi, "MAX_COLLECTION_LIST_LIMIT", 2)
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        for index in range(3):
+            createCollection(admin, folder, "collection_%d" % index)
+
+        # limit=0 means "as many as the cap allows", not "unlimited".
+        resp = self._byFolders(server, admin, folder, {"limit": 0})
+        assertStatusOk(resp)
+        assert len(resp.json) == 2
+
+        # Above the cap clamps down to it.
+        resp = self._byFolders(server, admin, folder, {"limit": 99})
+        assertStatusOk(resp)
+        assert len(resp.json) == 2
+
+        # Negative limits clamp to a single-row page, never to the sentinel.
+        for limit in (-1, -5):
+            resp = self._byFolders(server, admin, folder, {"limit": limit})
+            assertStatusOk(resp)
+            assert len(resp.json) == 1
+
+        # A negative offset must not reach PyMongo, which raises on it.
+        resp = self._byFolders(server, admin, folder, {"offset": -5})
+        assertStatusOk(resp)
+
+    def testFindByFoldersRestrictsSortToReturnedFields(self, admin, server):
+        """A free-form sort key lets a public caller force a blocking sort over
+        every accessible document, including on the large 'meta' subdocument.
+        The index added for /list covers only its own default sort."""
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        createCollection(admin, folder, "collection_a")
+
+        assertStatus(
+            self._byFolders(server, admin, folder, {"sort": "meta"}), 400)
+        assertStatus(
+            self._byFolders(server, admin, folder, {"sort": "access"}), 400)
+        assertStatusOk(
+            self._byFolders(server, admin, folder, {"sort": "name"}))
+        # The endpoint's own default sort must stay acceptable.
+        assertStatusOk(
+            self._byFolders(server, admin, folder, {"sort": "lowerName"}))

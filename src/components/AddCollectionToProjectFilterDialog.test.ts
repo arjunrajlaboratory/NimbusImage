@@ -235,4 +235,17 @@ describe("AddCollectionToProjectFilterDialog", () => {
 
     expect(vm.selectedIds).toEqual(new Set());
   });
+
+  // Switching scope redefines which collections are even listed, so a selection
+  // made under the old scope no longer corresponds to what the user can see.
+  it("clears selectedIds when the scope changes", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.selectedIds = new Set(["col-3"]);
+
+    vm.scope = "all";
+    await wrapper.vm.$nextTick();
+
+    expect(vm.selectedIds).toEqual(new Set());
+  });
 });

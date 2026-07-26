@@ -313,6 +313,9 @@ async function addCollections() {
 }
 
 watch([currentFolder, scope], () => {
+  // Changing folder or scope redefines which collections are listed at all, so
+  // a selection made under the old scope no longer matches what the user sees.
+  selectedIds.value = new Set();
   fetchCollections();
 });
 

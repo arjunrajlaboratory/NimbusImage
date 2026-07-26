@@ -119,13 +119,13 @@
         </template>
 
         <template v-slot:item.description="{ item }">
-          <span class="text-caption text-medium-emphasis">
+          <span class="cell-text text-caption text-medium-emphasis">
             {{ item.description }}
           </span>
         </template>
 
         <template v-slot:item.folderName="{ item }">
-          <span class="text-caption text-medium-emphasis">
+          <span class="cell-text text-caption text-medium-emphasis">
             {{ item.folderName || "…" }}
           </span>
         </template>
@@ -138,13 +138,13 @@
         </template>
 
         <template v-slot:item.updated="{ item }">
-          <span class="text-caption text-no-wrap">{{
+          <span class="cell-text text-caption text-no-wrap">{{
             item.updated ? formatDateString(item.updated) : "Unknown"
           }}</span>
         </template>
 
         <template v-slot:item.created="{ item }">
-          <span class="text-caption text-no-wrap">{{
+          <span class="cell-text text-caption text-no-wrap">{{
             item.created ? formatDateString(item.created) : "Unknown"
           }}</span>
         </template>
@@ -183,6 +183,13 @@ type TCollectionScope = "folder" | "all";
 
 interface ICollectionRow extends ICollectionSummary {
   folderName: string;
+}
+
+// Vuetify wraps each row before emitting it from `update:currentItems`. Its own
+// emit type is `(value: any) => any`, so nothing here is checked by tsc — this
+// interface exists to make the `.raw` hop explicit at the call site.
+interface IWrappedDataTableItem {
+  raw: ICollectionRow;
 }
 
 const router = useRouter();
@@ -379,9 +386,15 @@ async function resolveFolderNames() {
 // Dataset chips are resolved for the rows the table is actually showing, so a
 // listing of thousands of collections doesn't fan out into thousands of
 // dataset lookups up front.
-function onCurrentItemsChange(items: ICollectionRow[]) {
+//
+// `update:currentItems` emits Vuetify's INTERNAL wrapped items, not the rows we
+// passed in: the row is under `.raw`. (VDataTable.js draws the same distinction
+// between `items: …map(i => i.raw)` and `internalItems`.) Reading `item._id`
+// here yields `undefined` for every row, so nothing ever resolves. Note the
+// asymmetry with `onRowClick` below, whose payload IS the raw row.
+function onCurrentItemsChange(items: IWrappedDataTableItem[]) {
   const collectionIds = items
-    .map((item) => item._id)
+    .map((item) => item.raw._id)
     .filter((collectionId) => !requestedChipIds.value.has(collectionId));
   if (collectionIds.length === 0) return;
 
@@ -399,6 +412,12 @@ function onCurrentItemsChange(items: ICollectionRow[]) {
       chipsPerItemId.value = { ...chipsPerItemId.value, ...chipsById };
     })
     .catch((error) => {
+      // Release the ids again, otherwise one failed burst leaves those rows on
+      // "Loading datasets..." for the lifetime of the component: they stay
+      // marked as requested, so paging back to them never retries.
+      collectionIds.forEach((collectionId) =>
+        requestedChipIds.value.delete(collectionId),
+      );
       logError("Failed to resolve dataset chips:", error);
     })
     .finally(() => {
@@ -489,6 +508,19 @@ defineExpose({
 .collection-title {
   font-weight: 500;
   color: rgb(var(--v-theme-collection));
+}
+
+/* AnnotationBrowser/AnnotationList.vue ships an UNLAYERED, non-scoped
+   `td span { display: block; text-align: center; margin: auto; }`, which leaks
+   into every table in the app and centers these cells under their left-aligned
+   headers. Vuetify 4 puts its utilities in a cascade layer and unlayered rules
+   beat layered ones outright, so `text-left`/`ma-0` utilities cannot undo it —
+   these scoped rules can, being unlayered themselves. The chips column is
+   handled the same way inside CollectionDatasetChips.vue. */
+.collection-title,
+.cell-text {
+  text-align: left;
+  margin: 0;
 }
 
 .folder-path-display {

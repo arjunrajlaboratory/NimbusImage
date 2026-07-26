@@ -1,6 +1,6 @@
 ---
 name: nimbus-frontend
-description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button conventions (5-role taxonomy — primary/secondary/tertiary/destructive/icon-only — with required variant and size), button loading states, @girder/components compatibility, and style guidelines."
+description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode, and how an unlayered global rule silently beats every Vuetify utility), select slot patterns (no .raw wrapper) vs v-data-table's update:currentItems (wrapped items — row under .raw), per-page async work in data tables, dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button conventions (5-role taxonomy — primary/secondary/tertiary/destructive/icon-only — with required variant and size), button loading states, @girder/components compatibility, and style guidelines."
 ---
 
 # Nimbus Frontend Development
@@ -255,6 +255,8 @@ Vuetify 4 changed the default theme from `"light"` to `"system"`. Our config set
 
 Vuetify 4 removed the `.raw` wrapper from select slot items. Items are passed directly. This applies to ALL slot types: `#item`, `#chip`, and `#selection`.
 
+> **Scope this to selects.** "Vuetify 4 removed `.raw`" is NOT a framework-wide rule, and generalizing it is how PR #1278 shipped a broken column. `VDataTable`'s `update:currentItems` still emits **wrapped** items whose row is under `.raw` — see *Doing per-page work in a client-side `v-data-table`* below for the per-emit table.
+
 **Object items** — access properties directly:
 ```vue
 <!-- Vuetify 4: access properties directly on object items -->
@@ -411,11 +413,53 @@ When each visible row needs an async lookup (dataset chips, resolved names), fet
 <v-data-table :items="filteredRows" @update:current-items="onCurrentItemsChange" />
 ```
 
-Don't try to derive the page slice yourself from `v-model:page` / `v-model:sort-by` — that means reimplementing Vuetify's sort and filter to stay in sync. Keep a `Set` of already-requested ids so paging back to a visited page doesn't refetch, and enqueue the work through a serialized, non-rejecting promise chain (see the promise section above).
+**But that payload is NOT your rows — the row is under `.raw`** (PR #1278 shipped this bug; the Datasets column never resolved a single chip):
+
+```typescript
+// WRONG: undefined for every row, so nothing ever resolves and the Set of
+// requested ids collapses to a single `undefined` entry.
+function onCurrentItemsChange(items) { items.map((item) => item._id) }
+
+// RIGHT
+function onCurrentItemsChange(items) { items.map((item) => item.raw._id) }
+```
+
+`VDataTable.js` draws the distinction itself — `items: paginatedItemsWithoutGroups.value.map(i => i.raw)` vs `internalItems: paginatedItemsWithoutGroups.value` — and `paginate.js` emits the wrapped array via `vm.emit('update:currentItems', val)`.
+
+**The two payloads are asymmetric, which is exactly why they drift:**
+
+| Emit / slot | Payload |
+|---|---|
+| `@update:current-items` | **wrapped** — `{ key, index, value, raw, columns, selectable, type }` |
+| `@click:row="(event, { item }) => …"` | **raw** row (`VDataTableRows.js`: `item: item.raw`) |
+| `v-slot:item.<col>="{ item }"` | **raw** row |
+| `:row-props="({ item }) => …"` | **raw** row |
+
+So `onRowClick` reading `item._id` is correct while `onCurrentItemsChange` reading `item._id` is broken, and the two handlers sit ten lines apart looking identical. Classic *one of two symmetric paths*.
+
+Neither `tsc` nor a naive unit test catches it: Vuetify types the emit `(value: any) => any`, and a test that calls the handler with **raw** objects passes while the real table is broken. Any test driving `currentItems` must construct the wrapped shape — see the `wrappedItem` helper in `CollectionList.test.ts`.
+
+Don't try to derive the page slice yourself from `v-model:page` / `v-model:sort-by` — that means reimplementing Vuetify's sort and filter to stay in sync. Keep a `Set` of already-requested ids so paging back to a visited page doesn't refetch, and enqueue the work through a serialized, non-rejecting promise chain (see the promise section above). **Release those ids in the failure path**, or one failed burst pins those rows on "Loading…" for the component's lifetime.
 
 Two related gotchas:
 - The `hover` prop gives row hover styling, but row clicks need `@click:row="(event, { item }) => …"` — the payload's second argument is an object, not the item.
 - Sorting a column whose values are resolved asynchronously (a name looked up after the rows load) only works if the resolution covers **every loaded row**, not just the visible page — otherwise the sort silently orders by whatever happens to be resolved. Either resolve for the whole loaded set, or make the column non-sortable.
+
+### A non-scoped `td span` rule centers every table in the app
+
+`AnnotationBrowser/AnnotationList.vue` has a **non-scoped** `<style>` block containing:
+
+```css
+td span { display: block; text-align: center; margin: auto; }
+```
+
+It applies app-wide. Any new `v-data-table` gets its text cells centered under left-aligned headers, and the tell is a computed `margin-left` of some odd pixel value (e.g. `184.844px`) — that's `margin: auto` resolved against the flex free space, not a rule anyone wrote for your component.
+
+Two consequences worth knowing before you debug this for an hour:
+- Scanning `document.styleSheets` for the offending rule is how you find it, but **don't return `sheet.href`** from a devtools/`javascript_tool` probe — Vite dev URLs carry a `?t=` query string that trips content guards.
+- jsdom does not apply SFC styles, so **no runtime test can observe the cascade**. Guard it with a source-scan test asserting each cell carries the override class (precedent: `src/vuetifyDeprecations.test.ts`), and note that `import.meta.url` is not a `file://` URL under the jsdom environment — resolve from `process.cwd()`.
+
+Fix locally with a class on each text cell plus a scoped override (a class beats the global rule's two type selectors, so no `!important`). Deleting or scoping the global rule is the real fix but changes every table in the app — treat it as its own change, not a drive-by.
 
 ### Overriding Girder DataTable Row Styles
 

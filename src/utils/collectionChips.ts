@@ -1,7 +1,7 @@
 import type { RouteLocationRaw } from "vue-router";
 import store from "@/store";
 import { IDatasetView } from "@/store/model";
-import { logError, logWarning } from "@/utils/log";
+import { logWarning } from "@/utils/log";
 
 export interface IChipAttrs {
   text: string;
@@ -30,41 +30,41 @@ export async function collectionsToDatasetChips(
     return chipsByCollectionId;
   }
   // Seed every requested collection so the caller can tell "resolved, but has
-  // no datasets" apart from "not resolved yet", even if a request fails.
+  // no datasets" apart from "not resolved yet".
   for (const collectionId of collectionIds) {
     chipsByCollectionId[collectionId] = { chips: [], type: "collection" };
   }
 
-  try {
-    const views: IDatasetView[] = await store.api.findDatasetViews({
-      configurationIds: collectionIds,
-    });
+  // Deliberately NOT wrapped in try/catch. Resolving with the seeded empty
+  // chips on failure would render as "No datasets" — indistinguishable from a
+  // collection that genuinely has none — and would hide the failure from the
+  // caller, which needs it to decide whether to retry. The caller logs.
+  const views: IDatasetView[] = await store.api.findDatasetViews({
+    configurationIds: collectionIds,
+  });
 
-    const datasetIds = Array.from(
-      new Set(views.map((view) => String(view.datasetId))),
-    );
-    const datasetsById = datasetIds.length
-      ? (await store.api.batchResources({ folder: datasetIds })).folder ?? {}
-      : {};
+  const datasetIds = Array.from(
+    new Set(views.map((view) => String(view.datasetId))),
+  );
+  const datasetsById = datasetIds.length
+    ? (await store.api.batchResources({ folder: datasetIds })).folder ?? {}
+    : {};
 
-    for (const view of views) {
-      const datasetId = String(view.datasetId);
-      const collectionId = String(view.configurationId);
-      const dataset = datasetsById[datasetId];
-      if (!dataset) {
-        logWarning(
-          `Dataset ${datasetId} not found for collection ${collectionId} (may have been deleted)`,
-        );
-        continue;
-      }
-      chipsByCollectionId[collectionId]?.chips.push({
-        text: dataset.name,
-        color: "dataset",
-        to: { name: "dataset", params: { datasetId } },
-      });
+  for (const view of views) {
+    const datasetId = String(view.datasetId);
+    const collectionId = String(view.configurationId);
+    const dataset = datasetsById[datasetId];
+    if (!dataset) {
+      logWarning(
+        `Dataset ${datasetId} not found for collection ${collectionId} (may have been deleted)`,
+      );
+      continue;
     }
-  } catch (error) {
-    logError("Failed to resolve dataset chips for collections:", error);
+    chipsByCollectionId[collectionId]?.chips.push({
+      text: dataset.name,
+      color: "dataset",
+      to: { name: "dataset", params: { datasetId } },
+    });
   }
 
   return chipsByCollectionId;

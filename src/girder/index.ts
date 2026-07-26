@@ -58,7 +58,10 @@ export interface IGirderFile extends IGirderBase {
 // collections doesn't drag along every layer, tool and snapshot.
 export interface ICollectionSummary extends IGirderBase {
   _modelType: "upenn_collection";
-  description: string;
+  // Nullable: the listing endpoint projects fields with `document.get(field)`,
+  // so a collection stored without a description comes back as JSON null rather
+  // than being absent. Consumers must guard before calling string methods.
+  description: string | null;
   creatorId: string;
   folderId: string;
 }

@@ -1,6 +1,6 @@
 ---
 name: nimbus-backend
-description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API vs model layer separation (API raises RestException, models raise ValueError — never mix these), API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic, permission escalation risks), database queries (Model.find not collection.find, batch $in queries not loops), model loading (exc=True not manual null checks), error handling (catch specific exceptions, never except Exception), public endpoint input validation (inline isinstance guards → RestException 400, MAX_* clamps, bson InvalidId → 400), loading plugin changes into the running container (rebuild, not restart), and backend test patterns. Use this skill even for small backend changes."
+description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API vs model layer separation (API raises RestException, models raise ValueError — never mix these), API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic, permission escalation risks), database queries (Model.find not collection.find, batch $in queries not loops), model loading (exc=True not manual null checks), error handling (catch specific exceptions, never except Exception), public endpoint input validation (the shared server/helpers/validation.py helpers → RestException 400, never hand-rolled isinstance guards; MAX_* clamps traced for -1/0/MAX+1; sort-key allowlists; bson InvalidId → 400), loading plugin changes into the running container (rebuild, not restart), and backend test patterns (no wall-clock-dependent ordering; clamp tests must be able to fail). Use this skill even for small backend changes."
 ---
 
 # Nimbus Backend Development (Girder)
@@ -434,6 +434,38 @@ The frontend subscribes to job SSE events via `src/store/jobs.ts`. Log entries c
 For detailed testing patterns beyond basics: read `references/testing-patterns.md`
 
 Testing basics (running tox, test structure, linting): see `CLAUDE.md`
+
+### Two ways a backend test lies (both shipped in PR #1278)
+
+**1. Never assert an order that depends on wall-clock timing.** MongoDB stores datetimes at **millisecond** resolution. A test that creates one document, then touches another to make it "more recent", routinely lands both in the same millisecond — the sort then has a tie and Mongo returns an arbitrary order. The test passes alone and fails as soon as another test file shifts the timing, which reads like flakiness in unrelated code:
+
+```python
+# BAD: both land in the same millisecond; the assertion is a coin flip.
+older = createCollection(admin, folder, "older")
+createCollection(admin, folder, "newer")
+Collection().updateFields(older, description="touched")   # "now newest"
+
+# GOOD: write the timestamps, so the expected order is unambiguous.
+base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+older['updated'] = base
+newer['updated'] = base + datetime.timedelta(hours=1)
+Collection().save(older)
+Collection().save(newer)
+```
+
+Also **scope the request to the test's own folder**. An exact-list assertion against an unfiltered cross-folder listing is at the mercy of every other test file. And run the file *after* a big one (`tox -- .../test_annotations.py .../test_collection_list.py`), not just alone — order-only failures are invisible to a single-file run.
+
+**2. A clamp test with production-sized constants cannot fail.** Asserting that `limit=0` is capped at 10,000 is vacuous when the fixture has 3 documents: capped and uncapped both return 3. `monkeypatch` the ceiling down so the difference is observable:
+
+```python
+def testClampsLimit(self, admin, server, monkeypatch):
+    monkeypatch.setattr(collectionApi, "MAX_COLLECTION_LIST_LIMIT", 2)
+    # ...create 3 documents...
+    resp = ...  # limit=0
+    assert len(resp.json) == 2      # fails at 3 without the clamp
+```
+
+This requires the handler to read the module constant **at call time** (a module-level helper referencing the global does; a default argument captured at import does not). Note `limit=-1` may pass such a test by accident — PyMongo's `limit(-1)` returns at most one document — so assert the `limit=0` case specifically, which is the one that means *unlimited*.
 
 ## Codebase Documentation References
 

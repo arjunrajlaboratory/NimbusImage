@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 
 const mockListCollections = vi.fn();
 const mockGetUserPrivateFolder = vi.fn();
@@ -74,6 +76,25 @@ function collection(id: string, overrides: Record<string, any> = {}) {
     created: "2024-01-01T00:00:00Z",
     updated: "2024-06-15T12:00:00Z",
     ...overrides,
+  };
+}
+
+// `update:currentItems` does NOT hand over raw rows: Vuetify emits its INTERNAL
+// wrapped items, where the row lives under `.raw`. VDataTable.js draws the
+// distinction itself (`items: paginatedItemsWithoutGroups.value.map(i => i.raw)`
+// vs `internalItems: paginatedItemsWithoutGroups.value`), and paginate.js emits
+// the wrapped array. Passing raw rows here — which these tests used to do —
+// makes the chips test pass while the real table never resolves a single chip,
+// because every `item._id` is `undefined`. Mirror the real payload instead.
+function wrappedItem(raw: Record<string, any>, index = 0) {
+  return {
+    key: `item_${raw._id}`,
+    index,
+    value: raw._id,
+    raw,
+    columns: {},
+    selectable: true,
+    type: "item" as const,
   };
 }
 
@@ -182,6 +203,21 @@ describe("CollectionList", () => {
     vm.searchQuery = "important";
     expect(vm.filteredCollections).toHaveLength(1);
     expect(vm.filteredCollections[0]._id).toBe("c1");
+  });
+
+  // The listing endpoint projects with `document.get(field)`, so a collection
+  // stored without a description arrives as null. Filtering must not throw on
+  // it — this guards the `?.` in filteredCollections against being "tidied up".
+  it("filteredCollections tolerates a null description", () => {
+    const vm = mountComponent().vm as any;
+    vm.collections = [
+      collection("c1", { description: null }),
+      collection("c2", { description: "important stuff" }),
+    ];
+    vm.searchQuery = "important";
+    expect(() => vm.filteredCollections).not.toThrow();
+    expect(vm.filteredCollections).toHaveLength(1);
+    expect(vm.filteredCollections[0]._id).toBe("c2");
   });
 
   it("filteredCollections filters by resolved folder name", () => {
@@ -352,6 +388,44 @@ describe("CollectionList", () => {
     expect(mockBatchResources).not.toHaveBeenCalled();
   });
 
+  // --- cell alignment ---
+
+  // AnnotationBrowser/AnnotationList.vue ships a NON-scoped
+  // `td span { display: block; text-align: center; margin: auto; }` that leaks
+  // into every table in the app, centering these cells under their left-aligned
+  // headers. Each text cell must carry a class the component's scoped override
+  // targets, or a column added later silently renders centered again. Asserted
+  // against the source because jsdom does not apply SFC styles, so nothing at
+  // runtime can observe the cascade.
+  it("gives every text cell a class that defeats the global td-span centering", () => {
+    // This test runs in the jsdom environment, where `import.meta.url` is not a
+    // file:// URL — resolve from the project root instead.
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/CollectionList.vue"),
+      "utf8",
+    );
+    const template = source.slice(
+      source.indexOf("<template>"),
+      source.lastIndexOf("</template>"),
+    );
+    const cellSlots = [
+      ...template.matchAll(
+        /<template v-slot:item\.(\w+)="\{ item \}">([\s\S]*?)<\/template>/g,
+      ),
+    ];
+    expect(cellSlots.length).toBeGreaterThan(0);
+
+    for (const [, column, body] of cellSlots) {
+      // The chips column renders a child component, not a bare text span.
+      if (!body.includes("<span")) continue;
+      expect(body, `column "${column}" is missing the alignment class`).toMatch(
+        /class="[^"]*\b(cell-text|collection-title)\b/,
+      );
+    }
+
+    expect(source).toMatch(/\.cell-text\s*\{[^}]*text-align:\s*left/);
+  });
+
   // --- chips for the visible page ---
 
   it("onCurrentItemsChange resolves chips for the visible rows only once", async () => {
@@ -362,15 +436,52 @@ describe("CollectionList", () => {
         type: "collection",
       },
     });
-    vm.onCurrentItemsChange([collection("c1")]);
+    vm.onCurrentItemsChange([wrappedItem(collection("c1"))]);
     await new Promise((r) => setTimeout(r, 0));
     expect(mockCollectionsToDatasetChips).toHaveBeenCalledWith(["c1"]);
     expect(vm.debouncedChipsPerItemId.c1.chips).toHaveLength(1);
 
     // Paging back to the same row does not refetch.
     mockCollectionsToDatasetChips.mockClear();
-    vm.onCurrentItemsChange([collection("c1")]);
+    vm.onCurrentItemsChange([wrappedItem(collection("c1"))]);
     expect(mockCollectionsToDatasetChips).not.toHaveBeenCalled();
+  });
+
+  it("retries chip resolution for a page whose previous attempt failed", async () => {
+    const vm = mountComponent().vm as any;
+    mockCollectionsToDatasetChips.mockRejectedValueOnce(new Error("network"));
+    vm.onCurrentItemsChange([wrappedItem(collection("c1"))]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Ids marked as requested before the request settles are never retried, so
+    // a single failed burst leaves those rows on "Loading..." forever.
+    mockCollectionsToDatasetChips.mockResolvedValueOnce({
+      c1: {
+        chips: [{ text: "Dataset A", color: "dataset" }],
+        type: "collection",
+      },
+    });
+    vm.onCurrentItemsChange([wrappedItem(collection("c1"))]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockCollectionsToDatasetChips).toHaveBeenCalledTimes(2);
+    expect(vm.debouncedChipsPerItemId.c1.chips).toHaveLength(1);
+  });
+
+  it("onCurrentItemsChange reads ids from the wrapped payload, never the wrapper", async () => {
+    const vm = mountComponent().vm as any;
+    mockCollectionsToDatasetChips.mockResolvedValue({});
+    vm.onCurrentItemsChange([
+      wrappedItem(collection("c1"), 0),
+      wrappedItem(collection("c2"), 1),
+    ]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Reading `item._id` off the wrapper yields undefined for every row, which
+    // collapses the whole page into a single bogus `undefined` entry.
+    expect(mockCollectionsToDatasetChips).toHaveBeenCalledWith(["c1", "c2"]);
+    expect([...vm.requestedChipIds]).toEqual(["c1", "c2"]);
+    expect(vm.requestedChipIds.has(undefined)).toBe(false);
   });
 
   // --- navigation ---

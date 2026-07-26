@@ -83,12 +83,14 @@ describe("collectionsToDatasetChips", () => {
     expect(result.col1).toEqual({ chips: [], type: "collection" });
   });
 
-  it("degrades to empty chips when the view lookup fails", async () => {
+  // Swallowing the failure here would resolve with empty chips, which the table
+  // renders as "No datasets" — indistinguishable from a collection that really
+  // has none — and would leave the caller no way to know a retry is warranted.
+  // Propagate instead and let the caller decide.
+  it("propagates a failed view lookup instead of reporting empty chips", async () => {
     mockFindDatasetViews.mockRejectedValue(new Error("boom"));
-    const result = await collectionsToDatasetChips(["col1", "col2"]);
-    expect(result).toEqual({
-      col1: { chips: [], type: "collection" },
-      col2: { chips: [], type: "collection" },
-    });
+    await expect(collectionsToDatasetChips(["col1", "col2"])).rejects.toThrow(
+      "boom",
+    );
   });
 });

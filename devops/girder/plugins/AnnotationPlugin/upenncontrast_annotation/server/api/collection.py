@@ -31,6 +31,49 @@ COLLECTION_SUMMARY_FIELDS = (
 # Clients page past this with the offset parameter.
 MAX_COLLECTION_LIST_LIMIT = 10000
 
+# Fields a caller may sort a listing on. Every entry is a small scalar and is
+# either indexed or cheap; 'meta' is deliberately absent. 'lowerName' is not
+# projected by the summary listing but is the default sort of by_folders.
+COLLECTION_SORTABLE_FIELDS = COLLECTION_SUMMARY_FIELDS + ('lowerName',)
+
+
+def clampCollectionPaging(limit, offset):
+    """Land caller-supplied paging in a range that is safe to hand to Mongo.
+
+    Girder coerces the paging params to ints (a clean 400 on garbage) but
+    passes negatives through, and limit=0 is its "unlimited" sentinel. Both
+    endpoints here are public and return documents, so an unclamped limit lets
+    one request materialize everything the caller can read; a negative offset
+    makes PyMongo raise. Clamping into [1, MAX] also keeps `limit + 1` (the
+    read-one-extra trick /list uses for hasMore) from ever landing on 0 and
+    silently becoming "unlimited".
+
+    Reads the module constant at call time so tests can shrink the ceiling.
+    """
+    return (
+        min(
+            max(1, limit or MAX_COLLECTION_LIST_LIMIT),
+            MAX_COLLECTION_LIST_LIMIT,
+        ),
+        max(0, offset),
+    )
+
+
+def requireSortableFields(sort):
+    """Reject sort keys outside the allowlist.
+
+    Sort keys are caller input: pagingParams accepts any field name, so leaving
+    it open lets a public caller force a blocking sort over every accessible
+    document -- including on the large 'meta' subdocument. The indexes these
+    endpoints rely on cover only their own default sorts.
+    """
+    for field, _direction in sort or []:
+        if field not in COLLECTION_SORTABLE_FIELDS:
+            raise RestException(
+                'sort must be one of: %s'
+                % ', '.join(COLLECTION_SORTABLE_FIELDS), code=400)
+    return sort
+
 
 class Collection(Resource):
 
@@ -130,25 +173,8 @@ class Collection(Resource):
             {'folderId': requireObjectId(folderId, 'folderId')}
             if folderId else {}
         )
-        # Girder converts limit/offset to ints (a clean 400 on garbage) but
-        # passes negatives straight through: a negative offset makes PyMongo
-        # raise, and a negative limit would silently truncate the slice below.
-        # limit=0 means "unlimited" to Girder's paging params, so clamp that
-        # to the ceiling rather than honoring it — an unauthenticated caller
-        # must not be able to ask for every collection in one response.
-        offset = max(0, offset)
-        limit = min(
-            max(1, limit or MAX_COLLECTION_LIST_LIMIT),
-            MAX_COLLECTION_LIST_LIMIT,
-        )
-        # Only the returned fields may be sorted on. Anything else lets a
-        # public caller sort the whole collection on an unindexed key (or on
-        # the large 'meta' document) and pay for a blocking sort.
-        for field, _direction in sort or []:
-            if field not in COLLECTION_SUMMARY_FIELDS:
-                raise RestException(
-                    'sort must be one of: %s'
-                    % ', '.join(COLLECTION_SUMMARY_FIELDS), code=400)
+        limit, offset = clampCollectionPaging(limit, offset)
+        requireSortableFields(sort)
         # Read one extra document to tell the client whether paging further
         # would yield anything, without paying for a separate count query.
         documents = list(self._collectionModel.findWithPermissions(
@@ -274,9 +300,14 @@ class Collection(Resource):
                 'folderIds is required in the request body', code=400)
         requireCountWithin(
             len(folderIds), MAX_COLLECTION_LIST_LIMIT, 'folderIds')
+        # This endpoint returns WHOLE documents (meta included), so it needs
+        # the same paging and sort guards as the lightweight /list -- more so,
+        # since each row it serializes is far heavier.
+        limit, offset = clampCollectionPaging(limit, offset)
+        requireSortableFields(sort)
         query = {'folderId': {
             '$in': [requireObjectId(x, 'folderIds') for x in folderIds]
         }}
         return self._collectionModel.findWithPermissions(
-            query, max(0, offset), limit, sort=sort,
+            query, offset, limit, sort=sort,
             user=self.getCurrentUser())
