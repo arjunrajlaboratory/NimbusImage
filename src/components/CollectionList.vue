@@ -175,10 +175,6 @@ void GirderBreadcrumb;
 // many collections page through them with the "Load more" button.
 const COLLECTION_PAGE_SIZE = 10000;
 
-// How many folder ids to resolve per batchResources request. Bounds the
-// response size, since that endpoint returns whole folder documents.
-const FOLDER_BATCH_SIZE = 500;
-
 type TCollectionScope = "folder" | "all";
 
 interface ICollectionRow extends ICollectionSummary {
@@ -293,6 +289,11 @@ async function resolveCurrentFolderId(): Promise<string | null> {
 async function fetchCollections() {
   const generation = ++fetchGeneration;
   loading.value = true;
+  // The "Load more" alert renders outside the loading guard, so leaving
+  // hasMore set keeps it clickable while the listing is being replaced — and
+  // a click mid-refetch captures the already-bumped generation, so its own
+  // stale-response check would pass and append rows from the outgoing scope.
+  hasMore.value = false;
   try {
     let folderId: string | undefined;
     if (scope.value === "folder") {
@@ -327,12 +328,17 @@ async function fetchCollections() {
 }
 
 async function loadMore() {
-  if (loadingMore.value || !hasMore.value) return;
+  // `loading` matters as much as `loadingMore`: paging on top of a listing that
+  // is being replaced appends rows belonging to the outgoing scope.
+  if (loadingMore.value || loading.value || !hasMore.value) return;
   const generation = fetchGeneration;
+  // Pin the folder for this request rather than reading the mutable
+  // loadedFolderId again after the await.
+  const folderId = loadedFolderId;
   loadingMore.value = true;
   try {
     const page = await store.api.listCollections({
-      folderId: loadedFolderId,
+      folderId,
       limit: COLLECTION_PAGE_SIZE,
       offset: collections.value.length,
     });
@@ -363,19 +369,22 @@ async function resolveFolderNames() {
   );
   if (unresolvedIds.length === 0) return;
 
-  // batchResources returns whole folder documents, so a user whose
-  // collections each live in their own dataset folder would otherwise pull
-  // thousands of them in a single response. Chunk the ids instead: still one
-  // query per request on the backend, just bounded in size.
+  // One request for the whole set. This used to be chunked at 500 ids because
+  // batchResources returned whole folder documents, so resolving thousands of
+  // names shipped thousands of full documents — but chunking traded that for up
+  // to 20 sequential round-trips, i.e. a waterfall and a looped frontend API
+  // call. Asking for a projection of just `name` removes the reason to chunk.
   try {
+    const folders =
+      (
+        await store.api.batchResources({
+          folder: unresolvedIds,
+          fields: ["name"],
+        })
+      ).folder ?? {};
     const resolved = { ...folderNames.value };
-    for (let i = 0; i < unresolvedIds.length; i += FOLDER_BATCH_SIZE) {
-      const batchIds = unresolvedIds.slice(i, i + FOLDER_BATCH_SIZE);
-      const folders =
-        (await store.api.batchResources({ folder: batchIds })).folder ?? {};
-      for (const folderId of batchIds) {
-        resolved[folderId] = folders[folderId]?.name ?? "Unknown folder";
-      }
+    for (const folderId of unresolvedIds) {
+      resolved[folderId] = folders[folderId]?.name ?? "Unknown folder";
     }
     folderNames.value = resolved;
   } catch (error) {

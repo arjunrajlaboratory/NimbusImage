@@ -445,6 +445,46 @@ Two related gotchas:
 - The `hover` prop gives row hover styling, but row clicks need `@click:row="(event, { item }) => …"` — the payload's second argument is an object, not the item.
 - Sorting a column whose values are resolved asynchronously (a name looked up after the rows load) only works if the resolution covers **every loaded row**, not just the visible page — otherwise the sort silently orders by whatever happens to be resolved. Either resolve for the whole loaded set, or make the column non-sortable.
 
+### A generation counter does not protect a SECOND request started mid-refetch
+
+The `fetchGeneration` idiom (bump on entry, re-check after every await, bail if it moved) protects the refetch from stale responses. It does **not** protect a *different* request the user starts while the refetch is in flight — that request captures the **already-bumped** generation, so its own check passes and it writes into the replacement listing (PR #1278: "Load more" clicked during a scope change appended outgoing-scope rows).
+
+Three things have to line up, and the first is the one that gets missed:
+
+```typescript
+async function fetchCollections() {
+  const generation = ++fetchGeneration;
+  loading.value = true;
+  hasMore.value = false;   // (1) the alert renders OUTSIDE `v-if="loading"`,
+                           //     so leaving this set keeps it clickable
+  ...
+}
+
+async function loadMore() {
+  // (2) `loading`, not just `loadingMore` — paging onto a listing being
+  //     replaced is the bug, and the two flags are different states.
+  if (loadingMore.value || loading.value || !hasMore.value) return;
+  const folderId = loadedFolderId;   // (3) pin it; don't re-read the mutable
+  ...                                //     module var after the await
+}
+```
+
+Check the *rendered* position of any control that triggers the second request: a spinner guarding the table body does not disable a button that sits above it.
+
+**Testing a race requires controlling resolution ORDER.** Mocking both requests with one `mockResolvedValue` produces a test that passes before the fix — whichever response lands second wins, and sometimes that is the right one. Use two hand-released deferred promises, and release them in the order that exposes the bug (here: the refetch first, so the paging response arrives after the listing it no longer belongs to).
+
+### Chunking a looped API call is not a fix — ask the backend for less
+
+When a frontend loop exists to bound response *size* (`batchResources` returns whole documents, so resolve ids 500 at a time), it has traded one problem for another: up to 20 sequential round-trips, a waterfall, and a looped frontend API call the repo forbids. `Promise.all` over the chunks removes the waterfall but is still N calls.
+
+The fix is a projection. `POST /resource/batch` accepts an optional `fields` list and trims each document to those keys plus `_id`, so the whole set resolves in **one** request:
+
+```typescript
+await store.api.batchResources({ folder: unresolvedIds, fields: ["name"] });
+```
+
+Keep the projection **opt-in** — omitting `fields` must return whole documents, because the other callers depend on it, and pin that with a test. Validate the field list at the API boundary (plain non-empty strings, no `.` or `$`): it builds a Mongo projection out of caller input.
+
 ### A non-scoped `td span` rule centers every table in the app
 
 `AnnotationBrowser/AnnotationList.vue` has a **non-scoped** `<style>` block containing:

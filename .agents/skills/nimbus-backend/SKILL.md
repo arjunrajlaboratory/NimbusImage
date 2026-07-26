@@ -339,6 +339,19 @@ limit = min(max(1, limit or MAX_X_LIMIT), MAX_X_LIMIT)
 
 Whenever you write `limit + 1` (or any arithmetic on a limit), trace the value for **`-1`, `0`, and `MAX+1`** by hand. `-1` is the dangerous one and the easiest to skip: `0` and `MAX+1` both behave, so a spot-check of "does a MAX_ constant exist" passes while the bypass sits there. Regression-test `limit=-1` specifically, asserting a clamped page — not just "no 500".
 
+### Offset paging needs a TOTAL order — append `_id`
+
+A `limit`/`offset` endpoint is only coherent if the sort is deterministic. Mongo stores datetimes at **millisecond** resolution, so any bulk operation stamps many documents with the same `updated`/`created`; tied documents have no defined order, and a page-2 request can then repeat a row from page 1 or skip one entirely **with the data unchanged**. Nothing errors, and it is invisible in a single-page test.
+
+```python
+# The endpoint's sort allowlist runs first, then the tie-breaker is appended.
+sort = withIdTieBreaker(requireSortableFields(sort))
+```
+
+`_id` is unique, so appending it makes the order total; give it the primary key's direction so ties read the same way as the sorted column. Then put `_id` in the index — `([('updated', -1), ('_id', -1)], {})` — and drop the now-redundant single-field index, since an index whose *prefix* is `updated` still serves a plain `updated` sort.
+
+To write a test that can actually fail: ObjectIds are monotonic, so create A then B and give both the same timestamp. `_id` descending expects **B first**, the opposite of insertion order — which is what Mongo returns without the tie-breaker (verified: the assertion fails with `'collection_first' != 'collection_second'`). Then page one row at a time and assert the union has no duplicates.
+
 ### Sort keys are caller input too
 
 `pagingParams` exposes `sort` as a free-form field name. Clamping `limit` while leaving `sort` open still lets an unauthenticated caller force a blocking sort over every accessible document — including on a large `meta` subdocument. This is especially easy to miss right after adding an index for the *default* sort: the index covers `?sort=updated` and nothing else.

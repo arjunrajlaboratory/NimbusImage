@@ -59,6 +59,26 @@ def clampCollectionPaging(limit, offset):
     )
 
 
+def withIdTieBreaker(sort):
+    """Append `_id` to `sort` so the ordering is a total order.
+
+    Both listing endpoints page with `offset`, which is only coherent if the
+    sort is deterministic. Mongo stores datetimes at millisecond resolution, so
+    collections created in one bulk operation routinely share `updated`; tied
+    documents have no defined order, and a later page can then repeat a row
+    from an earlier one or skip a row entirely with the data unchanged.
+
+    `_id` is unique, so appending it makes the order total. It inherits the
+    primary key's direction so ties read in the same direction as the column
+    the user sorted on.
+    """
+    sort = list(sort or [])
+    if any(field == '_id' for field, _direction in sort):
+        return sort
+    direction = sort[0][1] if sort else SortDir.DESCENDING
+    return sort + [('_id', direction)]
+
+
 def requireSortableFields(sort):
     """Reject sort keys outside the allowlist.
 
@@ -174,7 +194,7 @@ class Collection(Resource):
             if folderId else {}
         )
         limit, offset = clampCollectionPaging(limit, offset)
-        requireSortableFields(sort)
+        sort = withIdTieBreaker(requireSortableFields(sort))
         # Read one extra document to tell the client whether paging further
         # would yield anything, without paying for a separate count query.
         documents = list(self._collectionModel.findWithPermissions(
@@ -304,7 +324,7 @@ class Collection(Resource):
         # the same paging and sort guards as the lightweight /list -- more so,
         # since each row it serializes is far heavier.
         limit, offset = clampCollectionPaging(limit, offset)
-        requireSortableFields(sort)
+        sort = withIdTieBreaker(requireSortableFields(sort))
         query = {'folderId': {
             '$in': [requireObjectId(x, 'folderIds') for x in folderIds]
         }}

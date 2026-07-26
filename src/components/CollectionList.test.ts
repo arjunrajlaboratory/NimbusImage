@@ -323,6 +323,77 @@ describe("CollectionList", () => {
     expect(vm.hasMore).toBe(false);
   });
 
+  // The hasMore alert renders outside the `v-if="loading"` block, so during a
+  // scope change the "Load more" button stays clickable. loadMore reads the
+  // ALREADY-BUMPED fetchGeneration, so its stale-response guard passes, and it
+  // would append rows fetched for the previous scope onto the new listing.
+  it("does not append a previous-scope page when load-more races a refetch", async () => {
+    (store as any).folderLocation = { _id: "folder1", name: "F" };
+    const vm = mountComponent().vm as any;
+    await new Promise((r) => setTimeout(r, 0));
+    vm.collections = [collection("old1")];
+    vm.hasMore = true;
+
+    // Both in-flight requests are released by hand. The refetch must land
+    // FIRST: if the paging response arrives first its rows are simply
+    // overwritten by the replacement listing, and the bug is invisible. It only
+    // shows when paging resolves after the listing it no longer belongs to.
+    const defer = () => {
+      let release: (value: any) => void = () => {};
+      const promise = new Promise((resolve) => {
+        release = resolve;
+      });
+      return { promise, release };
+    };
+    const refetch = defer();
+    const paging = defer();
+    mockListCollections
+      .mockReturnValueOnce(refetch.promise)
+      .mockReturnValueOnce(paging.promise);
+
+    vm.fetchCollections();
+    await vm.$nextTick();
+    vm.loadMore();
+    await vm.$nextTick();
+
+    refetch.release({ collections: [collection("new1")], hasMore: false });
+    await new Promise((r) => setTimeout(r, 0));
+    paging.release({ collections: [collection("stale1")], hasMore: false });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The listing must be exactly the replacement page — no previous-scope row.
+    expect(vm.collections.map((c: any) => c._id)).toEqual(["new1"]);
+  });
+
+  it("loadMore is a no-op while a refetch is in flight", async () => {
+    const vm = mountComponent().vm as any;
+    await new Promise((r) => setTimeout(r, 0));
+    vm.hasMore = true;
+    vm.loading = true;
+    mockListCollections.mockClear();
+    await vm.loadMore();
+    expect(mockListCollections).not.toHaveBeenCalled();
+  });
+
+  it("clears hasMore when a refetch starts so the alert cannot be clicked", async () => {
+    (store as any).folderLocation = { _id: "folder1", name: "F" };
+    const vm = mountComponent().vm as any;
+    await new Promise((r) => setTimeout(r, 0));
+    vm.hasMore = true;
+    let release: (v: any) => void = () => {};
+    mockListCollections.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    vm.fetchCollections();
+    await vm.$nextTick();
+    expect(vm.hasMore).toBe(false);
+
+    release({ collections: [], hasMore: false });
+  });
+
   it("loadMore is a no-op when there is nothing more to load", async () => {
     const vm = mountComponent().vm as any;
     vm.hasMore = false;
@@ -342,22 +413,37 @@ describe("CollectionList", () => {
     expect(vm.folderNames).toEqual({});
   });
 
-  it("resolveFolderNames chunks large id sets across requests", async () => {
+  // Chunking this into 500-id requests meant up to 20 sequential round-trips
+  // for a full 10,000-row page — a waterfall, and a looped frontend API call,
+  // which this repo forbids. The endpoint now takes a field projection, so the
+  // whole set resolves in ONE request that returns only ids and names instead
+  // of whole folder documents.
+  it("resolveFolderNames resolves every folder in a single request", async () => {
     const vm = mountComponent().vm as any;
     vm.scope = "all";
     // Let the refetch the scope watcher kicks off settle first.
     await new Promise((r) => setTimeout(r, 0));
-    // One collection per folder, more folders than fit in a single request.
+    // One collection per folder, far more than the old chunk size.
     vm.collections = Array.from({ length: 1200 }, (_unused, i) =>
       collection(`c${i}`, { folderId: `f${i}` }),
     );
     mockBatchResources.mockResolvedValue({ folder: {} });
     mockBatchResources.mockClear();
     await vm.resolveFolderNames();
-    expect(mockBatchResources).toHaveBeenCalledTimes(3);
-    expect(mockBatchResources.mock.calls[0][0].folder).toHaveLength(500);
-    expect(mockBatchResources.mock.calls[2][0].folder).toHaveLength(200);
+    expect(mockBatchResources).toHaveBeenCalledTimes(1);
+    expect(mockBatchResources.mock.calls[0][0].folder).toHaveLength(1200);
     expect(Object.keys(vm.folderNames)).toHaveLength(1200);
+  });
+
+  it("resolveFolderNames asks the backend for names only, not whole folders", async () => {
+    const vm = mountComponent().vm as any;
+    vm.scope = "all";
+    await new Promise((r) => setTimeout(r, 0));
+    vm.collections = [collection("c1", { folderId: "f1" })];
+    mockBatchResources.mockResolvedValue({ folder: {} });
+    mockBatchResources.mockClear();
+    await vm.resolveFolderNames();
+    expect(mockBatchResources.mock.calls[0][0].fields).toEqual(["name"]);
   });
 
   it("resolveFolderNames batch-resolves unseen folders only", async () => {
@@ -376,7 +462,10 @@ describe("CollectionList", () => {
     mockBatchResources.mockClear();
     await vm.resolveFolderNames();
     expect(mockBatchResources).toHaveBeenCalledTimes(1);
-    expect(mockBatchResources).toHaveBeenCalledWith({ folder: ["f1", "f2"] });
+    expect(mockBatchResources).toHaveBeenCalledWith({
+      folder: ["f1", "f2"],
+      fields: ["name"],
+    });
     expect(vm.folderNames).toEqual({
       f1: "Experiments",
       f2: "Unknown folder",

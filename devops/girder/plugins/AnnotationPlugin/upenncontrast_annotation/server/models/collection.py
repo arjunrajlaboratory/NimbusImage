@@ -96,16 +96,22 @@ class Collection(ProxiedModel):
 
     def initialize(self):
         self.name = 'upenn_collection'
-        # 'updated' (and its folder-scoped compound) back the default sort of
-        # the listing endpoint; without them Mongo has to blocking-sort every
-        # accessible collection, meta document and all.
+        # The '(updated, _id)' compounds back the default sort of the listing
+        # endpoint; without them Mongo has to blocking-sort every accessible
+        # collection, meta document and all. '_id' is part of the index because
+        # the endpoint appends it as a tie-breaker (see withIdTieBreaker): ties
+        # on 'updated' are common at Mongo's millisecond resolution, and offset
+        # paging over a non-total order can repeat or drop rows. An index whose
+        # prefix is 'updated' still serves a plain 'updated' sort, so no
+        # separate single-field index is needed.
         self.ensureIndices(('folderId',
                             'name',
                             'lowerName',
-                            'updated',
                             'meta.propertyIds',
                             ([('folderId', 1), ('name', 1)], {}),
-                            ([('folderId', 1), ('updated', -1)], {})))
+                            ([('updated', -1), ('_id', -1)], {}),
+                            ([('folderId', 1), ('updated', -1),
+                              ('_id', -1)], {})))
 
         self.exposeFields(level=AccessType.READ, fields=(
             '_id', 'size', 'updated', 'description', 'created', 'meta',

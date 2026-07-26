@@ -1,4 +1,3 @@
-from bson import ObjectId
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.v1.resource import Resource
@@ -6,6 +5,8 @@ from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.utility.model_importer import ModelImporter
 from girder.utility.progress import ProgressContext
+
+from ..helpers.validation import requireList, requireObjectId
 
 
 class CustomResource(Resource):
@@ -96,7 +97,9 @@ class CustomResource(Resource):
             'body',
             description=(
                 'Object with optional keys: folder, item, upenn_collection, '
-                ' user; each a list of ids'
+                ' user; each a list of ids. An optional "fields" list trims '
+                'every returned document to those keys plus _id, so callers '
+                'that only need e.g. names do not pull whole documents.'
             ),
             paramType='body',
             requireObject=True
@@ -105,6 +108,7 @@ class CustomResource(Resource):
     def batchResources(self, body):
         user = self.getCurrentUser()
         result = {}
+        fields = self._batchProjection(body.get('fields'))
 
         # Only allow known types
         allowed = ('folder', 'item', 'upenn_collection', 'user')
@@ -112,15 +116,22 @@ class CustomResource(Resource):
             ids = body.get(kind)
             if not ids:
                 continue
+            requireList(ids, kind)
             model = self._getResourceModel(kind)
 
             # Use bulk aggregation query instead of individual loads
             # This is much more efficient than loading each document
-            # individually
+            # individually.
+            # findWithPermissions folds the access criteria into the Mongo
+            # query, so projecting away 'access'/'public' is safe -- nothing
+            # post-filters in Python on the fields left out.
             docs = model.findWithPermissions(
-                query={"_id": {"$in": [ObjectId(x) for x in ids]}},
+                query={"_id": {"$in": [
+                    requireObjectId(x, kind) for x in ids
+                ]}},
                 user=user,
-                level=AccessType.READ
+                level=AccessType.READ,
+                fields=fields,
             )
 
             # Build the mapping from the bulk query results
@@ -131,3 +142,27 @@ class CustomResource(Resource):
             result[kind] = mapping
 
         return result
+
+    def _batchProjection(self, fields):
+        """Validate the optional `fields` list into a Mongo projection.
+
+        Returns None (no projection, whole documents) when the caller omits it,
+        so existing callers are unaffected. The keys build a projection, so
+        they are caller input on a query shape: reject anything not a plain
+        non-empty string, and reject '.' and '$' which would address a subpath
+        or read as an operator. '_id' is always included -- the response is a
+        map keyed by id, so it is not optional.
+        """
+        if fields is None:
+            return None
+        requireList(fields, 'fields')
+        for field in fields:
+            if (
+                not isinstance(field, str)
+                or not field
+                or '.' in field
+                or '$' in field
+            ):
+                raise RestException(
+                    'fields must be a list of plain document keys', code=400)
+        return list(set(fields) | {'_id'})

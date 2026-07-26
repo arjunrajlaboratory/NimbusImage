@@ -186,6 +186,64 @@ class TestCollectionList:
             "collection_older",
         ]
 
+    def testListBreaksUpdatedTiesByIdSoPagingIsStable(self, admin, server):
+        """Equal `updated` values must not leave the order to chance.
+
+        Mongo stores datetimes at millisecond resolution, so collections
+        created in one bulk operation routinely share `updated` (the same
+        collision that made the default-sort test flaky). Sorting on `updated`
+        alone gives tied documents no deterministic order, and the client pages
+        with `offset` -- so a second request can repeat a row from the first
+        page or skip one entirely, with the data unchanged. Append `_id` so the
+        total order is unique.
+        """
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        # ObjectIds are monotonic, so "older" gets the smaller _id. Both share
+        # one timestamp; _id descending therefore expects the SECOND-created
+        # collection first, which is the opposite of insertion order.
+        first = createCollection(admin, folder, "collection_first")
+        second = createCollection(admin, folder, "collection_second")
+        tied = datetime.datetime(2026, 1, 1, 12, 0, 0)
+        first['updated'] = tied
+        second['updated'] = tied
+        Collection().save(first)
+        Collection().save(second)
+        assert first['_id'] < second['_id']
+
+        def namesAt(offset):
+            resp = server.request(
+                path="/upenn_collection/list",
+                method="GET",
+                user=admin,
+                params={
+                    "folderId": str(folder["_id"]),
+                    "limit": 1,
+                    "offset": offset,
+                },
+            )
+            assertStatusOk(resp)
+            return [c["name"] for c in resp.json["collections"]]
+
+        # Whole page: ties resolve by _id descending, not insertion order.
+        resp = server.request(
+            path="/upenn_collection/list",
+            method="GET",
+            user=admin,
+            params={"folderId": str(folder["_id"])},
+        )
+        assertStatusOk(resp)
+        assert [c["name"] for c in resp.json["collections"]] == [
+            "collection_second",
+            "collection_first",
+        ]
+
+        # Paged one row at a time: every row appears exactly once.
+        paged = namesAt(0) + namesAt(1)
+        assert paged == ["collection_second", "collection_first"]
+        assert len(set(paged)) == 2
+
     def testListExcludesCollectionsTheUserCannotRead(
         self, admin, user, server
     ):

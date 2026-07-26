@@ -32,8 +32,12 @@ endpoint too heavy to use across folders.
 | Response | `{collections: [...], hasMore: bool}` |
 | `hasMore` | Read one document past the limit rather than a second count query |
 | Limit | Clamped to `[1, MAX_COLLECTION_LIST_LIMIT]` (10,000) |
-| Sort | Restricted to `COLLECTION_SORTABLE_FIELDS`; default `updated` descending |
-| Indexes | `updated` and `(folderId, updated)`, so the default sort doesn't blocking-sort full documents |
+| Sort | Restricted to `COLLECTION_SORTABLE_FIELDS`; default `updated` descending; `_id` appended as tie-breaker |
+| Indexes | `(updated, _id)` and `(folderId, updated, _id)`, so the default sort doesn't blocking-sort full documents |
+
+**Offset paging requires a total order.** `withIdTieBreaker` appends `_id` to whatever sort the caller asked for. Without it, documents tied on `updated` — which is routine, since Mongo stores datetimes at millisecond resolution and a bulk import stamps many collections in the same millisecond — have no defined order, so a page-2 request can repeat a row from page 1 or skip one entirely with the data unchanged. The indexes carry `_id` for the same reason; an index whose prefix is `updated` still serves a plain `updated` sort, so no separate single-field index is needed.
+
+Verified on a live server: the default sort plans as `LIMIT <- FETCH <- IXSCAN` with **no blocking `SORT` stage**, examining 10 keys for a limit of 10, and paging 44 rows one at a time returns 44 distinct ids in the same order as a single request. Note that `ensureIndices` only ever *creates* — an already-deployed database keeps the superseded `updated_1` and `folderId_1_updated_-1` indexes until they are dropped by hand. They are harmless (a little write overhead), so seeing them alongside the new compounds is expected, not a failed migration.
 
 **`findWithPermissions` + projection is safe.** It builds
 `{'$and': [query, permissionClauses(user, level)]}` and hands that to `find()`, so
@@ -73,7 +77,14 @@ in `src/` and `nimbusimage/` already passes one.
 
 Search filters name, description and folder name across what's loaded. Dataset chips
 resolve for the **visible page** rather than every collection up front; folder names
-resolve in batches of 500.
+resolve in a **single** `resource/batch` request that projects only `name`.
+
+That projection is why there is no chunking. `POST /resource/batch` takes an optional
+`fields` list and trims every returned document to those keys plus `_id`; omit it and
+callers get whole documents exactly as before. Resolving names without it meant either
+shipping thousands of full folder documents in one response, or chunking into 500-id
+requests — which traded the payload problem for up to 20 sequential round-trips, a
+waterfall and a looped frontend API call this repo forbids.
 
 ### Two Vuetify traps this feature hit
 
@@ -145,7 +156,8 @@ and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annota
 ### Cost
 
 - [ ] **Chips resolve per visible page, not per collection.** Two batch requests per page regardless of row count; a page already visited is not refetched. — *"resolves every collection with two batch requests"*, *"onCurrentItemsChange resolves chips for the visible rows only once"*
-- [ ] **Folder-name resolution is chunked and only for unseen ids.** — *"resolveFolderNames chunks large id sets across requests"*, *"resolveFolderNames batch-resolves unseen folders only"*
+- [ ] **Folder names resolve in ONE request, projecting only `name`, for unseen ids only.** Chunking the loop is not a fix for a looped API call — it just converts a payload problem into a waterfall. — *"resolveFolderNames resolves every folder in a single request"*, *"resolveFolderNames asks the backend for names only, not whole folders"*, *"resolveFolderNames batch-resolves unseen folders only"*
+- [ ] **`resource/batch` without `fields` still returns whole documents.** Eight other callers depend on that. — *`testBatchReturnsWholeDocumentsByDefault`*
 - [ ] **The folder scope skips folder-name resolution entirely.** — *"resolveFolderNames does nothing in the folder scope"*
 
 ### Error handling
@@ -154,6 +166,7 @@ and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annota
 - [ ] **Loading, empty and resolved are three distinct states.** `undefined` chips = not resolved yet; `[]` = resolved with none. — *"shows the loading state while chips have not been resolved"*, *"shows 'No datasets' once resolved to an empty chip list"*
 - [ ] **A null `description` never reaches a string method.** The listing projects with `document.get(field)`, so it can be JSON null. — *"filteredCollections tolerates a null description"*
 - [ ] **A stale response cannot overwrite a newer listing.** `fetchGeneration` guards every await. — *"fetchCollections handles error and sets empty collections"*
+- [ ] **Paging cannot fire on a listing that is being replaced.** `fetchGeneration` alone does NOT cover this: a "Load more" click during a refetch captures the *already-bumped* generation, so its own stale-check passes and it appends outgoing-scope rows. `fetchCollections` clears `hasMore` on entry (the alert renders outside the `v-if="loading"` block, so it stays clickable otherwise), `loadMore` also guards on `loading`, and it pins `folderId` for the request instead of re-reading the mutable `loadedFolderId`. — *"does not append a previous-scope page when load-more races a refetch"*, *"loadMore is a no-op while a refetch is in flight"*, *"clears hasMore when a refetch starts so the alert cannot be clicked"*
 
 ### Selection and scope
 
@@ -167,6 +180,9 @@ and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annota
 - [ ] **The clamp test can actually fail.** With 3 collections and a 10,000 ceiling, "unlimited" and "capped" are indistinguishable — shrink `MAX_COLLECTION_LIST_LIMIT` via `monkeypatch` instead. — *`testFindByFoldersClampsLimit`*
 - [ ] **Malformed input is 400, never 500.** Bad folderId, non-list `folderIds`, numeric entries, a JSON-array body. — *`testMalformedFolderIdIsA400`*, *`testFindByFoldersRejectsMalformedBodies`*
 - [ ] **The listing never ships `meta`.** — *`testListOmitsMetadata`*
+- [ ] **Ties on the sort key do not make paging lossy.** `_id` is appended so the order is total, and the indexes carry it. — *`testListBreaksUpdatedTiesByIdSoPagingIsStable`*
+- [ ] **`fields` on `resource/batch` is validated and cannot address a subpath.** It builds a projection from caller input; reject non-strings, empty keys, `.` and `$`. — *`testBatchRejectsMalformedFields`*
+- [ ] **A projection does not weaken the access filter.** Permission criteria live inside the Mongo query, so excluding `access`/`public` is safe — but assert it. — *`testBatchProjectionStillEnforcesAccess`*
 - [ ] **Access filtering survives the field projection.** — *`testListExcludesCollectionsTheUserCannotRead`*
 - [ ] **`GET /upenn_collection` still demands a folderId.** — *`testFindStillRequiresFolderId`*
 
@@ -175,5 +191,6 @@ and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annota
 - [ ] **Never assert an order that depends on wall-clock timing.** MongoDB stores datetimes at *millisecond* resolution, so creating one collection and touching another routinely lands both in the same millisecond; the sort then ties and returns an arbitrary order. Write the timestamps explicitly. — *`testListSortsByUpdatedDescendingByDefault`*
 - [ ] **Scope a listing assertion to its own folder.** An exact-list assertion against an unfiltered cross-folder listing is at the mercy of every other test file. — *`testListSortsByUpdatedDescendingByDefault`*
 - [ ] **Run the backend file after `test_annotations.py`, not just alone.** That ordering is what exposed the tie. `tox -- upenncontrast_annotation/test/test_annotations.py upenncontrast_annotation/test/test_collection_list.py`
+- [ ] **A race test must control resolution ORDER, or it proves nothing.** The first version of the load-more race test mocked both requests with one `mockResolvedValue` and passed *before* the fix: whichever response landed second won, and half the time that was the correct one. Use two hand-released deferred promises and release the refetch **first** — the bug only shows when paging resolves after the listing it no longer belongs to. — *"does not append a previous-scope page when load-more races a refetch"*
 - [ ] **Source-scan guards are legitimate where the cascade is untestable.** jsdom does not apply SFC styles, so no runtime assertion can observe a CSS override; assert against the template source instead (the precedent is `src/vuetifyDeprecations.test.ts`).
 - [ ] **`import.meta.url` is not a `file://` URL in the jsdom environment.** Resolve from `process.cwd()` in tests that read source files.

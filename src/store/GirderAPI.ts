@@ -596,11 +596,20 @@ export default class GirderAPI {
   }
 
   // Batch resolve multiple resources (folders, items, collections, users)
+  /**
+   * Batch-resolve resource ids to documents, one request per call.
+   *
+   * Pass `fields` to trim every returned document to those keys plus `_id`.
+   * Without it the backend ships whole documents, which is what forces callers
+   * resolving a single field (e.g. folder names for a table column) to either
+   * chunk their requests or transfer far more than they need.
+   */
   async batchResources(args: {
     folder?: string[];
     item?: string[];
     upenn_collection?: string[];
     user?: string[];
+    fields?: string[];
   }): Promise<{
     folder?: Record<string, IGirderFolder>;
     item?: Record<string, IGirderItem>;
