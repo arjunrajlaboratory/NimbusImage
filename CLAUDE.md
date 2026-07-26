@@ -273,6 +273,29 @@ JobModel().scheduleJob(job)
 
 ## Code Review Guidelines
 
+### Turn review findings into durable artifacts, not one-off fixes
+
+A reviewer flags **one instance** of a pattern per round. Fixing only that instance means the next round flags the next instance — a ten-round review of one feature here produced roughly twenty findings that reduced to **two underlying shapes**. Two obligations follow, and they apply to every branch, not just large ones.
+
+**1. Generalize the finding, then sweep the branch.** Before fixing, name the shape ("a rule applied to one of two symmetric paths", "expensive work before the cheap guard that would skip it"). Then grep the whole diff for other instances and fix those in the same pass. If a sweep comes back clean, ask what the query structurally cannot see — a grep for `throw` once found every deliberate thrower and missed every silent propagator.
+
+The single most repeated shape in this repo is **one of two symmetric paths**. When you change one, ask what its twin is: drawing ↔ retention/clearing, styling-on-create ↔ restyling-on-update, hover/highlight ↔ click/selection, one piece of paired state ↔ the other, one mode branch ↔ the rest. The two implementations rarely share a name, which is exactly why they drift — search by concept.
+
+**2. Write the lesson into a skill.** If the finding would recur in *other* features, it belongs in `.claude/skills/` — `fixing-review-findings` for review patterns, `nimbus-frontend` / `nimbus-geojs` / `nimbus-backend` for domain traps. Skills are the mechanism by which a review round improves the next feature instead of only this one. Skills live in two trees and CI enforces parity, so run `python3 plugins/nimbusimage/scripts/sync_skills.py --write` after editing (see *Editing skills* below).
+
+Record test-harness traps too, not just product bugs. A shared mock returning a fixed value silently defeats new tests: `distance2dToLineSquared` returns `100`, `pointDistance` returns `undefined`, `geojsAnnotationFactory` drops its options. Each caused a test that passed **before** its fix — worse than no test at all.
+
+### Give every substantial feature a regression checklist
+
+When a feature accumulates review findings, add a **Regression checklist** to its `codebaseDocumentation/<FEATURE>.md`: one line per invariant, each naming the test that holds it, grouped by concern (e.g. drawing / interaction / cost / destructive actions). See `CONNECTION_LIST.md` for the worked example.
+
+This exists because several fixes in that feature were undone by *later* fixes to adjacent code — the checklist is what makes "change this, re-check these" mechanical instead of remembered. Rules for it to stay useful:
+
+- **Every item names its test.** An invariant without a test is a wish; if the test doesn't exist, write it.
+- **Include invariants with no visible behavior** — allocation and recompute costs regress silently and no one notices until a large dataset does.
+- **Add an item whenever a review finds something the checklist missed.** The checklist is the running answer to "what has broken here before".
+- Also record process rules the feature proved: verify from a fresh page load on a dataset that actually has the property under test, and use `git stash` rather than a `cp` round-trip when confirming a test fails without its fix.
+
 ### Avoid Looped Database Calls (Frontend AND Backend)
 
 Never iterate and make individual database or API calls in a loop. This applies to **both** frontend API calls and backend database queries. Use batch/aggregated operations instead.
