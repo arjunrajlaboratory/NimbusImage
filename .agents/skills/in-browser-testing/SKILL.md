@@ -9,7 +9,7 @@ description: "Use when verifying NimbusImage changes in a live browser tab (loca
 
 Multiple real bugs in this repo passed tsc, lint, all unit tests, and code reasoning — and only broke in the live app (pointer-events layering, deep-watch over-firing, HMR-corrupted store, background-tab false-passes). For any user-facing change, in-browser verification is a required gate, and it must be done in a way that can actually fail. The traps below each produced a false "it works" at least once.
 
-## The five false-pass traps
+## The six false-pass traps
 
 1. **Synthetic clicks lie.** `element.dispatchEvent(new MouseEvent('click'))` bypasses hit-testing, `pointer-events`, z-index, and overlays. A synthetic-click walkthrough once reported a tour "working" while real user clicks did nothing. Verify clickability with `document.elementFromPoint(cx, cy)` (is the intended element the topmost hit target?), then click with the real `computer` tool. Reserve synthetic dispatch for *driving* flows fast only after clickability is independently confirmed.
 2. **Background tabs lie.** A hidden tab pauses `requestAnimationFrame`, throttles `setTimeout` to ~1 Hz, and never composites — perf probes report 0 long tasks and event loops stall/time out. The tab must be foreground/visible for any timing or rendering claim. If a paced loop must survive a background tab, use busy-wait gaps (`while (performance.now() < end) {}`), not setTimeout.
@@ -21,6 +21,20 @@ Multiple real bugs in this repo passed tsc, lint, all unit tests, and code reaso
    // draw to an offscreen canvas, then getImageData → report max/mean channel value
    ```
    A non-zero max means the tiles are there. Note that a fluorescence dataset is *legitimately* near-black at fit-to-view zoom (sparse bright cells, `hist.max` pinned to 65535 by a few saturated pixels), so a low mean is not evidence of a bug either. Verify tile health from `statusCode`s in `read_network_requests` (`/tiles/zxy/` → 200) plus the layers' `idle`/`_imageUrls`, and verify overlays from live DOM state — not from the picture.
+6. **An empty console reads as "clean" when it means "not capturing."** `read_console_messages` only records from the moment it is **first called**, so a warning emitted during app boot is invisible unless you call it *then* reload *then* read. Worse, a `console.warn` wrapper installed via `javascript_tool` can never see boot-time output at all — the app has already mounted by the time you can install it. Chasing a missing `[Vuetify UPGRADE]` warning this way produced two false passes in a row (issue #1281) before the order was fixed.
+
+   Compounding it: **`eager` dialogs mount at app boot, and a mount-time warning fires exactly once.** `PipelineDialog.vue` sets `eager` so its content stays mounted while closed — so closing and reopening the dialog does *not* re-run any child's `setup()`, and any one-shot warning there (Vuetify deprecations, prop validators) never fires again for the life of the page. Toggling the dialog to "re-trigger" it silently measures nothing.
+
+   Working order for any boot-time console assertion:
+   ```
+   1. read_console_messages{clear:true}    // start tracking / empty the buffer
+   2. location.reload()                    // via javascript_tool; a #hash nav is NOT a reload
+   3. wait for boot (poll store state)
+   4. read_console_messages{pattern:…}     // the real read
+   5. read again with a broad pattern (e.g. "vite") to prove capture is live —
+      seeing "[vite] connected" is what makes an empty filtered result meaningful
+   ```
+   Then invert it: put the pre-fix code back (`git stash`) and confirm the same sequence *does* report the warning. Verify which code is actually being served rather than assuming the stash took effect — `fetch('/src/path/To.vue?t=' + Date.now())` returns Vite's current transform, and counting tokens in it (`dense` vs `comfortable`) settles it. Rendered DOM often can't: `dense` and `density="comfortable"` produce the *same* `v-row--density-comfortable` class, so the DOM looked identical in both states.
 
 ## Console handles (javascript_tool)
 

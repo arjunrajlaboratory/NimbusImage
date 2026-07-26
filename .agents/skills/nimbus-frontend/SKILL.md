@@ -322,12 +322,48 @@ watch(promptMode, (v) => segState.value?.nodes.input.promptMode.setValue(v));
 
 Reactive **state** fields (from `reactive(...)` in the tool-state factory) are fine to read in computeds — only raw `markRaw`'d node `.output` reads are the trap.
 
-### VRow Density
+### VRow Density — and `dense` everywhere else
 
-`dense` prop is deprecated. Use `density="comfortable"`:
+On `<v-row>`, the boolean `dense` prop is deprecated. Use `density="comfortable"`:
 ```vue
 <v-row density="comfortable" align="center">
 ```
+
+The substitution is **visually identical** — VRow maps
+`density === 'comfortable' || dense` to the same `v-row--density-comfortable`
+class, so `dense` still works and the only symptom is
+`[Vuetify UPGRADE] 'dense' is deprecated` in the console. Don't trust
+Vuetify's own JSDoc here: `makeVRowProps` says `@deprecated use
+density="compact"` while the runtime warning and the class mapping both say
+`comfortable`. `comfortable` is the behaviour-preserving one.
+
+**The warning is one-shot per mounted row, not per render.** `deprecate()` is
+called from `VRow.setup()`, so re-rendering or updating an existing row never
+repeats it — which is exactly why you cannot "re-trigger" it by toggling the UI
+that contains it, and why it is usually already gone by the time you attach a
+console listener. See the `in-browser-testing` skill for the capture order this
+forces.
+
+**`VRow` is the only component that warns.** `deprecate('dense', …)` is called
+in exactly one place in Vuetify 4 (`VRow.setup()`). So a `dense` on anything
+else is *silent* — and dead: `VCard`, `VListSubheader`, and our own
+`tag-picker` / `docker-image-select` / `property-worker-menu` declare no `dense`
+prop, so Vue passes it through to the root element as a stray DOM attribute that
+styles nothing.
+
+**Delete those; don't convert them.** `VListSubheader` has no `density` prop
+either, so a swap is just a different dead attribute. `VCard` *does* have one,
+so a swap there newly tightens title/subtitle/text padding — an unrequested
+visual change. This is the trap in a scripted sweep: a regex that rewrites
+`dense` → `density="comfortable"` on every tag it matches is wrong on most of
+them, and a regex restricted to `<v-[a-z-]+` misses the custom-component
+instances entirely (they need the opposite treatment, so they can't just be
+ignored).
+
+`src/vuetifyDeprecations.test.ts` scans every `.vue` template for a boolean
+`dense` on any tag and fails the build, so this can't silently come back.
+Extend that test rather than hand-grepping when auditing a new Vuetify
+deprecation.
 
 ### v-menu / v-dialog Initial State
 
