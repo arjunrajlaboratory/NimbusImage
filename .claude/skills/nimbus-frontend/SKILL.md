@@ -332,10 +332,17 @@ On `<v-row>`, the boolean `dense` prop is deprecated. Use `density="comfortable"
 The substitution is **visually identical** — VRow maps
 `density === 'comfortable' || dense` to the same `v-row--density-comfortable`
 class, so `dense` still works and the only symptom is
-`[Vuetify UPGRADE] 'dense' is deprecated` logged on every render. Don't trust
+`[Vuetify UPGRADE] 'dense' is deprecated` in the console. Don't trust
 Vuetify's own JSDoc here: `makeVRowProps` says `@deprecated use
 density="compact"` while the runtime warning and the class mapping both say
 `comfortable`. `comfortable` is the behaviour-preserving one.
+
+**The warning is one-shot per mounted row, not per render.** `deprecate()` is
+called from `VRow.setup()`, so re-rendering or updating an existing row never
+repeats it — which is exactly why you cannot "re-trigger" it by toggling the UI
+that contains it, and why it is usually already gone by the time you attach a
+console listener. See the `in-browser-testing` skill for the capture order this
+forces.
 
 **`VRow` is the only component that warns.** `deprecate('dense', …)` is called
 in exactly one place in Vuetify 4 (`VRow.setup()`). So a `dense` on anything

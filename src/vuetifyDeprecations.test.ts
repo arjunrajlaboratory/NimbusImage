@@ -40,9 +40,10 @@ function templateBlock(source: string): string {
 const OPEN_TAG = /<([A-Za-z][a-zA-Z0-9.-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)\/?>/g;
 
 // A `dense` attribute in any binding form: bare, `dense="true"`, `:dense="x"`,
-// or `v-bind:dense="x"`. `density="…"` never matches, because the character
-// after `dense` must be whitespace, "=", or the blob's end.
-const DENSE_ATTR = /(^|\s)(?::|v-bind:)?dense(?=[\s=]|$)/;
+// `v-bind:dense="x"`, and with modifiers (`:dense.camel="x"`). `density="…"`
+// never matches, because after the optional modifier chain the next character
+// must be whitespace, "=", or the blob's end.
+const DENSE_ATTR = /(^|\s)(?::|v-bind:)?dense(?:\.[a-zA-Z]+)*(?=[\s=]|$)/;
 
 // Attribute *values* are not attribute names: `class="a dense b"` must not
 // register, so blank the quoted spans before looking for the token.
@@ -50,12 +51,33 @@ function attrNames(blob: string): string {
   return blob.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
 }
 
+// `v-bind="{ dense: true }"` spreads onto props, so a `dense` key there really
+// does set the prop — unlike a `dense` key inside a *named* prop's object value
+// (`:x="{ dense: true }"`), which binds to `x` and must be ignored. Only the
+// unnamed spread's own value is searched.
+const VBIND_SPREAD = /v-bind\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+// An object key named `dense`, including the `{ dense }` shorthand.
+const DENSE_KEY = /(^|[{,\s])dense\s*(?=[:,}\s]|$)/;
+
+// KNOWN LIMIT: `v-bind="someObject"` (116 occurrences in src, all
+// `activatorProps`/`$attrs` style) cannot be resolved statically, so a `dense`
+// arriving through one is invisible to this guard. Documented rather than
+// silently assumed away; `does not fire on look-alikes` pins the behaviour so
+// the gap stays visible instead of being mistaken for coverage.
+function denseInTag(blob: string): boolean {
+  if (DENSE_ATTR.test(attrNames(blob))) return true;
+  for (const spread of blob.matchAll(VBIND_SPREAD)) {
+    if (DENSE_KEY.test(spread[1] ?? spread[2] ?? "")) return true;
+  }
+  return false;
+}
+
 function densePlaces(source: string): string[] {
   // Drop HTML comments so prose mentioning "dense" is not scanned as markup.
   const stripped = templateBlock(source).replace(/<!--[\s\S]*?-->/g, "");
   const found: string[] = [];
   for (const match of stripped.matchAll(OPEN_TAG)) {
-    if (DENSE_ATTR.test(attrNames(match[2]))) {
+    if (denseInTag(match[2])) {
       found.push(match[1]);
     }
   }
@@ -64,9 +86,11 @@ function densePlaces(source: string): string[] {
 
 describe("Vuetify 4 deprecations", () => {
   // Vuetify 4 deprecated the boolean `dense` prop. VRow still honours it but
-  // logs `[Vuetify UPGRADE] 'dense' is deprecated` on every render; every
-  // other component in this app never had a `dense` prop at all, so there the
-  // attribute silently falls through to the DOM as dead markup.
+  // logs `[Vuetify UPGRADE] 'dense' is deprecated` once per mounted instance —
+  // `deprecate()` is called from `setup()`, so re-rendering an existing row
+  // never repeats it. Every other component in this app never had a `dense`
+  // prop at all, so there the attribute silently falls through to the DOM as
+  // dead markup.
   //
   // Fix: on `<v-row>` use `density="comfortable"` (identical rendered class —
   // VRow maps both to `v-row--density-comfortable`). Anywhere else, delete the
@@ -119,6 +143,13 @@ describe("Vuetify 4 deprecations", () => {
     expect(t(`<v-row dense="true">`)).toEqual(["v-row"]);
     expect(t(`<v-row :dense="isDense">`)).toEqual(["v-row"]);
     expect(t(`<v-row v-bind:dense="isDense">`)).toEqual(["v-row"]);
+    // binding modifiers
+    expect(t(`<v-row :dense.camel="isDense">`)).toEqual(["v-row"]);
+    expect(t(`<v-row v-bind:dense.prop="isDense">`)).toEqual(["v-row"]);
+    // object-literal v-bind spread really does set the prop
+    expect(t(`<VRow v-bind="{ dense: true }" />`)).toEqual(["VRow"]);
+    expect(t(`<VRow v-bind="{ ...rest, dense: true }" />`)).toEqual(["VRow"]);
+    expect(t(`<VRow v-bind="{ dense }" />`)).toEqual(["VRow"]);
     // custom components, which the issue's `<v-[a-z-]+` regex missed entirely
     expect(t(`<tag-picker v-model="t" dense />`)).toEqual(["tag-picker"]);
   });
@@ -128,14 +159,23 @@ describe("Vuetify 4 deprecations", () => {
 
     expect(t(`<v-row density="comfortable">`)).toEqual([]);
     expect(t(`<v-checkbox density="compact" />`)).toEqual([]);
+    expect(t(`<v-row v-bind="{ density: 'comfortable' }" />`)).toEqual([]);
     expect(t(`<!-- the slider is dense -->`)).toEqual([]);
     // "dense" appearing inside an attribute *value*, not as a prop name
     expect(t(`<v-col class="a dense b">`)).toEqual([]);
     expect(t(`<v-col :label="a > b ? 'dense' : ''">`)).toEqual([]);
+    // a `dense` key on a NAMED prop binds to that prop, not to `dense`
     expect(t(`<v-col :x="{ dense: true }">`)).toEqual([]);
+    // similarly-spelled identifiers are not the prop
+    expect(t(`<v-row :is-dense="x" />`)).toEqual([]);
+    expect(t(`<v-row v-bind="{ isDense: true }" />`)).toEqual([]);
     // script-block generics are outside the template and must be ignored
     expect(
       densePlaces(`<script setup>const r = ref<Dense>();</script>`),
     ).toEqual([]);
+
+    // Documented limit, asserted so it stays visible rather than being
+    // mistaken for coverage: an opaque spread cannot be resolved statically.
+    expect(t(`<VRow v-bind="activatorProps" />`)).toEqual([]);
   });
 });
