@@ -133,10 +133,21 @@ gh api repos/OWNER/REPO/pulls/N/comments \
 
 Sanity-check a "nothing yet" result against `gh pr view N --json reviews` (GraphQL) before reporting it — if the two disagree, the filter is wrong, not the bot. Turnaround is 1–8 minutes and grows with diff size.
 
-**A poll that only looks for a review object is wrong**, because the clean result is not one. Three separate polls in one session reported a false "nothing yet": one filtered on the GraphQL login spelling, one gave up at 5 minutes, and one checked the clean-comment form only *inside* the branch that had already found a review. Check every signal on every iteration:
+**A poll that only looks for a review object is wrong**, because the clean result is not one. Three separate polls in one session reported a false "nothing yet": one filtered on the GraphQL login spelling, one gave up at 5 minutes, and one checked the clean-comment form only *inside* the branch that had already found a review. A fourth failed the other way — a hand-typed local-clock cutoff matched the previous round and reported a finding already fixed. Every one of these was a *confident* wrong answer, so check every signal on every iteration and derive the cutoff from the API:
+
+**Never hand-write `LAST`.** This machine's clock is UTC-4 and GitHub timestamps
+are UTC, so a cutoff typed from the local clock sits four hours in the past and
+the loop matches the *previous* round's review on its first iteration — a false
+"the verdict arrived", re-reporting a finding already fixed. Derive it from the
+API, and print the matched review's `commit_id` so a stale match is obvious:
 
 ```bash
-LAST="<iso timestamp of the previous review>"; PR=1279; OWNER=arjunrajlaboratory/NimbusImage
+LAST=$(gh api repos/$OWNER/pulls/$PR/reviews \
+  --jq '[.[] | select(.user.login|startswith("chatgpt-codex-connector"))] | last | .submitted_at')
+```
+
+```bash
+PR=1279; OWNER=arjunrajlaboratory/NimbusImage   # LAST from the command above
 for i in $(seq 1 20); do
   sleep 30
   # 1. a review object with inline findings
@@ -148,6 +159,10 @@ for i in $(seq 1 20); do
   echo "$i: reviews=$N cleanComments=$C prReactions=$R"
   [ "$N" -gt 0 ] || [ "$C" -gt 0 ] && break
 done
+# Confirm the match is for the CURRENT head, not a carried-over earlier round:
+gh api repos/$OWNER/pulls/$PR/reviews \
+  --jq ".[] | select(.submitted_at > \"$LAST\") | \"\(.submitted_at) commit=\(.commit_id[0:10])\""
+git rev-parse --short HEAD
 ```
 
 The eyes-reaction transition is the most useful signal: while 👀 is on the trigger comment it is still working, and the moment it clears the verdict exists somewhere — as inline comments, as a "Didn't find any major issues" issue comment, or as 👍 on the PR.
