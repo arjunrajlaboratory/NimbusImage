@@ -140,14 +140,24 @@ tie-breaker under real data, not just in the unit test. The backend half checks 
 same way: `limit=43` → `hasMore: true`, `limit=44` → `false`, `limit=10&offset=40` → 4
 rows.
 
-**Not verified:** a real mouse click on the "Load more" button specifically. The button
-renders, is hit-testable (`elementFromPoint` resolves to it) and is not disabled, and
-the handler behind it was driven to exhaustion — but the browser window went
-background-hidden partway through the session, and Chrome does not deliver synthetic
-clicks to a hidden tab. Re-check that one interaction with the window in the
-foreground. Every other interaction in this table *was* driven by real clicks: the
-scope toggle, column-header sorting, the search field, row navigation, and the data
-table's own footer pager.
+All nine pages were driven by **real mouse clicks** on the button, not by calling the
+handler: 16 clicks landed on `SPAN.v-btn__content`, and the run ended at 44 loaded /
+44 distinct / `hasMore: false` / alert gone. Every other interaction in this table was
+real-clicked too — scope toggle, column-header sorting, the search field, row
+navigation, and the data table's own footer pager.
+
+Two traps cost real time getting there, both worth knowing before driving this UI:
+
+- **A background-hidden window silently swallows clicks.** `document.visibilityState`
+  reads `"hidden"` even while `document.hasFocus()` is `true`, and clicks produce *no*
+  event at all — not even on a capture-phase `document` listener. That looks exactly
+  like a dead button. Check `visibilityState` before concluding anything about a click.
+- **Rescale to the CURRENT screenshot every time.** The click tool works in screenshot
+  space. Reusing scale factors from an earlier screenshot after the window is resized
+  maps the target somewhere else entirely — here the button's centre landed on the
+  surrounding `v-alert` div, which registered a click on the wrong element and looked
+  like the handler failing. Confirm with `elementFromPoint` *and* by logging the
+  received `clientX/clientY`.
 
 ---
 
