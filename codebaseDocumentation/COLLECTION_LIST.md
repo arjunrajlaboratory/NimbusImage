@@ -182,7 +182,9 @@ and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annota
 - [ ] **The listing never ships `meta`.** — *`testListOmitsMetadata`*
 - [ ] **Ties on the sort key do not make paging lossy.** `_id` is appended so the order is total, and the indexes carry it. — *`testListBreaksUpdatedTiesByIdSoPagingIsStable`*
 - [ ] **`fields` on `resource/batch` is validated and cannot address a subpath.** It builds a projection from caller input; reject non-strings, empty keys, `.` and `$`. — *`testBatchRejectsMalformedFields`*
-- [ ] **A projection does not weaken the access filter.** Permission criteria live inside the Mongo query, so excluding `access`/`public` is safe — but assert it. — *`testBatchProjectionStillEnforcesAccess`*
+- [ ] **A projection does not weaken the access filter.** Permission criteria live inside the Mongo query, so excluding `access`/`public` from the *response* is safe — but they must still be *fetched*, because `model.filter()` reads them to compute the level. — *`testBatchProjectionStillEnforcesAccess`*
+- [ ] **`resource/batch` filters every document through `model.filter(doc, user)`.** It hand-builds a map, so `@filtermodel` cannot apply and nothing else strips unexposed keys. Returning raw documents leaked folder `access` and, for the `user` type, `salt` — the bcrypt password hash — plus `email`. Filter **then** narrow to `fields`, never the reverse, or `fields: ["salt"]` becomes an exfiltration primitive. — *`testBatchNeverReturnsUnexposedFolderFields`*, *`testBatchNeverReturnsUnexposedUserFields`*
+- [ ] **Nothing renders a user field that is only exposed at ADMIN.** `email` is ADMIN-level (your own account or a site admin), so another user's lookup legitimately has none; every display goes through `userDisplayName()`. — *`src/utils/userDisplay.test.ts`*, *"omits the email parenthetical when the owner's email is not visible"*
 - [ ] **Access filtering survives the field projection.** — *`testListExcludesCollectionsTheUserCannotRead`*
 - [ ] **`GET /upenn_collection` still demands a folderId.** — *`testFindStillRequiresFolderId`*
 

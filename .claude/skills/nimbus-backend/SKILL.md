@@ -339,6 +339,43 @@ limit = min(max(1, limit or MAX_X_LIMIT), MAX_X_LIMIT)
 
 Whenever you write `limit + 1` (or any arithmetic on a limit), trace the value for **`-1`, `0`, and `MAX+1`** by hand. `-1` is the dangerous one and the easiest to skip: `0` and `MAX+1` both behave, so a spot-check of "does a MAX_ constant exist" passes while the bypass sits there. Regression-test `limit=-1` specifically, asserting a clamped page — not just "no 500".
 
+### An endpoint that hand-builds its response has no `@filtermodel` — filter it yourself
+
+`@filtermodel` is what strips keys the model does not expose at the caller's access level. An endpoint that returns something other than a bare model document — a map keyed by id, a multi-type envelope, a computed summary — cannot use the decorator, and it is easy to miss that **nothing else is filtering**. `findWithPermissions` decides *which documents* you may see; it says nothing about *which fields*.
+
+`POST /resource/batch` shipped that way and leaked, to any signed-in caller (found auditing PR #1278):
+
+| Type | Leaked | Because |
+|---|---|---|
+| `folder` | `access` | who holds READ/WRITE/ADMIN, by user and group |
+| `user` | **`salt`** (the bcrypt password hash), `email`, `groups`, `status` | User exposes only `_id/admin/created/firstName/lastName/login/public` at READ |
+
+The fix is to call the same thing the decorator calls:
+
+```python
+mapping[str(doc['_id'])] = model.filter(doc, user)
+```
+
+**A field projection interacts with this — order matters.** `filter()` calls `getAccessLevel(doc, user)`, which reads the document's own `access` and `public`. Project those away and every document looks unreadable, silently stripping fields the caller *is* entitled to. So fetch them and drop them afterwards:
+
+```python
+fields=list(set(requested) | {'_id', 'access', 'public'})   # for the query
+...
+narrowed = {k: v for k, v in model.filter(doc, user).items() if k in requested}
+```
+
+Filter **then** narrow — never narrow then filter, or `fields: ["salt"]` becomes an exfiltration primitive. Regression-test exactly that: request an unexposed key explicitly and assert you get only `_id` back.
+
+Check exposure levels rather than guessing — `email` sits at ADMIN, not READ:
+
+```python
+docker compose exec -T girder python -c "
+from girder.models.user import User
+u=User(); print({lvl: sorted(k) for lvl, k in u._filterKeys.items()})"
+```
+
+Expect frontend fallout when you fix one of these: the UI may have been rendering data it should never have had. Here three call sites interpolated `user.email` and two produced `"Name (undefined)"` once it was correctly withheld.
+
 ### Offset paging needs a TOTAL order — append `_id`
 
 A `limit`/`offset` endpoint is only coherent if the sort is deterministic. Mongo stores datetimes at **millisecond** resolution, so any bulk operation stamps many documents with the same `updated`/`created`; tied documents have no defined order, and a page-2 request can then repeat a row from page 1 or skip one entirely **with the data unchanged**. Nothing errors, and it is invisible in a single-page test.

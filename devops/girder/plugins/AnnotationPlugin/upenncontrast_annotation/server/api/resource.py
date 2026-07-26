@@ -122,26 +122,49 @@ class CustomResource(Resource):
             # Use bulk aggregation query instead of individual loads
             # This is much more efficient than loading each document
             # individually.
-            # findWithPermissions folds the access criteria into the Mongo
-            # query, so projecting away 'access'/'public' is safe -- nothing
-            # post-filters in Python on the fields left out.
             docs = model.findWithPermissions(
                 query={"_id": {"$in": [
                     requireObjectId(x, kind) for x in ids
                 ]}},
                 user=user,
                 level=AccessType.READ,
-                fields=fields,
+                fields=self._queryFields(fields),
             )
 
-            # Build the mapping from the bulk query results
+            # Build the mapping from the bulk query results.
+            # model.filter() is what @filtermodel would apply: it drops every
+            # key the model does not expose at the caller's access level.
+            # Returning the raw documents leaked 'access' (who holds which
+            # permission) for folders and, for the user type, 'salt' -- the
+            # bcrypt password hash -- plus 'email', to any signed-in caller.
             mapping = {}
             for doc in docs:
-                mapping[str(doc['_id'])] = doc
+                mapping[str(doc['_id'])] = self._project(
+                    model.filter(doc, user), fields)
 
             result[kind] = mapping
 
         return result
+
+    def _queryFields(self, fields):
+        """Widen a response projection to what access filtering needs.
+
+        `model.filter()` calls `getAccessLevel(doc, user)`, which reads the
+        document's own 'access' and 'public'. Projecting those away would make
+        every document look unreadable and silently strip fields the caller is
+        entitled to, so they are fetched and then dropped from the response by
+        _project. Returns None (whole documents) when no projection was asked
+        for.
+        """
+        if fields is None:
+            return None
+        return list(set(fields) | {'_id', 'access', 'public'})
+
+    def _project(self, doc, fields):
+        """Narrow a filtered document to the caller's requested fields."""
+        if fields is None:
+            return doc
+        return {key: value for key, value in doc.items() if key in fields}
 
     def _batchProjection(self, fields):
         """Validate the optional `fields` list into a Mongo projection.

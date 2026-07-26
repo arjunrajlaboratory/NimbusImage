@@ -6,6 +6,10 @@ import json
 
 import pytest
 
+from girder.constants import AccessType
+from girder.models.folder import Folder
+from girder.models.user import User
+
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from . import girder_utilities as utilities
@@ -99,3 +103,42 @@ class TestResourceBatch:
         """A bad id is a clean 400, not an uncaught InvalidId 500."""
         resp = self._batch(server, admin, {"folder": ["not-an-object-id"]})
         assertStatus(resp, 400)
+
+    def testBatchNeverReturnsUnexposedFolderFields(self, admin, user, server):
+        """The response must not carry fields filtermodel would strip.
+
+        This endpoint hand-builds its response instead of using @filtermodel,
+        so nothing strips non-exposed keys. Folder exposes 'public' at READ but
+        NOT 'access' -- the document listing which users and groups hold which
+        permission levels.
+        """
+        folder = utilities.createPrivateFolder(
+            admin, "shared_ds", upenn_utilities.datasetMetadata
+        )
+        Folder().setUserAccess(folder, user, AccessType.READ, save=True)
+
+        resp = self._batch(server, user, {"folder": [str(folder["_id"])]})
+        assertStatusOk(resp)
+        doc = resp.json["folder"][str(folder["_id"])]
+        assert doc["name"] == "shared_ds"
+        assert "access" not in doc
+
+    def testBatchNeverReturnsUnexposedUserFields(self, admin, user, server):
+        """A batch user lookup must not leak credentials or contact details.
+
+        A raw user document holds 'salt' (the bcrypt password hash), 'email',
+        'groups' and 'access'; User exposes only _id/admin/created/firstName/
+        lastName/login/public at READ. Returning documents unfiltered hands
+        any authenticated caller another account's password hash.
+        """
+        User().update({'_id': admin['_id']}, {'$set': {'public': True}})
+
+        resp = self._batch(server, user, {"user": [str(admin["_id"])]})
+        assertStatusOk(resp)
+        doc = resp.json.get("user", {}).get(str(admin["_id"]))
+        if doc is None:
+            pytest.skip("admin user is not readable by this user")
+        for secret in ("salt", "email", "access", "groupInvites", "status"):
+            assert secret not in doc, (
+                "%s must not be returned by resource/batch" % secret
+            )
