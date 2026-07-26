@@ -112,7 +112,26 @@ gh api repos/OWNER/REPO/pulls/N/comments \
   --jq ".[] | select(.created_at > \"$LAST\") | \"=== \(.path):\(.line // .original_line)\n\(.body)\""
 ```
 
-Sanity-check a "nothing yet" result against `gh pr view N --json reviews` (GraphQL) before reporting it — if the two disagree, the filter is wrong, not the bot. Turnaround is typically 1–4 minutes; a poll that runs much longer than that with zero hits is more likely broken than slow.
+Sanity-check a "nothing yet" result against `gh pr view N --json reviews` (GraphQL) before reporting it — if the two disagree, the filter is wrong, not the bot. Turnaround is 1–8 minutes and grows with diff size.
+
+**A poll that only looks for a review object is wrong**, because the clean result is not one. Three separate polls in one session reported a false "nothing yet": one filtered on the GraphQL login spelling, one gave up at 5 minutes, and one checked the clean-comment form only *inside* the branch that had already found a review. Check every signal on every iteration:
+
+```bash
+LAST="<iso timestamp of the previous review>"; PR=1279; OWNER=arjunrajlaboratory/NimbusImage
+for i in $(seq 1 20); do
+  sleep 30
+  # 1. a review object with inline findings
+  N=$(gh api repos/$OWNER/pulls/$PR/reviews --jq "[.[] | select((.user.login|startswith(\"chatgpt-codex-connector\")) and .submitted_at > \"$LAST\")] | length")
+  # 2. the clean result — a plain ISSUE comment, never a review
+  C=$(gh api repos/$OWNER/issues/$PR/comments --jq "[.[] | select((.user.login|startswith(\"chatgpt\")) and .created_at > \"$LAST\")] | length")
+  # 3. 👀 present = still working; its DISAPPEARANCE means done, look for 1 or 2
+  R=$(gh api repos/$OWNER/issues/$PR/reactions --jq '[.[].content]|@json')
+  echo "$i: reviews=$N cleanComments=$C prReactions=$R"
+  [ "$N" -gt 0 ] || [ "$C" -gt 0 ] && break
+done
+```
+
+The eyes-reaction transition is the most useful signal: while 👀 is on the trigger comment it is still working, and the moment it clears the verdict exists somewhere — as inline comments, as a "Didn't find any major issues" issue comment, or as 👍 on the PR.
 
 ### 5. Gates before claiming done
 
