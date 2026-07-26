@@ -14,6 +14,7 @@ import {
   IProgressInfo,
   IPropertyAnnotationFilter,
   IScaleInformation,
+  IScales,
   IToolConfiguration,
   IWorkerInterfaceValues,
   PropertyFilterMode,
@@ -25,7 +26,12 @@ import {
   captureInterfaceScreenshot,
   captureViewportScreenshot,
 } from "@/utils/interfaceCapture";
-import { getDefault } from "@/utils/workerInterface";
+import {
+  getDefault,
+  normalizeWorkerInterfaceValue,
+  WORKER_INTERFACE_VALUE_FORMATS,
+  type IChannelContext,
+} from "@/utils/workerInterface";
 import { registerPlot, type IAgentPlot } from "./plotRegistry";
 import {
   MAX_BOX_POINTS,
@@ -95,6 +101,29 @@ const MAX_LIST_ANNOTATIONS = LARGE_ANNOTATION_RESULT;
 // dataset). The message is sent to the model as an error tool result so it
 // can correct its call.
 export class ToolExecutionError extends Error {}
+
+// Configuration/view mutations persist to the backend and can be rejected
+// (e.g. a read-only collection, a network failure). syncConfiguration swallows
+// those failures app-wide and only surfaces them via the global saving-state
+// indicator (issue #1239) — but the AI panel asserts success in prose, so a
+// swallowed failure would have the model tell the user a change was saved when
+// it only persisted locally. These mutators opt into throwOnError; this wraps
+// them so a backend rejection becomes a ToolExecutionError the model reports as
+// a failure instead of success.
+async function persistOrThrow<T>(
+  what: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error: any) {
+    throw new ToolExecutionError(
+      `${what} could not be saved: ${
+        error?.message ?? "the backend rejected the change"
+      }`,
+    );
+  }
+}
 
 interface IAnnotationQuery {
   tags?: string[];
@@ -364,10 +393,26 @@ async function resolveWorkerInterfaceValues(
         `Valid parameters: ${Object.keys(workerInterface).join(", ")}`,
     );
   }
+  const channelContext = buildChannelContext();
   const values: IWorkerInterfaceValues = {};
   for (const id in workerInterface) {
     if (id in overrides) {
-      values[id] = overrides[id];
+      // Normalize the agent-supplied value into the canonical shape (channel
+      // names/indices -> the {index: boolean} map the worker expects, etc.).
+      // A bad value throws here as a ToolExecutionError so the agent gets
+      // actionable feedback instead of saving a tool that fails at run time.
+      try {
+        values[id] = normalizeWorkerInterfaceValue(
+          workerInterface[id],
+          overrides[id],
+          channelContext,
+          id,
+        );
+      } catch (error: any) {
+        throw new ToolExecutionError(
+          error?.message ?? `Invalid value for worker parameter "${id}"`,
+        );
+      }
     } else if (id in saved) {
       values[id] = saved[id];
     } else {
@@ -378,6 +423,24 @@ async function resolveWorkerInterfaceValues(
     }
   }
   return values;
+}
+
+// Channel index<->name context for resolving agent-supplied channel references
+// against the open dataset. Empty when no dataset is open: index references
+// then pass through unvalidated, and name references can't resolve at all
+// (create_tool does not require a dataset, so this path is reachable).
+function buildChannelContext(): IChannelContext {
+  const dataset = main.dataset;
+  const nameToIndex = new Map<string, number>();
+  if (dataset) {
+    for (const channel of dataset.channels) {
+      const name = dataset.channelNames.get(channel);
+      if (name) {
+        nameToIndex.set(name.toLowerCase(), channel);
+      }
+    }
+  }
+  return { channels: dataset ? dataset.channels.slice() : [], nameToIndex };
 }
 
 // The viewer display options the agent can toggle (all local view state,
@@ -784,7 +847,32 @@ const registry: { [name: string]: IAgentToolEntry } = {
           `Could not fetch the interface for worker "${input.image}"`,
         );
       }
-      return { result: { image: input.image, interface: workerInterface } };
+      // The interface only carries a `type` per parameter, not the shape its
+      // value must take — so the agent gets a per-type format guide (limited to
+      // the types actually present) plus the dataset's channel index↔name list,
+      // which it needs to fill channel parameters correctly.
+      const typesPresent = new Set(
+        Object.values(workerInterface).map((element) => element.type),
+      );
+      const valueFormats: { [type: string]: string } = {};
+      for (const type of typesPresent) {
+        valueFormats[type] = WORKER_INTERFACE_VALUE_FORMATS[type];
+      }
+      const dataset = main.dataset;
+      const channels = dataset
+        ? dataset.channels.map((channel) => ({
+            index: channel,
+            name: dataset.channelNames.get(channel) ?? `Channel ${channel}`,
+          }))
+        : [];
+      return {
+        result: {
+          image: input.image,
+          interface: workerInterface,
+          valueFormats,
+          channels,
+        },
+      };
     },
   },
 
@@ -968,8 +1056,13 @@ const registry: { [name: string]: IAgentToolEntry } = {
       }
       const LENGTH_UNITS = ["nm", "µm", "mm", "m"];
       const TIME_UNITS = ["ms", "s", "m", "h", "d"];
-      const apply = (
-        itemId: "pixelSize" | "zStep" | "tStep",
+      // Validate every requested field BEFORE writing any of them, then
+      // persist the whole scales object in one backend write. Validating and
+      // saving field-by-field issued a write per field and left the shared
+      // collection partially updated when a later field was rejected - by the
+      // backend, or by this validation (Codex P2 on PR #1262).
+      const validate = (
+        itemId: keyof IScales,
         scale: { value: number; unit: string },
         units: string[],
       ) => {
@@ -985,32 +1078,31 @@ const registry: { [name: string]: IAgentToolEntry } = {
         }
         // scale.unit was just validated against the allowed unit list, so the
         // narrowing cast to the branded unit type is sound here.
-        main.saveScaleInConfiguration({
-          itemId,
-          scale: {
-            value: scale.value,
-            unit: scale.unit as TUnitLength | TUnitTime,
-          } as IScaleInformation<TUnitLength | TUnitTime>,
-        });
+        return {
+          value: scale.value,
+          unit: scale.unit as TUnitLength | TUnitTime,
+        } as IScaleInformation<TUnitLength | TUnitTime>;
       };
-      let changed = false;
+      const scales: Partial<
+        Record<keyof IScales, IScaleInformation<TUnitLength | TUnitTime>>
+      > = {};
       if (input.pixelSize) {
-        apply("pixelSize", input.pixelSize, LENGTH_UNITS);
-        changed = true;
+        scales.pixelSize = validate("pixelSize", input.pixelSize, LENGTH_UNITS);
       }
       if (input.zStep) {
-        apply("zStep", input.zStep, LENGTH_UNITS);
-        changed = true;
+        scales.zStep = validate("zStep", input.zStep, LENGTH_UNITS);
       }
       if (input.tStep) {
-        apply("tStep", input.tStep, TIME_UNITS);
-        changed = true;
+        scales.tStep = validate("tStep", input.tStep, TIME_UNITS);
       }
-      if (!changed) {
+      if (Object.keys(scales).length === 0) {
         throw new ToolExecutionError(
           "Provide at least one of pixelSize, zStep, tStep",
         );
       }
+      await persistOrThrow("scales", () =>
+        main.saveScalesInConfiguration({ scales, throwOnError: true }),
+      );
       return { result: { scales: main.scales } };
     },
   },
@@ -1023,7 +1115,9 @@ const registry: { [name: string]: IAgentToolEntry } = {
       unrollT?: boolean;
     }) => {
       requireLogin();
-      await main.setLayerMode(input.mode);
+      await persistOrThrow("layer mode", () =>
+        main.setLayerMode({ mode: input.mode, throwOnError: true }),
+      );
       if (input.unrollXY != null) {
         await main.setUnrollXY(input.unrollXY);
       }
@@ -1063,23 +1157,43 @@ const registry: { [name: string]: IAgentToolEntry } = {
           "Provide at least one of color, visible, contrast, name",
         );
       }
-      if (Object.keys(delta).length > 0) {
-        await main.changeLayer({ layerId: layer.id, delta });
-      }
-      if (input.contrast != null) {
-        // Default matches the UI slider: a personal view override. Pass
-        // contrastScope "configuration" to change the shared collection
-        // instead (persisted for everyone using the collection).
-        if (input.contrastScope === "configuration") {
-          await main.saveContrastInConfiguration({
-            layerId: layer.id,
-            contrast: input.contrast,
-          });
-        } else {
-          await main.saveContrastInView({
-            layerId: layer.id,
-            contrast: input.contrast,
-          });
+      const contrast = input.contrast;
+      // Default matches the UI slider: a personal view override. Pass
+      // contrastScope "configuration" to change the shared collection
+      // instead (persisted for everyone using the collection).
+      if (contrast != null && input.contrastScope === "configuration") {
+        // Both target the configuration's "layers" key, so write them
+        // together: two separate writes could leave the shared collection
+        // partially updated if the second failed (Codex P2 on PR #1262).
+        // Label by what actually changed: this one call may carry only the
+        // contrast, and the message becomes the model's failure reason.
+        await persistOrThrow(
+          Object.keys(delta).length > 0 ? "layer update" : "contrast",
+          () =>
+            main.saveContrastInConfiguration({
+              layerId: layer.id,
+              contrast,
+              delta,
+              throwOnError: true,
+            }),
+        );
+      } else {
+        if (Object.keys(delta).length > 0) {
+          await persistOrThrow("layer update", () =>
+            main.changeLayer({ layerId: layer.id, delta, throwOnError: true }),
+          );
+        }
+        // A view-scoped contrast lands in the dataset view, a different
+        // resource from the configuration, so it is necessarily a second
+        // write - there is no single call that covers both.
+        if (contrast != null) {
+          await persistOrThrow("contrast", () =>
+            main.saveContrastInView({
+              layerId: layer.id,
+              contrast,
+              throwOnError: true,
+            }),
+          );
         }
       }
       const updated = main.getLayerFromId(layer.id)!;
@@ -1119,7 +1233,9 @@ const registry: { [name: string]: IAgentToolEntry } = {
           });
         }
       }
-      await main.syncConfiguration("layers");
+      await persistOrThrow("layer visibility", () =>
+        main.syncConfiguration({ key: "layers", throwOnError: true }),
+      );
       return {
         result: {
           layers: main.layers.map((l) => ({
@@ -1329,6 +1445,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       channelName?: string;
       name?: string;
       tags?: string[];
+      workerInterfaceValues?: IWorkerInterfaceValues;
     }) => {
       requireLogin();
       if (!main.configuration) {
@@ -1339,6 +1456,11 @@ const registry: { [name: string]: IAgentToolEntry } = {
       if (hasManual === hasWorker) {
         throw new ToolExecutionError(
           "Provide exactly one of manualShape or workerImage",
+        );
+      }
+      if (hasManual && input.workerInterfaceValues != null) {
+        throw new ToolExecutionError(
+          "workerInterfaceValues only applies to worker tools",
         );
       }
       let entry;
@@ -1384,17 +1506,30 @@ const registry: { [name: string]: IAgentToolEntry } = {
           }`,
         );
       }
+      // Worker tools are saved with fully-resolved parameter values (model
+      // overrides on top of interface defaults), so the tool is runnable from
+      // the UI and pipelines with the intended parameters, not blank slots.
+      let workerInterfaceValues: IWorkerInterfaceValues | undefined;
+      if (input.workerImage != null) {
+        workerInterfaceValues = await resolveWorkerInterfaceValues(
+          input.workerImage,
+          input.workerInterfaceValues ?? {},
+        );
+      }
       const tool = buildToolConfiguration(entry, {
         channelName: input.channelName,
         name: input.name,
         tags: input.tags,
+        workerInterfaceValues,
       });
       if (!tool) {
         throw new ToolExecutionError(
           "Could not build the requested tool (missing tool template)",
         );
       }
-      await main.addToolToConfiguration(tool);
+      await persistOrThrow("tool", () =>
+        main.addToolToConfiguration({ tool, throwOnError: true }),
+      );
       return {
         result: {
           toolId: tool.id,
@@ -1402,6 +1537,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
           type: tool.type,
           channelName: input.channelName ?? null,
           tags: input.tags ?? [],
+          parameters: workerInterfaceValues ?? null,
         },
       };
     },
@@ -1473,16 +1609,24 @@ const registry: { [name: string]: IAgentToolEntry } = {
         image,
         input.workerInterfaceValues ?? {},
       );
-      const property = await propertyStore.createProperty({
-        name:
-          input.name ??
-          propertyStore.workerImageList[image]?.interfaceName ??
-          "Property",
-        image,
-        tags: { tags: input.tags ?? [], exclusive: input.exclusive ?? false },
-        shape: input.shape as AnnotationShape,
-        workerInterface,
-      });
+      // createProperty hits the backend directly (PropertiesAPI rejects on
+      // failure rather than swallowing), so wrap it to report a clean failure
+      // instead of leaking a raw error (issue #1239).
+      const property = await persistOrThrow("property", () =>
+        propertyStore.createProperty({
+          name:
+            input.name ??
+            propertyStore.workerImageList[image]?.interfaceName ??
+            "Property",
+          image,
+          tags: {
+            tags: input.tags ?? [],
+            exclusive: input.exclusive ?? false,
+          },
+          shape: input.shape as AnnotationShape,
+          workerInterface,
+        }),
+      );
       if (!property) {
         throw new ToolExecutionError("Failed to create the property");
       }
@@ -2094,7 +2238,14 @@ export function describeAgentToolCall(name: string, input: any): string {
         Array.isArray(input?.tags) && input.tags.length
           ? ` tagging ${joinList(input.tags)}`
           : "";
-      return `Set up a ${kind} tool${channel}${tags}`;
+      const parameterNames =
+        typeof input?.workerInterfaceValues === "object"
+          ? Object.keys(input.workerInterfaceValues ?? {})
+          : [];
+      const parameters = parameterNames.length
+        ? ` (setting ${joinList(parameterNames)})`
+        : "";
+      return `Set up a ${kind} tool${channel}${tags}${parameters}`;
     }
     case "set_display_options":
       return "Change viewer display options";
@@ -2251,7 +2402,12 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   await main.setZ(snapshot.location.z);
   await main.setTime(snapshot.location.time);
   if (main.layerMode !== snapshot.layerMode) {
-    await main.setLayerMode(snapshot.layerMode);
+    // throwOnError like the forward-direction tools: revertViewChanges tells
+    // the user "Reverted the view changes", so a revert that only applied
+    // locally must not be reported as a success either (issue #1239).
+    await persistOrThrow("layer mode", () =>
+      main.setLayerMode({ mode: snapshot.layerMode, throwOnError: true }),
+    );
   }
   await main.setUnrollXY(snapshot.unroll.xy);
   await main.setUnrollZ(snapshot.unroll.z);
@@ -2284,9 +2440,15 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
     }
   }
   if (layersChanged) {
-    await main.syncConfiguration("layers");
+    await persistOrThrow("layer changes", () =>
+      main.syncConfiguration({ key: "layers", throwOnError: true }),
+    );
   }
-  await main.setViewContrastOverrides(snapshot.viewContrasts);
+  // setViewContrastOverrides already rejects on a failed persist (it awaits
+  // updateDatasetView without catching); wrap it for a consistent message.
+  await persistOrThrow("view contrast overrides", () =>
+    main.setViewContrastOverrides(snapshot.viewContrasts),
+  );
   filterStore.setTagFilter(snapshot.tagFilter);
   filterStore.setOnlyCurrentFrame(snapshot.onlyCurrentFrame);
   // Restore property filters: disable any added since the snapshot (matching

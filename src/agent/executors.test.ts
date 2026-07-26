@@ -55,6 +55,7 @@ vi.mock("@/store", () => ({
     saveContrastInView: vi.fn(),
     saveContrastInConfiguration: vi.fn(),
     saveScaleInConfiguration: vi.fn(),
+    saveScalesInConfiguration: vi.fn(),
     scales: {
       pixelSize: { value: 1, unit: "µm" },
       zStep: { value: 1, unit: "µm" },
@@ -247,6 +248,10 @@ beforeEach(() => {
   mockProperties.computedPropertyPaths = [];
   mockProperties.propertyStatuses = {};
   mockProperties.getWorkerInterface = vi.fn(() => ({}));
+  // Reassigned (not just cleared) by tests that make a persist reject, so
+  // reset them here — clearAllMocks only resets call history.
+  mockMain.syncConfiguration = vi.fn();
+  mockMain.setViewContrastOverrides = vi.fn();
   mockMain.drawAnnotations = true;
   mockMain.annotationOpacity = 0.5;
   mockMain.showScalebar = true;
@@ -496,10 +501,12 @@ describe("executeAgentTool", () => {
     expect(mockMain.changeLayer).toHaveBeenCalledWith({
       layerId: "l1",
       delta: { color: "#ff0000" },
+      throwOnError: true,
     });
     expect(mockMain.saveContrastInView).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
+      throwOnError: true,
     });
   });
 
@@ -644,6 +651,98 @@ describe("executeAgentTool", () => {
     );
     expect(mockMain.addToolToConfiguration).toHaveBeenCalledTimes(1);
     expect(result.type).toBe("segmentation");
+  });
+
+  it("saves resolved worker parameters on a created worker tool", async () => {
+    const { buildToolConfiguration } = await import(
+      "@/tools/creation/toolFromCatalog"
+    );
+    // Overrides land on top of interface defaults, so the saved tool has a
+    // concrete value for every parameter slot.
+    mockProperties.getWorkerInterface = vi.fn(() => ({
+      Channel: { type: "channel", required: true },
+      Diameter: { type: "number", default: 30 },
+    }));
+    const { result } = await executeAgentTool(
+      "create_tool",
+      { workerImage: "img:1", workerInterfaceValues: { Channel: 1 } },
+      context,
+    );
+    expect(buildToolConfiguration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workerInterfaceValues: { Channel: 1, Diameter: 30 },
+      }),
+    );
+    expect(result.parameters).toEqual({ Channel: 1, Diameter: 30 });
+  });
+
+  it("resolves a channel name and normalizes channelCheckboxes", async () => {
+    // The mock dataset has channels 0 (DAPI) and 1 (Cy3). The agent may pass a
+    // channel name, an index, or an array; all normalize to the on-disk shape.
+    mockProperties.getWorkerInterface = vi.fn(() => ({
+      Channel: { type: "channel", required: true },
+      "Channel for Slot 1": { type: "channelCheckboxes" },
+    }));
+    const { result } = await executeAgentTool(
+      "create_tool",
+      {
+        workerImage: "img:1",
+        workerInterfaceValues: {
+          Channel: "DAPI",
+          "Channel for Slot 1": ["DAPI"],
+        },
+      },
+      context,
+    );
+    expect(result.parameters).toEqual({
+      Channel: 0,
+      "Channel for Slot 1": { 0: true, 1: false },
+    });
+  });
+
+  it("rejects a channelCheckboxes value that selects nothing", async () => {
+    // The original bug: {"0": 0} means "channel 0" to the model but 0 is falsy,
+    // so no channel is selected and the worker fails with "No channel selected".
+    mockProperties.getWorkerInterface = vi.fn(() => ({
+      "Channel for Slot 1": { type: "channelCheckboxes" },
+    }));
+    await expect(
+      executeAgentTool(
+        "create_tool",
+        {
+          workerImage: "img:1",
+          workerInterfaceValues: { "Channel for Slot 1": { 0: 0 } },
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown worker parameters on create_tool", async () => {
+    mockProperties.getWorkerInterface = vi.fn(() => ({
+      Diameter: { type: "number", default: 30 },
+    }));
+    await expect(
+      executeAgentTool(
+        "create_tool",
+        { workerImage: "img:1", workerInterfaceValues: { Bogus: 1 } },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("rejects workerInterfaceValues on a manual tool", async () => {
+    await expect(
+      executeAgentTool(
+        "create_tool",
+        { manualShape: "point", workerInterfaceValues: { Diameter: 30 } },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.addToolToConfiguration).not.toHaveBeenCalled();
   });
 
   it("rejects providing both or neither of manualShape/workerImage", async () => {
@@ -898,6 +997,7 @@ describe("update_layer contrast scope", () => {
     expect(mockMain.saveContrastInView).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
+      throwOnError: true,
     });
     expect(mockMain.saveContrastInConfiguration).not.toHaveBeenCalled();
   });
@@ -911,8 +1011,178 @@ describe("update_layer contrast scope", () => {
     expect(mockMain.saveContrastInConfiguration).toHaveBeenCalledWith({
       layerId: "l1",
       contrast,
+      delta: {},
+      throwOnError: true,
     });
     expect(mockMain.saveContrastInView).not.toHaveBeenCalled();
+  });
+
+  it("writes layer fields and a collection-scoped contrast in one call", async () => {
+    // Both land in the configuration's "layers" key. Two separate writes
+    // could leave the shared collection partially updated if the second
+    // failed (Codex P2 on PR #1262).
+    await executeAgentTool(
+      "update_layer",
+      {
+        layer: "l1",
+        color: "#ff0000",
+        contrast,
+        contrastScope: "configuration",
+      },
+      context,
+    );
+    expect(mockMain.saveContrastInConfiguration).toHaveBeenCalledTimes(1);
+    expect(mockMain.saveContrastInConfiguration).toHaveBeenCalledWith({
+      layerId: "l1",
+      contrast,
+      delta: { color: "#ff0000" },
+      throwOnError: true,
+    });
+    // No separate changeLayer write for the colour.
+    expect(mockMain.changeLayer).not.toHaveBeenCalled();
+  });
+});
+
+describe("surfaces backend sync failures (#1239)", () => {
+  const layer = {
+    id: "l1",
+    name: "DAPI",
+    color: "#0000ff",
+    visible: true,
+    contrast: { mode: "percentile", blackPoint: 0, whitePoint: 100 },
+  };
+  const contrast = { mode: "percentile", blackPoint: 5, whitePoint: 95 } as any;
+
+  beforeEach(() => {
+    mockMain.layers = [layer];
+    mockMain.getLayerFromId = vi.fn(() => layer);
+    // Reset to benign resolving mocks (a prior test may have made one reject).
+    mockMain.changeLayer = vi.fn(async () => undefined);
+    mockMain.syncConfiguration = vi.fn(async () => undefined);
+    mockMain.saveContrastInView = vi.fn(async () => undefined);
+    mockMain.saveContrastInConfiguration = vi.fn(async () => undefined);
+    mockMain.setLayerMode = vi.fn(async () => undefined);
+    mockMain.saveScaleInConfiguration = vi.fn(async () => undefined);
+    mockMain.saveScalesInConfiguration = vi.fn(async () => undefined);
+    mockMain.addToolToConfiguration = vi.fn(async () => undefined);
+    mockMain.configuration = { id: "conf1", name: "Collection", layers: [] };
+    mockProperties.workerImageList = {
+      "prop:1": {
+        isPropertyWorker: "x",
+        interfaceName: "Intensity",
+        annotationShape: "polygon",
+      },
+    };
+    mockProperties.getWorkerInterface = vi.fn(() => ({}));
+  });
+
+  it("update_layer reports a failed config save instead of success", async () => {
+    // syncConfiguration with throwOnError rejects on a read-only collection;
+    // changeLayer propagates it. The tool must fail, not report the layer as
+    // updated.
+    mockMain.changeLayer = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool(
+        "update_layer",
+        { layer: "l1", color: "#ff0000" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("update_layer reports a failed contrast save", async () => {
+    mockMain.saveContrastInView = vi.fn(async () => {
+      throw new Error("network error");
+    });
+    await expect(
+      executeAgentTool("update_layer", { layer: "l1", contrast }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("set_layer_visibility reports a failed sync instead of success", async () => {
+    mockMain.syncConfiguration = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool(
+        "set_layer_visibility",
+        { visibleLayers: ["l1"] },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // The failing sync is the one that opted into throwOnError.
+    expect(mockMain.syncConfiguration).toHaveBeenCalledWith({
+      key: "layers",
+      throwOnError: true,
+    });
+  });
+
+  it("update_layer still succeeds when the save succeeds", async () => {
+    const { result } = await executeAgentTool(
+      "update_layer",
+      { layer: "l1", color: "#ff0000" },
+      context,
+    );
+    expect(result.layer.id).toBe("l1");
+    expect(mockMain.changeLayer).toHaveBeenCalledWith({
+      layerId: "l1",
+      delta: { color: "#ff0000" },
+      throwOnError: true,
+    });
+  });
+
+  it("set_layer_mode reports a failed sync instead of success", async () => {
+    mockMain.setLayerMode = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool("set_layer_mode", { mode: "multiple" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.setLayerMode).toHaveBeenCalledWith({
+      mode: "multiple",
+      throwOnError: true,
+    });
+  });
+
+  it("set_scale reports a failed sync instead of success", async () => {
+    mockMain.saveScalesInConfiguration = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool(
+        "set_scale",
+        { pixelSize: { value: 0.65, unit: "µm" } },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("create_tool reports a failed sync instead of success", async () => {
+    mockMain.addToolToConfiguration = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool("create_tool", { manualShape: "polygon" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // The AI panel opts into error propagation via the options form.
+    expect(mockMain.addToolToConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ throwOnError: true }),
+    );
+  });
+
+  it("create_property reports a failed backend save instead of success", async () => {
+    mockProperties.createProperty = vi.fn(async () => {
+      throw new Error("Write access denied");
+    });
+    await expect(
+      executeAgentTool(
+        "create_property",
+        { propertyWorkerImage: "prop:1", shape: "polygon" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
   });
 });
 
@@ -980,13 +1250,15 @@ describe("set_scale", () => {
       },
       context,
     );
-    expect(mockMain.saveScaleInConfiguration).toHaveBeenCalledWith({
-      itemId: "pixelSize",
-      scale: { value: 0.65, unit: "µm" },
-    });
-    expect(mockMain.saveScaleInConfiguration).toHaveBeenCalledWith({
-      itemId: "zStep",
-      scale: { value: 2, unit: "µm" },
+    // One backend write for all requested fields, not one per field
+    // (Codex P2 on PR #1262).
+    expect(mockMain.saveScalesInConfiguration).toHaveBeenCalledTimes(1);
+    expect(mockMain.saveScalesInConfiguration).toHaveBeenCalledWith({
+      scales: {
+        pixelSize: { value: 0.65, unit: "µm" },
+        zStep: { value: 2, unit: "µm" },
+      },
+      throwOnError: true,
     });
   });
 
@@ -998,7 +1270,7 @@ describe("set_scale", () => {
         context,
       ),
     ).rejects.toBeInstanceOf(ToolExecutionError);
-    expect(mockMain.saveScaleInConfiguration).not.toHaveBeenCalled();
+    expect(mockMain.saveScalesInConfiguration).not.toHaveBeenCalled();
   });
 
   it("rejects a length unit on the time step and vice versa", async () => {
@@ -1016,6 +1288,24 @@ describe("set_scale", () => {
         context,
       ),
     ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("writes nothing when a later field is invalid", async () => {
+    // Validation used to be interleaved with saving, so a valid pixelSize was
+    // already persisted before an invalid tStep threw, leaving the shared
+    // collection partially updated (Codex P2 on PR #1262).
+    await expect(
+      executeAgentTool(
+        "set_scale",
+        {
+          pixelSize: { value: 0.65, unit: "µm" },
+          tStep: { value: 1, unit: "µm" },
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockMain.saveScalesInConfiguration).not.toHaveBeenCalled();
+    expect(mockMain.saveScaleInConfiguration).not.toHaveBeenCalled();
   });
 
   it("requires at least one dimension", async () => {
@@ -1884,6 +2174,48 @@ describe("snapshotViewState / restoreViewState", () => {
       expect.objectContaining({ layerId: "l1", sync: false }),
     );
     expect(mockMain.syncConfiguration).toHaveBeenCalledTimes(1);
+    // The revert must opt into error propagation, otherwise a rejected write
+    // is swallowed and revertViewChanges still reports "Reverted the view
+    // changes" for a change that only applied locally (issue #1239).
+    expect(mockMain.syncConfiguration).toHaveBeenCalledWith({
+      key: "layers",
+      throwOnError: true,
+    });
+  });
+
+  it("rejects when the revert's configuration sync fails", async () => {
+    mockMain.configuration.layers = [
+      {
+        id: "l1",
+        name: "DAPI",
+        color: "#0000ff",
+        visible: true,
+        contrast: { mode: "percentile", blackPoint: 0, whitePoint: 100 },
+      },
+    ];
+    mockMain.getConfigurationLayerFromId = vi.fn(
+      () => mockMain.configuration.layers[0],
+    );
+    const snapshot = snapshotViewState();
+    mockMain.configuration.layers[0].color = "#00ff00";
+    mockMain.syncConfiguration = vi.fn(async () => {
+      throw new Error("Read-only collection");
+    });
+
+    await expect(restoreViewState(snapshot)).rejects.toBeInstanceOf(
+      ToolExecutionError,
+    );
+  });
+
+  it("rejects when the revert's view-contrast persist fails", async () => {
+    const snapshot = snapshotViewState();
+    mockMain.setViewContrastOverrides = vi.fn(async () => {
+      throw new Error("Dataset view is read-only");
+    });
+
+    await expect(restoreViewState(snapshot)).rejects.toBeInstanceOf(
+      ToolExecutionError,
+    );
   });
 
   it("reverts property filters added or changed during the turn", async () => {

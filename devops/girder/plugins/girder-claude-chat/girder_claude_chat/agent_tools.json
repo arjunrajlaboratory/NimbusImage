@@ -99,7 +99,7 @@
   },
   {
     "name": "get_worker_interface",
-    "description": "Get the parameter schema (name, type, default, min/max) for a worker image. Call before run_worker to know which workerInterfaceValues can be set. May take a few seconds if the interface is not cached. Read-only.",
+    "description": "Get the parameter schema for a worker image: each parameter's name, type, default, and min/max, plus a `valueFormats` guide describing the exact value shape each type expects and a `channels` list giving the dataset's channel index↔name mapping. Call before run_worker or create_tool to know which workerInterfaceValues can be set and how to format them (channels are 0-based indices; channelCheckboxes slots take an array of indices like [0], not a map). May take a few seconds if the interface is not cached. Read-only.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -502,7 +502,7 @@
   },
   {
     "name": "create_tool",
-    "description": "Add a new annotation tool to the current collection's toolset (e.g. 'set up a DAPI blob tool'). Provide EITHER manualShape for a hand-drawing tool OR workerImage for an automated worker tool (from list_workers), not both. ALWAYS provide tags: annotations the tool creates carry these tags, and tags are how annotations are filtered, measured and analyzed downstream — an untagged tool produces annotations that are hard to work with. Optionally bind it to a channel with channelName and give it a name. Gated: the user approves before the tool is created. The tool is added but NOT activated; use select_tool to make it active, or run_worker to run a worker tool.",
+    "description": "Add a new annotation tool to the current collection's toolset (e.g. 'set up a DAPI blob tool'). Provide EITHER manualShape for a hand-drawing tool OR workerImage for an automated worker tool (from list_workers), not both. ALWAYS provide tags: annotations the tool creates carry these tags, and tags are how annotations are filtered, measured and analyzed downstream — an untagged tool produces annotations that are hard to work with. For a worker tool, FIRST call get_worker_interface for the image and pass workerInterfaceValues: the values are saved with the tool (used when it is run from the UI, pipelines, or run_worker), and unset parameters fall back to defaults that are often wrong for the dataset. Optionally bind it to a channel with channelName and give it a name. Gated: the user approves before the tool is created. The tool is added but NOT activated; use select_tool to make it active, or run_worker to run a worker tool.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -527,6 +527,10 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Tags applied to every annotation the tool creates (e.g. [\"nucleus\"]). Always provide at least one tag describing what the tool annotates."
+        },
+        "workerInterfaceValues": {
+          "type": "object",
+          "description": "For worker tools only: parameter values keyed by parameter name, saved with the tool (call get_worker_interface first for the schema, valueFormats and channels list). Set every required parameter and any channel/select parameter — their built-in defaults (channel 0, empty selection) are usually wrong for the dataset. Format values per valueFormats: a channel parameter takes a 0-based channel index number; a channelCheckboxes 'slot' takes an array of channel indices to select, e.g. [0] (NOT a map like {\"0\": 0}, which selects nothing); a select takes one of its items. Anything omitted uses the interface default."
         }
       },
       "additionalProperties": false
@@ -571,7 +575,7 @@
         },
         "workerInterfaceValues": {
           "type": "object",
-          "description": "Worker parameter overrides (see get_worker_interface); defaults are used for anything omitted."
+          "description": "Worker parameter overrides, formatted per get_worker_interface's valueFormats (channel = 0-based index number; channelCheckboxes slot = array of indices like [0]; select = one of its items); defaults are used for anything omitted."
         }
       },
       "required": ["propertyWorkerImage", "shape"],
@@ -779,7 +783,7 @@
         "toolId": { "type": "string" },
         "workerInterfaceValues": {
           "type": "object",
-          "description": "Parameter overrides keyed by parameter name.",
+          "description": "Parameter overrides keyed by parameter name, formatted per get_worker_interface's valueFormats (channel = 0-based index number; channelCheckboxes slot = array of indices like [0]; select = one of its items). Unspecified parameters use the tool's saved value or the interface default.",
           "additionalProperties": true
         }
       },

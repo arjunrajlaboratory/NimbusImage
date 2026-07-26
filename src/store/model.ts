@@ -1168,12 +1168,24 @@ interface IGeoJSScaleWidgetSpec {
 
 type IGeoJSScaleWidgetOptions = keyof IGeoJSScaleWidgetSpec;
 
+// https://opengeoscience.github.io/geojs/apidocs/geo.gui.domWidget.html
+// Created with a `position` of map coordinates ({ x, y }), the widget's element
+// tracks that point as the map is panned and zoomed.
+export interface IGeoJSDomWidget extends IGeoJSWidget {
+  canvas: (() => HTMLElement) & ((val: HTMLElement) => IGeoJSDomWidget);
+  layer: () => IGeoJSUiLayer;
+}
+
 // https://opengeoscience.github.io/geojs/apidocs/geo.gui.uiLayer.html
 export interface IGeoJSUiLayer extends IGeoJSLayer {
   createWidget: <WidgetName extends string, ParentType extends IGeoJsObject>(
     widgetName: WidgetName,
     arg: { parent?: ParentType; [k: string]: any },
-  ) => WidgetName extends "scale" ? IGeoJSScaleWidget : IGeoJSWidget;
+  ) => WidgetName extends "scale"
+    ? IGeoJSScaleWidget
+    : WidgetName extends "dom"
+      ? IGeoJSDomWidget
+      : IGeoJSWidget;
   deleteWidget: (widget: IGeoJSWidget) => IGeoJSUiLayer;
 }
 
