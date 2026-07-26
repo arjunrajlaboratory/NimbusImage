@@ -508,6 +508,20 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **Saving state clears on failure.** — *"clears the saving state when the create request rejects"*
 - [ ] **Per-dataset state resets**, including the dedupe flag. — *"clears the dedupe flag on a dataset switch"*
 
+### Symmetric pairs — change one, check the other
+
+Four separate review rounds flagged the same shape: a rule applied to one path
+and not its twin. Before considering any change here done, check the pair.
+
+| Path | Twin |
+|---|---|
+| `drawNewConnections` gating | `clearOldAnnotations`' connection branch |
+| styling at construction | the retained-feature restyle loop in `drawNewAnnotations` |
+| `setHoveredAnnotationFromCoordinates` (highlight) | `selectAnnotations` (select) |
+| `selectedConnectionIds` pruning | `hoveredConnectionId` pruning |
+| flat rendering | track/grouped rendering |
+| normal-mode connection styling | the inline style in `drawTimelapseTrack` |
+
 ### Before claiming done
 
 - [ ] `pnpm tsc`, `pnpm lint:ci`, `pnpm test`, and `python3 plugins/nimbusimage/scripts/sync_skills.py --check` if any skill changed.

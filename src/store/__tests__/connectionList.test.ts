@@ -178,6 +178,29 @@ describe("connectionList cost guards", () => {
     expect(resolveCalls).toBe(0);
   });
 
+  // Regression (pattern: cost before guard). selectedExistingConnectionIds
+  // filters a usually tiny selection against a Set of EVERY connection id, and
+  // it is read from ImageViewer and ConnectionActionPanel, which are not gated
+  // by the Connections tab. Keeping the set in its own getter means a selection
+  // change reuses it instead of rebuilding it.
+  it("reuses the connection id set across selection changes", () => {
+    (annotationStore as any).annotationConnections = [
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+    ];
+    const first = connectionList.connectionIdSet;
+    connectionList.setSelectedConnectionIds(["c1"]);
+    // Same object identity ⇒ the cached getter was not invalidated.
+    expect(connectionList.connectionIdSet).toBe(first);
+    expect(connectionList.selectedExistingConnectionIds).toEqual(["c1"]);
+
+    // Changing the connections themselves must invalidate it.
+    (annotationStore as any).annotationConnections = [
+      makeConnection("c1", "a", "b"),
+    ];
+    expect(connectionList.connectionIdSet).not.toBe(first);
+  });
+
   it("still resolves a selection within the cap", () => {
     let resolveCalls = 0;
     const byId = new Map([
@@ -305,6 +328,29 @@ describe("connectionList selection safety", () => {
     await connectionList.deleteConnectionsById(["c1", "c3"]);
     expect(deleteConnections).toHaveBeenCalledWith(["c1", "c3"]);
     expect([...connectionList.selectedConnectionIds]).toEqual(["c2"]);
+  });
+
+  // Regression (pattern: one of two symmetric pieces of state). Deleting
+  // pruned the selection but left hoveredConnectionId pointing at a connection
+  // that no longer exists.
+  it("clears the hover when the hovered connection is deleted", async () => {
+    (annotationStore as any).annotationConnections = [
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+    ];
+    connectionList.setHoveredConnectionId("c1");
+    await connectionList.deleteConnectionsById(["c1"]);
+    expect(connectionList.hoveredConnectionId).toBeNull();
+  });
+
+  it("keeps the hover when a different connection is deleted", async () => {
+    (annotationStore as any).annotationConnections = [
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+    ];
+    connectionList.setHoveredConnectionId("c2");
+    await connectionList.deleteConnectionsById(["c1"]);
+    expect(connectionList.hoveredConnectionId).toBe("c2");
   });
 
   it("deletes in a single batched call, never one request per id", async () => {

@@ -45,6 +45,44 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | Stale comments/tests describing pre-fix behavior | Wherever behavior changed | Grep for the old function contract in comments and test names |
 | Partial persistence: one change writing the same config key twice | Handlers that change several fields of one resource | All inputs validated *before* the first write? Two actions in the handler both syncing the same key? (see nimbus-frontend skill) |
 | Store action throws/propagates without `rawError: true` | Any `src/store/*.ts` | Audit **every** store module and the **whole** chain — errors re-wrap at each `@Action` boundary, and an action needs the flag when it merely propagates (no `throw` of its own) |
+| **A rule applied to one of two symmetric paths** | Anywhere the same concept has two implementations | See below — this was the single most-repeated finding across a 10-round review |
+| **Cost before the guard** | Getters/handlers with a cheap precondition and expensive body | Does the cheap check run FIRST? A cap that resolves 700K annotations to discover the limit was exceeded is doing the work it exists to prevent |
+
+#### The symmetric-path pattern
+
+By far the most repeated finding in this repo's review history: a rule is added
+to one path and its twin is left behind. Four separate rounds of one review
+flagged four instances of it —
+
+- `drawNewConnections` stopped gating on hydration; `clearOldAnnotations` kept doing it, so every draw deleted what the last one created.
+- Features were styled at construction; the retained-feature restyle loop overwrote it on the next redraw.
+- Timelapse click precedence was fixed for hover (`setHoveredAnnotationFromCoordinates`) and not for selection (`selectAnnotations`).
+- Deleting pruned `selectedConnectionIds` and left `hoveredConnectionId` dangling.
+
+When you fix something, ask **"what is the other one?"** before moving on:
+
+| If you changed… | Its twin is… |
+|---|---|
+| how something is drawn | how it is retained / cleared |
+| how something is styled on creation | how it is restyled on update |
+| the hover/highlight path | the click/selection path (and vice versa) |
+| one piece of paired state (selection) | the other (hover, expansion, page) |
+| the flat rendering branch | the grouped/track branch |
+| one scope/mode branch | the other three |
+
+Grep for the twin by concept, not by identifier: the two implementations rarely
+share a name, which is exactly why they drift.
+
+#### The cost-before-guard pattern
+
+A cheap precondition placed *after* the expensive work it was meant to avoid.
+Three instances in one review: a 500-item cap that first resolved every selected
+annotation; scope filtering that materialized all 709K stubs to build a set of
+ids it then used to filter a much smaller collection; and a set of all
+connection ids rebuilt on every selection change rather than cached against the
+connections. Check the ordering inside any getter with both a guard and a scan,
+and prefer iterating the **smaller** collection — resolve the few endpoints of N
+connections, don't enumerate all M objects.
 
 When you generalize, check the *shape* of your sweep too, not just its target. A grep for `throw` in action bodies found the deliberate throwers and missed every pure propagator — so the sweep reported "clean" and the next Codex round flagged the one it missed. If a sweep comes back clean, ask what the query structurally cannot see.
 

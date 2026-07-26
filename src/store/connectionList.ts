@@ -137,13 +137,22 @@ export class ConnectionList extends VuexModule {
    * rather than reacting to every deletion path keeps this correct no matter
    * who does the deleting.
    */
+  /**
+   * Every connection id, in its own getter so that it is cached against the
+   * CONNECTIONS rather than against the selection. Inlining this into
+   * `selectedExistingConnectionIds` rebuilt a set of all ids on every selection
+   * change, and that getter is read from `ImageViewer` and
+   * `ConnectionActionPanel`, neither of which is gated by the Connections tab.
+   */
+  get connectionIdSet(): Set<string> {
+    return new Set(annotation.annotationConnections.map(({ id }) => id));
+  }
+
   get selectedExistingConnectionIds(): string[] {
     if (this.selectedConnectionIds.size === 0) {
       return [];
     }
-    const existing = new Set(
-      annotation.annotationConnections.map(({ id }) => id),
-    );
+    const existing = this.connectionIdSet;
     return [...this.selectedConnectionIds].filter((id) => existing.has(id));
   }
 
@@ -326,6 +335,11 @@ export class ConnectionList extends VuexModule {
     this.setSelectedConnectionIds(
       [...this.selectedConnectionIds].filter((id) => !deleted.has(id)),
     );
+    // Hover is the other half of the same state. Pruning only the selection
+    // left hoveredConnectionId pointing at a connection that no longer exists.
+    if (this.hoveredConnectionId && deleted.has(this.hoveredConnectionId)) {
+      this.setHoveredConnectionId(null);
+    }
   }
 
   /**
