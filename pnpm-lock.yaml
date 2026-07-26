@@ -9,6 +9,7 @@ overrides:
   '@protobufjs/utf8': ^1.1.1
   '@girder/components>markdown-it': ^14.0.0
   uc.micro: 2.0.0
+  js-yaml@3: 3.15.0
 
 patchedDependencies:
   '@girder/components@4.0.0': 8aaba3e355e9252cd18d88b6f2300a8f2738fa449f7fc042708e1119b16d514b
@@ -3292,12 +3293,8 @@ packages:
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
 
-  js-yaml@3.14.0:
-    resolution: {integrity: sha512-/4IbIeHcD9VMHFqDR/gQ7EdZdLimOvW2DdcxFjdyyZ9NsbS+ccrXqVWDtab/lRl5AlUqmpBx8EhPaWR+OtY17A==}
-    hasBin: true
-
-  js-yaml@3.14.1:
-    resolution: {integrity: sha512-okMH7OXXJ7YrN9Ok3/SXrnu4iX9yOk+25nqX4imS2npuvTYDmo/QEZoqwZkYaIDk3jVvBOTOIEgEhaLOynBS9g==}
+  js-yaml@3.15.0:
+    resolution: {integrity: sha512-ttBQIIQPDeLjpPOohtUdXuXUVoA2uIB6fEH9HyJ7234s5mBJ5wTx20njxplLZQgLaOfpmPQA7X2t5AX6tIPbog==}
     hasBin: true
 
   js-yaml@4.3.0:
@@ -8249,13 +8246,7 @@ snapshots:
 
   js-tokens@9.0.1: {}
 
-  js-yaml@3.14.0:
-    dependencies:
-      argparse: 1.0.10
-      esprima: 4.0.1
-    optional: true
-
-  js-yaml@3.14.1:
+  js-yaml@3.15.0:
     dependencies:
       argparse: 1.0.10
       esprima: 4.0.1
@@ -9767,7 +9758,7 @@ snapshots:
       '@oozcitak/infra': 1.0.8
       '@oozcitak/util': 8.3.8
       '@types/node': 20.19.33
-      js-yaml: 3.14.0
+      js-yaml: 3.15.0
     optional: true
 
   xmlbuilder2@4.0.3:
@@ -9793,7 +9784,7 @@ snapshots:
   yaml-front-matter@4.1.1:
     dependencies:
       commander: 6.2.1
-      js-yaml: 3.14.1
+      js-yaml: 3.15.0
 
   yaml-loader@0.8.1:
     dependencies:
