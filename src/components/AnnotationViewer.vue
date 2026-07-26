@@ -4739,11 +4739,16 @@ onBeforeUnmount(() => {
   // Cancel pending debounced/throttled callbacks so a trailing fire after
   // teardown (e.g. navigating away right after a pan) can't run against a dead
   // layer / torn-down view (Finding 4).
+  // Every throttled/debounced function in this file belongs here. The list is
+  // covered by a test that DISCOVERS them rather than naming them, because an
+  // enumerated list is how the two below went missing in the first place.
   updateVisibilityDebounced.cancel();
   restyleAnnotationsThrottled.cancel();
+  restyleTimelapseConnectionsThrottled.cancel();
   drawAnnotations.cancel();
   drawTooltips.cancel();
   handleValueOnMouseMoveDebounce.cancel();
+  handleLineScanMouseMove.cancel();
   lineScanStore.setToolLineType(null);
   lineScanStore.clearLine();
   if (spatialIndexRequestId !== null) {
@@ -4850,6 +4855,8 @@ defineExpose({
   drawTooltips,
   updateVisibilityDebounced,
   restyleAnnotationsThrottled,
+  restyleTimelapseConnections,
+  restyleTimelapseConnectionsThrottled,
   clearOldAnnotations,
   drawNewAnnotations,
   drawNewConnections,

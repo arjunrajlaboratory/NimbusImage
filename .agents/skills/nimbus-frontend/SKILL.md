@@ -153,6 +153,33 @@ Watch out for stringify cost on large objects.
 
 Not every `{ deep: true }` is this bug — it only applies when the watched source is a **getter function that rebuilds a fresh object/array on each call** (a Vuex/Pinia getter, a `computed`, or a plain function reading store state). A `ref()`/`reactive()` passed **directly** as the watch source (not wrapped in a function) is the correct, safe use of `deep: true` — Vue tracks its stable identity and only fires on genuine in-place mutations. Don't blanket-remove `deep: true` without checking which case you're in.
 
+### Every `throttle`/`debounce` needs a `cancel()` in `onBeforeUnmount`
+
+A trailing call that fires after teardown runs against a dead view — in
+`AnnotationViewer.vue` that means `layer.annotations()` / `layer.draw()` on a
+torn-down GeoJS map, or a store write from a component that no longer exists.
+The teardown block already cancels them; the failure mode is *forgetting to add
+the new one*, which nothing catches because the component unmounts fine and the
+trailing call usually lands harmlessly.
+
+Guard it with a test that **discovers** the throttles instead of listing them —
+the listed version stayed green while two uncancelled ones shipped:
+
+```ts
+const isThrottled = (v: any) =>
+  typeof v === "function" &&
+  typeof v.cancel === "function" &&
+  typeof v.flush === "function";
+const names = Object.keys(vm).filter((k) => isThrottled(vm[k]));
+expect(names.length).toBeGreaterThanOrEqual(7);   // floor: discovery can break too
+const spies = names.map((n) => [n, vi.spyOn(vm[n], "cancel")] as const);
+wrapper.unmount();
+expect(spies.filter(([, s]) => !s.mock.calls.length).map(([n]) => n)).toEqual([]);
+```
+
+This only sees what `defineExpose` exposes, so expose new throttles alongside
+the existing ones (that block is already the component's test surface).
+
 ## Vuetify 4 Patterns
 
 ### CSS Cascade Layers

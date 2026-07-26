@@ -71,6 +71,16 @@ When you fix something, ask **"what is the other one?"** before moving on:
 | the flat rendering branch | the grouped/track branch |
 | one scope/mode branch | the other three |
 | how one render path reflects a state | how the *other* render path reflects it |
+| creating a throttled/debounced callback | cancelling it in `onBeforeUnmount` |
+
+**A test that enumerates today's instances cannot catch tomorrow's.** The
+teardown-cancel test named the five throttles that existed when it was written,
+so adding a sixth and forgetting its `cancel()` left the suite green — and a
+seventh had been missing all along. Where the invariant is "every X does Y",
+discover the Xs at runtime (filter the component's exposed surface for
+`typeof v.cancel === 'function' && typeof v.flush === 'function'`) and assert a
+count floor so the discovery itself can't silently break. Same reasoning as
+grepping for the twin instead of fixing the one instance reported.
 
 A performance decision can create this shape on its own. Skipping work for one
 state ("hover won't rebuild the layer — too expensive") is a correctness

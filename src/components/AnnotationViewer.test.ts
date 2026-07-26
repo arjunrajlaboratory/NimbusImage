@@ -5900,22 +5900,33 @@ describe("AnnotationViewer", () => {
     // onBeforeUnmount cleanup (Finding 4)
     // =======================================================================
     describe("onBeforeUnmount cleanup", () => {
-      it("cancels all pending debounced/throttled callbacks so none fire after teardown", () => {
+      // This test used to name the five throttles that existed when it was
+      // written, which is precisely how two more shipped uncancelled: adding a
+      // throttle and forgetting its teardown left the test green. Discover them
+      // from the exposed surface instead, so a new one is covered the moment it
+      // is added. A trailing fire after teardown runs against a dead GeoJS view.
+      it("cancels every pending debounced/throttled callback so none fire after teardown", () => {
         wrapper = mountComponent();
         const vm = wrapper.vm as any;
-        const spies = [
-          vi.spyOn(vm.updateVisibilityDebounced, "cancel"),
-          vi.spyOn(vm.restyleAnnotationsThrottled, "cancel"),
-          vi.spyOn(vm.drawAnnotations, "cancel"),
-          vi.spyOn(vm.drawTooltips, "cancel"),
-          vi.spyOn(vm.handleValueOnMouseMoveDebounce, "cancel"),
-        ];
+        const isThrottled = (value: any) =>
+          typeof value === "function" &&
+          typeof value.cancel === "function" &&
+          typeof value.flush === "function";
+        const names = Object.keys(vm).filter((key) => isThrottled(vm[key]));
+        // Floor guards against the discovery itself silently breaking (an
+        // un-exposed throttle, or a Vue change to what wrapper.vm enumerates).
+        expect(names.length).toBeGreaterThanOrEqual(7);
+        const spies = names.map(
+          (name) => [name, vi.spyOn(vm[name], "cancel")] as const,
+        );
 
         wrapper.unmount();
 
-        for (const spy of spies) {
-          expect(spy).toHaveBeenCalled();
-        }
+        expect(
+          spies
+            .filter(([, spy]) => spy.mock.calls.length === 0)
+            .map(([n]) => n),
+        ).toEqual([]);
       });
     });
 
