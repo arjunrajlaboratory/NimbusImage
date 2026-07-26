@@ -251,6 +251,13 @@ function toggleSelection(collectionId: string) {
 }
 
 async function fetchCollections() {
+  // Bump BEFORE any scope-dependent early return. Returning without bumping
+  // leaves a request that is already in flight believing it is current, so an
+  // all-folders response can land after the user has switched back to a folder
+  // scope and repopulate the list with collections from other folders — which
+  // are then selectable. The folder check below is exactly such a return: it
+  // runs while the private-folder lookup is still pending.
+  const generation = ++fetchGeneration;
   let folderId: string | undefined;
   if (scope.value === "folder") {
     const folder = currentFolder.value;
@@ -262,7 +269,6 @@ async function fetchCollections() {
     }
   }
 
-  const generation = ++fetchGeneration;
   loading.value = true;
   try {
     const page = await store.api.listCollections({ folderId });

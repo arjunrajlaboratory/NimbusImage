@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import { readFileSync } from "fs";
-import { resolve } from "path";
 
 const mockListCollections = vi.fn();
 const mockGetUserPrivateFolder = vi.fn();
@@ -475,44 +473,6 @@ describe("CollectionList", () => {
     mockBatchResources.mockClear();
     await vm.resolveFolderNames();
     expect(mockBatchResources).not.toHaveBeenCalled();
-  });
-
-  // --- cell alignment ---
-
-  // AnnotationBrowser/AnnotationList.vue ships a NON-scoped
-  // `td span { display: block; text-align: center; margin: auto; }` that leaks
-  // into every table in the app, centering these cells under their left-aligned
-  // headers. Each text cell must carry a class the component's scoped override
-  // targets, or a column added later silently renders centered again. Asserted
-  // against the source because jsdom does not apply SFC styles, so nothing at
-  // runtime can observe the cascade.
-  it("gives every text cell a class that defeats the global td-span centering", () => {
-    // This test runs in the jsdom environment, where `import.meta.url` is not a
-    // file:// URL — resolve from the project root instead.
-    const source = readFileSync(
-      resolve(process.cwd(), "src/components/CollectionList.vue"),
-      "utf8",
-    );
-    const template = source.slice(
-      source.indexOf("<template>"),
-      source.lastIndexOf("</template>"),
-    );
-    const cellSlots = [
-      ...template.matchAll(
-        /<template v-slot:item\.(\w+)="\{ item \}">([\s\S]*?)<\/template>/g,
-      ),
-    ];
-    expect(cellSlots.length).toBeGreaterThan(0);
-
-    for (const [, column, body] of cellSlots) {
-      // The chips column renders a child component, not a bare text span.
-      if (!body.includes("<span")) continue;
-      expect(body, `column "${column}" is missing the alignment class`).toMatch(
-        /class="[^"]*\b(cell-text|collection-title)\b/,
-      );
-    }
-
-    expect(source).toMatch(/\.cell-text\s*\{[^}]*text-align:\s*left/);
   });
 
   // --- chips for the visible page ---

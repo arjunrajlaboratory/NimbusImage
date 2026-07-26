@@ -4,13 +4,19 @@ import { shallowMount } from "@vue/test-utils";
 
 const mockGetUserPrivateFolder = vi.fn();
 const mockClientGet = vi.fn();
+const mockListCollections = vi.fn();
 const mockAddCollectionToProject = vi.fn();
 
+// `listCollections` must be mocked: the dialog was switched from a raw
+// `client.get("upenn_collection")` to `store.api.listCollections`, and until this
+// was added the method was simply absent from the mock — every fetch threw and
+// took the catch branch, so the whole fetch path was passing vacuously.
 vi.mock("@/store", () => ({
   default: {
     api: {
       getUserPrivateFolder: (...args: any[]) =>
         mockGetUserPrivateFolder(...args),
+      listCollections: (...args: any[]) => mockListCollections(...args),
       client: {
         get: (...args: any[]) => mockClientGet(...args),
       },
@@ -90,6 +96,7 @@ async function mountComponent(props = {}) {
     _modelType: "folder",
   });
   mockClientGet.mockResolvedValue({ data: [] });
+  mockListCollections.mockResolvedValue({ collections: [], hasMore: false });
 
   const wrapper = shallowMount(AddCollectionToProjectFilterDialog, {
     props: {
@@ -234,6 +241,39 @@ describe("AddCollectionToProjectFilterDialog", () => {
     await wrapper.setProps({ project: newProject });
 
     expect(vm.selectedIds).toEqual(new Set());
+  });
+
+  // `fetchGeneration` is bumped AFTER the folder check in the original code, so
+  // the "no folder yet" early return left the counter untouched — an all-scope
+  // request already in flight then passed its own stale check and repopulated the
+  // list with cross-folder collections while the UI showed folder scope, making
+  // them selectable. The counter has to move before ANY scope-dependent return.
+  // Same shape as the guard in CollectionList.vue; this is its untreated twin.
+  it("discards an in-flight all-scope response after switching back to a folder scope", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+
+    let release: (value: any) => void = () => {};
+    mockListCollections.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    // All-folders request starts and is still pending.
+    vm.scope = "all";
+    await nextTick();
+
+    // Switch back before any folder has been resolved: the early return path.
+    vm.currentFolder = null;
+    vm.scope = "folder";
+    await nextTick();
+
+    // The stale all-scope page lands afterwards.
+    release({ collections: [{ _id: "cross-folder" }], hasMore: false });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(vm.allCollections).toEqual([]);
   });
 
   // Switching scope redefines which collections are even listed, so a selection

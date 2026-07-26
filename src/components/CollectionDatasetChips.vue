@@ -21,7 +21,7 @@
     </v-chip>
 
     <!-- Computed, but the collection has no datasets -->
-    <span v-else class="no-datasets text-caption text-medium-emphasis ma-1">
+    <span v-else class="text-caption text-medium-emphasis ma-1">
       No datasets
     </span>
   </div>
@@ -53,21 +53,3 @@ function navigateToChip(chipItem: IChipAttrs) {
 
 defineExpose({ chips, navigateToChip });
 </script>
-
-<style lang="scss" scoped>
-/* AnnotationBrowser/AnnotationList.vue ships an UNLAYERED, non-scoped
-   `td span { display: block; text-align: center; margin: auto; }`. Vuetify 4
-   puts its utility classes in a cascade layer, and unlayered rules beat every
-   layered one regardless of specificity — so that rule overrides `ma-1` and
-   centers these chips inside their cell, under a left-aligned column header.
-   These scoped rules are also unlayered, so they win it back. `4px` restates
-   exactly what `ma-1` intended, keeping the vertical gap for wrapped rows. */
-.colored-chip {
-  margin: 4px;
-}
-
-.no-datasets {
-  text-align: left;
-  margin: 4px;
-}
-</style>

@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import { readFileSync } from "fs";
-import { resolve } from "path";
 import { routerProvider } from "@/test/helpers";
 import CollectionDatasetChips from "./CollectionDatasetChips.vue";
 
@@ -83,22 +81,5 @@ describe("CollectionDatasetChips", () => {
     });
     expect(wrapper.text()).toContain("No datasets");
     expect(wrapper.text()).not.toContain("Loading datasets...");
-  });
-
-  // AnnotationBrowser/AnnotationList.vue ships an UNLAYERED, non-scoped
-  // `td span { text-align: center; margin: auto; }`. Vuetify 4 puts its utility
-  // classes in a cascade layer, and unlayered rules beat every layered one
-  // regardless of specificity — so that rule defeats `ma-1` and centers these
-  // chips in their cell, under a left-aligned column header. The component must
-  // restore its own horizontal spacing. Asserted against the source because
-  // jsdom does not apply SFC styles, so nothing at runtime sees the cascade.
-  it("restores chip spacing against the global unlayered td-span rule", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "src/components/CollectionDatasetChips.vue"),
-      "utf8",
-    );
-    const style = source.slice(source.indexOf("<style"));
-    expect(style).toMatch(/\.colored-chip\s*\{[^}]*margin:\s*4px/);
-    expect(style).toMatch(/\.no-datasets\s*\{[^}]*text-align:\s*left/);
   });
 });

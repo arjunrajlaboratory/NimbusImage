@@ -119,13 +119,13 @@
         </template>
 
         <template v-slot:item.description="{ item }">
-          <span class="cell-text text-caption text-medium-emphasis">
+          <span class="text-caption text-medium-emphasis">
             {{ item.description }}
           </span>
         </template>
 
         <template v-slot:item.folderName="{ item }">
-          <span class="cell-text text-caption text-medium-emphasis">
+          <span class="text-caption text-medium-emphasis">
             {{ item.folderName || "…" }}
           </span>
         </template>
@@ -138,13 +138,13 @@
         </template>
 
         <template v-slot:item.updated="{ item }">
-          <span class="cell-text text-caption text-no-wrap">{{
+          <span class="text-caption text-no-wrap">{{
             item.updated ? formatDateString(item.updated) : "Unknown"
           }}</span>
         </template>
 
         <template v-slot:item.created="{ item }">
-          <span class="cell-text text-caption text-no-wrap">{{
+          <span class="text-caption text-no-wrap">{{
             item.created ? formatDateString(item.created) : "Unknown"
           }}</span>
         </template>
@@ -517,19 +517,6 @@ defineExpose({
 .collection-title {
   font-weight: 500;
   color: rgb(var(--v-theme-collection));
-}
-
-/* AnnotationBrowser/AnnotationList.vue ships an UNLAYERED, non-scoped
-   `td span { display: block; text-align: center; margin: auto; }`, which leaks
-   into every table in the app and centers these cells under their left-aligned
-   headers. Vuetify 4 puts its utilities in a cascade layer and unlayered rules
-   beat layered ones outright, so `text-left`/`ma-0` utilities cannot undo it —
-   these scoped rules can, being unlayered themselves. The chips column is
-   handled the same way inside CollectionDatasetChips.vue. */
-.collection-title,
-.cell-text {
-  text-align: left;
-  margin: 0;
 }
 
 .folder-path-display {

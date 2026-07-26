@@ -33,9 +33,11 @@ endpoint too heavy to use across folders.
 | `hasMore` | Read one document past the limit rather than a second count query |
 | Limit | Clamped to `[1, MAX_COLLECTION_LIST_LIMIT]` (10,000) |
 | Sort | Restricted to `COLLECTION_SORTABLE_FIELDS`; default `updated` descending; `_id` appended as tie-breaker |
-| Indexes | `(updated, _id)` and `(folderId, updated, _id)`, so the default sort doesn't blocking-sort full documents |
+| Indexes | `(updated, _id)` and `(folderId, updated, _id)` for `/list`, plus `(folderId, lowerName, _id)` for `by_folders`' own default sort — every default sort must be index-covered |
 
 **Offset paging requires a total order.** `withIdTieBreaker` appends `_id` to whatever sort the caller asked for. Without it, documents tied on `updated` — which is routine, since Mongo stores datetimes at millisecond resolution and a bulk import stamps many collections in the same millisecond — have no defined order, so a page-2 request can repeat a row from page 1 or skip one entirely with the data unchanged. The indexes carry `_id` for the same reason; an index whose prefix is `updated` still serves a plain `updated` sort, so no separate single-field index is needed.
+
+**Appending a tie-breaker changes the sort key, so every endpoint's default sort needs a matching index.** `by_folders` defaults to `lowerName`, and adding `_id` to it turned `LIMIT <- FETCH <- IXSCAN` into `SORT <- FETCH <- IXSCAN` — a blocking sort over every matching document, correct output silently paid for. `(folderId, lowerName, _id)` restores the index scan. Caught in review, not by any test, which is why the plan is now pinned by `testDefaultSortsAreIndexCoveredNotBlocking`.
 
 Verified on a live server: the default sort plans as `LIMIT <- FETCH <- IXSCAN` with **no blocking `SORT` stage**, examining 10 keys for a limit of 10, and paging 44 rows one at a time returns 44 distinct ids in the same order as a single request. Note that `ensureIndices` only ever *creates* — an already-deployed database keeps the superseded `updated_1` and `folderId_1_updated_-1` indexes until they are dropped by hand. They are harmless (a little write overhead), so seeing them alongside the new compounds is expected, not a failed migration.
 
@@ -98,14 +100,20 @@ while row clicks worked fine. Both emits are typed `(value: any) => any`, so `ts
 cannot catch it, and a unit test that calls the handler with raw rows passes while the
 real table is broken.
 
-**2. A non-scoped global `td span` rule centers every table cell.**
-`AnnotationBrowser/AnnotationList.vue` ships an un-scoped
-`td span { display: block; text-align: center; margin: auto; }`, which leaks into every
-table in the app. In this table it centered Name, Description, Folder, Modified and
-Created under their left-aligned headers. The contained fix is the `cell-text` class
-plus a scoped override; **the global rule is still there and will ambush the next new
-table.** Scoping or deleting it is a worthwhile follow-up with app-wide visual blast
-radius, so it was deliberately left out of this feature.
+**2. A non-scoped global `td span` rule used to center every table cell.**
+`AnnotationBrowser/AnnotationList.vue` had an un-scoped
+`td span { display: block; text-align: center; margin: auto; }` (and a matching
+`tbody tr:hover`), which leaked into every table in the app. In this table it centered
+Name, Description, Folder, Modified and Created under their left-aligned headers.
+Vuetify 4 puts its utilities in a cascade layer and unlayered rules beat layered ones
+outright, so no `text-left` / `ma-0` in the affected component could undo it.
+
+**Both rules are now scoped to `.annotation-list-panel`, so the leak is gone.** This
+table therefore carries *no* alignment workaround — the earlier `cell-text` class and
+the chips component's compensating margins were removed once the root cause was fixed,
+because an obsolete workaround enforced as an invariant constrains future columns for no
+reason. `src/globalStyleLeaks.test.ts` guards the root cause instead: it fails if any
+`.vue` file gains a top-level element selector in a non-scoped `<style>` block.
 
 ---
 
@@ -176,7 +184,7 @@ and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annota
 
 - [ ] **Per-page callbacks unwrap `.raw`.** `update:currentItems` emits Vuetify's internal wrapped items; `click:row` emits raw rows. Mixing them up silently yields `undefined` ids. — *"onCurrentItemsChange reads ids from the wrapped payload, never the wrapper"*, *"onRowClick navigates to the clicked collection"*
 - [ ] **Tests drive handlers with the shape Vuetify really emits.** Use the `wrappedItem` helper for `currentItems`; passing raw rows makes the test pass while the table is broken. — *"onCurrentItemsChange resolves chips for the visible rows only once"*
-- [ ] **Every text cell carries an alignment class.** A new column added without `cell-text` renders centered again, because of the global `td span` rule. — *"gives every text cell a class that defeats the global td-span centering"*
+- [ ] **No `.vue` file gains a top-level element selector in a non-scoped `<style>` block.** That is what centered every cell in this table; the fix was scoping the rule at its source rather than adding per-table workarounds, so there is no alignment class to keep in sync. — *`src/globalStyleLeaks.test.ts`*
 - [ ] **The Folder column exists only in the all-folders scope.** — *"tableHeaders includes the Folder column only in the 'all' scope"*
 
 ### Cost

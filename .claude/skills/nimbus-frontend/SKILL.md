@@ -485,21 +485,21 @@ await store.api.batchResources({ folder: unresolvedIds, fields: ["name"] });
 
 Keep the projection **opt-in** — omitting `fields` must return whole documents, because the other callers depend on it, and pin that with a test. Validate the field list at the API boundary (plain non-empty strings, no `.` or `$`): it builds a Mongo projection out of caller input.
 
-### A non-scoped `td span` rule centers every table in the app
+### A non-scoped element selector leaks into every component (fixed once, guard it)
 
-`AnnotationBrowser/AnnotationList.vue` has a **non-scoped** `<style>` block containing:
+`AnnotationBrowser/AnnotationList.vue` **used to** carry, in a non-scoped `<style>` block:
 
 ```css
-td span { display: block; text-align: center; margin: auto; }
+td span { display: block; text-align: center; margin: auto; }   /* now .annotation-list-panel td span */
 ```
 
-It applies app-wide. Any new `v-data-table` gets its text cells centered under left-aligned headers, and the tell is a computed `margin-left` of some odd pixel value (e.g. `184.844px`) — that's `margin: auto` resolved against the flex free space, not a rule anyone wrote for your component.
+Both that and a sibling `tbody tr:hover` are now scoped to the component root, and `src/globalStyleLeaks.test.ts` fails if any `.vue` file gains a new top-level element selector in a non-scoped block. The history is worth keeping because the diagnosis is not obvious and the shape recurs: an unscoped element selector applies app-wide. Any new `v-data-table` gets its text cells centered under left-aligned headers, and the tell is a computed `margin-left` of some odd pixel value (e.g. `184.844px`) — that's `margin: auto` resolved against the flex free space, not a rule anyone wrote for your component.
 
 Two consequences worth knowing before you debug this for an hour:
 - Scanning `document.styleSheets` for the offending rule is how you find it, but **don't return `sheet.href`** from a devtools/`javascript_tool` probe — Vite dev URLs carry a `?t=` query string that trips content guards.
 - jsdom does not apply SFC styles, so **no runtime test can observe the cascade**. Guard it with a source-scan test asserting each cell carries the override class (precedent: `src/vuetifyDeprecations.test.ts`), and note that `import.meta.url` is not a `file://` URL under the jsdom environment — resolve from `process.cwd()`.
 
-Fix locally with a class on each text cell plus a scoped override (a class beats the global rule's two type selectors, so no `!important`). Deleting or scoping the global rule is the real fix but changes every table in the app — treat it as its own change, not a drive-by.
+**Fix it at the source, not with a per-table workaround.** Scoping the offending rule took one line; the interim `cell-text` class in `CollectionList.vue` and the compensating chip margins were then dead code, and a review flagged them as an obsolete invariant constraining future columns. If you must patch locally first (the source fix has app-wide visual blast radius and may deserve its own change), delete the workaround when the real fix lands — including its tests.
 
 ### Overriding Girder DataTable Row Styles
 

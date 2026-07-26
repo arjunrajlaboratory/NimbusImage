@@ -104,6 +104,11 @@ class Collection(ProxiedModel):
         # paging over a non-total order can repeat or drop rows. An index whose
         # prefix is 'updated' still serves a plain 'updated' sort, so no
         # separate single-field index is needed.
+        # by_folders filters on folderId and defaults to sorting on lowerName,
+        # so it needs its own '_id'-carrying compound. Without it the
+        # tie-breaker turns an index scan into a blocking sort over every
+        # matching document -- correct output, silently paid for. Pinned by
+        # testDefaultSortsAreIndexCoveredNotBlocking.
         self.ensureIndices(('folderId',
                             'name',
                             'lowerName',
@@ -111,7 +116,9 @@ class Collection(ProxiedModel):
                             ([('folderId', 1), ('name', 1)], {}),
                             ([('updated', -1), ('_id', -1)], {}),
                             ([('folderId', 1), ('updated', -1),
-                              ('_id', -1)], {})))
+                              ('_id', -1)], {}),
+                            ([('folderId', 1), ('lowerName', 1),
+                              ('_id', 1)], {})))
 
         self.exposeFields(level=AccessType.READ, fields=(
             '_id', 'size', 'updated', 'description', 'created', 'meta',

@@ -356,6 +356,61 @@ class TestCollectionList:
         )
         assertStatusOk(resp)
 
+    # A blocking sort is invisible until the collection is large: the
+    # response is correct, just paid for by sorting every matching document
+    # before applying the limit. Appending the `_id` tie-breaker changed the
+    # sort key of BOTH listing endpoints, so both default sorts need an index
+    # carrying `_id` -- adding it for one and not the other regressed that one.
+    def _sortStages(self, query, sort):
+        """Stage names in the winning plan for `query` sorted by `sort`.
+
+        Uses the raw PyMongo cursor because explain() is not exposed through
+        Girder's find(). Test-only; production code goes through the model.
+        """
+        cursor = (
+            Collection().collection.find(query).sort(sort).limit(10)
+        )
+        plan = cursor.explain()["queryPlanner"]["winningPlan"]
+        stages = []
+
+        def walk(node):
+            if not isinstance(node, dict):
+                return
+            if "stage" in node:
+                stages.append(node["stage"])
+            for value in node.values():
+                if isinstance(value, dict):
+                    walk(value)
+                elif isinstance(value, list):
+                    for item in value:
+                        walk(item)
+
+        walk(plan)
+        return stages
+
+    def testDefaultSortsAreIndexCoveredNotBlocking(self, admin, server):
+        """Neither endpoint's default sort may fall back to a blocking sort."""
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        for index in range(3):
+            createCollection(admin, folder, "collection_%d" % index)
+
+        # /upenn_collection/list -- 'updated' descending, tie-broken by _id.
+        listStages = self._sortStages({}, [("updated", -1), ("_id", -1)])
+        assert "SORT" not in listStages, (
+            "/list default sort is blocking: %s" % listStages
+        )
+
+        # by_folders -- 'lowerName' ascending, also tie-broken by _id.
+        byFolderStages = self._sortStages(
+            {"folderId": {"$in": [folder["_id"]]}},
+            [("lowerName", 1), ("_id", 1)],
+        )
+        assert "SORT" not in byFolderStages, (
+            "by_folders default sort is blocking: %s" % byFolderStages
+        )
+
     def testFindByFoldersRejectsMalformedBodies(self, admin, server):
         """findByFolders answers 400, not 500, on a degenerate payload."""
         for body in [{}, {"folderIds": "abc"}, {"folderIds": ["nope"]}]:
