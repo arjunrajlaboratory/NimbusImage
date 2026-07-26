@@ -50,7 +50,7 @@
                     class="text-h6 text-white text-center"
                     style="pointer-events: none"
                   >
-                    Drop files here to upload
+                    Drop files or a folder here to upload
                   </div>
                 </v-overlay>
 
@@ -63,10 +63,21 @@
                   <div class="text-center">
                     <div class="text-h6 mb-2">Upload files</div>
                     <div class="text-body-2 mb-2">
-                      Click or drag here to upload files. You can choose to
-                      accept default settings or configure advanced options
-                      after selecting files.
+                      Click or drag here to upload files. You can also drag a
+                      folder or use the button below to upload every file in a
+                      folder. You can choose to accept default settings or
+                      configure advanced options after selecting files.
                     </div>
+                    <v-btn
+                      variant="tonal"
+                      color="primary"
+                      size="small"
+                      class="mb-2"
+                      @click.stop="openFolderSelector"
+                    >
+                      <v-icon start>mdi-folder-upload</v-icon>
+                      Upload a folder
+                    </v-btn>
                     <div class="text-caption">
                       Dataset will be uploaded to folder:
                       <strong>{{ locationName }}</strong>
@@ -508,6 +519,11 @@ import ZenodoImporter from "@/components/ZenodoImporter.vue";
 import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
 import RecentDatasets from "@/components/RecentDatasets.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
+import {
+  getFilesFromDrop,
+  selectFiles,
+  selectFilesFromFolder,
+} from "@/utils/fileUpload";
 import { formatDateNumber, formatDate } from "@/utils/date";
 import { logError } from "@/utils/log";
 import Persister from "@/store/Persister";
@@ -1007,40 +1023,25 @@ function comprehensiveUpload(
   router.push({ name: "newdataset" });
 }
 
-function handleDrop(event: DragEvent) {
+function beginUpload(files: File[]) {
+  if (files.length > 0) {
+    pendingFiles.value = files;
+    initializeUploadDialog();
+    showUploadDialog.value = true;
+  }
+}
+
+async function handleDrop(event: DragEvent) {
   isDragging.value = false;
-  const files = Array.from(event.dataTransfer?.files || []);
-  if (files.length > 0) {
-    pendingFiles.value = files;
-    initializeUploadDialog();
-    showUploadDialog.value = true;
-  }
+  beginUpload(await getFilesFromDrop(event));
 }
 
-function openFileSelector() {
-  // Create a temporary <input type="file"> on each click.
-  // Calling .click() on a freshly-created, detached input avoids Chrome's
-  // issue where programmatic .click() on an existing DOM-attached input
-  // (inside Vuetify's <v-card>) is silently blocked.
-  const input = document.createElement("input");
-  input.type = "file";
-  input.multiple = true;
-  input.addEventListener("change", handleFileSelect);
-  input.click();
+async function openFileSelector() {
+  beginUpload(await selectFiles());
 }
 
-function handleFileSelect(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []);
-
-  if (files.length > 0) {
-    pendingFiles.value = files;
-    initializeUploadDialog();
-    showUploadDialog.value = true;
-  }
-
-  // Reset the input
-  input.value = "";
+async function openFolderSelector() {
+  beginUpload(await selectFilesFromFolder());
 }
 
 function initializeUploadDialog() {
@@ -1319,7 +1320,8 @@ defineExpose({
   onLocationUpdate,
   handleDrop,
   openFileSelector,
-  handleFileSelect,
+  openFolderSelector,
+  beginUpload,
   initializeUploadDialog,
   handleAcceptDefaults,
   handleConfigureDataset,

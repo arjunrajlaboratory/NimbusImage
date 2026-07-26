@@ -3,6 +3,25 @@ import { shallowMount } from "@vue/test-utils";
 
 // ---- Hoisted mocks ----
 
+// Records every throttle/debounce wrapper the component creates, so the
+// teardown test can find them without a hand-maintained list. Delegates to the
+// real lodash so timing behaviour (and every test that advances fake timers
+// through a throttle) is unchanged.
+const createdThrottles = vi.hoisted(() => [] as any[]);
+
+vi.mock("lodash", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lodash")>();
+  const record = (wrapper: any) => {
+    createdThrottles.push(wrapper);
+    return wrapper;
+  };
+  return {
+    ...actual,
+    throttle: (...args: any[]) => record((actual.throttle as any)(...args)),
+    debounce: (...args: any[]) => record((actual.debounce as any)(...args)),
+  };
+});
+
 vi.mock("onnxruntime-web/webgpu", () => ({
   InferenceSession: { create: vi.fn() },
   Tensor: vi.fn(),
@@ -30,6 +49,50 @@ vi.mock("@/utils/annotation", () => ({
   geojsAnnotationFactory: vi.fn(),
   tagFilterFunction: vi.fn().mockReturnValue(true),
   ellipseToPolygonCoordinates: vi.fn((coords) => coords),
+  // Faithful copy of the real keep-decision (unit-tested in
+  // annotationStubUtils.test.ts). Importing the real module here pulls in its
+  // heavy transitive graph and OOMs this large test file, so mirror the small
+  // pure logic instead — stub ⇔ no `coordinates` field.
+  drawnFeatureUnchanged: (
+    layerExists: boolean,
+    layerData: any,
+    drawnColor: string | null,
+    drawnIsStub: boolean,
+    drawnGeometryKey: number,
+  ) =>
+    !!layerExists &&
+    !!layerData &&
+    layerData.color === drawnColor &&
+    !("coordinates" in layerData) === drawnIsStub &&
+    // Mirror geometryKeyForRender: hydrated keys off coordinates length, stub
+    // off centroid — enough fidelity for the viewer test's keep-decision.
+    (drawnGeometryKey === undefined ||
+      drawnGeometryKey === (layerData.coordinates?.length ?? -1)),
+  geometryKeyForRender: (data: any) =>
+    "coordinates" in data ? data.coordinates?.length ?? -1 : -1,
+  // Faithful copy of the real predicate (unit-tested in Task 1). Point stubs
+  // use the regular point style (false); polygon/line/rectangle stubs use the
+  // dot style (true).
+  drawnFeatureUsesDotStyle: vi.fn(
+    (isStub: boolean, shape: string) => isStub && shape !== "point",
+  ),
+  getStubStyleFromBaseStyle: vi.fn().mockReturnValue({
+    fillColor: "blue",
+    fillOpacity: 0.3,
+    strokeColor: "blue",
+    strokeWidth: 1,
+    radius: 5,
+  }),
+  // Faithful copy of the real retained-feature skip predicate (unit-tested in
+  // annotationStubUtils.test.ts). Retainable only with a stable (layer,
+  // annotation) identity and not a connection / special feature.
+  shouldRetainFeature: (options: any) =>
+    !!(
+      options.girderId &&
+      options.layerId &&
+      !options.isConnection &&
+      !options.specialAnnotation
+    ),
 }));
 
 vi.mock("@/utils/polygonSlice", () => ({
@@ -103,10 +166,13 @@ const mockAnnotationLayer = () => {
     geoOn: vi.fn(),
     geoOff: vi.fn(),
     mode: vi.fn(),
+    options: vi.fn(),
     currentAnnotation: null,
     map: vi.fn(() => ({
       unitsPerPixel: vi.fn().mockReturnValue(1),
       zoom: vi.fn().mockReturnValue(5),
+      zoomRange: vi.fn().mockReturnValue({ min: 0, max: 10 }),
+      size: vi.fn().mockReturnValue({ width: 1640, height: 877 }),
       bounds: vi.fn().mockReturnValue({
         left: 0,
         top: 0,
@@ -247,38 +313,49 @@ vi.mock("@/store", () => {
 
 vi.mock("@/store/annotation", () => {
   const { reactive } = require("vue");
-  return {
-    default: reactive({
-      annotations: [] as any[],
-      annotationConnections: [] as any[],
-      annotationCentroids: {} as Record<string, any>,
-      selectedAnnotationIds: new Set<string>(),
-      hoveredAnnotationId: null as string | null,
-      pendingAnnotation: null as any,
-      getAnnotationFromId: vi.fn().mockReturnValue(undefined),
-      isAnnotationSelected: vi.fn().mockReturnValue(false),
-      annotationIdToIdx: {} as Record<string, number>,
-      selectAnnotations: vi.fn(),
-      unselectAnnotations: vi.fn(),
-      toggleSelected: vi.fn(),
-      clearSelectedAnnotations: vi.fn(),
-      deleteSelectedAnnotations: vi.fn(),
-      deleteUnselectedAnnotations: vi.fn(),
-      addAnnotationFromTool: vi.fn().mockResolvedValue(null),
-      updateAnnotationsPerId: vi.fn().mockResolvedValue(undefined),
-      createConnection: vi.fn(),
-      createTimelapseConnection: vi.fn(),
-      createAllConnections: vi.fn().mockResolvedValue(undefined),
-      createAllTimelapseConnections: vi.fn().mockResolvedValue(undefined),
-      deleteAllConnections: vi.fn().mockResolvedValue(undefined),
-      combineAnnotations: vi.fn().mockResolvedValue(true),
-      colorAnnotationIds: vi.fn(),
-      colorSelectedAnnotations: vi.fn(),
-      tagSelectedAnnotations: vi.fn(),
-      removeTagsFromSelectedAnnotations: vi.fn(),
-      setHoveredAnnotationId: vi.fn(),
-    }),
-  };
+  const state = reactive({
+    annotations: [] as any[],
+    annotationConnections: [] as any[],
+    annotationCentroids: {} as Record<string, any>,
+    selectedAnnotationIds: new Set<string>(),
+    hoveredAnnotationId: null as string | null,
+    pendingAnnotation: null as any,
+    stubOnlyMode: false,
+    getAnnotationFromId: vi.fn().mockReturnValue(undefined),
+    getStub: vi.fn().mockReturnValue(undefined),
+    // Truthy by default: combine's "is the first annotation still hydrated?"
+    // guard treats it as loaded unless a test overrides it.
+    getHydratedAnnotation: vi.fn().mockReturnValue({ coordinates: [] }),
+    isAnnotationSelected: vi.fn().mockReturnValue(false),
+    annotationIdToIdx: {} as Record<string, number>,
+    selectAnnotations: vi.fn(),
+    unselectAnnotations: vi.fn(),
+    toggleSelected: vi.fn(),
+    clearSelectedAnnotations: vi.fn(),
+    deleteSelectedAnnotations: vi.fn(),
+    deleteUnselectedAnnotations: vi.fn(),
+    addAnnotationFromTool: vi.fn().mockResolvedValue(null),
+    updateAnnotationsPerId: vi.fn().mockResolvedValue(undefined),
+    createConnection: vi.fn(),
+    createTimelapseConnection: vi.fn(),
+    createAllConnections: vi.fn().mockResolvedValue(undefined),
+    createAllTimelapseConnections: vi.fn().mockResolvedValue(undefined),
+    deleteAllConnections: vi.fn().mockResolvedValue(undefined),
+    combineAnnotations: vi.fn().mockResolvedValue(true),
+    colorAnnotationIds: vi.fn(),
+    colorSelectedAnnotations: vi.fn(),
+    tagSelectedAnnotations: vi.fn(),
+    removeTagsFromSelectedAnnotations: vi.fn(),
+    setHoveredAnnotationId: vi.fn(),
+    ensureHydrated: vi.fn(),
+  });
+  Object.defineProperty(state, "annotationsForIteration", {
+    get() {
+      return state.annotations;
+    },
+    enumerable: true,
+  });
+  return { default: state };
 });
 
 vi.mock("@/store/properties", () => {
@@ -328,6 +405,7 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import filterStore from "@/store/filters";
+import lineScanStore from "@/store/lineScan";
 import {
   pointDistance,
   getAnnotationStyleFromBaseStyle,
@@ -343,6 +421,7 @@ import {
 } from "@/store/model";
 import { samPromptToAnnotation } from "@/pipelines/samPipeline";
 import { NoOutput } from "@/pipelines/computePipeline";
+import connectionListStore from "@/store/connectionList";
 import AnnotationViewer from "./AnnotationViewer.vue";
 
 const mockedStore = vi.mocked(store);
@@ -494,6 +573,7 @@ describe("AnnotationViewer", () => {
     mockedStore.annotationSelectionType = "ADD" as any;
     mockedStore.showAnnotationsFromHiddenLayers = false;
     mockedStore.valueOnHover = false;
+    mockedStore.cameraInfo = { gcsBounds: [] } as any;
 
     mockedAnnotationStore.annotations = [];
     mockedAnnotationStore.annotationConnections = [];
@@ -502,6 +582,25 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.hoveredAnnotationId = null;
     mockedAnnotationStore.pendingAnnotation = null;
     mockedAnnotationStore.annotationIdToIdx = {};
+    mockedAnnotationStore.stubOnlyMode = false;
+    (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+      undefined,
+    );
+    (mockedAnnotationStore.getStub as any).mockReturnValue(undefined);
+    mockedAnnotationStore.annotationStubs = new Map();
+    mockedAnnotationStore.visibilityConfig = {
+      stubThreshold: 10000,
+      maxVisible: 10000,
+      minimumVisible: 5000,
+      maxHydrated: 5000,
+      hydrationCacheCap: 10000,
+      globalThreshold: true,
+      coverageTarget: 0.15,
+      revealMoreOnZoom: true,
+      viewportRefreshFraction: 0.2,
+    };
+    mockedAnnotationStore.averageStubRadius = 0;
+    mockedAnnotationStore.updateVisibilityAndHydration = vi.fn();
 
     mockedPropertiesStore.displayWorkerPreview = false;
     mockedPropertiesStore.displayedPropertyPaths = [];
@@ -517,8 +616,14 @@ describe("AnnotationViewer", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    // Unmount the mounted component so its watchers, GeoJS layer refs, and
+    // reactive subscriptions are released. Without this the ~246 mounted
+    // instances accumulate across the run and OOM the vitest worker. Also clear
+    // the `attachTo` divs mountComponent appends to document.body.
     if (wrapper) {
+      wrapper.unmount();
     }
+    document.body.innerHTML = "";
   });
 
   // =========================================================================
@@ -963,6 +1068,394 @@ describe("AnnotationViewer", () => {
       });
     });
 
+    // --- drawNewConnections ---
+    describe("drawNewConnections", () => {
+      function setupTwoDisplayedAnnotations() {
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({ id: "a1", channel: 0 }),
+          makeAnnotation({ id: "a2", channel: 0 }),
+        ];
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ];
+        (geojsAnnotationFactory as any).mockImplementation((shape: string) =>
+          mockGeoJSAnnotation(shape),
+        );
+      }
+
+      it("draws a line for a connection between two displayed annotations", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const added = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(added).toHaveLength(1);
+        expect(added[0].options().girderId).toBe("c1");
+      });
+
+      // Regression: in stub-only mode getAnnotationFromId returns undefined for
+      // unhydrated annotations. Gating the draw on it silently dropped nearly
+      // every connection on a lazily-loaded dataset (1 of 11 drawn on the 709K
+      // Xenium dataset) even though every centroid was present.
+      it("still draws when the endpoints are unhydrated stubs", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const added = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(added).toHaveLength(1);
+        expect(added[0].options().girderId).toBe("c1");
+        expect(added[0].options().style.stroke).toBe(true);
+      });
+
+      // Retention must use the same criteria as the draw path, or every draw
+      // removes the lines it just created and rebuilds them next pass.
+      it("retains stub-backed connection lines through clearOldAnnotations", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        const countLines = () =>
+          aLayer.annotations().filter((f: any) => f.options().isConnection)
+            .length;
+        const before = countLines();
+        expect(before).toBeGreaterThan(0);
+
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+        expect(countLines()).toBe(before);
+      });
+
+      it("styles a selected connection at construction, not only on restyle", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        connectionListStore.setSelectedConnectionIds(["c1"]);
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const line = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .find((f: any) => f?.options?.().isConnection);
+        expect(line.options().style.strokeColor).toBe("#00e5ff");
+        // Asserting colour alone is not enough: options("style", …) REPLACES
+        // the style, so dropping `stroke` yields a correctly-positioned,
+        // correctly-coloured, completely invisible line.
+        expect(line.options().style.stroke).toBe(true);
+      });
+
+      // Regression: connection lines carry a girderId, so they land in
+      // drawnGeoJSAnnotations. They never set isHovered/isSelected, and
+      // `undefined != false` is true, so the retained-restyle loop used to
+      // overwrite a selected connection's cyan on the very next redraw.
+      it("keeps a selected connection cyan through a redraw", async () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        connectionListStore.setSelectedConnectionIds(["c1"]);
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        const lineOf = () =>
+          aLayer.annotations().find((f: any) => f.options().isConnection);
+        expect(lineOf().options().style.strokeColor).toBe("#00e5ff");
+        expect(lineOf().options().style.stroke).toBe(true);
+
+        // A plain redraw must not clobber it.
+        (wrapper.vm as any).drawAnnotationsNoThrottle();
+        vi.advanceTimersByTime(101);
+        await wrapper.vm.$nextTick();
+        expect(lineOf().options().style.strokeColor).toBe("#00e5ff");
+        expect(lineOf().options().style.stroke).toBe(true);
+      });
+
+      // A plain click highlights an object but used to do nothing at all on a
+      // connection line — the hover handler skipped isConnection features —
+      // which reads as the feature being broken.
+      it("hovers a connection on a plain click that hits no object", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        (wrapper.vm as any).drawNewConnections(new Map());
+        connectionListStore.setHoveredConnectionId(null);
+
+        // The GeoJS mock does not derive coordinates() from the vertices
+        // option, so the hit test would see no geometry. Give the drawn line
+        // the segment it represents.
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        const drawnLine = aLayer
+          .annotations()
+          .find((f: any) => f.options().isConnection);
+        drawnLine.coordinates = () => [
+          { x: 0, y: 0 },
+          { x: 1000, y: 1000 },
+        ];
+        // The shared geojs mock returns 100 from distance2dToLineSquared, which
+        // never clears the 6px tolerance; 1 means "the click is on the line".
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(1);
+
+        // Midpoint of the drawn line: on the connection, away from any object.
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 500,
+          y: 500,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBe("c1");
+      });
+
+      it("clears connection hover when the click lands on an object", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        (wrapper.vm as any).drawNewConnections(new Map());
+        connectionListStore.setHoveredConnectionId("c1");
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(100);
+
+        // Far from the line, so no connection is hit either way.
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 9999,
+          y: 9999,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBeNull();
+      });
+
+      // Regression: the hit test returned the FIRST line within tolerance, so
+      // with parallel or dense tracks a click could select a far segment over
+      // a near one and leave some links unreachable from the canvas.
+      it("selects the closest connection when several are within tolerance", () => {
+        setupTwoDisplayedAnnotations();
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "far", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "near", parentId: "a2", childId: "a1" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        (wrapper.vm as any).drawNewConnections(new Map());
+
+        const lines = aLayer
+          .annotations()
+          .filter((f: any) => f.options().isConnection);
+        // Give each line distinguishable geometry, then make the SECOND one
+        // measurably nearer while both stay inside the 6px tolerance (36).
+        lines.forEach((l: any, i: number) => {
+          l.coordinates = () => [
+            { x: i, y: 0 },
+            { x: i, y: 100 },
+          ];
+        });
+        (geojs.util.distance2dToLineSquared as any).mockImplementation(
+          (_p: any, a: any) => (a.x === 0 ? 25 : 1),
+        );
+
+        const first = lines[0].options().girderId;
+        const nearest = lines[1].options().girderId;
+        expect(
+          (wrapper.vm as any).findConnectionIdAtPoint({ x: 0, y: 50 }),
+        ).toBe(nearest);
+        expect(nearest).not.toBe(first);
+      });
+
+      // ConnectionActionPanel must live in ImageViewer, mounted once: in unroll
+      // mode ImageViewer renders one AnnotationViewer per layer group, and a
+      // per-viewer panel registered N global keydown listeners, so one Delete
+      // press sent N duplicate batch DELETEs.
+      it("does not mount the connection action panel per viewer", () => {
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        expect(
+          wrapper.findComponent({ name: "ConnectionActionPanel" }).exists(),
+        ).toBe(false);
+        expect(wrapper.html()).not.toContain("connection-action-panel");
+      });
+
+      // In timelapse mode the track segments ARE the visual; the annotation
+      // layer's dots sit under them. Clicking a segment that crosses a dot must
+      // select the link, not the dot — otherwise clicking a track does nothing
+      // for the connection, which is what users hit.
+      // Puts a drawn OBJECT feature and a connection line on the layer at the
+      // same spot, so the hover handler genuinely has to choose between them.
+      // Building them explicitly beats driving the whole draw pipeline: the
+      // point of the test is the precedence rule, not the drawing.
+      function mountWithOverlappingObjectAndConnection() {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(1);
+        // pointDistance is a bare vi.fn() returning undefined, so the object
+        // hit-test can never succeed until the test says otherwise — 0 means
+        // "the click is dead on the object".
+        (pointDistance as any).mockReturnValue(0);
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.removeAllAnnotations();
+
+        // Object a1 renders at (10, 20) with radius 5 — a click there hits it.
+        const objectFeature = mockGeoJSAnnotation("point");
+        objectFeature.options({ girderId: "a1", layerId: "l1" });
+        (objectFeature.style as any).mockReturnValue({
+          radius: 5,
+          strokeWidth: 2,
+        });
+        aLayer.addAnnotation(objectFeature);
+
+        // A connection line passing straight through the same point.
+        const lineFeature = mockGeoJSAnnotation("line");
+        lineFeature.options({ girderId: "c1", isConnection: true });
+        (lineFeature.coordinates as any).mockReturnValue([
+          { x: 0, y: 0 },
+          { x: 100, y: 100 },
+        ]);
+        aLayer.addAnnotation(lineFeature);
+
+        connectionListStore.setHoveredConnectionId(null);
+        mockedAnnotationStore.hoveredAnnotationId = null;
+      }
+
+      it("prefers the connection over an object in timelapse mode", () => {
+        mockedStore.showTimelapseMode = true;
+        mountWithOverlappingObjectAndConnection();
+
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 10,
+          y: 20,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBe("c1");
+      });
+
+      it("still prefers the object outside timelapse mode", () => {
+        mockedStore.showTimelapseMode = false;
+        mountWithOverlappingObjectAndConnection();
+
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 10,
+          y: 20,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBeNull();
+      });
+
+      // Hovering must not rebuild the timelapse layer. It is one line feature
+      // per connection — ~2,500 on a real dataset — and hovering rows in the
+      // list changes hoveredConnectionId continuously, so rebuilding per hover
+      // made the list feel sluggish. Selection still rebuilds.
+      it("does not rebuild the timelapse layer on hover", async () => {
+        mockedStore.showTimelapseMode = true;
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        await wrapper.vm.$nextTick();
+
+        tLayer.removeAllAnnotations.mockClear();
+        connectionListStore.setHoveredConnectionId("c1");
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const rebuildsOnHover = tLayer.removeAllAnnotations.mock.calls.length;
+
+        tLayer.removeAllAnnotations.mockClear();
+        connectionListStore.setSelectedConnectionIds(["c1"]);
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const rebuildsOnSelect = tLayer.removeAllAnnotations.mock.calls.length;
+
+        expect(rebuildsOnHover).toBe(0);
+        expect(rebuildsOnSelect).toBeGreaterThan(0);
+      });
+
+      // The timelapse precedence inversion must apply to SELECTION too, not
+      // only to plain-click highlighting: shift+click and the select tool go
+      // through selectAnnotations, and a track segment almost always overlaps
+      // a dot, so without this most timelapse connections cannot be selected.
+      it("selects the connection over an object in timelapse mode", () => {
+        mockedStore.showTimelapseMode = true;
+        mountWithOverlappingObjectAndConnection();
+        connectionListStore.setSelectedConnectionIds([]);
+
+        (wrapper.vm as any).selectAnnotations({
+          type: () => "point",
+          coordinates: () => [{ x: 10, y: 20 }],
+        });
+
+        expect([...connectionListStore.selectedConnectionIds]).toEqual(["c1"]);
+        // The object must NOT also be selected — the mocked store uses the ADD
+        // selection type, so that path calls selectAnnotations.
+        expect(mockedAnnotationStore.selectAnnotations).not.toHaveBeenCalled();
+      });
+
+      it("still selects the object outside timelapse mode", () => {
+        mockedStore.showTimelapseMode = false;
+        mountWithOverlappingObjectAndConnection();
+        connectionListStore.setSelectedConnectionIds([]);
+
+        (wrapper.vm as any).selectAnnotations({
+          type: () => "point",
+          coordinates: () => [{ x: 10, y: 20 }],
+        });
+
+        expect(connectionListStore.selectedConnectionIds.size).toBe(0);
+        expect(mockedAnnotationStore.selectAnnotations).toHaveBeenCalled();
+      });
+
+      it("skips a connection whose centroid is missing rather than drawing NaN", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        mockedAnnotationStore.annotationCentroids = { a1: { x: 10, y: 20 } };
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const added = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(added).toHaveLength(0);
+      });
+    });
+
     describe("displayedAnnotations", () => {
       it("returns flat array of annotations from layerAnnotations", () => {
         const layer = makeLayer({ id: "l1", channel: 0, visible: true });
@@ -1006,7 +1499,7 @@ describe("AnnotationViewer", () => {
         expect(aLayer.removeAllAnnotations).toHaveBeenCalled();
       });
 
-      it("calls clearOldAnnotations and drawNewAnnotations", () => {
+      it("draws incrementally (no bulk removeAllAnnotations) on a normal draw", () => {
         const layer = makeLayer({ id: "l1", channel: 0, visible: true });
         mockedStore.layers = [layer];
         (mockedStore.layerSliceIndexes as any).mockReturnValue({
@@ -1020,8 +1513,11 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
 
         const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.removeAllAnnotations.mockClear();
         (wrapper.vm as any).drawAnnotationsNoThrottle();
-        expect(aLayer.removeAllAnnotations).toHaveBeenCalled();
+        // The normal draw path now diffs incrementally instead of tearing the
+        // whole layer down — a low-churn draw must not bulk-clear.
+        expect(aLayer.removeAllAnnotations).not.toHaveBeenCalled();
         expect(aLayer.draw).toHaveBeenCalled();
       });
 
@@ -1077,6 +1573,85 @@ describe("AnnotationViewer", () => {
         vi.clearAllMocks();
         (wrapper.vm as any).clearOldAnnotations(true, true);
         expect(aLayer.draw).toHaveBeenCalled();
+      });
+
+      // --- incremental diff path (clearOldAnnotations(false)) ---
+      it("keeps a still-displayed feature and removes one no longer displayed", () => {
+        const layer = makeLayer({ id: "layer1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        // a1 is displayed (hydrated, no color); "gone" is not.
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({ id: "a1", channel: 0, color: null }),
+        ];
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        const keepFeature = mockGeoJSAnnotation("point");
+        keepFeature.options({
+          girderId: "a1",
+          layerId: "layer1",
+          color: null,
+          isStub: false,
+        });
+        const removeFeature = mockGeoJSAnnotation("point");
+        removeFeature.options({
+          girderId: "gone",
+          layerId: "layer1",
+          color: null,
+          isStub: false,
+        });
+        aLayer.removeAllAnnotations();
+        aLayer.addAnnotation(keepFeature);
+        aLayer.addAnnotation(removeFeature);
+        aLayer.removeAllAnnotations.mockClear();
+
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+
+        const remaining = aLayer.annotations();
+        expect(remaining).toContain(keepFeature);
+        expect(remaining).not.toContain(removeFeature);
+        // low churn (1 of 2) ⇒ individual removal, not a bulk clear
+        expect(aLayer.removeAllAnnotations).not.toHaveBeenCalled();
+      });
+
+      it("bulk-clears when most features must be removed (hybrid)", () => {
+        const layer = makeLayer({ id: "layer1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        // nothing displayed ⇒ all drawn features must be removed
+        mockedAnnotationStore.annotations = [];
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        aLayer.removeAllAnnotations();
+        for (const id of ["x1", "x2", "x3"]) {
+          const f = mockGeoJSAnnotation("point");
+          f.options({
+            girderId: id,
+            layerId: "layer1",
+            color: null,
+            isStub: false,
+          });
+          aLayer.addAnnotation(f);
+        }
+        aLayer.removeAllAnnotations.mockClear();
+
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+
+        // 3 of 3 removed ⇒ a single bulk clear beats N individual removals
+        expect(aLayer.removeAllAnnotations).toHaveBeenCalled();
+        expect(aLayer.annotations()).toHaveLength(0);
       });
     });
 
@@ -1147,6 +1722,146 @@ describe("AnnotationViewer", () => {
 
         // Should update the style since isHovered changed
         expect(geoAnn.options).toHaveBeenCalledWith("isHovered", true);
+      });
+    });
+
+    // --- retained-feature reuse (frame-scrub cache) ---
+    // These drive the cache logic against the GeoJS mock, so they guard the
+    // wiring (retain on remove, reuse-or-reject on redraw) — NOT the real GeoJS
+    // _exit/re-add contract the optimization relies on (see retainRemovedFeatures
+    // in AnnotationViewer.vue, which is pinned to geojs ^1.19.1).
+    describe("retained-feature reuse", () => {
+      function setupDisplayedLayer() {
+        const layer = makeLayer({ id: "layer1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+      }
+
+      // A previously-drawn feature for a1; `color` decides whether the reuse
+      // validity check (drawnFeatureUnchanged) accepts it against ann1.
+      function drawnFeatureForA1(color: string | null) {
+        const feature = mockGeoJSAnnotation("point");
+        feature.options({
+          girderId: "a1",
+          layerId: "layer1",
+          color,
+          isStub: false,
+          geometryKey: 1, // ann1 has one coordinate
+        });
+        return feature;
+      }
+
+      it("reuses a removed feature instead of reconstructing it on scrub-back", () => {
+        setupDisplayedLayer();
+        const ann1 = makeAnnotation({ id: "a1", channel: 0, color: null });
+        mockedAnnotationStore.annotations = [ann1];
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        const feature = drawnFeatureForA1(null);
+        aLayer.removeAllAnnotations();
+        aLayer.addAnnotation(feature);
+
+        // Frame leaves a1: not displayed ⇒ clearOldAnnotations removes + retains.
+        mockedAnnotationStore.annotations = [];
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+        expect(aLayer.annotations()).not.toContain(feature);
+
+        // Scrub back: a1 displayed again ⇒ reuse the retained object, no rebuild.
+        mockedAnnotationStore.annotations = [ann1];
+        (geojsAnnotationFactory as any).mockClear();
+        aLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawNewAnnotations(new Map());
+
+        expect(geojsAnnotationFactory).not.toHaveBeenCalled();
+        expect(aLayer.annotations()).toContain(feature);
+        // A reused feature's coordinates were already converted to the map gcs
+        // on its first add; it must be re-added with gcs=null so addAnnotation
+        // does NOT convert them a second time (which drifts it off the image on
+        // each zoom-out). Fresh features use gcs=undefined (ingcs) instead.
+        expect(aLayer.addMultipleAnnotations).toHaveBeenCalledWith(
+          [feature],
+          null,
+          false,
+        );
+      });
+
+      it("rejects a stale cached feature and reconstructs it", () => {
+        setupDisplayedLayer();
+        const ann1 = makeAnnotation({ id: "a1", channel: 0, color: null });
+        mockedAnnotationStore.annotations = [ann1];
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        // Cached feature's color no longer matches ann1 ⇒ must not be reused.
+        const staleFeature = drawnFeatureForA1("stale-color");
+        aLayer.removeAllAnnotations();
+        aLayer.addAnnotation(staleFeature);
+
+        mockedAnnotationStore.annotations = [];
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+
+        mockedAnnotationStore.annotations = [ann1];
+        (geojsAnnotationFactory as any).mockClear();
+        const freshFeature = mockGeoJSAnnotation("point");
+        (geojsAnnotationFactory as any).mockReturnValue(freshFeature);
+        aLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawNewAnnotations(new Map());
+
+        expect(geojsAnnotationFactory).toHaveBeenCalled();
+        expect(aLayer.annotations()).not.toContain(staleFeature);
+        // A freshly-created feature holds ingcs (pixel) coordinates, so it is
+        // added with gcs=undefined and addAnnotation converts it to gcs.
+        expect(aLayer.addMultipleAnnotations).toHaveBeenCalledWith(
+          [freshFeature],
+          undefined,
+          false,
+        );
+      });
+    });
+
+    // Regression: adding features to an otherwise-unchanged layer must mark it
+    // modified() so GeoJS's _update rebuilds and the features actually paint.
+    // clearOldAnnotations only marks modified on REMOVAL, and
+    // addMultipleAnnotations/addAnnotation with update=false never do — so
+    // without an explicit modified() the added features sit in the layer
+    // unrendered (the "annotations vanish after scrubbing through empty Z
+    // frames, until refresh" bug).
+    describe("marks the layer modified when a draw adds features", () => {
+      it("calls modified() when features are added to an empty layer", () => {
+        const layer = makeLayer({ id: "layer1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({ id: "a1", channel: 0 }),
+        ];
+        (geojsAnnotationFactory as any).mockReturnValue(
+          mockGeoJSAnnotation("point"),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        // Empty layer, as after scrubbing through a blank Z frame: the clear
+        // pass removes nothing, so only the add path can mark modified.
+        aLayer.removeAllAnnotations();
+        aLayer.modified.mockClear();
+        aLayer.draw.mockClear();
+
+        (wrapper.vm as any).drawAnnotationsNoThrottle();
+
+        expect(aLayer.annotations().length).toBeGreaterThan(0);
+        expect(aLayer.modified).toHaveBeenCalled();
+        expect(aLayer.draw).toHaveBeenCalled();
       });
     });
   });
@@ -1341,6 +2056,81 @@ describe("AnnotationViewer", () => {
       });
     });
 
+    // --- shouldSelectStub ---
+    describe("shouldSelectStub", () => {
+      beforeEach(() => {
+        wrapper = mountComponent();
+        // Real Euclidean distance so the hit-test math is actually exercised.
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+      });
+
+      function makeStub(overrides: any = {}) {
+        return {
+          id: "stub1",
+          centroid: { x: 0, y: 0 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "polygon",
+          channel: 0,
+          tags: [],
+          color: null,
+          estimatedRadius: 10,
+          ...overrides,
+        };
+      }
+
+      it("hit-tests the stub radius in world units (no unitsPerPixel scaling)", () => {
+        // The stub dot's style.radius is estimatedRadius in WORLD units. A click
+        // 8 world units away is inside the rendered radius (10), so it must hit
+        // regardless of the zoom-dependent unitsPerPixel.
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 0 };
+        const unitsPerPixel = 0.25; // zoomed in — the regression trigger
+        const result = (wrapper.vm as any).shouldSelectStub(
+          { x: 8, y: 0 },
+          stub,
+          style,
+          unitsPerPixel,
+        );
+        // Old (buggy) math: radius * unitsPerPixel = 2.5 → 8 > 2.5 → missed.
+        // Fixed math: radius = 10 → 8 < 10 → hit.
+        expect(result).toBe(true);
+      });
+
+      it("misses when the click is outside the world-unit radius", () => {
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 0 };
+        const result = (wrapper.vm as any).shouldSelectStub(
+          { x: 12, y: 0 },
+          stub,
+          style,
+          4, // zoomed out — old math would falsely hit (10*4=40)
+        );
+        expect(result).toBe(false);
+      });
+
+      it("converts only the stroke width by unitsPerPixel", () => {
+        // radius 10 (world) + strokeWidth 4 * unitsPerPixel 0.5 = 12 world units.
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 4 };
+        const inside = (wrapper.vm as any).shouldSelectStub(
+          { x: 11.5, y: 0 },
+          stub,
+          style,
+          0.5,
+        );
+        const outside = (wrapper.vm as any).shouldSelectStub(
+          { x: 12.5, y: 0 },
+          stub,
+          style,
+          0.5,
+        );
+        expect(inside).toBe(true);
+        expect(outside).toBe(false);
+      });
+    });
+
     // --- getSelectedAnnotationsFromAnnotation ---
     describe("getSelectedAnnotationsFromAnnotation", () => {
       it("iterates annotations and filters using shouldSelectAnnotation", () => {
@@ -1412,6 +2202,92 @@ describe("AnnotationViewer", () => {
           selectAnn,
         );
         expect(result).toHaveLength(1);
+      });
+
+      // Codex finding #1: in stub-only mode getAnnotationFromId returns
+      // undefined for displayed-but-unhydrated non-point stubs (dots), so
+      // selection must fall back to the stub (centroid + location) or it
+      // silently picks nothing.
+      it("click-selects a visible unhydrated stub in stub-only mode", () => {
+        mockedAnnotationStore.stubOnlyMode = true;
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        (mockedAnnotationStore.getStub as any).mockImplementation(
+          (id: string) =>
+            id === "stub-1"
+              ? {
+                  id: "stub-1",
+                  centroid: { x: 10, y: 20 },
+                  location: { XY: 0, Z: 0, Time: 0 },
+                  shape: "point",
+                  channel: 0,
+                  tags: [],
+                  color: null,
+                }
+              : undefined,
+        );
+        (pointDistance as any).mockReturnValue(1); // click near the dot
+
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "stub-1");
+        geoAnn.options("isConnection", false);
+
+        wrapper = mountComponent();
+        (wrapper.vm as any).annotationLayer.annotations = vi.fn(() => [geoAnn]);
+
+        const selectAnn = mockGeoJSAnnotation("point");
+        selectAnn.type = vi.fn().mockReturnValue("point");
+        selectAnn.coordinates = vi.fn().mockReturnValue([{ x: 10, y: 20 }]);
+
+        const result = (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(
+          selectAnn,
+        );
+        expect(result.map((a: any) => a.id)).toEqual(["stub-1"]);
+      });
+
+      it("drag-selects a visible unhydrated stub via its centroid", () => {
+        mockedAnnotationStore.stubOnlyMode = true;
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        (mockedAnnotationStore.getStub as any).mockImplementation(
+          (id: string) =>
+            id === "stub-1"
+              ? {
+                  id: "stub-1",
+                  centroid: { x: 5, y: 5 },
+                  location: { XY: 0, Z: 0, Time: 0 },
+                  shape: "point",
+                  channel: 0,
+                  tags: [],
+                  color: null,
+                }
+              : undefined,
+        );
+        // Stub centroid falls inside the drag polygon.
+        (geojs.util.pointInPolygon as any).mockReturnValue(true);
+
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "stub-1");
+        geoAnn.options("isConnection", false);
+
+        wrapper = mountComponent();
+        (wrapper.vm as any).annotationLayer.annotations = vi.fn(() => [geoAnn]);
+
+        const selectAnn = mockGeoJSAnnotation("polygon");
+        selectAnn.type = vi.fn().mockReturnValue("polygon");
+        selectAnn.coordinates = vi.fn().mockReturnValue([
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 },
+        ]);
+
+        const result = (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(
+          selectAnn,
+        );
+        expect(result.map((a: any) => a.id)).toContain("stub-1");
       });
     });
 
@@ -2538,6 +3414,83 @@ describe("AnnotationViewer", () => {
       });
     });
 
+    // --- geometry ops on unhydrated stubs (Finding P2) ---
+    describe("geometry edits on unhydrated stubs", () => {
+      // A polygon STUB: no `coordinates` key ⇒ isHydratedAnnotation is false.
+      const polygonStub = {
+        id: "s1",
+        shape: "polygon",
+        centroid: { x: 30, y: 30 },
+        location: { XY: 0, Z: 0, Time: 0 },
+        tags: [],
+        channel: 0,
+        color: null,
+      };
+
+      // Make getSelectedAnnotationsFromAnnotation resolve the click to the
+      // unhydrated stub: getAnnotationFromId misses, getStub hits.
+      function selectStub() {
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        (mockedAnnotationStore.getStub as any).mockReturnValue(polygonStub);
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const geoAnn = mockGeoJSAnnotation("polygon");
+        geoAnn.options("girderId", "s1");
+        geoAnn.options("isConnection", false);
+        (wrapper.vm as any).annotationLayer.annotations = vi.fn(() => [geoAnn]);
+        (geojs as any).util.pointInPolygon.mockReturnValue(true);
+        const selectAnn = mockGeoJSAnnotation("polygon");
+        selectAnn.type = vi.fn().mockReturnValue("polygon");
+        selectAnn.coordinates = vi.fn().mockReturnValue([
+          { x: 0, y: 0 },
+          { x: 100, y: 0 },
+          { x: 100, y: 100 },
+        ]);
+        return selectAnn;
+      }
+
+      it("edit: toasts and does NOT edit when the polygon is an unhydrated stub", async () => {
+        mockedStore.selectedTool = {
+          configuration: {
+            id: "t1",
+            type: "edit",
+            values: { action: { value: "blob_edit" } },
+          },
+          state: {},
+        } as any;
+        const selectAnn = selectStub();
+
+        await (wrapper.vm as any).handleAnnotationEdits(selectAnn);
+
+        expect((wrapper.vm as any).geometryNotLoadedSnackbar).toBe(true);
+        expect(
+          mockedAnnotationStore.updateAnnotationsPerId,
+        ).not.toHaveBeenCalled();
+      });
+
+      it("combine: toasts and does NOT combine when the clicked polygon is an unhydrated stub", async () => {
+        mockedStore.selectedTool = {
+          configuration: {
+            id: "t1",
+            type: "edit",
+            values: { action: { value: "combine_click" }, tolerance: "2" },
+          },
+          // The unhydrated-stub guard fires before any tool-state check, so the
+          // exact combine state isn't needed here.
+          state: {},
+        } as any;
+        const selectAnn = selectStub();
+
+        await (wrapper.vm as any).handleAnnotationCombine(selectAnn);
+
+        expect((wrapper.vm as any).geometryNotLoadedSnackbar).toBe(true);
+        expect(mockedAnnotationStore.combineAnnotations).not.toHaveBeenCalled();
+      });
+    });
+
     // --- handleNewROIFilter ---
     describe("handleNewROIFilter", () => {
       it("validates coordinates and removes annotation", () => {
@@ -2848,6 +3801,460 @@ describe("AnnotationViewer", () => {
         (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
         expect(tLayer.removeAllAnnotations).toHaveBeenCalled();
         expect(tLayer.draw).toHaveBeenCalled();
+      });
+
+      // Track segments must carry their connection id, or clicking a segment
+      // cannot resolve to the link it represents and tracks stay uncuttable.
+      it("tags each track segment with its connection id", () => {
+        mockedStore.showTimelapseMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        const ann1 = makeAnnotation({
+          id: "a1",
+          channel: 0,
+          location: { XY: 0, Z: 0, Time: 0 },
+        });
+        const ann2 = makeAnnotation({
+          id: "a2",
+          channel: 0,
+          location: { XY: 0, Z: 0, Time: 1 },
+        });
+        mockedAnnotationStore.annotations = [ann1, ann2];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        // The factory mock ignores its args by default, so give each created
+        // feature a real options bag to read back.
+        (geojsAnnotationFactory as any).mockImplementation((shape: string) =>
+          mockGeoJSAnnotation(shape),
+        );
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const lineBatches = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((lines: any[]) =>
+            lines?.some((line: any) => line.options()?.isConnection),
+          );
+        expect(lineBatches.length).toBeGreaterThan(0);
+        const tagged = lineBatches
+          .flat()
+          .filter((line: any) => line.options().isConnection);
+        expect(tagged).toHaveLength(1);
+        expect(tagged[0].options().girderId).toBe("c1");
+      });
+
+      // Regression: drawTimelapseTrack skipped a segment whenever the other
+      // endpoint's time was >= this one's, so an equal-time link was skipped
+      // from BOTH endpoints and never drawn — while Connect selected
+      // deliberately creates exactly those for same-frame pairs. One real
+      // dataset here has 54 links, every one of them equal-time.
+      it("draws an equal-time link exactly once", () => {
+        mockedStore.showTimelapseMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        // Both endpoints on the SAME timepoint.
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 3 },
+          }),
+          makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 3 },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "sameT", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        (geojsAnnotationFactory as any).mockImplementation((shape: string) =>
+          mockGeoJSAnnotation(shape),
+        );
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const drawn = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(drawn).toHaveLength(1);
+        expect(drawn[0].options().girderId).toBe("sameT");
+      });
+
+      // A self-connection is a zero-length segment; the id tie-break must
+      // exclude it rather than emitting a degenerate line.
+      it("does not draw a self-connection as a track segment", () => {
+        mockedStore.showTimelapseMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "loop", parentId: "a1", childId: "a1" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = { a1: { x: 10, y: 20 } };
+        (geojsAnnotationFactory as any).mockImplementation((shape: string) =>
+          mockGeoJSAnnotation(shape),
+        );
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const drawn = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(drawn).toHaveLength(0);
+      });
+
+      // The schema allows several connection documents for one endpoint pair
+      // (this repo's own datasets have them), but only one segment is drawn per
+      // pair. Whichever record it carries is the only one that can be
+      // highlighted or resolved by a click, so a selected duplicate must win.
+      it("renders the selected duplicate as the pair's representative", () => {
+        mockedStore.showTimelapseMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        const ann1 = makeAnnotation({
+          id: "a1",
+          channel: 0,
+          location: { XY: 0, Z: 0, Time: 0 },
+        });
+        const ann2 = makeAnnotation({
+          id: "a2",
+          channel: 0,
+          location: { XY: 0, Z: 0, Time: 1 },
+        });
+        mockedAnnotationStore.annotations = [ann1, ann2];
+        // Two documents for the very same pair.
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "dup1", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "dup2", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        // Forward the options bag: the default factory mock drops it, so the
+        // style passed at construction would never reach the feature.
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _coords: any, options: any) => {
+            const f = mockGeoJSAnnotation(shape);
+            if (options) f.options(options);
+            return f;
+          },
+        );
+        // Select the SECOND duplicate.
+        connectionListStore.setSelectedConnectionIds(["dup2"]);
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const drawn = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(drawn).toHaveLength(1);
+        expect(drawn[0].options().girderId).toBe("dup2");
+        expect(drawn[0].options().style.strokeColor).toBe("#00e5ff");
+      });
+
+      // The representative must prefer a HOVERED duplicate too, not only a
+      // selected one — otherwise hovering a later duplicate's row rebuilt the
+      // layer without widening or retagging the segment.
+      it("renders the hovered duplicate as the representative", () => {
+        mockedStore.showTimelapseMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+          }),
+          makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 1 },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "dup1", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "dup2", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _c: any, options: any) => {
+            const f = mockGeoJSAnnotation(shape);
+            if (options) f.options(options);
+            return f;
+          },
+        );
+        connectionListStore.setSelectedConnectionIds([]);
+        connectionListStore.setHoveredConnectionId("dup2");
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const drawn = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(drawn).toHaveLength(1);
+        expect(drawn[0].options().girderId).toBe("dup2");
+        // Hover must also change the rendered width, or the redraw the hover
+        // watcher pays for produces no visible difference.
+        const hoveredWidth = drawn[0].options().style.strokeWidth;
+        connectionListStore.setHoveredConnectionId(null);
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const plain = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection)[0];
+        expect(hoveredWidth).toBeGreaterThan(plain.options().style.strokeWidth);
+      });
+
+      // --- hover highlighting on the timelapse layer ---
+      //
+      // Clicking a row in the connection list HIGHLIGHTS (sets hover) rather
+      // than selecting, so hover is the primary highlight channel, not just an
+      // incidental mouse-over effect. Hover deliberately does not rebuild the
+      // timelapse layer, so it has to restyle the drawn segments in place —
+      // otherwise clicking a connection row does nothing visible in timelapse
+      // mode while it highlights fine everywhere else.
+      function setupOneSegmentTimelapseTrack(
+        connections: any[] = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ],
+        times: [number, number] = [0, 1],
+      ) {
+        mockedStore.showTimelapseMode = true;
+        mockedStore.layers = [
+          makeLayer({ id: "l1", channel: 0, visible: true }),
+        ];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: times[0] },
+          }),
+          makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: times[1] },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = connections;
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        // The default factory mock DROPS its options bag, so the style handed
+        // to it at construction would never reach the feature and every style
+        // assertion below would pass vacuously.
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _c: any, opts: any) => {
+            const f = mockGeoJSAnnotation(shape);
+            if (opts) f.options(opts);
+            return f;
+          },
+        );
+        connectionListStore.setSelectedConnectionIds([]);
+        connectionListStore.setHoveredConnectionId(null);
+      }
+
+      // Draws the track from a clean slate and returns the layer plus its only
+      // segment. Flushes the mount-time draw first: a trailing throttled draw
+      // landing mid-test would rebuild the layer and strand the captured
+      // feature, which reads as "the restyle did nothing".
+      async function drawTrackAndGetSegment() {
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const segments = tLayer
+          .annotations()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(segments).toHaveLength(1);
+        tLayer.removeAllAnnotations.mockClear();
+        tLayer.draw.mockClear();
+        return { tLayer, segment: segments[0] };
+      }
+
+      async function setHoverAndFlush(id: string | null) {
+        connectionListStore.setHoveredConnectionId(id);
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+      }
+
+      it("widens a hovered track segment in place, without rebuilding", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer, segment } = await drawTrackAndGetSegment();
+        const baseWidth = segment.options().style.strokeWidth;
+
+        await setHoverAndFlush("c1");
+
+        expect(segment.options().style.strokeWidth).toBeGreaterThan(baseWidth);
+        // `stroke` must survive: options("style", …) REPLACES the style object,
+        // so a restyle that omits it leaves the segment present, correctly
+        // positioned and completely unpainted.
+        expect(segment.options().style.stroke).toBe(true);
+        expect(tLayer.draw).toHaveBeenCalled();
+        expect(tLayer.removeAllAnnotations).not.toHaveBeenCalled();
+      });
+
+      // The other half of the pair: whatever hover paints, un-hover must undo,
+      // and it must not clobber the base styling baked in at draw time.
+      it("restores a time-jump segment's base styling when hover moves off", async () => {
+        // Times 0 → 3 skip a frame: red, dashed, 0.7 opacity.
+        setupOneSegmentTimelapseTrack(undefined, [0, 3]);
+        const { segment } = await drawTrackAndGetSegment();
+        const before = { ...segment.options().style };
+        expect(before.lineDash).toEqual([5, 5]);
+        expect(before.strokeOpacity).toBe(0.7);
+
+        await setHoverAndFlush("c1");
+        expect(segment.options().style.strokeWidth).toBeGreaterThan(
+          before.strokeWidth,
+        );
+
+        await setHoverAndFlush(null);
+        const after = segment.options().style;
+        expect(after.strokeWidth).toBe(before.strokeWidth);
+        expect(after.strokeColor).toBe(before.strokeColor);
+        expect(after.strokeOpacity).toBe(before.strokeOpacity);
+        expect(after.lineDash).toEqual(before.lineDash);
+      });
+
+      // One segment is drawn per endpoint PAIR, but several connection
+      // documents can share that pair. Since hover no longer rebuilds, the
+      // segment keeps the representative it was built with — so matching the
+      // hover on that id alone would leave hovering the other duplicate's row
+      // with no visible effect.
+      it("widens the segment when a non-representative duplicate is hovered", async () => {
+        setupOneSegmentTimelapseTrack([
+          makeConnection({ id: "dup1", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "dup2", parentId: "a1", childId: "a2" }),
+        ]);
+        const { segment } = await drawTrackAndGetSegment();
+        expect(segment.options().girderId).toBe("dup1");
+        const baseWidth = segment.options().style.strokeWidth;
+
+        await setHoverAndFlush("dup2");
+
+        expect(segment.options().style.strokeWidth).toBeGreaterThan(baseWidth);
+      });
+
+      // Hovering a row whose connection is outside the timelapse window must
+      // not force a redraw of the whole layer for a style that did not change.
+      it("does not redraw when the hovered connection is not on the layer", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer } = await drawTrackAndGetSegment();
+
+        await setHoverAndFlush("not-drawn");
+
+        expect(tLayer.draw).not.toHaveBeenCalled();
+      });
+
+      it("leaves the timelapse layer alone on hover outside timelapse mode", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer } = await drawTrackAndGetSegment();
+        // Leaving the mode clears the layer and draws once on its own; the
+        // assertion is about the hover that follows.
+        mockedStore.showTimelapseMode = false;
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        tLayer.draw.mockClear();
+
+        await setHoverAndFlush("c1");
+
+        expect(tLayer.draw).not.toHaveBeenCalled();
       });
 
       it("filters connections by displayed annotations", () => {
@@ -3592,6 +4999,134 @@ describe("AnnotationViewer", () => {
       });
     });
 
+    // Regression: clicking an annotation in the viewer (no tool selected)
+    // must set hoveredAnnotationId so the annotation list can page-jump,
+    // scroll to, and highlight the row.
+    describe("click-to-hover navigation", () => {
+      function fireAnnotationLayerMouseclicks(evt: any) {
+        const geoOnCalls = ((wrapper.vm as any).annotationLayer.geoOn as any)
+          .mock.calls;
+        const handlers = geoOnCalls
+          .filter((call: any[]) => call[0] === "geojs.mouseclick")
+          .map((call: any[]) => call[1]);
+        handlers.forEach((handler: any) => handler(evt));
+      }
+
+      it("clicking a point annotation sets hoveredAnnotationId", () => {
+        const ann = makeAnnotation(); // point at (10, 20)
+        mockedAnnotationStore.annotations = [ann];
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith("ann1");
+      });
+
+      it("clicking a stub-rendered (unhydrated) annotation sets hoveredAnnotationId", () => {
+        // Non-point stubs resolve to undefined via getAnnotationFromId; the
+        // hover hit-test must fall back to the stub and its rendered dot.
+        const stub = {
+          id: "stub1",
+          centroid: { x: 10, y: 20 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "polygon",
+          channel: 0,
+          tags: [],
+          color: null,
+          estimatedRadius: 5,
+        };
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        (mockedAnnotationStore.getStub as any).mockImplementation(
+          (id: string) => (id === "stub1" ? stub : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "stub1");
+        geoAnn.options("isStub", true);
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith("stub1");
+      });
+
+      it("clicking empty space clears hoveredAnnotationId", () => {
+        const ann = makeAnnotation();
+        mockedAnnotationStore.annotations = [ann];
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 500, y: 500 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith(null);
+      });
+
+      it("does not set hover when a tool is selected", () => {
+        const ann = makeAnnotation();
+        mockedAnnotationStore.annotations = [ann];
+        mockedStore.selectedTool = {
+          configuration: { type: "create", values: {} },
+          state: null,
+        } as any;
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).not.toHaveBeenCalled();
+      });
+    });
+
     describe("bindTimelapseEvents", () => {
       it("registers mouseclick handler on timelapseLayer", () => {
         wrapper = mountComponent();
@@ -3972,6 +5507,83 @@ describe("AnnotationViewer", () => {
       });
     });
 
+    // Integration coverage for the watcher change: xy/z/time were removed from
+    // the primary-change watcher. A frame change must still redraw — it now
+    // flows visibility → displayedAnnotations → onDisplayedAnnotationsChange,
+    // which draws once with the new frame's set (no leading draw via
+    // onPrimaryChange). These drive a real store frame change end-to-end.
+    describe("frame-index change (xy/z/time) redraw path", () => {
+      function setupTwoFrames(axis: "xy" | "z" | "time") {
+        const layer = makeLayer({ id: "layer1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        // Slice indexes track the current store frame, so the displayed set
+        // turns over when the frame changes.
+        (mockedStore.layerSliceIndexes as any).mockImplementation(() => ({
+          xyIndex: mockedStore.xy,
+          zIndex: mockedStore.z,
+          tIndex: mockedStore.time,
+        }));
+        const locFor = (v: number) => ({
+          XY: axis === "xy" ? v : 0,
+          Z: axis === "z" ? v : 0,
+          Time: axis === "time" ? v : 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({ id: "f0", channel: 0, location: locFor(0) }),
+          makeAnnotation({ id: "f1", channel: 0, location: locFor(1) }),
+        ];
+        // Created features carry their annotation id so the drawn set is
+        // inspectable through the (arg-ignoring) factory mock.
+        (geojsAnnotationFactory as any).mockImplementation(
+          (_shape: any, _coords: any, options: any) => {
+            const feature = mockGeoJSAnnotation("point");
+            if (options) feature.options(options);
+            return feature;
+          },
+        );
+      }
+
+      function drawnIds(aLayer: any): (string | undefined)[] {
+        return aLayer.annotations().map((f: any) => f.options("girderId"));
+      }
+
+      it.each(["xy", "z", "time"] as const)(
+        "redraws with the new frame's annotations when %s changes",
+        async (axis) => {
+          setupTwoFrames(axis);
+          // Mount on an empty frame so the first real draw is the seed below.
+          mockedStore[axis] = 9;
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          const aLayer = (wrapper.vm as any).annotationLayer;
+
+          // Seed frame 0: f0 becomes displayed and is drawn.
+          mockedStore[axis] = 0;
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+          expect(
+            (wrapper.vm as any).displayedAnnotations.map((a: any) => a.id),
+          ).toEqual(["f0"]);
+          expect(drawnIds(aLayer)).toContain("f0");
+
+          // Frame change to 1: the displayed set turns over and a redraw runs.
+          aLayer.draw.mockClear();
+          mockedStore[axis] = 1;
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+
+          expect(
+            (wrapper.vm as any).displayedAnnotations.map((a: any) => a.id),
+          ).toEqual(["f1"]);
+          expect(aLayer.draw).toHaveBeenCalled();
+          expect(drawnIds(aLayer)).toContain("f1");
+          expect(drawnIds(aLayer)).not.toContain("f0");
+          // The frame change never routed through onPrimaryChange.
+          expect((wrapper.vm as any).handlingPrimaryChange).toBe(false);
+        },
+      );
+    });
+
     describe("onRestyleNeeded", () => {
       it("calls restyleAnnotations", () => {
         wrapper = mountComponent();
@@ -4300,6 +5912,115 @@ describe("AnnotationViewer", () => {
         expect(
           (wrapper.vm as any).interactionLayer.addAnnotation,
         ).toHaveBeenCalled();
+      });
+    });
+
+    // =======================================================================
+    // onBeforeUnmount cleanup (Finding 4)
+    // =======================================================================
+    describe("onBeforeUnmount cleanup", () => {
+      // A trailing fire after teardown runs against a dead GeoJS view. This
+      // test twice failed to catch that, each time because it looked at a
+      // hand-maintained list:
+      //   1. it named the five throttles that existed when it was written, so
+      //      two later ones shipped uncancelled with the suite green;
+      //   2. scanning `wrapper.vm` instead moved the dependency to
+      //      defineExpose — an unexposed throttle is invisible there, and the
+      //      already-exposed ones keep any count floor satisfied.
+      // So record the wrappers where they are actually made: the lodash mock
+      // above captures every throttle/debounce this component constructs.
+      // (Wrappers built lazily inside a handler are still missed until that
+      // handler runs; all seven today are created in setup.)
+      it("cancels every pending debounced/throttled callback so none fire after teardown", () => {
+        createdThrottles.length = 0;
+        wrapper = mountComponent();
+        const vm = wrapper.vm as any;
+        // Floor guards against the recording itself breaking (a lodash import
+        // that bypasses the mock would silently record nothing).
+        expect(createdThrottles.length).toBeGreaterThanOrEqual(7);
+        // Names purely for the failure message; unexposed wrappers still count.
+        const named = createdThrottles.map(
+          (fn, i) =>
+            [
+              Object.keys(vm).find((key) => vm[key] === fn) ?? `unexposed#${i}`,
+              vi.spyOn(fn, "cancel"),
+            ] as const,
+        );
+
+        wrapper.unmount();
+
+        expect(
+          named
+            .filter(([, spy]) => spy.mock.calls.length === 0)
+            .map(([n]) => n),
+        ).toEqual([]);
+      });
+    });
+
+    describe("linescan auto-restart on next gesture", () => {
+      const armTool = (type: string, lineType?: "freehand" | "segment") => {
+        mockedStore.selectedTool = {
+          configuration: {
+            id: "t1",
+            type,
+            values: lineType ? { lineType: { value: lineType } } : {},
+          },
+          state: {},
+        } as any;
+      };
+      const completedLine = {
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 10 },
+        ],
+        isComplete: true,
+      };
+
+      beforeEach(() => {
+        lineScanStore.clearLine();
+      });
+
+      it("clears a completed freehand scan on mousedown", () => {
+        wrapper = mountComponent();
+        armTool("linescan", "freehand");
+        lineScanStore.setLine(completedLine);
+        expect(lineScanStore.points).not.toBeNull();
+
+        (wrapper.vm as any).handleLineScanMouseDown();
+
+        expect(lineScanStore.points).toBeNull();
+      });
+
+      it("does NOT clear a completed segment scan on mousedown (a segment left-drag pans the map)", () => {
+        wrapper = mountComponent();
+        armTool("linescan", "segment");
+        lineScanStore.setLine(completedLine);
+
+        (wrapper.vm as any).handleLineScanMouseDown();
+
+        // Segment restarts are cleared on the first click, not on mousedown,
+        // so panning never wipes the scan.
+        expect(lineScanStore.points).not.toBeNull();
+      });
+
+      it("leaves an in-progress (incomplete) freehand scan untouched on mousedown", () => {
+        wrapper = mountComponent();
+        armTool("linescan", "freehand");
+        lineScanStore.setLine({ ...completedLine, isComplete: false });
+
+        (wrapper.vm as any).handleLineScanMouseDown();
+
+        expect(lineScanStore.points).not.toBeNull();
+      });
+
+      it("does nothing when a non-linescan tool is active", () => {
+        wrapper = mountComponent();
+        armTool("create");
+        lineScanStore.setLine(completedLine);
+
+        (wrapper.vm as any).handleLineScanMouseDown();
+
+        expect(lineScanStore.points).not.toBeNull();
       });
     });
   });

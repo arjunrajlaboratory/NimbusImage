@@ -6,6 +6,16 @@
 
 See this [gitbook](https://docs.nimbusimage.com) for documentation.
 
+## Python API and agent skills
+
+Use the [`nimbusimage` Python package](./nimbusimage/README.md) for programmatic access to datasets, images, annotations, workers, exports, and sharing:
+
+```sh
+pip install nimbusimage
+```
+
+NimbusImage also ships a shared set of Agent Skills for Claude Code and Codex. See the [agent-skill installation and command reference](./plugins/nimbusimage/README.md) for marketplace setup and the available workflows.
+
 ## System requirements
 
 ### General notes

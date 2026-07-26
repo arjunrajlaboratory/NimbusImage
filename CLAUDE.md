@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Repository Agent Guidance
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides shared guidance to Claude Code, Codex, and other coding agents working in this repository. `AGENTS.md` links here so both providers use one canonical instruction file.
 
 ## Project Overview
 
@@ -152,6 +152,7 @@ Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names
 | `/api/v1/user_assetstore` | `server/api/user_assetstore.py` | Per-user storage |
 | `/api/v1/user_colors` | `server/api/user_colors.py` | User color preferences |
 | `/api/v1/export` | `server/api/export.py` | JSON/CSV export |
+| `/api/v1/annotation_import` | `server/api/dataImport.py` | Server-side JSON import (annotations, connections, property values) |
 | `/api/v1/project` | `server/api/project.py` | Project management |
 | `/api/v1/resource` | `server/api/resource.py` | Custom resource search |
 
@@ -271,6 +272,29 @@ JobModel().scheduleJob(job)
 ```
 
 ## Code Review Guidelines
+
+### Turn review findings into durable artifacts, not one-off fixes
+
+A reviewer flags **one instance** of a pattern per round. Fixing only that instance means the next round flags the next instance — a ten-round review of one feature here produced roughly twenty findings that reduced to **two underlying shapes**. Two obligations follow, and they apply to every branch, not just large ones.
+
+**1. Generalize the finding, then sweep the branch.** Before fixing, name the shape ("a rule applied to one of two symmetric paths", "expensive work before the cheap guard that would skip it"). Then grep the whole diff for other instances and fix those in the same pass. If a sweep comes back clean, ask what the query structurally cannot see — a grep for `throw` once found every deliberate thrower and missed every silent propagator.
+
+The single most repeated shape in this repo is **one of two symmetric paths**. When you change one, ask what its twin is: drawing ↔ retention/clearing, styling-on-create ↔ restyling-on-update, hover/highlight ↔ click/selection, one piece of paired state ↔ the other, one mode branch ↔ the rest. The two implementations rarely share a name, which is exactly why they drift — search by concept.
+
+**2. Write the lesson into a skill.** If the finding would recur in *other* features, it belongs in `.claude/skills/` — `fixing-review-findings` for review patterns, `nimbus-frontend` / `nimbus-geojs` / `nimbus-backend` for domain traps. Skills are the mechanism by which a review round improves the next feature instead of only this one. Skills live in two trees and CI enforces parity, so run `python3 plugins/nimbusimage/scripts/sync_skills.py --write` after editing (see *Editing skills* below).
+
+Record test-harness traps too, not just product bugs. A shared mock returning a fixed value silently defeats new tests: `distance2dToLineSquared` returns `100`, `pointDistance` returns `undefined`, `geojsAnnotationFactory` drops its options. Each caused a test that passed **before** its fix — worse than no test at all.
+
+### Give every substantial feature a regression checklist
+
+When a feature accumulates review findings, add a **Regression checklist** to its `codebaseDocumentation/<FEATURE>.md`: one line per invariant, each naming the test that holds it, grouped by concern (e.g. drawing / interaction / cost / destructive actions). See `CONNECTION_LIST.md` for the worked example.
+
+This exists because several fixes in that feature were undone by *later* fixes to adjacent code — the checklist is what makes "change this, re-check these" mechanical instead of remembered. Rules for it to stay useful:
+
+- **Every item names its test.** An invariant without a test is a wish; if the test doesn't exist, write it.
+- **Include invariants with no visible behavior** — allocation and recompute costs regress silently and no one notices until a large dataset does.
+- **Add an item whenever a review finds something the checklist missed.** The checklist is the running answer to "what has broken here before".
+- Also record process rules the feature proved: verify from a fresh page load on a dataset that actually has the property under test, and use `git stash` rather than a `cp` round-trip when confirming a test fails without its fix.
 
 ### Avoid Looped Database Calls (Frontend AND Backend)
 
@@ -636,6 +660,42 @@ flake8 devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/ap
 
 Note: Linting is also run as part of tox tests, so `tox` will catch linting errors.
 
+## NimbusImage Python API
+
+The `nimbusimage` Python package (`nimbusimage/`) provides programmatic access to the backend. Use it for scripts that create/query/modify annotations, datasets, and other resources — prefer it over raw `curl` commands.
+
+**Setup:**
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e nimbusimage python-dotenv
+```
+
+**Credentials:** Store in `.env` (gitignored) at the project root:
+```
+GIRDER_API_URL=http://localhost:8080/api/v1
+GIRDER_USERNAME=admin
+GIRDER_PASSWORD=password
+```
+
+**Usage (high-level API):**
+```python
+import nimbusimage as ni
+client = ni.connect("http://localhost:8080/api/v1", api_key="your-key")
+ds = client.dataset(name="My Experiment")
+ds.annotations.list(shape="polygon")
+```
+
+**Usage (low-level Girder client):**
+```python
+from dotenv import load_dotenv
+from nimbusimage._girder import create_client
+load_dotenv()
+gc = create_client(api_url=os.environ["GIRDER_API_URL"], username=os.environ["GIRDER_USERNAME"], password=os.environ["GIRDER_PASSWORD"])
+gc.post("/upenn_annotation/multiple", json=annotations)
+```
+
+See `nimbusimage/README.md` for full API reference and authentication options (API keys vs username/password).
+
 ## Important Notes
 
 - **Package Manager:** Project uses pnpm exclusively (enforced by preinstall script)
@@ -681,22 +741,17 @@ VITE_SENTRY_TRACES_SAMPLE_RATE=1.0
 
 Get the DSN value from the Sentry project's Settings → Client Keys (DSN) page. Trigger a test event with `setTimeout(() => { throw new Error("test"); });` in the browser console — a synchronous throw from devtools is swallowed, but async throws hit `window.onerror` which Sentry hooks. Filter on `environment:local-dev` in the Sentry UI to keep your test events out of the production view.
 
-## Allowed Tools
+## Agent Tooling Notes
 
-The following commands are pre-approved for Claude Code to run without confirmation:
+Tool permissions are controlled by the active agent environment, not by this file. Common development commands include `docker compose`, `curl`, `tox`, and standard Git commands. Follow the host's sandbox and approval policy when running them.
 
-```
-# Docker commands for backend development
-Bash(docker compose build:*)
-Bash(docker compose:*)
-Bash(curl:*)
+### Editing skills: mirror them or CI fails
 
-# Testing
-Bash(tox)
-Bash(tox:*)
+Skills live in **two** places — `.claude/skills/` (Claude) and `.agents/skills/` (Codex) — and the `sync` CI job enforces that they match. Editing only `.claude/skills/` fails the build with `ERROR: stale file: .agents/skills/<name>/SKILL.md`.
 
-# Git operations
-Bash(git add:*)
-Bash(git commit:*)
-Bash(git push:*)
+After changing anything under `.claude/skills/`, regenerate the mirror and commit both trees:
+
+```bash
+python3 plugins/nimbusimage/scripts/sync_skills.py --write
+python3 plugins/nimbusimage/scripts/sync_skills.py --check   # what CI runs
 ```

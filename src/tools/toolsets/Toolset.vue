@@ -22,6 +22,42 @@
         </template>
         <tool-type-selection @selected="handleToolTypeSelected" />
       </v-dialog>
+      <v-tooltip text="Suggest tools with AI">
+        <template v-slot:activator="{ props: tooltipProps }">
+          <v-btn
+            v-bind="tooltipProps"
+            variant="text"
+            color="primary"
+            icon
+            size="small"
+            class="tool-suggestions-ai-btn"
+            :class="{ 'tool-suggestions-glow': toolSuggestionsGlow }"
+            aria-label="Suggest tools with AI"
+            :disabled="!isLoggedIn || toolSuggestionsLoading"
+            :loading="toolSuggestionsLoading"
+            @click="openToolSuggestions"
+          >
+            <v-icon size="small">mdi-lightbulb-on-outline</v-icon>
+          </v-btn>
+        </template>
+      </v-tooltip>
+      <v-spacer />
+      <v-tooltip text="Pipelines: chain worker steps and run them in sequence">
+        <template v-slot:activator="{ props: tooltipProps }">
+          <v-btn
+            v-bind="tooltipProps"
+            variant="text"
+            color="primary"
+            size="small"
+            aria-label="Pipelines"
+            :disabled="!isLoggedIn"
+            @click="openPipelines"
+          >
+            <v-icon size="small" start>mdi-sitemap-outline</v-icon>
+            Pipelines
+          </v-btn>
+        </template>
+      </v-tooltip>
     </div>
     <!-- List toolset tools, grouped by behavior: canvas tools you use directly
          on the image vs. worker tools that open a configuration panel. -->
@@ -51,6 +87,9 @@
                 </template>
               </div>
             </template>
+            <!-- The unified "Segment similar objects" tool exposes its
+                 options in the bottom-right ObjectSegmentationPanel (mounted
+                 by ImageViewer), so here it renders as a plain tool-item. -->
             <template v-else>
               <tool-item
                 :tool="tool"
@@ -122,7 +161,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, mergeProps } from "vue";
+import { ref, computed, mergeProps, watch, onBeforeUnmount } from "vue";
 import store from "@/store";
 import {
   AnnotationNames,
@@ -137,6 +176,7 @@ import ToolCreation from "@/tools/creation/ToolCreation.vue";
 import ToolTypeSelection from "@/tools/creation/ToolTypeSelection.vue";
 import ToolItem from "./ToolItem.vue";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
+import toolSuggestionsStore from "@/store/toolSuggestions";
 
 // Lists tools from a toolset, allows selecting a tool from the list, and adding new tools
 
@@ -190,6 +230,12 @@ const toolCreationDialogOpen = ref(false);
 const toolTypeDialogOpen = ref(false);
 const selectedToolType = ref<any>(null);
 const toolCreationWide = ref(false);
+const toolSuggestionsLoading = computed(
+  () => toolSuggestionsStore.status === "loading",
+);
+const toolSuggestionsDismissed = computed(() => toolSuggestionsStore.dismissed);
+const toolSuggestionsGlow = ref(false);
+let toolSuggestionsGlowTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function onToolCreationDone() {
   // The child emitted "done" meaning the dialog is closing/cancelled/finished
@@ -209,6 +255,37 @@ function handleToolTypeSelected(toolType: any) {
   selectedToolType.value = toolType;
   toolTypeDialogOpen.value = false;
   toolCreationDialogOpen.value = true;
+}
+
+function openToolSuggestions() {
+  stopToolSuggestionsGlow();
+  toolSuggestionsStore.setDismissed(false);
+  if (toolSuggestionsStore.status !== "loading") {
+    toolSuggestionsStore.suggestForCurrentConfiguration();
+  }
+}
+
+function openPipelines() {
+  store.setIsPipelineDialogOpen(true);
+}
+
+function stopToolSuggestionsGlow() {
+  if (toolSuggestionsGlowTimeout !== null) {
+    clearTimeout(toolSuggestionsGlowTimeout);
+    toolSuggestionsGlowTimeout = null;
+  }
+  toolSuggestionsGlow.value = false;
+}
+
+function triggerToolSuggestionsGlow() {
+  if (toolSuggestionsGlowTimeout !== null) {
+    clearTimeout(toolSuggestionsGlowTimeout);
+  }
+  toolSuggestionsGlow.value = true;
+  toolSuggestionsGlowTimeout = setTimeout(() => {
+    toolSuggestionsGlow.value = false;
+    toolSuggestionsGlowTimeout = null;
+  }, 1800);
 }
 
 function getToolPropertiesDescription(tool: IToolConfiguration): string[][] {
@@ -257,6 +334,14 @@ function onWorkerDialogToggle(open: boolean) {
   }
 }
 
+watch(toolSuggestionsDismissed, (dismissed, wasDismissed) => {
+  if (dismissed && !wasDismissed) {
+    triggerToolSuggestionsGlow();
+  }
+});
+
+onBeforeUnmount(stopToolSuggestionsGlow);
+
 defineExpose({
   selectedToolId,
   tools,
@@ -270,9 +355,14 @@ defineExpose({
   toolTypeDialogOpen,
   selectedToolType,
   toolCreationWide,
+  toolSuggestionsLoading,
+  toolSuggestionsGlow,
   onToolCreationDone,
   onToolCreationDialogInput,
   handleToolTypeSelected,
+  openToolSuggestions,
+  openPipelines,
+  triggerToolSuggestionsGlow,
   getToolPropertiesDescription,
   onWorkerDialogToggle,
 });
@@ -284,7 +374,32 @@ defineExpose({
 
 .toolset-actions {
   display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 4px 12px 8px;
+}
+
+.tool-suggestions-ai-btn {
+  position: relative;
+}
+
+.tool-suggestions-ai-btn.tool-suggestions-glow {
+  animation: tool-suggestions-glow 1.8s ease-out;
+}
+
+@keyframes tool-suggestions-glow {
+  0% {
+    background-color: rgba(var(--v-theme-primary), 0.22);
+    box-shadow: 0 0 0 0 rgba(var(--v-theme-primary), 0.6);
+  }
+  70% {
+    background-color: rgba(var(--v-theme-primary), 0.12);
+    box-shadow: 0 0 0 10px rgba(var(--v-theme-primary), 0);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0 rgba(var(--v-theme-primary), 0);
+  }
 }
 
 .tight-list {

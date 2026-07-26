@@ -34,6 +34,8 @@ import {
   TJobType,
   IDatasetConfigurationCompatibility,
   IJob,
+  IUserStorageQuota,
+  resolveVisibilityConfig,
 } from "@/store/model";
 import {
   toStyle,
@@ -49,6 +51,7 @@ import { stringify } from "qs";
 import { logError, logWarning } from "@/utils/log";
 import { markRaw } from "vue";
 import { inferZStepFromDimensionLabelsUm } from "@/utils/dimensionLabels";
+import { IRawImageData, parseRawTiff } from "@/utils/tiff";
 
 // Modern browsers limit concurrency to a single domain at 6 requests (though
 // using HTML 2 might improve that slightly).  For a single layer, if we set
@@ -57,6 +60,16 @@ import { inferZStepFromDimensionLabelsUm } from "@/utils/dimensionLabels";
 // fail.  9 is a balance that is somewhat low but was measured as fast as
 // higher values in a limited set of tests.
 const HistogramConcurrency: number = 9;
+
+// A raw pixel region of one frame, with the mapping from image coordinates
+// to region pixels: regionX = (imageX - left) * scaleX
+export interface IRawRegion {
+  image: IRawImageData;
+  left: number;
+  top: number;
+  scaleX: number;
+  scaleY: number;
+}
 
 function toId(item: string | { _id: string }) {
   return typeof item === "string" ? item : item._id;
@@ -89,6 +102,9 @@ export default class GirderAPI {
   );
   private readonly resolvedHistogramCache = markRaw(
     new Map<string, ITileHistogram>(),
+  );
+  private readonly configurationUpdateChains = markRaw(
+    new Map<string, Promise<IUPennCollection>>(),
   );
 
   constructor(client: RestClientInstance) {
@@ -404,6 +420,51 @@ export default class GirderAPI {
       params,
     });
     return response.data;
+  }
+
+  /**
+   * Fetch the raw (unstyled) pixel values of a rectangular region of one
+   * frame as a typed array, along with the mapping from image coordinates to
+   * the returned region pixels. The output is capped at maxDim pixels per
+   * side; larger regions are downsampled by the server.
+   */
+  async getRawRegion(
+    itemId: string,
+    frame: number,
+    region: { left: number; top: number; right: number; bottom: number },
+    maxDim: number,
+  ): Promise<IRawRegion | null> {
+    const regionWidth = region.right - region.left;
+    const regionHeight = region.bottom - region.top;
+    if (regionWidth <= 0 || regionHeight <= 0) {
+      return null;
+    }
+    const scale = Math.min(1, maxDim / Math.max(regionWidth, regionHeight));
+    const params: { [key: string]: number | string } = {
+      ...region,
+      units: "base_pixels",
+      frame,
+      encoding: "TIFF",
+      tiffCompression: "raw",
+    };
+    if (scale < 1) {
+      params.width = Math.round(regionWidth * scale);
+      params.height = Math.round(regionHeight * scale);
+    }
+    const response = await this.client.get(`item/${itemId}/tiles/region`, {
+      params,
+      responseType: "arraybuffer",
+    });
+    const image = parseRawTiff(response.data);
+    return {
+      image,
+      left: region.left,
+      top: region.top,
+      // Use the actual returned size: the server preserves the aspect ratio,
+      // so the effective scale can differ slightly from the requested one
+      scaleX: image.width / regionWidth,
+      scaleY: image.height / regionHeight,
+    };
   }
 
   async getItems(folderId: string): Promise<IGirderItem[]> {
@@ -828,14 +889,33 @@ export default class GirderAPI {
   async updateConfigurationKey(
     config: IDatasetConfiguration,
     key: keyof IDatasetConfigurationBase,
-  ): Promise<any> {
+  ): Promise<IUPennCollection> {
+    // Snapshot the value when the save is requested, then serialize writes for
+    // the same configuration key. Metadata updates replace the complete value
+    // for that key, so allowing an older request to finish last can discard a
+    // newer edit.
     const metadata = toConfiguationMetadata({ [key]: config[key] });
-    const data = new FormData();
-    data.set("metadata", JSON.stringify(metadata));
-    const collection: IUPennCollection = (
-      await this.client.put(`upenn_collection/${config.id}/metadata`, data)
-    ).data;
-    return collection;
+    const queueKey = `${config.id}:${key}`;
+    const previousUpdate =
+      this.configurationUpdateChains.get(queueKey) ?? Promise.resolve();
+    const update = previousUpdate
+      .catch(() => undefined)
+      .then(async () => {
+        const data = new FormData();
+        data.set("metadata", JSON.stringify(metadata));
+        return (
+          await this.client.put(`upenn_collection/${config.id}/metadata`, data)
+        ).data as IUPennCollection;
+      });
+    this.configurationUpdateChains.set(queueKey, update);
+
+    try {
+      return await update;
+    } finally {
+      if (this.configurationUpdateChains.get(queueKey) === update) {
+        this.configurationUpdateChains.delete(queueKey);
+      }
+    }
   }
 
   deleteConfiguration(
@@ -1042,6 +1122,23 @@ export default class GirderAPI {
     }
   }
 
+  // Fetch the user's storage usage and quota from the girder-user-quota
+  // plugin. `quota` is null when the user has no quota (unlimited storage).
+  // Returns null if the quota information cannot be fetched (e.g. the
+  // user-quota plugin is not enabled on the backend).
+  async getUserStorageQuota(userId: string): Promise<IUserStorageQuota | null> {
+    try {
+      const response = await this.client.get(`user/${userId}/quota`);
+      return {
+        used: response.data.size ?? 0,
+        quota: response.data.quota?._currentFileSizeQuota ?? null,
+      };
+    } catch (error) {
+      logError("Failed to fetch user storage quota");
+      return null;
+    }
+  }
+
   async getUserColors(): Promise<{ [key: string]: string }> {
     const response = await this.client.get("user_colors");
     if (response.status !== 200) {
@@ -1173,6 +1270,7 @@ function defaultConfigurationBase(
     tools: [],
     propertyIds: [],
     snapshots: [],
+    pipelines: [],
     scales: getDatasetScales(dataset),
   };
 }
@@ -1204,6 +1302,12 @@ export function setBaseCollectionValues(
     description: item.description,
   };
   for (const key of configurationBaseKeys) {
+    if (key === "visibilityConfig") {
+      config.visibilityConfig = resolveVisibilityConfig(
+        item.meta.visibilityConfig,
+      );
+      continue;
+    }
     config[key] =
       key in item.meta ? item.meta[key] : exampleConfigurationBase()[key];
   }

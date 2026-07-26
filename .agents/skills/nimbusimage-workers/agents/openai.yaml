@@ -1,0 +1,4 @@
+interface:
+  display_name: "NimbusImage Workers"
+  short_description: "Run and monitor NimbusImage computation workers"
+  default_prompt: "Use the NimbusImage workers skill to discover workers, submit jobs, and track results."

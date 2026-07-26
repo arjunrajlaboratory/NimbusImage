@@ -46,7 +46,7 @@ interface ISamConfiguration {
   stdPerChannel: [number, number, number];
 }
 
-interface ISamEncoderContext {
+export interface ISamEncoderContext {
   model: TSamModel;
   configuration: ISamConfiguration;
   canvas: HTMLCanvasElement; // Keep this canvas at the encoder input dimensions
@@ -54,14 +54,14 @@ interface ISamEncoderContext {
   buffer: Float32Array;
 }
 
-interface ISamDecoderContext {
+export interface ISamDecoderContext {
   feedConstant: {
     mask_input: TensorF32;
     has_mask_input: TensorF32;
   };
 }
 
-const samModelsConfig = {
+export const samModelsConfig = {
   vit_b: {
     maxWidth: 1024,
     maxHeight: 1024,
@@ -84,11 +84,11 @@ const samModelsConfig = {
 
 export type TSamModel = keyof typeof samModelsConfig;
 
-function isSam2Model(model: TSamModel): boolean {
+export function isSam2Model(model: TSamModel): boolean {
   return model.startsWith("sam2_");
 }
 
-function createEncoderContext(model: TSamModel): ISamEncoderContext {
+export function createEncoderContext(model: TSamModel): ISamEncoderContext {
   const configuration = samModelsConfig[model];
   const { maxWidth, maxHeight } = configuration;
   const canvas = document.createElement("canvas");
@@ -138,7 +138,9 @@ export function warmSamModelCache(model: TSamModel) {
   warmModelCache(decoder);
 }
 
-function createEncoderSession(model: TSamModel): Promise<InferenceSession> {
+export function createEncoderSession(
+  model: TSamModel,
+): Promise<InferenceSession> {
   const encoderOptions: InferenceSession.SessionOptions = {
     executionProviders: ["webgpu"],
   };
@@ -148,7 +150,7 @@ function createEncoderSession(model: TSamModel): Promise<InferenceSession> {
   );
 }
 
-function createDecoderContext(): ISamDecoderContext {
+export function createDecoderContext(): ISamDecoderContext {
   return {
     feedConstant: {
       has_mask_input: new Tensor("float32", [0]),
@@ -161,11 +163,13 @@ function createDecoderContext(): ISamDecoderContext {
   };
 }
 
-function createDecoderSession(model: TSamModel): Promise<InferenceSession> {
+export function createDecoderSession(
+  model: TSamModel,
+): Promise<InferenceSession> {
   return createOnnxInferenceSession(getSamModelPaths(model).decoder, {});
 }
 
-async function screenshot({ map, imageLayers }: IMapEntry) {
+export async function screenshot({ map, imageLayers }: IMapEntry) {
   const layers = imageLayers.filter(
     (layer) => layer.node().css("visibility") !== "hidden",
   );
@@ -173,7 +177,7 @@ async function screenshot({ map, imageLayers }: IMapEntry) {
   return imageCanvas;
 }
 
-interface IProcessCanvasOutput {
+export interface IProcessCanvasOutput {
   model: TSamModel;
   encoderFeed: Record<string, TensorF32>;
   scaledWidth: number;
@@ -184,7 +188,7 @@ interface IProcessCanvasOutput {
   maxHeight: number;
 }
 
-function processCanvas(
+export function processCanvas(
   srcCanvas: HTMLCanvasElement,
   samContext: ISamEncoderContext,
 ): IProcessCanvasOutput {
@@ -257,9 +261,9 @@ function processCanvas(
   };
 }
 
-type IEncoderOutput = Record<string, TensorF32>;
+export type IEncoderOutput = Record<string, TensorF32>;
 
-async function runEncoder(
+export async function runEncoder(
   encoderSession: InferenceSession,
   input: IProcessCanvasOutput,
 ) {
@@ -272,7 +276,7 @@ async function runEncoder(
 
 type IProcessPromptOutput = Record<string, TensorF32>;
 
-function processPrompt(
+export function processPrompt(
   prompts: TSamPrompt[],
   canvasInfo: IProcessCanvasOutput,
   context: ISamDecoderContext,
@@ -361,12 +365,12 @@ function processPrompt(
   return result;
 }
 
-interface IDecoderOutput {
+export interface IDecoderOutput {
   masks: TensorF32;
   iou_predictions: TensorF32;
 }
 
-async function runDecoder(
+export async function runDecoder(
   decoderSession: InferenceSession,
   prompt: IProcessPromptOutput,
   encoderOutput: IEncoderOutput,
@@ -379,7 +383,7 @@ async function runDecoder(
 }
 
 let cachedWebWorker: Worker | null = null;
-async function runItkPipeline({
+export async function runItkPipeline({
   masks,
 }: IDecoderOutput): Promise<IGeoJSPosition[]> {
   const array = masks.data;
@@ -436,7 +440,7 @@ async function runItkPipeline({
  * size like SAM1 did via orig_im_size). This rescales polygon coordinates
  * from mask space back to display/source image space.
  */
-function rescaleMaskToDisplayCoords(
+export function rescaleMaskToDisplayCoords(
   coords: IGeoJSPosition[],
   canvasInfo: IProcessCanvasOutput,
   decoderOutput: IDecoderOutput,
@@ -453,14 +457,14 @@ function rescaleMaskToDisplayCoords(
   return coords.map(({ x, y }) => ({ x: x * xScale, y: y * yScale }));
 }
 
-function displayToWorld(
+export function displayToWorld(
   coords: IGeoJSPosition[],
   { map }: IMapEntry,
 ): IGeoJSPosition[] {
   return map.displayToGcs(coords);
 }
 
-function simplifyCoordinates(
+export function simplifyCoordinates(
   coords: IGeoJSPosition[],
   tolerance: number,
 ): IGeoJSPosition[] {

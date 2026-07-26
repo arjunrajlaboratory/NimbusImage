@@ -108,24 +108,9 @@
 </template>
 
 <script lang="ts">
-export interface IAnnotationSetup {
-  tags: string[];
-  coordinateAssignments: {
-    layer: string | null | undefined;
-    Z: {
-      type: string;
-      value: number;
-      max: number;
-    };
-    Time: {
-      type: string;
-      value: number;
-      max: number;
-    };
-  };
-  shape: import("@/store/model").AnnotationShape;
-  color: string | undefined;
-}
+// IAnnotationSetup now lives in the canonical type home (src/store/model.ts).
+// Re-exported here so existing imports from this component keep working.
+export type { IAnnotationSetup } from "@/store/model";
 </script>
 
 <script setup lang="ts">
@@ -144,6 +129,7 @@ import {
   WelcomeTourStatus,
   WelcomeTourNames,
 } from "@/store/model";
+import type { IAnnotationSetup } from "@/store/model";
 
 type VForm = ComponentPublicInstance & { validate: () => boolean };
 
