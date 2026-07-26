@@ -153,6 +153,47 @@ Watch out for stringify cost on large objects.
 
 Not every `{ deep: true }` is this bug — it only applies when the watched source is a **getter function that rebuilds a fresh object/array on each call** (a Vuex/Pinia getter, a `computed`, or a plain function reading store state). A `ref()`/`reactive()` passed **directly** as the watch source (not wrapped in a function) is the correct, safe use of `deep: true` — Vue tracks its stable identity and only fires on genuine in-place mutations. Don't blanket-remove `deep: true` without checking which case you're in.
 
+### Every `throttle`/`debounce` needs a `cancel()` in `onBeforeUnmount`
+
+A trailing call that fires after teardown runs against a dead view — in
+`AnnotationViewer.vue` that means `layer.annotations()` / `layer.draw()` on a
+torn-down GeoJS map, or a store write from a component that no longer exists.
+The teardown block already cancels them; the failure mode is *forgetting to add
+the new one*, which nothing catches because the component unmounts fine and the
+trailing call usually lands harmlessly.
+
+Guard it with a test that records the throttles **at construction** — the
+version that listed them by name stayed green while two uncancelled ones
+shipped, and a version that scanned `wrapper.vm` only moved the hand-maintained
+list to `defineExpose` (an unexposed throttle stays invisible there):
+
+```ts
+// top of the test file — delegates to real lodash, so timing is unchanged
+const createdThrottles = vi.hoisted(() => [] as any[]);
+vi.mock("lodash", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lodash")>();
+  const record = (w: any) => { createdThrottles.push(w); return w; };
+  return { ...actual,
+    throttle: (...a: any[]) => record((actual.throttle as any)(...a)),
+    debounce: (...a: any[]) => record((actual.debounce as any)(...a)) };
+});
+
+// in the test
+createdThrottles.length = 0;
+wrapper = mountComponent();
+expect(createdThrottles.length).toBeGreaterThanOrEqual(7);  // recording can break too
+const named = createdThrottles.map((fn, i) => [
+  Object.keys(vm).find((k) => vm[k] === fn) ?? `unexposed#${i}`,
+  vi.spyOn(fn, "cancel"),
+] as const);
+wrapper.unmount();
+expect(named.filter(([, s]) => !s.mock.calls.length).map(([n]) => n)).toEqual([]);
+```
+
+`<script setup>` bodies run per instance, so setup-scope throttles are created
+during mount and land in the recording. One residual gap: a wrapper built lazily
+inside a handler isn't recorded until that handler runs.
+
 ## Vuetify 4 Patterns
 
 ### CSS Cascade Layers
@@ -281,12 +322,48 @@ watch(promptMode, (v) => segState.value?.nodes.input.promptMode.setValue(v));
 
 Reactive **state** fields (from `reactive(...)` in the tool-state factory) are fine to read in computeds — only raw `markRaw`'d node `.output` reads are the trap.
 
-### VRow Density
+### VRow Density — and `dense` everywhere else
 
-`dense` prop is deprecated. Use `density="comfortable"`:
+On `<v-row>`, the boolean `dense` prop is deprecated. Use `density="comfortable"`:
 ```vue
 <v-row density="comfortable" align="center">
 ```
+
+The substitution is **visually identical** — VRow maps
+`density === 'comfortable' || dense` to the same `v-row--density-comfortable`
+class, so `dense` still works and the only symptom is
+`[Vuetify UPGRADE] 'dense' is deprecated` in the console. Don't trust
+Vuetify's own JSDoc here: `makeVRowProps` says `@deprecated use
+density="compact"` while the runtime warning and the class mapping both say
+`comfortable`. `comfortable` is the behaviour-preserving one.
+
+**The warning is one-shot per mounted row, not per render.** `deprecate()` is
+called from `VRow.setup()`, so re-rendering or updating an existing row never
+repeats it — which is exactly why you cannot "re-trigger" it by toggling the UI
+that contains it, and why it is usually already gone by the time you attach a
+console listener. See the `in-browser-testing` skill for the capture order this
+forces.
+
+**`VRow` is the only component that warns.** `deprecate('dense', …)` is called
+in exactly one place in Vuetify 4 (`VRow.setup()`). So a `dense` on anything
+else is *silent* — and dead: `VCard`, `VListSubheader`, and our own
+`tag-picker` / `docker-image-select` / `property-worker-menu` declare no `dense`
+prop, so Vue passes it through to the root element as a stray DOM attribute that
+styles nothing.
+
+**Delete those; don't convert them.** `VListSubheader` has no `density` prop
+either, so a swap is just a different dead attribute. `VCard` *does* have one,
+so a swap there newly tightens title/subtitle/text padding — an unrequested
+visual change. This is the trap in a scripted sweep: a regex that rewrites
+`dense` → `density="comfortable"` on every tag it matches is wrong on most of
+them, and a regex restricted to `<v-[a-z-]+` misses the custom-component
+instances entirely (they need the opposite treatment, so they can't just be
+ignored).
+
+`src/vuetifyDeprecations.test.ts` scans every `.vue` template for a boolean
+`dense` on any tag and fails the build, so this can't silently come back.
+Extend that test rather than hand-grepping when auditing a new Vuetify
+deprecation.
 
 ### v-menu / v-dialog Initial State
 
@@ -588,6 +665,18 @@ Before claiming a frontend change done:
 4. **In-browser verification for anything user-facing** — tsc/lint/vitest green does not mean the UI works (pointer-events, layering, watcher-firing, and store-corruption bugs all passed every static gate). See the in-browser-testing skill; remember to hard-reload after store edits.
 
 Component-level test patterns (AnnotationViewer harness, GeoJS mocks): see the nimbus-geojs skill and `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`.
+
+### A mock that returns a fixed value can fail your test for the wrong reason
+
+Shared mocks in this repo return constants chosen for the tests that existed when they were written, and a new test inherits them silently. The failure looks like a bug in the code under test, not in the harness.
+
+- `geojs.util.distance2dToLineSquared` returns **100** and `pointInPolygon` returns **false** in `AnnotationViewer.test.ts`. Any line hit test compares against a squared tolerance (36 for the 6 px connection tolerance), so it can never match until the test sets `mockReturnValue(1)`.
+- `mockGeoJSAnnotation` doesn't derive `coordinates()` from the `vertices` option, so a feature built by the real draw path has correct `options()` and no usable geometry.
+- `geojsAnnotationFactory` drops its options argument unless you re-forward it — assertions on a feature's constructed `style` see `undefined`.
+
+Before concluding "the code doesn't work", check what the relevant mock actually returns. Equally: when a component test needs a *component* to do something, prefer asserting the side effect the component owns over re-deriving geometry through the mock.
+
+**Unmount components that register global listeners.** A wrapper left mounted by an earlier test keeps its `window` listener attached, so the next test's dispatch fires it too and a spy is called twice. Track the wrapper and unmount it in `afterEach`. If you see "expected 1 call, got 2", suspect a leaked mount before suspecting the code — and then ask whether the *product* can also mount that component more than once, because that is the same bug in production.
 
 ## Codebase Documentation References
 

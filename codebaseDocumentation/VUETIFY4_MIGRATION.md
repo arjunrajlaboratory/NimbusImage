@@ -39,7 +39,33 @@ Files changed:
 **Note:** The `#item` slot name itself did NOT change (contrary to some online sources claiming it was renamed to `#internalItem`).
 
 ### VRow `dense` Prop Deprecated
-Vuetify 4 deprecates the boolean `dense` prop on `v-row`. Replaced with `density="comfortable"` across 10 occurrences in 6 files.
+Vuetify 4 deprecates the boolean `dense` prop on `v-row`. Replaced with `density="comfortable"` across 10 occurrences in 6 files. A follow-up sweep (issue #1281) caught the remaining 19; `src/vuetifyDeprecations.test.ts` now fails the build if any come back.
+
+`VRow` is the **only** component that warns: `VRow.setup()` calls
+`deprecate('dense', 'density="comfortable"')`, and nothing else in Vuetify 4
+does. The prop is *not* ignored — VRow maps `density === 'comfortable' || dense`
+to the same `v-row--density-comfortable` class, so the substitution is
+visually identical and purely silences the console.
+
+Two things to know before touching a `dense` outside `v-row`:
+
+- **Vuetify's own JSDoc contradicts its runtime.** `makeVRowProps` is annotated
+  `@deprecated use density="compact"` while the warning and the class mapping
+  both say `comfortable`. `comfortable` is the behaviour-preserving choice —
+  `compact` would tighten gutters that `dense` never tightened.
+- **On anything other than `v-row`, `dense` was always dead** — `VCard`,
+  `VListSubheader`, and our own `tag-picker` / `docker-image-select` /
+  `property-worker-menu` declare no `dense` prop, so it fell through to the DOM
+  as a stray attribute and never styled anything. These get **deleted**, not
+  converted: `VListSubheader` has no `density` prop either (a swap would just be
+  a different dead attribute), and `VCard` *does* have one, so a swap there
+  would newly tighten title/subtitle/text padding — a visual change nobody
+  asked for. `TagPicker` and `DockerImageSelect` already set
+  `density="compact"` on their inner field internally.
+
+  (An earlier revision of this document listed these under "What Was NOT
+  Changed" as "app-level props." That was wrong — none of the three components
+  ever declared the prop.)
 
 ### `!important` Cleanup
 With CSS Cascade Layers, custom styles (outside layers) automatically win over Vuetify's layered styles. Removed 61 `!important` declarations that were only needed to beat Vuetify specificity.
@@ -83,5 +109,4 @@ Vuetify 4 reduced elevation levels from 0-24 to 0-5. All usages in the codebase 
 ## What Was NOT Changed
 - `v-data-table` `#item` slot — this is a VDataTable slot, not VSelect, and was not affected
 - `v-breadcrumbs` `#item` slot — not affected
-- `dense` prop on custom components (`tag-picker`, `docker-image-select`, etc.) — these are app-level props, not Vuetify deprecations
 - `@girder/components` version — staying at 4.0.0 until a Vuetify 4-compatible release

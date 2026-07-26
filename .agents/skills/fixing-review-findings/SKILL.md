@@ -45,6 +45,93 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | Stale comments/tests describing pre-fix behavior | Wherever behavior changed | Grep for the old function contract in comments and test names |
 | Partial persistence: one change writing the same config key twice | Handlers that change several fields of one resource | All inputs validated *before* the first write? Two actions in the handler both syncing the same key? (see nimbus-frontend skill) |
 | Store action throws/propagates without `rawError: true` | Any `src/store/*.ts` | Audit **every** store module and the **whole** chain — errors re-wrap at each `@Action` boundary, and an action needs the flag when it merely propagates (no `throw` of its own) |
+| **A rule applied to one of two symmetric paths** | Anywhere the same concept has two implementations | See below — this was the single most-repeated finding across a 10-round review |
+| **Cost before the guard** | Getters/handlers with a cheap precondition and expensive body | Does the cheap check run FIRST? A cap that resolves 700K annotations to discover the limit was exceeded is doing the work it exists to prevent |
+
+#### The symmetric-path pattern
+
+By far the most repeated finding in this repo's review history: a rule is added
+to one path and its twin is left behind. Four separate rounds of one review
+flagged four instances of it —
+
+- `drawNewConnections` stopped gating on hydration; `clearOldAnnotations` kept doing it, so every draw deleted what the last one created.
+- Features were styled at construction; the retained-feature restyle loop overwrote it on the next redraw.
+- Timelapse click precedence was fixed for hover (`setHoveredAnnotationFromCoordinates`) and not for selection (`selectAnnotations`).
+- Deleting pruned `selectedConnectionIds` and left `hoveredConnectionId` dangling.
+- Selection was reflected on the timelapse layer (by rebuilding it) and hover was not, so the row click — which highlights via hover — did nothing there.
+
+When you fix something, ask **"what is the other one?"** before moving on:
+
+| If you changed… | Its twin is… |
+|---|---|
+| how something is drawn | how it is retained / cleared |
+| how something is styled on creation | how it is restyled on update |
+| the hover/highlight path | the click/selection path (and vice versa) |
+| one piece of paired state (selection) | the other (hover, expansion, page) |
+| the flat rendering branch | the grouped/track branch |
+| one scope/mode branch | the other three |
+| how one render path reflects a state | how the *other* render path reflects it |
+| creating a throttled/debounced callback | cancelling it in `onBeforeUnmount` |
+
+**A test that enumerates today's instances cannot catch tomorrow's.** The
+teardown-cancel test named the five throttles that existed when it was written,
+so adding a sixth and forgetting its `cancel()` left the suite green — and a
+seventh had been missing all along. Where the invariant is "every X does Y",
+discover the Xs at runtime instead of listing them.
+
+**Then check where the discovery gets its list from.** The first rewrite scanned
+the component's exposed surface for `typeof v.cancel === 'function' && typeof
+v.flush === 'function'` — which only moved the hand-maintained list from the
+test to `defineExpose`. A throttle nobody exposed stays invisible, and the
+already-exposed ones keep any count floor satisfied, so the test reads as
+comprehensive while covering exactly the cases that were never at risk. Codex
+caught this one round after the rewrite.
+
+Record instances **where they are created**, not where they are published — mock
+the constructor (`vi.mock("lodash", …)` delegating to `importOriginal` so timing
+behaviour is unchanged) and push each wrapper into an array:
+
+```ts
+const createdThrottles = vi.hoisted(() => [] as any[]);
+vi.mock("lodash", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lodash")>();
+  const record = (w: any) => { createdThrottles.push(w); return w; };
+  return { ...actual,
+    throttle: (...a: any[]) => record((actual.throttle as any)(...a)),
+    debounce: (...a: any[]) => record((actual.debounce as any)(...a)) };
+});
+```
+
+Keep a count floor (the recording can break too) and label failures with the
+exposed name when there is one, `unexposed#N` otherwise — the label is what
+turns a red test into a fix. Verify the test can fail on the case that motivated
+it: here, un-exposing *and* un-cancelling one throttle, which the exposed-surface
+version passed and this one reports as `unexposed#4`.
+
+The general rule: when a test discovers what it checks, ask what feeds the
+discovery, and whether that feed is itself a list a human has to remember to
+update.
+
+A performance decision can create this shape on its own. Skipping work for one
+state ("hover won't rebuild the layer — too expensive") is a correctness
+decision wearing a cost argument: it is only safe if nothing user-facing depends
+on that state. Write down which gesture drives each piece of state before
+deciding one of them is cheap to ignore, and prefer a cheaper *reflection* (an
+in-place restyle) over no reflection at all.
+
+Grep for the twin by concept, not by identifier: the two implementations rarely
+share a name, which is exactly why they drift.
+
+#### The cost-before-guard pattern
+
+A cheap precondition placed *after* the expensive work it was meant to avoid.
+Three instances in one review: a 500-item cap that first resolved every selected
+annotation; scope filtering that materialized all 709K stubs to build a set of
+ids it then used to filter a much smaller collection; and a set of all
+connection ids rebuilt on every selection change rather than cached against the
+connections. Check the ordering inside any getter with both a guard and a scan,
+and prefer iterating the **smaller** collection — resolve the few endpoints of N
+connections, don't enumerate all M objects.
 
 When you generalize, check the *shape* of your sweep too, not just its target. A grep for `throw` in action bodies found the deliberate throwers and missed every pure propagator — so the sweep reported "clean" and the next Codex round flagged the one it missed. If a sweep comes back clean, ask what the query structurally cannot see.
 
@@ -61,6 +148,70 @@ Its three response signals are easy to confuse when polling:
 | A plain PR comment ("Didn't find any major issues") | Also a clean result — arrives as an issue comment, *not* a review object with inline comments. |
 
 Poll for all three. Watching only for a new review object plus 👍 reports a false timeout when the answer arrived as a comment. Findings themselves come as inline review comments (`/pulls/{n}/comments`), not in the review body, which only holds boilerplate.
+
+**The bot's login differs between the two GitHub APIs.** GraphQL (`gh pr view --json reviews`) reports `author.login` as `chatgpt-codex-connector`; REST (`gh api .../reviews`, `.../comments`) reports `user.login` as **`chatgpt-codex-connector[bot]`**. A REST poll filtering on the GraphQL spelling matches nothing and reports "no review yet" forever — this produced a confident false negative after the review had already landed. Match on a prefix, and prefer polling by timestamp rather than by author:
+
+```bash
+# Robust: newer than a known timestamp, author matched by prefix.
+gh api repos/OWNER/REPO/pulls/N/reviews \
+  --jq "[.[] | select((.user.login|startswith(\"chatgpt-codex-connector\")) and .submitted_at > \"$LAST\")] | length"
+
+# The findings themselves:
+gh api repos/OWNER/REPO/pulls/N/comments \
+  --jq ".[] | select(.created_at > \"$LAST\") | \"=== \(.path):\(.line // .original_line)\n\(.body)\""
+```
+
+Sanity-check a "nothing yet" result against `gh pr view N --json reviews` (GraphQL) before reporting it — if the two disagree, the filter is wrong, not the bot. Turnaround is 1–8 minutes and grows with diff size.
+
+**A poll that only looks for a review object is wrong**, because the clean result is not one. Three separate polls in one session reported a false "nothing yet": one filtered on the GraphQL login spelling, one gave up at 5 minutes, and one checked the clean-comment form only *inside* the branch that had already found a review. A fourth failed the other way — a hand-typed local-clock cutoff matched the previous round and reported a finding already fixed. Every one of these was a *confident* wrong answer, so check every signal on every iteration and derive the cutoff from the API:
+
+**Never hand-write `LAST`.** This machine's clock is UTC-4 and GitHub timestamps
+are UTC, so a cutoff typed from the local clock sits four hours in the past and
+the loop matches the *previous* round's review on its first iteration — a false
+"the verdict arrived", re-reporting a finding already fixed. Derive it from the
+API, and print the matched review's `commit_id` so a stale match is obvious:
+
+```bash
+LAST=$(gh api repos/$OWNER/pulls/$PR/reviews \
+  --jq '[.[] | select(.user.login|startswith("chatgpt-codex-connector"))] | last | .submitted_at')
+```
+
+```bash
+PR=1279; OWNER=arjunrajlaboratory/NimbusImage   # LAST from the command above
+for i in $(seq 1 20); do
+  sleep 30
+  # 1. a review object with inline findings
+  N=$(gh api repos/$OWNER/pulls/$PR/reviews --jq "[.[] | select((.user.login|startswith(\"chatgpt-codex-connector\")) and .submitted_at > \"$LAST\")] | length")
+  # 2. the clean result — a plain ISSUE comment, never a review
+  C=$(gh api repos/$OWNER/issues/$PR/comments --jq "[.[] | select((.user.login|startswith(\"chatgpt\")) and .created_at > \"$LAST\")] | length")
+  # 3. 👀 present = still working; its DISAPPEARANCE means done, look for 1 or 2
+  R=$(gh api repos/$OWNER/issues/$PR/reactions --jq '[.[].content]|@json')
+  echo "$i: reviews=$N cleanComments=$C prReactions=$R"
+  [ "$N" -gt 0 ] || [ "$C" -gt 0 ] && break
+done
+# Confirm the match is for the CURRENT head, not a carried-over earlier round:
+gh api repos/$OWNER/pulls/$PR/reviews \
+  --jq ".[] | select(.submitted_at > \"$LAST\") | \"\(.submitted_at) commit=\(.commit_id[0:10])\""
+git rev-parse --short HEAD
+```
+
+**Pull the findings by review id, not by timestamp.** An inline comment is
+created a second or so *after* its review's `submitted_at`, so
+`created_at > <previous review's submitted_at>` re-lists that review's own
+findings and a clean round looks like it repeated last round's complaint. Take
+the id of the review you just matched (or, for the clean-comment form, expect no
+inline comments at all):
+
+```bash
+gh api repos/$OWNER/pulls/$PR/comments \
+  --jq ".[] | select(.pull_request_review_id == $NEW_REVIEW_ID) | \"=== \(.path):\(.line // .original_line)\n\(.body)\""
+```
+
+A comment's own `commit_id` is no help for telling rounds apart — GitHub
+re-points it at the current head while the comment is still tracked, so a
+finding from two rounds ago can report the sha you just pushed.
+
+The eyes-reaction transition is the most useful signal: while 👀 is on the trigger comment it is still working, and the moment it clears the verdict exists somewhere — as inline comments, as a "Didn't find any major issues" issue comment, or as 👍 on the PR.
 
 ### 5. Gates before claiming done
 
@@ -81,3 +232,15 @@ Report per-finding outcomes (fixed / stale / by-design / needs-decision) keyed t
 | Verifying backend fixes with curl after only `docker compose restart girder` | Plugin is baked into the image; you're testing stale code |
 | Committing right after tests pass | User verifies live first in this repo's workflow |
 | Silently choosing a cap/limit/default | Those are user decisions — recommend, then ask |
+| Reverting a fix in a chained `cp bak && revert && test && cp back` command | An interrupt or a rejected call between the revert and the restore leaves the fix silently removed from the working tree. Use `git stash` / `git checkout -- <file>` to restore, and `git diff` against HEAD before continuing |
+| Trusting a probe that passed against drifted state | Re-verify from a **fresh load**: a churn probe reported "no problem" only because everything had hydrated by the time it ran, and a live behavior check disagreed with a passing unit test because the working tree had lost the fix |
+
+### Verifying a fix live: pick a fixture that actually exercises it
+
+A live check on the wrong dataset is worse than none — it produces a confident result about nothing. Before claiming live verification, confirm the fixture has the property under test:
+
+- Timelapse/track behavior needs a dataset with **>1 timepoint**. Forcing `showTimelapseMode` on a single-timepoint dataset "works" but proves nothing about tracks.
+- Stub/lazy-loading behavior needs a dataset over the stub threshold, checked from a **fresh load** (everything hydrates as you interact, and the bug disappears with it).
+- Duplicate/degenerate-data behavior needs a dataset that actually contains duplicates or self-loops — query MongoDB to find one rather than assuming.
+
+When no fixture has the property, **create one**: annotations and connections can be made in seconds via `store.dispatch('createMultipleAnnotations', bases)` and `store.dispatch('createConnectionsFromBases', bases)` (both take a bare array, not a wrapper object). Build the edge cases deliberately — a multi-frame track, a same-frame pair, an off-location pair — rather than hoping existing data covers them.

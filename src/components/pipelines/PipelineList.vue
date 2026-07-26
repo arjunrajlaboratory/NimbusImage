@@ -1,6 +1,6 @@
 <template>
   <v-container class="pa-0">
-    <v-row class="my-0" dense>
+    <v-row class="my-0" density="comfortable">
       <v-col class="d-flex ga-2 py-1 justify-end">
         <v-btn
           variant="flat"
@@ -106,7 +106,7 @@
         </template>
       </v-list-item>
     </v-list>
-    <v-row v-else class="my-2" dense>
+    <v-row v-else class="my-2" density="comfortable">
       <v-col class="text-caption text-medium-emphasis">
         No pipelines yet. Create one to get started.
       </v-col>
