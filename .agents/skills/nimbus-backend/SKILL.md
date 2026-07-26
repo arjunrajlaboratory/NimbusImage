@@ -13,10 +13,20 @@ description: "Use when writing or modifying Python code in the Girder backend pl
 |-------|----------|---------|
 | -1 | (none) | No access / Remove access |
 | 0 | `AccessType.READ` | View-only access |
-| 1 | `AccessType.WRITE` | Edit access |
-| 2 | `AccessType.ADMIN` | Owner — can manage access (share, set public, delete) |
+| 1 | `AccessType.WRITE` | Edit access — **and delete, for item-like resources** |
+| 2 | `AccessType.ADMIN` | Owner — manage access (share, set public), delete a container |
 
 **Important:** `AccessType.ADMIN` means **owner of that document**, not a site-wide admin. The creator of a project/dataset gets ADMIN on it and can share it with others.
+
+**Do not conclude that deleting requires ADMIN.** Reading "ADMIN … delete" off this table and flagging a `WRITE`-level delete is a false positive — it happened auditing PR #1278. The convention follows Girder core, where `DELETE /item` is `WRITE` while `DELETE /folder` is `ADMIN`:
+
+| Resource | Delete level | Why |
+|---|---|---|
+| `upenn_annotation`, `annotation_connection`, `annotation_property`, `dataset_view`, `upenn_collection` | `WRITE` | item-like, lives inside a folder |
+| `upenn_project` | `ADMIN` | container that owns datasets and collections |
+| `project/:id/dataset/:id`, `project/:id/collection/:id` | `WRITE` | removing a child, not deleting the container |
+
+Before changing a level, grep the sibling endpoints — `grep -n "def delete" -B 14 server/api/*.py | grep -E "@access|AccessType"` — and match them. Changing WRITE to ADMIN is a **behavior change** that stops collaborators from deleting, not a hardening no-op.
 
 Use `-1` (not `null`) to remove a user's access.
 

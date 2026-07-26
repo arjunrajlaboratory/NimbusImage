@@ -378,7 +378,14 @@ Exception: Keep temporaries when they improve readability for complex expression
 
 When editing backend code, always maintain the existing security and access control patterns:
 
-- Use `AccessType` levels consistently: `READ` (view), `WRITE` (edit), `ADMIN` (owner — can share, set public, delete)
+- Use `AccessType` levels consistently: `READ` (view), `WRITE` (edit, **including delete** for item-like resources), `ADMIN` (owner — share, set public, delete a container)
+- **Deleting does NOT automatically require `ADMIN`.** Match the existing endpoints rather than reasoning from the level names, which reads as if it does and has produced at least one false review finding. The convention here follows Girder core, where `DELETE /item` is `WRITE` but `DELETE /folder` is `ADMIN`: an item-like resource that lives inside a folder is deletable at `WRITE`; a container that owns other things needs `ADMIN`.
+
+  | Endpoint | Level | Why |
+  |---|---|---|
+  | `upenn_annotation`, `annotation_connection`, `annotation_property`, `dataset_view`, `upenn_collection` | `WRITE` | item-like, live inside a folder |
+  | `upenn_project` | `ADMIN` | a container that owns datasets and collections |
+  | `project/:id/dataset/:id`, `project/:id/collection/:id` | `WRITE` | removing a child from a container, not deleting the container |
 - Note: `AccessType.ADMIN` on a document means **owner of that document**, not site-wide admin. `@access.admin` (the endpoint decorator) means site-wide Girder admin — these are different concepts.
 - Check user permissions before data operations
 - Validate that users have access to the dataset/resource being modified
