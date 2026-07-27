@@ -93,4 +93,15 @@ describe("collectionsToDatasetChips", () => {
       "boom",
     );
   });
+
+  it("propagates a failed dataset lookup instead of reporting no datasets", async () => {
+    mockFindDatasetViews.mockResolvedValue([
+      { id: "v1", datasetId: "ds1", configurationId: "col1" },
+    ]);
+    mockBatchResources.mockRejectedValue(new Error("Unauthorized"));
+
+    await expect(collectionsToDatasetChips(["col1"])).rejects.toThrow(
+      "Unauthorized",
+    );
+  });
 });

@@ -164,6 +164,22 @@ export default class ProjectsAPI {
   }
 
   /**
+   * Add multiple collections to a project in one validated request.
+   */
+  async addCollectionsToProject(
+    projectId: string,
+    collectionIds: string[],
+  ): Promise<IProject> {
+    const response = await this.client.post(
+      `project/${projectId}/collections`,
+      {
+        collectionIds,
+      },
+    );
+    return toProject(response.data);
+  }
+
+  /**
    * Remove a collection from a project
    */
   async removeCollectionFromProject(

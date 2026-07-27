@@ -715,12 +715,26 @@ queue = queue
 
 Rule of thumb: whatever promise you *store* for the next link to chain onto must be non-rejecting. `.finally()` passes rejections through, so it can never be the terminator. Note this is invisible to `tsc`, lint, and tests — a test that always resolves the work function never exercises the reject path.
 
-### `batchResources` returns whole documents, not names
+### Project `batchResources` calls to the fields you need
 
-`store.api.batchResources({ folder: ids })` resolves ids in a single backend `$in` query (good — not an N+1), but it returns **full** Girder documents including `meta`. Callers that only want display names still pay for everything. That's fine for a page of rows; it is not fine for a whole listing. One collection per dataset folder is the common case, so "resolve names for all loaded collections" can mean thousands of full folder documents in one response.
+`store.api.batchResources({ folder: ids })` resolves ids in one backend `$in`
+query, but omitting `fields` returns full Girder documents including `meta`.
+Callers that only need a display field should ask for it explicitly:
 
-- Resolve only what the UI actually renders. If a column is scope- or mode-conditional, skip the resolution entirely in the modes that don't show it.
-- When you genuinely need names for a large set (sorting/searching a column needs them for every loaded row, not just the visible page), chunk the ids against a named constant and loop the chunks sequentially. This is batch-chunking, not the looped-API-call antipattern — say so in a comment, since it looks like the latter to a reviewer.
+```typescript
+await store.api.batchResources({ folder: ids, fields: ["name"] });
+```
+
+This keeps the entire set in one request. Do not sequentially chunk the ids:
+that creates a waterfall and is still a looped frontend API call. Resolve only
+resources the rendered mode needs; if sorting/searching depends on a resolved
+field, resolve the whole loaded set once with a projection.
+
+Projected responses are deliberately typed as partial documents: `_id` is the
+only unconditional field, while requested fields can still be absent on older
+documents. Guard optional values instead of casting the response to a full
+`IGirderFolder`/`IGirderUser`. Batch-request failures, including 401s, propagate;
+do not turn them into `{}` and cache fallback labels as if resolution succeeded.
 
 ## Native File / Folder Pickers (`src/utils/fileUpload.ts`)
 

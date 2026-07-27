@@ -8,7 +8,7 @@ for export to Zenodo.
 from bson import ObjectId
 from girder.api import access
 from girder.api.rest import Resource, filtermodel, loadmodel
-from girder.api.describe import Description, autoDescribeRoute
+from girder.api.describe import Description, autoDescribeRoute, describeRoute
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
@@ -17,12 +17,20 @@ from girder.models.user import User
 from upenncontrast_annotation.server.helpers.access_helpers import (
     formatAccessList
 )
+from upenncontrast_annotation.server.helpers.validation import (
+    requireCountWithin,
+    requireList,
+    requireObjectBody,
+    requireObjectId,
+)
 from upenncontrast_annotation.server.models.project import (
     Project as ProjectModel
 )
 from upenncontrast_annotation.server.models.collection import (
     Collection as CollectionModel
 )
+
+MAX_PROJECT_COLLECTIONS_PER_REQUEST = 10_000
 
 
 class Project(Resource):
@@ -48,6 +56,7 @@ class Project(Resource):
 
         # Collection management
         self.route("POST", (":id", "collection"), self.addCollection)
+        self.route("POST", (":id", "collections"), self.addCollections)
         self.route(
             "DELETE", (":id", "collection", ":collectionId"),
             self.removeCollection
@@ -219,11 +228,75 @@ class Project(Resource):
         result = self._projectModel.addCollection(
             project, collection['_id']
         )
-        self._projectModel.propagateAccessToCollection(
-            project, collection
+        self._projectModel.propagatePermissionsToCollections(
+            project, [collection]
         )
-        self._projectModel.propagatePublicToCollection(
-            project, collection
+        return result
+
+    @access.user(scope=TokenScope.DATA_WRITE)
+    @filtermodel(model=ProjectModel)
+    @describeRoute(
+        Description('Add multiple collections to a project.')
+        .notes(
+            'Validates WRITE access on every collection before changing '
+            'the project, then adds them in one project write.'
+        )
+        .param('body', 'Object containing collectionIds.', paramType='body')
+        .errorResponse()
+        .errorResponse('Write access denied.', 403)
+    )
+    @loadmodel(
+        model='upenn_project',
+        plugin='upenncontrast_annotation',
+        level=AccessType.WRITE,
+    )
+    def addCollections(self, upenn_project, params):
+        body = requireObjectBody(self.getBodyJson())
+        raw_ids = requireList(body.get('collectionIds'), 'collectionIds')
+        if not raw_ids:
+            raise RestException(
+                'collectionIds must not be empty', code=400
+            )
+        requireCountWithin(
+            len(raw_ids),
+            MAX_PROJECT_COLLECTIONS_PER_REQUEST,
+            'collectionIds',
+        )
+        collection_ids = [
+            requireObjectId(value, 'collectionIds[%d]' % index)
+            for index, value in enumerate(raw_ids)
+        ]
+        if len(set(collection_ids)) != len(collection_ids):
+            raise RestException(
+                'collectionIds must not contain duplicates', code=400
+            )
+
+        user = self.getCurrentUser()
+        collection_model = CollectionModel()
+        accessible = list(collection_model.findWithPermissions(
+            {'_id': {'$in': collection_ids}},
+            user=user,
+            level=AccessType.WRITE,
+        ))
+        by_id = {
+            collection['_id']: collection
+            for collection in accessible
+        }
+        if set(by_id) != set(collection_ids):
+            raise RestException(
+                'Write access denied for one or more collections.',
+                code=403,
+            )
+        collections = [
+            by_id[collection_id]
+            for collection_id in collection_ids
+        ]
+
+        result = self._projectModel.addCollections(
+            upenn_project, collection_ids
+        )
+        self._projectModel.propagatePermissionsToCollections(
+            upenn_project, collections
         )
         return result
 

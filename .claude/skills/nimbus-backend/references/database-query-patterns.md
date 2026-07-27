@@ -70,13 +70,18 @@ Keep `_id` **in** the field tuple rather than special-casing it around the compr
 
 **No reliable `count()`.** The docstring says the return "may be a CommandCursor augmented with a count function," but the non-admin path returns a plain PyMongo cursor, and `Cursor.count()` was removed in PyMongo 4. Don't build a response contract on it. Fetch `limit + 1` documents and report `hasMore = len(documents) > limit` instead — one query, no count aggregation. See the SKILL.md warning about how `limit + 1` interacts with Girder's `limit=0`-means-unlimited sentinel.
 
-**Index the sort field.** A cross-folder listing sorted on an unindexed key makes Mongo blocking-sort every accessible document. Add the plain field and the scoped compound:
+**Index the complete sort.** A cross-folder listing sorted on an unindexed key
+makes Mongo blocking-sort every accessible document. Offset paging also needs a
+total order, so append `_id` to every supported sort and its matching index.
+The `(updated, _id)` compound still serves a plain `updated` prefix query, so a
+separate single-field `updated` index is redundant:
 
 ```python
 self.ensureIndices((
-    'folderId', 'name', 'lowerName', 'updated',
-    ([('folderId', 1), ('name', 1)], {}),
-    ([('folderId', 1), ('updated', -1)], {}),
+    'folderId', 'name', 'lowerName',
+    ([('updated', -1), ('_id', -1)], {}),
+    ([('folderId', 1), ('name', 1), ('_id', 1)], {}),
+    ([('folderId', 1), ('updated', -1), ('_id', -1)], {}),
 ))
 ```
 

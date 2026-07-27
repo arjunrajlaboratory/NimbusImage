@@ -11,6 +11,8 @@ import {
   ICollectionSummary,
   IUPennCollection,
   IGirderLocation,
+  IGirderBatchResource,
+  IGirderProjectedResource,
 } from "@/girder";
 import {
   configurationBaseKeys,
@@ -609,28 +611,37 @@ export default class GirderAPI {
     item?: string[];
     upenn_collection?: string[];
     user?: string[];
-    fields?: string[];
+    fields: string[];
   }): Promise<{
-    folder?: Record<string, IGirderFolder>;
-    item?: Record<string, IGirderItem>;
-    upenn_collection?: Record<string, IGirderItem>;
-    user?: Record<string, IGirderUser>;
-  }> {
-    try {
-      const response = await this.client.post("resource/batch", args);
-      return response.data;
-    } catch (error) {
-      // Handle 401 (Unauthorized) errors gracefully - user may not be logged in
-      if (isAxiosError(error) && error.response?.status === 401) {
-        logWarning(
-          "Batch resources request unauthorized (user may not be logged in)",
-        );
-        // Return empty result instead of throwing
-        return {};
-      }
-      // Re-throw other errors
-      throw error;
-    }
+    folder?: Record<string, IGirderProjectedResource<IGirderFolder>>;
+    item?: Record<string, IGirderProjectedResource<IGirderItem>>;
+    upenn_collection?: Record<
+      string,
+      IGirderProjectedResource<IUPennCollection>
+    >;
+    user?: Record<string, IGirderProjectedResource<IGirderUser>>;
+  }>;
+  async batchResources(args: {
+    folder?: string[];
+    item?: string[];
+    upenn_collection?: string[];
+    user?: string[];
+    fields?: undefined;
+  }): Promise<{
+    folder?: Record<string, IGirderBatchResource<IGirderFolder>>;
+    item?: Record<string, IGirderBatchResource<IGirderItem>>;
+    upenn_collection?: Record<string, IGirderBatchResource<IUPennCollection>>;
+    user?: Record<string, IGirderBatchResource<IGirderUser>>;
+  }>;
+  async batchResources(args: {
+    folder?: string[];
+    item?: string[];
+    upenn_collection?: string[];
+    user?: string[];
+    fields?: string[];
+  }) {
+    const response = await this.client.post("resource/batch", args);
+    return response.data;
   }
 
   /**

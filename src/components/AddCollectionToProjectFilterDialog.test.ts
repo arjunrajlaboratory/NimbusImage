@@ -5,7 +5,7 @@ import { shallowMount } from "@vue/test-utils";
 const mockGetUserPrivateFolder = vi.fn();
 const mockClientGet = vi.fn();
 const mockListCollections = vi.fn();
-const mockAddCollectionToProject = vi.fn();
+const mockAddCollectionsToProject = vi.fn();
 
 // `listCollections` must be mocked: the dialog was switched from a raw
 // `client.get("upenn_collection")` to `store.api.listCollections`, and until this
@@ -27,8 +27,8 @@ vi.mock("@/store", () => ({
 
 vi.mock("@/store/projects", () => ({
   default: {
-    addCollectionToProject: (...args: any[]) =>
-      mockAddCollectionToProject(...args),
+    addCollectionsToProject: (...args: any[]) =>
+      mockAddCollectionsToProject(...args),
   },
 }));
 
@@ -153,6 +153,41 @@ describe("AddCollectionToProjectFilterDialog", () => {
     expect(vm.filteredCollections[0]._id).toBe("existing-col-1");
   });
 
+  it("renders only one bounded page of loaded collections", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.allCollections = Array.from({ length: 30 }, (_value, index) => ({
+      _id: `collection-${index}`,
+      name: `Collection ${index}`,
+      description: "",
+    }));
+
+    expect(vm.visibleCollections).toHaveLength(25);
+    expect(vm.visibleCollections[0]._id).toBe("collection-0");
+
+    vm.collectionPage = 2;
+    await nextTick();
+    expect(vm.visibleCollections).toHaveLength(5);
+    expect(vm.visibleCollections[0]._id).toBe("collection-25");
+  });
+
+  it("returns to the first client page when the search changes", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.allCollections = Array.from({ length: 30 }, (_value, index) => ({
+      _id: `collection-${index}`,
+      name: `Collection ${index}`,
+      description: "",
+    }));
+    vm.collectionPage = 2;
+
+    vm.searchQuery = "Collection 2";
+    await nextTick();
+
+    expect(vm.collectionPage).toBe(1);
+    expect(vm.visibleCollections[0]._id).toBe("collection-2");
+  });
+
   it("isInProject checks existingCollectionIds Set", async () => {
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
@@ -180,8 +215,8 @@ describe("AddCollectionToProjectFilterDialog", () => {
     expect(vm.selectedCollections).toHaveLength(0);
   });
 
-  it("addCollections calls store for each selected collection and emits added", async () => {
-    mockAddCollectionToProject.mockResolvedValue({});
+  it("adds every selection in one request and emits confirmed ids", async () => {
+    mockAddCollectionsToProject.mockResolvedValue(["col-3", "col-4"]);
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
@@ -190,14 +225,10 @@ describe("AddCollectionToProjectFilterDialog", () => {
 
     await vm.addCollections();
 
-    expect(mockAddCollectionToProject).toHaveBeenCalledTimes(2);
-    expect(mockAddCollectionToProject).toHaveBeenCalledWith({
+    expect(mockAddCollectionsToProject).toHaveBeenCalledTimes(1);
+    expect(mockAddCollectionsToProject).toHaveBeenCalledWith({
       projectId: "proj1",
-      collectionId: "col-3",
-    });
-    expect(mockAddCollectionToProject).toHaveBeenCalledWith({
-      projectId: "proj1",
-      collectionId: "col-4",
+      collectionIds: ["col-3", "col-4"],
     });
     expect(wrapper.emitted("added")).toBeTruthy();
     expect(wrapper.emitted("added")![0][0]).toEqual(["col-3", "col-4"]);
@@ -211,12 +242,12 @@ describe("AddCollectionToProjectFilterDialog", () => {
 
     await vm.addCollections();
 
-    expect(mockAddCollectionToProject).not.toHaveBeenCalled();
+    expect(mockAddCollectionsToProject).not.toHaveBeenCalled();
     expect(wrapper.emitted("added")).toBeFalsy();
   });
 
   it("addCollections resets selectedIds after adding", async () => {
-    mockAddCollectionToProject.mockResolvedValue({});
+    mockAddCollectionsToProject.mockResolvedValue(["col-3"]);
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
@@ -226,6 +257,23 @@ describe("AddCollectionToProjectFilterDialog", () => {
     await vm.addCollections();
 
     expect(vm.selectedIds).toEqual(new Set());
+  });
+
+  it("retains the selection and emits no success when the batch fails", async () => {
+    mockAddCollectionsToProject.mockRejectedValue(
+      new Error("Batch request failed"),
+    );
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.allCollections = sampleCollections;
+    vm.selectedIds = new Set(["col-3", "col-4"]);
+
+    await vm.addCollections();
+
+    expect(wrapper.emitted("added")).toBeFalsy();
+    expect(vm.selectedIds).toEqual(new Set(["col-3", "col-4"]));
+    expect(vm.addError).toBe("Failed to add collections. Please try again.");
+    expect(vm.adding).toBe(false);
   });
 
   it("watch on project resets selectedIds", async () => {

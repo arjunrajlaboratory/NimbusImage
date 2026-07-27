@@ -93,8 +93,18 @@
 
       <v-progress-linear v-if="loading" indeterminate />
 
+      <v-alert
+        v-if="addError"
+        type="error"
+        variant="tonal"
+        density="compact"
+        class="mb-2 mx-2"
+      >
+        {{ addError }}
+      </v-alert>
+
       <div
-        v-else-if="filteredCollections.length === 0"
+        v-if="!loading && filteredCollections.length === 0"
         class="text-center pa-4"
       >
         <v-icon size="48" color="grey">mdi-folder-multiple-outline</v-icon>
@@ -109,9 +119,9 @@
         </div>
       </div>
 
-      <v-list v-else density="compact" class="collection-list">
+      <v-list v-else-if="!loading" density="compact" class="collection-list">
         <v-list-item
-          v-for="collection in filteredCollections"
+          v-for="collection in visibleCollections"
           :key="collection._id"
           :disabled="isInProject(collection._id)"
           @click="toggleSelection(collection._id)"
@@ -143,6 +153,14 @@
           </v-list-item-subtitle>
         </v-list-item>
       </v-list>
+      <v-pagination
+        v-if="!loading && collectionPageCount > 1"
+        v-model="collectionPage"
+        :length="collectionPageCount"
+        :total-visible="7"
+        density="compact"
+        class="flex-shrink-0"
+      />
     </v-card-text>
     <v-card-actions class="ma-2">
       <v-btn variant="text" size="small" @click="$emit('done')">Cancel</v-btn>
@@ -151,7 +169,7 @@
         variant="flat"
         color="primary"
         size="small"
-        :disabled="selectedCollections.length === 0"
+        :disabled="selectedCollections.length === 0 || adding"
         :loading="adding"
         @click="confirmAdd"
       >
@@ -205,6 +223,8 @@ import { logError } from "@/utils/log";
 // Suppress unused import warning
 void GirderBreadcrumb;
 
+const COLLECTIONS_PER_PAGE = 25;
+
 const props = defineProps<{
   project: IProject;
   isShared?: boolean;
@@ -223,6 +243,8 @@ const scope = ref<"folder" | "all">("folder");
 const allCollections = ref<ICollectionSummary[]>([]);
 const hasMore = ref(false);
 const loadingMore = ref(false);
+const addError = ref<string | null>(null);
+const collectionPage = ref(1);
 const selectedIds = ref<Set<string>>(new Set());
 const showPermissionConfirm = ref(false);
 const currentFolder = ref<IGirderLocation | null>(null);
@@ -245,6 +267,15 @@ const filteredCollections = computed<ICollectionSummary[]>(() => {
       c.name.toLowerCase().includes(query) ||
       (c.description && c.description.toLowerCase().includes(query)),
   );
+});
+
+const collectionPageCount = computed(() =>
+  Math.ceil(filteredCollections.value.length / COLLECTIONS_PER_PAGE),
+);
+
+const visibleCollections = computed<ICollectionSummary[]>(() => {
+  const start = (collectionPage.value - 1) * COLLECTIONS_PER_PAGE;
+  return filteredCollections.value.slice(start, start + COLLECTIONS_PER_PAGE);
 });
 
 const selectedCollections = computed<ICollectionSummary[]>(() => {
@@ -354,19 +385,19 @@ async function addCollections() {
   showPermissionConfirm.value = false;
   if (selectedCollections.value.length === 0) return;
 
+  addError.value = null;
   adding.value = true;
   try {
-    for (const collection of selectedCollections.value) {
-      await projects.addCollectionToProject({
-        projectId: props.project.id,
-        collectionId: collection._id,
-      });
-    }
-    emit(
-      "added",
-      selectedCollections.value.map((c) => c._id),
-    );
+    const addedIds = await projects.addCollectionsToProject({
+      projectId: props.project.id,
+      collectionIds: selectedCollections.value.map(
+        (collection) => collection._id,
+      ),
+    });
+    emit("added", addedIds);
     selectedIds.value = new Set();
+  } catch {
+    addError.value = "Failed to add collections. Please try again.";
   } finally {
     adding.value = false;
   }
@@ -376,13 +407,20 @@ watch([currentFolder, scope], () => {
   // Changing folder or scope redefines which collections are listed at all, so
   // a selection made under the old scope no longer matches what the user sees.
   selectedIds.value = new Set();
+  addError.value = null;
+  collectionPage.value = 1;
   fetchCollections();
+});
+
+watch(searchQuery, () => {
+  collectionPage.value = 1;
 });
 
 watch(
   () => props.project,
   () => {
     selectedIds.value = new Set();
+    addError.value = null;
   },
 );
 
@@ -403,11 +441,15 @@ defineExpose({
   allCollections,
   hasMore,
   loadingMore,
+  addError,
+  collectionPage,
   selectedIds,
   showPermissionConfirm,
   currentFolder,
   existingCollectionIds,
   filteredCollections,
+  collectionPageCount,
+  visibleCollections,
   selectedCollections,
   isInProject,
   toggleSelection,

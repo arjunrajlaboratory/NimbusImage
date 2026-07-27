@@ -15,11 +15,12 @@ interface IGirderBase {
   icon?: string;
 }
 
-export interface IGirderUser extends IGirderBase {
+export interface IGirderUser extends Omit<IGirderBase, "name"> {
   _modelType: "user";
   _id: string;
+  name?: string;
   login: string;
-  email: string;
+  email?: string;
   firstName: string;
   lastName: string;
   admin?: boolean;
@@ -69,6 +70,26 @@ export interface ICollectionSummary extends IGirderBase {
 export interface IUPennCollection extends ICollectionSummary {
   meta: any;
 }
+
+/**
+ * A document returned by POST /resource/batch without a field projection.
+ * The backend does not add the frontend-only `_modelType` discriminator.
+ */
+export type IGirderBatchResource<T extends { _id: string }> = Omit<
+  T,
+  "_modelType"
+>;
+
+/**
+ * A projected POST /resource/batch document. Only `_id` is unconditional;
+ * every other requested field is optional because callers choose the
+ * projection at runtime and documents may omit nullable fields.
+ */
+export type IGirderProjectedResource<T extends { _id: string }> = Pick<
+  T,
+  "_id"
+> &
+  Partial<Omit<T, "_id" | "_modelType">>;
 
 // TODO: This type is essentially a wrapper around the IGirderItem type for now.
 // It is defined in case we want to add more properties to the largeImage object in the future.

@@ -369,7 +369,7 @@ async function refreshItems(force = false) {
               type: "folder",
             });
             if (resource) {
-              text = resource.name;
+              text = resource.name ?? "Unknown dataset";
             }
           } catch {
             // Silently handle errors

@@ -133,6 +133,16 @@ server cap. The pre-`/list` implementation asked for `limit: 0` (Girder "unlimit
 and received every row, so switching to `/list` without a paging path silently made
 collections past the cap unselectable — a regression, not just a missing feature.
 
+The loaded set is then paged locally at 25 rows. Selection lives in a separate
+ID set, so changing the client page never loses earlier choices, while the
+dialog mounts at most 25 list rows instead of up to 10,000.
+
+Submitting the selection uses one `POST /project/:id/collections` request. The
+backend validates every ID and WRITE permission before its single project save,
+then bulk-propagates the project's ACL/public state. The frontend emits only IDs
+confirmed by the returned project; a rejected request retains the selection and
+shows an error instead of reporting a partially successful loop as complete.
+
 Exercise it by shrinking `MAX_COLLECTION_LIST_LIMIT` on the **server** (the dialog
 sends no limit, so the frontend constant has no effect here) and rebuilding girder.
 With a cap of 5 the folder's 43 collections page `5 → 10 → … → 43`, 43 distinct, 0
@@ -197,8 +207,8 @@ the handler with the wrong shape, and the flaky sort test passed alone and faile
 when another test file ran first. Each line names the invariant and the test that holds
 it, so changing this code means re-checking the list rather than rediscovering it.
 
-Run `pnpm test src/components/CollectionList.test.ts src/components/CollectionDatasetChips.test.ts src/components/AddCollectionToProjectFilterDialog.test.ts src/utils/collectionChips.test.ts`
-and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annotation/test/test_collection_list.py`.
+Run `pnpm test src/components/CollectionList.test.ts src/components/CollectionDatasetChips.test.ts src/components/AddCollectionToProjectFilterDialog.test.ts src/utils/collectionChips.test.ts src/store/GirderAPI.batchResources.test.ts src/store/projects.addCollections.test.ts`
+and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annotation/test/test_collection_list.py upenncontrast_annotation/test/test_project.py`.
 
 ### Table wiring
 
@@ -212,11 +222,14 @@ and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annota
 - [ ] **Chips resolve per visible page, not per collection.** Two batch requests per page regardless of row count; a page already visited is not refetched. — *"resolves every collection with two batch requests"*, *"onCurrentItemsChange resolves chips for the visible rows only once"*
 - [ ] **Folder names resolve in ONE request, projecting only `name`, for unseen ids only.** Chunking the loop is not a fix for a looped API call — it just converts a payload problem into a waterfall. — *"resolveFolderNames resolves every folder in a single request"*, *"resolveFolderNames asks the backend for names only, not whole folders"*, *"resolveFolderNames batch-resolves unseen folders only"*
 - [ ] **`resource/batch` without `fields` still returns whole documents.** Eight other callers depend on that. — *`testBatchReturnsWholeDocumentsByDefault`*
+- [ ] **The add dialog mounts at most 25 collection rows.** Its client pager slices the loaded/filtered set while `selectedIds` preserves choices across pages. — *"renders only one bounded page of loaded collections"*, *"returns to the first client page when the search changes"*
 - [ ] **The folder scope skips folder-name resolution entirely.** — *"resolveFolderNames does nothing in the folder scope"*
 
 ### Error handling
 
 - [ ] **A failed chip lookup propagates and is retryable.** `collectionsToDatasetChips` must NOT swallow: resolving with the seeded empty chips renders as "No datasets", indistinguishable from a collection that genuinely has none. The caller logs and *releases* the ids, otherwise one failed burst pins those rows on "Loading..." for the component's lifetime. — *"propagates a failed view lookup instead of reporting empty chips"*, *"retries chip resolution for a page whose previous attempt failed"*
+- [ ] **`resource/batch` propagates 401 like every other failure.** Returning `{}` turns authentication failure into apparently resolved missing data and lets callers cache fallback labels. — *"propagates an unauthorized response instead of returning empty data"*
+- [ ] **Projected batch documents are typed as partial.** `_id` is unconditional; a requested field can still be absent, and the response never carries the frontend-only `_modelType`. — *"types a field projection as a partial document"*, *`pnpm tsc`*
 - [ ] **Loading, empty and resolved are three distinct states.** `undefined` chips = not resolved yet; `[]` = resolved with none. — *"shows the loading state while chips have not been resolved"*, *"shows 'No datasets' once resolved to an empty chip list"*
 - [ ] **A null `description` never reaches a string method.** The listing projects with `document.get(field)`, so it can be JSON null. — *"filteredCollections tolerates a null description"*
 - [ ] **A stale response cannot overwrite a newer listing.** `fetchGeneration` guards every await. — *"fetchCollections handles error and sets empty collections"*
@@ -224,6 +237,7 @@ and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annota
 
 ### Selection and scope
 
+- [ ] **Adding multiple selected collections is one validated operation.** Every collection permission is checked before the one project save; the real Vuex action preserves the original rejection, verifies every returned ID, and the dialog emits only confirmed IDs while retaining selection on failure. — *`test_project_add_collections_validates_before_saving`*, *`test_batch_add_collections_uses_one_write_and_propagates_access`*, *`test_batch_add_collections_denies_all_before_project_write`*, *"propagates the original batch failure through the real Vuex action"*, *"rejects a response that does not confirm every requested collection"*, *"adds every selection in one request and emits confirmed ids"*, *"retains the selection and emits no success when the batch fails"*
 - [ ] **Changing scope clears the dialog's selection.** Scope redefines which collections are listed, so a selection made under the old scope no longer matches what the user sees. — *"clears selectedIds when the scope changes"*
 - [ ] **Scope is persisted and restored.** — *"persists the scope choice and refetches when it changes"*, *"restores the persisted scope on mount"*
 
@@ -231,7 +245,7 @@ and, from `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annota
 
 - [ ] **`limit=-1` cannot bypass the cap.** `min(limit or MAX, MAX)` preserves `-1`, and `limit + 1` then becomes `0` — Girder's *unlimited* sentinel. `0` and `MAX+1` both behave correctly, so a spot-check passes while the bypass ships. — *`testNegativeOneLimitCannotBypassTheCap`*, *`testDegeneratePagingParamsNeverReachMongo`*
 - [ ] **Both listing endpoints share the clamp and the sort allowlist.** `by_folders` returns whole documents including `meta`, so it needs them more than `/list` does. — *`testFindByFoldersClampsLimit`*, *`testFindByFoldersRestrictsSortToReturnedFields`*, *`testListClampsLimitToMaximum`*, *`testSortIsRestrictedToReturnedFields`*
-- [ ] **The clamp test can actually fail.** With 3 collections and a 10,000 ceiling, "unlimited" and "capped" are indistinguishable — shrink `MAX_COLLECTION_LIST_LIMIT` via `monkeypatch` instead. — *`testFindByFoldersClampsLimit`*
+- [ ] **The clamp tests can actually fail.** With 3 collections and a 10,000 ceiling, "unlimited" and "capped" are indistinguishable — shrink `MAX_COLLECTION_LIST_LIMIT` via `monkeypatch` instead. — *`testFindByFoldersClampsLimit`*, *`testListClampsLimitToMaximum`*
 - [ ] **Malformed input is 400, never 500.** Bad folderId, non-list `folderIds`, numeric entries, a JSON-array body. — *`testMalformedFolderIdIsA400`*, *`testFindByFoldersRejectsMalformedBodies`*
 - [ ] **The listing never ships `meta`.** — *`testListOmitsMetadata`*
 - [ ] **Ties on the sort key do not make paging lossy.** `_id` is appended so the order is total, and the indexes carry it. — *`testListBreaksUpdatedTiesByIdSoPagingIsStable`*

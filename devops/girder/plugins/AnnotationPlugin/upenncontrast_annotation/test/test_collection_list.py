@@ -132,23 +132,32 @@ class TestCollectionList:
         assert len(resp.json["collections"]) == 1
         assert resp.json["hasMore"] is False
 
-    def testListClampsLimitToMaximum(self, admin, server):
-        """A limit above the cap, or the unlimited 0, is clamped."""
+    def testListClampsLimitToMaximum(self, admin, server, monkeypatch):
+        """A limit above the cap, or the unlimited 0, is observably clamped."""
+        monkeypatch.setattr(
+            collectionApi, "MAX_COLLECTION_LIST_LIMIT", 2
+        )
         folder = utilities.createPrivateFolder(
             admin, "ds", upenn_utilities.datasetMetadata
         )
-        createCollection(admin, folder, "collection_a")
+        for index in range(3):
+            createCollection(
+                admin, folder, "collection_%d" % index
+            )
 
         for limit in (0, collectionApi.MAX_COLLECTION_LIST_LIMIT + 5000):
             resp = server.request(
                 path="/upenn_collection/list",
                 method="GET",
                 user=admin,
-                params={"limit": limit},
+                params={
+                    "folderId": str(folder["_id"]),
+                    "limit": limit,
+                },
             )
             assertStatusOk(resp)
-            assert len(resp.json["collections"]) == 1
-            assert resp.json["hasMore"] is False
+            assert len(resp.json["collections"]) == 2
+            assert resp.json["hasMore"] is True
 
     def testListSortsByUpdatedDescendingByDefault(self, admin, server):
         """The default ordering is most recently modified first.

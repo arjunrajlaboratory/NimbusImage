@@ -475,6 +475,25 @@ describe("CollectionList", () => {
     expect(mockBatchResources).not.toHaveBeenCalled();
   });
 
+  it("does not cache fallback folder names after a failed lookup", async () => {
+    const vm = mountComponent().vm as any;
+    vm.scope = "all";
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    vm.collections = [collection("c1", { folderId: "f1" })];
+    mockBatchResources.mockRejectedValueOnce(new Error("Unauthorized"));
+    mockBatchResources.mockClear();
+
+    await vm.resolveFolderNames();
+
+    expect(vm.folderNames).toEqual({});
+    mockBatchResources.mockResolvedValueOnce({
+      folder: { f1: { _id: "f1", name: "Experiments" } },
+    });
+    await vm.resolveFolderNames();
+    expect(mockBatchResources).toHaveBeenCalledTimes(2);
+    expect(vm.folderNames).toEqual({ f1: "Experiments" });
+  });
+
   // --- chips for the visible page ---
 
   it("onCurrentItemsChange resolves chips for the visible rows only once", async () => {
