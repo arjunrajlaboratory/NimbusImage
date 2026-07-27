@@ -34,6 +34,8 @@ import {
   TJobType,
   IDatasetConfigurationCompatibility,
   IJob,
+  IUserStorageQuota,
+  resolveVisibilityConfig,
 } from "@/store/model";
 import {
   toStyle,
@@ -100,6 +102,9 @@ export default class GirderAPI {
   );
   private readonly resolvedHistogramCache = markRaw(
     new Map<string, ITileHistogram>(),
+  );
+  private readonly configurationUpdateChains = markRaw(
+    new Map<string, Promise<IUPennCollection>>(),
   );
 
   constructor(client: RestClientInstance) {
@@ -884,14 +889,33 @@ export default class GirderAPI {
   async updateConfigurationKey(
     config: IDatasetConfiguration,
     key: keyof IDatasetConfigurationBase,
-  ): Promise<any> {
+  ): Promise<IUPennCollection> {
+    // Snapshot the value when the save is requested, then serialize writes for
+    // the same configuration key. Metadata updates replace the complete value
+    // for that key, so allowing an older request to finish last can discard a
+    // newer edit.
     const metadata = toConfiguationMetadata({ [key]: config[key] });
-    const data = new FormData();
-    data.set("metadata", JSON.stringify(metadata));
-    const collection: IUPennCollection = (
-      await this.client.put(`upenn_collection/${config.id}/metadata`, data)
-    ).data;
-    return collection;
+    const queueKey = `${config.id}:${key}`;
+    const previousUpdate =
+      this.configurationUpdateChains.get(queueKey) ?? Promise.resolve();
+    const update = previousUpdate
+      .catch(() => undefined)
+      .then(async () => {
+        const data = new FormData();
+        data.set("metadata", JSON.stringify(metadata));
+        return (
+          await this.client.put(`upenn_collection/${config.id}/metadata`, data)
+        ).data as IUPennCollection;
+      });
+    this.configurationUpdateChains.set(queueKey, update);
+
+    try {
+      return await update;
+    } finally {
+      if (this.configurationUpdateChains.get(queueKey) === update) {
+        this.configurationUpdateChains.delete(queueKey);
+      }
+    }
   }
 
   deleteConfiguration(
@@ -1098,6 +1122,23 @@ export default class GirderAPI {
     }
   }
 
+  // Fetch the user's storage usage and quota from the girder-user-quota
+  // plugin. `quota` is null when the user has no quota (unlimited storage).
+  // Returns null if the quota information cannot be fetched (e.g. the
+  // user-quota plugin is not enabled on the backend).
+  async getUserStorageQuota(userId: string): Promise<IUserStorageQuota | null> {
+    try {
+      const response = await this.client.get(`user/${userId}/quota`);
+      return {
+        used: response.data.size ?? 0,
+        quota: response.data.quota?._currentFileSizeQuota ?? null,
+      };
+    } catch (error) {
+      logError("Failed to fetch user storage quota");
+      return null;
+    }
+  }
+
   async getUserColors(): Promise<{ [key: string]: string }> {
     const response = await this.client.get("user_colors");
     if (response.status !== 200) {
@@ -1229,6 +1270,7 @@ function defaultConfigurationBase(
     tools: [],
     propertyIds: [],
     snapshots: [],
+    pipelines: [],
     scales: getDatasetScales(dataset),
   };
 }
@@ -1260,6 +1302,12 @@ export function setBaseCollectionValues(
     description: item.description,
   };
   for (const key of configurationBaseKeys) {
+    if (key === "visibilityConfig") {
+      config.visibilityConfig = resolveVisibilityConfig(
+        item.meta.visibilityConfig,
+      );
+      continue;
+    }
     config[key] =
       key in item.meta ? item.meta[key] : exampleConfigurationBase()[key];
   }

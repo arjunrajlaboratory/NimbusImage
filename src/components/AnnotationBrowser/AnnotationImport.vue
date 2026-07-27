@@ -71,7 +71,7 @@
           <div class="pa-2">
             <v-checkbox
               v-model="overwriteAnnotations"
-              :label="`Overwrite ${annotationStore.annotations.length} annotations (delete current annotations)`"
+              :label="`Overwrite ${annotationStore.annotationsForIteration.length} annotations (delete current annotations)`"
               @update:model-value="
                 overwriteAnnotationsDialog = overwriteAnnotations
               "
@@ -88,7 +88,8 @@
                 <v-card-title> Overwrite annotations? </v-card-title>
                 <v-card-text>
                   This will remove
-                  {{ annotationStore.annotations.length }} annotations forever
+                  {{ annotationStore.annotationsForIteration.length }}
+                  annotations forever
                 </v-card-text>
                 <v-card-actions>
                   <v-spacer />
@@ -173,10 +174,10 @@ import {
   ImportOptions,
 } from "@/utils/annotationImport";
 import {
-  IAnnotation,
-  IAnnotationConnection,
-  IAnnotationProperty,
   IAnnotationPropertyValues,
+  ISerializedAnnotation,
+  ISerializedConnection,
+  ISerializedProperty,
   ISerializedData,
 } from "@/store/model";
 import { logError } from "@/utils/log";
@@ -188,9 +189,9 @@ const isLoadingFile = ref(false);
 const isJsonLoaded = ref(false);
 const isImporting = ref(false);
 
-const annotations = ref<IAnnotation[]>([]);
-const connections = ref<IAnnotationConnection[]>([]);
-const properties = ref<IAnnotationProperty[]>([]);
+const annotations = ref<ISerializedAnnotation[]>([]);
+const connections = ref<ISerializedConnection[]>([]);
+const properties = ref<ISerializedProperty[]>([]);
 const values = ref<IAnnotationPropertyValues>({});
 
 const importAnnotations = ref(true);

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ref } from "vue";
 import { shallowMount } from "@vue/test-utils";
 
 const { d3Chain } = vi.hoisted(() => {
@@ -148,30 +149,49 @@ describe("PropertyFilterHistogram", () => {
     expect(vm.propertyFullName).toBeNull();
   });
 
-  it("values extracts numeric values from propertyStore.propertyValues", () => {
+  it("defaultMin returns the histogram's lower bound", () => {
+    (filterStore as any).getHistogram = vi.fn().mockReturnValue([
+      { count: 3, min: 11.7, max: 50 },
+      { count: 9, min: 50, max: 100 },
+    ]);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.values).toEqual(expect.arrayContaining([10, 20, 30]));
-    expect(vm.values).toHaveLength(3);
+    expect(vm.defaultMin).toBe(11.7);
   });
 
-  it("values returns empty array when no matching property values", () => {
-    (propertyStore as any).propertyValues = {};
+  it("defaultMax returns the histogram's upper bound", () => {
+    (filterStore as any).getHistogram = vi.fn().mockReturnValue([
+      { count: 3, min: 11.7, max: 50 },
+      { count: 9, min: 50, max: 100 },
+    ]);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.values).toEqual([]);
+    expect(vm.defaultMax).toBe(100);
   });
 
-  it("defaultMin returns minimum of values", () => {
+  it("defaultMin/defaultMax fall back to 0 before the histogram loads", () => {
+    (filterStore as any).getHistogram = vi.fn().mockReturnValue([]);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.defaultMin).toBe(10);
+    expect(vm.defaultMin).toBe(0);
+    expect(vm.defaultMax).toBe(0);
   });
 
-  it("defaultMax returns maximum of values", () => {
+  it("derives the range from the histogram, not the bounded propertyValues map", () => {
+    // The server histogram is the authoritative full-dataset range; in lazy
+    // mode propertyValues holds only the visible subset, so the range must
+    // never be derived from it (no wholesale read).
+    (propertyStore as any).propertyValues = {
+      ann1: { propA: { sub1: 999 } },
+    };
+    (filterStore as any).getHistogram = vi.fn().mockReturnValue([
+      { count: 1, min: 11.7, max: 50 },
+      { count: 1, min: 50, max: 100 },
+    ]);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.defaultMax).toBe(30);
+    expect(vm.defaultMin).toBe(11.7);
+    expect(vm.defaultMax).toBe(100);
   });
 
   it("minValue getter returns defaultMin when defaultMinMax is true", () => {
@@ -276,6 +296,34 @@ describe("PropertyFilterHistogram", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.propertyFilter.id).toBe("existing-id");
+  });
+
+  it("preserves a restored range when the histogram loads", async () => {
+    const histogram = ref<any[]>([]);
+    const existingFilter = {
+      id: "existing-id",
+      propertyPath: ["propA", "sub1"],
+      range: { min: 12, max: 24 },
+      exclusive: false,
+      enabled: true,
+      valuesOrRange: "range",
+    };
+    (filterStore as any).propertyFilters = [existingFilter];
+    (filterStore as any).getHistogram = vi.fn(() => histogram.value);
+
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.defaultMinMax).toBe(false);
+    expect(vm.minValue).toBe(12);
+    expect(vm.maxValue).toBe(24);
+
+    (filterStore.updatePropertyFilter as any).mockClear();
+    histogram.value = [{ count: 5, min: 0, max: 100 }];
+    await wrapper.vm.$nextTick();
+
+    expect(vm.minValue).toBe(12);
+    expect(vm.maxValue).toBe(24);
+    expect(filterStore.updatePropertyFilter).not.toHaveBeenCalled();
   });
 
   it("hist returns histogram from filterStore", () => {
@@ -400,13 +448,18 @@ describe("PropertyFilterHistogram", () => {
     expect(call.values).toEqual([1, 2, 3]);
   });
 
-  it("updateValuesFilter does not update when input is empty", () => {
+  it("updateValuesFilter clears values when input is emptied (Codex #5)", () => {
+    // Emptying the textarea must write values: [] so the previously-applied
+    // values filter is actually cleared. The old behavior skipped the update,
+    // leaving the stale filter silently active while the UI looked cleared.
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     (filterStore.updatePropertyFilter as any).mockClear();
     vm.valuesInput = "";
     vm.updateValuesFilter();
-    expect(filterStore.updatePropertyFilter).not.toHaveBeenCalled();
+    expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
+    const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
+    expect(call.values).toEqual([]);
   });
 
   it("updateValuesFilter handles tab/newline/semicolon separators", () => {
@@ -425,7 +478,7 @@ describe("PropertyFilterHistogram", () => {
     expect(filterStore.updateHistograms).toHaveBeenCalled();
   });
 
-  it("onBeforeUnmount disables filter if it was enabled", () => {
+  it("does not mutate the filter when the component unmounts", () => {
     const existingFilter = {
       id: "test-id",
       propertyPath: ["propA", "sub1"],
@@ -437,12 +490,8 @@ describe("PropertyFilterHistogram", () => {
     (filterStore as any).propertyFilters = [existingFilter];
     const wrapper = mountComponent();
     (filterStore.updatePropertyFilter as any).mockClear();
-    // Trigger onBeforeUnmount
     wrapper.unmount();
-    // Should have been called to disable the filter
-    expect(filterStore.updatePropertyFilter).toHaveBeenCalled();
-    const call = (filterStore.updatePropertyFilter as any).mock.calls[0][0];
-    expect(call.enabled).toBe(false);
+    expect(filterStore.updatePropertyFilter).not.toHaveBeenCalled();
   });
 
   // Vuetify 3 @change migration: v-checkbox and v-btn-toggle should use @update:model-value

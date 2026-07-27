@@ -3,6 +3,7 @@ import {
   IAnnotation,
   IAnnotationConnection,
   IAnnotationBase,
+  IAnnotationStub,
   IToolConfiguration,
   IAnnotationConnectionBase,
   IWorkerInterfaceValues,
@@ -10,6 +11,12 @@ import {
   IDisplayLayer,
   IScales,
   IDataset,
+  IAnnotationImportPayload,
+  IAnnotationImportResult,
+  IAnnotationListQuery,
+  IAnnotationListPage,
+  IAnnotationListRow,
+  IAnnotationListFilters,
 } from "./model";
 
 import { logError } from "@/utils/log";
@@ -96,6 +103,59 @@ export default class AnnotationsAPI {
       annotations.push(...newAnnotations);
     }
     return annotations;
+  }
+
+  async getAnnotationStubs(datasetId: string): Promise<IAnnotationStub[]> {
+    const response = await this.client.get("upenn_annotation/stubs", {
+      params: { datasetId },
+    });
+    return (response.data as any[]).map(this.toStub);
+  }
+
+  toListRow = (item: any): IAnnotationListRow => {
+    const stub = this.toStub(item);
+    return markRaw({
+      ...stub,
+      name: item.name ?? null,
+      values: item.values || {},
+    });
+  };
+
+  async fetchAnnotationListPage(
+    query: IAnnotationListQuery,
+  ): Promise<IAnnotationListPage> {
+    const response = await this.client.post("upenn_annotation/list", query);
+    return {
+      total: response.data.total,
+      rows: (response.data.rows as any[]).map(this.toListRow),
+      offset: response.data.offset,
+    };
+  }
+
+  async fetchAnnotationListIds(
+    datasetId: string,
+    filters: IAnnotationListFilters,
+  ): Promise<string[]> {
+    const response = await this.client.post("upenn_annotation/list/ids", {
+      datasetId,
+      filters,
+    });
+    return response.data.ids as string[];
+  }
+
+  async hydrateAnnotations(
+    annotationIds: string[],
+    signal?: AbortSignal,
+  ): Promise<IAnnotation[]> {
+    if (annotationIds.length === 0) {
+      return [];
+    }
+    const response = await this.client.post(
+      "upenn_annotation/hydrate",
+      annotationIds,
+      { signal },
+    );
+    return (response.data as any[]).map(this.toAnnotation);
   }
 
   async deleteAnnotation(id: string): Promise<void> {
@@ -271,6 +331,31 @@ export default class AnnotationsAPI {
     );
   }
 
+  toStub = (item: any): IAnnotationStub => {
+    // datasetId is intentionally excluded from the stub (redundant — see
+    // ANNOTATION-STUBS.md "Resolved Design Decisions" #1).
+    const {
+      _id,
+      tags,
+      shape,
+      channel,
+      location,
+      color,
+      centroid,
+      estimatedRadius,
+    } = item;
+    return markRaw({
+      id: _id,
+      tags,
+      shape,
+      channel,
+      location,
+      color: color ?? null,
+      centroid,
+      estimatedRadius,
+    });
+  };
+
   toConnection = (item: any): IAnnotationConnection => {
     const { label, tags, _id, parentId, childId, datasetId } = item;
     return markRaw({
@@ -283,13 +368,28 @@ export default class AnnotationsAPI {
     });
   };
 
+  // Import annotations, connections and property values exported as JSON.
+  // The backend sanitizes the raw documents and remaps old ids to the newly
+  // created annotations, rolling back everything it created on failure.
+  async importAnnotationData(
+    payload: IAnnotationImportPayload,
+  ): Promise<IAnnotationImportResult> {
+    return this.client
+      .post("annotation_import", payload)
+      .then((response) => response.data);
+  }
+
   // Count endpoints
 
   async getAnnotationCount(datasetId: string): Promise<number> {
-    return this.client
-      .get("upenn_annotation/count", { params: { datasetId } })
-      .then((res) => res.data.count)
-      .catch(() => 0);
+    // Intentionally does NOT swallow errors to 0: a silent 0 is <=
+    // stubThreshold and would route a large dataset into the full-fetch (OOM)
+    // branch. Callers must handle the rejection (fetchAnnotations falls back to
+    // stub-only mode; DatasetInfo shows the count as unknown).
+    const res = await this.client.get("upenn_annotation/count", {
+      params: { datasetId },
+    });
+    return res.data.count;
   }
 
   async getConnectionCount(datasetId: string): Promise<number> {

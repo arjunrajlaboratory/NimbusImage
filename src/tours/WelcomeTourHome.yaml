@@ -85,15 +85,6 @@ steps:
     modalOverlay: true
     waitForElement: 1000
 
-  - id: chat-button-tourstep
-    route: datasetview
-    element: '[data-tour="chat-button"]'
-    title: "Chatbot"
-    text: "Click here for the NimbusImage chatbot. It uses AI to 'see' the image and help guide you through the analysis."
-    position: "bottom"
-    modalOverlay: true
-    waitForElement: 1000
-
   - id: analysis-tourstep
     route: datasetview
     title: "Analysis"

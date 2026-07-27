@@ -22,7 +22,6 @@ import "mousetrap";
 import "mousetrap/plugins/record/mousetrap-record.min.js";
 import { mousetrapDirective } from "@/utils/v-mousetrap";
 import { descriptionDirective } from "@/utils/v-description";
-import chat from "./store/chat";
 import { installTour } from "./plugins/tour";
 import { tourTriggerDirective } from "./plugins/tour-trigger.directive";
 
@@ -37,7 +36,6 @@ import girderResourcesStore from "./store/girderResources";
 
 main.initialize();
 main.setupWatchers();
-chat.initializeChatDatabase();
 
 // Wire up live store/cache counts now that all store modules have finished
 // initializing. memDiag does not import these stores itself to avoid a

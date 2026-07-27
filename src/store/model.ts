@@ -312,6 +312,8 @@ export enum ProgressType {
   PROPERTY_FETCH = "PROPERTY_FETCH",
   PROPERTY_COMPUTE = "PROPERTY_COMPUTE",
   BATCH_PROPERTY_COMPUTE = "BATCH_PROPERTY_COMPUTE",
+  PIPELINE_COMPUTE = "PIPELINE_COMPUTE",
+  BATCH_PIPELINE_COMPUTE = "BATCH_PIPELINE_COMPUTE",
   CONNECTION_FETCH = "CONNECTION_FETCH",
   CONNECTION_SAVE = "CONNECTION_SAVE",
   CONNECTION_DELETE = "CONNECTION_DELETE",
@@ -506,13 +508,31 @@ export interface IDatasetConfigurationCompatibility {
   channels: { [key: number]: string };
 }
 
+export interface IAnnotationBrowserConfig {
+  // Property columns shown in the annotation list
+  displayedPropertyPaths: string[][];
+  // Properties with a filter row in the annotation browser
+  filterPaths: string[][];
+  // Range/values and enabled state of those filter rows
+  propertyFilters: IPropertyAnnotationFilter[];
+}
+
 export interface IDatasetConfigurationBase {
   compatibility: IDatasetConfigurationCompatibility;
   layers: IDisplayLayer[];
   tools: IToolConfiguration[];
   snapshots: ISnapshot[];
   propertyIds: string[];
+  pipelines: IPipeline[];
   scales: IScales;
+  // Shared annotation-rendering tuning for this configuration. Optional for
+  // compatibility with configurations created before these settings were
+  // persisted.
+  visibilityConfig?: IVisibilityConfig;
+  // Shared annotation-browser state (displayed property columns and property
+  // filters). Optional for compatibility with configurations created before
+  // this was persisted.
+  annotationBrowserConfig?: IAnnotationBrowserConfig;
 }
 
 export interface IDatasetConfiguration extends IDatasetConfigurationBase {
@@ -1148,12 +1168,24 @@ interface IGeoJSScaleWidgetSpec {
 
 type IGeoJSScaleWidgetOptions = keyof IGeoJSScaleWidgetSpec;
 
+// https://opengeoscience.github.io/geojs/apidocs/geo.gui.domWidget.html
+// Created with a `position` of map coordinates ({ x, y }), the widget's element
+// tracks that point as the map is panned and zoomed.
+export interface IGeoJSDomWidget extends IGeoJSWidget {
+  canvas: (() => HTMLElement) & ((val: HTMLElement) => IGeoJSDomWidget);
+  layer: () => IGeoJSUiLayer;
+}
+
 // https://opengeoscience.github.io/geojs/apidocs/geo.gui.uiLayer.html
 export interface IGeoJSUiLayer extends IGeoJSLayer {
   createWidget: <WidgetName extends string, ParentType extends IGeoJsObject>(
     widgetName: WidgetName,
     arg: { parent?: ParentType; [k: string]: any },
-  ) => WidgetName extends "scale" ? IGeoJSScaleWidget : IGeoJSWidget;
+  ) => WidgetName extends "scale"
+    ? IGeoJSScaleWidget
+    : WidgetName extends "dom"
+      ? IGeoJSDomWidget
+      : IGeoJSWidget;
   deleteWidget: (widget: IGeoJSWidget) => IGeoJSUiLayer;
 }
 
@@ -1485,6 +1517,28 @@ export const AnnotationNames = {
   [AnnotationShape.Any]: "Any", // This was added to support the "Any" shape
 };
 
+// Shapes a computed property can be attached to. Must match the backend
+// annotation_property schema enum (server/models/property.py) — property
+// workers only operate on these, so a property step / materialized property
+// with any other shape would be rejected on compute.
+export const MATERIALIZABLE_PROPERTY_SHAPES: AnnotationShape[] = [
+  AnnotationShape.Point,
+  AnnotationShape.Line,
+  AnnotationShape.Polygon,
+];
+
+// Clamp an arbitrary annotation shape to one a property can be computed on,
+// falling back to Polygon (a rectangle/circle/ellipse annotation is closest to
+// a blob). Used wherever a property step derives its shape from an annotation
+// source: the AI suggestion path and the builder's tag auto-wiring.
+export function clampToMaterializablePropertyShape(
+  shape: AnnotationShape,
+): AnnotationShape {
+  return MATERIALIZABLE_PROPERTY_SHAPES.includes(shape)
+    ? shape
+    : AnnotationShape.Polygon;
+}
+
 export interface IAnnotationLocation {
   XY: number;
   Z: number;
@@ -1504,6 +1558,148 @@ export interface IAnnotationBase {
 export interface IAnnotation extends IAnnotationBase {
   id: string;
   name: string | null;
+}
+
+// --- Stub/Hydrated Annotation Architecture ---
+
+export interface IAnnotationStub {
+  id: string;
+  centroid: IGeoJSPosition;
+  location: IAnnotationLocation;
+  shape: AnnotationShape;
+  channel: number;
+  tags: string[];
+  color: string | null;
+  estimatedRadius?: number;
+}
+
+export type TAnnotationOrStub = IAnnotation | IAnnotationStub;
+
+// --- Server-side annotation list query/response ---
+
+export interface IAnnotationListSort {
+  type: "field" | "property";
+  key: string | string[]; // "location.XY" | "name" | ... | ["propId","sub"]
+  order: "asc" | "desc";
+}
+
+export interface IAnnotationListPropertyFilter {
+  path: string[];
+  mode: "range" | "values";
+  min?: number;
+  max?: number;
+  values?: number[];
+}
+
+export interface IAnnotationListFilters {
+  shape?: string;
+  tags?: { values: string[]; exclusive: boolean };
+  location?: IAnnotationLocation;
+  idSubstring?: string;
+  propertyFilters?: IAnnotationListPropertyFilter[];
+  // A list of id-sets; an annotation matches iff its _id is in EVERY set
+  // (AND of $in's). Used to apply the selection and annotation-id filters.
+  idConstraints?: string[][];
+}
+
+export interface IAnnotationListQuery {
+  datasetId: string;
+  filters: IAnnotationListFilters;
+  sort: IAnnotationListSort | null;
+  propertyPaths: string[][];
+  offset: number;
+  limit: number;
+  // When supplied, the server ignores `offset` and returns the page containing
+  // this annotation under the same filters and sort. `offset` in the response
+  // is null when the annotation is not part of the filtered result.
+  anchorId?: string;
+}
+
+// A server list row: stub fields + the requested property values.
+export interface IAnnotationListRow extends IAnnotationStub {
+  name: string | null;
+  values: IAnnotationPropertyValues[string]; // {[propId]: value | nested}
+}
+
+export interface IAnnotationListPage {
+  total: number;
+  rows: IAnnotationListRow[];
+  offset?: number | null;
+}
+
+export type THydrationMode = "shapes" | "dots";
+
+export interface IVisibilityConfig {
+  // Dataset annotation count above which stub-only (lazy) mode activates: stubs
+  // are fetched and coordinates/property values load on demand. Independent of
+  // the render budget (maxVisible).
+  stubThreshold: number;
+  // Max annotations to render (stubs or shapes) — the cap when fully zoomed in.
+  // Datasets at or below this render fully at every zoom (the size gate).
+  maxVisible: number;
+  // Floor on the zoom-adaptive render budget: at least this many are drawn at
+  // any zoom (clamped to maxVisible). So a view holding fewer than this shows
+  // everything; a busier view shows at least this many (or the zoom-rule count,
+  // whichever is higher). Set to 0 to defer entirely to the zoom rule.
+  minimumVisible: number;
+  // Max annotations to keep hydrated per visibility update — the cap when fully
+  // zoomed in.
+  maxHydrated: number;
+  // Total cap on the hydration cache (accumulates across updates; LRU-evicts
+  // beyond cap, protecting selected).
+  hydrationCacheCap: number;
+  // If true, threshold applies to total frame annotations across all layers.
+  globalThreshold: boolean;
+  // Fraction of the screen the rendered dots may cover. See revealMoreOnZoom for
+  // how this interacts with zoom.
+  coverageTarget: number;
+  // Controls how the render budget responds to zoom:
+  //   false (default): enforce coverageTarget at EVERY zoom — the budget is the
+  //     number of dots that cover coverageTarget of the screen at the current
+  //     zoom, so the view stays at ~that density (uncrowded) and reveals
+  //     everything only when you zoom into a genuinely sparse region.
+  //   true: "reveal more as you zoom in" — coverageTarget sets the zoomed-out
+  //     floor and the budget doubles per zoom level up to maxVisible, so working
+  //     zooms progressively reveal (and can crowd) more.
+  revealMoreOnZoom: boolean;
+  // Zoom hysteresis: skip the camera-driven refresh until the zoom magnification
+  // changes by this fraction (e.g. 0.2 = 20%). Panning has no threshold — any
+  // pan refreshes — so this governs zoom only.
+  viewportRefreshFraction: number;
+}
+
+// Annotation count above which the annotation browser list switches to the
+// backend-paginated (server) list, independently of stub-only mode. This is a
+// UI materialization limit (one v-data-table row per annotation, client-side
+// sort), NOT a data-loading concern like stubThreshold — a fully-fetched
+// dataset can still be too large to sort/render as a client-side table.
+export const ANNOTATION_LIST_SERVER_THRESHOLD = 20000;
+
+export const DEFAULT_VISIBILITY_CONFIG: IVisibilityConfig = {
+  stubThreshold: 100000,
+  maxVisible: 50000,
+  minimumVisible: 5000,
+  maxHydrated: 20000,
+  hydrationCacheCap: 40000,
+  globalThreshold: true,
+  coverageTarget: 0.3,
+  revealMoreOnZoom: false,
+  viewportRefreshFraction: 0.2,
+};
+
+export function resolveVisibilityConfig(
+  config?: Partial<IVisibilityConfig>,
+): IVisibilityConfig {
+  return {
+    ...DEFAULT_VISIBILITY_CONFIG,
+    ...config,
+  };
+}
+
+export function isHydratedAnnotation(
+  annotation: TAnnotationOrStub,
+): annotation is IAnnotation {
+  return "coordinates" in annotation;
 }
 
 export enum TrackPositionType {
@@ -1580,6 +1776,104 @@ export interface IAnnotationProperty extends IAnnotationPropertyConfiguration {
   id: string;
 }
 
+// Annotation setup shared by the annotation-producing tool UIs and by
+// annotation pipeline steps. (Historically defined in AnnotationConfiguration.vue,
+// which now re-exports it from here.)
+export interface IAnnotationSetup {
+  tags: string[];
+  coordinateAssignments: {
+    layer: string | null | undefined;
+    Z: {
+      type: string;
+      value: number;
+      max: number;
+    };
+    Time: {
+      type: string;
+      value: number;
+      max: number;
+    };
+  };
+  shape: AnnotationShape;
+  color: string | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Worker pipelines
+//
+// A pipeline is an ordered list of steps stored on a configuration. Each step
+// is a self-contained worker invocation: either an annotation-producing worker
+// (segmentation path) or a property-computing worker (property path). Steps do
+// not pass data in memory — each writes annotations/property values back to the
+// dataset and downstream steps read them back, joined by tags + shape.
+// See codebaseDocumentation/WORKER_PIPELINES.md.
+// ---------------------------------------------------------------------------
+
+export type TPipelineStepKind = "annotation" | "property";
+
+export interface IPipelineStepBase {
+  // Stable id, unique within the pipeline.
+  readonly id: string;
+  kind: TPipelineStepKind;
+  // Display name, defaults to the worker's interfaceName label.
+  name: string;
+  // Docker image tag.
+  image: string;
+  // The user-picked runtime parameters for this worker image.
+  workerInterfaceValues: IWorkerInterfaceValues;
+  // Skipped by the runner when false.
+  enabled: boolean;
+}
+
+export interface IAnnotationPipelineStep extends IPipelineStepBase {
+  kind: "annotation";
+  // Mirrors tool.values.annotation. `annotation.tags` ARE this step's output
+  // tags (applied to the annotations the worker produces).
+  annotation: IAnnotationSetup;
+  // Mirrors tool.values.connectTo (optional connection wiring).
+  connectTo?: {
+    tags: string[];
+    layer: string | null;
+    exclusive?: boolean;
+  };
+  // Mirrors tool.values.jobDateTag.
+  jobDateTag?: boolean;
+}
+
+export interface IPropertyPipelineStep extends IPipelineStepBase {
+  kind: "property";
+  // Which annotations this property computes on.
+  shape: AnnotationShape;
+  // Tag filter selecting INPUT annotations. Normally set to the output tags of
+  // an upstream annotation step (see tag wiring in WORKER_PIPELINES.md).
+  inputTags: { tags: string[]; exclusive: boolean };
+  // True when inputTags/shape were auto-wired from an upstream annotation step
+  // (so the builder knows it may safely refresh them; manual edits clear it).
+  autoWired?: boolean;
+  // Set lazily by the runner on first successful run: the id of the persisted
+  // IAnnotationProperty this step created. Reused on later runs. Cleared if the
+  // referenced property no longer exists (runner re-creates).
+  materializedPropertyId?: string;
+}
+
+export type TPipelineStep = IAnnotationPipelineStep | IPropertyPipelineStep;
+
+export interface IPipeline {
+  readonly id: string;
+  name: string;
+  description?: string;
+  steps: TPipelineStep[];
+  // Provenance, for UI badges.
+  origin?: "user" | "preset";
+}
+
+export interface IPipelineRunResult {
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  failedStepIndex: number | null;
+}
+
 export type TNestedValues<T> = T | { [pathName: string]: TNestedValues<T> };
 
 // Can't be an object
@@ -1597,11 +1891,52 @@ export type TPropertyHistogram = {
   max: number;
 }[];
 
+// Annotation export files are raw Mongo documents produced by
+// `GET /export/json`: the identifier lives under `_id`, and `id` isn't
+// present. These types describe that on-disk/import shape, as opposed to
+// the normalized `IAnnotation`/`IAnnotationConnection`/`IAnnotationProperty`
+// used everywhere else once the frontend has parsed a server response.
+export type ISerializedAnnotation = Omit<IAnnotation, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
+export type ISerializedConnection = Omit<IAnnotationConnection, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
+export type ISerializedProperty = Omit<IAnnotationProperty, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
 export interface ISerializedData {
-  annotations: IAnnotation[];
-  annotationConnections: IAnnotationConnection[];
-  annotationProperties: IAnnotationProperty[];
+  annotations: ISerializedAnnotation[];
+  annotationConnections: ISerializedConnection[];
+  annotationProperties: ISerializedProperty[];
   annotationPropertyValues: IAnnotationPropertyValues;
+}
+
+export interface IAnnotationImportPayload {
+  datasetId: string;
+  annotations?: ISerializedAnnotation[];
+  connections?: ISerializedConnection[];
+  propertyValues?: IAnnotationPropertyValues;
+  propertyIdMap?: { [oldPropertyId: string]: string };
+}
+
+export interface IAnnotationImportResult {
+  annotationCount: number;
+  connectionCount: number;
+  propertyValueCount: number;
+}
+
+// Storage usage and quota for a user, as reported by the girder-user-quota
+// plugin. Sizes are in bytes; quota is null when unlimited.
+export interface IUserStorageQuota {
+  used: number;
+  quota: number | null;
 }
 
 export interface IJobEventData {
@@ -2042,10 +2377,17 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
     tools: [],
     snapshots: [],
     propertyIds: [],
+    pipelines: [],
     scales: {
       pixelSize: { value: 1, unit: "m" },
       zStep: { value: 1, unit: "m" },
       tStep: { value: 1, unit: "s" },
+    },
+    visibilityConfig: resolveVisibilityConfig(),
+    annotationBrowserConfig: {
+      displayedPropertyPaths: [],
+      filterPaths: [],
+      propertyFilters: [],
     },
   };
 }
@@ -2087,13 +2429,6 @@ export const AnnotationSelectionTypesTooltips = {
 export interface IChatImage {
   data: string;
   type: string;
-  visible?: boolean;
-}
-
-export interface IChatMessage {
-  type: "user" | "assistant" | "system" | "error";
-  content: string;
-  images?: IChatImage[];
   visible?: boolean;
 }
 

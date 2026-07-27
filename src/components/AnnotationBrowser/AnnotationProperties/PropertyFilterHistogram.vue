@@ -105,17 +105,11 @@
 </template>
 
 <script setup lang="ts">
-import {
-  ref,
-  computed,
-  watch,
-  onMounted,
-  onBeforeUnmount,
-  nextTick,
-} from "vue";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
-import { arePathEquals, getValueFromObjectAndPath } from "@/utils/paths";
+import { arePathEquals } from "@/utils/paths";
+import { histogramBounds } from "@/utils/propertyValues";
 import { selectAll, event as d3Event } from "d3-selection";
 import { drag, D3DragEvent } from "d3-drag";
 
@@ -141,7 +135,11 @@ const width = ref(400);
 const height = ref(60);
 const useLog = ref(false);
 const useCDF = ref(false);
-const defaultMinMax = ref(true);
+const defaultMinMax = ref(
+  !filterStore.propertyFilters.some((filter) =>
+    arePathEquals(filter.propertyPath, props.propertyPath),
+  ),
+);
 const valuesInput = ref("");
 
 const histToPixel = computed(() => {
@@ -191,9 +189,16 @@ const maxValue = computed({
   },
 });
 
-const defaultMin = computed(() => Math.min(...values.value));
+// Default slider extent = the authoritative full-data range from the server
+// histogram, which is complete in both wholesale and lazy (stub-only) mode.
+// Falls back to 0 before the histogram loads (the watch on `hist` below syncs
+// the stored range once it arrives). The range is deliberately NOT derived
+// from propertyStore.propertyValues: in lazy mode that map holds only the
+// visible subset, so reading it would both under-represent the range and
+// reintroduce a wholesale per-annotation read.
+const defaultMin = computed(() => histogramBounds(hist.value)?.min ?? 0);
 
-const defaultMax = computed(() => Math.max(...values.value));
+const defaultMax = computed(() => histogramBounds(hist.value)?.max ?? 0);
 
 const propertyFilters = computed(() => filterStore.propertyFilters);
 
@@ -220,22 +225,6 @@ const propertyFilter = computed(() => {
 const propertyFullName = computed(() =>
   propertyStore.getFullNameFromPath(props.propertyPath),
 );
-
-const values = computed(() => {
-  const valuesForThisProperty: number[] = [];
-  const propValues = propertyStore.propertyValues;
-  for (const annotationId in propValues) {
-    const valuesPerProperty = propValues[annotationId];
-    const value = getValueFromObjectAndPath(
-      valuesPerProperty,
-      props.propertyPath,
-    );
-    if (typeof value === "number") {
-      valuesForThisProperty.push(value);
-    }
-  }
-  return valuesForThisProperty;
-});
 
 const hist = computed(() => filterStore.getHistogram(props.propertyPath) || []);
 
@@ -314,13 +303,14 @@ function parseValuesInput(input: string): number[] {
 }
 
 function updateValuesFilter() {
-  const parsedValues = parseValuesInput(valuesInput.value);
-  if (parsedValues.length) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      values: parsedValues,
-    });
-  }
+  // Always write the parsed values, even when empty. An empty list means "do
+  // not filter" (see filters.ts). Previously an empty parse was skipped, so
+  // deleting all text from the textarea left the old values filter silently
+  // active while the UI looked cleared.
+  filterStore.updatePropertyFilter({
+    ...propertyFilter.value,
+    values: parseValuesInput(valuesInput.value),
+  });
 }
 
 const debouncedUpdateValues = debounce(updateValuesFilter, 500);
@@ -354,7 +344,20 @@ function removeFilter() {
   filterStore.togglePropertyPathFiltering(props.propertyPath);
 }
 
-watch(hist, () => initializeHandles());
+watch(hist, () => {
+  // Once the server histogram (authoritative full-data range) arrives, sync the
+  // stored default range to it — only while the user is still on defaults
+  // (hasn't dragged a handle). Without this, a filter created before the
+  // histogram loaded (e.g. in stub-only mode, where propertyValues is empty)
+  // keeps a degenerate range and would filter out everything.
+  if (defaultMinMax.value) {
+    filterStore.updatePropertyFilter({
+      ...propertyFilter.value,
+      range: { min: defaultMin.value, max: defaultMax.value },
+    });
+  }
+  initializeHandles();
+});
 
 onMounted(() => {
   if (
@@ -365,22 +368,7 @@ onMounted(() => {
   }
 
   filterStore.updateHistograms();
-  if (!propertyFilter.value.enabled) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      enabled: true,
-    });
-  }
   initializeHandles();
-});
-
-onBeforeUnmount(() => {
-  if (propertyFilter.value.enabled) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      enabled: false,
-    });
-  }
 });
 
 defineExpose({
@@ -398,7 +386,6 @@ defineExpose({
   defaultMax,
   propertyFilter,
   propertyFullName,
-  values,
   hist,
   area,
   initializeHandles,

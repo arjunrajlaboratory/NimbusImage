@@ -93,7 +93,7 @@ async function submit() {
     case "location":
       const currentLocation = store.currentLocation;
       const currentLocationAnnotationIds = new Set(
-        annotationStore.annotations
+        annotationStore.annotationsForIteration
           .filter(
             ({ location }) =>
               location.Time === currentLocation.time &&

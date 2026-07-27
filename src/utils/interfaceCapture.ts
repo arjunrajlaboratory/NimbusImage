@@ -2,10 +2,11 @@ import html2canvas from "html2canvas";
 import { IChatImage, IGeoJSMap } from "@/store/model";
 import { logError } from "@/utils/log";
 
-// Screenshot helpers shared between the chat assistant (ChatComponent.vue) and
-// the automatic tool-suggestion flow (store/toolSuggestions.ts). Chat uses both
-// the interface and viewport captures; tool suggestions prefer the viewport
-// capture and send structured layer context instead of cloning the whole DOM.
+// Screenshot helpers shared across the chat assistant (ChatComponent.vue), the
+// automatic tool-suggestion flow (store/toolSuggestions.ts), and the AI panel
+// agent (store/aiPanel.ts, agent/executors.ts). Chat uses both the interface
+// and viewport captures; tool suggestions prefer the viewport capture and send
+// structured layer context instead of cloning the whole DOM.
 
 /**
  * Capture the whole application interface as a PNG data URL.

@@ -16,7 +16,7 @@
         {{ iconName }}
       </v-icon>
     </template>
-    <v-card dense class="pa-2" max-width="300">
+    <v-card class="pa-2" max-width="300">
       <!-- Loading -->
       <div v-if="loading" class="text-center pa-1">
         <v-progress-circular indeterminate size="16" width="2" />

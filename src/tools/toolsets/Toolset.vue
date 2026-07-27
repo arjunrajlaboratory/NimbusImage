@@ -41,6 +41,23 @@
           </v-btn>
         </template>
       </v-tooltip>
+      <v-spacer />
+      <v-tooltip text="Pipelines: chain worker steps and run them in sequence">
+        <template v-slot:activator="{ props: tooltipProps }">
+          <v-btn
+            v-bind="tooltipProps"
+            variant="text"
+            color="primary"
+            size="small"
+            aria-label="Pipelines"
+            :disabled="!isLoggedIn"
+            @click="openPipelines"
+          >
+            <v-icon size="small" start>mdi-sitemap-outline</v-icon>
+            Pipelines
+          </v-btn>
+        </template>
+      </v-tooltip>
     </div>
     <!-- List toolset tools, grouped by behavior: canvas tools you use directly
          on the image vs. worker tools that open a configuration panel. -->
@@ -248,6 +265,10 @@ function openToolSuggestions() {
   }
 }
 
+function openPipelines() {
+  store.setIsPipelineDialogOpen(true);
+}
+
 function stopToolSuggestionsGlow() {
   if (toolSuggestionsGlowTimeout !== null) {
     clearTimeout(toolSuggestionsGlowTimeout);
@@ -340,6 +361,7 @@ defineExpose({
   onToolCreationDialogInput,
   handleToolTypeSelected,
   openToolSuggestions,
+  openPipelines,
   triggerToolSuggestionsGlow,
   getToolPropertiesDescription,
   onWorkerDialogToggle,

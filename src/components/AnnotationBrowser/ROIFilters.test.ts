@@ -12,8 +12,15 @@ vi.mock("@/store/filters", () => ({
   },
 }));
 
+vi.mock("@/store/annotation", () => ({
+  default: {
+    isListServerMode: false,
+  },
+}));
+
 import ROIFilters from "./ROIFilters.vue";
 import filterStore from "@/store/filters";
+import annotationStore from "@/store/annotation";
 
 function mountComponent() {
   return mount(ROIFilters, {});
@@ -36,6 +43,19 @@ describe("ROIFilters", () => {
     const wrapper = mountComponent();
     wrapper.vm.removeFilter("Region Filter 0");
     expect(filterStore.removeROIFilter).toHaveBeenCalledWith("Region Filter 0");
+  });
+
+  it("hides the server-list warning when the list is client-side", () => {
+    (annotationStore as any).isListServerMode = false;
+    const wrapper = mountComponent();
+    expect(wrapper.text()).not.toContain("region filters will not be applied");
+  });
+
+  it("shows the server-list warning when the list is server-paginated", () => {
+    (annotationStore as any).isListServerMode = true;
+    const wrapper = mountComponent();
+    expect(wrapper.text()).toContain("region filters will not be applied");
+    (annotationStore as any).isListServerMode = false;
   });
 
   it("toggleEnabled calls filterStore.toggleRoiFilterEnabled with id", () => {

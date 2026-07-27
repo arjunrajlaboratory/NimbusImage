@@ -267,7 +267,7 @@
     ]
   },
   {
-    "name": "Segment Anything Model (experimental, Chrome/WebGPU only)",
+    "name": "Segment Anything Model (Chrome only)",
     "type": "samAnnotation",
     "shortName": "SAM",
     "interface": [
@@ -325,7 +325,7 @@
     ]
   },
   {
-    "name": "Segment similar objects (experimental, Chrome/WebGPU only)",
+    "name": "Segment similar objects (Chrome only)",
     "type": "objectSegmentation",
     "shortName": "Similar",
     "description": "Mark a few example objects (shift-click with SAM, shift-drag a box, or shift-drag a freehand circle) and find similar objects across the current view using SAM similarity or an in-browser classifier. Choose the selection and application methods in the panel. Works on what is displayed: zoom and adjust contrast first.",
