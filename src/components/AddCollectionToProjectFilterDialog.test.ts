@@ -274,6 +274,69 @@ describe("AddCollectionToProjectFilterDialog", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(vm.allCollections).toEqual([]);
+    // Bumping the generation before the early return (the fix above) stranded
+    // `loading`: the superseded request's finally sees a stale generation and
+    // refuses to clear it, while the new generation never enters the
+    // try/finally at all — leaving the progress bar up indefinitely.
+    expect(vm.loading).toBe(false);
+  });
+
+  // The dialog previously fetched with `limit: 0` (Girder "unlimited"), so every
+  // collection in a folder was selectable. /list clamps to 10,000, so without a
+  // paging path anything past the first page became unreachable — a regression
+  // for a folder holding more than the cap.
+  it("appends the next page at the current offset when loading more", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.allCollections = [sampleCollections[0]];
+    vm.hasMore = true;
+
+    mockListCollections.mockResolvedValue({
+      collections: [sampleCollections[1]],
+      hasMore: false,
+    });
+    await vm.loadMore();
+
+    expect(mockListCollections).toHaveBeenLastCalledWith({
+      folderId: "private-folder",
+      offset: 1,
+    });
+    expect(vm.allCollections.map((c: any) => c._id)).toEqual([
+      "existing-col-1",
+      "col-3",
+    ]);
+    expect(vm.hasMore).toBe(false);
+  });
+
+  // The alert renders outside the `v-if="loading"` guard, so leaving hasMore set
+  // keeps a clickable-but-dead button on screen during a refetch. CollectionList
+  // clears it on entry for this reason; keep the two in step.
+  it("clears hasMore when a refetch starts", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.hasMore = true;
+    let release: (value: any) => void = () => {};
+    mockListCollections.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    vm.fetchCollections();
+    await nextTick();
+    expect(vm.hasMore).toBe(false);
+
+    release({ collections: [], hasMore: false });
+  });
+
+  it("does not page while a refetch is replacing the listing", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.hasMore = true;
+    vm.loading = true;
+    mockListCollections.mockClear();
+    await vm.loadMore();
+    expect(mockListCollections).not.toHaveBeenCalled();
   });
 
   // Switching scope redefines which collections are even listed, so a selection

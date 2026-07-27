@@ -126,6 +126,26 @@ So: one fetch of up to 10,000, everything client-side, and above that a warning 
 "Load 10,000 more" that appends. That gives paging without stacking a second level of
 pagination on top of the table's own.
 
+### The add-to-project dialog pages too
+
+It has its own `loadMore`, because it sends **no** `limit` and therefore gets the
+server cap. The pre-`/list` implementation asked for `limit: 0` (Girder "unlimited")
+and received every row, so switching to `/list` without a paging path silently made
+collections past the cap unselectable — a regression, not just a missing feature.
+
+Exercise it by shrinking `MAX_COLLECTION_LIST_LIMIT` on the **server** (the dialog
+sends no limit, so the frontend constant has no effect here) and rebuilding girder.
+With a cap of 5 the folder's 43 collections page `5 → 10 → … → 43`, 43 distinct, 0
+duplicates, alert gone.
+
+Two behaviours worth knowing when driving it:
+- **Rapid repeat clicks load one page, not several.** The `loadingMore` guard
+  suppresses clicks while a page is in flight — three clicks inside one batch
+  produced exactly one page. That is correct, not a dropped click.
+- **The button moves as rows append** (~43px per page here). Re-measure its position
+  between clicks; four clicks at a stale position landed on a `DIV` and looked like a
+  dead button.
+
 ### Verifying the >10,000 path without 10,000 collections
 
 No available dataset comes close to 10,000 collections (the dev database has 44), so

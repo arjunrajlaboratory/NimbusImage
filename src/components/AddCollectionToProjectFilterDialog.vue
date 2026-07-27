@@ -72,9 +72,23 @@
         density="compact"
         class="mb-2 mx-2"
       >
-        Showing the {{ allCollections.length.toLocaleString() }} most recently
-        modified collections; search only covers these. Narrow the scope to a
-        folder to find older ones.
+        <div class="d-flex align-center flex-wrap ga-2">
+          <span class="text-body-2">
+            Showing the {{ allCollections.length.toLocaleString() }} most
+            recently modified collections; search only covers these.
+          </span>
+          <v-spacer />
+          <v-btn
+            variant="outlined"
+            color="primary"
+            size="small"
+            :loading="loadingMore"
+            :disabled="loadingMore"
+            @click="loadMore"
+          >
+            Load more
+          </v-btn>
+        </div>
       </v-alert>
 
       <v-progress-linear v-if="loading" indeterminate />
@@ -208,10 +222,14 @@ const adding = ref(false);
 const scope = ref<"folder" | "all">("folder");
 const allCollections = ref<ICollectionSummary[]>([]);
 const hasMore = ref(false);
+const loadingMore = ref(false);
 const selectedIds = ref<Set<string>>(new Set());
 const showPermissionConfirm = ref(false);
 const currentFolder = ref<IGirderLocation | null>(null);
 let fetchGeneration = 0;
+// The folderId the loaded page was fetched with, so paging continues in the
+// same scope even if currentFolder changes under us.
+let loadedFolderId: string | undefined;
 
 const existingCollectionIds = computed<Set<string>>(() => {
   return new Set(props.project.meta.collections.map((c) => c.collectionId));
@@ -258,21 +276,31 @@ async function fetchCollections() {
   // are then selectable. The folder check below is exactly such a return: it
   // runs while the private-folder lookup is still pending.
   const generation = ++fetchGeneration;
-  let folderId: string | undefined;
-  if (scope.value === "folder") {
-    const folder = currentFolder.value;
-    folderId = folder && "_id" in folder ? folder._id : undefined;
-    if (!folderId) {
-      allCollections.value = [];
-      hasMore.value = false;
-      return;
-    }
-  }
-
+  // Claim `loading` and put the folder check INSIDE the try, so the finally
+  // owns clearing it on every path. Returning from outside the try stranded the
+  // flag: the superseded request's finally sees a stale generation and refuses
+  // to clear it, and the new generation never entered the try — so the progress
+  // bar stayed up until some later fetch happened to succeed. Same shape as
+  // CollectionList.vue, whose early return is inside its try for this reason.
   loading.value = true;
+  // The hasMore alert renders outside the `v-if="loading"` guard, so leaving it
+  // set keeps a clickable-but-dead "Load more" on screen during a refetch.
+  hasMore.value = false;
   try {
+    let folderId: string | undefined;
+    if (scope.value === "folder") {
+      const folder = currentFolder.value;
+      folderId = folder && "_id" in folder ? folder._id : undefined;
+      if (!folderId) {
+        allCollections.value = [];
+        hasMore.value = false;
+        return;
+      }
+    }
+
     const page = await store.api.listCollections({ folderId });
     if (generation !== fetchGeneration) return;
+    loadedFolderId = folderId;
     allCollections.value = page.collections;
     hasMore.value = page.hasMore;
   } catch (error) {
@@ -284,6 +312,32 @@ async function fetchCollections() {
     if (generation === fetchGeneration) {
       loading.value = false;
     }
+  }
+}
+
+// The server caps a listing request, so a folder holding more than the cap needs
+// a way to reach the rest — the pre-/list implementation asked for `limit: 0`
+// and got everything, so without this those collections became unselectable.
+async function loadMore() {
+  // `loading` matters as much as `loadingMore`: paging onto a listing that is
+  // being replaced would append rows belonging to the outgoing scope.
+  if (loadingMore.value || loading.value || !hasMore.value) return;
+  const generation = fetchGeneration;
+  const folderId = loadedFolderId;
+  loadingMore.value = true;
+  try {
+    const page = await store.api.listCollections({
+      folderId,
+      offset: allCollections.value.length,
+    });
+    if (generation !== fetchGeneration) return;
+    allCollections.value = [...allCollections.value, ...page.collections];
+    hasMore.value = page.hasMore;
+  } catch (error) {
+    if (generation !== fetchGeneration) return;
+    logError("Failed to load more collections:", error);
+  } finally {
+    loadingMore.value = false;
   }
 }
 
@@ -348,6 +402,7 @@ defineExpose({
   scope,
   allCollections,
   hasMore,
+  loadingMore,
   selectedIds,
   showPermissionConfirm,
   currentFolder,
@@ -357,6 +412,7 @@ defineExpose({
   isInProject,
   toggleSelection,
   fetchCollections,
+  loadMore,
   confirmAdd,
   addCollections,
 });
