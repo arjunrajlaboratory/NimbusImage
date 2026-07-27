@@ -3,6 +3,8 @@ from girder_worker.docker.tasks import docker_run
 from girder.api.rest import getCurrentToken
 from girder.models.setting import Setting
 
+from .workerQueues import getQueueForRequest
+
 import datetime
 import json
 import re
@@ -16,7 +18,7 @@ import re
 # )
 
 
-def runJobRequest(image, datasetId, params, request):
+def runJobRequest(image, datasetId, params, requestType):
     name = params.get("name", "unknown")
     # Make sure name is a valid name for a docker container
     name = "".join(re.findall("[a-zA-Z0-9_.-]", name))
@@ -28,7 +30,7 @@ def runJobRequest(image, datasetId, params, request):
         "--token",
         getCurrentToken()["_id"],
         "--request",
-        request,
+        requestType,
         "--parameters",
         params,
     ]
@@ -49,6 +51,9 @@ def runJobRequest(image, datasetId, params, request):
                 "girder_job_title": name,
                 # 'girder_result_hooks': [testHook]
             },
+            # Route to the "cpu" or "gpu" queue by worker class; interface
+            # requests always go to "cpu" (see helpers/workerQueues.py).
+            queue=getQueueForRequest(image, requestType),
             # Limit tasks execution to 24h to avoid blocking tasks that
             # monopolize a worker
             time_limit=24 * 60 * 60
