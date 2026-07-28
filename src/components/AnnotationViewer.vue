@@ -148,7 +148,7 @@ import {
   TRACK_UNIFORM_COLOR,
   findConnectedComponents,
   trackColor,
-  trackKey,
+  trackKeyFromIndex,
 } from "@/utils/connections";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
@@ -1321,15 +1321,25 @@ function drawTimelapseConnectionsAndCentroids() {
 
   const coloring = store.timelapseTrackColoring;
   const colorSeed = store.timelapseColorSeed;
+  // Vuex caches this global analysis against `annotationConnections`. Reads
+  // during scope changes and time scrubs reuse it; only connection CRUD
+  // invalidates it. Uniform coloring does not need the index at all.
+  const trackKeyByAnnotationId =
+    coloring === "track"
+      ? connectionListStore.trackAnalysis.trackKeyByAnnotationId
+      : undefined;
 
   components.forEach((component) => {
     const componentAnnotations: ITimelapseAnnotation[] = [];
-    // Keyed by the smallest member id, not by Set insertion order, so the
-    // Connections tab's swatch resolves to the same colour for the same track.
+    // Resolve the displayed fragment through the complete connection graph.
+    // A hidden endpoint must not make the same track change color.
     const color =
       coloring === "uniform"
         ? TRACK_UNIFORM_COLOR
-        : trackColor(trackKey(component.annotations), colorSeed);
+        : trackColor(
+            trackKeyFromIndex(component.annotations, trackKeyByAnnotationId),
+            colorSeed,
+          );
 
     const annotations = Array.from(component.annotations);
     const len = annotations.length;

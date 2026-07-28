@@ -36,6 +36,15 @@ export interface IConnectedComponent {
   connections: IAnnotationConnection[];
 }
 
+export interface ITrackAnalysis {
+  components: IConnectedComponent[];
+  /**
+   * Dataset-wide connected-component identity for each connected annotation.
+   * Derived from `annotationConnections`; it is not lifecycle-managed state.
+   */
+  trackKeyByAnnotationId: ReadonlyMap<string, string>;
+}
+
 /**
  * Group connections into connected components ("tracks") via union-find.
  *
@@ -115,6 +124,50 @@ export function trackKey(annotationIds: Iterable<string>): string {
     }
   }
   return smallest ?? "";
+}
+
+/**
+ * Resolve a possibly-scoped component through a dataset-wide track index.
+ *
+ * Every member of one full component maps to the same key, so any member of a
+ * displayed/scoped fragment is sufficient. The local key is retained as a
+ * fallback for callers without a global index.
+ */
+export function trackKeyFromIndex(
+  annotationIds: Iterable<string>,
+  trackKeyByAnnotationId?: ReadonlyMap<string, string>,
+): string {
+  let smallest: string | null = null;
+  let indexedKey: string | undefined;
+  for (const annotationId of annotationIds) {
+    if (indexedKey === undefined) {
+      indexedKey = trackKeyByAnnotationId?.get(annotationId);
+    }
+    if (smallest === null || annotationId < smallest) {
+      smallest = annotationId;
+    }
+  }
+  return indexedKey ?? smallest ?? "";
+}
+
+/**
+ * Analyze the complete connection graph once.
+ *
+ * Consumers reuse this result for the global track count and for translating
+ * scoped/displayed fragments back to their dataset-wide color identity.
+ */
+export function analyzeTracks(
+  connections: IAnnotationConnection[],
+): ITrackAnalysis {
+  const components = findConnectedComponents(connections);
+  const trackKeyByAnnotationId = new Map<string, string>();
+  for (const component of components) {
+    const key = trackKey(component.annotations);
+    for (const annotationId of component.annotations) {
+      trackKeyByAnnotationId.set(annotationId, key);
+    }
+  }
+  return { components, trackKeyByAnnotationId };
 }
 
 /** The colour every track is drawn in when per-track colouring is off. */
@@ -197,6 +250,8 @@ export interface IConnectionRow {
 export interface ITrackRow {
   /** Smallest member annotation id — stable across re-renders. */
   id: string;
+  /** Dataset-wide component key used only for color consistency. */
+  colorKey: string;
   /** Member annotation ids, sorted. Drives "Select objects" on the header. */
   annotationIds: string[];
   annotationCount: number;
@@ -257,6 +312,7 @@ export function buildConnectionRows(
 export function buildTrackRows(
   rows: IConnectionRow[],
   resolve: TResolveAnnotation,
+  trackKeyByAnnotationId?: ReadonlyMap<string, string>,
 ): ITrackRow[] {
   const rowsByConnectionId = new Map(
     rows.map((row) => [row.connection.id, row]),
@@ -275,9 +331,10 @@ export function buildTrackRows(
       }
     }
     return {
-      // Sorted, so this is `trackKey(component.annotations)` — the same key the
-      // viewer colours the track by.
+      // Keep the scoped component id for expansion/labels. Color identity is
+      // deliberately separate because a scope can expose only a track tail.
       id: memberIds[0],
+      colorKey: trackKeyFromIndex(memberIds, trackKeyByAnnotationId),
       annotationIds: memberIds,
       annotationCount: memberIds.length,
       timeRange: times.length

@@ -47,7 +47,13 @@ const h = vi.hoisted(() => ({
   } as any,
 }));
 
-vi.mock("@/store", () => ({ default: { isLoggedIn: true } }));
+vi.mock("@/store", () => ({
+  default: {
+    isLoggedIn: true,
+    timelapseTrackColoring: "track",
+    timelapseColorSeed: 0,
+  },
+}));
 
 vi.mock("@/store/annotation", () => ({
   default: {
@@ -78,7 +84,7 @@ vi.mock("@/store/connectionList", () => {
 });
 
 import ConnectionList from "./ConnectionList.vue";
-import { buildConnectionRows } from "@/utils/connections";
+import { buildConnectionRows, trackColor } from "@/utils/connections";
 
 function makeConnection(
   id: string,
@@ -141,6 +147,20 @@ describe("ConnectionList", () => {
       [makeAnnotation("a", 0), makeAnnotation("b", 1)],
     );
     expect(mountComponent().vm.scopedCount).toBe(1);
+  });
+
+  it("colors a scoped track from its dataset-wide color key", () => {
+    const wrapper = mountComponent();
+    expect(
+      wrapper.vm.swatchColor({
+        id: "b",
+        colorKey: "a",
+        annotationIds: ["b", "c"],
+        annotationCount: 2,
+        timeRange: { start: 1, end: 2 },
+        rows: [],
+      }),
+    ).toBe(trackColor("a", 0));
   });
 
   // Regression: building rows depends on hydration, so it is invalidated by
@@ -414,7 +434,13 @@ describe("ConnectionList", () => {
     );
     h.state.grouping = "track";
     h.state.trackRows = [
-      { id: "a", annotationCount: 2, timeRange: null, rows: [] },
+      {
+        id: "a",
+        colorKey: "a",
+        annotationCount: 2,
+        timeRange: null,
+        rows: [],
+      },
     ];
     // The track holding c1 is collapsed; revealing must expand it.
     h.state.trackRows[0].rows = [h.state.connectionRows[0]];
@@ -449,6 +475,7 @@ describe("ConnectionList", () => {
     const wrapper = mountComponent();
     await wrapper.vm.deleteTrack({
       id: "a",
+      colorKey: "a",
       annotationIds: ["a", "b", "c"],
       annotationCount: 3,
       timeRange: { start: 0, end: 2 },

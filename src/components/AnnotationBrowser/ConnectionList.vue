@@ -337,14 +337,15 @@ function shortId(id: string) {
   return shortAnnotationId(id);
 }
 
-// `track.id` is the track key, so this is the same input the viewer colours
-// from — the swatch matches the drawn line rather than merely resembling it.
+// The scoped row id remains independent for expansion/labeling. `colorKey`
+// comes from the dataset-wide connection graph, matching the viewer even when
+// the current scope exposes only a tail of the track.
 const showTrackSwatches = computed(
   () => store.timelapseTrackColoring === "track",
 );
 
 function swatchColor(track: ITrackRow) {
-  return trackColor(track.id, store.timelapseColorSeed);
+  return trackColor(track.colorKey, store.timelapseColorSeed);
 }
 
 function trackMeta(track: ITrackRow) {

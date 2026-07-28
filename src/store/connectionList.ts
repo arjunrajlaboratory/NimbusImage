@@ -16,11 +16,12 @@ import { MAX_CONNECT_SELECTED, TIMELAPSE_CONNECTION_TAG } from "./constants";
 import { IAnnotationConnection, TAnnotationOrStub } from "./model";
 import {
   IConnectionRow,
+  ITrackAnalysis,
   ITrackRow,
+  analyzeTracks,
   buildConnectionRows,
   buildTrackRows,
   chainAnnotationsByTime,
-  findConnectedComponents,
   findTimeTies,
 } from "@/utils/connections";
 
@@ -119,7 +120,23 @@ export class ConnectionList extends VuexModule {
     if (this.grouping !== "track") {
       return [];
     }
-    return buildTrackRows(this.connectionRows, this.resolveAnnotation);
+    return buildTrackRows(
+      this.connectionRows,
+      this.resolveAnnotation,
+      this.trackAnalysis.trackKeyByAnnotationId,
+    );
+  }
+
+  /**
+   * One cached analysis of the complete connection graph.
+   *
+   * This getter depends only on the immutable `annotationConnections` array,
+   * so scope/location/filter changes reuse the same result. Connection CRUD
+   * replaces that array and invalidates the analysis, naturally handling track
+   * merges and splits without persistent track state.
+   */
+  get trackAnalysis(): ITrackAnalysis {
+    return analyzeTracks(annotation.annotationConnections);
   }
 
   /**
@@ -132,7 +149,7 @@ export class ConnectionList extends VuexModule {
    * it recomputes when connections change rather than on every render.
    */
   get trackCount(): number {
-    return findConnectedComponents(annotation.annotationConnections).length;
+    return this.trackAnalysis.components.length;
   }
 
   get isConnectionSelected() {

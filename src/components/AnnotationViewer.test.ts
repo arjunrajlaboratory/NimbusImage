@@ -4490,6 +4490,63 @@ describe("AnnotationViewer", () => {
           // Explicitly NOT the first-inserted member's colour.
           expect(segmentColors(wrapper.vm)).not.toEqual([trackColor("z1", 0)]);
         });
+
+        it("keeps a displayed track fragment on its dataset-wide color", () => {
+          mockedStore.showTimelapseMode = true;
+          mockedStore.layers = [
+            makeLayer({ id: "visible", channel: 0, visible: true }),
+          ];
+          (mockedStore.layerSliceIndexes as any).mockReturnValue({
+            xyIndex: 0,
+            zIndex: 0,
+            tIndex: 0,
+          });
+          mockedAnnotationStore.annotations = [
+            // `a` belongs to the full track but its channel is not displayed,
+            // so the viewer builds only the b-c fragment.
+            makeAnnotation({
+              id: "a",
+              channel: 1,
+              location: { XY: 0, Z: 0, Time: 0 },
+            }),
+            makeAnnotation({
+              id: "b",
+              channel: 0,
+              location: { XY: 0, Z: 0, Time: 1 },
+            }),
+            makeAnnotation({
+              id: "c",
+              channel: 0,
+              location: { XY: 0, Z: 0, Time: 2 },
+            }),
+          ];
+          mockedAnnotationStore.annotationConnections = [
+            makeConnection({ id: "c1", parentId: "a", childId: "b" }),
+            makeConnection({ id: "c2", parentId: "b", childId: "c" }),
+          ];
+          (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+            (id: string) =>
+              mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+          );
+          mockedAnnotationStore.annotationCentroids = {
+            a: { x: 10, y: 20 },
+            b: { x: 30, y: 40 },
+            c: { x: 50, y: 60 },
+          };
+          (geojsAnnotationFactory as any).mockImplementation(
+            (_shape: any, _coords: any, options: any) => {
+              const feature = mockGeoJSAnnotation("line");
+              if (options) feature.options(options);
+              return feature;
+            },
+          );
+
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+          expect(segmentColors(wrapper.vm)).toEqual([trackColor("a", 0)]);
+          expect(segmentColors(wrapper.vm)).not.toEqual([trackColor("b", 0)]);
+        });
       });
     });
   });

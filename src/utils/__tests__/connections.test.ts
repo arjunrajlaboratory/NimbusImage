@@ -7,6 +7,7 @@ import {
   TAnnotationOrStub,
 } from "@/store/model";
 import {
+  analyzeTracks,
   buildConnectionRows,
   buildTrackRows,
   chainAnnotationsByTime,
@@ -15,6 +16,7 @@ import {
   shortAnnotationId,
   trackColor,
   trackKey,
+  trackKeyFromIndex,
 } from "@/utils/connections";
 
 function makeConnection(
@@ -296,6 +298,32 @@ describe("buildConnectionRows", () => {
   });
 });
 
+describe("analyzeTracks", () => {
+  it("indexes every member by the dataset-wide component key", () => {
+    const analysis = analyzeTracks([
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+      makeConnection("c3", "x", "y"),
+    ]);
+
+    expect(analysis.components).toHaveLength(2);
+    expect(analysis.trackKeyByAnnotationId.get("a")).toBe("a");
+    expect(analysis.trackKeyByAnnotationId.get("b")).toBe("a");
+    expect(analysis.trackKeyByAnnotationId.get("c")).toBe("a");
+    expect(analysis.trackKeyByAnnotationId.get("x")).toBe("x");
+    expect(analysis.trackKeyByAnnotationId.get("y")).toBe("x");
+  });
+
+  it("resolves a scoped fragment to its dataset-wide track key", () => {
+    const { trackKeyByAnnotationId } = analyzeTracks([
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+    ]);
+
+    expect(trackKeyFromIndex(["b", "c"], trackKeyByAnnotationId)).toBe("a");
+  });
+});
+
 describe("buildTrackRows", () => {
   it("groups rows into tracks with member count and time range", () => {
     const annotations = [
@@ -344,21 +372,30 @@ describe("buildTrackRows", () => {
     expect(buildTrackRows(rows, resolve)[0].id).toBe("aaa");
   });
 
-  // The list's swatch and the viewer's line must resolve to one colour, and the
-  // only thing that guarantees that is both keying off `trackKey`.
-  it("keys the track id the same way trackKey does", () => {
+  // A scoped track row keeps its scoped id for expansion and labeling, but its
+  // swatch must use the dataset-wide identity shared with the viewer.
+  it("keeps scoped row identity separate from its global color key", () => {
     const annotations = [
-      makeAnnotation("ccc", 0),
-      makeAnnotation("aaa", 1),
-      makeAnnotation("bbb", 2),
+      makeAnnotation("a", 0),
+      makeAnnotation("b", 1),
+      makeAnnotation("c", 2),
     ];
     const resolve = resolverFor(annotations);
+    const allConnections = [
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+    ];
     const rows = buildConnectionRows(
-      [makeConnection("c1", "ccc", "aaa"), makeConnection("c2", "aaa", "bbb")],
+      // The active scope exposes only the tail of the full a-b-c track.
+      [allConnections[1]],
       resolve,
     );
-    const [track] = buildTrackRows(rows, resolve);
+    const { trackKeyByAnnotationId } = analyzeTracks(allConnections);
+    const [track] = buildTrackRows(rows, resolve, trackKeyByAnnotationId);
+
+    expect(track.id).toBe("b");
     expect(track.id).toBe(trackKey(track.annotationIds));
+    expect(track.colorKey).toBe("a");
   });
 
   it("exposes sorted member ids, agreeing with annotationCount", () => {
