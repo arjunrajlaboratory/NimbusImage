@@ -60,3 +60,60 @@ Base: `master`
   restores the exact original style, and the same feature objects are reused
   (1,425 points before and after — no rebuild).
 - **Found by:** user report, reviewing the per-track Select action.
+
+## Finding 5 — Selection panels unreachable behind the AI panel
+
+- **Severity:** High
+- **Location:** `src/components/AnnotationActionPanel.vue`,
+  `src/components/ConnectionActionPanel.vue`
+- **Summary:** Moving the selection panels clear of the Timelapse palette
+  (Finding 4's neighbour fix) keyed the new right-edge offset off a single
+  `object-browser-open` class. The Object Browser is not the only overlay that
+  holds the right edge: `.ai-panel` is `z-index: 2001` against the panels' 1000
+  and is mutually exclusive with neither timelapse mode nor the Browser. So the
+  panels moved out from under the Timelapse palette and straight under the AI
+  panel. Measured live at 1684×857 with timelapse on, AI panel open and a
+  selection: `.action-panel` 171×138px covered, `.connection-action-panel`
+  206×103px covered, and **6 of the two panels' 8 buttons failed
+  `elementFromPoint`** — including `Deselect All`, the only non-destructive way to
+  dismiss them, leaving two reachable buttons that both delete things.
+- **Status:** fixed — `rightEdgeClearX()` in `@/utils/paletteGeometry` resolves
+  the max over every open right-edge overlay and App.vue projects it as
+  `--nimbus-right-edge-clear-x`, so each panel needs one CSS rule instead of one
+  per overlay combination. Verified live: `rightVar` 556px, panels at x 953–1128,
+  `overlapsAI=false`, **0 blocked buttons** with the AI panel open and with both
+  it and the Browser open (the offset takes 556 over 544, not their sum).
+- **Found by:** self-review of the branch (`/branch-review`).
+
+## Finding 6 — Track swatches shown outside timelapse mode
+
+- **Severity:** Low
+- **Location:** `src/components/AnnotationBrowser/ConnectionList.vue`
+- **Summary:** `showTrackSwatches` was gated on the colouring option but not on
+  the mode, while `trackColor` is reached only from the timelapse draw path. With
+  the mode off the swatch therefore named a colour nothing on the canvas used —
+  measured, 248 swatches in 248 distinct hues against zero drawn connection
+  features (a timelapse link's endpoints sit on different timepoints, and normal
+  mode never co-displays them). And they could not be switched off, because the
+  only control that hides them lives in the Timelapse palette, which *is* the
+  mode. This is the pair the branch had already written into
+  `CONNECTION_LIST.md` ("a track's colour in the viewer | its swatch in the
+  Connections tab") and then missed on the mode gate.
+- **Status:** fixed — gated on `store.showTimelapseMode` as well. Verified live:
+  248 track rows throughout, swatches 248 → 0 → 248 across a mode toggle.
+- **Found by:** self-review of the branch (`/branch-review`).
+
+## Finding 7 — Delete-all guarded on a different set than it deletes
+
+- **Severity:** Low
+- **Location:** `src/components/TimelapsePanel.vue`
+- **Summary:** The button's `disabled` used the total connection count, but
+  `deleteAllTimelapseConnections` only deletes `TIMELAPSE_CONNECTION_TAG` ones.
+  On a dataset whose connections are all hand-made or from Connect-to-nearest the
+  button was enabled, the click deleted nothing, and nothing was reported. The
+  old Navigator button had no guard at all, so the guard was new here — it just
+  counted the wrong set.
+- **Status:** fixed — a separate `timelapseTaggedCount` drives the guard; the
+  readout keeps the dataset-wide total on purpose, since the timelapse view draws
+  every connection whose endpoints are displayed regardless of tag.
+- **Found by:** self-review of the branch (`/branch-review`).

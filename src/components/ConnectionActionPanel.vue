@@ -156,14 +156,12 @@ defineExpose({ selectedCount, deleteSelected, onKeydown });
 
 /* The twin of AnnotationActionPanel's rule — the Timelapse palette occupies the
    spot both panels slide to. `.stacked` still applies on top of this, so the two
-   keep stacking vertically in their new corner rather than overlapping. */
+   keep stacking vertically in their new corner rather than overlapping. See that
+   component for why the offset is one resolved variable rather than a class per
+   right-edge overlay. */
 .timelapse-palette-open .connection-action-panel {
   left: auto;
-  right: 16px;
+  right: var(--nimbus-right-edge-clear-x);
   transform: none;
-}
-
-.timelapse-palette-open.object-browser-open .connection-action-panel {
-  right: var(--nimbus-right-palette-clear-x);
 }
 </style>

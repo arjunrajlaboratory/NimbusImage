@@ -103,7 +103,7 @@
         color="error"
         size="x-small"
         class="delete-btn"
-        :disabled="connectionCount === 0 || isDeleting"
+        :disabled="timelapseTaggedCount === 0 || isDeleting"
         :loading="isDeleting"
         @click="deleteAll"
       >
@@ -121,6 +121,7 @@ import TagPicker from "./TagPicker.vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import connectionListStore from "@/store/connectionList";
+import { TIMELAPSE_CONNECTION_TAG } from "@/store/constants";
 import { TOUR_ANCHORS } from "@/tours/anchors";
 
 const isDeleting = ref(false);
@@ -142,8 +143,22 @@ const showLabels = computed({
 
 const trackColoring = computed(() => store.timelapseTrackColoring);
 
+// Every connection, deliberately: the timelapse view draws any connection whose
+// endpoints are both displayed, regardless of tag, so this is what the readout
+// beside "N tracks" is counting.
 const connectionCount = computed(
   () => annotationStore.annotationConnections.length,
+);
+
+// ...but the delete button's guard must count what the ACTION deletes, which is
+// only the tagged subset. Guarding on the total left the button enabled on a
+// dataset whose connections are all hand-made or from Connect-to-nearest, where
+// clicking it deleted nothing and reported nothing.
+const timelapseTaggedCount = computed(
+  () =>
+    annotationStore.annotationConnections.filter((connection) =>
+      connection.tags.includes(TIMELAPSE_CONNECTION_TAG),
+    ).length,
 );
 
 // Gated on the mode, for the same reason ConnectionList gates its row getters:
@@ -173,7 +188,13 @@ async function deleteAll() {
   }
 }
 
-defineExpose({ trackCount, connectionCount, showTracks, deleteAll });
+defineExpose({
+  trackCount,
+  connectionCount,
+  timelapseTaggedCount,
+  showTracks,
+  deleteAll,
+});
 </script>
 
 <style lang="scss" scoped>

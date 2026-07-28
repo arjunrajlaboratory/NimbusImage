@@ -8,11 +8,11 @@
       'any-left-palette-open': isDatasetView && anyLeftPaletteOpen,
       // The Timelapse palette sits exactly where the selection action panels
       // slide to when a left palette is open, so they move to the top-right
-      // while it is up. Both flags, because the offset from the right edge
-      // depends on whether the Object Browser is occupying it.
+      // while it is up. How far in they sit is `--nimbus-right-edge-clear-x`
+      // below, not a second class.
       'timelapse-palette-open': isDatasetView && timelapsePanel,
-      'object-browser-open': isDatasetView && annotationPanel,
     }"
+    :style="paletteGeometryVars"
   >
     <v-dialog
       v-model="helpPanelIsOpen"
@@ -405,7 +405,7 @@
     <floating-palette
       v-model="annotationPanel"
       title="Object Browser"
-      :width="512"
+      :width="OBJECT_BROWSER_WIDTH"
       :top="annotationBrowserTop"
       :max-height="annotationBrowserMaxHeight"
     >
@@ -427,8 +427,8 @@
         ref="navigatorPaletteRef"
         v-model="navigatorPanel"
         title="Navigator"
-        :left="16"
-        :width="380"
+        :left="PALETTE_INSET"
+        :width="LEFT_COLUMN_PALETTE_WIDTHS.navigator"
       >
         <navigator-panel />
       </floating-palette>
@@ -440,7 +440,7 @@
       <floating-palette
         v-model="timelapsePanel"
         title="Time Lapse"
-        :left="TIMELAPSE_PANEL_LEFT"
+        :left="RIGHT_OF_LEFT_COLUMN"
         :width="300"
       >
         <timelapse-panel />
@@ -450,8 +450,8 @@
         ref="layersPaletteRef"
         v-model="layersPanel"
         title="Layers"
-        :left="16"
-        :width="420"
+        :left="PALETTE_INSET"
+        :width="LEFT_COLUMN_PALETTE_WIDTHS.layers"
         :top="layersPanelTop"
         :max-height="layersPanelMaxHeight"
       >
@@ -461,8 +461,8 @@
       <floating-palette
         v-model="toolsPanel"
         title="Tools"
-        :left="16"
-        :width="380"
+        :left="PALETTE_INSET"
+        :width="LEFT_COLUMN_PALETTE_WIDTHS.tools"
         :top="toolsPanelTop"
         :max-height="toolsPanelMaxHeight"
       >
@@ -512,6 +512,15 @@ import volumeViewStore from "@/store/volumeView";
 import aiPanelStore from "@/store/aiPanel";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
+import {
+  LEFT_COLUMN_PALETTE_WIDTHS,
+  LEFT_PALETTE_CLEAR_X,
+  OBJECT_BROWSER_WIDTH,
+  PALETTE_GAP,
+  PALETTE_INSET,
+  RIGHT_OF_LEFT_COLUMN,
+  rightEdgeClearX,
+} from "@/utils/paletteGeometry";
 import AiPanel from "@/components/AiPanel.vue";
 import FloatingPalette from "@/components/FloatingPalette.vue";
 import { IGirderFolder } from "@/girder";
@@ -562,6 +571,17 @@ const timelapsePanel = computed({
   set: (value: boolean) => store.setShowTimelapseMode(value),
 });
 
+/**
+ * Palette geometry, projected onto `<v-app>` so the stylesheets read the same
+ * numbers `@/utils/paletteGeometry` computes instead of transcribing them.
+ *
+ * `--nimbus-right-edge-clear-x` is a single resolved offset rather than a class
+ * per overlay. The class-per-overlay version only knew about the Object Browser,
+ * which left the selection panels drawn underneath the AI panel (z-index 2001 vs
+ * their 1000) with 6 of their 8 buttons unhittable; and each new right-edge
+ * overlay would have doubled the number of CSS rules. Resolving the max here
+ * makes adding one a single term in `rightEdgeClearX`.
+ */
 // The AI panel is gated behind a build-time flag (enabled unless explicitly
 // set to "false") and requires a logged-in user: the claude_agent endpoint is
 // @access.user, so anonymous users would only hit 401s. Deployments without
@@ -571,6 +591,14 @@ const aiPanelFeatureEnabled = import.meta.env.VITE_AI_PANEL_ENABLED !== "false";
 const canUseAiPanel = computed(
   () => aiPanelFeatureEnabled && store.isLoggedIn && !!store.girderUser,
 );
+
+const paletteGeometryVars = computed(() => ({
+  "--nimbus-left-palette-clear-x": `${LEFT_PALETTE_CLEAR_X}px`,
+  "--nimbus-right-edge-clear-x": `${rightEdgeClearX({
+    objectBrowser: annotationPanel.value,
+    aiPanel: aiPanelOpen.value && canUseAiPanel.value,
+  })}px`,
+}));
 
 function toggleAiPanel() {
   if (!canUseAiPanel.value) {
@@ -740,14 +768,7 @@ function closeAllPalettes() {
 // pair and the left-zone Navigator/Layers/Tools stack.
 const PALETTE_TOP = 72; // clears the floating app bar
 const COLUMN_BOTTOM_INSET = 16;
-const STACK_GAP = 8;
-const LEFT_COLUMN_INSET = 16;
-// The left palettes are NOT all one width — Navigator and Tools are 380, Layers
-// is 420. Clearing only the Navigator's width put the Timelapse palette 32px
-// on top of Layers.
-const LEFT_COLUMN_WIDTH = 420;
-// Immediately right of the left column, over empty image space.
-const TIMELAPSE_PANEL_LEFT = LEFT_COLUMN_INSET + LEFT_COLUMN_WIDTH + STACK_GAP;
+const STACK_GAP = PALETTE_GAP;
 const MIN_BROWSER_HEIGHT = 260; // keep the Browser usable when stacked
 
 type PaletteRefEl = ComponentPublicInstance & { rootEl?: HTMLElement };

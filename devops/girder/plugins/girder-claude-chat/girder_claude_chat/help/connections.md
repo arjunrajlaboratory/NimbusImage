@@ -44,17 +44,43 @@ Let algorithms establish connections based on criteria:
 Special considerations for temporal relationships:
 
 **Time Lapse Mode**:
-- Enable with checkbox in variable navigation panel
+- Enable with the "Time lapse mode" checkbox in the Navigator palette. The checkbox only appears for datasets with more than one time point, and not while time is unrolled
+- Turning it on opens a separate **Time Lapse palette** immediately to the right of the Navigator, which holds everything the mode configures. The palette and the mode are the same switch: closing the palette turns time lapse mode off
 - Visualizes tracks as connected lines between time points
 - Line thickness reflects a connection's position relative to the current time point (segments still ahead of the playhead are drawn thicker, those already passed are thinner)
 - Skipped frame connections appear in red
-- "Track window" controls how many frames to display before/after current time
+
+**Time Lapse Palette Controls**:
+- **Window** (3–100): how many time points of track to draw on either side of the current frame. This was previously called "Track window" and lived in the Navigator
+- **Tag picker**: restrict the tracks drawn to objects carrying particular tags
+- **Labels**: show or hide the per-object time point labels
+- **Coloring** (two-button toggle): the palette icon gives every track its own color; the crossed-out-colors icon draws every track white, which is easier to read when many tracks overlap
+- **Shuffle** (shuffle icon): re-rolls the color assignment when two neighbouring tracks happen to land on similar hues. It re-permutes rather than rotating, so a second shuffle cannot land back on the palette you just rejected. Only available under per-track coloring
+- **"N tracks · M links"** readout: the dataset-wide count of tracks (connected groups of objects) and of connections. This is the place to look for "how many tracks do I have"
+- **Show tracks**: opens the Object list on the Connections tab, grouped by track
+- **Delete all timelapse connections**: removes every connection tagged "Time lapse connection". Other connections (Connect to nearest, hand-made ones) are left alone. Undoable with the undo button
 
 **Track Visualization**:
 - Objects are labeled with time point information (T=1, T=2, etc.)
-- Current time point is highlighted
+- Current time point is highlighted, and its dot is drawn larger
 - Click any object in a track to jump to that time point
-- Color-coding helps distinguish different tracks
+- Under per-track coloring each track gets its own hue, chosen so that tracks created at the same time still come out visually distinct
+- Objects not connected to any track ("orphans") are drawn gray
+- Selected objects and selected connections are both drawn in cyan, so one color means "selected" throughout the mode
+- While time lapse mode is on, the selection popup menus move to the top right of the viewport so they do not sit underneath the Time Lapse palette
+
+## Track View in the Object List
+Open the Object list, choose the **Connections** tab, and group by track (or use "Show tracks" in the Time Lapse palette). Each track gets one collapsible row:
+
+- A **color swatch** matching the color that track is drawn in, so a line picked out in the viewer can be matched to its row
+- **Track \<id\>**, followed by the object count, the time range it spans (T1–T12), and the link count. The link count is the diagnostic one: it exceeds (objects − 1) only when a track branches or carries duplicate links
+- **Clicking the row** expands it to show the individual connections *and* frames the track in the viewport — the camera centers on the track and zooms so it occupies about a fifth of the view, keeping the surrounding cells visible for context. It moves XY and Z to the track, and only nudges the time point if the current frame falls outside the track's own range. Collapsing the row leaves the camera where it is
+- **Select ▾** menu, with three choices:
+  - **Objects (N)**: selects the track's objects, feeding actions like "Connect selected", "Tag selected" and "Color selected". Endpoints whose object no longer exists are excluded from both the selection and the count
+  - **Links (M)**: selects the track's connections, feeding "Delete selected"
+  - **Both**: selects each side at once, which is usually what reviewing a track wants
+  Objects and links are separate selections feeding separate actions, so choosing one deliberately leaves the other alone. Each choice replaces its own selection rather than adding to it — use the per-row checkboxes to build up a union across tracks
+- **Delete track**: removes every connection in the track in one batched operation. The objects themselves are kept
 
 ## Managing Connections
 Tools and techniques for maintaining connection accuracy:

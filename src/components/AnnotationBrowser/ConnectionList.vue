@@ -367,8 +367,15 @@ function shortId(id: string) {
 // The scoped row id remains independent for expansion/labeling. `colorKey`
 // comes from the dataset-wide connection graph, matching the viewer even when
 // the current scope exposes only a tail of the track.
+// Gated on the MODE as well as the option. `trackColor` is only ever called from
+// the timelapse draw path, so with the mode off nothing on the canvas carries a
+// track hue — measured on a real dataset, 248 swatches in 248 distinct colours
+// against zero drawn connection features, since a timelapse link's endpoints sit
+// on different timepoints and normal mode never co-displays them. Worse, the
+// only control that hides them is in the Timelapse palette, which IS the mode,
+// so with the mode off they were unturnoffable too.
 const showTrackSwatches = computed(
-  () => store.timelapseTrackColoring === "track",
+  () => store.showTimelapseMode && store.timelapseTrackColoring === "track",
 );
 
 function swatchColor(track: ITrackRow) {

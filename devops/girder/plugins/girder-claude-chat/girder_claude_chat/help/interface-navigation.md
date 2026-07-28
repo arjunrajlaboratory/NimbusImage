@@ -2,6 +2,7 @@
 After loading your data, navigate the interface:
 - **Home Page**: Tabbed interface with "Recent Datasets", "Recent Projects", and (when sample data is configured) "Sample Datasets"
 - **Top Bar**: Buttons that open floating palettes — Navigator, Layers, Tools, 3D view, Object list, Filters, Snapshots, Settings, and Measure objects. (Connections are managed inside the Object list, not a separate top-bar tab.)
+- **Time Lapse palette**: has no top-bar button. It appears to the right of the Navigator when "Time lapse mode" is checked in the Navigator, and closing it turns the mode back off
 - **Center**: The main image viewing area fills the window; palettes open over it
 - **Floating panels**: These palettes float over the viewport as semi-transparent glass overlays (you can still see the image through them) rather than pushing it aside, and they stay open while you interact with the image
 

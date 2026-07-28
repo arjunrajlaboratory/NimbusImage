@@ -4440,8 +4440,23 @@ watch(
   },
 );
 
+// Object selection/hover has to reach BOTH layers. `restyleAnnotations` (via
+// onAnnotationStateChanged) only ever touches `annotationLayer`, so the timelapse
+// centroid dots need their own pass — without it, selecting a whole track's
+// objects from the Connections tab changed nothing on screen while its links did
+// light up, making a correct object selection read as "it selected the
+// connections instead". In place rather than a rebuild: a selection can be
+// hundreds of objects, and unlike a connection duplicate's representative, a
+// dot's identity is not a draw-time choice.
+//
+// One watcher, not two on the same pair: this file has already been bitten by
+// "everything that must happen on event X" being spread across the file rather
+// than enumerated (see the cancel list in onBeforeUnmount).
 watch([hoveredAnnotationId, selectedAnnotationIds], () => {
   onAnnotationStateChanged();
+  if (showTimelapseMode.value) {
+    restyleTimelapseFeaturesThrottled();
+  }
 });
 
 // Connection selection/hover restyles normal-mode connection lines in place —
@@ -4465,20 +4480,6 @@ watch(selectedConnectionIds, () => {
 });
 
 watch(hoveredConnectionId, () => {
-  if (showTimelapseMode.value) {
-    restyleTimelapseFeaturesThrottled();
-  }
-});
-
-// The OBJECT half of the same pair. `restyleAnnotations` (which the watcher
-// above this block drives) only touches `annotationLayer`, so without this the
-// timelapse centroid dots never reacted to object selection or hover at all —
-// selecting a whole track's objects from the Connections tab changed nothing on
-// screen, while its connections did light up, making a correct selection look
-// like it had selected the wrong thing. In place rather than a rebuild: a
-// selection can be hundreds of objects and the dots' identity is not a
-// draw-time choice, unlike a connection duplicate's representative.
-watch([selectedAnnotationIds, hoveredAnnotationId], () => {
   if (showTimelapseMode.value) {
     restyleTimelapseFeaturesThrottled();
   }

@@ -21,20 +21,20 @@
   --nimbus-glass-bg: rgba(18, 22, 30, 0.78);
   --nimbus-glass-filter: blur(28px) saturate(140%);
 
-  /* Right edge of the open left-palette column plus a 10 px gap. Surfaces
-     anchored to the canvas's left edge (bottom-left button cluster, the
-     selection action panel, future bottom-dock items) use this as their
-     "safe left" when any left palette is open. Derived from FloatingPalette
-     anchors in App.vue: left 16 + Layers palette width 420 (widest of the
-     three) + 10 px gap = 446. Update together if palette geometry changes. */
-  --nimbus-left-palette-clear-x: 446px;
+  /* Palette clearances are NOT declared here.
+     `--nimbus-left-palette-clear-x` ("safe left" for canvas-anchored surfaces
+     while any left palette is open) and `--nimbus-right-edge-clear-x` (how far
+     from the right edge a surface must sit to clear whichever right-edge
+     overlays are open) are computed in `@/utils/paletteGeometry` and set on
+     `<v-app>` by App.vue.
 
-  /* Mirror of the above for the RIGHT edge: the Object Browser's width (512)
-     plus its 16 px inset plus a 16 px gap. Used by the selection action panels
-     when timelapse mode pushes them to the top-right, because the Timelapse
-     palette occupies the spot they normally slide to (left 444 vs their 446).
-     Update together with the Object Browser's FloatingPalette width. */
-  --nimbus-right-palette-clear-x: 544px;
+     They used to live here as literals — 446px and 544px — transcribed from the
+     FloatingPalette anchors in App.vue. Two copies of one number is two chances
+     to be wrong, and both were taken: a stale copy of the Layers width drew the
+     Timelapse palette 32px over Layers, and 444 landing 2px from 446 drew the
+     selection action panels underneath the Timelapse palette. Consumers get no
+     value at all if rendered outside `<v-app>`, which drops the declaration and
+     leaves the surface unshifted — the safe direction. */
 }
 
 /* Apply Geist globally */

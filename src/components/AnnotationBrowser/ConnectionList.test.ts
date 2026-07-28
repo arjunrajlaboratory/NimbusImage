@@ -51,13 +51,16 @@ const h = vi.hoisted(() => ({
   } as any,
 }));
 
-vi.mock("@/store", () => ({
-  default: {
-    isLoggedIn: true,
-    timelapseTrackColoring: "track",
-    timelapseColorSeed: 0,
-  },
+// Mutable (and reset in beforeEach) because the swatch gate depends on the
+// timelapse mode as well as the colouring option, and both need to be driven.
+const mainStore = vi.hoisted(() => ({
+  isLoggedIn: true,
+  showTimelapseMode: true,
+  timelapseTrackColoring: "track" as string,
+  timelapseColorSeed: 0,
 }));
+
+vi.mock("@/store", () => ({ default: mainStore }));
 
 vi.mock("@/store/annotation", () => ({
   default: {
@@ -132,6 +135,9 @@ function mountComponent(isActive = true) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mainStore.showTimelapseMode = true;
+  mainStore.timelapseTrackColoring = "track";
+  mainStore.timelapseColorSeed = 0;
   h.state.scope = "all";
   h.state.grouping = "flat";
   h.state.selectedConnectionIds = new Set();
@@ -169,6 +175,27 @@ describe("ConnectionList", () => {
         rows: [],
       }),
     ).toBe(trackColor("a", 0));
+  });
+
+  /**
+   * The swatch promises "this is the colour that track is drawn in", and
+   * `trackColor` is only reached from the timelapse draw path — so with the mode
+   * off it names a colour nothing on the canvas is using. Measured on a real
+   * dataset: 248 swatches in 248 hues against zero drawn connection features.
+   * Gating on the colouring option alone also made them unturnoffable, since
+   * that toggle lives in the Timelapse palette, which *is* the mode.
+   */
+  it("hides the track swatches while timelapse mode is off", () => {
+    mainStore.showTimelapseMode = true;
+    expect(mountComponent().vm.showTrackSwatches).toBe(true);
+
+    mainStore.showTimelapseMode = false;
+    expect(mountComponent().vm.showTrackSwatches).toBe(false);
+  });
+
+  it("still hides them in the mode when colouring is uniform", () => {
+    mainStore.timelapseTrackColoring = "uniform";
+    expect(mountComponent().vm.showTrackSwatches).toBe(false);
   });
 
   // Regression: building rows depends on hydration, so it is invalidated by

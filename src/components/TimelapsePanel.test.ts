@@ -39,6 +39,7 @@ vi.mock("@/store/connectionList", () => ({ default: h.connectionList }));
 
 import TimelapsePanel from "./TimelapsePanel.vue";
 import annotationStore from "@/store/annotation";
+import { TIMELAPSE_CONNECTION_TAG } from "@/store/constants";
 
 function mountComponent() {
   return shallowMount(TimelapsePanel, {});
@@ -109,5 +110,40 @@ describe("TimelapsePanel", () => {
   it("delegates delete-all to the batched store action", async () => {
     await mountComponent().vm.deleteAll();
     expect(h.deleteAllTimelapseConnections).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The readout counts every connection (the timelapse view draws any connection
+   * whose endpoints are both displayed, tag or no tag), but
+   * `deleteAllTimelapseConnections` only deletes the tagged subset. Guarding the
+   * button on the total left it enabled on a dataset whose connections are all
+   * hand-made or from Connect-to-nearest, where the click deleted nothing and
+   * said nothing. The two counts must stay separate.
+   */
+  it("enables delete-all only when tagged connections exist", () => {
+    (annotationStore as any).annotationConnections = [
+      { id: "c1", parentId: "a", childId: "b", tags: ["nucleus"] },
+      { id: "c2", parentId: "b", childId: "c", tags: [] },
+    ];
+    const untagged = mountComponent();
+    expect(untagged.vm.connectionCount).toBe(2);
+    expect(untagged.vm.timelapseTaggedCount).toBe(0);
+    // The v-btn stub serialises the prop, so compare the string: `toBeTruthy`
+    // would pass on "false" and prove nothing.
+    expect(untagged.find(".delete-btn").attributes("disabled")).toBe("true");
+
+    (annotationStore as any).annotationConnections = [
+      { id: "c1", parentId: "a", childId: "b", tags: ["nucleus"] },
+      {
+        id: "c2",
+        parentId: "b",
+        childId: "c",
+        tags: [TIMELAPSE_CONNECTION_TAG],
+      },
+    ];
+    const tagged = mountComponent();
+    expect(tagged.vm.connectionCount).toBe(2);
+    expect(tagged.vm.timelapseTaggedCount).toBe(1);
+    expect(tagged.find(".delete-btn").attributes("disabled")).toBe("false");
   });
 });
