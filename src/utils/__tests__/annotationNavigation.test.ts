@@ -217,6 +217,54 @@ describe("goToTrack", () => {
     expect(h.setTime).toHaveBeenCalledWith(5);
   });
 
+  /**
+   * A track can span XY/Z: `Connect selected` chains whatever is selected by
+   * ascending time with no slice constraint. Taking XY/Z from one member while
+   * deriving the box and the time from ALL of them navigated to one slice and
+   * framed another — the nearest time could belong to a member that is not drawn
+   * there, so the row expanded onto empty image.
+   */
+  it("frames only the anchor slice for a cross-slice track", () => {
+    h.showTimelapseMode = false;
+    h.time = 7;
+    // Nearest to T7 is "b" on XY 1 — so XY 1 is the anchor slice.
+    addAnnotation("a", 0, 0, 0);
+    h.annotations.get("a")!.location.XY = 0;
+    addAnnotation("b", 100, 100, 8);
+    h.annotations.get("b")!.location.XY = 1;
+    addAnnotation("c", 110, 120, 9);
+    h.annotations.get("c")!.location.XY = 1;
+
+    goToTrack(["a", "b", "c"]);
+
+    expect(h.setXY).toHaveBeenCalledWith(1);
+    const [, center, width, height] = h.frameCameraInfoToExtent.mock
+      .calls[0] as any[];
+    // Box over b and c only. Including "a" at (0,0) would give a 110x120 box
+    // centred at (55, 60) — most of it empty image on a slice a isn't on.
+    expect(width).toBe(10);
+    expect(height).toBe(20);
+    expect(center).toEqual({ x: 105, y: 110 });
+    // ...and Time lands on a member of THAT slice.
+    expect(h.setTime).toHaveBeenCalledWith(8);
+  });
+
+  it("keeps Time inside the anchor slice's range in timelapse mode", () => {
+    h.showTimelapseMode = true;
+    h.time = 2;
+    // Anchor is "a" (XY 0, T0); the other slice's T8-T9 must not widen the range.
+    addAnnotation("a", 0, 0, 0);
+    h.annotations.get("a")!.location.XY = 0;
+    addAnnotation("b", 100, 100, 8);
+    h.annotations.get("b")!.location.XY = 1;
+
+    goToTrack(["a", "b"]);
+
+    expect(h.setXY).toHaveBeenCalledWith(0);
+    // T2 is outside [0, 0] on the anchor slice, so clamp to its only frame.
+    expect(h.setTime).toHaveBeenCalledWith(0);
+  });
+
   it("does not move Time outside the mode when already on a member", () => {
     h.showTimelapseMode = false;
     h.time = 5;

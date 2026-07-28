@@ -232,3 +232,56 @@ Base: `master`
   for a small nearby group. √2−1 scores 44.4°/19.4°; the three chosen steps score
   ≥65°/≥62°. A sweep found 852 qualifying steps, so this was never a tight
   constraint — just the wrong one metric.
+
+---
+
+# Codex round 3 (commit `4b827e66`)
+
+## Finding 13 — Time-jump links ignored the colouring control
+
+- **Severity:** P2 (Codex)
+- **Location:** `src/components/AnnotationViewer.vue` (`drawTimelapseTrack`)
+- **Summary:** A connection skipping a timepoint had its colour forced to
+  `#ff6b6b`, overriding both colouring modes. "Uniform" therefore left those
+  segments red among white ones — not uniform — and under per-track colouring a
+  track whose drawn segments are all jumps showed a hue swatch against red lines,
+  contradicting the swatch's whole promise.
+- **Status:** fixed — the segment keeps its track colour. A jump is still
+  unmistakable: `lineDash: [5, 5]` and `strokeOpacity: 0.7` are two independent
+  cues no other segment carries, which is what made the colour the redundant one
+  to drop. This is a deliberate visible change to pre-existing behaviour; the
+  alternative was to keep the red and document the exception, which leaves the
+  swatch lying under the default mode. `help/connections.md` updated — it
+  advertised "skipped frame connections appear in red".
+
+## Finding 14 — Ungated O(N) scan next to the gate that exists for it
+
+- **Severity:** P2 (Codex)
+- **Location:** `src/components/TimelapsePanel.vue`
+- **Summary:** `timelapseTaggedCount` (added in the previous round to fix the
+  delete guard) filters the entire connection array, ungated, in a component that
+  `v-show` keeps mounted from dataset load — so it ran on load and again on every
+  connection create or delete. It sits directly above `trackCount`, which is
+  gated on the mode for exactly this reason, and the checklist item demanding the
+  gate was written in the same commit.
+- **Status:** fixed — gated on `timelapseStore.showMode`. The checklist item now
+  says "every O(N) read", not "the panel": the granularity was the failure.
+  `connectionCount` stays ungated on purpose — it reads `.length`.
+
+## Finding 15 — Cross-slice tracks framed incoherently
+
+- **Severity:** P2 (Codex)
+- **Location:** `src/utils/annotationNavigation.ts`
+- **Summary:** `goToTrack` took XY/Z from `members[0]` on the stated assumption
+  that "a track's members share an XY/Z in every dataset this supports", while
+  computing the bounding box and time range from ALL members. The assumption is
+  false: `chainAnnotationsByTime` chains whatever is selected by ascending time
+  with no slice constraint, so `Connect selected` can build a cross-slice track.
+  The result mixes two slices — the nearest time can belong to a member on the
+  slice that was NOT navigated to, so the row expands onto empty image, and the
+  box is inflated by members that aren't drawn there.
+- **Status:** fixed — an anchor member is chosen first (nearest the current
+  frame), XY/Z comes from it, and the bounds and times come from members on that
+  slice only. Identical behaviour for the common single-slice track.
+- **Lesson:** the comment asserting the invariant was the bug. It read like a
+  justification and was never checked against the code that creates tracks.

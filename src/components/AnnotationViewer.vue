@@ -1533,8 +1533,17 @@ function drawTimelapseTrack(
       // selection or hover. Kept on the feature so the segment can be restyled
       // in place later without knowing which track it came from — a hover
       // change must not have to rebuild the layer to be visible.
+      // A time jump keeps the track's colour. It used to be forced to #ff6b6b,
+      // which broke both colouring controls: "uniform" left those segments red
+      // among white ones, so it was not uniform, and under per-track colouring a
+      // track whose drawn segments are all jumps showed a hue swatch against red
+      // lines. The jump is still unmistakable — the dash and the reduced opacity
+      // below are two independent cues that no other segment has — so the colour
+      // was a third, redundant signal that happened to be the one contradicting
+      // the swatch. Dropping it makes the swatch match the line unconditionally,
+      // which is a claim the UI now makes in both modes.
       const baseStyle: ITimelapseSegmentBaseStyle = {
-        strokeColor: isTimeJump ? "#ff6b6b" : color,
+        strokeColor: color,
         strokeWidth: isBeforeCurrent ? 3 : 6,
         strokeOpacity: isTimeJump ? 0.7 : 1,
         lineDash: isTimeJump ? [5, 5] : undefined,

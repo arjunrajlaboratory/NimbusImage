@@ -103,6 +103,48 @@ describe("TimelapsePanel", () => {
     }
   });
 
+  /**
+   * The twin of the test above, and the reason that rule is worth stating twice:
+   * `timelapseTaggedCount` shipped as an ungated O(N) filter over every
+   * connection, right below the `trackCount` gate that exists for exactly this.
+   * `v-show` keeps this component mounted from dataset load, so it ran once on
+   * load and again on every connection create or delete.
+   */
+  it("does not scan connections for tagged links while the mode is off", () => {
+    let reads = 0;
+    const connections = [
+      {
+        id: "c1",
+        parentId: "a",
+        childId: "b",
+        tags: [TIMELAPSE_CONNECTION_TAG],
+      },
+    ];
+    Object.defineProperty(annotationStore, "annotationConnections", {
+      configurable: true,
+      get() {
+        reads++;
+        return connections;
+      },
+    });
+    try {
+      h.timelapse.showMode = false;
+      const off = mountComponent();
+      expect(off.vm.timelapseTaggedCount).toBe(0);
+      const readsWhileOff = reads;
+
+      h.timelapse.showMode = true;
+      const on = mountComponent();
+      expect(on.vm.timelapseTaggedCount).toBe(1);
+      // The gate has to skip the scan, not just the arithmetic: reading the
+      // array at all is the cost being avoided.
+      expect(reads).toBeGreaterThan(readsWhileOff);
+    } finally {
+      delete (annotationStore as any).annotationConnections;
+      (annotationStore as any).annotationConnections = [];
+    }
+  });
+
   // Two steps, and dropping either leaves the user somewhere they didn't ask
   // for: the tab without the grouping lands on the flat connection list, the
   // grouping without the tab changes nothing they can see.

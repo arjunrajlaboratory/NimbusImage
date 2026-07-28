@@ -4312,7 +4312,7 @@ describe("AnnotationViewer", () => {
       // The other half of the pair: whatever hover paints, un-hover must undo,
       // and it must not clobber the base styling baked in at draw time.
       it("restores a time-jump segment's base styling when hover moves off", async () => {
-        // Times 0 → 3 skip a frame: red, dashed, 0.7 opacity.
+        // Times 0 → 3 skip a frame: dashed, 0.7 opacity (and the TRACK colour).
         setupOneSegmentTimelapseTrack(undefined, [0, 3]);
         const { segment } = await drawTrackAndGetSegment();
         const before = { ...segment.options().style };
@@ -4590,6 +4590,42 @@ describe("AnnotationViewer", () => {
           const colors = segmentColors(wrapper.vm);
           expect(colors.length).toBeGreaterThan(0);
           expect(new Set(colors)).toEqual(new Set([TRACK_UNIFORM_COLOR]));
+        });
+
+        /**
+         * A connection skipping a timepoint used to be forced to `#ff6b6b`,
+         * which broke BOTH colouring controls: "uniform" left those segments red
+         * among the white ones, and per-track showed a hue swatch against a red
+         * line for any track whose drawn segments are all jumps. The jump is
+         * still marked by two cues no other segment has — `lineDash` and reduced
+         * opacity — which is why the colour was the redundant one to drop.
+         */
+        it.each([
+          ["uniform" as const, (): string => TRACK_UNIFORM_COLOR],
+          [
+            "track" as const,
+            (): string => trackColor(trackKey(["z1", "a2"]), 0),
+          ],
+        ])("keeps a time-jump segment on the %s track colour", (mode, want) => {
+          setupOneTrack();
+          mockedTimelapseStore.trackColoring = mode;
+          // Times 0 -> 4 skip frames, so this segment is a time jump.
+          mockedAnnotationStore.annotations[1].location.Time = 4;
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+          const styles = (wrapper.vm as any).timelapseLayer
+            .annotations()
+            .map((f: any) => f.options("timelapseBaseStyle"))
+            .filter(Boolean);
+          expect(styles.length).toBeGreaterThan(0);
+          for (const style of styles) {
+            // Still unmistakably a jump...
+            expect(style.lineDash).toEqual([5, 5]);
+            expect(style.strokeOpacity).toBe(0.7);
+            // ...but on the track's colour, not a hardcoded red.
+            expect(style.strokeColor).toBe(want());
+          }
         });
 
         // The swatch in the Connections tab is computed from `trackKey`, so

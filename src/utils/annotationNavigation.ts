@@ -127,8 +127,12 @@ export function goToConnection(parentId: string, childId: string) {
  * Frame a whole track: centre on its members' bounding box and size the camera
  * so the track occupies `TRACK_VIEWPORT_FRACTION` of the viewport.
  *
- * XY and Z come from the members, because a track on a different XY/Z is not
- * drawn at all and framing it would show empty image.
+ * XY and Z come from an ANCHOR member — the one nearest the current frame —
+ * because a track on a different XY/Z is not drawn at all and framing it would
+ * show empty image. The bounding box and the time range then come from that
+ * member's slice only: a track can legitimately span slices (`Connect selected`
+ * chains by time with no slice constraint), and mixing slices means framing a box
+ * inflated by members that aren't drawn, possibly on a frame where none is.
  *
  * TIME depends on the mode, because what "visible" means does:
  *
@@ -156,19 +160,42 @@ export function goToTrack(annotationIds: string[]) {
     return;
   }
 
-  const xs = members.map((m) => m.centroid.x);
-  const ys = members.map((m) => m.centroid.y);
+  // Pick ONE member first, then derive everything from its slice.
+  //
+  // A track is not guaranteed to sit on a single XY/Z: "Connect selected" chains
+  // whatever is selected by ascending time with no slice constraint, so a
+  // cross-slice track is reachable. Taking XY/Z from one member while computing
+  // the time and bounding box from ALL of them mixes two slices together — the
+  // nearest time can belong to a member on the slice we did NOT navigate to, so
+  // the row expands onto empty image, and the box is inflated by members that
+  // aren't drawn.
+  //
+  // The anchor is the member nearest the current frame, which for the common
+  // single-slice track is the same navigation as before.
+  const anchor = members.reduce((best, member) =>
+    Math.abs(member.location.Time - store.time) <
+    Math.abs(best.location.Time - store.time)
+      ? member
+      : best,
+  );
+  const onAnchorSlice = members.filter(
+    (member) =>
+      member.location.XY === anchor.location.XY &&
+      member.location.Z === anchor.location.Z,
+  );
+
+  store.setXY(anchor.location.XY);
+  store.setZ(anchor.location.Z);
+
+  // Bounds and times from the anchor's slice only: the rest is not drawn there.
+  const xs = onAnchorSlice.map((m) => m.centroid.x);
+  const ys = onAnchorSlice.map((m) => m.centroid.y);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
 
-  // A track's members share an XY/Z in every dataset this supports; take the
-  // first rather than inventing a rule for a mixed track.
-  store.setXY(members[0].location.XY);
-  store.setZ(members[0].location.Z);
-
-  const times = members.map((m) => m.location.Time);
+  const times = onAnchorSlice.map((m) => m.location.Time);
   if (timelapse.showMode) {
     // A window of frames is drawn, so anywhere inside the range already shows it.
     const startTime = Math.min(...times);
@@ -180,11 +207,9 @@ export function goToTrack(annotationIds: string[]) {
     }
   } else {
     // One frame is drawn, so land on an actual member or nothing is visible.
-    const nearest = times.reduce((best, time) =>
-      Math.abs(time - store.time) < Math.abs(best - store.time) ? time : best,
-    );
-    if (nearest !== store.time) {
-      store.setTime(nearest);
+    // `anchor` is by construction the nearest member on this slice.
+    if (anchor.location.Time !== store.time) {
+      store.setTime(anchor.location.Time);
     }
   }
 

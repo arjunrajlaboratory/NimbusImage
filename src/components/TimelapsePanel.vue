@@ -162,11 +162,18 @@ const connectionCount = computed(
 // only the tagged subset. Guarding on the total left the button enabled on a
 // dataset whose connections are all hand-made or from Connect-to-nearest, where
 // clicking it deleted nothing and reported nothing.
-const timelapseTaggedCount = computed(
-  () =>
-    annotationStore.annotationConnections.filter((connection) =>
-      connection.tags.includes(TIMELAPSE_CONNECTION_TAG),
-    ).length,
+//
+// Gated on the mode for the same reason as `trackCount` below — and the omission
+// here is why that rule is worth stating twice. This is an O(N) scan of every
+// connection, in a component that `v-show` keeps mounted from dataset load
+// onward, so ungated it ran once on load and again on every connection create or
+// delete. `connectionCount` above needs no gate: it reads `.length`.
+const timelapseTaggedCount = computed(() =>
+  timelapseStore.showMode
+    ? annotationStore.annotationConnections.filter((connection) =>
+        connection.tags.includes(TIMELAPSE_CONNECTION_TAG),
+      ).length
+    : 0,
 );
 
 // Gated on the mode, for the same reason ConnectionList gates its row getters:

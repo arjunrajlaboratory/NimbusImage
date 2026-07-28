@@ -48,7 +48,7 @@ Special considerations for temporal relationships:
 - Turning it on opens a separate **Time Lapse palette** immediately to the right of the Navigator, which holds everything the mode configures. The palette and the mode are the same switch: closing the palette turns time lapse mode off
 - Visualizes tracks as connected lines between time points
 - Line thickness reflects a connection's position relative to the current time point (segments still ahead of the playhead are drawn thicker, those already passed are thinner)
-- Skipped frame connections appear in red
+- Connections that skip a timepoint (a gap in the track) are drawn dashed and semi-transparent, keeping their track's color
 
 **Time Lapse Palette Controls**:
 - **Window** (3–100): how many time points of track to draw on either side of the current frame. This was previously called "Track window" and lived in the Navigator
