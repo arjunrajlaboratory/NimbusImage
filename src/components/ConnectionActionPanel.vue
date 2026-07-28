@@ -153,4 +153,17 @@ defineExpose({ selectedCount, deleteSelected, onKeydown });
 .any-left-palette-open .connection-action-panel {
   transform: translateX(calc(var(--nimbus-left-palette-clear-x) - 16px));
 }
+
+/* The twin of AnnotationActionPanel's rule — the Timelapse palette occupies the
+   spot both panels slide to. `.stacked` still applies on top of this, so the two
+   keep stacking vertically in their new corner rather than overlapping. */
+.timelapse-palette-open .connection-action-panel {
+  left: auto;
+  right: 16px;
+  transform: none;
+}
+
+.timelapse-palette-open.object-browser-open .connection-action-panel {
+  right: var(--nimbus-right-palette-clear-x);
+}
 </style>

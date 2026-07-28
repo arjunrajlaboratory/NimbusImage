@@ -175,4 +175,20 @@ async function copyAnnotationIds() {
 .any-left-palette-open .action-panel {
   transform: translateX(calc(var(--nimbus-left-palette-clear-x) - 16px));
 }
+
+/* Timelapse mode: the Timelapse palette is anchored at left 444, which is where
+   the rule above slides this panel to (446) — they landed on top of each other,
+   with the palette winning. Move to the top-right instead, the one region that
+   is empty in this mode, and cancel the left shift. Ordered after that rule so
+   it wins without !important. */
+.timelapse-palette-open .action-panel {
+  left: auto;
+  right: 16px;
+  transform: none;
+}
+
+/* ...offset past the Object Browser when it holds the right edge. */
+.timelapse-palette-open.object-browser-open .action-panel {
+  right: var(--nimbus-right-palette-clear-x);
+}
 </style>

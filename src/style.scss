@@ -28,6 +28,13 @@
      anchors in App.vue: left 16 + Layers palette width 420 (widest of the
      three) + 10 px gap = 446. Update together if palette geometry changes. */
   --nimbus-left-palette-clear-x: 446px;
+
+  /* Mirror of the above for the RIGHT edge: the Object Browser's width (512)
+     plus its 16 px inset plus a 16 px gap. Used by the selection action panels
+     when timelapse mode pushes them to the top-right, because the Timelapse
+     palette occupies the spot they normally slide to (left 444 vs their 446).
+     Update together with the Object Browser's FloatingPalette width. */
+  --nimbus-right-palette-clear-x: 544px;
 }
 
 /* Apply Geist globally */

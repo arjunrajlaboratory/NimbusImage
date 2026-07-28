@@ -250,7 +250,7 @@ import connectionListStore, {
 } from "@/store/connectionList";
 import { MAX_CONNECT_SELECTED } from "@/store/constants";
 import ConnectionListRow from "@/components/AnnotationBrowser/ConnectionListRow.vue";
-import { goToConnection } from "@/utils/annotationNavigation";
+import { goToConnection, goToTrack } from "@/utils/annotationNavigation";
 import { logError } from "@/utils/log";
 import {
   IConnectionRow,
@@ -513,8 +513,20 @@ function toggleSelectAll() {
   );
 }
 
+/**
+ * Toggle the track's disclosure, and frame it in the viewer when it OPENS.
+ *
+ * Only on open, deliberately. Framing on collapse too would yank the camera
+ * back every time the user tidied up the list — including after they had panned
+ * away on purpose — whereas expanding a track is an unambiguous "show me this
+ * one".
+ */
 function toggleTrack(track: ITrackRow) {
+  const willExpand = !connectionListStore.isTrackExpanded(track.id);
   connectionListStore.toggleTrackExpanded(track.id);
+  if (willExpand) {
+    goToTrack(track.annotationIds);
+  }
 }
 
 // Navigate to the child (later) endpoint and select both endpoints so the
@@ -608,6 +620,7 @@ defineExpose({
   deleteSelected,
   deleteTrack,
   connectSelected,
+  toggleTrack,
   selectTrackObjects,
   selectTrackConnections,
   selectTrackBoth,

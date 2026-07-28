@@ -6,6 +6,12 @@
       'datasetview-mode': isDatasetView,
       'left-palettes-open': isDatasetView && allLeftPalettesOpen,
       'any-left-palette-open': isDatasetView && anyLeftPaletteOpen,
+      // The Timelapse palette sits exactly where the selection action panels
+      // slide to when a left palette is open, so they move to the top-right
+      // while it is up. Both flags, because the offset from the right edge
+      // depends on whether the Object Browser is occupying it.
+      'timelapse-palette-open': isDatasetView && timelapsePanel,
+      'object-browser-open': isDatasetView && annotationPanel,
     }"
   >
     <v-dialog

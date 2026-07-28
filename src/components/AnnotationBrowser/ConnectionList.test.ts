@@ -12,6 +12,7 @@ import {
 const h = vi.hoisted(() => ({
   setSelected: vi.fn(),
   goToConnection: vi.fn(),
+  goToTrack: vi.fn(),
   deleteConnectionsById: vi.fn(),
   deleteSelectedConnections: vi.fn(),
   deleteSelectedInScopeConnections: vi.fn(),
@@ -67,6 +68,7 @@ vi.mock("@/store/annotation", () => ({
 
 vi.mock("@/utils/annotationNavigation", () => ({
   goToConnection: h.goToConnection,
+  goToTrack: h.goToTrack,
 }));
 
 vi.mock("@/store/connectionList", () => {
@@ -489,6 +491,43 @@ describe("ConnectionList", () => {
     });
     expect(h.deleteConnectionsById).toHaveBeenCalledTimes(1);
     expect(h.deleteConnectionsById).toHaveBeenCalledWith(["c1", "c2"]);
+  });
+
+  /**
+   * Expanding a track is an unambiguous "show me this one", so it frames the
+   * track in the viewer. Collapsing is not — framing on both would yank the
+   * camera back every time the user tidied the list, including after they had
+   * panned away on purpose.
+   */
+  describe("track disclosure framing", () => {
+    function trackRow() {
+      return {
+        id: "a",
+        colorKey: "a",
+        annotationIds: ["a", "b"],
+        annotationCount: 2,
+        timeRange: { start: 0, end: 1 },
+        rows: [],
+      };
+    }
+
+    it("expanding a track frames it, collapsing leaves the camera alone", () => {
+      const wrapper = mountComponent();
+
+      // Collapsed -> expanding.
+      h.state.isTrackExpanded = () => false;
+      wrapper.vm.toggleTrack(trackRow());
+      expect(h.state.toggleTrackExpanded).toHaveBeenCalledWith("a");
+      expect(h.goToTrack).toHaveBeenCalledWith(["a", "b"]);
+
+      vi.clearAllMocks();
+
+      // Expanded -> collapsing.
+      h.state.isTrackExpanded = () => true;
+      wrapper.vm.toggleTrack(trackRow());
+      expect(h.state.toggleTrackExpanded).toHaveBeenCalledWith("a");
+      expect(h.goToTrack).not.toHaveBeenCalled();
+    });
   });
 
   // --- Per-track Select menu ---

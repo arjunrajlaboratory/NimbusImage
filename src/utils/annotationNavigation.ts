@@ -1,10 +1,21 @@
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import { simpleCentroid } from "@/utils/annotation";
-import { frameCameraInfo, recenterCameraInfo } from "@/utils/camera";
+import {
+  frameCameraInfo,
+  frameCameraInfoToExtent,
+  recenterCameraInfo,
+} from "@/utils/camera";
 
 /** Fraction of the viewport a framed connection should occupy. */
 const CONNECTION_FRAME_PADDING = 1.6;
+
+/**
+ * Fraction of the viewport a framed track should occupy. Deliberately well
+ * under 1: a track filling the frame edge to edge loses the surrounding context
+ * that makes it interpretable — neighbouring cells, which way it is heading.
+ */
+const TRACK_VIEWPORT_FRACTION = 0.2;
 
 /**
  * Move the viewer to an annotation's location and recenter on it.
@@ -109,4 +120,67 @@ export function goToConnection(parentId: string, childId: string) {
   );
   annotationStore.setHoveredAnnotationId(target.id);
   annotationStore.ensureHydrated([parentId, childId]);
+}
+
+/**
+ * Frame a whole track: centre on its members' bounding box and size the camera
+ * so the track occupies `TRACK_VIEWPORT_FRACTION` of the viewport.
+ *
+ * XY and Z come from the members, because a track on a different XY/Z is not
+ * drawn at all and framing it would show empty image. TIME is deliberately left
+ * alone unless the current frame lies outside the track's range — in timelapse
+ * mode Time is the window's centre and the user scrubs it on purpose, so moving
+ * it would fight them. When it IS outside, the track is entirely off-window and
+ * would render as nothing, so Time is clamped to the nearest end of the range
+ * rather than jumped to the middle: the smallest move that makes the click do
+ * something.
+ *
+ * Unlike `goToConnection` this zooms in as well as out — clicking a track from a
+ * zoomed-out view should bring it up to a usable size, which is the whole point.
+ */
+export function goToTrack(annotationIds: string[]) {
+  const members = annotationIds
+    .map((id) => resolveEndpoint(id))
+    .filter((member): member is NonNullable<typeof member> => member !== null);
+  if (members.length === 0) {
+    return;
+  }
+
+  const xs = members.map((m) => m.centroid.x);
+  const ys = members.map((m) => m.centroid.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+
+  // A track's members share an XY/Z in every dataset this supports; take the
+  // first rather than inventing a rule for a mixed track.
+  store.setXY(members[0].location.XY);
+  store.setZ(members[0].location.Z);
+
+  const times = members.map((m) => m.location.Time);
+  const startTime = Math.min(...times);
+  const endTime = Math.max(...times);
+  if (store.time < startTime) {
+    store.setTime(startTime);
+  } else if (store.time > endTime) {
+    store.setTime(endTime);
+  }
+
+  // Clamp to what the map can actually show. Without a max, a track whose
+  // members sit within a pixel of each other asks for effectively infinite
+  // zoom; GeoJS would clamp `map.zoom()` silently and leave the store's zoom and
+  // gcsBounds describing a viewport that never existed.
+  const zoomRange = store.maps[0]?.map?.zoomRange?.();
+  store.setCameraInfo(
+    frameCameraInfoToExtent(
+      store.cameraInfo,
+      { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
+      maxX - minX,
+      maxY - minY,
+      TRACK_VIEWPORT_FRACTION,
+      { maxZoom: zoomRange?.max, minZoom: zoomRange?.min },
+    ),
+  );
+  annotationStore.ensureHydrated(annotationIds);
 }
