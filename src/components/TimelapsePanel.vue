@@ -35,7 +35,7 @@
         mandatory
         divided
         variant="outlined"
-        @update:model-value="store.setTimelapseTrackColoring"
+        @update:model-value="timelapseStore.setTrackColoring"
       >
         <v-tooltip text="Give each track its own color">
           <template v-slot:activator="{ props: activatorProps }">
@@ -71,7 +71,7 @@
             icon
             aria-label="Shuffle track colors"
             :disabled="trackColoring !== 'track'"
-            @click="store.shuffleTimelapseColors"
+            @click="timelapseStore.shuffleColors"
           >
             <v-icon size="small">mdi-shuffle-variant</v-icon>
           </v-btn>
@@ -121,27 +121,28 @@ import TagPicker from "./TagPicker.vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import connectionListStore from "@/store/connectionList";
+import timelapseStore from "@/store/timelapse";
 import { TIMELAPSE_CONNECTION_TAG } from "@/store/constants";
 import { TOUR_ANCHORS } from "@/tours/anchors";
 
 const isDeleting = ref(false);
 
 const trackWindow = computed({
-  get: () => store.timelapseModeWindow,
-  set: (value: number) => store.setTimelapseModeWindow(value),
+  get: () => timelapseStore.modeWindow,
+  set: (value: number) => timelapseStore.setModeWindow(value),
 });
 
 const timelapseTags = computed({
-  get: () => store.timelapseTags,
-  set: (value: string[]) => store.setTimelapseTags(value),
+  get: () => timelapseStore.tags,
+  set: (value: string[]) => timelapseStore.setTags(value),
 });
 
 const showLabels = computed({
-  get: () => store.showTimelapseLabels,
-  set: (value: boolean) => store.setShowTimelapseLabels(value),
+  get: () => timelapseStore.showLabels,
+  set: (value: boolean) => timelapseStore.setShowLabels(value),
 });
 
-const trackColoring = computed(() => store.timelapseTrackColoring);
+const trackColoring = computed(() => timelapseStore.trackColoring);
 
 // Every connection, deliberately: the timelapse view draws any connection whose
 // endpoints are both displayed, regardless of tag, so this is what the readout
@@ -168,7 +169,7 @@ const timelapseTaggedCount = computed(
 // every dataset with connections — and again on every connection create or
 // delete, doubling the work the draw path is already doing.
 const trackCount = computed(() =>
-  store.showTimelapseMode ? connectionListStore.trackCount : 0,
+  timelapseStore.showMode ? connectionListStore.trackCount : 0,
 );
 
 // Open the Object Browser on the track view. Sets the grouping too: landing on

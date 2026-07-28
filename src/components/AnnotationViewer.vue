@@ -52,6 +52,7 @@ import {
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import connectionListStore from "@/store/connectionList";
+import timelapseStore from "@/store/timelapse";
 import propertiesStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import lineScanStore from "@/store/lineScan";
@@ -352,9 +353,9 @@ const shouldDrawConnections = computed(
   (): boolean => store.drawAnnotationConnections,
 );
 const showTooltips = computed((): boolean => store.showTooltips);
-const showTimelapseMode = computed((): boolean => store.showTimelapseMode);
-const timelapseModeWindow = computed((): number => store.timelapseModeWindow);
-const showTimelapseLabels = computed((): boolean => store.showTimelapseLabels);
+const showTimelapseMode = computed((): boolean => timelapseStore.showMode);
+const timelapseModeWindow = computed((): number => timelapseStore.modeWindow);
+const showTimelapseLabels = computed((): boolean => timelapseStore.showLabels);
 const filteredAnnotationTooltips = computed(
   (): boolean => store.filteredAnnotationTooltips,
 );
@@ -1306,7 +1307,7 @@ function drawTimelapseConnectionsAndCentroids() {
 
   const tlModeWindow = timelapseModeWindow.value;
   const currentTime = time.value;
-  const timelapseTags = store.timelapseTags;
+  const timelapseTags = timelapseStore.tags;
 
   const displayedIds = getDisplayedAnnotationIdsAcrossTime();
 
@@ -1322,8 +1323,8 @@ function drawTimelapseConnectionsAndCentroids() {
 
   const components = findConnectedComponents(filteredConnections);
 
-  const coloring = store.timelapseTrackColoring;
-  const colorSeed = store.timelapseColorSeed;
+  const coloring = timelapseStore.trackColoring;
+  const colorSeed = timelapseStore.colorSeed;
   // Vuex caches this global analysis against `annotationConnections`. Reads
   // during scope changes and time scrubs reuse it; only connection CRUD
   // invalidates it. Uniform coloring does not need the index at all.
@@ -4499,10 +4500,10 @@ watch(
   [
     showTimelapseMode,
     timelapseModeWindow,
-    () => store.timelapseTags,
+    () => timelapseStore.tags,
     showTimelapseLabels,
-    () => store.timelapseTrackColoring,
-    () => store.timelapseColorSeed,
+    () => timelapseStore.trackColoring,
+    () => timelapseStore.colorSeed,
   ],
   () => {
     onTimelapseModeChanged();

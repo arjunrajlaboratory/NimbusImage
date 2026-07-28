@@ -249,6 +249,7 @@ import connectionListStore, {
   TConnectionScope,
 } from "@/store/connectionList";
 import { MAX_CONNECT_SELECTED } from "@/store/constants";
+import timelapseStore from "@/store/timelapse";
 import ConnectionListRow from "@/components/AnnotationBrowser/ConnectionListRow.vue";
 import { goToConnection, goToTrack } from "@/utils/annotationNavigation";
 import { logError } from "@/utils/log";
@@ -375,11 +376,11 @@ function shortId(id: string) {
 // only control that hides them is in the Timelapse palette, which IS the mode,
 // so with the mode off they were unturnoffable too.
 const showTrackSwatches = computed(
-  () => store.showTimelapseMode && store.timelapseTrackColoring === "track",
+  () => timelapseStore.showMode && timelapseStore.trackColoring === "track",
 );
 
 function swatchColor(track: ITrackRow) {
-  return trackColor(track.colorKey, store.timelapseColorSeed);
+  return trackColor(track.colorKey, timelapseStore.colorSeed);
 }
 
 function trackMeta(track: ITrackRow) {

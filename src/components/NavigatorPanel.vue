@@ -97,6 +97,7 @@ import { ref, computed, watch, onMounted } from "vue";
 import ValueSlider from "./ValueSlider.vue";
 import LargeImageDropdown from "./LargeImageDropdown.vue";
 import store from "@/store";
+import timelapseStore from "@/store/timelapse";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { logError } from "@/utils/log";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
@@ -193,8 +194,8 @@ const timeLabel = computed(() => {
 });
 
 const timelapseMode = computed({
-  get: () => store.showTimelapseMode,
-  set: (value: boolean) => store.setShowTimelapseMode(value),
+  get: () => timelapseStore.showMode,
+  set: (value: boolean) => timelapseStore.setShowMode(value),
 });
 
 const mousetrapSliders: IHotkey[] = [

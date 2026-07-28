@@ -8,18 +8,22 @@ const h = vi.hoisted(() => ({
   openAnnotationBrowserTab: vi.fn(),
   deleteAllTimelapseConnections: vi.fn(),
   main: {
-    showTimelapseMode: true,
-    timelapseModeWindow: 10,
-    timelapseTags: [] as string[],
-    showTimelapseLabels: true,
-    timelapseTrackColoring: "track",
-    timelapseColorSeed: 0,
-    setTimelapseModeWindow: vi.fn(),
-    setTimelapseTags: vi.fn(),
-    setShowTimelapseLabels: vi.fn(),
-    setTimelapseTrackColoring: vi.fn(),
-    shuffleTimelapseColors: vi.fn(),
+    // Only the Object Browser routing lives in the main store now; the mode and
+    // everything it configures moved to `@/store/timelapse`.
     openAnnotationBrowserTab: vi.fn(),
+  } as any,
+  timelapse: {
+    showMode: true,
+    modeWindow: 10,
+    tags: [] as string[],
+    showLabels: true,
+    trackColoring: "track",
+    colorSeed: 0,
+    setModeWindow: vi.fn(),
+    setTags: vi.fn(),
+    setShowLabels: vi.fn(),
+    setTrackColoring: vi.fn(),
+    shuffleColors: vi.fn(),
   } as any,
   connectionList: {
     trackCount: 0,
@@ -28,6 +32,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/store", () => ({ default: h.main }));
+vi.mock("@/store/timelapse", () => ({ default: h.timelapse }));
 vi.mock("@/store/annotation", () => ({
   default: {
     annotationConnections: [] as unknown[],
@@ -48,8 +53,8 @@ function mountComponent() {
 describe("TimelapsePanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    h.main.showTimelapseMode = true;
-    h.main.timelapseTrackColoring = "track";
+    h.timelapse.showMode = true;
+    h.timelapse.trackColoring = "track";
     h.main.openAnnotationBrowserTab = vi.fn();
     h.connectionList.setGrouping = vi.fn();
     h.connectionList.trackCount = 0;
@@ -74,20 +79,26 @@ describe("TimelapsePanel", () => {
       },
     });
 
-    h.main.showTimelapseMode = false;
-    const off = mountComponent();
-    expect(reads).toBe(0);
-    expect(off.vm.trackCount).toBe(0);
-    off.unmount();
+    // The accessor MUST come back off in a finally. Without it, one failed
+    // assertion here left a getter-only `trackCount` on the shared mock and the
+    // next four tests all died on "Cannot set property trackCount" — four
+    // failures reported for one cause.
+    try {
+      h.timelapse.showMode = false;
+      const off = mountComponent();
+      expect(reads).toBe(0);
+      expect(off.vm.trackCount).toBe(0);
+      off.unmount();
 
-    h.main.showTimelapseMode = true;
-    const on = mountComponent();
-    expect(on.vm.trackCount).toBe(7);
-    expect(reads).toBeGreaterThan(0);
-    on.unmount();
-
-    delete (h.connectionList as any).trackCount;
-    h.connectionList.trackCount = 0;
+      h.timelapse.showMode = true;
+      const on = mountComponent();
+      expect(on.vm.trackCount).toBe(7);
+      expect(reads).toBeGreaterThan(0);
+      on.unmount();
+    } finally {
+      delete (h.connectionList as any).trackCount;
+      h.connectionList.trackCount = 0;
+    }
   });
 
   // Two steps, and dropping either leaves the user somewhere they didn't ask

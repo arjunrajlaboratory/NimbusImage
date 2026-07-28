@@ -75,7 +75,6 @@ import {
   IVisibilityConfig,
   IAnnotationBrowserConfig,
   IUserStorageQuota,
-  TTimelapseTrackColoring,
   TAnnotationBrowserTab,
 } from "./model";
 import {
@@ -399,14 +398,7 @@ export class Main extends VuexModule {
   unrollZ: boolean = false;
   unrollT: boolean = false;
 
-  showTimelapseMode: boolean = false;
-  timelapseModeWindow: number = 10;
-  timelapseTags: string[] = [];
-  showTimelapseLabels: boolean = true;
-  timelapseTrackColoring: TTimelapseTrackColoring = "track";
-  // Rotates every track hue. Bumped by "Shuffle colors" when two neighbouring
-  // tracks happen to land on similar hues.
-  timelapseColorSeed: number = 0;
+  // Timelapse mode's state lives in `src/store/timelapse.ts`.
 
   maps: IMapEntry[] = [];
 
@@ -728,45 +720,6 @@ export class Main extends VuexModule {
   @Mutation
   public setShowTooltips(value: boolean) {
     this.showTooltips = value;
-  }
-
-  @Mutation
-  public setShowTimelapseMode(value: boolean) {
-    this.showTimelapseMode = value;
-  }
-
-  @Mutation
-  public setTimelapseModeWindow(value: number) {
-    this.timelapseModeWindow = value;
-  }
-
-  @Mutation
-  public setTimelapseTags(value: string[]) {
-    this.timelapseTags = value;
-  }
-
-  @Mutation
-  public setShowTimelapseLabels(value: boolean) {
-    this.showTimelapseLabels = value;
-  }
-
-  @Mutation
-  public setTimelapseTrackColoring(value: TTimelapseTrackColoring) {
-    this.timelapseTrackColoring = value;
-  }
-
-  @Mutation
-  public setTimelapseColorSeed(value: number) {
-    this.timelapseColorSeed = value;
-  }
-
-  /**
-   * Re-roll the track hue assignment. Steps rather than randomises so a second
-   * shuffle can't land back on the palette the user just rejected.
-   */
-  @Mutation
-  public shuffleTimelapseColors() {
-    this.timelapseColorSeed += 1;
   }
 
   @Mutation

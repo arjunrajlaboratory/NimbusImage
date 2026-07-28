@@ -510,6 +510,7 @@ import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import volumeViewStore from "@/store/volumeView";
 import aiPanelStore from "@/store/aiPanel";
+import timelapseStore from "@/store/timelapse";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
 import {
@@ -567,8 +568,8 @@ const aiPanelOpen = ref(false);
 // the left-zone stacking treat it as part of the Navigator/Layers/Tools column,
 // which is exactly what it is positioned to avoid.
 const timelapsePanel = computed({
-  get: () => store.showTimelapseMode,
-  set: (value: boolean) => store.setShowTimelapseMode(value),
+  get: () => timelapseStore.showMode,
+  set: (value: boolean) => timelapseStore.setShowMode(value),
 });
 
 /**

@@ -99,7 +99,7 @@ Base: `master`
   mode. This is the pair the branch had already written into
   `CONNECTION_LIST.md` ("a track's colour in the viewer | its swatch in the
   Connections tab") and then missed on the mode gate.
-- **Status:** fixed — gated on `store.showTimelapseMode` as well. Verified live:
+- **Status:** fixed — gated on `timelapseStore.showMode` as well. Verified live:
   248 track rows throughout, swatches 248 → 0 → 248 across a mode toggle.
 - **Found by:** self-review of the branch (`/branch-review`).
 
@@ -117,3 +117,29 @@ Base: `master`
   readout keeps the dataset-wide total on purpose, since the timelapse view draws
   every connection whose endpoints are displayed regardless of tag.
 - **Found by:** self-review of the branch (`/branch-review`).
+
+## Finding 8 — Timelapse state in the main store module
+
+- **Severity:** Low
+- **Location:** `src/store/index.ts`
+- **Summary:** Six timelapse fields and their seven mutations had accumulated in
+  `src/store/index.ts`, against the guideline that a distinct feature area gets
+  its own focused module rather than growing the 2000-line main one. Deferred
+  through two review rounds as a large behaviour-neutral edit to this feature's
+  main safety net, then explicitly requested.
+- **Status:** fixed — extracted to `src/store/timelapse.ts` (`showMode`,
+  `modeWindow`, `tags`, `showLabels`, `trackColoring`, `colorSeed`). Mechanical
+  because none of it is persisted: no `syncConfiguration` or dataset-view path
+  touches these fields, so there was nothing to re-point but readers.
+  `annotationBrowserTab` and `isAnnotationPanelOpen` deliberately stayed —
+  they are panel-visibility state that App.vue owns alongside the other palette
+  flags, not timelapse state.
+- **Verification:** the risk here was the test harness, not the source. The new
+  `@/store/timelapse` mock must be `reactive()` or every timelapse draw test
+  passes against a layer that was never rebuilt. Confirmed by breaking it:
+  a plain-object mock fails 6 tests including both colouring-watch tests.
+  Then live, driving the new module's mutations from a fresh page load —
+  mode off 0 points / 0 segments; on 1,966 / 1,714 in 119 colours; uniform the
+  same counts in **1** colour; shuffle 120 colours with the sampled hue changed;
+  window 30 → 2,728 / 2,488. `main` retains no timelapse field, and
+  `timelapse-palette-open` still tracks the mode.

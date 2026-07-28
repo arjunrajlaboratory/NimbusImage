@@ -51,16 +51,17 @@ const h = vi.hoisted(() => ({
   } as any,
 }));
 
+vi.mock("@/store", () => ({ default: { isLoggedIn: true } }));
+
 // Mutable (and reset in beforeEach) because the swatch gate depends on the
 // timelapse mode as well as the colouring option, and both need to be driven.
-const mainStore = vi.hoisted(() => ({
-  isLoggedIn: true,
-  showTimelapseMode: true,
-  timelapseTrackColoring: "track" as string,
-  timelapseColorSeed: 0,
+const timelapseStore = vi.hoisted(() => ({
+  showMode: true,
+  trackColoring: "track" as string,
+  colorSeed: 0,
 }));
 
-vi.mock("@/store", () => ({ default: mainStore }));
+vi.mock("@/store/timelapse", () => ({ default: timelapseStore }));
 
 vi.mock("@/store/annotation", () => ({
   default: {
@@ -135,9 +136,9 @@ function mountComponent(isActive = true) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mainStore.showTimelapseMode = true;
-  mainStore.timelapseTrackColoring = "track";
-  mainStore.timelapseColorSeed = 0;
+  timelapseStore.showMode = true;
+  timelapseStore.trackColoring = "track";
+  timelapseStore.colorSeed = 0;
   h.state.scope = "all";
   h.state.grouping = "flat";
   h.state.selectedConnectionIds = new Set();
@@ -186,15 +187,15 @@ describe("ConnectionList", () => {
    * that toggle lives in the Timelapse palette, which *is* the mode.
    */
   it("hides the track swatches while timelapse mode is off", () => {
-    mainStore.showTimelapseMode = true;
+    timelapseStore.showMode = true;
     expect(mountComponent().vm.showTrackSwatches).toBe(true);
 
-    mainStore.showTimelapseMode = false;
+    timelapseStore.showMode = false;
     expect(mountComponent().vm.showTrackSwatches).toBe(false);
   });
 
   it("still hides them in the mode when colouring is uniform", () => {
-    mainStore.timelapseTrackColoring = "uniform";
+    timelapseStore.trackColoring = "uniform";
     expect(mountComponent().vm.showTrackSwatches).toBe(false);
   });
 
