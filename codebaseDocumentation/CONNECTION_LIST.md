@@ -467,7 +467,7 @@ draw path had just dropped, and a per-viewer mount reappeared as duplicate
 delete requests. Each line names the invariant and the test that holds it, so
 changing this code means re-checking the list rather than rediscovering it.
 
-Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camera.test.ts src/utils/__tests__/annotationNavigation.test.ts src/store/__tests__/connectionList.test.ts src/components/AnnotationBrowser src/components/ConnectionActionPanel.test.ts src/components/AnnotationViewer.test.ts`.
+Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camera.test.ts src/utils/__tests__/annotationNavigation.test.ts src/store/__tests__/connectionList.test.ts src/components/AnnotationBrowser src/components/ConnectionActionPanel.test.ts src/components/AnnotationViewer.test.ts src/components/TimelapsePanel.test.ts`.
 
 ### Drawing
 
@@ -499,6 +499,16 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **The Connect-selected cap checks the raw id count first.** Resolving the selection to apply a cap that exists to prevent that resolution is self-defeating; a server-mode select-all is hundreds of thousands of ids. Tie detection skips oversized selections too. — *"rejects an oversized selection without resolving it"*
 - [ ] **Every scope-derived computed is gated, not just the rows.** `scopedConnections` resolves `scopeAnnotationIds`, which scans all annotations for the dynamic scopes — an ungated count is a full-dataset scan per scrub from a hidden tab. — *"does not read the scope getters while the tab is hidden"*
 - [ ] **Counts don't allocate.** The tab badges use `annotationStore.annotationCount`, never `annotationsForIteration.length`, which materializes an array from the 700K-entry stub map. — *"badges both tabs with dataset-wide totals"*
+- [ ] **The Timelapse panel gates its reads on the mode, not on being rendered.** It lives in a `v-show` `FloatingPalette` too, so it is mounted from dataset load onward whether or not timelapse is ever switched on. `connectionListStore.trackCount` runs a union-find over every connection, so an ungated read pays it at load for every dataset with connections, and again on every connection create/delete — doubling what the draw path already does, during the one gesture that creates connections one at a time. Same rule as the rows and the scope getters above; this is the third component to need it. — *"does not read trackCount while timelapse mode is off"*
+
+### Track colouring
+
+- [ ] **Every colouring input is in the timelapse watch list.** Track colour is baked into each line feature at draw time and there is no restyle-in-place path for it (unlike hover), so a control missing from `watch([showTimelapseMode, timelapseModeWindow, timelapseTags, showTimelapseLabels, timelapseTrackColoring, timelapseColorSeed])` changes nothing until an unrelated redraw. Silent: tsc, lint and every draw-path test stay green. — *"rebuilds the timelapse layer when timelapseTrackColoring changes"*, *"…when timelapseColorSeed changes"*
+- [ ] **Viewer and list colour from the same key.** Both must go through `trackKey` (smallest member id), never `Array.from(component.annotations)[0]` — the two build their components from different connection sets and iterate members in different orders, so insertion order gives one track two colours. Note the test fixture needs insertion order to *differ* from sort order or it passes either way. — *"colours a track by trackKey, matching the connection list swatch"*, *"keys the track id the same way trackKey does"*
+- [ ] **Hue only; never luminance.** Saturation and lightness are fixed in `trackColor`. Deriving `#rrggbb` from hash digits put luminance under the hash and made roughly a third of tracks near-black or near-white against the image. — *"keeps every channel in a readable mid band for any id"*
+- [ ] **Adjacent ObjectIds must not give adjacent hues,** and the golden-angle step is what guarantees it. Do **not** "improve" this by swapping in `hashString` from `@/utils/annotation`: its murmur finalizer exists to destroy the sequential correlation the golden angle needs. Measured over 40 consecutive ObjectIds, smallest neighbouring-id hue gap — current 77.3°, `hashString` + golden 9.2°, `hashString % 360` 3.0°, the original `% 360` bug 1.0°. — *"separates ids that differ by a single trailing character"*
+- [ ] **A colour re-roll re-permutes, it does not rotate.** The seed is folded into the hash accumulator; adding it to the hue rotates every track equally and leaves any confusable pair just as confusable. — *"re-permutes rather than rotating when the seed changes"*
+- [ ] **Tour anchors travel with the controls they annotate.** `timelapse-tags` and `timelapse-labels` moved from `NavigatorPanel.vue` to `TimelapsePanel.vue`; `testTimelapseTour.yaml` targets them by `data-tour` and breaks at step 2 if either is dropped or is not hit-testable once the mode is on. No unit test covers this — verify in the browser, with the panel open.
 
 ### Destructive actions
 
@@ -526,6 +536,9 @@ and not its twin. Before considering any change here done, check the pair.
 | creating a throttled/debounced callback | cancelling it in `onBeforeUnmount` |
 | flat rendering | track/grouped rendering |
 | normal-mode connection styling | the inline style in `drawTimelapseTrack` |
+| a track's colour in the viewer | its swatch in the Connections tab |
+| a new timelapse draw input | its entry in the timelapse `watch` list |
+| the Navigator's mode checkbox | the Timelapse palette's close button |
 
 ### Before claiming done
 

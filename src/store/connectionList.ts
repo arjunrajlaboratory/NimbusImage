@@ -20,6 +20,7 @@ import {
   buildConnectionRows,
   buildTrackRows,
   chainAnnotationsByTime,
+  findConnectedComponents,
   findTimeTies,
 } from "@/utils/connections";
 
@@ -119,6 +120,19 @@ export class ConnectionList extends VuexModule {
       return [];
     }
     return buildTrackRows(this.connectionRows, this.resolveAnnotation);
+  }
+
+  /**
+   * Number of tracks over ALL connections, ignoring scope and grouping.
+   *
+   * Deliberately not derived from `trackRows`, which is empty unless the
+   * Connections tab is in track mode and is narrowed by the current scope. The
+   * Timelapse panel wants the dataset-wide answer, the same way the browser's
+   * tab badges do. As a getter it is cached against `annotationConnections`, so
+   * it recomputes when connections change rather than on every render.
+   */
+  get trackCount(): number {
+    return findConnectedComponents(annotation.annotationConnections).length;
   }
 
   get isConnectionSelected() {

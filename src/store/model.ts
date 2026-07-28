@@ -431,6 +431,16 @@ export interface IViewConfiguration {
 
 export type TLayerMode = "single" | "multiple" | "unroll";
 
+/**
+ * How timelapse track segments are coloured. "track" gives every connected
+ * component its own hue; "uniform" draws them all in `TRACK_UNIFORM_COLOR`,
+ * which is easier to read when many tracks overlap.
+ */
+export type TTimelapseTrackColoring = "track" | "uniform";
+
+/** Which tab the Object Browser is showing. */
+export type TAnnotationBrowserTab = "objects" | "connections";
+
 export type TVolumeViewMode = "2d" | "3d";
 
 export type TVolumeBlendMode = "composite" | "mip";

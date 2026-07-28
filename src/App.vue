@@ -99,7 +99,9 @@
       <bread-crumbs />
       <template v-if="store.dataset && routeName === 'datasetview'">
         <div class="palette-cluster">
-          <v-tooltip text="Navigator: XY / Z / Time and timelapse controls">
+          <v-tooltip
+            text="Navigator: XY / Z / Time and the timelapse mode toggle"
+          >
             <template v-slot:activator="{ props: activatorProps }">
               <button
                 v-bind="activatorProps"
@@ -425,6 +427,19 @@
         <navigator-panel />
       </floating-palette>
 
+      <!-- Sits immediately right of the Navigator rather than in the left
+           stack, so turning the mode on doesn't push Layers and Tools down.
+           Visibility IS the mode: closing the palette turns timelapse off, so
+           there is no "mode on, panel hidden" state to reason about. -->
+      <floating-palette
+        v-model="timelapsePanel"
+        title="Time Lapse"
+        :left="TIMELAPSE_PANEL_LEFT"
+        :width="300"
+      >
+        <timelapse-panel />
+      </floating-palette>
+
       <floating-palette
         ref="layersPaletteRef"
         v-model="layersPanel"
@@ -479,6 +494,7 @@ import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
 import PipelineDialog from "@/components/PipelineDialog.vue";
 import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
 import NavigatorPanel from "@/components/NavigatorPanel.vue";
+import TimelapsePanel from "@/components/TimelapsePanel.vue";
 import LayersPanel from "@/components/LayersPanel.vue";
 import Toolset from "@/tools/toolsets/Toolset.vue";
 import HelpPanel from "./components/HelpPanel.vue";
@@ -509,6 +525,7 @@ void AnalyzeDialog;
 void PipelineDialog;
 void UndoRedoButtons;
 void NavigatorPanel;
+void TimelapsePanel;
 void LayersPanel;
 void Toolset;
 void HelpPanel;
@@ -529,6 +546,15 @@ const settingsPanel = ref(false);
 const filtersPanel = ref(false);
 const analyzePanel = ref(false);
 const aiPanelOpen = ref(false);
+
+// Not a plain ref and not in the palette registry: the Timelapse palette has no
+// independent open state, it mirrors the mode. Registering it would also let
+// the left-zone stacking treat it as part of the Navigator/Layers/Tools column,
+// which is exactly what it is positioned to avoid.
+const timelapsePanel = computed({
+  get: () => store.showTimelapseMode,
+  set: (value: boolean) => store.setShowTimelapseMode(value),
+});
 
 // The AI panel is gated behind a build-time flag (enabled unless explicitly
 // set to "false") and requires a logged-in user: the claude_agent endpoint is
@@ -709,6 +735,13 @@ function closeAllPalettes() {
 const PALETTE_TOP = 72; // clears the floating app bar
 const COLUMN_BOTTOM_INSET = 16;
 const STACK_GAP = 8;
+const LEFT_COLUMN_INSET = 16;
+// The left palettes are NOT all one width — Navigator and Tools are 380, Layers
+// is 420. Clearing only the Navigator's width put the Timelapse palette 32px
+// on top of Layers.
+const LEFT_COLUMN_WIDTH = 420;
+// Immediately right of the left column, over empty image space.
+const TIMELAPSE_PANEL_LEFT = LEFT_COLUMN_INSET + LEFT_COLUMN_WIDTH + STACK_GAP;
 const MIN_BROWSER_HEIGHT = 260; // keep the Browser usable when stacked
 
 type PaletteRefEl = ComponentPublicInstance & { rootEl?: HTMLElement };
@@ -980,6 +1013,25 @@ function datasetChanged() {
 }
 
 watch(annotationPanel, () => annotationPanelChanged());
+
+// The reverse direction, so `store.openAnnotationBrowserTab` can reach the
+// palette registry from a component that has no access to it (the Timelapse
+// panel's "Show tracks"). Both watchers only ever write a value that differs
+// from what they read, so the pair settles rather than ping-pongs.
+watch(
+  () => store.isAnnotationPanelOpen,
+  (open) => {
+    if (open === annotationPanel.value) {
+      return;
+    }
+    if (open) {
+      openPalette("annotationPanel");
+    } else {
+      annotationPanel.value = false;
+    }
+  },
+);
+
 watch(routeName, () => datasetChanged());
 
 // Left palettes mount/unmount with the dataset view, so (re)attach their

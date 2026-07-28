@@ -58,6 +58,10 @@
           :disabled="!(maxTime > 0 || unrollT)"
         />
       </div>
+      <!-- Only the toggle lives here. Everything the mode configures moved to
+           the Timelapse palette, which opens alongside this one — five controls
+           inline made the Navigator taller than the three sliders it exists
+           for. -->
       <div v-if="maxTime > 0 && !unrollT" class="d-flex align-center">
         <v-checkbox
           :data-tour="TOUR_ANCHORS.timelapseMode"
@@ -66,42 +70,6 @@
           v-model="timelapseMode"
           label="Time lapse mode"
         />
-        <value-slider
-          id="timelapse-window"
-          v-if="timelapseMode"
-          v-model="timelapseModeWindow"
-          label="Track window"
-          :min="3"
-          :max="100"
-          :title="'Track window size'"
-          class="track-window-slider"
-        />
-      </div>
-      <div v-if="timelapseMode" class="d-flex align-center">
-        <tag-picker
-          :data-tour="TOUR_ANCHORS.timelapseTags"
-          class="ml-3"
-          v-model="timelapseTags"
-          style="max-width: 300px"
-        />
-      </div>
-      <div v-if="timelapseMode" class="d-flex align-center">
-        <v-checkbox
-          :data-tour="TOUR_ANCHORS.timelapseLabels"
-          class="ml-3 my-checkbox"
-          v-model="showTimelapseLabels"
-          label="Show labels"
-        />
-        <v-btn
-          class="ml-3 timelapse-delete-btn"
-          variant="text"
-          color="error"
-          size="small"
-          @click="annotationStore.deleteAllTimelapseConnections"
-        >
-          <v-icon start size="small">mdi-delete</v-icon>
-          Delete all timelapse connections
-        </v-btn>
       </div>
       <!-- TODO: Only display if there is more than one large image -->
       <large-image-dropdown />
@@ -122,33 +90,13 @@
 .v-input--selection-controls {
   margin-top: 0;
 }
-
-/* "Track window" is a longer label than the XY/Z/Time sliders, so its fixed
-   3em column wraps and renders at the 16px body size. Match the 13px label
-   convention and let it size to its content on one line. */
-.track-window-slider :deep(.label-column) {
-  width: auto;
-  min-width: 0;
-  font-size: 13px;
-  white-space: nowrap;
-  padding-right: 4px;
-}
-
-/* The delete button inherits the 16px body size; pin it to 13px to match the
-   surrounding controls. */
-.timelapse-delete-btn {
-  font-size: 13px;
-  letter-spacing: 0;
-}
 </style>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import ValueSlider from "./ValueSlider.vue";
 import LargeImageDropdown from "./LargeImageDropdown.vue";
-import TagPicker from "./TagPicker.vue";
 import store from "@/store";
-import annotationStore from "@/store/annotation";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { logError } from "@/utils/log";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
@@ -247,21 +195,6 @@ const timeLabel = computed(() => {
 const timelapseMode = computed({
   get: () => store.showTimelapseMode,
   set: (value: boolean) => store.setShowTimelapseMode(value),
-});
-
-const timelapseModeWindow = computed({
-  get: () => store.timelapseModeWindow,
-  set: (value: number) => store.setTimelapseModeWindow(value),
-});
-
-const timelapseTags = computed({
-  get: () => store.timelapseTags,
-  set: (value: string[]) => store.setTimelapseTags(value),
-});
-
-const showTimelapseLabels = computed({
-  get: () => store.showTimelapseLabels,
-  set: (value: boolean) => store.setShowTimelapseLabels(value),
 });
 
 const mousetrapSliders: IHotkey[] = [

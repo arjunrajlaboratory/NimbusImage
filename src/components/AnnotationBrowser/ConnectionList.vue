@@ -147,17 +147,37 @@
                   : "mdi-chevron-right"
               }}
             </v-icon>
+            <!-- The colour the track is drawn in, so a line picked out in the
+                 viewer can be matched to its row without counting. Hidden under
+                 uniform colouring, where it would claim a distinction the
+                 canvas isn't making. -->
+            <span
+              v-if="showTrackSwatches"
+              class="track-swatch"
+              :style="{ backgroundColor: swatchColor(track) }"
+              aria-hidden="true"
+            />
             <span class="track-title">Track {{ shortId(track.id) }}</span>
-            <span class="track-meta">
-              {{ track.annotationCount }} objects
-              <template v-if="track.timeRange">
-                · T{{ track.timeRange.start + 1 }}–T{{
-                  track.timeRange.end + 1
-                }}
-              </template>
-              · {{ track.rows.length }} links
+            <!-- Also in the title attribute: the counts are what gets
+                 ellipsized when the row is tight, and the link count is the
+                 diagnostic one (it exceeds objects−1 only when a track
+                 branches or carries duplicate links). -->
+            <span class="track-meta" :title="trackMeta(track)">
+              {{ trackMeta(track) }}
             </span>
             <v-spacer />
+            <!-- "Select", not "Select objects": the two actions plus the
+                 swatch pushed the header onto two lines at the palette's
+                 512px, and 248 tracks at two lines each is a lot of scroll. -->
+            <v-btn
+              variant="text"
+              size="x-small"
+              title="Select this track's objects"
+              @click.stop="selectTrackObjects(track)"
+            >
+              <v-icon size="small" start>mdi-select-group</v-icon>
+              Select
+            </v-btn>
             <v-btn
               variant="text"
               color="error"
@@ -209,6 +229,7 @@ import {
   IConnectionRow,
   ITrackRow,
   shortAnnotationId,
+  trackColor,
 } from "@/utils/connections";
 
 const props = withDefaults(
@@ -314,6 +335,32 @@ const selectAllIndeterminate = computed(
 
 function shortId(id: string) {
   return shortAnnotationId(id);
+}
+
+// `track.id` is the track key, so this is the same input the viewer colours
+// from — the swatch matches the drawn line rather than merely resembling it.
+const showTrackSwatches = computed(
+  () => store.timelapseTrackColoring === "track",
+);
+
+function swatchColor(track: ITrackRow) {
+  return trackColor(track.id, store.timelapseColorSeed);
+}
+
+function trackMeta(track: ITrackRow) {
+  const range = track.timeRange
+    ? ` · T${track.timeRange.start + 1}–T${track.timeRange.end + 1}`
+    : "";
+  return `${track.annotationCount} objects${range} · ${track.rows.length} links`;
+}
+
+/**
+ * Select every object in the track. Replaces the selection rather than adding
+ * to it: "select this track" means this track, and the Objects tab's own
+ * checkboxes remain the way to build a union.
+ */
+function selectTrackObjects(track: ITrackRow) {
+  annotationStore.setSelected(track.annotationIds);
 }
 
 /**
@@ -499,6 +546,10 @@ defineExpose({
   deleteSelected,
   deleteTrack,
   connectSelected,
+  selectTrackObjects,
+  swatchColor,
+  showTrackSwatches,
+  trackMeta,
 });
 </script>
 
@@ -560,14 +611,31 @@ defineExpose({
   background: rgba(var(--v-theme-on-surface), 0.06);
 }
 
+.track-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  /* The hues are tuned to read against the image, not against the palette's
+     own background; a hairline keeps a pale track from dissolving into it. */
+  box-shadow: 0 0 0 1px rgba(var(--v-theme-on-surface), 0.25);
+}
+
 .track-title {
   font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
 }
 
+/* Shrinks and truncates ahead of the title and the actions — the counts are
+   the least load-bearing part of the header. */
 .track-meta {
   font-size: 11px;
   opacity: 0.6;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .track-table {

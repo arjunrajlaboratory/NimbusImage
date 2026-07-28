@@ -13,6 +13,8 @@ import {
   findConnectedComponents,
   findTimeTies,
   shortAnnotationId,
+  trackColor,
+  trackKey,
 } from "@/utils/connections";
 
 function makeConnection(
@@ -58,6 +60,138 @@ function resolverFor(annotations: TAnnotationOrStub[]) {
   const byId = new Map(annotations.map((a) => [a.id, a]));
   return (id: string) => byId.get(id);
 }
+
+function channels(hex: string): [number, number, number] {
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+/** Hue in degrees, recovered from a hex colour. */
+function hueOf(hex: string): number {
+  const [r, g, b] = channels(hex).map((c) => c / 255);
+  const max = Math.max(r, g, b);
+  const delta = max - Math.min(r, g, b);
+  if (delta === 0) {
+    return 0;
+  }
+  const raw =
+    max === r
+      ? ((g - b) / delta) % 6
+      : max === g
+        ? (b - r) / delta + 2
+        : (r - g) / delta + 4;
+  return (((raw * 60) % 360) + 360) % 360;
+}
+
+describe("trackKey", () => {
+  it("returns the smallest member id", () => {
+    expect(trackKey(["c", "a", "b"])).toBe("a");
+  });
+
+  // The viewer builds its components from connections filtered to the displayed
+  // time window and the list from scoped ones, so the two iterate a track's
+  // members in different orders. Keying on iteration order — which the previous
+  // `Array.from(set)[0]` did — gave one track two different colours.
+  it("is independent of iteration order", () => {
+    expect(trackKey(new Set(["z", "m", "a"]))).toBe(
+      trackKey(new Set(["a", "z", "m"])),
+    );
+  });
+
+  it("returns an empty string for an empty component", () => {
+    expect(trackKey([])).toBe("");
+  });
+});
+
+describe("trackColor", () => {
+  it("is deterministic for the same id and seed", () => {
+    expect(trackColor("65f4eb85aaba948c2d7b9da5")).toBe(
+      trackColor("65f4eb85aaba948c2d7b9da5"),
+    );
+  });
+
+  it("returns a 6-digit hex colour", () => {
+    expect(trackColor("abc")).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  /**
+   * The regression this function exists for. The previous implementation sliced
+   * the hash's own hex digits into `#rrggbb`, which put luminance under the
+   * hash's control — ids hashing low produced near-black tracks that read as
+   * unhighlighted against the image. Fixed S/L pins every channel into a mid
+   * band whatever the hue.
+   */
+  it("keeps every channel in a readable mid band for any id", () => {
+    const ids = Array.from(
+      { length: 500 },
+      (_, i) => `65f4eb85aaba948c2d7b${i.toString(16).padStart(4, "0")}`,
+    );
+    for (const id of ids) {
+      for (const channel of channels(trackColor(id))) {
+        expect(channel).toBeGreaterThanOrEqual(0x4f);
+        expect(channel).toBeLessThanOrEqual(0xe3);
+      }
+    }
+  });
+
+  it("spans the hue circle rather than clustering", () => {
+    const sectors = new Set(
+      Array.from({ length: 200 }, (_, i) =>
+        Math.floor(hueOf(trackColor(`track-${i}`)) / 30),
+      ),
+    );
+    expect(sectors.size).toBe(12);
+  });
+
+  /**
+   * The failure this function's golden-angle step exists for, and the one the
+   * "spans the hue circle" test above could not see. Track ids are ObjectIds
+   * allocated in one batch, so neighbouring tracks differ in the LAST character
+   * only. Under a plain `hash % 360` their hues came out one degree apart: a
+   * real dataset's first five tracks rendered as five indistinguishable greens,
+   * rgb(80,226,{162,218,215,213,211}).
+   */
+  it("separates ids that differ by a single trailing character", () => {
+    const ids = [
+      "69fa8984a3094194968568c5",
+      "69fa8984a3094194968568c6",
+      "69fa8984a3094194968568c7",
+      "69fa8984a3094194968568cb",
+      "69fa8984a3094194968568cc",
+    ];
+    const hues = ids.map((id) => hueOf(trackColor(id)));
+    for (let i = 0; i < hues.length; i++) {
+      for (let j = i + 1; j < hues.length; j++) {
+        const gap = Math.abs(hues[i] - hues[j]);
+        // Shortest way round the circle.
+        expect(Math.min(gap, 360 - gap)).toBeGreaterThan(20);
+      }
+    }
+  });
+
+  it("changes the colour when the seed is bumped", () => {
+    expect(trackColor("abc", 1)).not.toBe(trackColor("abc", 0));
+  });
+
+  // A seed bump must re-PERMUTE, not rotate the whole wheel: rotating leaves
+  // any confusable pair exactly as confusable as it was.
+  it("re-permutes rather than rotating when the seed changes", () => {
+    const ids = Array.from(
+      { length: 40 },
+      (_, i) => `69fa8984a30941949685${i.toString(16).padStart(4, "0")}`,
+    );
+    const shifts = new Set(
+      ids.map((id) => {
+        const gap = hueOf(trackColor(id, 1)) - hueOf(trackColor(id, 0));
+        return Math.round((((gap % 360) + 360) % 360) / 10);
+      }),
+    );
+    expect(shifts.size).toBeGreaterThan(1);
+  });
+});
 
 describe("findConnectedComponents", () => {
   it("returns nothing for no connections", () => {
@@ -208,6 +342,39 @@ describe("buildTrackRows", () => {
       resolve,
     );
     expect(buildTrackRows(rows, resolve)[0].id).toBe("aaa");
+  });
+
+  // The list's swatch and the viewer's line must resolve to one colour, and the
+  // only thing that guarantees that is both keying off `trackKey`.
+  it("keys the track id the same way trackKey does", () => {
+    const annotations = [
+      makeAnnotation("ccc", 0),
+      makeAnnotation("aaa", 1),
+      makeAnnotation("bbb", 2),
+    ];
+    const resolve = resolverFor(annotations);
+    const rows = buildConnectionRows(
+      [makeConnection("c1", "ccc", "aaa"), makeConnection("c2", "aaa", "bbb")],
+      resolve,
+    );
+    const [track] = buildTrackRows(rows, resolve);
+    expect(track.id).toBe(trackKey(track.annotationIds));
+  });
+
+  it("exposes sorted member ids, agreeing with annotationCount", () => {
+    const annotations = [
+      makeAnnotation("ccc", 0),
+      makeAnnotation("aaa", 1),
+      makeAnnotation("bbb", 2),
+    ];
+    const resolve = resolverFor(annotations);
+    const rows = buildConnectionRows(
+      [makeConnection("c1", "ccc", "aaa"), makeConnection("c2", "aaa", "bbb")],
+      resolve,
+    );
+    const [track] = buildTrackRows(rows, resolve);
+    expect(track.annotationIds).toEqual(["aaa", "bbb", "ccc"]);
+    expect(track.annotationIds).toHaveLength(track.annotationCount);
   });
 
   it("survives a track whose members cannot be resolved", () => {

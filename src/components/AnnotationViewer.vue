@@ -144,7 +144,12 @@ import {
   shouldRetainFeature,
 } from "@/utils/annotation";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
-import { findConnectedComponents } from "@/utils/connections";
+import {
+  TRACK_UNIFORM_COLOR,
+  findConnectedComponents,
+  trackColor,
+  trackKey,
+} from "@/utils/connections";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
   mouseStateToSamPrompt,
@@ -1314,17 +1319,17 @@ function drawTimelapseConnectionsAndCentroids() {
 
   const components = findConnectedComponents(filteredConnections);
 
+  const coloring = store.timelapseTrackColoring;
+  const colorSeed = store.timelapseColorSeed;
+
   components.forEach((component) => {
     const componentAnnotations: ITimelapseAnnotation[] = [];
-    let color: string = "#FFFFFF";
-    if (component.annotations.size > 0) {
-      const hash = Array.from(component.annotations)[0]
-        .split("")
-        .reduce((acc, char) => {
-          return char.charCodeAt(0) + ((acc << 5) - acc);
-        }, 0);
-      color = `#${Math.abs(hash).toString(16).slice(0, 6).padEnd(6, "0")}`;
-    }
+    // Keyed by the smallest member id, not by Set insertion order, so the
+    // Connections tab's swatch resolves to the same colour for the same track.
+    const color =
+      coloring === "uniform"
+        ? TRACK_UNIFORM_COLOR
+        : trackColor(trackKey(component.annotations), colorSeed);
 
     const annotations = Array.from(component.annotations);
     const len = annotations.length;
@@ -4362,13 +4367,19 @@ watch(displayedAnnotations, (annotations) => {
   buildSpatialIndex(annotations);
 });
 
-// Timelapse mode: 4 sources (fixes timelapseTags bug by watching store directly)
+// Timelapse mode: every draw input (watching the store directly fixes an older
+// timelapseTags bug). Track colour is baked into the line features at build
+// time — there is no restyle-in-place path for it, the way there is for
+// hover — so the colouring controls MUST appear here or they change nothing
+// until the next unrelated redraw.
 watch(
   [
     showTimelapseMode,
     timelapseModeWindow,
     () => store.timelapseTags,
     showTimelapseLabels,
+    () => store.timelapseTrackColoring,
+    () => store.timelapseColorSeed,
   ],
   () => {
     onTimelapseModeChanged();

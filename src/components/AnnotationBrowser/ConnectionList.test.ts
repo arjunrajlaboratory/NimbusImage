@@ -449,6 +449,7 @@ describe("ConnectionList", () => {
     const wrapper = mountComponent();
     await wrapper.vm.deleteTrack({
       id: "a",
+      annotationIds: ["a", "b", "c"],
       annotationCount: 3,
       timeRange: { start: 0, end: 2 },
       rows: wrapper.vm.rows,

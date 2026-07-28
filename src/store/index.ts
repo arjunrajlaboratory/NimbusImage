@@ -75,6 +75,8 @@ import {
   IVisibilityConfig,
   IAnnotationBrowserConfig,
   IUserStorageQuota,
+  TTimelapseTrackColoring,
+  TAnnotationBrowserTab,
 } from "./model";
 import {
   buildAnnotationBrowserConfig,
@@ -401,10 +403,15 @@ export class Main extends VuexModule {
   timelapseModeWindow: number = 10;
   timelapseTags: string[] = [];
   showTimelapseLabels: boolean = true;
+  timelapseTrackColoring: TTimelapseTrackColoring = "track";
+  // Rotates every track hue. Bumped by "Shuffle colors" when two neighbouring
+  // tracks happen to land on similar hues.
+  timelapseColorSeed: number = 0;
 
   maps: IMapEntry[] = [];
 
   isAnnotationPanelOpen: boolean = false;
+  annotationBrowserTab: TAnnotationBrowserTab = "objects";
   annotationPanelBadge: boolean = false;
   isHelpPanelOpen: boolean = false;
   isAnalyzeDialogOpen: boolean = false;
@@ -741,6 +748,25 @@ export class Main extends VuexModule {
   @Mutation
   public setShowTimelapseLabels(value: boolean) {
     this.showTimelapseLabels = value;
+  }
+
+  @Mutation
+  public setTimelapseTrackColoring(value: TTimelapseTrackColoring) {
+    this.timelapseTrackColoring = value;
+  }
+
+  @Mutation
+  public setTimelapseColorSeed(value: number) {
+    this.timelapseColorSeed = value;
+  }
+
+  /**
+   * Re-roll the track hue assignment. Steps rather than randomises so a second
+   * shuffle can't land back on the palette the user just rejected.
+   */
+  @Mutation
+  public shuffleTimelapseColors() {
+    this.timelapseColorSeed += 1;
   }
 
   @Mutation
@@ -1309,6 +1335,25 @@ export class Main extends VuexModule {
   @Mutation
   public setIsAnnotationPanelOpen(value: boolean) {
     this.isAnnotationPanelOpen = value;
+  }
+
+  @Mutation
+  public setAnnotationBrowserTab(value: TAnnotationBrowserTab) {
+    this.annotationBrowserTab = value;
+  }
+
+  /**
+   * Open the Object Browser on a specific tab.
+   *
+   * `isAnnotationPanelOpen` is normally written BY App.vue (which owns palette
+   * visibility) rather than read by it; App.vue watches it back so a component
+   * with no path to the palette registry — the Timelapse panel — can still ask
+   * for the browser.
+   */
+  @Action
+  public openAnnotationBrowserTab(tab: TAnnotationBrowserTab) {
+    this.setAnnotationBrowserTab(tab);
+    this.setIsAnnotationPanelOpen(true);
   }
 
   @Mutation

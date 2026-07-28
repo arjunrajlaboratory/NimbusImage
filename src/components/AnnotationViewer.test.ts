@@ -285,6 +285,8 @@ vi.mock("@/store", () => {
       timelapseModeWindow: 5,
       timelapseTags: [] as string[],
       showTimelapseLabels: false,
+      timelapseTrackColoring: "track" as "track" | "uniform",
+      timelapseColorSeed: 0,
       filteredDraw: false,
       filteredAnnotationTooltips: false,
       scaleAnnotationsWithZoom: false,
@@ -422,6 +424,7 @@ import {
 import { samPromptToAnnotation } from "@/pipelines/samPipeline";
 import { NoOutput } from "@/pipelines/computePipeline";
 import connectionListStore from "@/store/connectionList";
+import { TRACK_UNIFORM_COLOR, trackColor, trackKey } from "@/utils/connections";
 import AnnotationViewer from "./AnnotationViewer.vue";
 
 const mockedStore = vi.mocked(store);
@@ -565,6 +568,8 @@ describe("AnnotationViewer", () => {
     mockedStore.timelapseModeWindow = 5;
     mockedStore.timelapseTags = [];
     mockedStore.showTimelapseLabels = false;
+    mockedStore.timelapseTrackColoring = "track";
+    mockedStore.timelapseColorSeed = 0;
     mockedStore.filteredDraw = false;
     mockedStore.filteredAnnotationTooltips = false;
     mockedStore.scaleAnnotationsWithZoom = false;
@@ -4375,6 +4380,116 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
         expect((wrapper.vm as any).timelapseLayer.draw).toHaveBeenCalled();
+      });
+
+      // --- Track colouring ---
+      //
+      // Track colour is baked into each line feature at draw time; unlike
+      // hover, there is no restyle-in-place path for it. So a colouring
+      // control that is not in the timelapse watch list changes nothing until
+      // some unrelated redraw happens, and every check below fails silently:
+      // tsc, lint and the draw-path tests all stay green.
+      describe("track colouring", () => {
+        function setupOneTrack() {
+          mockedStore.showTimelapseMode = true;
+          const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+          mockedStore.layers = [layer];
+          (mockedStore.layerSliceIndexes as any).mockReturnValue({
+            xyIndex: 0,
+            zIndex: 0,
+            tIndex: 0,
+          });
+          // Ids chosen so INSERTION order (z1 first, as the connection's
+          // parent) differs from SORT order (a2 first). With a1/a2 the two
+          // keyings coincide and the trackKey assertion below passes against
+          // `Array.from(set)[0]` too — i.e. it proves nothing.
+          const earlier = makeAnnotation({
+            id: "z1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+          });
+          const later = makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 1 },
+          });
+          mockedAnnotationStore.annotations = [earlier, later];
+          mockedAnnotationStore.annotationConnections = [
+            makeConnection({ id: "c1", parentId: "z1", childId: "a2" }),
+          ];
+          (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+            (id: string) =>
+              mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+          );
+          mockedAnnotationStore.annotationCentroids = {
+            z1: { x: 10, y: 20 },
+            a2: { x: 30, y: 40 },
+          };
+          // MUST be set here, not inherited. The shared geojsAnnotationFactory
+          // mock discards its options by default, so a feature it returns has
+          // no `timelapseBaseStyle` to read and segmentColors comes back empty
+          // — these assertions would pass only when an earlier test in the file
+          // had installed this implementation, and fail when run alone.
+          (geojsAnnotationFactory as any).mockImplementation(
+            (_shape: any, _coords: any, options: any) => {
+              const feature = mockGeoJSAnnotation("line");
+              if (options) feature.options(options);
+              return feature;
+            },
+          );
+        }
+
+        function segmentColors(vm: any): string[] {
+          return vm.timelapseLayer
+            .annotations()
+            .map((f: any) => f.options("timelapseBaseStyle"))
+            .filter(Boolean)
+            .map((s: any) => s.strokeColor);
+        }
+
+        it.each(["timelapseTrackColoring", "timelapseColorSeed"] as const)(
+          "rebuilds the timelapse layer when %s changes",
+          async (field) => {
+            setupOneTrack();
+            wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+            const tlLayer = (wrapper.vm as any).timelapseLayer;
+
+            tlLayer.draw.mockClear();
+            if (field === "timelapseTrackColoring") {
+              mockedStore.timelapseTrackColoring = "uniform";
+            } else {
+              mockedStore.timelapseColorSeed = 1;
+            }
+            await wrapper.vm.$nextTick();
+
+            expect(tlLayer.draw).toHaveBeenCalled();
+          },
+        );
+
+        it("paints every segment uniformly when per-track colouring is off", async () => {
+          setupOneTrack();
+          mockedStore.timelapseTrackColoring = "uniform";
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+          const colors = segmentColors(wrapper.vm);
+          expect(colors.length).toBeGreaterThan(0);
+          expect(new Set(colors)).toEqual(new Set([TRACK_UNIFORM_COLOR]));
+        });
+
+        // The swatch in the Connections tab is computed from `trackKey`, so
+        // the viewer must colour from the same key or the two drift apart.
+        it("colours a track by trackKey, matching the connection list swatch", () => {
+          setupOneTrack();
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+          expect(segmentColors(wrapper.vm)).toEqual([
+            trackColor(trackKey(["z1", "a2"]), 0),
+          ]);
+          // Explicitly NOT the first-inserted member's colour.
+          expect(segmentColors(wrapper.vm)).not.toEqual([trackColor("z1", 0)]);
+        });
       });
     });
   });

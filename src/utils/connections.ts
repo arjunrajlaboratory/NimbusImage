@@ -94,6 +94,87 @@ export function findConnectedComponents(
   return Array.from(components.values());
 }
 
+// --- Track identity and color ---
+
+/**
+ * Stable key for a connected component: its lexicographically smallest member
+ * id.
+ *
+ * The viewer and the connection list build their components from different
+ * connection sets (the viewer filters to the displayed time window, the list to
+ * the current scope), so they cannot share a component object. They CAN share a
+ * key derivation — which is what makes a track the same colour in both places.
+ * Picking "first element of the Set" instead would depend on insertion order,
+ * and the two build their sets in different orders.
+ */
+export function trackKey(annotationIds: Iterable<string>): string {
+  let smallest: string | null = null;
+  for (const id of annotationIds) {
+    if (smallest === null || id < smallest) {
+      smallest = id;
+    }
+  }
+  return smallest ?? "";
+}
+
+/** The colour every track is drawn in when per-track colouring is off. */
+export const TRACK_UNIFORM_COLOR = "#FFFFFF";
+
+function hslToHex(hue: number, saturation: number, lightness: number): string {
+  const a = saturation * Math.min(lightness, 1 - lightness);
+  const channel = (n: number) => {
+    const k = (n + hue / 30) % 12;
+    const value = lightness - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(value * 255)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${channel(0)}${channel(8)}${channel(4)}`;
+}
+
+// Golden-ratio conjugate. Successive multiples of it are maximally spread on
+// the unit interval, which is what turns "hashes one apart" into "hues 222°
+// apart" below.
+const GOLDEN_RATIO_CONJUGATE = 0.618033988749895;
+
+/**
+ * Deterministic colour for a track, keyed by `trackKey`.
+ *
+ * Two properties matter, and each cost a bug to learn:
+ *
+ * 1. Saturation and lightness are FIXED, so only the hue varies. The original
+ *    sliced the hash's own hex digits into `#rrggbb`, putting luminance under
+ *    the hash's control — a third of tracks came out near-black or near-white
+ *    and read as unhighlighted against the image.
+ *
+ * 2. Adjacent ids must not give adjacent hues. Track ids are ObjectIds
+ *    allocated in one batch, so neighbouring tracks differ in the last
+ *    character only. Invisible in synthetic fixtures; on a real dataset the
+ *    first five tracks came out rgb(80,226,{162,218,215,213,211}) — five
+ *    indistinguishable greens. Under `% 360` a one-character difference is a
+ *    one-degree difference. The golden angle turns it into 222°.
+ *
+ * Deliberately does NOT use `hashString` from `@/utils/annotation`, even though
+ * that one is stronger and its murmur finalizer is commented as existing "to
+ * break sequential correlation in MongoDB ObjectIDs". The two are in direct
+ * tension: the golden-angle step needs the sequential correlation that the
+ * finalizer destroys. Measured over 40 consecutive ObjectIds, smallest hue gap
+ * between neighbouring ids — this hash 77.3°, hashString 9.2°, hashString with
+ * a plain `% 360` 3.0°. Swapping in the "better" hash makes the output worse.
+ *
+ * `seed` is folded into the accumulator rather than added to the hue, so
+ * re-rolling re-permutes the assignment instead of rotating the whole wheel —
+ * a rotation would leave any confusable pair exactly as confusable.
+ */
+export function trackColor(trackId: string, seed: number = 0): string {
+  let hash = seed;
+  for (let i = 0; i < trackId.length; i++) {
+    hash = (trackId.charCodeAt(i) + ((hash << 5) - hash)) | 0;
+  }
+  const hue = ((Math.abs(hash) * GOLDEN_RATIO_CONJUGATE) % 1) * 360;
+  return hslToHex(hue, 0.72, 0.6);
+}
+
 // --- Connection list rows ---
 
 export interface IConnectionEndpoint {
@@ -116,6 +197,8 @@ export interface IConnectionRow {
 export interface ITrackRow {
   /** Smallest member annotation id — stable across re-renders. */
   id: string;
+  /** Member annotation ids, sorted. Drives "Select objects" on the header. */
+  annotationIds: string[];
   annotationCount: number;
   /** Null when no member endpoint resolved, so no time range is knowable. */
   timeRange: { start: number; end: number } | null;
@@ -192,7 +275,10 @@ export function buildTrackRows(
       }
     }
     return {
+      // Sorted, so this is `trackKey(component.annotations)` — the same key the
+      // viewer colours the track by.
       id: memberIds[0],
+      annotationIds: memberIds,
       annotationCount: memberIds.length,
       timeRange: times.length
         ? { start: Math.min(...times), end: Math.max(...times) }
