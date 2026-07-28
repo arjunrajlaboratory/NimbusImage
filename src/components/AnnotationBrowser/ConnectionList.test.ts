@@ -37,6 +37,9 @@ const h = vi.hoisted(() => ({
       return this.selectedConnectionIds.has(id);
     },
     isTrackExpanded: () => false,
+    // Replaced by setRows() with a resolver over the annotations it was given.
+    // A stub resolving everything would hide the dangling-endpoint filter.
+    resolveAnnotation: () => undefined as any,
     setScope: vi.fn(),
     setGrouping: vi.fn(),
     setPage: vi.fn(),
@@ -114,6 +117,9 @@ function setRows(connections: IAnnotationConnection[], known: IAnnotation[]) {
   h.state.connectionRows = buildConnectionRows(connections, (id) =>
     byId.get(id),
   );
+  // Same source of truth the rows were built from, so an endpoint absent from
+  // `known` is dangling for both.
+  h.state.resolveAnnotation = (id: string) => byId.get(id);
 }
 
 // Default to the visible tab: rows are gated on isActive, so a default-false
@@ -483,6 +489,90 @@ describe("ConnectionList", () => {
     });
     expect(h.deleteConnectionsById).toHaveBeenCalledTimes(1);
     expect(h.deleteConnectionsById).toHaveBeenCalledWith(["c1", "c2"]);
+  });
+
+  // --- Per-track Select menu ---
+  //
+  // Objects and links are SEPARATE selections feeding separate actions
+  // ("Connect selected" reads the object selection, "Delete selected" the
+  // connection one), so each menu item must touch only its own and leave the
+  // other alone.
+  describe("per-track Select menu", () => {
+    function trackFor(wrapper: any, annotationIds: string[]) {
+      return {
+        id: annotationIds[0],
+        colorKey: annotationIds[0],
+        annotationIds,
+        annotationCount: annotationIds.length,
+        timeRange: null,
+        rows: wrapper.vm.rows,
+      };
+    }
+
+    function setupTrack() {
+      setRows(
+        [makeConnection("c1", "a", "b"), makeConnection("c2", "b", "c")],
+        [
+          makeAnnotation("a", 0),
+          makeAnnotation("b", 1),
+          makeAnnotation("c", 2),
+        ],
+      );
+      return mountComponent();
+    }
+
+    it("Objects selects the track's objects and no connections", () => {
+      const wrapper = setupTrack();
+      wrapper.vm.selectTrackObjects(trackFor(wrapper, ["a", "b", "c"]));
+      expect(h.setSelected).toHaveBeenCalledWith(["a", "b", "c"]);
+      expect(h.setSelectedConnectionIds).not.toHaveBeenCalled();
+    });
+
+    it("Links selects the track's connections and no objects", () => {
+      const wrapper = setupTrack();
+      wrapper.vm.selectTrackConnections(trackFor(wrapper, ["a", "b", "c"]));
+      expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1", "c2"]);
+      expect(h.setSelected).not.toHaveBeenCalled();
+    });
+
+    it("Both selects each side exactly once", () => {
+      const wrapper = setupTrack();
+      wrapper.vm.selectTrackBoth(trackFor(wrapper, ["a", "b", "c"]));
+      expect(h.setSelected).toHaveBeenCalledTimes(1);
+      expect(h.setSelected).toHaveBeenCalledWith(["a", "b", "c"]);
+      expect(h.setSelectedConnectionIds).toHaveBeenCalledTimes(1);
+      expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1", "c2"]);
+    });
+
+    /**
+     * Connection endpoints outlive the annotation they point at — the list
+     * deliberately keeps dangling links visible so they can be deleted. Putting
+     * those ids in the selection inflates every "(N)" counter with entries
+     * nothing can ever clear, because no row or feature exists to click.
+     */
+    it("excludes endpoints that no longer resolve", () => {
+      setRows(
+        [makeConnection("c1", "a", "gone"), makeConnection("c2", "a", "b")],
+        // "gone" is deliberately absent.
+        [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+      );
+      const wrapper = mountComponent();
+      const track = trackFor(wrapper, ["a", "b", "gone"]);
+
+      expect(wrapper.vm.resolvableTrackObjectIds(track)).toEqual(["a", "b"]);
+      expect(wrapper.vm.selectableObjectCount(track)).toBe(2);
+
+      wrapper.vm.selectTrackObjects(track);
+      expect(h.setSelected).toHaveBeenCalledWith(["a", "b"]);
+    });
+
+    it("counts nothing selectable when every endpoint is dangling", () => {
+      setRows([makeConnection("c1", "x", "y")], []);
+      const wrapper = mountComponent();
+      expect(
+        wrapper.vm.selectableObjectCount(trackFor(wrapper, ["x", "y"])),
+      ).toBe(0);
+    });
   });
 
   it("selects every row with the header checkbox", () => {

@@ -26,7 +26,9 @@
       />
       <v-spacer />
       <!-- Icon-only, so each needs a tooltip per BUTTON_CONVENTIONS.md §6 —
-           none of these three icons is self-explanatory. -->
+           none of these three icons is self-explanatory. Each also carries an
+           aria-label: a tooltip is a hover affordance and gives a screen reader
+           nothing to announce for a button whose only content is an icon. -->
       <v-btn-toggle
         :model-value="trackColoring"
         density="compact"
@@ -37,14 +39,24 @@
       >
         <v-tooltip text="Give each track its own color">
           <template v-slot:activator="{ props: activatorProps }">
-            <v-btn v-bind="activatorProps" value="track" size="x-small">
+            <v-btn
+              v-bind="activatorProps"
+              value="track"
+              size="x-small"
+              aria-label="Color each track separately"
+            >
               <v-icon size="small">mdi-palette</v-icon>
             </v-btn>
           </template>
         </v-tooltip>
         <v-tooltip text="Draw every track in one color">
           <template v-slot:activator="{ props: activatorProps }">
-            <v-btn v-bind="activatorProps" value="uniform" size="x-small">
+            <v-btn
+              v-bind="activatorProps"
+              value="uniform"
+              size="x-small"
+              aria-label="Draw every track in one color"
+            >
               <v-icon size="small">mdi-invert-colors-off</v-icon>
             </v-btn>
           </template>

@@ -166,18 +166,45 @@
               {{ trackMeta(track) }}
             </span>
             <v-spacer />
-            <!-- "Select", not "Select objects": the two actions plus the
-                 swatch pushed the header onto two lines at the palette's
-                 512px, and 248 tracks at two lines each is a lot of scroll. -->
-            <v-btn
-              variant="text"
-              size="x-small"
-              title="Select this track's objects"
-              @click.stop="selectTrackObjects(track)"
-            >
-              <v-icon size="small" start>mdi-select-group</v-icon>
-              Select
-            </v-btn>
+            <!-- A menu rather than two buttons: the actions plus the swatch
+                 already pushed this header onto two lines once, and 248 tracks
+                 at two lines each is a lot of scroll. It also makes the
+                 objects/links distinction explicit — with one "Select" button
+                 the difference lived only in a tooltip, and selecting objects
+                 looks like nothing happening unless you know to watch
+                 "Connect selected" rather than "Delete selected". -->
+            <v-menu location="bottom end">
+              <template v-slot:activator="{ props: activatorProps }">
+                <v-btn
+                  v-bind="activatorProps"
+                  variant="text"
+                  size="x-small"
+                  append-icon="mdi-menu-down"
+                  @click.stop
+                >
+                  <v-icon size="small" start>mdi-select-group</v-icon>
+                  Select
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item
+                  :disabled="selectableObjectCount(track) === 0"
+                  @click="selectTrackObjects(track)"
+                >
+                  <v-list-item-title>
+                    Objects ({{ selectableObjectCount(track) }})
+                  </v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="selectTrackConnections(track)">
+                  <v-list-item-title>
+                    Links ({{ track.rows.length }})
+                  </v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="selectTrackBoth(track)">
+                  <v-list-item-title>Both</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
             <v-btn
               variant="text"
               color="error"
@@ -356,12 +383,46 @@ function trackMeta(track: ITrackRow) {
 }
 
 /**
- * Select every object in the track. Replaces the selection rather than adding
- * to it: "select this track" means this track, and the Objects tab's own
- * checkboxes remain the way to build a union.
+ * A track's member ids that still resolve to an annotation or stub.
+ *
+ * `annotationIds` comes from the connection endpoints, which can outlive the
+ * annotation they point at — the list deliberately keeps dangling links visible
+ * so they can be deleted. Selecting those ids put phantom entries in the
+ * selection: they inflate every "(N)" counter, and nothing can ever clear them
+ * by clicking, because no row or feature exists to click.
+ */
+function resolvableTrackObjectIds(track: ITrackRow): string[] {
+  const resolve = connectionListStore.resolveAnnotation;
+  return track.annotationIds.filter((id) => resolve(id) !== undefined);
+}
+
+function selectableObjectCount(track: ITrackRow) {
+  return resolvableTrackObjectIds(track).length;
+}
+
+/**
+ * Select the track's objects, its links, or both. Each REPLACES its own
+ * selection rather than adding — "select this track" means this track, and the
+ * per-row checkboxes remain the way to build a union.
+ *
+ * Objects and links are separate selections feeding separate actions ("Connect
+ * selected" reads the object selection, "Delete selected" the connection one),
+ * so choosing one deliberately leaves the other alone. "Both" exists because
+ * reviewing a track usually wants it.
  */
 function selectTrackObjects(track: ITrackRow) {
-  annotationStore.setSelected(track.annotationIds);
+  annotationStore.setSelected(resolvableTrackObjectIds(track));
+}
+
+function selectTrackConnections(track: ITrackRow) {
+  connectionListStore.setSelectedConnectionIds(
+    track.rows.map(({ connection }) => connection.id),
+  );
+}
+
+function selectTrackBoth(track: ITrackRow) {
+  selectTrackObjects(track);
+  selectTrackConnections(track);
 }
 
 /**
@@ -548,6 +609,10 @@ defineExpose({
   deleteTrack,
   connectSelected,
   selectTrackObjects,
+  selectTrackConnections,
+  selectTrackBoth,
+  selectableObjectCount,
+  resolvableTrackObjectIds,
   swatchColor,
   showTrackSwatches,
   trackMeta,

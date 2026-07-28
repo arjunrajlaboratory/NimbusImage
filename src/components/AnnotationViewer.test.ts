@@ -584,6 +584,10 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.annotationConnections = [];
     mockedAnnotationStore.annotationCentroids = {};
     mockedAnnotationStore.selectedAnnotationIds = new Set<string>();
+    // Explicit, because tests that install a real implementation would
+    // otherwise leak it into every later test — vi.clearAllMocks() clears calls
+    // but leaves implementations in place.
+    (mockedAnnotationStore.isAnnotationSelected as any).mockReturnValue(false);
     mockedAnnotationStore.hoveredAnnotationId = null;
     mockedAnnotationStore.pendingAnnotation = null;
     mockedAnnotationStore.annotationIdToIdx = {};
@@ -4177,6 +4181,103 @@ describe("AnnotationViewer", () => {
         await wrapper.vm.$nextTick();
         vi.advanceTimersByTime(101);
       }
+
+      // Returns the layer plus the centroid dot for `id`, from a clean slate.
+      async function drawTrackAndGetPoint(id: string) {
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const point = tLayer
+          .annotations()
+          .find(
+            (f: any) =>
+              f?.options?.().isTimelapsePoint && f.options().girderId === id,
+          );
+        expect(point).toBeDefined();
+        tLayer.removeAllAnnotations.mockClear();
+        tLayer.draw.mockClear();
+        return { tLayer, point };
+      }
+
+      async function setObjectSelectionAndFlush(ids: string[]) {
+        // mockImplementation, not reassignment: the viewer's computed returns
+        // the function REFERENCE, so replacing it would leave the component
+        // holding the old one. The watcher fires off selectedAnnotationIds,
+        // which is reassigned here.
+        mockedAnnotationStore.selectedAnnotationIds = new Set(ids);
+        (mockedAnnotationStore.isAnnotationSelected as any).mockImplementation(
+          (id: string) => mockedAnnotationStore.selectedAnnotationIds.has(id),
+        );
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+      }
+
+      /**
+       * The OBJECT half of the highlight pair, and the bug that motivated it:
+       * `restyleAnnotations` only touches `annotationLayer`, so the timelapse
+       * centroid dots had no selection branch and no restyle route at all.
+       * Selecting a whole track's objects from the Connections tab changed
+       * nothing on screen while its links did light up — which reads as "it
+       * selected the connections instead of the objects".
+       */
+      it("highlights a selected object's centroid dot in place", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer, point } = await drawTrackAndGetPoint("a1");
+        const before = { ...point.options().style };
+
+        await setObjectSelectionAndFlush(["a1"]);
+
+        const after = point.options().style;
+        expect(after.strokeColor).not.toBe(before.strokeColor);
+        expect(after.strokeWidth).toBeGreaterThan(before.strokeWidth);
+        // Both must survive the replace, or the dot renders unpainted/invisible.
+        expect(after.stroke).toBe(true);
+        expect(after.fill).toBe(true);
+        expect(tLayer.draw).toHaveBeenCalled();
+        // In place: a selection can be hundreds of objects and the dots'
+        // identity is not a draw-time choice.
+        expect(tLayer.removeAllAnnotations).not.toHaveBeenCalled();
+      });
+
+      // The other half: whatever selection paints, deselection must undo,
+      // without clobbering the base styling baked in at draw time.
+      it("restores a dot's base styling when it is deselected", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { point } = await drawTrackAndGetPoint("a1");
+        const before = { ...point.options().style };
+
+        await setObjectSelectionAndFlush(["a1"]);
+        expect(point.options().style.strokeWidth).toBeGreaterThan(
+          before.strokeWidth,
+        );
+
+        await setObjectSelectionAndFlush([]);
+        const after = point.options().style;
+        expect(after.strokeColor).toBe(before.strokeColor);
+        expect(after.strokeWidth).toBe(before.strokeWidth);
+        expect(after.fillOpacity).toBe(before.fillOpacity);
+        expect(after.radius).toBe(before.radius);
+      });
+
+      // Selecting an object must not restyle a different object's dot.
+      it("leaves unselected dots alone", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer } = await drawTrackAndGetPoint("a1");
+        const other = tLayer
+          .annotations()
+          .find(
+            (f: any) =>
+              f?.options?.().isTimelapsePoint && f.options().girderId === "a2",
+          );
+        const before = { ...other.options().style };
+
+        await setObjectSelectionAndFlush(["a1"]);
+
+        expect(other.options().style.strokeColor).toBe(before.strokeColor);
+        expect(other.options().style.strokeWidth).toBe(before.strokeWidth);
+      });
 
       it("widens a hovered track segment in place, without rebuilding", async () => {
         setupOneSegmentTimelapseTrack();

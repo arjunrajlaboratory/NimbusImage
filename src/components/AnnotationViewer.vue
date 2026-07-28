@@ -66,6 +66,9 @@ const THROTTLE = 100;
 // line. Bright and distinct from both the per-track colors (hash-derived) and
 // the red time-jump lines, so a selected link reads at a glance.
 const CONNECTION_SELECTED_COLOR = "#00e5ff";
+// Deliberately the same cyan: inside timelapse mode a selected dot and a
+// selected track segment must read as one state, not two.
+const TIMELAPSE_POINT_SELECTED_COLOR = CONNECTION_SELECTED_COLOR;
 
 // The unselected appearance of a normal-mode connection line. These values
 // reproduce GeoJS's own line-annotation defaults (blue, width 3), which is what
@@ -1567,14 +1570,14 @@ function drawTimelapseAnnotationCentroidsAndLabels(
 ) {
   const currentTime = time.value;
 
-  const styleObj = {
-    scaled: 1,
-    fill: true,
+  const hoveredId = hoveredAnnotationId.value;
+  const isSelected = isAnnotationSelected.value;
+  // Mutated and re-read each iteration; safe because the factory copies the
+  // options it is handed (verified: 1,425 points hold 1,425 distinct style
+  // objects), so later iterations can't retroactively restyle earlier points.
+  const baseStyle: ITimelapsePointBaseStyle = {
     fillColor: "white",
     fillOpacity: 1,
-    stroke: true,
-    strokeColor: "black",
-    strokeWidth: 1,
     strokeOpacity: 1,
     radius: 0.09,
   };
@@ -1584,13 +1587,13 @@ function drawTimelapseAnnotationCentroidsAndLabels(
     const annotation = annotations[i];
     const locationTime = annotation.location.Time;
 
-    styleObj.fillColor =
+    baseStyle.fillColor =
       annotation.trackPositionType === TrackPositionType.ORPHAN
         ? "gray"
         : "white";
-    styleObj.fillOpacity = locationTime < currentTime ? 0.5 : 1;
-    styleObj.strokeOpacity = locationTime < currentTime ? 0.5 : 1;
-    styleObj.radius = locationTime === currentTime ? 0.16 : 0.09;
+    baseStyle.fillOpacity = locationTime < currentTime ? 0.5 : 1;
+    baseStyle.strokeOpacity = locationTime < currentTime ? 0.5 : 1;
+    baseStyle.radius = locationTime === currentTime ? 0.16 : 0.09;
 
     const pointAnnotation = geojsAnnotationFactory(
       AnnotationShape.Point,
@@ -1599,7 +1602,15 @@ function drawTimelapseAnnotationCentroidsAndLabels(
         time: annotation.location.Time,
         girderId: annotation.id,
         isTimelapsePoint: true,
-        style: styleObj,
+        // Kept on the feature for the same reason as timelapseBaseStyle on a
+        // segment: the unhighlighted appearance has to be recoverable so a
+        // selection change can be repainted without rebuilding the layer.
+        timelapsePointBaseStyle: { ...baseStyle },
+        style: getTimelapsePointStyle(
+          baseStyle,
+          isSelected(annotation.id),
+          annotation.id === hoveredId,
+        ),
       },
     );
 
@@ -1906,6 +1917,55 @@ interface ITimelapseSegmentBaseStyle {
   lineDash?: number[];
 }
 
+// A timelapse centroid dot's appearance minus the highlight: fill from its
+// track position (orphan vs member), opacity and radius from its timepoint
+// relative to the current one.
+interface ITimelapsePointBaseStyle {
+  fillColor: string;
+  fillOpacity: number;
+  strokeOpacity: number;
+  radius: number;
+}
+
+/**
+ * Style for a timelapse centroid dot.
+ *
+ * The dots had NO selection or hover branch at all, so selecting a track's
+ * objects — which is exactly what the Connections tab's per-track Select
+ * action does — produced no visible change anywhere in timelapse mode. Only
+ * connections reacted to selection there, which made a working object
+ * selection read as "it selected the links instead". Selected dots take the
+ * same cyan as selected segments so one colour means "selected" throughout the
+ * mode.
+ *
+ * Every branch sets every key: this object REPLACES the feature's style rather
+ * than merging, so an omitted key strands the previous highlight.
+ */
+function getTimelapsePointStyle(
+  base: ITimelapsePointBaseStyle,
+  isSelected: boolean,
+  isHovered: boolean,
+) {
+  return {
+    scaled: 1,
+    fill: true,
+    fillColor: base.fillColor,
+    // A selected dot is fully opaque even in the past, or the highlight fades
+    // out on exactly the frames a track is being reviewed on.
+    fillOpacity: isSelected || isHovered ? 1 : base.fillOpacity,
+    stroke: true,
+    strokeColor: isSelected
+      ? TIMELAPSE_POINT_SELECTED_COLOR
+      : isHovered
+        ? "white"
+        : "black",
+    strokeWidth: isSelected ? 3 : isHovered ? 2 : 1,
+    strokeOpacity: isSelected || isHovered ? 1 : base.strokeOpacity,
+    // Grown so the ring reads at the 0.09 radius the non-current frames use.
+    radius: isSelected ? base.radius + 0.05 : base.radius,
+  };
+}
+
 function getTimelapseSegmentStyle(
   base: ITimelapseSegmentBaseStyle,
   isSelected: boolean,
@@ -1924,42 +1984,80 @@ function getTimelapseSegmentStyle(
   };
 }
 
-// The timelapse counterpart of restyleAnnotations. Selection changes rebuild
-// the whole layer — they also decide which duplicate represents a pair — but
-// hover changes continuously as the pointer runs down the connection list, and
-// rebuilding ~2,500 line features per row made the list feel sluggish. So hover
-// repaints the drawn segments in place instead. This is not a cosmetic nicety:
-// clicking a row HIGHLIGHTS rather than selects, so without it the main way of
-// finding a connection has no visible effect at all in timelapse mode.
-function restyleTimelapseConnections() {
+// The timelapse counterpart of restyleAnnotations, covering BOTH kinds of
+// feature the layer holds: track segments and centroid dots.
+//
+// Connection selection additionally rebuilds the layer (it decides which
+// duplicate represents a pair), but hover changes continuously as the pointer
+// runs down the connection list, and rebuilding ~2,500 line features per row
+// made the list feel sluggish — so hover repaints in place. Not a cosmetic
+// nicety: clicking a row HIGHLIGHTS rather than selects, so without it the main
+// way of finding a connection has no visible effect at all in timelapse mode.
+//
+// Dots go through the same in-place path. `restyleAnnotations` only ever
+// touches `annotationLayer`, so before this the timelapse dots had no restyle
+// route of any kind and object selection was invisible in the mode.
+function restyleTimelapseFeatures() {
   const annotations = props.timelapseLayer.annotations();
   const len = annotations.length;
-  const hoveredId = connectionListStore.hoveredConnectionId;
+  const hoveredConnectionId = connectionListStore.hoveredConnectionId;
   const isConnectionSelected = connectionListStore.isConnectionSelected;
+  const hoveredObjectId = hoveredAnnotationId.value;
+  const isObjectSelected = isAnnotationSelected.value;
   let restyled = false;
   for (let i = 0; i < len; i++) {
     const geoJSAnnotation = annotations[i];
-    const { isConnection, connectionIds, timelapseBaseStyle, style } =
-      geoJSAnnotation.options();
-    if (!isConnection || !connectionIds || !timelapseBaseStyle) {
-      continue;
-    }
-    const newStyle = getTimelapseSegmentStyle(
+    const {
+      isConnection,
+      connectionIds,
       timelapseBaseStyle,
-      connectionIds.some((id: string) => isConnectionSelected(id)),
-      hoveredId !== null && connectionIds.includes(hoveredId),
-    );
+      isTimelapsePoint,
+      timelapsePointBaseStyle,
+      girderId,
+      style,
+    } = geoJSAnnotation.options();
+
     // Assigning a style marks the layer modified, which makes GeoJS rebuild
-    // every feature's render data on the next draw. At most two segments change
-    // when the hover moves, so leave the rest untouched and skip the draw
-    // entirely when the hovered connection is not drawn on this layer.
-    if (
-      style?.strokeColor === newStyle.strokeColor &&
-      style?.strokeWidth === newStyle.strokeWidth &&
-      style?.strokeOpacity === newStyle.strokeOpacity
-    ) {
+    // every feature's render data on the next draw. Usually only a handful of
+    // features change, so each branch compares exactly the keys IT sets and
+    // leaves the rest untouched — the draw is skipped entirely when nothing
+    // changed.
+    let newStyle;
+    if (isConnection && connectionIds && timelapseBaseStyle) {
+      const segmentStyle = getTimelapseSegmentStyle(
+        timelapseBaseStyle,
+        connectionIds.some((id: string) => isConnectionSelected(id)),
+        hoveredConnectionId !== null &&
+          connectionIds.includes(hoveredConnectionId),
+      );
+      if (
+        style?.strokeColor === segmentStyle.strokeColor &&
+        style?.strokeWidth === segmentStyle.strokeWidth &&
+        style?.strokeOpacity === segmentStyle.strokeOpacity
+      ) {
+        continue;
+      }
+      newStyle = segmentStyle;
+    } else if (isTimelapsePoint && timelapsePointBaseStyle && girderId) {
+      const pointStyle = getTimelapsePointStyle(
+        timelapsePointBaseStyle,
+        isObjectSelected(girderId),
+        girderId === hoveredObjectId,
+      );
+      if (
+        style?.strokeColor === pointStyle.strokeColor &&
+        style?.strokeWidth === pointStyle.strokeWidth &&
+        style?.strokeOpacity === pointStyle.strokeOpacity &&
+        style?.fillOpacity === pointStyle.fillOpacity &&
+        style?.radius === pointStyle.radius
+      ) {
+        continue;
+      }
+      newStyle = pointStyle;
+    } else {
       continue;
     }
+
     geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
     restyled = true;
   }
@@ -1968,8 +2066,8 @@ function restyleTimelapseConnections() {
   }
 }
 
-const restyleTimelapseConnectionsThrottled = throttle(
-  restyleTimelapseConnections,
+const restyleTimelapseFeaturesThrottled = throttle(
+  restyleTimelapseFeatures,
   THROTTLE,
 );
 
@@ -4368,7 +4466,21 @@ watch(selectedConnectionIds, () => {
 
 watch(hoveredConnectionId, () => {
   if (showTimelapseMode.value) {
-    restyleTimelapseConnectionsThrottled();
+    restyleTimelapseFeaturesThrottled();
+  }
+});
+
+// The OBJECT half of the same pair. `restyleAnnotations` (which the watcher
+// above this block drives) only touches `annotationLayer`, so without this the
+// timelapse centroid dots never reacted to object selection or hover at all —
+// selecting a whole track's objects from the Connections tab changed nothing on
+// screen, while its connections did light up, making a correct selection look
+// like it had selected the wrong thing. In place rather than a rebuild: a
+// selection can be hundreds of objects and the dots' identity is not a
+// draw-time choice, unlike a connection duplicate's representative.
+watch([selectedAnnotationIds, hoveredAnnotationId], () => {
+  if (showTimelapseMode.value) {
+    restyleTimelapseFeaturesThrottled();
   }
 });
 
@@ -4765,7 +4877,7 @@ onBeforeUnmount(() => {
   // enumerated list is how the two below went missing in the first place.
   updateVisibilityDebounced.cancel();
   restyleAnnotationsThrottled.cancel();
-  restyleTimelapseConnectionsThrottled.cancel();
+  restyleTimelapseFeaturesThrottled.cancel();
   drawAnnotations.cancel();
   drawTooltips.cancel();
   handleValueOnMouseMoveDebounce.cancel();
@@ -4876,8 +4988,8 @@ defineExpose({
   drawTooltips,
   updateVisibilityDebounced,
   restyleAnnotationsThrottled,
-  restyleTimelapseConnections,
-  restyleTimelapseConnectionsThrottled,
+  restyleTimelapseFeatures,
+  restyleTimelapseFeaturesThrottled,
   clearOldAnnotations,
   drawNewAnnotations,
   drawNewConnections,
