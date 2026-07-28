@@ -43,8 +43,22 @@ export const LEFT_COLUMN_PALETTE_WIDTHS = {
   tools: 380,
 } as const;
 
-/** Width of the Object Browser palette, which anchors to the right edge. */
-export const OBJECT_BROWSER_WIDTH = 512;
+/**
+ * Widths of the right-edge palettes. `FloatingPalette` defaults to `right: 16`
+ * with no `left`, so EVERY palette that omits `:left` lands here — which is all
+ * of these. Analyze is a `v-navigation-drawer location="right"` rather than a
+ * palette, and sits flush to the edge (see `RIGHT_EDGE_OVERLAY_INSETS`).
+ */
+export const RIGHT_PALETTE_WIDTHS = {
+  objectBrowser: 512,
+  filters: 480,
+  settings: 480,
+  snapshots: 480,
+  analyze: 480,
+} as const;
+
+/** Kept as its own name: the Object Browser is referenced by several callers. */
+export const OBJECT_BROWSER_WIDTH = RIGHT_PALETTE_WIDTHS.objectBrowser;
 
 /**
  * AiPanel.vue's fixed footprint. Its own scoped CSS owns these values; they are
@@ -70,12 +84,35 @@ export const RIGHT_OF_LEFT_COLUMN =
 export const LEFT_PALETTE_CLEAR_X =
   PALETTE_INSET + LEFT_COLUMN_WIDTH + CANVAS_SURFACE_GAP;
 
-/** Right offset that clears the Object Browser. */
-export const OBJECT_BROWSER_CLEAR_X =
-  PALETTE_INSET + OBJECT_BROWSER_WIDTH + PALETTE_INSET;
+/**
+ * One right-edge overlay's footprint.
+ *
+ * `inset` defaults to `PALETTE_INSET` because that is `FloatingPalette`'s own
+ * default (`right: 16` whenever `left` is unset). The only exception is the AI
+ * panel, whose scoped CSS uses 20.
+ */
+export interface IRightEdgeOverlay {
+  open: boolean;
+  width: number;
+  inset?: number;
+}
 
-/** Right offset that clears the AI panel. */
-export const AI_PANEL_CLEAR_X = AI_PANEL_INSET + AI_PANEL_WIDTH + PALETTE_INSET;
+/**
+ * Insets for the overlays that don't use `FloatingPalette`'s default.
+ *
+ * The Analyze drawer is absent on purpose: it is not an overlay at all. A
+ * `v-navigation-drawer location="right"` shifts the layout, narrowing the
+ * container the action panels are positioned inside, so it needs no clearance —
+ * giving it one double-counts and moves them left instead of right.
+ */
+export const RIGHT_EDGE_OVERLAY_INSETS = {
+  aiPanel: AI_PANEL_INSET,
+} as const;
+
+/** How far from the right edge ONE overlay's far side sits, plus a gap. */
+export function overlayClearX(width: number, inset = PALETTE_INSET): number {
+  return inset + width + PALETTE_INSET;
+}
 
 /**
  * How far from the right edge a surface must sit to clear every right-edge
@@ -84,19 +121,24 @@ export const AI_PANEL_CLEAR_X = AI_PANEL_INSET + AI_PANEL_WIDTH + PALETTE_INSET;
  * Takes the largest clearance rather than summing: the overlays share the right
  * edge, they don't queue along it. Returns the bare inset when nothing is open.
  *
+ * Takes a LIST rather than named booleans. The named-boolean version knew about
+ * the Object Browser and the AI panel and silently ignored Settings, Snapshots
+ * and Filters — all right-anchored, none mutually exclusive with timelapse mode,
+ * each outranking the selection panels on z-index (1006 vs their 1000). Naming
+ * the occupants in the signature is what let three of them be forgotten; a list
+ * makes "did you pass all of them?" a question the caller must answer.
+ *
  * Height is deliberately ignored. The AI panel is bottom-anchored and 680px
  * tall, so on a very tall viewport it sits below the surfaces that consult this
  * and the offset is unnecessary — but applying it anyway only moves them further
  * over empty canvas, whereas measuring would mean reading layout on every
  * resize to save nothing a user would notice.
  */
-export function rightEdgeClearX(open: {
-  objectBrowser?: boolean;
-  aiPanel?: boolean;
-}): number {
+export function rightEdgeClearX(overlays: IRightEdgeOverlay[]): number {
   return Math.max(
     PALETTE_INSET,
-    open.objectBrowser ? OBJECT_BROWSER_CLEAR_X : 0,
-    open.aiPanel ? AI_PANEL_CLEAR_X : 0,
+    ...overlays
+      .filter((overlay) => overlay.open)
+      .map((overlay) => overlayClearX(overlay.width, overlay.inset)),
   );
 }

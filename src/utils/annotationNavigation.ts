@@ -1,5 +1,6 @@
 import store from "@/store";
 import annotationStore from "@/store/annotation";
+import timelapse from "@/store/timelapse";
 import { simpleCentroid } from "@/utils/annotation";
 import {
   frameCameraInfo,
@@ -127,13 +128,22 @@ export function goToConnection(parentId: string, childId: string) {
  * so the track occupies `TRACK_VIEWPORT_FRACTION` of the viewport.
  *
  * XY and Z come from the members, because a track on a different XY/Z is not
- * drawn at all and framing it would show empty image. TIME is deliberately left
- * alone unless the current frame lies outside the track's range — in timelapse
- * mode Time is the window's centre and the user scrubs it on purpose, so moving
- * it would fight them. When it IS outside, the track is entirely off-window and
- * would render as nothing, so Time is clamped to the nearest end of the range
- * rather than jumped to the middle: the smallest move that makes the click do
- * something.
+ * drawn at all and framing it would show empty image.
+ *
+ * TIME depends on the mode, because what "visible" means does:
+ *
+ * - **Timelapse mode** draws a whole window of timepoints at once, so a track
+ *   spanning T1–T5 is on screen from anywhere inside that range. Time is the
+ *   window's centre and the user scrubs it deliberately, so leave it alone; only
+ *   when the current frame is OUTSIDE the range is the track entirely off-window,
+ *   and then clamp to the nearest end — the smallest move that makes the click do
+ *   something.
+ * - **Normal mode** draws one timepoint. Leaving Time alone there frames a region
+ *   containing nothing: a track with members at T1 and T5 viewed at T3 has no
+ *   member and no link on screen, so the row expands and the camera moves to
+ *   empty image. The By-track view is available with the mode off, so this is
+ *   reachable. Snap to the member nearest the current frame instead — the
+ *   smallest move that puts a real object in view.
  *
  * Unlike `goToConnection` this zooms in as well as out — clicking a track from a
  * zoomed-out view should bring it up to a usable size, which is the whole point.
@@ -159,12 +169,23 @@ export function goToTrack(annotationIds: string[]) {
   store.setZ(members[0].location.Z);
 
   const times = members.map((m) => m.location.Time);
-  const startTime = Math.min(...times);
-  const endTime = Math.max(...times);
-  if (store.time < startTime) {
-    store.setTime(startTime);
-  } else if (store.time > endTime) {
-    store.setTime(endTime);
+  if (timelapse.showMode) {
+    // A window of frames is drawn, so anywhere inside the range already shows it.
+    const startTime = Math.min(...times);
+    const endTime = Math.max(...times);
+    if (store.time < startTime) {
+      store.setTime(startTime);
+    } else if (store.time > endTime) {
+      store.setTime(endTime);
+    }
+  } else {
+    // One frame is drawn, so land on an actual member or nothing is visible.
+    const nearest = times.reduce((best, time) =>
+      Math.abs(time - store.time) < Math.abs(best - store.time) ? time : best,
+    );
+    if (nearest !== store.time) {
+      store.setTime(nearest);
+    }
   }
 
   // Clamp to what the map can actually show. Without a max, a track whose

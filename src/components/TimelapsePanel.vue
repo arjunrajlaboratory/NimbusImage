@@ -103,7 +103,7 @@
         color="error"
         size="x-small"
         class="delete-btn"
-        :disabled="timelapseTaggedCount === 0 || isDeleting"
+        :disabled="!isLoggedIn || timelapseTaggedCount === 0 || isDeleting"
         :loading="isDeleting"
         @click="deleteAll"
       >
@@ -143,6 +143,13 @@ const showLabels = computed({
 });
 
 const trackColoring = computed(() => timelapseStore.trackColoring);
+
+// `deleteAllTimelapseConnections` returns immediately when not logged in
+// (src/store/annotation.ts:1141), so without this the button is enabled for a
+// signed-out viewer of a public dataset and the click silently does nothing.
+// Not a security check — the backend owns that; this is just not offering an
+// action that provably no-ops. ConnectionLists delete controls already do it.
+const isLoggedIn = computed(() => store.isLoggedIn);
 
 // Every connection, deliberately: the timelapse view draws any connection whose
 // endpoints are both displayed, regardless of tag, so this is what the readout
@@ -191,6 +198,7 @@ async function deleteAll() {
 
 defineExpose({
   trackCount,
+  isLoggedIn,
   connectionCount,
   timelapseTaggedCount,
   showTracks,

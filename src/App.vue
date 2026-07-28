@@ -388,24 +388,32 @@
       v-model="analyzePanel"
       location="right"
       :scrim="false"
-      :width="480"
+      :width="RIGHT_PALETTE_WIDTHS.analyze"
       :mobile="false"
     >
       <analyze-annotations />
     </v-navigation-drawer>
 
-    <floating-palette v-model="settingsPanel" title="Settings" :width="480">
+    <floating-palette
+      v-model="settingsPanel"
+      title="Settings"
+      :width="RIGHT_PALETTE_WIDTHS.settings"
+    >
       <annotations-settings />
     </floating-palette>
 
-    <floating-palette v-model="snapshotPanel" title="Snapshots" :width="480">
+    <floating-palette
+      v-model="snapshotPanel"
+      title="Snapshots"
+      :width="RIGHT_PALETTE_WIDTHS.snapshots"
+    >
       <snapshots :snapshotVisible="snapshotPanel" />
     </floating-palette>
 
     <floating-palette
       v-model="annotationPanel"
       title="Object Browser"
-      :width="OBJECT_BROWSER_WIDTH"
+      :width="RIGHT_PALETTE_WIDTHS.objectBrowser"
       :top="annotationBrowserTop"
       :max-height="annotationBrowserMaxHeight"
     >
@@ -416,7 +424,7 @@
       ref="filtersPaletteRef"
       v-model="filtersPanel"
       title="Filters"
-      :width="480"
+      :width="RIGHT_PALETTE_WIDTHS.filters"
       :max-height="filtersMaxHeight"
     >
       <filters-panel />
@@ -514,12 +522,14 @@ import timelapseStore from "@/store/timelapse";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
 import {
+  AI_PANEL_WIDTH,
   LEFT_COLUMN_PALETTE_WIDTHS,
   LEFT_PALETTE_CLEAR_X,
-  OBJECT_BROWSER_WIDTH,
   PALETTE_GAP,
   PALETTE_INSET,
+  RIGHT_EDGE_OVERLAY_INSETS,
   RIGHT_OF_LEFT_COLUMN,
+  RIGHT_PALETTE_WIDTHS,
   rightEdgeClearX,
 } from "@/utils/paletteGeometry";
 import AiPanel from "@/components/AiPanel.vue";
@@ -593,12 +603,32 @@ const canUseAiPanel = computed(
   () => aiPanelFeatureEnabled && store.isLoggedIn && !!store.girderUser,
 );
 
+// EVERY right-edge overlay that OVERLAYS the canvas. All the palettes below omit
+// `:left`, so FloatingPalette anchors them right at z-index 1006; the AI panel is
+// fixed at 2001. The selection action panels are 1000, so any of them covers the
+// panels' buttons, and none is mutually exclusive with timelapse mode.
+//
+// The Analyze drawer is deliberately NOT here. It is a `v-navigation-drawer
+// location="right"`, which SHIFTS the layout instead of floating over it: the
+// action panels are `position: absolute` inside `.image`, and the drawer narrows
+// that container, so its strip is already excluded from the box `right:` is
+// measured against. Adding a clearance for it double-counts and pushes the panels
+// left — measured with the drawer open, container 0–1204 and the panel at
+// 533–708 (= 1204 − 496 − 175), which puts them back under the Timelapse palette
+// at 444–744, i.e. straight back into the bug this whole mechanism fixes.
 const paletteGeometryVars = computed(() => ({
   "--nimbus-left-palette-clear-x": `${LEFT_PALETTE_CLEAR_X}px`,
-  "--nimbus-right-edge-clear-x": `${rightEdgeClearX({
-    objectBrowser: annotationPanel.value,
-    aiPanel: aiPanelOpen.value && canUseAiPanel.value,
-  })}px`,
+  "--nimbus-right-edge-clear-x": `${rightEdgeClearX([
+    { open: annotationPanel.value, width: RIGHT_PALETTE_WIDTHS.objectBrowser },
+    { open: filtersPanel.value, width: RIGHT_PALETTE_WIDTHS.filters },
+    { open: settingsPanel.value, width: RIGHT_PALETTE_WIDTHS.settings },
+    { open: snapshotPanel.value, width: RIGHT_PALETTE_WIDTHS.snapshots },
+    {
+      open: aiPanelOpen.value && canUseAiPanel.value,
+      width: AI_PANEL_WIDTH,
+      inset: RIGHT_EDGE_OVERLAY_INSETS.aiPanel,
+    },
+  ])}px`,
 }));
 
 function toggleAiPanel() {

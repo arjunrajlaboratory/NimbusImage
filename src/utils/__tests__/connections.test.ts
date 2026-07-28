@@ -7,6 +7,7 @@ import {
   TAnnotationOrStub,
 } from "@/store/model";
 import {
+  TRACK_PALETTE_COUNT,
   analyzeTracks,
   buildConnectionRows,
   buildTrackRows,
@@ -164,12 +165,18 @@ describe("trackColor", () => {
       "69fa8984a3094194968568cb",
       "69fa8984a3094194968568cc",
     ];
-    const hues = ids.map((id) => hueOf(trackColor(id)));
-    for (let i = 0; i < hues.length; i++) {
-      for (let j = i + 1; j < hues.length; j++) {
-        const gap = Math.abs(hues[i] - hues[j]);
-        // Shortest way round the circle.
-        expect(Math.min(gap, 360 - gap)).toBeGreaterThan(20);
+    // Every palette, not just the default: a shuffle that fixes one collision
+    // by making these five indistinguishable is a worse outcome than the
+    // collision. Optimising the neighbour-gap metric alone once picked a step
+    // that scored 44 deg there and 19.4 deg here.
+    for (let seed = 0; seed < TRACK_PALETTE_COUNT; seed++) {
+      const hues = ids.map((id) => hueOf(trackColor(id, seed)));
+      for (let i = 0; i < hues.length; i++) {
+        for (let j = i + 1; j < hues.length; j++) {
+          const gap = Math.abs(hues[i] - hues[j]);
+          // Shortest way round the circle.
+          expect(Math.min(gap, 360 - gap)).toBeGreaterThan(20);
+        }
       }
     }
   });
@@ -178,20 +185,120 @@ describe("trackColor", () => {
     expect(trackColor("abc", 1)).not.toBe(trackColor("abc", 0));
   });
 
-  // A seed bump must re-PERMUTE, not rotate the whole wheel: rotating leaves
-  // any confusable pair exactly as confusable as it was.
+  /**
+   * A batch of consecutive ObjectIds, the shape real track keys take. 248 of
+   * them, matching the test dataset, because the property degrades with count:
+   * the previous 40-id fixture started at offset 0x0000 and never crossed the
+   * hex carry that produced the bad case, so it measured 77.3° for a step that
+   * measures 4.2° here.
+   */
+  const consecutiveIds = (count: number, start = 0x68c3) =>
+    Array.from(
+      { length: count },
+      (_, i) =>
+        `69fa8984a30941949685${(start + i).toString(16).padStart(4, "0")}`,
+    );
+
+  /** Smallest hue gap between ids that are NEIGHBOURS in allocation order. */
+  const minAdjacentGap = (ids: string[], seed = 0) => {
+    let min = 360;
+    for (let i = 1; i < ids.length; i++) {
+      const gap = Math.abs(
+        hueOf(trackColor(ids[i], seed)) - hueOf(trackColor(ids[i - 1], seed)),
+      );
+      min = Math.min(min, gap, 360 - gap);
+    }
+    return min;
+  };
+
+  /**
+   * The sorted multiset of gaps around the circle. Invariant under a rotation of
+   * every hue by the same amount; changed by a genuine re-assignment. This is the
+   * discriminator the previous version of this test lacked.
+   */
+  const gapSignature = (ids: string[], seed = 0) => {
+    const hues = ids
+      .map((id) => hueOf(trackColor(id, seed)))
+      .sort((a, b) => a - b);
+    return hues
+      .map(
+        (hue, i) =>
+          +((hues[(i + 1) % hues.length] - hue + 360) % 360).toFixed(3),
+      )
+      .sort((a, b) => a - b)
+      .join("|");
+  };
+
+  const closestPair = (ids: string[], seed = 0) => {
+    const hues = ids.map((id) => hueOf(trackColor(id, seed)));
+    let best = { pair: "", gap: 360 };
+    for (let i = 0; i < hues.length; i++) {
+      for (let j = i + 1; j < hues.length; j++) {
+        const gap = Math.abs(hues[i] - hues[j]);
+        const shortest = Math.min(gap, 360 - gap);
+        if (shortest < best.gap) {
+          best = { pair: `${i}/${j}`, gap: shortest };
+        }
+      }
+    }
+    return best;
+  };
+
+  /**
+   * Regression for a claim the code made and did not honour. The seed used to be
+   * folded into the hash accumulator, which for equal-length ids adds the same
+   * `31^n · seed` to every hash — a constant offset. Every hue moved, so the
+   * colours looked different and both a unit test and a live browser check
+   * accepted it, but every pairwise gap survived: identical gap multiset at every
+   * seed, with the closest pair pinned at 2.927°. The one thing Shuffle exists
+   * for — separating a pair that collides — was the one thing it could not do.
+   */
   it("re-permutes rather than rotating when the seed changes", () => {
-    const ids = Array.from(
-      { length: 40 },
-      (_, i) => `69fa8984a30941949685${i.toString(16).padStart(4, "0")}`,
-    );
-    const shifts = new Set(
-      ids.map((id) => {
-        const gap = hueOf(trackColor(id, 1)) - hueOf(trackColor(id, 0));
-        return Math.round((((gap % 360) + 360) % 360) / 10);
-      }),
-    );
-    expect(shifts.size).toBeGreaterThan(1);
+    const ids = consecutiveIds(248);
+    const base = gapSignature(ids, 0);
+    // At least one other palette must have a genuinely different gap structure.
+    const signatures = [1, 2].map((seed) => gapSignature(ids, seed));
+    expect(signatures).not.toContain(base);
+    // ...and the closest pair must actually be broken up, not carried along.
+    const before = closestPair(ids, 0);
+    const after = closestPair(ids, 1);
+    expect(after.pair).not.toBe(before.pair);
+  });
+
+  /**
+   * The primary property, at the scale it actually degrades. Every palette the
+   * seed can select must hold it — a shuffle that fixes one collision by making
+   * neighbouring tracks indistinguishable is a worse outcome than the collision.
+   * 1/φ, the previous step, measures 4.2° here and would fail this.
+   */
+  it("keeps neighbouring ids far apart in every palette", () => {
+    const ids = consecutiveIds(248);
+    for (let seed = 0; seed < TRACK_PALETTE_COUNT; seed++) {
+      expect(minAdjacentGap(ids, seed)).toBeGreaterThan(20);
+    }
+  });
+
+  // Not overfit to one batch: the delta structure depends on where the hex
+  // carries fall, so a step can look fine for one start offset and fail another.
+  it("holds that separation across id batches and sizes", () => {
+    for (const start of [0x0000, 0x009a, 0x68c3, 0x0fff, 0xabcd]) {
+      for (const count of [40, 120, 248]) {
+        const ids = consecutiveIds(count, start);
+        for (let seed = 0; seed < TRACK_PALETTE_COUNT; seed++) {
+          expect(minAdjacentGap(ids, seed)).toBeGreaterThan(20);
+        }
+      }
+    }
+  });
+
+  // Only ever incremented in practice, but indexing past the array would yield
+  // an undefined step and a NaN hue — a silently colourless track.
+  it("survives a seed outside the palette range", () => {
+    for (const seed of [-1, -7, TRACK_PALETTE_COUNT, TRACK_PALETTE_COUNT * 3]) {
+      expect(trackColor("69fa8984a3094194968568c5", seed)).toMatch(
+        /^#[0-9a-f]{6}$/,
+      );
+    }
   });
 });
 

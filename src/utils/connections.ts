@@ -185,15 +185,50 @@ function hslToHex(hue: number, saturation: number, lightness: number): string {
   return `#${channel(0)}${channel(8)}${channel(4)}`;
 }
 
-// Golden-ratio conjugate. Successive multiples of it are maximally spread on
-// the unit interval, which is what turns "hashes one apart" into "hues 222°
-// apart" below.
-const GOLDEN_RATIO_CONJUGATE = 0.618033988749895;
+/**
+ * Multipliers that turn a track's hash into a hue. `seed` picks one, so a
+ * shuffle changes the STEP rather than adding an offset.
+ *
+ * These are MEASURED values, not named constants, and that is the point. The
+ * obvious choice is 1/φ, whose multiples are maximally spread — but that theory
+ * is about `frac(i·φ)` for consecutive integers `i`, and our input is not `i`. It
+ * is a polynomial hash whose delta between consecutive ObjectIds is 1 for most
+ * steps and jumps at every hex carry ('9'→'a' is +40 in char codes). Under that
+ * delta structure 1/φ hits a resonance and is the *worst* candidate tried, while
+ * two multipliers a thousandth away from it score among the best. Naming a
+ * constant here would imply the value was derived; it was searched for.
+ *
+ * Two properties are held simultaneously, because optimising either alone picks a
+ * step that fails the other:
+ *
+ * 1. **Neighbouring ids must differ** — tracks created in one pass get
+ *    consecutive ids, so this is the common case. Measured as the smallest hue
+ *    gap between allocation-order neighbours, over 128 batches (4 id prefixes ×
+ *    8 start offsets × 4 sizes up to 600).
+ * 2. **Small nearby groups must all differ** — the five-id case from the
+ *    original bug report, measured as the smallest gap over ALL pairs.
+ *
+ * | step      | worst neighbour gap | five-id all-pairs |
+ * |-----------|---------------------|-------------------|
+ * | 0.1912317 |               68.8° |             68.8° |
+ * | 0.3594317 |               96.1° |             62.8° |
+ * | 0.5954317 |               65.5° |             68.7° |
+ * | 1/φ       |            **4.2°** |             67.9° |
+ * | √2−1      |               44.4° |          **19.4°** |
+ *
+ * 1/φ measured 77.3° on the 40-id fixture this was first developed against,
+ * because that fixture started at offset 0x0000 and never crossed the carry that
+ * triggers the resonance — the figure quoted in the original docs was a fixture
+ * artifact, not a property of the design. Each step here is also verified to
+ * cover all 12 hue sectors and to produce a gap structure distinct from the other
+ * two, which is what makes a shuffle a re-assignment rather than a rotation.
+ */
+const HUE_STEPS = [0.1912317, 0.3594317, 0.5954317] as const;
 
 /**
  * Deterministic colour for a track, keyed by `trackKey`.
  *
- * Two properties matter, and each cost a bug to learn:
+ * Three properties matter, and each cost a bug to learn:
  *
  * 1. Saturation and lightness are FIXED, so only the hue varies. The original
  *    sliced the hash's own hex digits into `#rrggbb`, putting luminance under
@@ -204,29 +239,45 @@ const GOLDEN_RATIO_CONJUGATE = 0.618033988749895;
  *    allocated in one batch, so neighbouring tracks differ in the last
  *    character only. Invisible in synthetic fixtures; on a real dataset the
  *    first five tracks came out rgb(80,226,{162,218,215,213,211}) — five
- *    indistinguishable greens. Under `% 360` a one-character difference is a
- *    one-degree difference. The golden angle turns it into 222°.
+ *    indistinguishable greens, because under `% 360` a one-character difference
+ *    is a one-degree difference. Multiplying by an irrational step fixes it —
+ *    see `HUE_STEPS` for which steps, and why the obvious choice (1/φ) is in
+ *    fact the worst one available here.
+ *
+ * 3. A shuffle must re-ASSIGN, not rotate. The seed used to be folded into the
+ *    hash accumulator, which for equal-length ids adds the same `31^n · seed` to
+ *    every hash — a constant offset, so every hue moved by the same amount and
+ *    every pairwise gap survived. Measured: an identical sorted gap multiset for
+ *    every seed, with the closest pair pinned at 2.927° no matter how many times
+ *    you shuffled. So the one thing the button exists for — separating a pair
+ *    that happens to collide — was the one thing it could not do. The seed now
+ *    selects the step, which genuinely re-assigns: ~97% of hues move and the
+ *    closest pair changes both partners and distance.
  *
  * Deliberately does NOT use `hashString` from `@/utils/annotation`, even though
  * that one is stronger and its murmur finalizer is commented as existing "to
  * break sequential correlation in MongoDB ObjectIDs". The two are in direct
- * tension: the golden-angle step needs the sequential correlation that the
- * finalizer destroys. Measured over 40 consecutive ObjectIds, smallest hue gap
- * between neighbouring ids — this hash 77.3°, hashString 9.2°, hashString with
- * a plain `% 360` 3.0°. Swapping in the "better" hash makes the output worse.
- *
- * `seed` is folded into the accumulator rather than added to the hue, so
- * re-rolling re-permutes the assignment instead of rotating the whole wheel —
- * a rotation would leave any confusable pair exactly as confusable.
+ * tension: the irrational step needs the sequential correlation the finalizer
+ * destroys. Measured over 40 consecutive ObjectIds, smallest neighbouring-id hue
+ * gap — hashString 9.2°, hashString with a plain `% 360` 3.0°. Swapping in the
+ * "better" hash makes the output worse.
  */
 export function trackColor(trackId: string, seed: number = 0): string {
-  let hash = seed;
+  let hash = 0;
   for (let i = 0; i < trackId.length; i++) {
     hash = (trackId.charCodeAt(i) + ((hash << 5) - hash)) | 0;
   }
-  const hue = ((Math.abs(hash) * GOLDEN_RATIO_CONJUGATE) % 1) * 360;
-  return hslToHex(hue, 0.72, 0.6);
+  // Non-negative modulo: `seed` is only ever incremented, but a caller passing a
+  // negative would otherwise index past the end of the array and yield NaN.
+  const step =
+    HUE_STEPS[
+      ((seed % HUE_STEPS.length) + HUE_STEPS.length) % HUE_STEPS.length
+    ];
+  return hslToHex(((Math.abs(hash) * step) % 1) * 360, 0.72, 0.6);
 }
+
+/** How many distinct palettes `shuffleTimelapseColors` cycles through. */
+export const TRACK_PALETTE_COUNT = HUE_STEPS.length;
 
 // --- Connection list rows ---
 

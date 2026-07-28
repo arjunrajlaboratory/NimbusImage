@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   cameraInfo: { center: { x: 0, y: 0 }, zoom: 3, rotate: 0, gcsBounds: [] },
   time: 0,
   zoomRange: { min: 0, max: 12 } as { min: number; max: number } | undefined,
+  showTimelapseMode: true,
 }));
 
 vi.mock("@/store", () => ({
@@ -43,6 +44,14 @@ vi.mock("@/store/annotation", () => ({
     annotationCentroids: {},
     setHoveredAnnotationId: h.setHoveredAnnotationId,
     ensureHydrated: h.ensureHydrated,
+  },
+}));
+
+vi.mock("@/store/timelapse", () => ({
+  default: {
+    get showMode() {
+      return h.showTimelapseMode;
+    },
   },
 }));
 
@@ -81,6 +90,7 @@ beforeEach(() => {
   h.annotations.clear();
   h.time = 0;
   h.zoomRange = { min: 0, max: 12 };
+  h.showTimelapseMode = true;
 });
 
 describe("goToConnection", () => {
@@ -173,10 +183,43 @@ describe("goToTrack", () => {
   /**
    * Time is the timelapse window's centre and the user scrubs it deliberately,
    * so framing a track must not move it when the current frame already falls
-   * inside the track's range.
+   * inside the track's range — the whole window is drawn, so the track is
+   * already on screen.
    */
   it("leaves Time alone when it is already inside the track's range", () => {
+    h.showTimelapseMode = true;
     h.time = 3;
+    addAnnotation("a", 0, 0, 1);
+    addAnnotation("b", 10, 10, 5);
+    goToTrack(["a", "b"]);
+    expect(h.setTime).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ...but the By-track view works with the mode OFF, where only one timepoint
+   * is drawn. Leaving Time alone there frames a region containing nothing: with
+   * members at T1 and T5 viewed at T3, no member and no link is on screen, so
+   * the row expands and the camera moves to empty image. Snap to the nearest
+   * member instead.
+   */
+  it("snaps Time to the nearest member outside timelapse mode", () => {
+    h.showTimelapseMode = false;
+    h.time = 3;
+    addAnnotation("a", 0, 0, 1);
+    addAnnotation("b", 10, 10, 5);
+    goToTrack(["a", "b"]);
+    // T3 is inside [1, 5], so the timelapse rule would not have moved at all.
+    expect(h.setTime).toHaveBeenCalledWith(1);
+
+    vi.clearAllMocks();
+    h.time = 4; // nearer T5 now
+    goToTrack(["a", "b"]);
+    expect(h.setTime).toHaveBeenCalledWith(5);
+  });
+
+  it("does not move Time outside the mode when already on a member", () => {
+    h.showTimelapseMode = false;
+    h.time = 5;
     addAnnotation("a", 0, 0, 1);
     addAnnotation("b", 10, 10, 5);
     goToTrack(["a", "b"]);
@@ -186,6 +229,7 @@ describe("goToTrack", () => {
   // ...but a track entirely off-window renders as nothing, so the click would
   // look broken. Clamp to the nearest end — the smallest move that fixes it.
   it("clamps Time to the nearest end when it is outside the range", () => {
+    h.showTimelapseMode = true;
     h.time = 40;
     addAnnotation("a", 0, 0, 1);
     addAnnotation("b", 10, 10, 5);

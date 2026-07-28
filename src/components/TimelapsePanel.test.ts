@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   main: {
     // Only the Object Browser routing lives in the main store now; the mode and
     // everything it configures moved to `@/store/timelapse`.
+    isLoggedIn: true,
     openAnnotationBrowserTab: vi.fn(),
   } as any,
   timelapse: {
@@ -54,6 +55,7 @@ describe("TimelapsePanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.timelapse.showMode = true;
+    h.main.isLoggedIn = true;
     h.timelapse.trackColoring = "track";
     h.main.openAnnotationBrowserTab = vi.fn();
     h.connectionList.setGrouping = vi.fn();
@@ -156,5 +158,34 @@ describe("TimelapsePanel", () => {
     expect(tagged.vm.connectionCount).toBe(2);
     expect(tagged.vm.timelapseTaggedCount).toBe(1);
     expect(tagged.find(".delete-btn").attributes("disabled")).toBe("false");
+  });
+
+  /**
+   * The other half of the same shape: `deleteAllTimelapseConnections` returns
+   * immediately when not logged in (`src/store/annotation.ts:1141`), so on a
+   * public dataset viewed while signed out the button was enabled and the click
+   * silently did nothing. Not a security check — the backend owns that — just not
+   * offering an action that provably no-ops, which the Connection List's delete
+   * controls already did.
+   */
+  it("disables delete-all for a signed-out viewer with tagged connections", () => {
+    (annotationStore as any).annotationConnections = [
+      {
+        id: "c1",
+        parentId: "a",
+        childId: "b",
+        tags: [TIMELAPSE_CONNECTION_TAG],
+      },
+    ];
+    h.main.isLoggedIn = false;
+    const signedOut = mountComponent();
+    // The tagged count is non-zero, so ONLY the login guard can be disabling it.
+    expect(signedOut.vm.timelapseTaggedCount).toBe(1);
+    expect(signedOut.find(".delete-btn").attributes("disabled")).toBe("true");
+
+    h.main.isLoggedIn = true;
+    expect(mountComponent().find(".delete-btn").attributes("disabled")).toBe(
+      "false",
+    );
   });
 });

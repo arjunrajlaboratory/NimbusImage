@@ -143,3 +143,92 @@ Base: `master`
   same counts in **1** colour; shuffle 120 colours with the sampled hue changed;
   window 30 → 2,728 / 2,488. `main` retains no timelapse field, and
   `timelapse-palette-open` still tracks the mode.
+
+---
+
+# Codex round 2 (commit `1a4bc1fa`)
+
+## Finding 9 — Clearance accounted for two right-edge overlays out of five
+
+- **Severity:** P1 (Codex)
+- **Location:** `src/App.vue`
+- **Summary:** Finding 5's fix resolved the offset over the Object Browser and
+  the AI panel. `FloatingPalette` anchors right whenever `left` is unset, so
+  Settings, Snapshots and Filters land there too — all at z-index 1006 against
+  the selection panels' 1000, none mutually exclusive with timelapse mode. The
+  panels were still drawn underneath any of them.
+- **Status:** fixed — `rightEdgeClearX` now takes a LIST of overlays and App.vue
+  passes all five. Naming the occupants in the signature was what let three be
+  forgotten.
+- **Codex was right about the palettes and wrong about the drawer.** Its advice
+  was "include every concurrently open right-edge palette", which would have
+  added the Analyze `v-navigation-drawer` too. That one shifts the layout rather
+  than floating over it, and the action panels are `position: absolute` inside
+  `.image`, which the drawer narrows — so its strip is already excluded from the
+  box `right:` measures against. Measured with it open: container 0–1204, panel
+  at 533–708 (= 1204 − 496 − 175), which is back under the Timelapse palette at
+  444–744. Giving it a clearance moves the panels LEFT, into the bug. It is
+  excluded, and a test asserts the exclusion so it does not get "fixed" later.
+- **Test:** the helper's own unit tests all pass against a caller that forgets
+  four overlays, so the guard has to read the source:
+  `src/components/__tests__/rightEdgeOverlays.test.ts` scans App.vue for
+  `<floating-palette>` elements without `:left` and asserts each appears in the
+  `rightEdgeClearX([...])` list, naming the culprit in the failure message.
+
+## Finding 10 — Track framing broken outside timelapse mode
+
+- **Severity:** P2 (Codex)
+- **Location:** `src/utils/annotationNavigation.ts`
+- **Summary:** `goToTrack` left Time alone whenever the current frame was inside
+  the track's range — correct in timelapse mode, where a whole window of frames
+  is drawn, but the By-track view works with the mode off, where only one frame
+  is. A track with members at T1 and T5 viewed at T3 then has no member and no
+  link on screen: the row expands and the camera moves to empty image.
+- **Status:** fixed — the Time rule now branches on the mode: clamp to the
+  nearest end of the range in timelapse mode, snap to the nearest member outside
+  it. Third instance of the same blind spot (the swatch gate and the By-track
+  view were the others), now a row in the symmetric-pairs table.
+
+## Finding 11 — Delete-all enabled for signed-out viewers
+
+- **Severity:** P2 (Codex)
+- **Location:** `src/components/TimelapsePanel.vue`
+- **Summary:** The other half of Finding 7. `deleteAllTimelapseConnections`
+  returns immediately when not logged in, so on a public dataset viewed while
+  signed out the button was enabled and the click silently did nothing.
+- **Status:** fixed — `!isLoggedIn` added to the guard, matching the Connection
+  List's delete controls. Not a security check; the backend owns that.
+
+## Finding 12 — Shuffle rotated the palette instead of re-assigning it
+
+- **Severity:** P2 (Codex)
+- **Location:** `src/utils/connections.ts`
+- **Summary:** The seed was folded into the hash accumulator, which for
+  equal-length ids adds the same `31^n · seed` to every hash — a constant offset.
+  Every colour changed, so it looked like it worked, but every pairwise gap
+  survived: an identical sorted gap multiset at every seed with the closest pair
+  pinned at 2.927°. Separating a pair that collides is the only reason the button
+  exists, and it was the one thing it could not do. The docstring claimed the
+  opposite.
+- **Three layers of verification had accepted it.** The unit test asserted "the
+  per-id hue shift is not a single constant", which is true under rotation
+  because `Math.abs` and int32 wrap perturb a few ids. The live browser check
+  observed "the sampled colour changed", also true under rotation. And the
+  docstring asserted the property as fact. None of them tested the gap structure.
+- **Status:** fixed — the seed now selects the hue STEP, which genuinely
+  re-assigns (~97% of hues move, the closest pair changes both partners and
+  distance). Tests assert the **gap multiset** differs and the closest pair's
+  identity changes.
+- **A worse bug surfaced underneath it.** Choosing the step needed measurement,
+  and measuring exposed that 1/φ — the value the code used and the docs praised —
+  scores **4.2°** minimum neighbour gap on the real dataset's 248 consecutive
+  track keys, worse than every alternative. The 77.3° figure in the original docs
+  came from a 40-id fixture starting at offset 0x0000, which never crosses the
+  hex carry that triggers the resonance. The equidistribution theory behind 1/φ
+  is about `frac(i·φ)` for consecutive integers; the input here is a polynomial
+  hash whose delta jumps at every carry, so the theory does not transfer.
+- Two metrics must hold together, because optimising either alone picks a step
+  that fails the other: worst neighbour gap across id batches, and all-pairs gap
+  for a small nearby group. √2−1 scores 44.4°/19.4°; the three chosen steps score
+  ≥65°/≥62°. A sweep found 852 qualifying steps, so this was never a tight
+  constraint — just the wrong one metric.
