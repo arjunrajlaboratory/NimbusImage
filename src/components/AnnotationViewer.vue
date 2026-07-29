@@ -133,7 +133,6 @@ import { logError, logWarning } from "@/utils/log";
 import {
   pointDistance,
   getAnnotationStyleFromBaseStyle,
-  unrollIndexFromImages,
   geojsAnnotationFactory,
   tagFilterFunction,
   ellipseToPolygonCoordinates,
@@ -143,6 +142,10 @@ import {
   geometryKeyForRender,
   shouldRetainFeature,
 } from "@/utils/annotation";
+import {
+  unrollLayoutFor,
+  unrolledCoordinates as unrolledCoordinatesOnGrid,
+} from "@/utils/unroll";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import { findConnectedComponents } from "@/utils/connections";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
@@ -671,53 +674,32 @@ function getAnnotationStyle(
   );
 }
 
-function unrollIndex(
-  XY: number,
-  Z: number,
-  Time: number,
-  unrollXY: boolean,
-  unrollZ: boolean,
-  unrollT: boolean,
-) {
-  const images = store.dataset?.images(
-    unrollZ ? -1 : Z,
-    unrollT ? -1 : Time,
-    unrollXY ? -1 : XY,
-    0,
-  );
-  if (!images) {
-    return 0;
-  }
-  return unrollIndexFromImages(XY, Z, Time, images);
-}
-
+/**
+ * Where a shape drawn at `location` lands on the unrolled grid.
+ *
+ * The offset math lives in `@/utils/unroll` because navigation needs the same
+ * answer to put the camera where the shape actually is (issue #1280). `unrollW`
+ * comes from the prop rather than `store.unrollGrid` — see `unrollLayoutFor`.
+ */
 function unrolledCoordinates(
   coordinates: IGeoJSPosition[],
   location: IAnnotationLocation,
   image: IImage,
 ) {
-  const tileW = image.sizeX;
-  const tileH = image.sizeY;
-  if (unrolling.value) {
-    const locationIdx = unrollIndex(
-      location.XY,
-      location.Z,
-      location.Time,
-      store.unrollXY,
-      store.unrollZ,
-      store.unrollT,
-    );
-
-    const tileX = Math.floor(locationIdx % props.unrollW);
-    const tileY = Math.floor(locationIdx / props.unrollW);
-
-    return coordinates.map((point: IGeoJSPosition) => ({
-      x: tileW * tileX + point.x,
-      y: tileH * tileY + point.y,
-      z: point.z,
-    }));
-  }
-  return coordinates;
+  return unrolledCoordinatesOnGrid(
+    coordinates,
+    location,
+    unrollLayoutFor({
+      flags: {
+        unrollXY: store.unrollXY,
+        unrollZ: store.unrollZ,
+        unrollT: store.unrollT,
+      },
+      unrollW: props.unrollW,
+      image,
+      dataset: store.dataset,
+    }),
+  );
 }
 
 // --- Retained-feature cache (frame-scrub optimization) -----------------------
@@ -4846,7 +4828,6 @@ defineExpose({
   // Functions
   getAnyLayerForChannel,
   getAnnotationStyle,
-  unrollIndex,
   unrolledCoordinates,
   drawAnnotationsAndTooltips,
   drawAnnotationsNoThrottle,

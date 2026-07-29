@@ -25,6 +25,14 @@ vi.mock("@/store", () => ({
         { x: -10, y: 10 },
       ],
     },
+    // Nothing unrolled, so navigation aims at the raw centroid. The unrolled
+    // case is covered in utils/__tests__/annotationNavigation.test.ts.
+    unroll: false,
+    unrollXY: false,
+    unrollZ: false,
+    unrollT: false,
+    unrollGrid: { unrollW: 1, unrollH: 1 },
+    dataset: null,
   },
 }));
 

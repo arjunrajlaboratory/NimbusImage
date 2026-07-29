@@ -273,10 +273,21 @@ vi.mock("@/store", () => {
       xy: 0,
       z: 0,
       time: 0,
-      unroll: false,
       unrollXY: false,
       unrollZ: false,
       unrollT: false,
+      // DERIVED, exactly as in the real store, where `unroll` is a getter over
+      // the three flags. It used to be an independent field here, so a test that
+      // set `unrollXY` alone left `unroll` false — the component's filtering saw
+      // an unrolled axis while its coordinate transform did not, a state the app
+      // can never actually be in. Writing `unroll` unrolls time, which is what
+      // the tests that set it are reaching for.
+      get unroll() {
+        return this.unrollXY || this.unrollZ || this.unrollT;
+      },
+      set unroll(value: boolean) {
+        this.unrollT = value;
+      },
       selectedTool: null as any,
       drawAnnotations: true,
       drawAnnotationConnections: true,
@@ -927,6 +938,13 @@ describe("AnnotationViewer", () => {
           location: { XY: 5, Z: 0, Time: 0 },
         });
         mockedAnnotationStore.annotations = [ann1, ann2];
+        // Unrolling is on, so the drawn-centroid transform runs. The real store
+        // writes a centroid for every annotation it holds, so leaving these out
+        // would test a state that cannot occur.
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 1, y: 2 },
+          a2: { x: 3, y: 4 },
+        };
 
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         const result = (wrapper.vm as any).layerAnnotations;
@@ -1026,6 +1044,7 @@ describe("AnnotationViewer", () => {
           location: { XY: 0, Z: 99, Time: 0 },
         });
         mockedAnnotationStore.annotations = [ann];
+        mockedAnnotationStore.annotationCentroids = { a1: { x: 1, y: 2 } };
 
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         const result = (wrapper.vm as any).layerAnnotations;
@@ -3528,63 +3547,9 @@ describe("AnnotationViewer", () => {
   // Category 5: Coordinate Transformation (~7 tests)
   // =========================================================================
   describe("coordinate transformation", () => {
-    // --- unrollIndex ---
-    describe("unrollIndex", () => {
-      it("returns 0 when no images", () => {
-        mockedStore.dataset = {
-          ...mockedStore.dataset,
-          images: () => null,
-        } as any;
-        wrapper = mountComponent();
-        const result = (wrapper.vm as any).unrollIndex(
-          0,
-          0,
-          0,
-          false,
-          false,
-          false,
-        );
-        expect(result).toBe(0);
-      });
-
-      it("calls unrollIndexFromImages", () => {
-        (unrollIndexFromImages as any).mockReturnValue(3);
-        wrapper = mountComponent();
-        const result = (wrapper.vm as any).unrollIndex(
-          1,
-          2,
-          3,
-          false,
-          false,
-          false,
-        );
-        expect(unrollIndexFromImages).toHaveBeenCalled();
-        expect(result).toBe(3);
-      });
-
-      it("passes -1 for unrolled dimensions", () => {
-        wrapper = mountComponent();
-        const datasetImages = vi.fn().mockReturnValue([]);
-        mockedStore.dataset = {
-          ...mockedStore.dataset,
-          images: datasetImages,
-        } as any;
-        (wrapper.vm as any).unrollIndex(1, 2, 3, true, true, true);
-        expect(datasetImages).toHaveBeenCalledWith(-1, -1, -1, 0);
-      });
-
-      it("passes actual index for non-unrolled dimensions", () => {
-        wrapper = mountComponent();
-        const datasetImages = vi.fn().mockReturnValue([]);
-        mockedStore.dataset = {
-          ...mockedStore.dataset,
-          images: datasetImages,
-        } as any;
-        (wrapper.vm as any).unrollIndex(1, 2, 3, false, false, false);
-        expect(datasetImages).toHaveBeenCalledWith(2, 3, 1, 0);
-      });
-    });
-
+    // `unrollIndex` moved to `unrollCellIndex` in @/utils/unroll (issue
+    // #1280), where navigation shares it; its tests moved with it to
+    // src/utils/unroll.test.ts.
     // --- unrolledCoordinates ---
     describe("unrolledCoordinates", () => {
       it("returns coordinates unchanged when not unrolling", () => {
