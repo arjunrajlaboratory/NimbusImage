@@ -181,9 +181,6 @@ export interface IUnrollGrid {
   unrollH: number;
 }
 
-/** A 1×1 grid — the layout when nothing is unrolled, or nothing is loaded. */
-const SINGLE_CELL: IUnrollGrid = { unrollW: 1, unrollH: 1 };
-
 /**
  * Lay `cellCount` frames of `sizeX`×`sizeY` out into the grid the viewer draws.
  *
@@ -191,6 +188,11 @@ const SINGLE_CELL: IUnrollGrid = { unrollW: 1, unrollH: 1 };
  * aspect ratio of a single frame. This is the definition — `ImageViewer` sizes
  * its maps and positions its frame labels from it, and the store mirrors it in
  * `unrollGrid` for everyone else, so it must stay the only copy of the formula.
+ *
+ * Degenerate input (nothing loaded, no frame sized yet) gives a 1×1 grid, which
+ * is `ImageViewer`'s initial state. A fresh object every time on purpose:
+ * callers assign the fields into reactive refs, and handing them all one shared
+ * constant means one stray mutation corrupts the fallback for everyone.
  */
 export function unrollGridSize(
   cellCount: number,
@@ -198,7 +200,7 @@ export function unrollGridSize(
   sizeY: number,
 ): IUnrollGrid {
   if (cellCount < 1 || sizeX <= 0 || sizeY <= 0) {
-    return SINGLE_CELL;
+    return { unrollW: 1, unrollH: 1 };
   }
   const unrollW = Math.min(
     cellCount,
@@ -213,6 +215,13 @@ export function unrollGridSize(
  * Mirrors how `parseTiles` builds the collapsed lookup: the unrolled dimensions
  * are asked for as -1 so every frame lands in one entry, and the frame's
  * position within it (`keyOffset`) is its cell.
+ *
+ * Channel 0 is hardcoded, carried over from the original in `AnnotationViewer`.
+ * The grid's cells come from whichever layer `ImageViewer` drew, whose channel
+ * need not be 0 — so on a dataset where channel 0 has no frames this falls back
+ * to cell 0 for everything. Not observed in practice, and widening it would
+ * change what the draw path does, so it stays a known limitation rather than a
+ * silent assumption.
  */
 export function unrollCellIndex(
   location: IAnnotationLocation,
@@ -284,7 +293,12 @@ export function unrollLayoutFor({
   };
 }
 
-/** The world-space origin of grid cell `cellIndex`. */
+/**
+ * The world-space origin of grid cell `cellIndex`, laid out row-major.
+ *
+ * `cellIndex` is a frame's `keyOffset`, so it is a whole number and only the
+ * division needs flooring.
+ */
 export function unrollCellOffset(
   cellIndex: number,
   unrollW: number,
@@ -292,7 +306,7 @@ export function unrollCellOffset(
   sizeY: number,
 ): IGeoJSPosition {
   return {
-    x: sizeX * Math.floor(cellIndex % unrollW),
+    x: sizeX * (cellIndex % unrollW),
     y: sizeY * Math.floor(cellIndex / unrollW),
   };
 }

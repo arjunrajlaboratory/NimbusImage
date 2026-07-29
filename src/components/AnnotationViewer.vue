@@ -95,7 +95,6 @@ import {
   IAnnotation,
   ITimelapseAnnotation,
   IAnnotationConnection,
-  IAnnotationLocation,
   IDisplayLayer,
   IGeoJSAnnotation,
   IGeoJSAnnotationLayer,
@@ -106,7 +105,6 @@ import {
   IGeoJSPosition,
   IGeoJSPointFeatureStyle,
   IGeoJSPolygonFeatureStyle,
-  IImage,
   IMapEntry,
   IMouseState,
   IRestrictTagsAndLayer,
@@ -143,8 +141,9 @@ import {
   shouldRetainFeature,
 } from "@/utils/annotation";
 import {
+  IUnrollLayout,
   unrollLayoutFor,
-  unrolledCoordinates as unrolledCoordinatesOnGrid,
+  unrolledCoordinates,
 } from "@/utils/unroll";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import { findConnectedComponents } from "@/utils/connections";
@@ -631,20 +630,46 @@ const selectedToolRadius = computed(
   (): number | undefined => selectedToolConfiguration.value?.values?.radius,
 );
 
+/**
+ * How to place a frame-local point on the unrolled grid, for the DRAW path
+ * (issue #1280). Navigation needs the same answer and builds its own from
+ * `store.unrollGrid`; the geometry itself lives in `@/utils/unroll` so the two
+ * cannot disagree.
+ *
+ * `unrollW` comes from the prop rather than `store.unrollGrid` — see
+ * `unrollLayoutFor` for why.
+ *
+ * A computed, and NOT rebuilt inside the loops below: `unrolledCoordinates` runs
+ * once per annotation per draw, so constructing a layout there would allocate two
+ * objects per annotation — including on the un-unrolled path, which is supposed
+ * to allocate nothing at all.
+ */
+const unrollLayout = computed<IUnrollLayout>(() =>
+  unrollLayoutFor({
+    flags: {
+      unrollXY: store.unrollXY,
+      unrollZ: store.unrollZ,
+      unrollT: store.unrollT,
+    },
+    unrollW: props.unrollW,
+    image: store.dataset?.anyImage(),
+    dataset: store.dataset,
+  }),
+);
+
 const unrolledCentroidCoordinates = computed(() => {
   const centroidMap: { [annotationId: string]: IGeoJSPosition } = {};
   const annotationCentroids = annotationStore.annotationCentroids;
 
-  const anyImage = store.dataset?.anyImage();
-  if (anyImage) {
+  // No sized frame yet ⇒ nothing is drawable, so don't build a map for it.
+  if (store.dataset?.anyImage()) {
+    const layout = unrollLayout.value;
     for (const annotation of annotationStore.annotationsForIteration) {
-      const centroid = annotationCentroids[annotation.id];
-      const unrolledCentroid = unrolledCoordinates(
-        [centroid],
+      centroidMap[annotation.id] = unrolledCoordinates(
+        [annotationCentroids[annotation.id]],
         annotation.location,
-        anyImage,
+        layout,
       )[0];
-      centroidMap[annotation.id] = unrolledCentroid;
     }
   }
 
@@ -671,34 +696,6 @@ function getAnnotationStyle(
     annotationColor || layerColor,
     hovered,
     selected,
-  );
-}
-
-/**
- * Where a shape drawn at `location` lands on the unrolled grid.
- *
- * The offset math lives in `@/utils/unroll` because navigation needs the same
- * answer to put the camera where the shape actually is (issue #1280). `unrollW`
- * comes from the prop rather than `store.unrollGrid` — see `unrollLayoutFor`.
- */
-function unrolledCoordinates(
-  coordinates: IGeoJSPosition[],
-  location: IAnnotationLocation,
-  image: IImage,
-) {
-  return unrolledCoordinatesOnGrid(
-    coordinates,
-    location,
-    unrollLayoutFor({
-      flags: {
-        unrollXY: store.unrollXY,
-        unrollZ: store.unrollZ,
-        unrollT: store.unrollT,
-      },
-      unrollW: props.unrollW,
-      image,
-      dataset: store.dataset,
-    }),
   );
 }
 
@@ -1671,12 +1668,8 @@ function createGeoJSAnnotation(
   annotation: TAnnotationOrStub,
   layerId?: string,
 ) {
-  if (!store.dataset || !store.dataset.anyImage()) {
-    return null;
-  }
-
-  const anyImage = store.dataset.anyImage();
-  if (!anyImage) {
+  // No sized frame ⇒ no tile size to place the shape against.
+  if (!store.dataset?.anyImage()) {
     return null;
   }
 
@@ -1688,14 +1681,14 @@ function createGeoJSAnnotation(
     coordinates = unrolledCoordinates(
       annotation.coordinates,
       annotation.location,
-      anyImage,
+      unrollLayout.value,
     );
     renderShape = annotation.shape;
   } else {
     coordinates = unrolledCoordinates(
       [annotation.centroid],
       annotation.location,
-      anyImage,
+      unrollLayout.value,
     );
     renderShape = AnnotationShape.Point;
   }
@@ -4771,6 +4764,7 @@ defineExpose({
   showColorDialog,
   geometryNotLoadedSnackbar,
   // Computed
+  unrollLayout,
   unrolledCentroidCoordinates,
   annotationSelectionType,
   roiFilter,
@@ -4828,7 +4822,6 @@ defineExpose({
   // Functions
   getAnyLayerForChannel,
   getAnnotationStyle,
-  unrolledCoordinates,
   drawAnnotationsAndTooltips,
   drawAnnotationsNoThrottle,
   drawAnnotations,

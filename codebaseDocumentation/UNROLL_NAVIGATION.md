@@ -43,9 +43,15 @@ so a util could not reach it, which is why the two paths drifted.
 - `ImageViewer.draw()` assigns its `unrollW` / `unrollH` refs from `unrollGridSize`.
 - `store.unrollGrid` mirrors it off the same `layerStackImages` entry, so navigation
   — which has no access to the component — gets the same grid by construction.
-- `AnnotationViewer`'s local `unrolledCoordinates` and `annotationNavigation`'s
-  `renderedPosition` both build an `IUnrollLayout` via `unrollLayoutFor` and call
-  the same transform.
+- Both callers build an `IUnrollLayout` via `unrollLayoutFor` and hand it to the
+  same transform: `AnnotationViewer`'s `unrollLayout` computed for the draw path,
+  `annotationNavigation`'s `currentUnrollLayout()` per navigation.
+
+The layout is built **once per draw**, not once per annotation. `unrolledCoordinates`
+runs for every annotation on every draw, so constructing a layout inside it allocates
+two objects per annotation — including on the un-unrolled path, which is supposed to
+allocate nothing at all. (This was caught in review after being written the wrong way
+first; hence the counting test below.)
 
 ### Why `AnnotationViewer` keeps using the prop
 
@@ -116,12 +122,22 @@ Run `pnpm test src/utils/unroll.test.ts src/utils/__tests__/annotationNavigation
 
 ### Cost
 
+Nothing in this group has a visible symptom, which is exactly why each one needs a
+test: every item here regressed or nearly regressed while the feature was being
+written, and no assertion about *positions* can see any of them.
+
 - [ ] **The un-unrolled path allocates nothing.** It runs per annotation per draw;
       `unrolledCoordinates` must return the *same array* it was given. — *"returns
       the very same array when nothing is unrolled"*
-- [ ] **`unrolledCentroidCoordinates` does not depend on `layerStackImages`.** No
-      visible symptom — it silently turns every contrast drag into a full rebuild
-      of the centroid map. Guarded by the viewer taking `unrollW` from its prop.
+- [ ] **One layout per draw, not one per annotation.** Building an `IUnrollLayout`
+      inside the transform costs two objects per annotation, on the un-unrolled
+      path too. Asserted as "does not scale with annotation count", because the
+      layout is a computed and the absolute number of evaluations per mount is
+      incidental. — *"builds a layout per draw, not per annotation"*
+- [ ] **`unrolledCentroidCoordinates` does not depend on `layerStackImages`.** It
+      would silently turn every contrast drag into a full rebuild of the centroid
+      map. Guarded by the viewer taking `unrollW` from its prop. — *"takes its grid
+      from the unrollW prop"*
 
 ### Test-fixture traps this feature proved
 
@@ -138,6 +154,12 @@ Run `pnpm test src/utils/unroll.test.ts src/utils/__tests__/annotationNavigation
 - [ ] **Any store mock reaching `goToAnnotationLocation` needs `unrollGrid` and the
       unroll flags**, or navigation throws on `store.unrollGrid.unrollW`
       (`AnnotationList.test.ts`).
+- [ ] **`@/utils/unroll` is mocked in `AnnotationViewer.test.ts` with
+      `importOriginal` spread**, wrapping only `unrollLayoutFor` so the counting
+      test can see it. Keep the real geometry: stubbing more of that module would
+      make the offset assertions meaningless. Note the file uses
+      `vi.clearAllMocks()`, which preserves the spy's implementation —
+      `resetAllMocks` would strip it and silently return `undefined` layouts.
 
 ### Verified in-browser, not just in unit tests
 

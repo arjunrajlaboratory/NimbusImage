@@ -494,14 +494,17 @@ export class Main extends VuexModule {
    * are the same grid by construction rather than by coincidence.
    */
   get unrollGrid(): IUnrollGrid {
+    // Same entry `ImageViewer.draw` lays the tiles out from. Nothing loaded yet
+    // degenerates to a 1×1 grid inside unrollGridSize, so no guard is needed
+    // here — one fallback, in one place.
     const cellImages = this.layerStackImages.find(
       (lsi) => lsi.images[0],
     )?.images;
-    const someImage = cellImages?.[0];
-    if (!someImage) {
-      return { unrollW: 1, unrollH: 1 };
-    }
-    return unrollGridSize(cellImages!.length, someImage.sizeX, someImage.sizeY);
+    return unrollGridSize(
+      cellImages?.length ?? 0,
+      cellImages?.[0]?.sizeX ?? 0,
+      cellImages?.[0]?.sizeY ?? 0,
+    );
   }
 
   get userName() {
