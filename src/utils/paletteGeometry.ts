@@ -77,6 +77,50 @@ export const LEFT_COLUMN_WIDTH = Math.max(
 export const RIGHT_OF_LEFT_COLUMN =
   PALETTE_INSET + LEFT_COLUMN_WIDTH + PALETTE_GAP;
 
+/** Width of the Timelapse palette, which is anchored there. */
+export const TIMELAPSE_PALETTE_WIDTH = 300;
+
+/** x of the Timelapse palette's right edge. */
+export const TIMELAPSE_PALETTE_RIGHT =
+  RIGHT_OF_LEFT_COLUMN + TIMELAPSE_PALETTE_WIDTH;
+
+/**
+ * `max-width` of the selection action panels, from their scoped CSS. Used as the
+ * conservative bound when asking whether they fit somewhere — they are
+ * `width: max-content`, so the real width is usually smaller, but a placement
+ * decision must hold for the widest content they can hold.
+ */
+export const ACTION_PANEL_MAX_WIDTH = 320;
+
+/** Top of the action panels when nothing forces them lower. */
+export const ACTION_PANEL_TOP = 72;
+
+/**
+ * Vertical distance from the annotation action panel's top to the connection
+ * panel's, when both are shown. AnnotationActionPanel has a fixed six-button
+ * body, so its height is deterministic; measured live at 223px.
+ */
+export const STACKED_ACTION_PANEL_OFFSET = 232;
+
+/**
+ * Does the right-anchored action panel clear the Timelapse palette horizontally?
+ *
+ * In timelapse mode the panels move to the right edge to get out from under that
+ * palette. On a narrow viewport the two meet in the middle: at 1280px with the
+ * Object Browser also open (exactly what "Show tracks" produces) a panel anchored
+ * 544px from the right has its right edge at x=736, inside the palette's 444–744,
+ * and the palette wins on z-index (1006 vs 1000). Below roughly 1500px there is
+ * no horizontal placement that clears both, so the caller drops the panels below
+ * the palette instead.
+ */
+export function actionPanelClearsTimelapsePalette(
+  viewportWidth: number,
+  rightClearX: number,
+): boolean {
+  const panelLeft = viewportWidth - rightClearX - ACTION_PANEL_MAX_WIDTH;
+  return panelLeft >= TIMELAPSE_PALETTE_RIGHT + PALETTE_GAP;
+}
+
 /**
  * "Safe left" for a canvas-anchored surface while any left palette is open.
  * Exposed as `--nimbus-left-palette-clear-x`.

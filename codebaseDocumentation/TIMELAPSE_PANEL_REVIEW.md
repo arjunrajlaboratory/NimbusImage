@@ -285,3 +285,50 @@ Base: `master`
   slice only. Identical behaviour for the common single-slice track.
 - **Lesson:** the comment asserting the invariant was the bug. It read like a
   justification and was never checked against the code that creates tracks.
+
+---
+
+# Codex round 4 (commit `85160435`)
+
+## Finding 16 — Right-edge placement fails on a narrow viewport
+
+- **Severity:** P1 (Codex)
+- **Location:** `src/components/AnnotationActionPanel.vue`,
+  `src/components/ConnectionActionPanel.vue`, `src/App.vue`
+- **Summary:** Moving the panels to the right edge escapes the Timelapse palette
+  only while there is horizontal room. At 1280px with the Object Browser open —
+  exactly the state "Show tracks" produces — a panel anchored 544px from the right
+  spans x 561–736, inside the palette's 444–744, and the palette wins on z-index
+  (1006 vs 1000). 1440px fails too, so this is common hardware, not a corner.
+  I had written this exact scenario into a test comment ("on a narrow viewport,
+  into the Timelapse palette they were moved to avoid") and then not handled it.
+- **Status:** fixed — `actionPanelClearsTimelapsePalette(viewportWidth,
+  rightClearX)` decides whether the right-edge placement fits, using the panels'
+  `max-width` as the conservative bound. When it doesn't, App.vue drops the panels
+  below the palette via `--nimbus-action-panel-top`, computed from the palette's
+  ResizeObserver-measured height (reusing the left column's existing
+  `observePaletteHeight`), and the stacked connection panel follows through
+  `--nimbus-stacked-action-panel-top`.
+- **Verified live at 1280×900:** `--nimbus-action-panel-top` 366px (palette bottom
+  358 + 8 gap), annotation panel y 366–589, connection panel y 598–701, both
+  **0 blocked**; and at 1684 the resize listener returns it to 72px with both
+  panels back at their top-right positions, 0 blocked.
+
+## Finding 17 — Sparse tracks framed onto an empty timelapse view
+
+- **Severity:** P2 (Codex)
+- **Location:** `src/utils/annotationNavigation.ts`
+- **Summary:** The timelapse branch tested the track's overall RANGE, but the draw
+  path filters members to `[time − modeWindow, time + modeWindow]`. A T1→T100 jump
+  viewed at T50 with the default window of 10 has T50 comfortably inside [1, 100],
+  so Time was left alone — while every member was filtered out and the camera
+  moved and zoomed onto nothing.
+- **Status:** fixed — one rule for both modes: move Time only when NO member lies
+  within the drawn window, where the half-width is `modeWindow` in timelapse mode
+  and 0 outside it. That subsumes the previous two branches, matches what the draw
+  path actually renders, and removes gratuitous moves the range rule made (at T0
+  with members at T1/T5 and a window of 10, nothing needs to move — two existing
+  tests asserted the unnecessary jump and were corrected).
+- **Note:** the slice filter cannot affect this decision — the anchor is the
+  globally nearest member, so it always lies on the anchor slice. Recorded at the
+  call site so it isn't "simplified" into something that is no longer equivalent.

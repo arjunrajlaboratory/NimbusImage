@@ -163,5 +163,13 @@ defineExpose({ selectedCount, deleteSelected, onKeydown });
   left: auto;
   right: var(--nimbus-right-edge-clear-x);
   transform: none;
+  top: var(--nimbus-action-panel-top, 72px);
+}
+
+/* `.stacked` follows the object panel wherever it went. Ordered after the rule
+   above so it wins, and after the plain `.stacked` rule further up whose fixed
+   304px assumes the un-shifted 72px top. */
+.timelapse-palette-open .connection-action-panel.stacked {
+  top: var(--nimbus-stacked-action-panel-top, 304px);
 }
 </style>

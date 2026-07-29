@@ -134,20 +134,19 @@ export function goToConnection(parentId: string, childId: string) {
  * chains by time with no slice constraint), and mixing slices means framing a box
  * inflated by members that aren't drawn, possibly on a frame where none is.
  *
- * TIME depends on the mode, because what "visible" means does:
+ * TIME is left alone if any member is actually DRAWN at the current frame, and
+ * otherwise moved to the nearest member. One rule covers both modes, because the
+ * only thing that differs is how wide "drawn" is: timelapse mode renders
+ * `[time - modeWindow, time + modeWindow]`, normal mode just the current frame.
+ * Time is the window's centre and the user scrubs it deliberately, so the bar for
+ * moving it is "you would otherwise be looking at nothing".
  *
- * - **Timelapse mode** draws a whole window of timepoints at once, so a track
- *   spanning T1–T5 is on screen from anywhere inside that range. Time is the
- *   window's centre and the user scrubs it deliberately, so leave it alone; only
- *   when the current frame is OUTSIDE the range is the track entirely off-window,
- *   and then clamp to the nearest end — the smallest move that makes the click do
- *   something.
- * - **Normal mode** draws one timepoint. Leaving Time alone there frames a region
- *   containing nothing: a track with members at T1 and T5 viewed at T3 has no
- *   member and no link on screen, so the row expands and the camera moves to
- *   empty image. The By-track view is available with the mode off, so this is
- *   reachable. Snap to the member nearest the current frame instead — the
- *   smallest move that puts a real object in view.
+ * Two ways this went wrong, both from testing something other than what the draw
+ * path tests. Comparing against the track's overall RANGE left Time alone for a
+ * track with members at T1 and T5 viewed at T3 with the mode off (one frame is
+ * drawn, so neither member is), and for a sparse T1→T100 track viewed at T50 with
+ * the default window of 10 (T50 is inside [1, 100], but every member is outside
+ * the window).
  *
  * Unlike `goToConnection` this zooms in as well as out — clicking a track from a
  * zoomed-out view should bring it up to a usable size, which is the whole point.
@@ -195,22 +194,29 @@ export function goToTrack(annotationIds: string[]) {
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
 
-  const times = onAnchorSlice.map((m) => m.location.Time);
-  if (timelapse.showMode) {
-    // A window of frames is drawn, so anywhere inside the range already shows it.
-    const startTime = Math.min(...times);
-    const endTime = Math.max(...times);
-    if (store.time < startTime) {
-      store.setTime(startTime);
-    } else if (store.time > endTime) {
-      store.setTime(endTime);
-    }
-  } else {
-    // One frame is drawn, so land on an actual member or nothing is visible.
-    // `anchor` is by construction the nearest member on this slice.
-    if (anchor.location.Time !== store.time) {
-      store.setTime(anchor.location.Time);
-    }
+  // One rule for both modes: is any member actually drawn at the current frame?
+  //
+  // The drawn window is `[time - modeWindow, time + modeWindow]` in timelapse
+  // mode (`drawTimelapseConnectionsAndCentroids`) and just the current frame
+  // outside it, so the only difference is the half-width. If nothing is inside
+  // it, move to the nearest member; otherwise leave Time alone, because the user
+  // scrubs it deliberately.
+  //
+  // Testing the track's overall RANGE instead was wrong for sparse tracks: a
+  // T1→T100 jump viewed at T50 with the default window of 10 has T50 inside
+  // [1, 100], so Time was left alone — while the draw path filtered out every
+  // member, and the camera moved to an empty view. Comparing against the members
+  // and the window that actually decide what is drawn makes the two agree.
+  // Equivalent to testing `anchor` alone — it is the globally nearest member, so
+  // it is inside the window whenever anything is — but phrased as "is anything
+  // drawn?" because that is the question, and it stays correct if the anchor rule
+  // ever changes.
+  const halfWindow = timelapse.showMode ? timelapse.modeWindow : 0;
+  const anyMemberDrawn = onAnchorSlice.some(
+    (member) => Math.abs(member.location.Time - store.time) <= halfWindow,
+  );
+  if (!anyMemberDrawn) {
+    store.setTime(anchor.location.Time);
   }
 
   // Clamp to what the map can actually show. Without a max, a track whose

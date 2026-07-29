@@ -191,5 +191,10 @@ async function copyAnnotationIds() {
   left: auto;
   right: var(--nimbus-right-edge-clear-x);
   transform: none;
+  /* Usually still 72px. Below roughly 1500px wide there is no horizontal
+     placement that clears both the Timelapse palette and the right-edge
+     overlays, so App.vue drops this below the palette using its measured
+     height. */
+  top: var(--nimbus-action-panel-top, 72px);
 }
 </style>

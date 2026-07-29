@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   time: 0,
   zoomRange: { min: 0, max: 12 } as { min: number; max: number } | undefined,
   showTimelapseMode: true,
+  timelapseModeWindow: 10,
 }));
 
 vi.mock("@/store", () => ({
@@ -51,6 +52,11 @@ vi.mock("@/store/timelapse", () => ({
   default: {
     get showMode() {
       return h.showTimelapseMode;
+    },
+    // The drawn window is +/- this, and goToTrack must compare against the same
+    // number the draw path does.
+    get modeWindow() {
+      return h.timelapseModeWindow;
     },
   },
 }));
@@ -91,6 +97,7 @@ beforeEach(() => {
   h.time = 0;
   h.zoomRange = { min: 0, max: 12 };
   h.showTimelapseMode = true;
+  h.timelapseModeWindow = 10;
 });
 
 describe("goToConnection", () => {
@@ -186,8 +193,9 @@ describe("goToTrack", () => {
    * inside the track's range — the whole window is drawn, so the track is
    * already on screen.
    */
-  it("leaves Time alone when it is already inside the track's range", () => {
+  it("leaves Time alone when a member is inside the drawn window", () => {
     h.showTimelapseMode = true;
+    h.timelapseModeWindow = 10;
     h.time = 3;
     addAnnotation("a", 0, 0, 1);
     addAnnotation("b", 10, 10, 5);
@@ -249,20 +257,61 @@ describe("goToTrack", () => {
     expect(h.setTime).toHaveBeenCalledWith(8);
   });
 
-  it("keeps Time inside the anchor slice's range in timelapse mode", () => {
+  // Slice isolation applies in timelapse mode too: the mode widens which TIMES
+  // are drawn, not which slices. (It cannot change the Time decision — the anchor
+  // is the globally nearest member, so it always lies on the anchor slice — but
+  // it must not leak the other slice's geometry into the box.)
+  it("frames only the anchor slice in timelapse mode as well", () => {
     h.showTimelapseMode = true;
-    h.time = 2;
-    // Anchor is "a" (XY 0, T0); the other slice's T8-T9 must not widen the range.
+    h.timelapseModeWindow = 10;
+    h.time = 0;
     addAnnotation("a", 0, 0, 0);
     h.annotations.get("a")!.location.XY = 0;
-    addAnnotation("b", 100, 100, 8);
+    addAnnotation("a2", 20, 30, 1);
+    h.annotations.get("a2")!.location.XY = 0;
+    addAnnotation("b", 900, 900, 2);
     h.annotations.get("b")!.location.XY = 1;
 
-    goToTrack(["a", "b"]);
+    goToTrack(["a", "a2", "b"]);
 
     expect(h.setXY).toHaveBeenCalledWith(0);
-    // T2 is outside [0, 0] on the anchor slice, so clamp to its only frame.
-    expect(h.setTime).toHaveBeenCalledWith(0);
+    const [, center, width, height] = h.frameCameraInfoToExtent.mock
+      .calls[0] as any[];
+    expect(width).toBe(20);
+    expect(height).toBe(30);
+    expect(center).toEqual({ x: 10, y: 15 });
+    // Both anchor-slice members are inside the window, so Time stays put.
+    expect(h.setTime).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The sparse-track case. A T1→T100 jump viewed at T50 with the default window
+   * of 10 has T50 comfortably inside the track's RANGE, so a range check left
+   * Time alone — while the draw path, which filters to
+   * `[time - window, time + window]`, kept no member at all. Expanding the row
+   * then moved and zoomed the camera onto an empty timelapse view. The check has
+   * to use the same window the draw path uses.
+   */
+  it("snaps Time when every member is outside the drawn window", () => {
+    h.showTimelapseMode = true;
+    h.timelapseModeWindow = 10;
+    h.time = 50;
+    addAnnotation("a", 0, 0, 1);
+    addAnnotation("b", 10, 10, 100);
+    goToTrack(["a", "b"]);
+    // Nearest member to T50 is T1 (49 away) vs T100 (50 away).
+    expect(h.setTime).toHaveBeenCalledWith(1);
+  });
+
+  // ...and a window wide enough to reach a member must NOT move Time.
+  it("leaves Time alone when a wide window reaches a member", () => {
+    h.showTimelapseMode = true;
+    h.timelapseModeWindow = 60;
+    h.time = 50;
+    addAnnotation("a", 0, 0, 1);
+    addAnnotation("b", 10, 10, 100);
+    goToTrack(["a", "b"]);
+    expect(h.setTime).not.toHaveBeenCalled();
   });
 
   it("does not move Time outside the mode when already on a member", () => {
@@ -276,8 +325,13 @@ describe("goToTrack", () => {
 
   // ...but a track entirely off-window renders as nothing, so the click would
   // look broken. Clamp to the nearest end — the smallest move that fixes it.
-  it("clamps Time to the nearest end when it is outside the range", () => {
+  // Outside the window is where the snap happens, and the nearest member is the
+  // nearest end of the range. Note the second half: at T0 with a window of 10
+  // BOTH members are inside [-10, 10], so they are drawn and Time must NOT move
+  // — the previous range-based rule moved it to T1 for nothing.
+  it("snaps Time to the nearest end when the window reaches no member", () => {
     h.showTimelapseMode = true;
+    h.timelapseModeWindow = 10;
     h.time = 40;
     addAnnotation("a", 0, 0, 1);
     addAnnotation("b", 10, 10, 5);
@@ -287,7 +341,7 @@ describe("goToTrack", () => {
     vi.clearAllMocks();
     h.time = 0;
     goToTrack(["a", "b"]);
-    expect(h.setTime).toHaveBeenCalledWith(1);
+    expect(h.setTime).not.toHaveBeenCalled();
   });
 
   it("passes the map's zoom range so a tiny track can't demand infinite zoom", () => {

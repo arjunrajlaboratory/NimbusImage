@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  ACTION_PANEL_MAX_WIDTH,
   AI_PANEL_INSET,
   AI_PANEL_WIDTH,
   LEFT_COLUMN_PALETTE_WIDTHS,
@@ -8,6 +9,10 @@ import {
   PALETTE_INSET,
   RIGHT_PALETTE_WIDTHS,
   RIGHT_OF_LEFT_COLUMN,
+  PALETTE_GAP,
+  TIMELAPSE_PALETTE_RIGHT,
+  TIMELAPSE_PALETTE_WIDTH,
+  actionPanelClearsTimelapsePalette,
   overlayClearX,
   rightEdgeClearX,
 } from "@/utils/paletteGeometry";
@@ -133,5 +138,47 @@ describe("rightEdgeClearX", () => {
         { open: true, width: RIGHT_PALETTE_WIDTHS.filters },
       ]),
     ).toBe(overlayClearX(RIGHT_PALETTE_WIDTHS.filters));
+  });
+});
+
+describe("actionPanelClearsTimelapsePalette", () => {
+  /**
+   * In timelapse mode the selection panels move to the right edge to escape the
+   * Timelapse palette (x 444–744). On a narrow viewport the two meet: at 1280px
+   * with the Object Browser open — exactly the state "Show tracks" produces — a
+   * panel anchored 544px from the right spans x 416–736, inside the palette,
+   * which wins on z-index (1006 vs 1000). The caller drops the panels below the
+   * palette when this returns false.
+   */
+  it("reports no clearance at 1280px with the Object Browser open", () => {
+    const clear = overlayClearX(RIGHT_PALETTE_WIDTHS.objectBrowser); // 544
+    expect(actionPanelClearsTimelapsePalette(1280, clear)).toBe(false);
+  });
+
+  it("reports clearance on a wide viewport", () => {
+    const clear = overlayClearX(RIGHT_PALETTE_WIDTHS.objectBrowser);
+    expect(actionPanelClearsTimelapsePalette(1684, clear)).toBe(true);
+  });
+
+  // 1440 is a common laptop width, so the threshold has to be checked, not
+  // assumed to sit below anything real.
+  it("reports no clearance at 1440px with the Object Browser open", () => {
+    const clear = overlayClearX(RIGHT_PALETTE_WIDTHS.objectBrowser);
+    expect(actionPanelClearsTimelapsePalette(1440, clear)).toBe(false);
+  });
+
+  it("has more room when nothing holds the right edge", () => {
+    expect(actionPanelClearsTimelapsePalette(1280, PALETTE_INSET)).toBe(true);
+  });
+
+  // The panel must clear the palette's far edge, not its near one.
+  it("measures against the palette's right edge", () => {
+    expect(TIMELAPSE_PALETTE_RIGHT).toBe(
+      RIGHT_OF_LEFT_COLUMN + TIMELAPSE_PALETTE_WIDTH,
+    );
+    const justEnough =
+      TIMELAPSE_PALETTE_RIGHT + PALETTE_GAP + ACTION_PANEL_MAX_WIDTH;
+    expect(actionPanelClearsTimelapsePalette(justEnough, 0)).toBe(true);
+    expect(actionPanelClearsTimelapsePalette(justEnough - 1, 0)).toBe(false);
   });
 });

@@ -446,10 +446,11 @@
            Visibility IS the mode: closing the palette turns timelapse off, so
            there is no "mode on, panel hidden" state to reason about. -->
       <floating-palette
+        ref="timelapsePaletteRef"
         v-model="timelapsePanel"
         title="Time Lapse"
         :left="RIGHT_OF_LEFT_COLUMN"
-        :width="300"
+        :width="TIMELAPSE_PALETTE_WIDTH"
       >
         <timelapse-panel />
       </floating-palette>
@@ -522,6 +523,7 @@ import timelapseStore from "@/store/timelapse";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
 import {
+  ACTION_PANEL_TOP,
   AI_PANEL_WIDTH,
   LEFT_COLUMN_PALETTE_WIDTHS,
   LEFT_PALETTE_CLEAR_X,
@@ -530,6 +532,9 @@ import {
   RIGHT_EDGE_OVERLAY_INSETS,
   RIGHT_OF_LEFT_COLUMN,
   RIGHT_PALETTE_WIDTHS,
+  STACKED_ACTION_PANEL_OFFSET,
+  TIMELAPSE_PALETTE_WIDTH,
+  actionPanelClearsTimelapsePalette,
   rightEdgeClearX,
 } from "@/utils/paletteGeometry";
 import AiPanel from "@/components/AiPanel.vue";
@@ -616,9 +621,8 @@ const canUseAiPanel = computed(
 // left — measured with the drawer open, container 0–1204 and the panel at
 // 533–708 (= 1204 − 496 − 175), which puts them back under the Timelapse palette
 // at 444–744, i.e. straight back into the bug this whole mechanism fixes.
-const paletteGeometryVars = computed(() => ({
-  "--nimbus-left-palette-clear-x": `${LEFT_PALETTE_CLEAR_X}px`,
-  "--nimbus-right-edge-clear-x": `${rightEdgeClearX([
+const rightEdgeClearance = computed(() =>
+  rightEdgeClearX([
     { open: annotationPanel.value, width: RIGHT_PALETTE_WIDTHS.objectBrowser },
     { open: filtersPanel.value, width: RIGHT_PALETTE_WIDTHS.filters },
     { open: settingsPanel.value, width: RIGHT_PALETTE_WIDTHS.settings },
@@ -628,7 +632,49 @@ const paletteGeometryVars = computed(() => ({
       width: AI_PANEL_WIDTH,
       inset: RIGHT_EDGE_OVERLAY_INSETS.aiPanel,
     },
-  ])}px`,
+  ]),
+);
+
+/**
+ * Where the selection action panels sit vertically.
+ *
+ * Normally the top of the canvas. In timelapse mode they move to the right edge
+ * to clear the Timelapse palette — but on a narrow viewport the right edge and
+ * that palette meet in the middle, and no horizontal placement clears both. At
+ * 1280px with the Object Browser open (what "Show tracks" produces) a panel
+ * anchored 544px from the right lands at x 526–736, inside the palette's 444–744,
+ * and loses on z-index. Below roughly 1500px they therefore drop BELOW the
+ * palette, using its measured height so the offset tracks its real content.
+ */
+const actionPanelTop = computed(() => {
+  if (!timelapsePanel.value || !isDatasetView.value) {
+    return ACTION_PANEL_TOP;
+  }
+  if (
+    actionPanelClearsTimelapsePalette(
+      windowWidth.value,
+      rightEdgeClearance.value,
+    )
+  ) {
+    return ACTION_PANEL_TOP;
+  }
+  return (
+    PALETTE_TOP +
+    (timelapsePaletteHeight.value
+      ? timelapsePaletteHeight.value + STACK_GAP
+      : 0)
+  );
+});
+
+const paletteGeometryVars = computed(() => ({
+  "--nimbus-left-palette-clear-x": `${LEFT_PALETTE_CLEAR_X}px`,
+  "--nimbus-right-edge-clear-x": `${rightEdgeClearance.value}px`,
+  "--nimbus-action-panel-top": `${actionPanelTop.value}px`,
+  // The connection panel stacks a fixed distance below the object panel, so it
+  // has to follow whenever that one moves.
+  "--nimbus-stacked-action-panel-top": `${
+    actionPanelTop.value + STACKED_ACTION_PANEL_OFFSET
+  }px`,
 }));
 
 function toggleAiPanel() {
@@ -797,7 +843,7 @@ function closeAllPalettes() {
 // height of the palette(s) above it (via ResizeObserver) so the next one sits
 // flush beneath with no dead gap. Used by both the right-zone Filters/Browser
 // pair and the left-zone Navigator/Layers/Tools stack.
-const PALETTE_TOP = 72; // clears the floating app bar
+const PALETTE_TOP = ACTION_PANEL_TOP; // clears the floating app bar
 const COLUMN_BOTTOM_INSET = 16;
 const STACK_GAP = PALETTE_GAP;
 const MIN_BROWSER_HEIGHT = 260; // keep the Browser usable when stacked
@@ -864,8 +910,20 @@ const navigatorPaletteRef = ref<PaletteRefEl>();
 const layersPaletteRef = ref<PaletteRefEl>();
 const navigatorHeight = ref(0);
 const layersHeight = ref(0);
+// The Timelapse palette is not in the left stack, but its height is needed to
+// drop the selection action panels below it on a narrow viewport.
+const timelapsePaletteRef = ref<PaletteRefEl>();
+const timelapsePaletteHeight = ref(0);
+
+// Viewport width, for the one placement decision that depends on it (see
+// `actionPanelTop`). Guarded for non-DOM test environments.
+const windowWidth = ref(typeof window === "undefined" ? 0 : window.innerWidth);
+function updateWindowWidth() {
+  windowWidth.value = window.innerWidth;
+}
 let navigatorResizeObserver: ResizeObserver | null = null;
 let layersResizeObserver: ResizeObserver | null = null;
+let timelapseResizeObserver: ResizeObserver | null = null;
 
 const layersPanelTop = computed(
   () =>
@@ -905,13 +963,20 @@ function setupLeftPaletteObservers() {
     navigatorHeight,
   );
   layersResizeObserver = observePaletteHeight(layersPaletteRef, layersHeight);
+  timelapseResizeObserver = observePaletteHeight(
+    timelapsePaletteRef,
+    timelapsePaletteHeight,
+  );
 }
 
 function teardownLeftPaletteObservers() {
   navigatorResizeObserver?.disconnect();
   layersResizeObserver?.disconnect();
+  timelapseResizeObserver?.disconnect();
   navigatorResizeObserver = null;
   layersResizeObserver = null;
+  timelapseResizeObserver = null;
+  timelapsePaletteHeight.value = 0;
   navigatorHeight.value = 0;
   layersHeight.value = 0;
 }
@@ -1130,6 +1195,8 @@ watch(
 onMounted(() => {
   fetchConfig();
   loadAllTours();
+  window.addEventListener("resize", updateWindowWidth);
+  updateWindowWidth();
 
   // The Filters palette is always mounted, so observe it directly.
   filtersResizeObserver = observePaletteHeight(
@@ -1139,6 +1206,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("resize", updateWindowWidth);
   filtersResizeObserver?.disconnect();
   teardownLeftPaletteObservers();
 });
