@@ -332,3 +332,33 @@ Base: `master`
 - **Note:** the slice filter cannot affect this decision — the anchor is the
   globally nearest member, so it always lies on the anchor slice. Recorded at the
   call site so it isn't "simplified" into something that is no longer equivalent.
+
+---
+
+# Codex round 5 (commit `850abbf7`)
+
+## Finding 18 — Contradictory rows in the regression checklist
+
+- **Severity:** P2 (Codex)
+- **Location:** `codebaseDocumentation/CONNECTION_LIST.md`
+- **Summary:** Round 4 replaced the track-framing Time rule but added the new
+  invariant ABOVE the one it superseded instead of removing it. The checklist then
+  carried two contradictory rules for the same behaviour — the old row prescribing
+  the range-based check that had just been shown to frame an empty view for sparse
+  tracks — so no future change could satisfy both, and following the stale row
+  would restore the bug. The old row also cited two tests that had been renamed
+  out of existence.
+- **Status:** fixed — the three overlapping rows (the two Time rules plus the
+  separate anchor-slice row) are now one invariant citing nine live tests. An
+  audit of the whole checklist found one further stale citation, from a test
+  renamed in round 3, plus two that were `it.each` templates whose reported titles
+  never appear in the source and so could not be grepped; all are corrected.
+- **The durable fix is a guard, not a correction.** The checklist's own rule is
+  "every item names its test", and nothing enforced it, so it decayed silently.
+  `src/__tests__/regressionChecklist.test.ts` now asserts that every cited name
+  resolves in `src/` and that no two invariants share a heading, reporting the
+  offending name in the failure message. Confirmed to catch both: reintroducing
+  the stale citation fails with that name, and duplicating any row fails the
+  heading check. 85 citations, 0 unresolved.
+- **Lesson recorded in the checklist itself:** replace a row when you supersede
+  it; never stack the new rule on top of the old one.
