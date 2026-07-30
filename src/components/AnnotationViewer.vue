@@ -99,7 +99,6 @@ import {
   IAnnotation,
   ITimelapseAnnotation,
   IAnnotationConnection,
-  IAnnotationLocation,
   IDisplayLayer,
   IGeoJSAnnotation,
   IGeoJSAnnotationLayer,
@@ -110,7 +109,6 @@ import {
   IGeoJSPosition,
   IGeoJSPointFeatureStyle,
   IGeoJSPolygonFeatureStyle,
-  IImage,
   IMapEntry,
   IMouseState,
   IRestrictTagsAndLayer,
@@ -137,7 +135,6 @@ import { logError, logWarning } from "@/utils/log";
 import {
   pointDistance,
   getAnnotationStyleFromBaseStyle,
-  unrollIndexFromImages,
   geojsAnnotationFactory,
   tagFilterFunction,
   ellipseToPolygonCoordinates,
@@ -147,6 +144,11 @@ import {
   geometryKeyForRender,
   shouldRetainFeature,
 } from "@/utils/annotation";
+import {
+  IUnrollLayout,
+  unrollLayoutFor,
+  unrolledCoordinates,
+} from "@/utils/unroll";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import {
   TRACK_UNIFORM_COLOR,
@@ -637,20 +639,46 @@ const selectedToolRadius = computed(
   (): number | undefined => selectedToolConfiguration.value?.values?.radius,
 );
 
+/**
+ * How to place a frame-local point on the unrolled grid, for the DRAW path
+ * (issue #1280). Navigation needs the same answer and builds its own from
+ * `store.unrollGrid`; the geometry itself lives in `@/utils/unroll` so the two
+ * cannot disagree.
+ *
+ * `unrollW` comes from the prop rather than `store.unrollGrid` — see
+ * `unrollLayoutFor` for why.
+ *
+ * A computed, and NOT rebuilt inside the loops below: `unrolledCoordinates` runs
+ * once per annotation per draw, so constructing a layout there would allocate two
+ * objects per annotation — including on the un-unrolled path, which is supposed
+ * to allocate nothing at all.
+ */
+const unrollLayout = computed<IUnrollLayout>(() =>
+  unrollLayoutFor({
+    flags: {
+      unrollXY: store.unrollXY,
+      unrollZ: store.unrollZ,
+      unrollT: store.unrollT,
+    },
+    unrollW: props.unrollW,
+    image: store.dataset?.anyImage(),
+    dataset: store.dataset,
+  }),
+);
+
 const unrolledCentroidCoordinates = computed(() => {
   const centroidMap: { [annotationId: string]: IGeoJSPosition } = {};
   const annotationCentroids = annotationStore.annotationCentroids;
 
-  const anyImage = store.dataset?.anyImage();
-  if (anyImage) {
+  // No sized frame yet ⇒ nothing is drawable, so don't build a map for it.
+  if (store.dataset?.anyImage()) {
+    const layout = unrollLayout.value;
     for (const annotation of annotationStore.annotationsForIteration) {
-      const centroid = annotationCentroids[annotation.id];
-      const unrolledCentroid = unrolledCoordinates(
-        [centroid],
+      centroidMap[annotation.id] = unrolledCoordinates(
+        [annotationCentroids[annotation.id]],
         annotation.location,
-        anyImage,
+        layout,
       )[0];
-      centroidMap[annotation.id] = unrolledCentroid;
     }
   }
 
@@ -678,55 +706,6 @@ function getAnnotationStyle(
     hovered,
     selected,
   );
-}
-
-function unrollIndex(
-  XY: number,
-  Z: number,
-  Time: number,
-  unrollXY: boolean,
-  unrollZ: boolean,
-  unrollT: boolean,
-) {
-  const images = store.dataset?.images(
-    unrollZ ? -1 : Z,
-    unrollT ? -1 : Time,
-    unrollXY ? -1 : XY,
-    0,
-  );
-  if (!images) {
-    return 0;
-  }
-  return unrollIndexFromImages(XY, Z, Time, images);
-}
-
-function unrolledCoordinates(
-  coordinates: IGeoJSPosition[],
-  location: IAnnotationLocation,
-  image: IImage,
-) {
-  const tileW = image.sizeX;
-  const tileH = image.sizeY;
-  if (unrolling.value) {
-    const locationIdx = unrollIndex(
-      location.XY,
-      location.Z,
-      location.Time,
-      store.unrollXY,
-      store.unrollZ,
-      store.unrollT,
-    );
-
-    const tileX = Math.floor(locationIdx % props.unrollW);
-    const tileY = Math.floor(locationIdx / props.unrollW);
-
-    return coordinates.map((point: IGeoJSPosition) => ({
-      x: tileW * tileX + point.x,
-      y: tileH * tileY + point.y,
-      z: point.z,
-    }));
-  }
-  return coordinates;
 }
 
 // --- Retained-feature cache (frame-scrub optimization) -----------------------
@@ -1725,12 +1704,8 @@ function createGeoJSAnnotation(
   annotation: TAnnotationOrStub,
   layerId?: string,
 ) {
-  if (!store.dataset || !store.dataset.anyImage()) {
-    return null;
-  }
-
-  const anyImage = store.dataset.anyImage();
-  if (!anyImage) {
+  // No sized frame ⇒ no tile size to place the shape against.
+  if (!store.dataset?.anyImage()) {
     return null;
   }
 
@@ -1742,14 +1717,14 @@ function createGeoJSAnnotation(
     coordinates = unrolledCoordinates(
       annotation.coordinates,
       annotation.location,
-      anyImage,
+      unrollLayout.value,
     );
     renderShape = annotation.shape;
   } else {
     coordinates = unrolledCoordinates(
       [annotation.centroid],
       annotation.location,
-      anyImage,
+      unrollLayout.value,
     );
     renderShape = AnnotationShape.Point;
   }
@@ -4933,6 +4908,7 @@ defineExpose({
   showColorDialog,
   geometryNotLoadedSnackbar,
   // Computed
+  unrollLayout,
   unrolledCentroidCoordinates,
   annotationSelectionType,
   roiFilter,
@@ -4990,8 +4966,6 @@ defineExpose({
   // Functions
   getAnyLayerForChannel,
   getAnnotationStyle,
-  unrollIndex,
-  unrolledCoordinates,
   drawAnnotationsAndTooltips,
   drawAnnotationsNoThrottle,
   drawAnnotations,

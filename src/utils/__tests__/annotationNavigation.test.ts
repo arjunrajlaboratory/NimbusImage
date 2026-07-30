@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { AnnotationShape, IAnnotation } from "@/store/model";
+import { AnnotationShape, IAnnotation, IImage } from "@/store/model";
+
+/** One tile of the unroll fixture below. Square, to keep the grid predictable. */
+const TILE = 1024;
 
 const h = vi.hoisted(() => ({
   setXY: vi.fn(),
@@ -13,6 +16,12 @@ const h = vi.hoisted(() => ({
   recenterCameraInfo: vi.fn(() => ({ recentered: true })),
   annotations: new Map<string, IAnnotation>(),
   cameraInfo: { center: { x: 0, y: 0 }, zoom: 3, rotate: 0, gcsBounds: [] },
+  unrollXY: false,
+  unrollZ: false,
+  unrollT: false,
+  unrollW: 1,
+  /** Every frame of the dataset, in grid-cell order. Empty = no unrolling set up. */
+  frames: [] as any[],
   time: 0,
   zoomRange: { min: 0, max: 12 } as { min: number; max: number } | undefined,
   showTimelapseMode: true,
@@ -27,6 +36,32 @@ vi.mock("@/store", () => ({
     setCameraInfo: h.setCameraInfo,
     get cameraInfo() {
       return h.cameraInfo;
+    },
+    get unrollXY() {
+      return h.unrollXY;
+    },
+    get unrollZ() {
+      return h.unrollZ;
+    },
+    get unrollT() {
+      return h.unrollT;
+    },
+    get unroll() {
+      return h.unrollXY || h.unrollZ || h.unrollT;
+    },
+    get unrollGrid() {
+      return { unrollW: h.unrollW, unrollH: 1 };
+    },
+    get dataset() {
+      if (h.frames.length === 0) {
+        return null;
+      }
+      return {
+        // The collapsed lookup `parseTiles` builds: an unrolled axis is asked
+        // for as -1 and every frame along it comes back in one list.
+        images: () => h.frames,
+        anyImage: () => ({ sizeX: 1024, sizeY: 1024 }) as IImage,
+      };
     },
     get time() {
       return h.time;
@@ -67,24 +102,53 @@ vi.mock("@/utils/camera", () => ({
   recenterCameraInfo: h.recenterCameraInfo,
 }));
 
-// The real centroid helper: averages the coordinates.
-vi.mock("@/utils/annotation", () => ({
+// Only `simpleCentroid` is stubbed, and with its real behavior (the average).
+// `unrollIndexFromImages` is deliberately left REAL: `@/utils/unroll` calls it to
+// resolve a location to its grid cell, and a fixed-value stub there would make
+// every unroll assertion below pass for the wrong reason.
+vi.mock("@/utils/annotation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/annotation")>()),
   simpleCentroid: (coords: { x: number; y: number }[]) => ({
     x: coords.reduce((s, c) => s + c.x, 0) / coords.length,
     y: coords.reduce((s, c) => s + c.y, 0) / coords.length,
   }),
 }));
 
-import { goToConnection, goToTrack } from "@/utils/annotationNavigation";
+import {
+  goToAnnotationLocation,
+  goToConnection,
+  goToTrack,
+} from "@/utils/annotationNavigation";
 
-function addAnnotation(id: string, x: number, y: number, time = 0) {
+/**
+ * Unroll `frameCount` timepoints into a `width`-column grid.
+ *
+ * Frames are given `keyOffset`s in cell order, which is what `parseTiles` does
+ * and what the grid layout is indexed by.
+ */
+function unrollTime(frameCount: number, width: number) {
+  h.unrollT = true;
+  h.unrollW = width;
+  h.frames = Array.from({ length: frameCount }, (_, i) => ({
+    keyOffset: i,
+    frame: { IndexXY: 0, IndexZ: 0, IndexT: i },
+  }));
+}
+
+function addAnnotation(
+  id: string,
+  x: number,
+  y: number,
+  time = 0,
+  { XY = 0, Z = 0 }: { XY?: number; Z?: number } = {},
+) {
   h.annotations.set(id, {
     id,
     name: null,
     tags: [],
     shape: AnnotationShape.Point,
     channel: 0,
-    location: { XY: 0, Z: 0, Time: time },
+    location: { XY, Z, Time: time },
     coordinates: [{ x, y }],
     datasetId: "ds",
     color: null,
@@ -94,6 +158,11 @@ function addAnnotation(id: string, x: number, y: number, time = 0) {
 beforeEach(() => {
   vi.clearAllMocks();
   h.annotations.clear();
+  h.unrollXY = false;
+  h.unrollZ = false;
+  h.unrollT = false;
+  h.unrollW = 1;
+  h.frames = [];
   h.time = 0;
   h.zoomRange = { min: 0, max: 12 };
   h.showTimelapseMode = true;
@@ -157,6 +226,86 @@ describe("goToConnection", () => {
     expect(h.frameCameraInfo).not.toHaveBeenCalled();
     expect(h.recenterCameraInfo).not.toHaveBeenCalled();
     expect(h.setCameraInfo).not.toHaveBeenCalled();
+  });
+});
+
+// Issue #1280. With an axis unrolled, every frame along it is drawn side by side
+// and the viewer offsets each annotation by its frame's cell — so the camera has
+// to be aimed at the offset position, not the raw centroid. Measured on
+// normmedia_8well_col2_livecellgfp before the fix: an object whose centroid was
+// x = 260 rendered at x = 1284 (tile 1 of a 1024-wide grid) and the camera went
+// to x = 260 — a full tile away, onto the equivalent spot of tile 0.
+describe("navigation on the unrolled grid", () => {
+  it("centres on the tile-offset centroid, not the raw one", () => {
+    unrollTime(4, 4);
+    addAnnotation("obj", 260, 100, 1); // Time 1 => cell 1 => +1024 in x
+
+    goToAnnotationLocation("obj");
+
+    expect(h.recenterCameraInfo).toHaveBeenCalledTimes(1);
+    const [, center] = h.recenterCameraInfo.mock.calls[0] as any[];
+    expect(center).toEqual({ x: 260 + TILE, y: 100, z: undefined });
+  });
+
+  it("wraps onto the next grid row past the last column", () => {
+    unrollTime(4, 2); // 2x2 grid
+    addAnnotation("obj", 10, 20, 3); // cell 3 => column 1, row 1
+
+    goToAnnotationLocation("obj");
+
+    const [, center] = h.recenterCameraInfo.mock.calls[0] as any[];
+    expect(center).toEqual({ x: 10 + TILE, y: 20 + TILE, z: undefined });
+  });
+
+  it("leaves the centroid alone for a frame on the first cell", () => {
+    unrollTime(4, 4);
+    addAnnotation("obj", 260, 100, 0);
+
+    goToAnnotationLocation("obj");
+
+    const [, center] = h.recenterCameraInfo.mock.calls[0] as any[];
+    expect(center).toEqual({ x: 260, y: 100, z: undefined });
+  });
+
+  // The pre-existing behavior must not change when nothing is unrolled: the raw
+  // centroid IS the drawn position there.
+  it("does not offset when unrolling is off", () => {
+    addAnnotation("obj", 260, 100, 1);
+
+    goToAnnotationLocation("obj");
+
+    const [, center] = h.recenterCameraInfo.mock.calls[0] as any[];
+    expect(center).toEqual({ x: 260, y: 100 });
+  });
+
+  // The same-frame gate was too strict while unrolling: both endpoints ARE on
+  // screen, and the connection is genuinely drawn as a line between two cells.
+  it("frames cross-time endpoints while time is unrolled", () => {
+    unrollTime(4, 4);
+    addAnnotation("parent", 100, 50, 0);
+    addAnnotation("child", 200, 50, 2); // cell 2 => +2048 in x
+
+    goToConnection("parent", "child");
+
+    expect(h.frameCameraInfo).toHaveBeenCalledTimes(1);
+    const [, center, spanX, spanY] = h.frameCameraInfo.mock.calls[0] as any[];
+    // Drawn at x = 100 and x = 200 + 2048 = 2248.
+    expect(center).toEqual({ x: (100 + 2248) / 2, y: 50 });
+    expect(spanX).toBeCloseTo((2248 - 100) * 1.6);
+    expect(spanY).toBeCloseTo(0);
+  });
+
+  // Unrolling T does not put two Z slices on screen, so a Z-crossing connection
+  // still can't be framed.
+  it("still declines to frame when the endpoints differ on a rolled axis", () => {
+    unrollTime(4, 4);
+    addAnnotation("parent", 0, 0, 0, { Z: 0 });
+    addAnnotation("child", 80, 0, 0, { Z: 1 });
+
+    goToConnection("parent", "child");
+
+    expect(h.frameCameraInfo).not.toHaveBeenCalled();
+    expect(h.recenterCameraInfo).toHaveBeenCalled();
   });
 });
 
@@ -369,6 +518,129 @@ describe("goToTrack", () => {
     goToTrack(["a", "gone"]);
     const [, center] = h.frameCameraInfoToExtent.mock.calls[0] as any[];
     expect(center).toEqual({ x: 0, y: 0 });
+  });
+
+  // Issue #1280. All three of goToTrack's "which members are drawn" rules assumed
+  // a single frame is on screen. The slice filter and bounding box always relax
+  // for an unrolled axis, and the box uses drawn rather than raw coordinates.
+  // Time relaxes only for the base layer; the overlay's window stays authoritative.
+  describe("on the unrolled grid", () => {
+    it("frames the drawn box, spanning cells for a cross-time track", () => {
+      unrollTime(4, 4); // one row of 4 cells, tile 1024
+      addAnnotation("a", 10, 20, 0); // cell 0 => drawn at (10, 20)
+      addAnnotation("b", 50, 20, 2); // cell 2 => drawn at (50 + 2048, 20)
+
+      goToTrack(["a", "b"]);
+
+      const [, center, width, height] = h.frameCameraInfoToExtent.mock
+        .calls[0] as any[];
+      expect(center).toEqual({ x: (10 + 50 + 2 * TILE) / 2, y: 20 });
+      expect(width).toBe(40 + 2 * TILE);
+      expect(height).toBe(0);
+    });
+
+    // Without the offset the same track frames a 40-unit box on the first tile,
+    // which is the pre-fix behaviour.
+    it("does not collapse the box to the raw centroids", () => {
+      unrollTime(4, 4);
+      addAnnotation("a", 10, 20, 0);
+      addAnnotation("b", 50, 20, 2);
+
+      goToTrack(["a", "b"]);
+
+      const [, , width] = h.frameCameraInfoToExtent.mock.calls[0] as any[];
+      expect(width).not.toBe(40);
+    });
+
+    // The time rule depends on WHICH layer draws the track, because only one of
+    // the two relaxes time when unrolled. Both directions are pinned below; a rule
+    // conditioned on `unrollT` alone gets one of them wrong, and so does a rule
+    // that ignores `unrollT` entirely. Both mistakes were made in review.
+
+    // Overlay OFF: the base annotation layer draws every timepoint when unrolled
+    // (`allT = store.unrollT || max-merge`), so the whole track is on screen and
+    // Time must be left alone.
+    it("leaves Time alone when unrolled with the overlay off", () => {
+      unrollTime(4, 4);
+      h.showTimelapseMode = false;
+      h.time = 0;
+      addAnnotation("a", 0, 0, 3); // 3 away, and no window without the overlay
+
+      goToTrack(["a"]);
+
+      expect(h.setTime).not.toHaveBeenCalled();
+    });
+
+    // Overlay ON: it windows its own segments and dots to `currentTime ±
+    // modeWindow` even when every frame is on screen, so leaving Time put would
+    // frame a track with no track drawn on it. Regression guard for a review
+    // finding: this originally short-circuited on `store.unrollT` regardless of
+    // the overlay, and so disagreed with the draw path.
+    it("still snaps Time when unrolled, because the overlay still windows", () => {
+      unrollTime(4, 4);
+      h.showTimelapseMode = true;
+      h.timelapseModeWindow = 1;
+      h.time = 0;
+      addAnnotation("a", 0, 0, 3);
+
+      goToTrack(["a"]);
+
+      expect(h.setTime).toHaveBeenCalledWith(3);
+    });
+
+    // ...and it still leaves Time alone when a member IS in the window, so the
+    // rule above is "match the overlay", not "always move Time".
+    it("leaves Time alone when a member is inside the window, unrolled", () => {
+      unrollTime(4, 4);
+      h.showTimelapseMode = true;
+      h.timelapseModeWindow = 10;
+      h.time = 0;
+      addAnnotation("a", 0, 0, 3);
+
+      goToTrack(["a"]);
+
+      expect(h.setTime).not.toHaveBeenCalled();
+    });
+
+    it("snaps Time the same way when time is NOT unrolled", () => {
+      h.showTimelapseMode = true;
+      h.timelapseModeWindow = 1;
+      h.time = 0;
+      addAnnotation("a", 0, 0, 3);
+
+      goToTrack(["a"]);
+
+      expect(h.setTime).toHaveBeenCalledWith(3);
+    });
+
+    // A cross-slice track is framed to the anchor's slice only when the other
+    // slices genuinely aren't drawn; unrolling Z puts them all on screen.
+    it("includes other-Z members when Z is unrolled", () => {
+      h.unrollZ = true;
+      h.frames = [
+        { keyOffset: 0, frame: { IndexXY: 0, IndexZ: 0, IndexT: 0 } },
+        { keyOffset: 1, frame: { IndexXY: 0, IndexZ: 1, IndexT: 0 } },
+      ];
+      h.unrollW = 2;
+      addAnnotation("a", 10, 10, 0, { Z: 0 }); // cell 0
+      addAnnotation("b", 20, 10, 0, { Z: 1 }); // cell 1 => +1024 in x
+
+      goToTrack(["a", "b"]);
+
+      const [, , width] = h.frameCameraInfoToExtent.mock.calls[0] as any[];
+      // Both members counted, and at their drawn positions.
+      expect(width).toBe(10 + TILE);
+    });
+
+    it("still frames only the anchor slice when Z is NOT unrolled", () => {
+      addAnnotation("a", 10, 10, 0, { Z: 0 });
+      addAnnotation("b", 20, 10, 0, { Z: 1 });
+
+      goToTrack(["a", "b"]);
+
+      const [, , width] = h.frameCameraInfoToExtent.mock.calls[0] as any[];
+      expect(width).toBe(0); // anchor alone
+    });
   });
 
   it("does nothing when no member resolves", () => {

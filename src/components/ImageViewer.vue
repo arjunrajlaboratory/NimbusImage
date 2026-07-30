@@ -269,7 +269,7 @@ import { convertLength } from "@/utils/conversion";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { NoOutput } from "@/pipelines/computePipeline";
 import { logWarning } from "@/utils/log";
-import { getUnrollCells, IUnrollCell } from "@/utils/unroll";
+import { getUnrollCells, IUnrollCell, unrollGridSize } from "@/utils/unroll";
 
 function generateFilterURL(
   index: number,
@@ -1497,16 +1497,17 @@ function draw() {
   if (!someImages) {
     return;
   }
-  let unrollCount = someImages.images.length;
   const someImage = someImages.images[0];
-  unrollW.value = Math.min(
-    unrollCount,
-    Math.ceil(
-      Math.sqrt(someImage.sizeX * someImage.sizeY * unrollCount) /
-        someImage.sizeX,
-    ),
+  // Shared with `store.unrollGrid`, which navigation uses to find where an
+  // annotation is drawn — same inputs, same helper, so the camera and the tiles
+  // cannot disagree about the grid (issue #1280).
+  const grid = unrollGridSize(
+    someImages.images.length,
+    someImage.sizeX,
+    someImage.sizeY,
   );
-  unrollH.value = Math.ceil(unrollCount / unrollW.value);
+  unrollW.value = grid.unrollW;
+  unrollH.value = grid.unrollH;
   tileWidth.value = someImage.tileWidth;
   tileHeight.value = someImage.tileHeight;
 

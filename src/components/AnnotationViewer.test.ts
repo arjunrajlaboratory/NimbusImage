@@ -95,6 +95,17 @@ vi.mock("@/utils/annotation", () => ({
     ),
 }));
 
+// Real geometry throughout — only `unrollLayoutFor` is wrapped, so a test can
+// count how many layouts a draw builds. It must be ONE per draw: building one
+// inside the per-annotation transform allocates two objects per annotation,
+// including on the un-unrolled path that is supposed to allocate nothing.
+const unrollSpy = vi.hoisted(() => ({ unrollLayoutFor: vi.fn() }));
+vi.mock("@/utils/unroll", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/unroll")>();
+  unrollSpy.unrollLayoutFor.mockImplementation(actual.unrollLayoutFor);
+  return { ...actual, unrollLayoutFor: unrollSpy.unrollLayoutFor };
+});
+
 vi.mock("@/utils/polygonSlice", () => ({
   editPolygonAnnotation: vi.fn().mockReturnValue([]),
 }));
@@ -273,10 +284,21 @@ vi.mock("@/store", () => {
       xy: 0,
       z: 0,
       time: 0,
-      unroll: false,
       unrollXY: false,
       unrollZ: false,
       unrollT: false,
+      // DERIVED, exactly as in the real store, where `unroll` is a getter over
+      // the three flags. It used to be an independent field here, so a test that
+      // set `unrollXY` alone left `unroll` false — the component's filtering saw
+      // an unrolled axis while its coordinate transform did not, a state the app
+      // can never actually be in. Writing `unroll` unrolls time, which is what
+      // the tests that set it are reaching for.
+      get unroll() {
+        return this.unrollXY || this.unrollZ || this.unrollT;
+      },
+      set unroll(value: boolean) {
+        this.unrollT = value;
+      },
       selectedTool: null as any,
       drawAnnotations: true,
       drawAnnotationConnections: true,
@@ -950,6 +972,13 @@ describe("AnnotationViewer", () => {
           location: { XY: 5, Z: 0, Time: 0 },
         });
         mockedAnnotationStore.annotations = [ann1, ann2];
+        // Unrolling is on, so the drawn-centroid transform runs. The real store
+        // writes a centroid for every annotation it holds, so leaving these out
+        // would test a state that cannot occur.
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 1, y: 2 },
+          a2: { x: 3, y: 4 },
+        };
 
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         const result = (wrapper.vm as any).layerAnnotations;
@@ -1049,6 +1078,7 @@ describe("AnnotationViewer", () => {
           location: { XY: 0, Z: 99, Time: 0 },
         });
         mockedAnnotationStore.annotations = [ann];
+        mockedAnnotationStore.annotationCentroids = { a1: { x: 1, y: 2 } };
 
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         const result = (wrapper.vm as any).layerAnnotations;
@@ -3551,112 +3581,106 @@ describe("AnnotationViewer", () => {
   // Category 5: Coordinate Transformation (~7 tests)
   // =========================================================================
   describe("coordinate transformation", () => {
-    // --- unrollIndex ---
-    describe("unrollIndex", () => {
-      it("returns 0 when no images", () => {
-        mockedStore.dataset = {
-          ...mockedStore.dataset,
-          images: () => null,
-        } as any;
-        wrapper = mountComponent();
-        const result = (wrapper.vm as any).unrollIndex(
-          0,
-          0,
-          0,
-          false,
-          false,
-          false,
-        );
-        expect(result).toBe(0);
+    // `unrollIndex` became `unrollCellIndex` and the offset math became
+    // `unrolledCoordinates`, both in @/utils/unroll (issue #1280), where the
+    // navigation path shares them. Their unit tests moved with them to
+    // src/utils/unroll.test.ts.
+    //
+    // What belongs HERE is the wiring the util cannot see: the draw path must key
+    // its grid to the `unrollW` PROP — the grid ImageViewer actually laid the
+    // tiles out on — and the centroid map the canvas draws from must carry the
+    // offset. `unrollIndexFromImages` stays stubbed to pick the cell; resolving a
+    // location to its cell for real is unroll.test.ts's job.
+    describe("unrollLayout", () => {
+      it("takes its grid from the unrollW prop", () => {
+        mockedStore.unroll = true;
+        wrapper = mountComponent({ unrollW: 3 });
+        const layout = (wrapper.vm as any).unrollLayout;
+        expect(layout.unrollW).toBe(3);
+        expect(layout.unroll).toBe(true);
+        // Cell size comes from the dataset's frames, not from the caller.
+        expect(layout.sizeX).toBe(1024);
+        expect(layout.sizeY).toBe(1024);
       });
 
-      it("calls unrollIndexFromImages", () => {
-        (unrollIndexFromImages as any).mockReturnValue(3);
-        wrapper = mountComponent();
-        const result = (wrapper.vm as any).unrollIndex(
-          1,
-          2,
-          3,
-          false,
-          false,
-          false,
-        );
-        expect(unrollIndexFromImages).toHaveBeenCalled();
-        expect(result).toBe(3);
-      });
-
-      it("passes -1 for unrolled dimensions", () => {
-        wrapper = mountComponent();
-        const datasetImages = vi.fn().mockReturnValue([]);
-        mockedStore.dataset = {
-          ...mockedStore.dataset,
-          images: datasetImages,
-        } as any;
-        (wrapper.vm as any).unrollIndex(1, 2, 3, true, true, true);
-        expect(datasetImages).toHaveBeenCalledWith(-1, -1, -1, 0);
-      });
-
-      it("passes actual index for non-unrolled dimensions", () => {
-        wrapper = mountComponent();
-        const datasetImages = vi.fn().mockReturnValue([]);
-        mockedStore.dataset = {
-          ...mockedStore.dataset,
-          images: datasetImages,
-        } as any;
-        (wrapper.vm as any).unrollIndex(1, 2, 3, false, false, false);
-        expect(datasetImages).toHaveBeenCalledWith(2, 3, 1, 0);
+      it("is not unrolled when no axis is unrolled", () => {
+        wrapper = mountComponent({ unrollW: 3 });
+        expect((wrapper.vm as any).unrollLayout.unroll).toBe(false);
       });
     });
 
-    // --- unrolledCoordinates ---
-    describe("unrolledCoordinates", () => {
-      it("returns coordinates unchanged when not unrolling", () => {
-        mockedStore.unroll = false;
-        wrapper = mountComponent();
-        const coords = [{ x: 10, y: 20 }];
-        const image = { sizeX: 1024, sizeY: 1024 };
-        const result = (wrapper.vm as any).unrolledCoordinates(
-          coords,
-          { XY: 0, Z: 0, Time: 0 },
-          image,
-        );
-        expect(result).toBe(coords);
+    // The map every drawn centroid, connection line and label is positioned
+    // from — the reason the offset has to be applied at all.
+    describe("unrolledCentroidCoordinates", () => {
+      function mountWithOneAnnotation(tile: number, unrollW: number) {
+        mockedStore.dataset = {
+          ...mockedStore.dataset,
+          anyImage: () => ({ sizeX: tile, sizeY: tile }),
+          images: () => [],
+        } as any;
+        mockedAnnotationStore.annotations = [makeAnnotation({ id: "a1" })];
+        mockedAnnotationStore.annotationCentroids = { a1: { x: 10, y: 20 } };
+        wrapper = mountComponent({ unrollW });
+        return (wrapper.vm as any).unrolledCentroidCoordinates.a1;
+      }
+
+      it("leaves centroids alone when not unrolling", () => {
+        (unrollIndexFromImages as any).mockReturnValue(3);
+        expect(mountWithOneAnnotation(100, 2)).toEqual({ x: 10, y: 20 });
       });
 
-      it("offsets coordinates when unrolling", () => {
+      it("offsets a centroid by its frame's grid cell", () => {
         mockedStore.unroll = true;
-
-        (unrollIndexFromImages as any).mockReturnValue(1); // tileIndex=1, tileX=0, tileY=1 (with unrollW=1)
-        wrapper = mountComponent({ unrollW: 1 });
-        const coords = [{ x: 10, y: 20 }];
-        const image = { sizeX: 100, sizeY: 200 };
-        const result = (wrapper.vm as any).unrolledCoordinates(
-          coords,
-          { XY: 0, Z: 0, Time: 0 },
-          image,
-        );
-        // tileX = 1 % 1 = 0, tileY = floor(1 / 1) = 1
-        // x = 100*0 + 10 = 10, y = 200*1 + 20 = 220
-        expect(result[0].x).toBe(10);
-        expect(result[0].y).toBe(220);
+        // cell 1 in a 2-wide grid ⇒ column 1, row 0
+        (unrollIndexFromImages as any).mockReturnValue(1);
+        expect(mountWithOneAnnotation(100, 2)).toEqual({
+          x: 110,
+          y: 20,
+          z: undefined,
+        });
       });
 
-      it("calculates tileX/Y from unrollW", () => {
+      it("wraps onto the next grid row past the last column", () => {
         mockedStore.unroll = true;
+        // cell 3 in a 2-wide grid ⇒ column 1, row 1: offset in BOTH axes
+        (unrollIndexFromImages as any).mockReturnValue(3);
+        expect(mountWithOneAnnotation(100, 2)).toEqual({
+          x: 110,
+          y: 120,
+          z: undefined,
+        });
+      });
 
-        (unrollIndexFromImages as any).mockReturnValue(3); // tileIndex=3, with unrollW=2: tileX=1, tileY=1
-        wrapper = mountComponent({ unrollW: 2 });
-        const coords = [{ x: 5, y: 10 }];
-        const image = { sizeX: 50, sizeY: 50 };
-        const result = (wrapper.vm as any).unrolledCoordinates(
-          coords,
-          { XY: 0, Z: 0, Time: 0 },
-          image,
-        );
-        // tileX = 3 % 2 = 1, tileY = floor(3 / 2) = 1
-        // x = 50*1 + 5 = 55, y = 50*1 + 10 = 60
-        expect(result[0].x).toBe(55);
-        expect(result[0].y).toBe(60);
+      // Cost, with no visible behaviour: the transform runs once per annotation
+      // per draw, so the layout must be hoisted out of that loop. Asserted as
+      // "does not scale with annotation count" rather than an absolute count —
+      // the layout is a computed, so how many times mount happens to evaluate it
+      // is incidental, while scaling with the annotation count is the defect.
+      it("builds a layout per draw, not per annotation", () => {
+        mockedStore.unroll = true;
+        const layoutsBuiltFor = (annotationCount: number) => {
+          const ids = Array.from(
+            { length: annotationCount },
+            (_, i) => `a${i}`,
+          );
+          mockedAnnotationStore.annotations = ids.map((id) =>
+            makeAnnotation({ id }),
+          );
+          mockedAnnotationStore.annotationCentroids = Object.fromEntries(
+            ids.map((id, i) => [id, { x: i, y: i }]),
+          );
+          unrollSpy.unrollLayoutFor.mockClear();
+          wrapper = mountComponent({ unrollW: 2 });
+          // Reading the map is what runs the transform over every annotation.
+          expect(
+            Object.keys((wrapper.vm as any).unrolledCentroidCoordinates),
+          ).toHaveLength(annotationCount);
+          const built = unrollSpy.unrollLayoutFor.mock.calls.length;
+          wrapper.unmount();
+          return built;
+        };
+
+        expect(layoutsBuiltFor(40)).toBe(layoutsBuiltFor(2));
       });
     });
   });

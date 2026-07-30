@@ -81,6 +81,7 @@ import {
   buildAnnotationBrowserConfig,
   resolveAnnotationBrowserConfig,
 } from "@/utils/annotationBrowserConfig";
+import { IUnrollGrid, unrollGridSize } from "@/utils/unroll";
 import {
   storageSeverityFromPercentage,
   TStorageSeverity,
@@ -479,6 +480,30 @@ export class Main extends VuexModule {
 
   get unroll() {
     return this.unrollXY || this.unrollZ || this.unrollT;
+  }
+
+  /**
+   * The unrolled grid `ImageViewer` lays the tiles out on (issue #1280).
+   *
+   * `ImageViewer` owns the layout — it sizes its maps and places its frame
+   * labels from it — but anything that has to reason about where an annotation
+   * is *drawn* needs the same numbers, and the component's `unrollW` ref is
+   * reachable only by the children it passes it to as a prop. This reads the
+   * same `layerStackImages` entry through the same `unrollGridSize`, so the two
+   * are the same grid by construction rather than by coincidence.
+   */
+  get unrollGrid(): IUnrollGrid {
+    // Same entry `ImageViewer.draw` lays the tiles out from. Nothing loaded yet
+    // degenerates to a 1×1 grid inside unrollGridSize, so no guard is needed
+    // here — one fallback, in one place.
+    const cellImages = this.layerStackImages.find(
+      (lsi) => lsi.images[0],
+    )?.images;
+    return unrollGridSize(
+      cellImages?.length ?? 0,
+      cellImages?.[0]?.sizeX ?? 0,
+      cellImages?.[0]?.sizeY ?? 0,
+    );
   }
 
   get userName() {

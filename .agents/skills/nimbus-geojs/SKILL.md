@@ -21,6 +21,7 @@ GeoJS's annotation layer has several asymmetric, mutating APIs. Each trap below 
 | A drawn feature can't be selected even though its record exists | One feature drawn per *pair/group* while several records map to it; the feature carries only the first record's id | Choose the selected record as the drawn representative |
 | Feature is in `layer.annotations()`, on-screen, right colour — and paints nothing | `options("style", {...})` **replaces** the style, dropping GeoJS's default `stroke: true` / `fill: true` | Include `stroke: true` explicitly, and merge: `options("style", {...a.options("style"), ...next})` |
 | Clicking a list row shows no connection at high zoom | A connection draws only when BOTH endpoints are displayed; recentering on one leaves the other outside the viewport | Frame both endpoints (`frameCameraInfo`) instead of recentering on one |
+| With an axis unrolled, the camera/hit-test lands exactly one tile-width (or a multiple) away from the object | The draw path offsets each annotation by its grid cell; the other path used the raw frame-local centroid | Put both through `@/utils/unroll` — see "Unrolled coordinates are a third space" |
 | Hover/selection highlight works on one layer and does nothing on another | The second layer rebuilds its features from scratch on every draw and bakes the highlight in at build time, so only the state wired to a rebuild is ever reflected | Give the features a base-style option and restyle them in place — see "Layers that bake style at draw time" |
 
 ## Layers that bake style at draw time
@@ -77,6 +78,52 @@ The image map has `ingcs !== gcs` (y-flipped/scaled pixel system from `geojs.uti
   - `undefined` → treat coords as ingcs, convert once (correct for freshly created features)
   - `null` → map.gcs(), conversion skipped (correct for retained/pooled features being re-added)
 - The GeoJS mock in unit tests does NOT model conversion — tests can only assert the `gcs` arg contract (`toHaveBeenCalledWith([...], null, ...)`). Visual drift must be verified in-browser (see in-browser-testing skill).
+
+## Unrolled coordinates are a third space
+
+`ingcs` vs `gcs` is not the only split. When any of `store.unrollXY / unrollZ / unrollT`
+is on, every frame along that axis is drawn side by side on one map, and the draw path
+offsets each annotation by the grid cell its frame occupies:
+
+```
+drawn.x = sizeX * (cell % unrollW) + raw.x        // cell = the frame's keyOffset
+drawn.y = sizeY * floor(cell / unrollW) + raw.y
+```
+
+So an annotation's **stored** coordinates and its **on-screen** position differ by up to
+the whole grid. Two consequences, and the first one is the trap:
+
+- **A stored centroid is not a position on the map.** `annotationCentroids[id]`,
+  `simpleCentroid(annotation.coordinates)` and `stub.centroid` are all frame-local. The
+  moment you compare one against anything in map space — `evt.geo`, `cameraInfo.center`,
+  `gcsBounds`, a drawn lasso, a `map.bounds()` — you need the unrolled position instead.
+  Use `unrolledPoint` / `unrolledCoordinates` from `@/utils/unroll`, built from a layout
+  from `unrollLayoutFor`.
+- **Everything is on screen at once, so "same frame" is the wrong displayed-ness test.**
+  A connection between two timepoints is genuinely drawn as a line between two tiles.
+  Gate on "displayed", which for each axis is `unrolled || indices match` — not on frame
+  equality (issue #1280).
+
+The grid itself lives in `ImageViewer`'s `unrollW` / `unrollH` refs, which is why this
+drifted in the first place: navigation code cannot reach a component ref. `unrollGridSize`
+is the single copy of the layout formula, `ImageViewer` assigns its refs from it, and
+`store.unrollGrid` mirrors it for everyone else. Never re-derive it.
+
+**The failure is quiet and looks like a rounding error until you check the magnitude** —
+the offset is an exact multiple of the tile size, so "off by 1024" is the tell. Diagnose
+by comparing the store value against what GeoJS actually holds:
+
+```js
+// per annotation, in the console
+layer.annotations().find(a => a.options('girderId') === id).coordinates()[0]  // drawn
+store.state.annotation.annotationCentroids[id]                               // raw
+```
+
+Known still-raw paths (pre-existing, not yet fixed): the annotation spatial index and
+everything querying it — click/shift-click selection, hover highlight, right-click menu,
+alt-drag ghost, and the viewport hydration partition. Clicking an object while unrolled
+selects nothing; clicking the same spot on the first tile selects it. Verified live on
+`normmedia_8well_col2_livecellgfp`.
 
 ## Render gating
 

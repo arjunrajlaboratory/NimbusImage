@@ -7,6 +7,7 @@ import {
   frameCameraInfoToExtent,
   recenterCameraInfo,
 } from "@/utils/camera";
+import { IUnrollLayout, unrollLayoutFor, unrolledPoint } from "@/utils/unroll";
 
 /** Fraction of the viewport a framed connection should occupy. */
 const CONNECTION_FRAME_PADDING = 1.6;
@@ -17,6 +18,34 @@ const CONNECTION_FRAME_PADDING = 1.6;
  * that makes it interpretable — neighbouring cells, which way it is heading.
  */
 const TRACK_VIEWPORT_FRACTION = 0.2;
+
+/**
+ * The grid an annotation is currently DRAWN on, for turning a stored centroid
+ * into a position the camera can be aimed at.
+ *
+ * With an axis unrolled every frame along it is on screen at once, side by side,
+ * and the viewer offsets each annotation by the grid cell its frame occupies. So
+ * the camera has to be aimed at the offset position: centring on the raw
+ * centroid put it a whole tile-width away from the object the user clicked, on
+ * the equivalent spot of the first tile (issue #1280).
+ *
+ * Read once per navigation and passed down — `unrollGrid` derives from
+ * `layerStackImages`, so it is not something to re-fetch per endpoint. Off the
+ * unrolled path the resulting transform is the identity.
+ */
+function currentUnrollLayout(): IUnrollLayout {
+  return unrollLayoutFor({
+    flags: {
+      unrollXY: store.unrollXY,
+      unrollZ: store.unrollZ,
+      unrollT: store.unrollT,
+    },
+    // The grid the tiles are laid out on, mirrored from ImageViewer.
+    unrollW: store.unrollGrid.unrollW,
+    image: store.dataset?.anyImage(),
+    dataset: store.dataset,
+  });
+}
 
 /**
  * Move the viewer to an annotation's location and recenter on it.
@@ -47,7 +76,13 @@ export function goToAnnotationLocation(annotationId: string) {
     // Recenter as a pure pan and translate gcsBounds with it. The new location
     // must be hydrated against the *new* viewport, not the stale pre-click one
     // (this path bypasses the GeoJS map, so nothing else re-syncs gcsBounds).
-    store.setCameraInfo(recenterCameraInfo(store.cameraInfo, center));
+    // Resolved AFTER the frame is set so the grid is the one being navigated to.
+    store.setCameraInfo(
+      recenterCameraInfo(
+        store.cameraInfo,
+        unrolledPoint(center, location, currentUnrollLayout()),
+      ),
+    );
   }
   annotationStore.setHoveredAnnotationId(annotationId);
   // Guarantee the navigated-to annotation renders as a full shape, even if it
@@ -77,9 +112,17 @@ function resolveEndpoint(id: string) {
  * the row to look at. Measured on the Xenium dataset at max zoom: viewport span
  * 51 world units, endpoints 139 apart, line not drawn.
  *
- * Endpoints on DIFFERENT frames can't both be displayed in normal mode no matter
- * the zoom — that is what timelapse mode is for — so this only zooms to fit when
- * the two share a frame, and otherwise behaves like a plain navigate.
+ * Endpoints on different frames usually can't both be displayed no matter the
+ * zoom — that is what timelapse mode is for — so this only zooms to fit when both
+ * are on screen, and otherwise behaves like a plain navigate.
+ *
+ * "On screen" is NOT the same as "on the same frame", though. An unrolled axis
+ * puts every one of its frames on screen simultaneously, and a connection across
+ * them is genuinely drawn as a line between two grid cells — so a differing
+ * index on an unrolled axis is no reason to give up on framing (issue #1280).
+ * The framing then has to use the endpoints' drawn positions, which is what makes
+ * a cross-tile span come out tile-widths wide instead of collapsing to the
+ * distance between two raw centroids.
  */
 export function goToConnection(parentId: string, childId: string) {
   const parent = resolveEndpoint(parentId);
@@ -88,14 +131,16 @@ export function goToConnection(parentId: string, childId: string) {
   if (!target) {
     return;
   }
-  const sameFrame =
+  // An axis that is unrolled shows all of its frames at once, so the endpoints
+  // only have to agree on the axes that still select a single frame.
+  const bothDisplayed =
     parent !== null &&
     child !== null &&
-    parent.location.XY === child.location.XY &&
-    parent.location.Z === child.location.Z &&
-    parent.location.Time === child.location.Time;
+    (store.unrollXY || parent.location.XY === child.location.XY) &&
+    (store.unrollZ || parent.location.Z === child.location.Z) &&
+    (store.unrollT || parent.location.Time === child.location.Time);
 
-  if (!sameFrame) {
+  if (!bothDisplayed) {
     // Nothing to frame — one endpoint is missing, or they live on different
     // frames and only one can ever be on screen here.
     goToAnnotationLocation(target.id);
@@ -105,9 +150,15 @@ export function goToConnection(parentId: string, childId: string) {
   store.setXY(target.location.XY);
   store.setZ(target.location.Z);
   store.setTime(target.location.Time);
+  // Frame where the endpoints are DRAWN. Unrolled, these differ from the raw
+  // centroids by a cell offset each, and for a cross-tile connection that offset
+  // is the bulk of the span.
+  const layout = currentUnrollLayout();
+  const parentAt = unrolledPoint(parent!.centroid, parent!.location, layout);
+  const childAt = unrolledPoint(child!.centroid, child!.location, layout);
   const midpoint = {
-    x: (parent!.centroid.x + child!.centroid.x) / 2,
-    y: (parent!.centroid.y + child!.centroid.y) / 2,
+    x: (parentAt.x + childAt.x) / 2,
+    y: (parentAt.y + childAt.y) / 2,
   };
   store.setCameraInfo(
     frameCameraInfo(
@@ -115,8 +166,8 @@ export function goToConnection(parentId: string, childId: string) {
       midpoint,
       // Signed delta: frameCameraInfo projects it onto the camera axes, and
       // under rotation the sign changes the result.
-      (child!.centroid.x - parent!.centroid.x) * CONNECTION_FRAME_PADDING,
-      (child!.centroid.y - parent!.centroid.y) * CONNECTION_FRAME_PADDING,
+      (childAt.x - parentAt.x) * CONNECTION_FRAME_PADDING,
+      (childAt.y - parentAt.y) * CONNECTION_FRAME_PADDING,
     ),
   );
   annotationStore.setHoveredAnnotationId(target.id);
@@ -148,6 +199,15 @@ export function goToConnection(parentId: string, childId: string) {
  * the default window of 10 (T50 is inside [1, 100], but every member is outside
  * the window).
  *
+ * All three of those rules — the slice filter, the bounding box, and the time
+ * window — assumed one frame is on screen, and UNROLLING breaks that assumption.
+ * The slice filter and the bounding box are relaxed for it below: every frame along
+ * an unrolled axis is displayed, so no member is excluded by it, and members on
+ * different frames are drawn in different grid cells rather than on top of each
+ * other. The time rule is relaxed for it only when the timelapse overlay is off,
+ * because the overlay keeps windowing even when unrolled while the base annotation
+ * layer does not — see the comment at that rule (issue #1280).
+ *
  * Unlike `goToConnection` this zooms in as well as out — clicking a track from a
  * zoomed-out view should bring it up to a usable size, which is the whole point.
  */
@@ -177,18 +237,29 @@ export function goToTrack(annotationIds: string[]) {
       ? member
       : best,
   );
+  // An unrolled axis puts every one of its frames on screen at once, so it never
+  // disqualifies a member — the same "displayed, not same-frame" rule
+  // `goToConnection` uses (issue #1280). Always contains `anchor`, which
+  // trivially matches itself.
   const onAnchorSlice = members.filter(
     (member) =>
-      member.location.XY === anchor.location.XY &&
-      member.location.Z === anchor.location.Z,
+      (store.unrollXY || member.location.XY === anchor.location.XY) &&
+      (store.unrollZ || member.location.Z === anchor.location.Z),
   );
 
   store.setXY(anchor.location.XY);
   store.setZ(anchor.location.Z);
 
-  // Bounds and times from the anchor's slice only: the rest is not drawn there.
-  const xs = onAnchorSlice.map((m) => m.centroid.x);
-  const ys = onAnchorSlice.map((m) => m.centroid.y);
+  // Bounds from the members that are actually drawn, at the positions they are
+  // actually drawn AT. Unrolled, members on different frames sit in different
+  // grid cells, so a box over their raw centroids describes a fraction of the
+  // track and the camera frames the wrong region (issue #1280).
+  const layout = currentUnrollLayout();
+  const drawnPositions = onAnchorSlice.map((member) =>
+    unrolledPoint(member.centroid, member.location, layout),
+  );
+  const xs = drawnPositions.map((position) => position.x);
+  const ys = drawnPositions.map((position) => position.y);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
@@ -211,10 +282,27 @@ export function goToTrack(annotationIds: string[]) {
   // it is inside the window whenever anything is — but phrased as "is anything
   // drawn?" because that is the question, and it stays correct if the anchor rule
   // ever changes.
+  // Relaxed for `unrollT` only when the timelapse overlay is OFF, because the two
+  // modes draw a track from different layers and only one of them relaxes time.
+  //
+  // Overlay OFF: the track is drawn by the base annotation layer, whose time
+  // filter IS relaxed by unrolling (`layerAnnotations` builds
+  // `allT = store.unrollT || max-merge`), so every member is on screen and Time
+  // should stay where the user put it.
+  //
+  // Overlay ON: `drawTimelapseConnectionsAndCentroids` filters its own segments
+  // and centroid dots to `currentTime ± modeWindow` whatever the unroll state —
+  // measured with `unrollT` on: 10 features at `modeWindow` 100, 1 at 0. Leaving
+  // Time put there would frame a track with no track drawn on it, the empty-view
+  // failure this rule exists to prevent. Whether the overlay SHOULD window while
+  // every frame is displayed is a question about the timelapse feature rather than
+  // about navigation (#1292); until that changes, navigation matches what is drawn.
   const halfWindow = timelapse.showMode ? timelapse.modeWindow : 0;
-  const anyMemberDrawn = onAnchorSlice.some(
-    (member) => Math.abs(member.location.Time - store.time) <= halfWindow,
-  );
+  const anyMemberDrawn =
+    (store.unrollT && !timelapse.showMode) ||
+    onAnchorSlice.some(
+      (member) => Math.abs(member.location.Time - store.time) <= halfWindow,
+    );
   if (!anyMemberDrawn) {
     store.setTime(anchor.location.Time);
   }
