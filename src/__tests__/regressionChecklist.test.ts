@@ -55,21 +55,85 @@ function citedTestNames(body: string): string[] {
 }
 
 /**
- * Where tests live, and how they are named. Backend checklists are allowed to cite
- * pytest tests — the docs are not frontend-only, and a checklist doc that cited
- * `test_*.py` names would otherwise fail here with "test does not exist" while
- * every cited test existed.
+ * Every test tree this repo OWNS, and how each names its tests. Checklists are not
+ * frontend-only, and a doc citing a test in a tree missing from here would fail with
+ * "test does not exist" while the test existed.
+ *
+ * Listed explicitly rather than walked from the repo root with an exclude list,
+ * because the two failure modes are not symmetric: a missing ROOT fails loudly and
+ * obviously, while a missing EXCLUDE lets a citation resolve against vendored
+ * third-party tests and pass for the wrong reason. `nimbusimage/` alone holds 877
+ * `test_*.py` files — 24 ours, the rest inside `.venv`.
+ *
+ * `knownTest` pins one real test per root, so a root that stops being scanned fails
+ * here instead of silently reporting every citation into it as missing.
  */
+const PYTEST = (f: string) => f.startsWith("test_") && f.endsWith(".py");
 const TEST_ROOTS = [
   {
     dir: resolve(__dirname, ".."),
     matches: (f: string) => f.endsWith(".test.ts"),
+    knownTest: "names only tests that exist",
   },
+  // Girder plugin (backend).
   {
     dir: resolve(__dirname, "../../devops"),
-    matches: (f: string) => f.startsWith("test_") && f.endsWith(".py"),
+    matches: PYTEST,
+    knownTest: "testAnnotationSchema",
+  },
+  // The `nimbusimage` Python package — its `.venv` is skipped by NOT_OURS.
+  {
+    dir: resolve(__dirname, "../../nimbusimage/tests"),
+    matches: PYTEST,
+    knownTest: "test_connect_with_token",
+  },
+  // Repo tooling, e.g. the skills-mirror sync script.
+  {
+    dir: resolve(__dirname, "../../plugins"),
+    matches: PYTEST,
+    knownTest: "test_accepts_codex_marketplace_contract",
   },
 ];
+
+/** Directories holding code this repo does not own. */
+const NOT_OURS = new Set([
+  "node_modules",
+  ".tox",
+  ".venv",
+  "__pycache__",
+  ".pnpm-store",
+]);
+
+/**
+ * Every directory in the repo that holds an owned `test_*.py`, found from the
+ * filesystem rather than from `TEST_ROOTS`.
+ *
+ * This is the completeness half of the guard. The per-root assertions below catch a
+ * root that stops resolving, but not a root DELETED from the list — `it.each` simply
+ * generates one case fewer, which passes. Deriving the expectation from disk catches
+ * both that and a brand-new owned test tree nobody added.
+ *
+ * Only used to check coverage, never to resolve citations, so walking broadly here
+ * cannot cause a citation to match vendored code.
+ */
+function ownedPytestDirs(): string[] {
+  const repoRoot = resolve(__dirname, "../..");
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) {
+        if (!NOT_OURS.has(entry) && entry !== ".git") {
+          walk(full);
+        }
+      } else if (PYTEST(entry) && !found.includes(dir)) {
+        found.push(dir);
+      }
+    }
+  };
+  walk(repoRoot);
+  return found;
+}
 
 /** Read once: this is a whole-tree walk, and it is the same for every doc. */
 let cachedSources: string | null = null;
@@ -83,13 +147,7 @@ function allTestSources(): string {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) {
-        // `.tox` holds installed copies of other packages' tests, which would
-        // make citations resolve against code this repo does not own.
-        if (
-          entry !== "node_modules" &&
-          entry !== ".tox" &&
-          entry !== "__pycache__"
-        ) {
+        if (!NOT_OURS.has(entry)) {
           walk(full, matches);
         }
       } else if (matches(entry)) {
@@ -113,6 +171,36 @@ describe("regression checklists", () => {
     const names = checklistDocs().map((doc) => doc.name);
     expect(names).toContain("CONNECTION_LIST.md");
     expect(names).toContain("UNROLL_NAVIGATION.md");
+  });
+
+  // Guards the discovery of test SOURCES the same way. Without this, a root that
+  // stopped being scanned would not fail here — it would fail as "the checklist
+  // cites tests that no longer exist" in whichever doc happened to cite into it,
+  // which reads as a documentation problem rather than a discovery one.
+  it.each(
+    TEST_ROOTS.map((root) => [root.dir.split("/").slice(-2).join("/"), root]),
+  )("scans %s", (_label, root) => {
+    expect(
+      existsSync(root.dir),
+      `${root.dir} is gone — update TEST_ROOTS`,
+    ).toBe(true);
+    expect(allTestSources()).toContain(root.knownTest);
+  });
+
+  // Catches a root deleted from TEST_ROOTS, and an owned test tree nobody added —
+  // neither of which the per-root cases above can see.
+  it("leaves no owned pytest tree unscanned", () => {
+    const covered = TEST_ROOTS.map((root) => root.dir);
+    const unscanned = ownedPytestDirs().filter(
+      (dir) =>
+        !covered.some((root) => dir === root || dir.startsWith(root + "/")),
+    );
+    expect(
+      unscanned,
+      `These directories hold test_*.py that no TEST_ROOTS entry covers, so a ` +
+        `checklist citing them would wrongly report the tests as missing:\n  ` +
+        `${unscanned.join("\n  ")}`,
+    ).toEqual([]);
   });
 
   it("cites a non-trivial number of tests overall", () => {

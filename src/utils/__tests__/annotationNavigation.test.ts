@@ -553,12 +553,30 @@ describe("goToTrack", () => {
       expect(width).not.toBe(40);
     });
 
-    // The time window is the ONE rule unrolling does not relax, because the
-    // timelapse overlay keeps windowing its segments and dots to
-    // `currentTime ± modeWindow` even when every frame is on screen. Leaving Time
-    // put would frame a track with no track drawn on it. Regression guard for a
-    // review finding: this originally short-circuited on `store.unrollT` and so
-    // disagreed with the draw path.
+    // The time rule depends on WHICH layer draws the track, because only one of
+    // the two relaxes time when unrolled. Both directions are pinned below; a rule
+    // conditioned on `unrollT` alone gets one of them wrong, and so does a rule
+    // that ignores `unrollT` entirely. Both mistakes were made in review.
+
+    // Overlay OFF: the base annotation layer draws every timepoint when unrolled
+    // (`allT = store.unrollT || max-merge`), so the whole track is on screen and
+    // Time must be left alone.
+    it("leaves Time alone when unrolled with the overlay off", () => {
+      unrollTime(4, 4);
+      h.showTimelapseMode = false;
+      h.time = 0;
+      addAnnotation("a", 0, 0, 3); // 3 away, and no window without the overlay
+
+      goToTrack(["a"]);
+
+      expect(h.setTime).not.toHaveBeenCalled();
+    });
+
+    // Overlay ON: it windows its own segments and dots to `currentTime ±
+    // modeWindow` even when every frame is on screen, so leaving Time put would
+    // frame a track with no track drawn on it. Regression guard for a review
+    // finding: this originally short-circuited on `store.unrollT` regardless of
+    // the overlay, and so disagreed with the draw path.
     it("still snaps Time when unrolled, because the overlay still windows", () => {
       unrollTime(4, 4);
       h.showTimelapseMode = true;

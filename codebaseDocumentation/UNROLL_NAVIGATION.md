@@ -120,26 +120,37 @@ drawn" — the slice filter, the bounding box, and the time window — and all t
 assumed a single frame is on screen. Two are relaxed by one rule: *an unrolled axis
 never disqualifies a member, and positions are the drawn ones.*
 
-The third is the trap: the time window is **not** relaxed, because the timelapse
-overlay keeps windowing even when every frame is displayed. "Unrolled ⇒ everything
-is displayed" holds for the base annotation layer and *not* for the timelapse layer,
-so the rule to apply is "match what the draw path actually does", not "unrolled means
-everything". Every item below has a paired control, because a blanket relaxation
-would pass the unrolled assertion alone.
+The third is the trap: the time rule is relaxed **only when the timelapse overlay is
+off**. "Unrolled ⇒ everything is displayed" holds for the base annotation layer and
+*not* for the timelapse layer, which keeps windowing to `currentTime ± modeWindow`
+whatever the layout — so a track is fully drawn in one mode and partially drawn in the
+other, and the rule to apply is "match whichever layer draws it", not "unrolled means
+everything". Every item below has a paired control, because a one-sided rule passes
+half the assertions.
 
 - [ ] **The box spans cells for a cross-time track while T is unrolled.** —
       *"frames the drawn box, spanning cells for a cross-time track"*, with
       *"does not collapse the box to the raw centroids"* pinning the pre-fix value
-- [ ] **The time window is NOT relaxed for `unrollT`** — the one rule unrolling
-      leaves alone. The timelapse overlay
-      (`drawTimelapseConnectionsAndCentroids`) filters segments and dots to
-      `currentTime ± modeWindow` whatever the unroll state, so exempting the flag
-      here frames a track with no track drawn on it. Caught in review after being
-      written the wrong way round. — *"still snaps Time when unrolled, because the
-      overlay still windows"*, with *"leaves Time alone when a member is inside the
-      window, unrolled"* proving it is "match the overlay" and not "always snap"
-- [ ] **Rolled time snaps identically**, so the rule is not conditioned on the flag
-      at all. — *"snaps Time the same way when time is NOT unrolled"*
+- [ ] **The time rule depends on which layer draws the track**, because only one of
+      the two relaxes time when unrolled. With the timelapse overlay **off** the
+      base annotation layer draws every timepoint (`allT = store.unrollT ||
+      max-merge`), so Time is left alone. — *"leaves Time alone when unrolled with
+      the overlay off"*
+- [ ] **With the overlay on, Time still snaps**, because
+      `drawTimelapseConnectionsAndCentroids` windows its segments and dots to
+      `currentTime ± modeWindow` whatever the unroll state — so exempting `unrollT`
+      frames a track with no track drawn on it. — *"still snaps Time when unrolled,
+      because the overlay still windows"*
+- [ ] **…and still leaves Time alone when a member IS in the window**, so the rule
+      reads as "match the overlay", not "always snap". — *"leaves Time alone when a
+      member is inside the window, unrolled"*
+- [ ] **Rolled time is unaffected either way.** — *"snaps Time the same way when
+      time is NOT unrolled"* and *"snaps Time to the nearest member outside
+      timelapse mode"*
+
+Both wrong versions of this rule were written during review — one ignoring `unrollT`
+entirely, one exempting it unconditionally — and each is caught by a different row
+above. Verify by mutating the predicate both ways, not just one.
 - [ ] **Other-Z members are included when Z is unrolled**, at their drawn positions. —
       *"includes other-Z members when Z is unrolled"*
 - [ ] **…but a cross-slice track is still framed to the anchor slice when Z is

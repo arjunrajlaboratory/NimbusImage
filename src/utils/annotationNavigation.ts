@@ -204,8 +204,9 @@ export function goToConnection(parentId: string, childId: string) {
  * The slice filter and the bounding box are relaxed for it below: every frame along
  * an unrolled axis is displayed, so no member is excluded by it, and members on
  * different frames are drawn in different grid cells rather than on top of each
- * other. The time window is deliberately NOT relaxed, because the timelapse overlay
- * still windows even when unrolled — see the comment at that rule (issue #1280).
+ * other. The time rule is relaxed for it only when the timelapse overlay is off,
+ * because the overlay keeps windowing even when unrolled while the base annotation
+ * layer does not — see the comment at that rule (issue #1280).
  *
  * Unlike `goToConnection` this zooms in as well as out — clicking a track from a
  * zoomed-out view should bring it up to a usable size, which is the whole point.
@@ -281,22 +282,27 @@ export function goToTrack(annotationIds: string[]) {
   // it is inside the window whenever anything is — but phrased as "is anything
   // drawn?" because that is the question, and it stays correct if the anchor rule
   // ever changes.
-  // NOT relaxed for `unrollT`, unlike the two rules above. Unrolling time does put
-  // every timepoint on screen, so it is tempting — but the TIMELAPSE overlay
-  // (`drawTimelapseConnectionsAndCentroids`) filters its track segments and
-  // centroid dots to `currentTime ± modeWindow` regardless of unrolling. Measured:
-  // with `unrollT` on, the timelapse layer holds 10 features at `modeWindow` 100
-  // and 1 at 0. Exempting the flag here would leave Time on a frame whose window
-  // contains none of the track, and the user would click a track row and get no
-  // track drawn — the empty-view failure this rule exists to prevent.
+  // Relaxed for `unrollT` only when the timelapse overlay is OFF, because the two
+  // modes draw a track from different layers and only one of them relaxes time.
   //
-  // Whether that overlay SHOULD window while every frame is displayed is a
-  // question about the timelapse feature, not about navigation; until it changes,
-  // navigation matches what is actually drawn (issues #1280, #1292).
+  // Overlay OFF: the track is drawn by the base annotation layer, whose time
+  // filter IS relaxed by unrolling (`layerAnnotations` builds
+  // `allT = store.unrollT || max-merge`), so every member is on screen and Time
+  // should stay where the user put it.
+  //
+  // Overlay ON: `drawTimelapseConnectionsAndCentroids` filters its own segments
+  // and centroid dots to `currentTime ± modeWindow` whatever the unroll state —
+  // measured with `unrollT` on: 10 features at `modeWindow` 100, 1 at 0. Leaving
+  // Time put there would frame a track with no track drawn on it, the empty-view
+  // failure this rule exists to prevent. Whether the overlay SHOULD window while
+  // every frame is displayed is a question about the timelapse feature rather than
+  // about navigation (#1292); until that changes, navigation matches what is drawn.
   const halfWindow = timelapse.showMode ? timelapse.modeWindow : 0;
-  const anyMemberDrawn = onAnchorSlice.some(
-    (member) => Math.abs(member.location.Time - store.time) <= halfWindow,
-  );
+  const anyMemberDrawn =
+    (store.unrollT && !timelapse.showMode) ||
+    onAnchorSlice.some(
+      (member) => Math.abs(member.location.Time - store.time) <= halfWindow,
+    );
   if (!anyMemberDrawn) {
     store.setTime(anchor.location.Time);
   }
