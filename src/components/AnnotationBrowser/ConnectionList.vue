@@ -147,17 +147,64 @@
                   : "mdi-chevron-right"
               }}
             </v-icon>
+            <!-- The colour the track is drawn in, so a line picked out in the
+                 viewer can be matched to its row without counting. Hidden under
+                 uniform colouring, where it would claim a distinction the
+                 canvas isn't making. -->
+            <span
+              v-if="showTrackSwatches"
+              class="track-swatch"
+              :style="{ backgroundColor: swatchColor(track) }"
+              aria-hidden="true"
+            />
             <span class="track-title">Track {{ shortId(track.id) }}</span>
-            <span class="track-meta">
-              {{ track.annotationCount }} objects
-              <template v-if="track.timeRange">
-                · T{{ track.timeRange.start + 1 }}–T{{
-                  track.timeRange.end + 1
-                }}
-              </template>
-              · {{ track.rows.length }} links
+            <!-- Also in the title attribute: the counts are what gets
+                 ellipsized when the row is tight, and the link count is the
+                 diagnostic one (it exceeds objects−1 only when a track
+                 branches or carries duplicate links). -->
+            <span class="track-meta" :title="trackMeta(track)">
+              {{ trackMeta(track) }}
             </span>
             <v-spacer />
+            <!-- A menu rather than two buttons: the actions plus the swatch
+                 already pushed this header onto two lines once, and 248 tracks
+                 at two lines each is a lot of scroll. It also makes the
+                 objects/links distinction explicit — with one "Select" button
+                 the difference lived only in a tooltip, and selecting objects
+                 looks like nothing happening unless you know to watch
+                 "Connect selected" rather than "Delete selected". -->
+            <v-menu location="bottom end">
+              <template v-slot:activator="{ props: activatorProps }">
+                <v-btn
+                  v-bind="activatorProps"
+                  variant="text"
+                  size="x-small"
+                  append-icon="mdi-menu-down"
+                  @click.stop
+                >
+                  <v-icon size="small" start>mdi-select-group</v-icon>
+                  Select
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item
+                  :disabled="selectableObjectCount(track) === 0"
+                  @click="selectTrackObjects(track)"
+                >
+                  <v-list-item-title>
+                    Objects ({{ selectableObjectCount(track) }})
+                  </v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="selectTrackConnections(track)">
+                  <v-list-item-title>
+                    Links ({{ track.rows.length }})
+                  </v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="selectTrackBoth(track)">
+                  <v-list-item-title>Both</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
             <v-btn
               variant="text"
               color="error"
@@ -202,13 +249,15 @@ import connectionListStore, {
   TConnectionScope,
 } from "@/store/connectionList";
 import { MAX_CONNECT_SELECTED } from "@/store/constants";
+import timelapseStore from "@/store/timelapse";
 import ConnectionListRow from "@/components/AnnotationBrowser/ConnectionListRow.vue";
-import { goToConnection } from "@/utils/annotationNavigation";
+import { goToConnection, goToTrack } from "@/utils/annotationNavigation";
 import { logError } from "@/utils/log";
 import {
   IConnectionRow,
   ITrackRow,
   shortAnnotationId,
+  trackColor,
 } from "@/utils/connections";
 
 const props = withDefaults(
@@ -316,6 +365,74 @@ function shortId(id: string) {
   return shortAnnotationId(id);
 }
 
+// The scoped row id remains independent for expansion/labeling. `colorKey`
+// comes from the dataset-wide connection graph, matching the viewer even when
+// the current scope exposes only a tail of the track.
+// Gated on the MODE as well as the option. `trackColor` is only ever called from
+// the timelapse draw path, so with the mode off nothing on the canvas carries a
+// track hue — measured on a real dataset, 248 swatches in 248 distinct colours
+// against zero drawn connection features, since a timelapse link's endpoints sit
+// on different timepoints and normal mode never co-displays them. Worse, the
+// only control that hides them is in the Timelapse palette, which IS the mode,
+// so with the mode off they were unturnoffable too.
+const showTrackSwatches = computed(
+  () => timelapseStore.showMode && timelapseStore.trackColoring === "track",
+);
+
+function swatchColor(track: ITrackRow) {
+  return trackColor(track.colorKey, timelapseStore.colorSeed);
+}
+
+function trackMeta(track: ITrackRow) {
+  const range = track.timeRange
+    ? ` · T${track.timeRange.start + 1}–T${track.timeRange.end + 1}`
+    : "";
+  return `${track.annotationCount} objects${range} · ${track.rows.length} links`;
+}
+
+/**
+ * A track's member ids that still resolve to an annotation or stub.
+ *
+ * `annotationIds` comes from the connection endpoints, which can outlive the
+ * annotation they point at — the list deliberately keeps dangling links visible
+ * so they can be deleted. Selecting those ids put phantom entries in the
+ * selection: they inflate every "(N)" counter, and nothing can ever clear them
+ * by clicking, because no row or feature exists to click.
+ */
+function resolvableTrackObjectIds(track: ITrackRow): string[] {
+  const resolve = connectionListStore.resolveAnnotation;
+  return track.annotationIds.filter((id) => resolve(id) !== undefined);
+}
+
+function selectableObjectCount(track: ITrackRow) {
+  return resolvableTrackObjectIds(track).length;
+}
+
+/**
+ * Select the track's objects, its links, or both. Each REPLACES its own
+ * selection rather than adding — "select this track" means this track, and the
+ * per-row checkboxes remain the way to build a union.
+ *
+ * Objects and links are separate selections feeding separate actions ("Connect
+ * selected" reads the object selection, "Delete selected" the connection one),
+ * so choosing one deliberately leaves the other alone. "Both" exists because
+ * reviewing a track usually wants it.
+ */
+function selectTrackObjects(track: ITrackRow) {
+  annotationStore.setSelected(resolvableTrackObjectIds(track));
+}
+
+function selectTrackConnections(track: ITrackRow) {
+  connectionListStore.setSelectedConnectionIds(
+    track.rows.map(({ connection }) => connection.id),
+  );
+}
+
+function selectTrackBoth(track: ITrackRow) {
+  selectTrackObjects(track);
+  selectTrackConnections(track);
+}
+
 /**
  * Bring a connection into view in the list. Clicking a line in the viewer only
  * sets the selected id, so without this the highlighted link could sit on any
@@ -404,8 +521,20 @@ function toggleSelectAll() {
   );
 }
 
+/**
+ * Toggle the track's disclosure, and frame it in the viewer when it OPENS.
+ *
+ * Only on open, deliberately. Framing on collapse too would yank the camera
+ * back every time the user tidied up the list — including after they had panned
+ * away on purpose — whereas expanding a track is an unambiguous "show me this
+ * one".
+ */
 function toggleTrack(track: ITrackRow) {
+  const willExpand = !connectionListStore.isTrackExpanded(track.id);
   connectionListStore.toggleTrackExpanded(track.id);
+  if (willExpand) {
+    goToTrack(track.annotationIds);
+  }
 }
 
 // Navigate to the child (later) endpoint and select both endpoints so the
@@ -499,6 +628,15 @@ defineExpose({
   deleteSelected,
   deleteTrack,
   connectSelected,
+  toggleTrack,
+  selectTrackObjects,
+  selectTrackConnections,
+  selectTrackBoth,
+  selectableObjectCount,
+  resolvableTrackObjectIds,
+  swatchColor,
+  showTrackSwatches,
+  trackMeta,
 });
 </script>
 
@@ -560,14 +698,31 @@ defineExpose({
   background: rgba(var(--v-theme-on-surface), 0.06);
 }
 
+.track-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  /* The hues are tuned to read against the image, not against the palette's
+     own background; a hairline keeps a pale track from dissolving into it. */
+  box-shadow: 0 0 0 1px rgba(var(--v-theme-on-surface), 0.25);
+}
+
 .track-title {
   font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
 }
 
+/* Shrinks and truncates ahead of the title and the actions — the counts are
+   the least load-bearing part of the header. */
 .track-meta {
   font-size: 11px;
   opacity: 0.6;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .track-table {

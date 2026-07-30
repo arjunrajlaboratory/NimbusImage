@@ -129,6 +129,31 @@ describe("connectionList scoping", () => {
   });
 });
 
+describe("global track analysis", () => {
+  it("is cached across scope changes and invalidated by connection changes", () => {
+    (annotationStore as any).annotationConnections = [
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+    ];
+
+    const first = connectionList.trackAnalysis;
+    expect(first.trackKeyByAnnotationId.get("c")).toBe("a");
+
+    connectionList.setScope("selected");
+    expect(connectionList.trackAnalysis).toBe(first);
+
+    // Removing the bridge splits b-c from a. The immutable connection-array
+    // replacement must invalidate the cached analysis exactly at this boundary.
+    (annotationStore as any).annotationConnections = [
+      makeConnection("c2", "b", "c"),
+    ];
+    const afterDelete = connectionList.trackAnalysis;
+
+    expect(afterDelete).not.toBe(first);
+    expect(afterDelete.trackKeyByAnnotationId.get("c")).toBe("b");
+  });
+});
+
 describe("connectionList cost guards", () => {
   // Regression: the location scope built a set of ids by scanning
   // annotationsForIteration, which in stub-only mode materializes an array of

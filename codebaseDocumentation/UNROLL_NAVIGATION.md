@@ -82,6 +82,12 @@ the distance between two raw centroids.
 
 Run `pnpm test src/utils/unroll.test.ts src/utils/__tests__/annotationNavigation.test.ts src/components/AnnotationViewer.test.ts src/components/AnnotationBrowser/AnnotationList.test.ts`.
 
+There are **three** navigation entry points and they must stay consistent:
+`goToAnnotationLocation`, `goToConnection`, and `goToTrack`. The third arrived from
+#1288 *after* this fix was written and carried the identical defect — which is the
+argument for the shared `@/utils/unroll` helpers rather than three local fixes.
+Anything added here later needs the same treatment.
+
 ### Navigation aims at drawn positions
 
 - [ ] **Recentring uses the cell-offset centroid, not the raw one.** The whole
@@ -106,6 +112,29 @@ Run `pnpm test src/utils/unroll.test.ts src/utils/__tests__/annotationNavigation
       differ on a rolled axis"*
 - [ ] **The span is signed and measured between drawn positions**, not raw ones. —
       *"passes the SIGNED endpoint delta to frameCameraInfo"*
+
+### Track framing (`goToTrack`, merged in from #1288)
+
+`goToTrack` has **three** separate predicates that all encode "which members are
+drawn" — the slice filter, the bounding box, and the time window — and all three
+assumed a single frame is on screen. They are relaxed by one rule: *an unrolled axis
+never disqualifies a member, and positions are the drawn ones.* Every item below has
+a paired rolled-axis control, because a blanket relaxation would pass the unrolled
+assertion alone.
+
+- [ ] **The box spans cells for a cross-time track while T is unrolled.** —
+      *"frames the drawn box, spanning cells for a cross-time track"*, with
+      *"does not collapse the box to the raw centroids"* pinning the pre-fix value
+- [ ] **Time is left alone when T is unrolled**, even with every member outside the
+      timelapse window — there is no window to be outside of. —
+      *"leaves Time alone even when no member is inside the window"*
+- [ ] **…but rolled time still snaps to the nearest member.** —
+      *"still snaps Time when time is NOT unrolled"*
+- [ ] **Other-Z members are included when Z is unrolled**, at their drawn positions. —
+      *"includes other-Z members when Z is unrolled"*
+- [ ] **…but a cross-slice track is still framed to the anchor slice when Z is
+      rolled**, because the other slices genuinely aren't drawn. —
+      *"still frames only the anchor slice when Z is NOT unrolled"*
 
 ### Grid layout
 

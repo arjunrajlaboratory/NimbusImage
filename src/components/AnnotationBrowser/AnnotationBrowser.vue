@@ -35,13 +35,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import AnnotationList from "@/components/AnnotationBrowser/AnnotationList.vue";
 import ConnectionList from "@/components/AnnotationBrowser/ConnectionList.vue";
+import store from "@/store";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
+import { TAnnotationBrowserTab } from "@/store/model";
 
-const activeTab = ref("objects");
+// In the store rather than a local ref so other panels can route here — the
+// Timelapse panel's "Show tracks" opens the browser AND picks this tab.
+const activeTab = computed({
+  get: () => store.annotationBrowserTab,
+  set: (value: TAnnotationBrowserTab) => store.setAnnotationBrowserTab(value),
+});
 
 // Both badges are dataset-wide totals, not the scoped/filtered counts shown
 // inside each tab — they answer "does this dataset have any?" at a glance.

@@ -16,7 +16,9 @@ import { MAX_CONNECT_SELECTED, TIMELAPSE_CONNECTION_TAG } from "./constants";
 import { IAnnotationConnection, TAnnotationOrStub } from "./model";
 import {
   IConnectionRow,
+  ITrackAnalysis,
   ITrackRow,
+  analyzeTracks,
   buildConnectionRows,
   buildTrackRows,
   chainAnnotationsByTime,
@@ -118,7 +120,36 @@ export class ConnectionList extends VuexModule {
     if (this.grouping !== "track") {
       return [];
     }
-    return buildTrackRows(this.connectionRows, this.resolveAnnotation);
+    return buildTrackRows(
+      this.connectionRows,
+      this.resolveAnnotation,
+      this.trackAnalysis.trackKeyByAnnotationId,
+    );
+  }
+
+  /**
+   * One cached analysis of the complete connection graph.
+   *
+   * This getter depends only on the immutable `annotationConnections` array,
+   * so scope/location/filter changes reuse the same result. Connection CRUD
+   * replaces that array and invalidates the analysis, naturally handling track
+   * merges and splits without persistent track state.
+   */
+  get trackAnalysis(): ITrackAnalysis {
+    return analyzeTracks(annotation.annotationConnections);
+  }
+
+  /**
+   * Number of tracks over ALL connections, ignoring scope and grouping.
+   *
+   * Deliberately not derived from `trackRows`, which is empty unless the
+   * Connections tab is in track mode and is narrowed by the current scope. The
+   * Timelapse panel wants the dataset-wide answer, the same way the browser's
+   * tab badges do. As a getter it is cached against `annotationConnections`, so
+   * it recomputes when connections change rather than on every render.
+   */
+  get trackCount(): number {
+    return this.trackAnalysis.components.length;
   }
 
   get isConnectionSelected() {
