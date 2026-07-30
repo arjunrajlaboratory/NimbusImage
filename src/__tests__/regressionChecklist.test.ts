@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 
 /**
@@ -54,21 +54,56 @@ function citedTestNames(body: string): string[] {
   ];
 }
 
+/**
+ * Where tests live, and how they are named. Backend checklists are allowed to cite
+ * pytest tests — the docs are not frontend-only, and a checklist doc that cited
+ * `test_*.py` names would otherwise fail here with "test does not exist" while
+ * every cited test existed.
+ */
+const TEST_ROOTS = [
+  {
+    dir: resolve(__dirname, ".."),
+    matches: (f: string) => f.endsWith(".test.ts"),
+  },
+  {
+    dir: resolve(__dirname, "../../devops"),
+    matches: (f: string) => f.startsWith("test_") && f.endsWith(".py"),
+  },
+];
+
+/** Read once: this is a whole-tree walk, and it is the same for every doc. */
+let cachedSources: string | null = null;
+
 function allTestSources(): string {
-  const root = resolve(__dirname, "..");
+  if (cachedSources !== null) {
+    return cachedSources;
+  }
   const parts: string[] = [];
-  const walk = (dir: string) => {
+  const walk = (dir: string, matches: (f: string) => boolean) => {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) {
-        if (entry !== "node_modules") walk(full);
-      } else if (entry.endsWith(".test.ts")) {
+        // `.tox` holds installed copies of other packages' tests, which would
+        // make citations resolve against code this repo does not own.
+        if (
+          entry !== "node_modules" &&
+          entry !== ".tox" &&
+          entry !== "__pycache__"
+        ) {
+          walk(full, matches);
+        }
+      } else if (matches(entry)) {
         parts.push(readFileSync(full, "utf8"));
       }
     }
   };
-  walk(root);
-  return parts.join("\n");
+  for (const { dir, matches } of TEST_ROOTS) {
+    if (existsSync(dir)) {
+      walk(dir, matches);
+    }
+  }
+  cachedSources = normalize(parts.join("\n"));
+  return cachedSources;
 }
 
 describe("regression checklists", () => {
@@ -96,7 +131,7 @@ describe("regression checklists", () => {
     });
 
     it("names only tests that exist", () => {
-      const sources = normalize(allTestSources());
+      const sources = allTestSources();
       const missing = citedTestNames(body).filter((name) => {
         // A trailing ellipsis is a deliberate abbreviation in the doc; match the
         // part before it. `%s` marks an it.each template, which is literal in the

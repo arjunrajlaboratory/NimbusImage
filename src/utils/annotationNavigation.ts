@@ -200,10 +200,12 @@ export function goToConnection(parentId: string, childId: string) {
  * the window).
  *
  * All three of those rules — the slice filter, the bounding box, and the time
- * window — assumed one frame is on screen. UNROLLING breaks that assumption in the
- * same way for each: every frame along an unrolled axis is displayed, so no member
- * is excluded by it, and members on different frames are drawn in different grid
- * cells rather than on top of each other. Each rule is relaxed below (issue #1280).
+ * window — assumed one frame is on screen, and UNROLLING breaks that assumption.
+ * The slice filter and the bounding box are relaxed for it below: every frame along
+ * an unrolled axis is displayed, so no member is excluded by it, and members on
+ * different frames are drawn in different grid cells rather than on top of each
+ * other. The time window is deliberately NOT relaxed, because the timelapse overlay
+ * still windows even when unrolled — see the comment at that rule (issue #1280).
  *
  * Unlike `goToConnection` this zooms in as well as out — clicking a track from a
  * zoomed-out view should bring it up to a usable size, which is the whole point.
@@ -279,16 +281,22 @@ export function goToTrack(annotationIds: string[]) {
   // it is inside the window whenever anything is — but phrased as "is anything
   // drawn?" because that is the question, and it stays correct if the anchor rule
   // ever changes.
-  // Unrolled over time there is no window to be outside of — every timepoint is
-  // on screen — so every member is drawn and Time is left alone. Short-circuiting
-  // on the flag is safe because `onAnchorSlice` always holds at least the anchor,
-  // so it can never claim "drawn" for an empty set (issue #1280).
+  // NOT relaxed for `unrollT`, unlike the two rules above. Unrolling time does put
+  // every timepoint on screen, so it is tempting — but the TIMELAPSE overlay
+  // (`drawTimelapseConnectionsAndCentroids`) filters its track segments and
+  // centroid dots to `currentTime ± modeWindow` regardless of unrolling. Measured:
+  // with `unrollT` on, the timelapse layer holds 10 features at `modeWindow` 100
+  // and 1 at 0. Exempting the flag here would leave Time on a frame whose window
+  // contains none of the track, and the user would click a track row and get no
+  // track drawn — the empty-view failure this rule exists to prevent.
+  //
+  // Whether that overlay SHOULD window while every frame is displayed is a
+  // question about the timelapse feature, not about navigation; until it changes,
+  // navigation matches what is actually drawn (issues #1280, #1292).
   const halfWindow = timelapse.showMode ? timelapse.modeWindow : 0;
-  const anyMemberDrawn =
-    store.unrollT ||
-    onAnchorSlice.some(
-      (member) => Math.abs(member.location.Time - store.time) <= halfWindow,
-    );
+  const anyMemberDrawn = onAnchorSlice.some(
+    (member) => Math.abs(member.location.Time - store.time) <= halfWindow,
+  );
   if (!anyMemberDrawn) {
     store.setTime(anchor.location.Time);
   }

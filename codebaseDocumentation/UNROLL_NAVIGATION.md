@@ -117,19 +117,29 @@ Anything added here later needs the same treatment.
 
 `goToTrack` has **three** separate predicates that all encode "which members are
 drawn" — the slice filter, the bounding box, and the time window — and all three
-assumed a single frame is on screen. They are relaxed by one rule: *an unrolled axis
-never disqualifies a member, and positions are the drawn ones.* Every item below has
-a paired rolled-axis control, because a blanket relaxation would pass the unrolled
-assertion alone.
+assumed a single frame is on screen. Two are relaxed by one rule: *an unrolled axis
+never disqualifies a member, and positions are the drawn ones.*
+
+The third is the trap: the time window is **not** relaxed, because the timelapse
+overlay keeps windowing even when every frame is displayed. "Unrolled ⇒ everything
+is displayed" holds for the base annotation layer and *not* for the timelapse layer,
+so the rule to apply is "match what the draw path actually does", not "unrolled means
+everything". Every item below has a paired control, because a blanket relaxation
+would pass the unrolled assertion alone.
 
 - [ ] **The box spans cells for a cross-time track while T is unrolled.** —
       *"frames the drawn box, spanning cells for a cross-time track"*, with
       *"does not collapse the box to the raw centroids"* pinning the pre-fix value
-- [ ] **Time is left alone when T is unrolled**, even with every member outside the
-      timelapse window — there is no window to be outside of. —
-      *"leaves Time alone even when no member is inside the window"*
-- [ ] **…but rolled time still snaps to the nearest member.** —
-      *"still snaps Time when time is NOT unrolled"*
+- [ ] **The time window is NOT relaxed for `unrollT`** — the one rule unrolling
+      leaves alone. The timelapse overlay
+      (`drawTimelapseConnectionsAndCentroids`) filters segments and dots to
+      `currentTime ± modeWindow` whatever the unroll state, so exempting the flag
+      here frames a track with no track drawn on it. Caught in review after being
+      written the wrong way round. — *"still snaps Time when unrolled, because the
+      overlay still windows"*, with *"leaves Time alone when a member is inside the
+      window, unrolled"* proving it is "match the overlay" and not "always snap"
+- [ ] **Rolled time snaps identically**, so the rule is not conditioned on the flag
+      at all. — *"snaps Time the same way when time is NOT unrolled"*
 - [ ] **Other-Z members are included when Z is unrolled**, at their drawn positions. —
       *"includes other-Z members when Z is unrolled"*
 - [ ] **…but a cross-slice track is still framed to the anchor slice when Z is

@@ -553,9 +553,13 @@ describe("goToTrack", () => {
       expect(width).not.toBe(40);
     });
 
-    // The sparse-track case that legitimately moves Time when one frame is
-    // drawn: with T unrolled there is no window to be outside of.
-    it("leaves Time alone even when no member is inside the window", () => {
+    // The time window is the ONE rule unrolling does not relax, because the
+    // timelapse overlay keeps windowing its segments and dots to
+    // `currentTime ± modeWindow` even when every frame is on screen. Leaving Time
+    // put would frame a track with no track drawn on it. Regression guard for a
+    // review finding: this originally short-circuited on `store.unrollT` and so
+    // disagreed with the draw path.
+    it("still snaps Time when unrolled, because the overlay still windows", () => {
       unrollTime(4, 4);
       h.showTimelapseMode = true;
       h.timelapseModeWindow = 1;
@@ -564,12 +568,24 @@ describe("goToTrack", () => {
 
       goToTrack(["a"]);
 
+      expect(h.setTime).toHaveBeenCalledWith(3);
+    });
+
+    // ...and it still leaves Time alone when a member IS in the window, so the
+    // rule above is "match the overlay", not "always move Time".
+    it("leaves Time alone when a member is inside the window, unrolled", () => {
+      unrollTime(4, 4);
+      h.showTimelapseMode = true;
+      h.timelapseModeWindow = 10;
+      h.time = 0;
+      addAnnotation("a", 0, 0, 3);
+
+      goToTrack(["a"]);
+
       expect(h.setTime).not.toHaveBeenCalled();
     });
 
-    // Rolled time still snaps, so the relaxation above is specific to the flag
-    // and not a blanket "never move Time".
-    it("still snaps Time when time is NOT unrolled", () => {
+    it("snaps Time the same way when time is NOT unrolled", () => {
       h.showTimelapseMode = true;
       h.timelapseModeWindow = 1;
       h.time = 0;
