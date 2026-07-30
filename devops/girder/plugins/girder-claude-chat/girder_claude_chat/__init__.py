@@ -158,7 +158,11 @@ class ClaudeAgentResource(Resource):
     # API_RATE_LIMITING_AUDIT.md); limiter semantics and the
     # single-process caveat are documented in rate_limit.py.
     RATE_LIMIT_WINDOW_SECONDS = 60
-    RATE_LIMIT_MAX_REQUESTS = 30
+    # Must stay above the frontend's per-message loop cap
+    # (MAX_TOOL_ITERATIONS in src/store/aiPanel.ts, currently 30): a single
+    # legitimate multi-step turn spends one request per iteration, and it must
+    # not be able to 429 itself partway through.
+    RATE_LIMIT_MAX_REQUESTS = 45
     # Reject conversations whose JSON-serialized messages exceed this size
     # (base64 screenshots dominate; the frontend prunes old ones).
     MAX_BODY_BYTES = 25 * 1024 * 1024

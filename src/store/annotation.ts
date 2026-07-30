@@ -1930,7 +1930,11 @@ export class Annotations extends VuexModule {
     };
 
     jobs.addJob(computeJob).then(async (success: boolean) => {
-      this.fetchAnnotations();
+      // Awaited: `callback` consumers (the AI panel's wait_for_job among them)
+      // read annotation state as soon as they are told the worker finished, so
+      // the refresh must complete before the callback fires. fetchAnnotations
+      // handles its own errors and never rejects.
+      await this.fetchAnnotations();
       // If this was a worker that makes a new large_image, this line will load it
       // I'm pretty sure this function won't reload the large image if it's already loaded
       const newLargeImage = await main.loadLargeImages(true); // true means switch to the new large image

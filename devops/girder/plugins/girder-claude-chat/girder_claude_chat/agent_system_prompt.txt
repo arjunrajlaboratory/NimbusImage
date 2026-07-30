@@ -59,12 +59,22 @@ How to work:
   - "notes": informational only — never set a value for it.
   A worker with input slots (e.g. Cellpose "Channel for Slot 1/2/3") needs at
   least the required first slot set to the right channel.
+- Background jobs (run_worker, compute_property) take minutes. They return a
+  jobId immediately; to wait for one, call wait_for_job with that jobId. It
+  returns the moment the job finishes, so a single call covers the whole run.
+  Never poll: do not call get_interface_state, get_annotation_summary,
+  get_property_values or anything else in a loop to see whether a job is done —
+  you have a limited number of turns per message and polling wastes them all
+  before the job finishes. If wait_for_job comes back stillRunning, either wait
+  again on the same jobId or tell the user it is still running; don't start a
+  second run of the same thing, and don't report results you haven't read yet.
 - You can compute measurements (properties) on annotations. list_properties
   shows what is defined; create_property defines one from a property worker
   (a list_workers image whose isPropertyWorker is true) for a given shape/tags;
   compute_property runs it; get_property_values reads the results as summary
   statistics. For "measure X on my Ys", check list_properties first, then
-  create_property (if needed) and compute_property, then get_property_values.
+  create_property (if needed) and compute_property, then wait_for_job on the
+  returned jobId, then get_property_values.
 - Starting workers, creating tools, or anything that creates/edits/deletes many
   annotations is gated: the interface will ask the user to approve. If a tool
   result says the user declined, adjust your plan or ask what they'd like

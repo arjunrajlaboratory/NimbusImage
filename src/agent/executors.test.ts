@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 vi.mock("@/store", () => ({
   default: {
@@ -180,6 +182,10 @@ vi.mock("@/store/jobs", () => ({
   default: {
     jobIdForToolId: {} as { [toolId: string]: string },
     jobIdForPropertyId: {} as { [propertyId: string]: string },
+    // Never settles by default: tests that care resolve their own promise.
+    addJob: vi.fn(() => new Promise<boolean>(() => {})),
+    getPromiseForJobId: vi.fn(() => undefined as Promise<boolean> | undefined),
+    fetchJobStatus: vi.fn(async () => null as number | null),
   },
 }));
 
@@ -196,16 +202,19 @@ import propertyStore from "@/store/properties";
 import volumeViewStore from "@/store/volumeView";
 import filterStore from "@/store/filters";
 import {
+  AGENT_TOOL_NAMES,
   annotationsBoundingBox,
   describeAgentToolCall,
   executeAgentTool,
   isGatedTool,
+  resetTrackedAgentJobsForTests,
   restoreViewState,
   snapshotViewState,
   ToolExecutionError,
   viewIdentityChangedSince,
 } from "./executors";
 import { MAX_BOX_POINTS, MAX_PLOT_POINTS, MAX_SAMPLE_ROWS } from "./analysis";
+import { jobStates } from "@/store/jobConstants";
 import { clearPlots, getPlot } from "./plotRegistry";
 
 const mockMain = main as any;
@@ -261,6 +270,10 @@ beforeEach(() => {
   mockProperties.getFullNameFromPath = () => null;
   mockVolumeView.viewMode = "2d";
   mockFilters.propertyFilters = [];
+  mockJobs.getPromiseForJobId = vi.fn(() => undefined);
+  mockJobs.fetchJobStatus = vi.fn(async () => null);
+  mockJobs.addJob = vi.fn(() => new Promise<boolean>(() => {}));
+  resetTrackedAgentJobsForTests();
   clearPlots();
 });
 
@@ -857,6 +870,246 @@ describe("executeAgentTool", () => {
     expect(result.started).toBe(true);
     expect(result.jobId).toBe("job7");
     expect(mockAnnotations.computeAnnotationsWithWorker).toHaveBeenCalled();
+  });
+});
+
+// wait_for_job exists so the agent never has to poll for a background job:
+// polling a Cellpose run burned every turn of the budget before the job
+// finished. These tests hold the two properties that make that true — it
+// returns on the completion event (not on a timer), and a wait that comes back
+// "still running" has actually blocked for at least the 30s floor.
+describe("wait_for_job", () => {
+  // Submit a worker job through run_worker and hand back the store-side
+  // completion callback plus the progress/error objects it writes into.
+  async function startWorkerJob(jobId = "job7") {
+    mockMain.tools = [
+      { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
+    ];
+    mockJobs.jobIdForToolId = {};
+    let submitted: any;
+    mockAnnotations.computeAnnotationsWithWorker = vi.fn(async (args: any) => {
+      submitted = args;
+      return { jobId };
+    });
+    const { result } = await executeAgentTool(
+      "run_worker",
+      { toolId: "t1" },
+      context,
+    );
+    expect(result.jobId).toBe(jobId);
+    return {
+      complete: (success: boolean) => submitted.callback(success),
+      errors: () => submitted.error as { errors: any[] },
+      progress: () => submitted.progress as { progress?: number },
+    };
+  }
+
+  it("is read-only, so it is not gated", () => {
+    expect(isGatedTool("wait_for_job")).toBe(false);
+  });
+
+  it("returns as soon as the completion event arrives, without polling", async () => {
+    const job = await startWorkerJob();
+    const pending = executeAgentTool(
+      "wait_for_job",
+      { jobId: "job7" },
+      context,
+    );
+    job.complete(true);
+    const { result } = await pending;
+    expect(result).toMatchObject({
+      jobId: "job7",
+      finished: true,
+      success: true,
+    });
+    // The whole point: no status requests were needed to learn the outcome.
+    expect(mockJobs.fetchJobStatus).not.toHaveBeenCalled();
+  });
+
+  it("reports the worker's own errors when the job fails", async () => {
+    const job = await startWorkerJob();
+    const pending = executeAgentTool(
+      "wait_for_job",
+      { jobId: "job7" },
+      context,
+    );
+    job.errors().errors.push({ error: "CUDA out of memory" });
+    job.complete(false);
+    const { result } = await pending;
+    expect(result).toMatchObject({ finished: true, success: false });
+    expect(result.errors).toContain("CUDA out of memory");
+    expect(context.notify).toHaveBeenCalledWith(
+      expect.stringContaining("CUDA out of memory"),
+    );
+  });
+
+  it("returns immediately for a job that already finished", async () => {
+    const job = await startWorkerJob();
+    job.complete(true);
+    const { result } = await executeAgentTool(
+      "wait_for_job",
+      { jobId: "job7" },
+      context,
+    );
+    expect(result).toMatchObject({ finished: true, success: true });
+    expect(result.waitedSeconds).toBe(0);
+  });
+
+  it("waits at least the 30s floor before reporting a job still running", async () => {
+    vi.useFakeTimers();
+    try {
+      const job = await startWorkerJob();
+      job.progress().progress = 0.4;
+      // A 1s budget must be clamped up: a model that re-waits in a loop with a
+      // tiny timeout would otherwise spin through its turns.
+      const pending = executeAgentTool(
+        "wait_for_job",
+        { jobId: "job7", timeoutSeconds: 1 },
+        context,
+      );
+      let settled = false;
+      pending.then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(settled).toBe(false);
+      // Budget spent: one status check confirms the job really is still going.
+      mockJobs.fetchJobStatus = vi.fn(async () => jobStates.running);
+      await vi.advanceTimersByTimeAsync(2_000);
+      const { result } = await pending;
+      expect(result).toMatchObject({ finished: false, stillRunning: true });
+      expect(result.waitedSeconds).toBeGreaterThanOrEqual(30);
+      expect(result.progress).toBe(0.4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a completion the notification stream missed", async () => {
+    vi.useFakeTimers();
+    try {
+      await startWorkerJob();
+      // No completion callback ever fires (e.g. a dropped WebSocket), but the
+      // server says the job succeeded — report that, not "still running".
+      mockJobs.fetchJobStatus = vi.fn(async () => jobStates.success);
+      const pending = executeAgentTool(
+        "wait_for_job",
+        { jobId: "job7", timeoutSeconds: 30 },
+        context,
+      );
+      await vi.advanceTimersByTimeAsync(31_000);
+      const { result } = await pending;
+      expect(result).toMatchObject({ finished: true, success: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("unwinds at once when the user stops the run", async () => {
+    const job = await startWorkerJob();
+    const controller = new AbortController();
+    const pending = executeAgentTool(
+      "wait_for_job",
+      { jobId: "job7" },
+      { ...context, abortSignal: controller.signal },
+    );
+    controller.abort();
+    const { result } = await pending;
+    expect(result).toMatchObject({ finished: false, aborted: true });
+    // The job itself is untouched — it keeps running in the background.
+    job.complete(true);
+  });
+
+  it("reads the server status for a job this session did not start", async () => {
+    mockJobs.fetchJobStatus = vi.fn(async () => jobStates.error);
+    const { result } = await executeAgentTool(
+      "wait_for_job",
+      { jobId: "job-from-a-previous-page-load" },
+      context,
+    );
+    expect(result).toMatchObject({ finished: true, success: false });
+    expect(mockJobs.fetchJobStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("polls an untracked job on a slow interval, not in a tight loop", async () => {
+    vi.useFakeTimers();
+    try {
+      let checks = 0;
+      mockJobs.fetchJobStatus = vi.fn(async () =>
+        ++checks >= 2 ? jobStates.success : jobStates.running,
+      );
+      const pending = executeAgentTool(
+        "wait_for_job",
+        { jobId: "untracked" },
+        context,
+      );
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(mockJobs.fetchJobStatus).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      const { result } = await pending;
+      expect(result).toMatchObject({ finished: true, success: true });
+      expect(mockJobs.fetchJobStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a job id it cannot resolve", async () => {
+    mockJobs.fetchJobStatus = vi.fn(async () => null);
+    await expect(
+      executeAgentTool("wait_for_job", { jobId: "bogus" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("requires a job id", async () => {
+    await expect(
+      executeAgentTool("wait_for_job", {}, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockJobs.fetchJobStatus).not.toHaveBeenCalled();
+  });
+
+  it("waits for a property computation and notes its completion", async () => {
+    mockProperties.properties = [{ id: "prop1", name: "Area" }];
+    mockProperties.computeProperty = vi.fn(async () => ({ jobId: "job-prop" }));
+    let finishJob!: (success: boolean) => void;
+    mockJobs.addJob = vi.fn(
+      () => new Promise<boolean>((resolve) => (finishJob = resolve)),
+    );
+    const { result: started } = await executeAgentTool(
+      "compute_property",
+      { propertyId: "prop1" },
+      context,
+    );
+    expect(started.jobId).toBe("job-prop");
+    const pending = executeAgentTool(
+      "wait_for_job",
+      { jobId: "job-prop" },
+      context,
+    );
+    finishJob(true);
+    const { result } = await pending;
+    expect(result).toMatchObject({ finished: true, success: true });
+    // Property jobs get the same transcript note worker jobs do.
+    expect(context.notify).toHaveBeenCalledWith(
+      expect.stringContaining('Property "Area" finished'),
+    );
+  });
+});
+
+// The executor registry lives here; the schemas the model sees are served by
+// the girder-claude-chat plugin. Nothing else keeps the two in step, and a
+// mismatch fails silently in one direction (a tool the model is never told
+// about) and loudly in the other ("Unknown tool" mid-turn).
+describe("tool schema parity with the backend", () => {
+  // Vitest runs from the repository root.
+  const schemaPath = resolve(
+    process.cwd(),
+    "devops/girder/plugins/girder-claude-chat/girder_claude_chat/agent_tools.json",
+  );
+
+  it("defines exactly the tools the backend advertises", () => {
+    const schemaNames = JSON.parse(readFileSync(schemaPath, "utf8")).map(
+      (tool: { name: string }) => tool.name,
+    );
+    expect([...AGENT_TOOL_NAMES].sort()).toEqual([...schemaNames].sort());
   });
 });
 

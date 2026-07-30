@@ -68,8 +68,12 @@ export interface IAgentPanelItem {
 }
 
 // Upper bound on model round-trips per user message; the backend has a
-// looser backstop on total conversation length.
-const MAX_TOOL_ITERATIONS = 20;
+// looser backstop on total conversation length. Multi-step workflows
+// (create a tool, run a worker, wait for it, define a property, compute it,
+// plot the results) legitimately need a couple of dozen. Raising this past the
+// backend's per-minute rate limit (RATE_LIMIT_MAX_REQUESTS in the
+// girder-claude-chat plugin) would let one turn 429 itself partway through.
+const MAX_TOOL_ITERATIONS = 30;
 
 // Tools whose effects are captured by the per-turn view snapshot and can be
 // reverted with "revert view changes". Annotation edits (color/tag/undo)
@@ -92,6 +96,10 @@ const VIEW_STATE_TOOLS = new Set([
 // serializable state.
 let wireMessages: IAgentWireMessage[] = [];
 let approvalResolver: ((approved: boolean) => void) | null = null;
+// Aborted when the user stops the run (or the conversation is cleared), so a
+// tool that deliberately blocks for minutes (wait_for_job) unwinds at once
+// instead of holding the panel busy until its own wait budget expires.
+let turnAbortController: AbortController | null = null;
 let turnSnapshot: IViewStateSnapshot | null = null;
 let panelElement: HTMLElement | null = null;
 // Bumped on clearConversation so late async notifications (e.g. a worker
@@ -235,6 +243,8 @@ export class AiPanel extends VuexModule {
     if (approvalResolver) {
       approvalResolver(false);
     }
+    // Likewise for a tool that is deliberately blocking (waiting on a job).
+    turnAbortController?.abort();
   }
 
   @Action
@@ -293,10 +303,12 @@ export class AiPanel extends VuexModule {
       this.setStopRequested(true);
       // A gated tool may be blocking the loop on the approval promise; resolve
       // it as declined (same as requestStop) so the loop unwinds immediately
-      // instead of hanging until the user happens to press Stop.
+      // instead of hanging until the user happens to press Stop. Same for a
+      // tool blocked waiting on a job.
       if (approvalResolver) {
         approvalResolver(false);
       }
+      turnAbortController?.abort();
     }
   }
 
@@ -378,6 +390,7 @@ export class AiPanel extends VuexModule {
     }
     this.setRunning(true);
     this.setStopRequested(false);
+    turnAbortController = new AbortController();
     turnSnapshot = snapshotViewState();
     this.setCanRevert(false);
     // If the conversation is cleared mid-run (e.g. the user logs out/in),
@@ -522,6 +535,7 @@ export class AiPanel extends VuexModule {
     } finally {
       this.setRunning(false);
       this.setStopRequested(false);
+      turnAbortController = null;
       // Persist only if this turn's conversation is still the active one
       // (not cleared or switched to another user mid-run).
       if (conversationGeneration === generationAtStart && lastKnownUserId) {
@@ -643,6 +657,7 @@ export class AiPanel extends VuexModule {
           // identity immediately before it acts.
           hasViewIdentityChanged: () =>
             turnSnapshot != null && viewIdentityChangedSince(turnSnapshot),
+          abortSignal: turnAbortController?.signal,
         },
       );
       if (generation !== conversationGeneration) {

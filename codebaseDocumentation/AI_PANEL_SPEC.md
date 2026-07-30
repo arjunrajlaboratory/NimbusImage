@@ -167,6 +167,7 @@ method — the executor registry (§6) is a thin table, not new logic.
 | `list_workers` | Available worker images with labels/descriptions | `properties.workerImageList` |
 | `get_worker_interface` | Parameter schema for a worker image | `properties.fetchWorkerInterface` |
 | `get_property_summary` | Property definitions + basic stats/histogram for a property path | `properties`, `filters.getHistogram` |
+| `wait_for_job` | Blocks until a `run_worker`/`compute_property` job finishes, then `{finished, success, errors?}` (or `{stillRunning}` when the wait budget runs out, `{aborted}` when the user stops) | the completion callback the executor already wires for the transcript note; `jobs.fetchJobStatus` as fallback |
 
 `get_interface_state` is the workhorse: it is cheap, textual (no image
 tokens), and precise where screenshots are fuzzy. The system prompt
@@ -514,7 +515,7 @@ Loop sketch (in `aiPanel.ts`):
 async runTurn(userText: string) {
   this.snapshotViewState();                 // for per-turn revert
   push(userMessage(userText, interfaceStateSnapshot()));
-  for (let i = 0; i < MAX_ITERATIONS; i++) { // e.g. 20
+  for (let i = 0; i < MAX_ITERATIONS; i++) { // 30
     const res = await agentAPI.postAgentMessage(this.wireMessages);
     push(assistantMessage(res.content));
     if (res.stop_reason !== "tool_use") break;
@@ -536,9 +537,36 @@ returns them as `is_error` tool results so the model can recover.
 `run_worker` inside a turn: the executor submits the job and returns
 `{jobId, started: true}` immediately; job progress streams into the
 transcript via the existing `jobs.addJob` callback. The agent may end its
-turn with the job running; when the job's promise resolves, the panel
-offers ("Worker finished — 1,912 annotations. Ask the agent to review?")
-rather than auto-resuming the loop (keeps turns bounded and user-paced).
+turn with the job running, or continue the workflow by calling
+**`wait_for_job`** with that id.
+
+`wait_for_job` exists because the model cannot see the transcript notes:
+without it, the only way to learn a job had finished was to re-read state
+each turn, and a single Cellpose run consumed the whole
+`MAX_TOOL_ITERATIONS` budget on polling. The tool blocks on the same
+completion callback that writes the transcript note (so it returns *when the
+job finishes*, not on a timer, and after the store has refreshed annotations
+/ property values), and hands the outcome — including the worker's own error
+messages — back as a tool result.
+
+Details that matter:
+
+- **One wait per job, not a poll loop.** The wait budget defaults to 10
+  minutes and is clamped to `[30s, 30min]`. The 30-second floor is the
+  anti-spin guarantee: a result that says `stillRunning` has by construction
+  blocked for at least that long, so re-waiting can never burn turns quickly.
+- **Stop works.** The turn's `AbortController` (`aiPanel.ts`) is passed to
+  executors as `context.abortSignal`; `requestStop` and a forced
+  `clearConversation` abort it, so a blocking wait unwinds immediately
+  instead of holding the panel busy for minutes.
+- **Fallbacks.** Jobs this session never registered (e.g. started before a
+  page reload) have no completion event, so the wait races the jobs store's
+  promise against `jobs.fetchJobStatus` checks every 10s — REST calls inside
+  one tool call, invisible to the model and free of turn cost. A tracked job
+  that times out also gets one confirming status check, so a dropped
+  notification WebSocket is not reported as "still running".
+- `MAX_TOOL_ITERATIONS` is 30, kept below the backend's per-minute rate
+  limit so one long turn cannot 429 itself.
 
 ### 6.3 Errors
 
@@ -638,3 +666,56 @@ session service, browser bridge, sandboxed `run_python` with
 6. **When does code execution earn Option B?** Proposed trigger: recurring
    user requests that reduce to per-annotation math the tool surface can't
    express, or demand for unattended multi-step pipelines.
+
+## 11. Regression checklist — background jobs
+
+Invariants that have broken (or would silently break) here, each with the test
+that holds it. Re-check these when touching `run_worker`, `compute_property`,
+`wait_for_job`, the loop in `aiPanel.ts`, or the jobs store.
+
+Waiting instead of polling:
+
+- `wait_for_job` returns on the completion event, with **zero** status
+  requests — `executors.test.ts` "returns as soon as the completion event
+  arrives, without polling".
+- A wait that reports `stillRunning` has blocked for at least the 30s floor,
+  whatever `timeoutSeconds` the model asked for — "waits at least the 30s floor
+  before reporting a job still running".
+- A job that finished before the wait started returns immediately —
+  "returns immediately for a job that already finished".
+- Both job-starting tools are covered, not just the worker one: property
+  computations get the same tracking, transcript note and wait —
+  "waits for a property computation and notes its completion".
+
+Failure and edge paths:
+
+- The worker's own error messages reach the model, not just the transcript —
+  "reports the worker's own errors when the job fails".
+- A missed completion event (dropped notification WebSocket) is confirmed
+  against the server rather than reported as still running — "reports a
+  completion the notification stream missed".
+- An untracked job (started before a page reload) is polled at the slow
+  interval, not in a tight loop — "polls an untracked job on a slow interval,
+  not in a tight loop"; an unresolvable id errors instead of hanging —
+  "rejects a job id it cannot resolve".
+
+Cost and responsiveness:
+
+- Stop and a forced clear unwind a blocking tool immediately, via the turn's
+  abort signal — `aiPanel.test.ts` "aborts a blocking tool when the user
+  presses Stop" / "aborts a blocking tool on a forced clear".
+- The frontend tool surface and the backend's `agent_tools.json` define the
+  same set of tools — `executors.test.ts` "defines exactly the tools the
+  backend advertises".
+- `MAX_TOOL_ITERATIONS` (30) stays below the plugin's
+  `RATE_LIMIT_MAX_REQUESTS` (45) so one turn cannot 429 itself. No test; both
+  constants carry a comment pointing at the other.
+
+Process notes:
+
+- Verifying by hand means a *real* worker run: submit Cellpose-SAM on a dataset
+  with nuclei and watch the transcript show one "Wait for Worker …" card for the
+  whole run, not a series of state re-reads.
+- The completion callback must fire *after* the store refreshed its data
+  (`annotation.ts` awaits `fetchAnnotations` before `callback`), otherwise the
+  model reads stale counts the moment it is told the job finished.

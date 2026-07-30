@@ -259,6 +259,51 @@ describe("AI panel forced clear (finding P2-D)", () => {
   });
 });
 
+// wait_for_job deliberately blocks for minutes, so Stop (and a forced clear)
+// must reach the running tool through the turn's abort signal — otherwise the
+// panel stays busy until the wait's own budget expires.
+describe("AI panel stop reaches a blocking tool", () => {
+  // Resolve only when the turn's abort signal fires, the way wait_for_job does.
+  function blockUntilAborted() {
+    mockExecuteAgentTool.mockImplementationOnce(
+      (_name: string, _input: any, context: any) =>
+        new Promise((resolve) => {
+          context.abortSignal.addEventListener("abort", () =>
+            resolve({ result: { aborted: true } }),
+          );
+        }),
+    );
+  }
+
+  it("aborts a blocking tool when the user presses Stop", async () => {
+    await aiPanel.handleAuthenticatedUserChange("userA");
+    postAgentMessage.mockResolvedValueOnce(toolUseResponse("wait_for_job"));
+    blockUntilAborted();
+
+    const turn = aiPanel.sendUserMessage("wait for the worker");
+    await waitFor(() => mockExecuteAgentTool.mock.calls.length > 0);
+    expect(aiPanel.running).toBe(true);
+
+    aiPanel.requestStop();
+    await turn;
+    expect(aiPanel.running).toBe(false);
+    expect(aiPanel.items.some((i) => i.text === "Stopped.")).toBe(true);
+  });
+
+  it("aborts a blocking tool on a forced clear", async () => {
+    await aiPanel.handleAuthenticatedUserChange("userA");
+    postAgentMessage.mockResolvedValueOnce(toolUseResponse("wait_for_job"));
+    blockUntilAborted();
+
+    const turn = aiPanel.sendUserMessage("wait for the worker");
+    await waitFor(() => mockExecuteAgentTool.mock.calls.length > 0);
+
+    aiPanel.clearConversation(true);
+    await turn;
+    expect(aiPanel.running).toBe(false);
+  });
+});
+
 describe("AI panel persistence", () => {
   // handleAuthenticatedUserChange no-ops when userId === lastKnownUserId, and
   // lastKnownUserId is module-level state that outlives the outer
