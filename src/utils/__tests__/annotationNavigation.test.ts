@@ -520,11 +520,10 @@ describe("goToTrack", () => {
     expect(center).toEqual({ x: 0, y: 0 });
   });
 
-  // Issue #1280. All three of goToTrack's "which members are drawn" rules — the
-  // slice filter, the bounding box, and the time window — assumed a single frame
-  // is on screen. An unrolled axis shows every frame along it at once, so each
-  // rule has to stop excluding members on that axis, and the box has to be built
-  // from where members are DRAWN rather than from their raw centroids.
+  // Issue #1280. All three of goToTrack's "which members are drawn" rules assumed
+  // a single frame is on screen. The slice filter and bounding box always relax
+  // for an unrolled axis, and the box uses drawn rather than raw coordinates.
+  // Time relaxes only for the base layer; the overlay's window stays authoritative.
   describe("on the unrolled grid", () => {
     it("frames the drawn box, spanning cells for a cross-time track", () => {
       unrollTime(4, 4); // one row of 4 cells, tile 1024

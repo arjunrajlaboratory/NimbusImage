@@ -66,7 +66,8 @@ function citedTestNames(body: string): string[] {
  * `test_*.py` files — 24 ours, the rest inside `.venv`.
  *
  * `knownTest` pins one real test per root, so a root that stops being scanned fails
- * here instead of silently reporting every citation into it as missing.
+ * against that root's own sources instead of silently resolving against another
+ * tree or reporting every citation into it as missing.
  */
 const PYTEST = (f: string) => f.startsWith("test_") && f.endsWith(".py");
 const TEST_ROOTS = [
@@ -94,6 +95,7 @@ const TEST_ROOTS = [
     knownTest: "test_accepts_codex_marketplace_contract",
   },
 ];
+type TestRoot = (typeof TEST_ROOTS)[number];
 
 /** Directories holding code this repo does not own. */
 const NOT_OURS = new Set([
@@ -135,32 +137,42 @@ function ownedPytestDirs(): string[] {
   return found;
 }
 
-/** Read once: this is a whole-tree walk, and it is the same for every doc. */
-let cachedSources: string | null = null;
+const cachedRootSources = new WeakMap<TestRoot, string>();
 
-function allTestSources(): string {
-  if (cachedSources !== null) {
-    return cachedSources;
+/** Read one configured root once, independently from every other test tree. */
+function testSources(root: TestRoot): string {
+  const cached = cachedRootSources.get(root);
+  if (cached !== undefined) {
+    return cached;
   }
   const parts: string[] = [];
-  const walk = (dir: string, matches: (f: string) => boolean) => {
+  const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) {
         if (!NOT_OURS.has(entry)) {
-          walk(full, matches);
+          walk(full);
         }
-      } else if (matches(entry)) {
+      } else if (root.matches(entry)) {
         parts.push(readFileSync(full, "utf8"));
       }
     }
   };
-  for (const { dir, matches } of TEST_ROOTS) {
-    if (existsSync(dir)) {
-      walk(dir, matches);
-    }
+  if (existsSync(root.dir)) {
+    walk(root.dir);
   }
-  cachedSources = normalize(parts.join("\n"));
+  const sources = normalize(parts.join("\n"));
+  cachedRootSources.set(root, sources);
+  return sources;
+}
+
+/** Read once: this is a whole-tree walk, and it is the same for every doc. */
+let cachedSources: string | null = null;
+
+function allTestSources(): string {
+  if (cachedSources === null) {
+    cachedSources = normalize(TEST_ROOTS.map(testSources).join("\n"));
+  }
   return cachedSources;
 }
 
@@ -184,7 +196,17 @@ describe("regression checklists", () => {
       existsSync(root.dir),
       `${root.dir} is gone — update TEST_ROOTS`,
     ).toBe(true);
-    expect(allTestSources()).toContain(root.knownTest);
+    expect(testSources(root)).toContain(root.knownTest);
+  });
+
+  it("does not let another root satisfy a broken root probe", () => {
+    const backendRoot = TEST_ROOTS.find((root) => root.dir.endsWith("/devops"));
+    if (!backendRoot) {
+      throw new Error("devops test root is not configured");
+    }
+    expect(testSources({ ...backendRoot, matches: () => false })).not.toContain(
+      backendRoot.knownTest,
+    );
   });
 
   // Catches a root deleted from TEST_ROOTS, and an owned test tree nobody added —
