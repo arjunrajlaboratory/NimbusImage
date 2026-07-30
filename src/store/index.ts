@@ -75,6 +75,7 @@ import {
   IVisibilityConfig,
   IAnnotationBrowserConfig,
   IUserStorageQuota,
+  TAnnotationBrowserTab,
 } from "./model";
 import {
   buildAnnotationBrowserConfig,
@@ -397,14 +398,12 @@ export class Main extends VuexModule {
   unrollZ: boolean = false;
   unrollT: boolean = false;
 
-  showTimelapseMode: boolean = false;
-  timelapseModeWindow: number = 10;
-  timelapseTags: string[] = [];
-  showTimelapseLabels: boolean = true;
+  // Timelapse mode's state lives in `src/store/timelapse.ts`.
 
   maps: IMapEntry[] = [];
 
   isAnnotationPanelOpen: boolean = false;
+  annotationBrowserTab: TAnnotationBrowserTab = "objects";
   annotationPanelBadge: boolean = false;
   isHelpPanelOpen: boolean = false;
   isAnalyzeDialogOpen: boolean = false;
@@ -721,26 +720,6 @@ export class Main extends VuexModule {
   @Mutation
   public setShowTooltips(value: boolean) {
     this.showTooltips = value;
-  }
-
-  @Mutation
-  public setShowTimelapseMode(value: boolean) {
-    this.showTimelapseMode = value;
-  }
-
-  @Mutation
-  public setTimelapseModeWindow(value: number) {
-    this.timelapseModeWindow = value;
-  }
-
-  @Mutation
-  public setTimelapseTags(value: string[]) {
-    this.timelapseTags = value;
-  }
-
-  @Mutation
-  public setShowTimelapseLabels(value: boolean) {
-    this.showTimelapseLabels = value;
   }
 
   @Mutation
@@ -1309,6 +1288,25 @@ export class Main extends VuexModule {
   @Mutation
   public setIsAnnotationPanelOpen(value: boolean) {
     this.isAnnotationPanelOpen = value;
+  }
+
+  @Mutation
+  public setAnnotationBrowserTab(value: TAnnotationBrowserTab) {
+    this.annotationBrowserTab = value;
+  }
+
+  /**
+   * Open the Object Browser on a specific tab.
+   *
+   * `isAnnotationPanelOpen` is normally written BY App.vue (which owns palette
+   * visibility) rather than read by it; App.vue watches it back so a component
+   * with no path to the palette registry — the Timelapse panel — can still ask
+   * for the browser.
+   */
+  @Action
+  public openAnnotationBrowserTab(tab: TAnnotationBrowserTab) {
+    this.setAnnotationBrowserTab(tab);
+    this.setIsAnnotationPanelOpen(true);
   }
 
   @Mutation

@@ -12,6 +12,7 @@ import {
 const h = vi.hoisted(() => ({
   setSelected: vi.fn(),
   goToConnection: vi.fn(),
+  goToTrack: vi.fn(),
   deleteConnectionsById: vi.fn(),
   deleteSelectedConnections: vi.fn(),
   deleteSelectedInScopeConnections: vi.fn(),
@@ -37,6 +38,9 @@ const h = vi.hoisted(() => ({
       return this.selectedConnectionIds.has(id);
     },
     isTrackExpanded: () => false,
+    // Replaced by setRows() with a resolver over the annotations it was given.
+    // A stub resolving everything would hide the dangling-endpoint filter.
+    resolveAnnotation: () => undefined as any,
     setScope: vi.fn(),
     setGrouping: vi.fn(),
     setPage: vi.fn(),
@@ -49,6 +53,16 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/store", () => ({ default: { isLoggedIn: true } }));
 
+// Mutable (and reset in beforeEach) because the swatch gate depends on the
+// timelapse mode as well as the colouring option, and both need to be driven.
+const timelapseStore = vi.hoisted(() => ({
+  showMode: true,
+  trackColoring: "track" as string,
+  colorSeed: 0,
+}));
+
+vi.mock("@/store/timelapse", () => ({ default: timelapseStore }));
+
 vi.mock("@/store/annotation", () => ({
   default: {
     setSelected: h.setSelected,
@@ -58,6 +72,7 @@ vi.mock("@/store/annotation", () => ({
 
 vi.mock("@/utils/annotationNavigation", () => ({
   goToConnection: h.goToConnection,
+  goToTrack: h.goToTrack,
 }));
 
 vi.mock("@/store/connectionList", () => {
@@ -78,7 +93,7 @@ vi.mock("@/store/connectionList", () => {
 });
 
 import ConnectionList from "./ConnectionList.vue";
-import { buildConnectionRows } from "@/utils/connections";
+import { buildConnectionRows, trackColor } from "@/utils/connections";
 
 function makeConnection(
   id: string,
@@ -108,6 +123,9 @@ function setRows(connections: IAnnotationConnection[], known: IAnnotation[]) {
   h.state.connectionRows = buildConnectionRows(connections, (id) =>
     byId.get(id),
   );
+  // Same source of truth the rows were built from, so an endpoint absent from
+  // `known` is dangling for both.
+  h.state.resolveAnnotation = (id: string) => byId.get(id);
 }
 
 // Default to the visible tab: rows are gated on isActive, so a default-false
@@ -118,6 +136,9 @@ function mountComponent(isActive = true) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  timelapseStore.showMode = true;
+  timelapseStore.trackColoring = "track";
+  timelapseStore.colorSeed = 0;
   h.state.scope = "all";
   h.state.grouping = "flat";
   h.state.selectedConnectionIds = new Set();
@@ -141,6 +162,41 @@ describe("ConnectionList", () => {
       [makeAnnotation("a", 0), makeAnnotation("b", 1)],
     );
     expect(mountComponent().vm.scopedCount).toBe(1);
+  });
+
+  it("colors a scoped track from its dataset-wide color key", () => {
+    const wrapper = mountComponent();
+    expect(
+      wrapper.vm.swatchColor({
+        id: "b",
+        colorKey: "a",
+        annotationIds: ["b", "c"],
+        annotationCount: 2,
+        timeRange: { start: 1, end: 2 },
+        rows: [],
+      }),
+    ).toBe(trackColor("a", 0));
+  });
+
+  /**
+   * The swatch promises "this is the colour that track is drawn in", and
+   * `trackColor` is only reached from the timelapse draw path — so with the mode
+   * off it names a colour nothing on the canvas is using. Measured on a real
+   * dataset: 248 swatches in 248 hues against zero drawn connection features.
+   * Gating on the colouring option alone also made them unturnoffable, since
+   * that toggle lives in the Timelapse palette, which *is* the mode.
+   */
+  it("hides the track swatches while timelapse mode is off", () => {
+    timelapseStore.showMode = true;
+    expect(mountComponent().vm.showTrackSwatches).toBe(true);
+
+    timelapseStore.showMode = false;
+    expect(mountComponent().vm.showTrackSwatches).toBe(false);
+  });
+
+  it("still hides them in the mode when colouring is uniform", () => {
+    timelapseStore.trackColoring = "uniform";
+    expect(mountComponent().vm.showTrackSwatches).toBe(false);
   });
 
   // Regression: building rows depends on hydration, so it is invalidated by
@@ -414,7 +470,13 @@ describe("ConnectionList", () => {
     );
     h.state.grouping = "track";
     h.state.trackRows = [
-      { id: "a", annotationCount: 2, timeRange: null, rows: [] },
+      {
+        id: "a",
+        colorKey: "a",
+        annotationCount: 2,
+        timeRange: null,
+        rows: [],
+      },
     ];
     // The track holding c1 is collapsed; revealing must expand it.
     h.state.trackRows[0].rows = [h.state.connectionRows[0]];
@@ -449,12 +511,135 @@ describe("ConnectionList", () => {
     const wrapper = mountComponent();
     await wrapper.vm.deleteTrack({
       id: "a",
+      colorKey: "a",
+      annotationIds: ["a", "b", "c"],
       annotationCount: 3,
       timeRange: { start: 0, end: 2 },
       rows: wrapper.vm.rows,
     });
     expect(h.deleteConnectionsById).toHaveBeenCalledTimes(1);
     expect(h.deleteConnectionsById).toHaveBeenCalledWith(["c1", "c2"]);
+  });
+
+  /**
+   * Expanding a track is an unambiguous "show me this one", so it frames the
+   * track in the viewer. Collapsing is not — framing on both would yank the
+   * camera back every time the user tidied the list, including after they had
+   * panned away on purpose.
+   */
+  describe("track disclosure framing", () => {
+    function trackRow() {
+      return {
+        id: "a",
+        colorKey: "a",
+        annotationIds: ["a", "b"],
+        annotationCount: 2,
+        timeRange: { start: 0, end: 1 },
+        rows: [],
+      };
+    }
+
+    it("expanding a track frames it, collapsing leaves the camera alone", () => {
+      const wrapper = mountComponent();
+
+      // Collapsed -> expanding.
+      h.state.isTrackExpanded = () => false;
+      wrapper.vm.toggleTrack(trackRow());
+      expect(h.state.toggleTrackExpanded).toHaveBeenCalledWith("a");
+      expect(h.goToTrack).toHaveBeenCalledWith(["a", "b"]);
+
+      vi.clearAllMocks();
+
+      // Expanded -> collapsing.
+      h.state.isTrackExpanded = () => true;
+      wrapper.vm.toggleTrack(trackRow());
+      expect(h.state.toggleTrackExpanded).toHaveBeenCalledWith("a");
+      expect(h.goToTrack).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- Per-track Select menu ---
+  //
+  // Objects and links are SEPARATE selections feeding separate actions
+  // ("Connect selected" reads the object selection, "Delete selected" the
+  // connection one), so each menu item must touch only its own and leave the
+  // other alone.
+  describe("per-track Select menu", () => {
+    function trackFor(wrapper: any, annotationIds: string[]) {
+      return {
+        id: annotationIds[0],
+        colorKey: annotationIds[0],
+        annotationIds,
+        annotationCount: annotationIds.length,
+        timeRange: null,
+        rows: wrapper.vm.rows,
+      };
+    }
+
+    function setupTrack() {
+      setRows(
+        [makeConnection("c1", "a", "b"), makeConnection("c2", "b", "c")],
+        [
+          makeAnnotation("a", 0),
+          makeAnnotation("b", 1),
+          makeAnnotation("c", 2),
+        ],
+      );
+      return mountComponent();
+    }
+
+    it("Objects selects the track's objects and no connections", () => {
+      const wrapper = setupTrack();
+      wrapper.vm.selectTrackObjects(trackFor(wrapper, ["a", "b", "c"]));
+      expect(h.setSelected).toHaveBeenCalledWith(["a", "b", "c"]);
+      expect(h.setSelectedConnectionIds).not.toHaveBeenCalled();
+    });
+
+    it("Links selects the track's connections and no objects", () => {
+      const wrapper = setupTrack();
+      wrapper.vm.selectTrackConnections(trackFor(wrapper, ["a", "b", "c"]));
+      expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1", "c2"]);
+      expect(h.setSelected).not.toHaveBeenCalled();
+    });
+
+    it("Both selects each side exactly once", () => {
+      const wrapper = setupTrack();
+      wrapper.vm.selectTrackBoth(trackFor(wrapper, ["a", "b", "c"]));
+      expect(h.setSelected).toHaveBeenCalledTimes(1);
+      expect(h.setSelected).toHaveBeenCalledWith(["a", "b", "c"]);
+      expect(h.setSelectedConnectionIds).toHaveBeenCalledTimes(1);
+      expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1", "c2"]);
+    });
+
+    /**
+     * Connection endpoints outlive the annotation they point at — the list
+     * deliberately keeps dangling links visible so they can be deleted. Putting
+     * those ids in the selection inflates every "(N)" counter with entries
+     * nothing can ever clear, because no row or feature exists to click.
+     */
+    it("excludes endpoints that no longer resolve", () => {
+      setRows(
+        [makeConnection("c1", "a", "gone"), makeConnection("c2", "a", "b")],
+        // "gone" is deliberately absent.
+        [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+      );
+      const wrapper = mountComponent();
+      const track = trackFor(wrapper, ["a", "b", "gone"]);
+
+      expect(wrapper.vm.resolvableTrackObjectIds(track)).toEqual(["a", "b"]);
+      expect(wrapper.vm.selectableObjectCount(track)).toBe(2);
+
+      wrapper.vm.selectTrackObjects(track);
+      expect(h.setSelected).toHaveBeenCalledWith(["a", "b"]);
+    });
+
+    it("counts nothing selectable when every endpoint is dangling", () => {
+      setRows([makeConnection("c1", "x", "y")], []);
+      const wrapper = mountComponent();
+      expect(
+        wrapper.vm.selectableObjectCount(trackFor(wrapper, ["x", "y"])),
+      ).toBe(0);
+    });
   });
 
   it("selects every row with the header checkbox", () => {
