@@ -18,6 +18,7 @@ vi.mock("@/agent/wireConversation", () => ({
 
 vi.mock("@/agent/executors", () => ({
   buildInterfaceState: vi.fn(() => ({ dataset: null })),
+  clearTrackedAgentJobs: vi.fn(),
   snapshotViewState: vi.fn(() => ({ datasetId: "ds1" })),
   describeAgentToolCall: vi.fn(() => "action"),
   executeAgentTool: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock("./index", () => ({
 import aiPanel from "./aiPanel";
 import main from "./index";
 import {
+  clearTrackedAgentJobs,
   executeAgentTool,
   isGatedTool,
   restoreViewState,
@@ -57,6 +59,7 @@ import {
 
 const postAgentMessage = (main as any).agentAPI.postAgentMessage;
 const mockExecuteAgentTool = executeAgentTool as any;
+const mockClearTrackedAgentJobs = clearTrackedAgentJobs as any;
 const mockIsGatedTool = isGatedTool as any;
 const mockRestoreViewState = restoreViewState as any;
 const mockViewIdentityChangedSince = viewIdentityChangedSince as any;
@@ -118,6 +121,17 @@ describe("AI panel conversation isolation across users", () => {
     const sent = lastSentPayload();
     expect(sent).toContain("hello from B");
     expect(sent).not.toContain("secret from A");
+  });
+
+  it("forgets tracked background jobs when the authenticated user changes", async () => {
+    // The job tracker in executors.ts is module state holding job labels and
+    // worker error text. Like the plot registry it must be dropped with the
+    // conversation, so the next user can't read the previous user's job
+    // details back through wait_for_job.
+    await aiPanel.handleAuthenticatedUserChange("userA");
+    mockClearTrackedAgentJobs.mockClear();
+    await aiPanel.handleAuthenticatedUserChange("userB");
+    expect(mockClearTrackedAgentJobs).toHaveBeenCalled();
   });
 
   it("keeps the conversation when the same user is re-observed", async () => {

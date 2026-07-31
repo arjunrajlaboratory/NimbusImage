@@ -699,6 +699,15 @@ Failure and edge paths:
   not in a tight loop"; an unresolvable id errors instead of hanging —
   "rejects a job id it cannot resolve".
 
+Conversation scoping (module state must not outlive its conversation):
+
+- Clearing the conversation drops tracked jobs, so the previous user's job
+  labels and worker error text can't be read back by job id after a
+  login/logout — `aiPanel.test.ts` "forgets tracked background jobs when the
+  authenticated user changes" and `executors.test.ts` "forgets a tracked job
+  when the conversation is cleared". This is the pair to `clearPlots()`: any
+  new module-level cache in `src/agent/` needs the same treatment.
+
 Cost and responsiveness:
 
 - Stop and a forced clear unwind a blocking tool immediately, via the turn's

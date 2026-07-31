@@ -16,6 +16,7 @@ import {
 } from "./AgentAPI";
 import {
   buildInterfaceState,
+  clearTrackedAgentJobs,
   describeAgentToolCall,
   executeAgentTool,
   isGatedTool,
@@ -293,6 +294,13 @@ export class AiPanel extends VuexModule {
     wireMessages = [];
     turnSnapshot = null;
     clearPlots();
+    // Same reason as clearPlots: module-level agent state must not outlive the
+    // conversation it belongs to. Tracked jobs additionally carry the previous
+    // user's job labels and worker error text, which the next user (this also
+    // runs on an authenticated-user change) must not be able to read back via
+    // wait_for_job; without a record it falls back to the access-checked
+    // job/{id} request.
+    clearTrackedAgentJobs();
     conversationGeneration++;
     this.clearItemsImpl();
     this.setCanRevert(false);

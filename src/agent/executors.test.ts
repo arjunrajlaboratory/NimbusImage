@@ -204,10 +204,10 @@ import filterStore from "@/store/filters";
 import {
   AGENT_TOOL_NAMES,
   annotationsBoundingBox,
+  clearTrackedAgentJobs,
   describeAgentToolCall,
   executeAgentTool,
   isGatedTool,
-  resetTrackedAgentJobsForTests,
   restoreViewState,
   snapshotViewState,
   ToolExecutionError,
@@ -273,7 +273,7 @@ beforeEach(() => {
   mockJobs.getPromiseForJobId = vi.fn(() => undefined);
   mockJobs.fetchJobStatus = vi.fn(async () => null);
   mockJobs.addJob = vi.fn(() => new Promise<boolean>(() => {}));
-  resetTrackedAgentJobsForTests();
+  clearTrackedAgentJobs();
   clearPlots();
 });
 
@@ -1016,6 +1016,28 @@ describe("wait_for_job", () => {
     expect(result).toMatchObject({ finished: false, aborted: true });
     // The job itself is untouched — it keeps running in the background.
     job.complete(true);
+  });
+
+  it("forgets a tracked job when the conversation is cleared", async () => {
+    // A cleared conversation (which is also what an authenticated-user change
+    // triggers) must not leave the previous user's job label and worker errors
+    // readable by job id; without a record the wait goes through the
+    // access-checked server request instead.
+    const job = await startWorkerJob();
+    job.errors().errors.push({ error: "path /user/alice/private" });
+    job.complete(false);
+    clearTrackedAgentJobs();
+
+    mockJobs.fetchJobStatus = vi.fn(async () => jobStates.error);
+    const { result } = await executeAgentTool(
+      "wait_for_job",
+      { jobId: "job7" },
+      context,
+    );
+    expect(mockJobs.fetchJobStatus).toHaveBeenCalledTimes(1);
+    expect(result.errors).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("alice");
+    expect(JSON.stringify(result)).not.toContain("Cellpose");
   });
 
   it("reads the server status for a job this session did not start", async () => {

@@ -698,8 +698,13 @@ function trackAgentJob(params: {
   };
 }
 
-// Test seam only: the tracking map is module state that survives between tests.
-export function resetTrackedAgentJobsForTests() {
+// Drop every tracked job. Called from aiPanel.clearConversation — like the plot
+// registry, this is module state that would otherwise outlive the conversation
+// it belongs to. That matters on an authenticated-user change (login/logout is
+// client-side, no page reload): a record holds the previous user's job label and
+// worker error text, and the tracked path returns it without the access-checked
+// job/{id} request, so the next user must not be able to read it by job id.
+export function clearTrackedAgentJobs() {
   agentJobs.clear();
 }
 
