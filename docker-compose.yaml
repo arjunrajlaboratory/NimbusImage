@@ -47,7 +47,15 @@ services:
     image: girder/girder_worker
     # The dispatcher routes jobs to the "cpu"/"gpu" queues; locally one
     # worker consumes all of them, plus the legacy default queue.
-    command: -Q celery,cpu,gpu
+    #
+    # This has to override `entrypoint`, not `command`: the girder_worker image's
+    # /docker-entrypoint.sh ends in `$BIN -m girder_worker -l info` with no "$@",
+    # so anything passed as the command is silently discarded and the worker only
+    # ever consumes the default "celery" queue -- leaving every dispatched job
+    # parked in "cpu"/"gpu" with no consumer (worker interfaces never load).
+    # Bypassing that script is safe because its only other job is defaulting
+    # RABBITMQ_USER/PASS/HOST, which worker.env already provides.
+    entrypoint: ["python3", "-m", "girder_worker", "-l", "info", "-Q", "celery,cpu,gpu"]
     links:
       - girder
     volumes:
