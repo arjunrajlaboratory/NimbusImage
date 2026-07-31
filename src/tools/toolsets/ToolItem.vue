@@ -96,9 +96,11 @@ function onJobChanged() {
   if (!jobId.value) {
     return;
   }
+  // Undefined if the job already settled (the jobs store drops finished
+  // entries), in which case there is no outcome left to show an icon for.
   jobs
     .getPromiseForJobId(jobId.value)
-    .then(
+    ?.then(
       (success: boolean) =>
         (statusIcon.value = success ? "mdi-check" : "mdi-close"),
     );

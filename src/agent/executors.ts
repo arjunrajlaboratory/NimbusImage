@@ -3,6 +3,7 @@ import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
+import { jobStates } from "@/store/jobConstants";
 import volumeViewStore from "@/store/volumeView";
 import {
   AnnotationShape,
@@ -70,6 +71,10 @@ export interface IAgentToolContext {
   // worker interface, then submits a job) calls this immediately before the
   // mutation so it never acts on a dataset the request didn't target.
   hasViewIdentityChanged?: () => boolean;
+  // Aborted when the user presses Stop (or the conversation is cleared) so a
+  // tool that blocks for minutes (wait_for_job) unwinds immediately instead of
+  // keeping the panel busy until its own budget expires.
+  abortSignal?: AbortSignal;
 }
 
 export interface IToolExecutionResult {
@@ -572,6 +577,299 @@ function clamp(value: number, max: number) {
   return Math.max(0, Math.min(value, Math.max(0, max - 1)));
 }
 
+// --- Background jobs -------------------------------------------------------
+//
+// run_worker and compute_property start jobs that take minutes. The model
+// cannot see the transcript notes their completion callbacks write, so without
+// a way to *wait* it can only re-read state on each turn to guess whether the
+// job is done — which burns the turn budget on polling (issue: an agent spent
+// every turn polling a Cellpose run). wait_for_job blocks on the same
+// completion signal the transcript note uses, so one tool call covers the whole
+// run: no polling, and the job's outcome (including its errors) reaches the
+// model as a tool result.
+
+// Jobs started by the agent in this session, keyed by job id. Holds the live
+// progress/error objects the jobs store writes into, so a wait can report
+// progress on timeout and the failure reason on completion.
+interface IAgentJobRecord {
+  label: string;
+  progress: IProgressInfo;
+  errors: IErrorInfoList;
+  // Resolves when the job's completion callback fires (i.e. after the store
+  // has refreshed annotations / property values), never rejects.
+  completion: Promise<boolean>;
+  finished: boolean;
+  success: boolean | null;
+}
+
+const agentJobs = new Map<string, IAgentJobRecord>();
+
+// Records are tiny but must not grow without bound across a long session.
+const MAX_TRACKED_AGENT_JOBS = 20;
+
+// Wait budget for a single wait_for_job call. The floor matters: a wait that
+// comes back "still running" has by construction blocked for at least
+// MIN_WAIT_SECONDS, so a model that re-waits in a loop cannot spin through its
+// turns the way bare polling did.
+const DEFAULT_WAIT_SECONDS = 600;
+const MIN_WAIT_SECONDS = 30;
+const MAX_WAIT_SECONDS = 1800;
+
+// How often the fallback path asks the server for a job's status. Used only for
+// jobs this session never registered (e.g. started before a page reload), where
+// no completion event will arrive. These are plain REST calls inside a single
+// tool call — they cost no agent turns and never reach the model.
+const JOB_STATUS_POLL_SECONDS = 10;
+
+const TERMINAL_JOB_STATES = new Set([
+  jobStates.success,
+  jobStates.error,
+  jobStates.cancelled,
+]);
+
+function pruneAgentJobs() {
+  if (agentJobs.size <= MAX_TRACKED_AGENT_JOBS) {
+    return;
+  }
+  // Map iterates in insertion order: drop the oldest finished records first,
+  // then (only if many jobs are running at once) the oldest records regardless.
+  // A waiter already holds its record, so dropping one only forgets the
+  // outcome — it never breaks an in-flight wait.
+  for (const [jobId, record] of agentJobs) {
+    if (agentJobs.size <= MAX_TRACKED_AGENT_JOBS) {
+      return;
+    }
+    if (record.finished) {
+      agentJobs.delete(jobId);
+    }
+  }
+  for (const jobId of [...agentJobs.keys()]) {
+    if (agentJobs.size <= MAX_TRACKED_AGENT_JOBS) {
+      return;
+    }
+    agentJobs.delete(jobId);
+  }
+}
+
+function jobErrorMessages(errors: IErrorInfoList): string[] {
+  return (
+    errors.errors
+      .map((e) => e.error || e.warning || e.info)
+      .filter((message): message is string => Boolean(message))
+      // Worker logs can emit many messages; the model only needs the gist.
+      .slice(0, 5)
+  );
+}
+
+// Start tracking a job the agent submitted and return the completion handler to
+// wire to the store's callback. The handler both records the outcome (for
+// wait_for_job) and writes the transcript note the user sees.
+function trackAgentJob(params: {
+  jobId: string;
+  label: string;
+  progress: IProgressInfo;
+  errors: IErrorInfoList;
+  notify: (text: string) => void;
+}): (success: boolean) => void {
+  let resolve!: (success: boolean) => void;
+  const record: IAgentJobRecord = {
+    label: params.label,
+    progress: params.progress,
+    errors: params.errors,
+    completion: new Promise<boolean>((r) => (resolve = r)),
+    finished: false,
+    success: null,
+  };
+  agentJobs.set(params.jobId, record);
+  pruneAgentJobs();
+  return (success: boolean) => {
+    if (record.finished) {
+      return;
+    }
+    record.finished = true;
+    record.success = success;
+    const errors = jobErrorMessages(record.errors);
+    params.notify(
+      success
+        ? `${params.label} finished successfully.`
+        : `${params.label} failed${errors.length ? `: ${errors.join("; ")}` : "."}`,
+    );
+    resolve(success);
+  };
+}
+
+// Drop every tracked job. Called from aiPanel.clearConversation — like the plot
+// registry, this is module state that would otherwise outlive the conversation
+// it belongs to. That matters on an authenticated-user change (login/logout is
+// client-side, no page reload): a record holds the previous user's job label and
+// worker error text, and the tracked path returns it without the access-checked
+// job/{id} request, so the next user must not be able to read it by job id.
+export function clearTrackedAgentJobs() {
+  agentJobs.clear();
+}
+
+type TWaitOutcome = "timeout" | "aborted";
+
+// Wait for `completion` to settle, for `timeoutMs` to elapse, or for the user
+// to press Stop — whichever comes first. With no `completion` it is an
+// abortable sleep (used between status checks on the fallback path).
+function raceWait(
+  timeoutMs: number,
+  signal?: AbortSignal,
+  completion?: Promise<boolean>,
+): Promise<boolean | TWaitOutcome> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: boolean | TWaitOutcome) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(value);
+    };
+    const onAbort = () => finish("aborted");
+    // `finish` closes over `timer`, but is only ever called after this line.
+    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    if (signal?.aborted) {
+      finish("aborted");
+      return;
+    }
+    signal?.addEventListener("abort", onAbort);
+    completion?.then((success) => finish(success));
+  });
+}
+
+async function waitForJobTool(
+  input: { jobId?: unknown; timeoutSeconds?: unknown },
+  context: IAgentToolContext,
+): Promise<IToolExecutionResult> {
+  const jobId = typeof input?.jobId === "string" ? input.jobId.trim() : "";
+  if (!jobId) {
+    throw new ToolExecutionError(
+      "wait_for_job needs the jobId returned by run_worker or compute_property",
+    );
+  }
+  const timeoutSeconds =
+    typeof input?.timeoutSeconds === "number" &&
+    Number.isFinite(input.timeoutSeconds)
+      ? Math.min(
+          Math.max(input.timeoutSeconds, MIN_WAIT_SECONDS),
+          MAX_WAIT_SECONDS,
+        )
+      : DEFAULT_WAIT_SECONDS;
+  const startedAt = Date.now();
+  const waitedSeconds = () => Math.round((Date.now() - startedAt) / 1000);
+
+  const record = agentJobs.get(jobId);
+  const label = record?.label ?? "The job";
+  const finishedResult = (success: boolean) => {
+    const errors = record ? jobErrorMessages(record.errors) : [];
+    return {
+      result: {
+        jobId,
+        finished: true,
+        success,
+        waitedSeconds: waitedSeconds(),
+        ...(errors.length ? { errors } : {}),
+        note: success
+          ? `${label} finished successfully. Read the results ` +
+            "(get_annotation_summary, get_property_values) before reporting " +
+            "to the user."
+          : `${label} did not succeed. Tell the user what failed; its log is ` +
+            "in Settings > Jobs & Logs.",
+      },
+    };
+  };
+  const abortedResult = () => ({
+    result: {
+      jobId,
+      finished: false,
+      aborted: true,
+      waitedSeconds: waitedSeconds(),
+      note:
+        "The user stopped this turn while waiting; the job keeps running in " +
+        "the background. Do not start another run.",
+    },
+  });
+  const stillRunningResult = () => ({
+    result: {
+      jobId,
+      finished: false,
+      stillRunning: true,
+      waitedSeconds: waitedSeconds(),
+      ...(record?.progress?.progress != null
+        ? { progress: record.progress.progress, step: record.progress.title }
+        : {}),
+      note:
+        `Still running after ${waitedSeconds()}s. Call wait_for_job again ` +
+        "with the same jobId to keep waiting (this costs one turn per wait, " +
+        "polling other tools costs many). If it has been a very long time, " +
+        "tell the user it is still running instead of waiting again.",
+    },
+  });
+
+  if (record) {
+    if (record.finished) {
+      return finishedResult(record.success === true);
+    }
+    const outcome = await raceWait(
+      timeoutSeconds * 1000,
+      context.abortSignal,
+      record.completion,
+    );
+    if (outcome === "aborted") {
+      return abortedResult();
+    }
+    if (typeof outcome === "boolean") {
+      return finishedResult(outcome);
+    }
+    // Budget spent without a completion event. Almost always means the job is
+    // genuinely still running, but a dropped notification WebSocket looks the
+    // same, so confirm against the server before reporting.
+    const status = await jobsStore.fetchJobStatus(jobId);
+    if (status != null && TERMINAL_JOB_STATES.has(status)) {
+      return finishedResult(status === jobStates.success);
+    }
+    return stillRunningResult();
+  }
+
+  // Not started by the agent in this session (or already forgotten): there may
+  // still be a live completion promise in the jobs store; otherwise fall back
+  // to server status checks.
+  const completion = jobsStore.getPromiseForJobId(jobId);
+  const initialStatus = await jobsStore.fetchJobStatus(jobId);
+  if (initialStatus == null && !completion) {
+    throw new ToolExecutionError(
+      `Could not read the status of job "${jobId}" — check the id returned by ` +
+        "run_worker or compute_property.",
+    );
+  }
+  if (initialStatus != null && TERMINAL_JOB_STATES.has(initialStatus)) {
+    return finishedResult(initialStatus === jobStates.success);
+  }
+  const deadline = startedAt + timeoutSeconds * 1000;
+  while (Date.now() < deadline) {
+    const outcome = await raceWait(
+      Math.min(JOB_STATUS_POLL_SECONDS * 1000, deadline - Date.now()),
+      context.abortSignal,
+      completion,
+    );
+    if (outcome === "aborted") {
+      return abortedResult();
+    }
+    if (typeof outcome === "boolean") {
+      return finishedResult(outcome);
+    }
+    const status = await jobsStore.fetchJobStatus(jobId);
+    if (status != null && TERMINAL_JOB_STATES.has(status)) {
+      return finishedResult(status === jobStates.success);
+    }
+  }
+  return stillRunningResult();
+}
+
 async function runWorkerTool(
   input: { toolId: string; workerInterfaceValues?: IWorkerInterfaceValues },
   context: IAgentToolContext,
@@ -589,8 +887,8 @@ async function runWorkerTool(
         alreadyRunning: true,
         jobId: runningJobId,
         note:
-          `A job for tool "${tool.name}" is already running. Wait for its ` +
-          "completion note in the transcript before starting another run.",
+          `A job for tool "${tool.name}" is already running. Call wait_for_job ` +
+          "with this jobId instead of starting another run.",
       },
     };
   }
@@ -631,28 +929,40 @@ async function runWorkerTool(
 
   const progressInfo: IProgressInfo = {};
   const errorInfo: IErrorInfoList = { errors: [] };
+  // The completion handler needs the job id, which only exists after the
+  // submission below, so route the store's callback through this indirection and
+  // replay an outcome that arrived first (a job that fails immediately).
+  const completion: {
+    handler?: (success: boolean) => void;
+    early?: boolean;
+  } = {};
   const computeJob = await annotationStore.computeAnnotationsWithWorker({
     tool,
     workerInterface: values,
     progress: progressInfo,
     error: errorInfo,
     callback: (success: boolean) => {
-      const errors = errorInfo.errors
-        .map((e) => e.error || e.warning || e.info)
-        .filter(Boolean);
-      context.notify(
-        success
-          ? `Worker "${tool.name}" finished successfully.`
-          : `Worker "${tool.name}" failed${
-              errors.length ? `: ${errors.join("; ")}` : "."
-            }`,
-      );
+      if (completion.handler) {
+        completion.handler(success);
+      } else {
+        completion.early = success;
+      }
     },
   });
   if (!computeJob) {
     throw new ToolExecutionError(
       "Failed to start the worker job (are you logged in and is a dataset open?)",
     );
+  }
+  completion.handler = trackAgentJob({
+    jobId: computeJob.jobId,
+    label: `Worker "${tool.name}"`,
+    progress: progressInfo,
+    errors: errorInfo,
+    notify: context.notify,
+  });
+  if (completion.early !== undefined) {
+    completion.handler(completion.early);
   }
   return {
     result: {
@@ -661,8 +971,9 @@ async function runWorkerTool(
       tool: { id: tool.id, name: tool.name, image },
       parameters: values,
       note:
-        "The job runs in the background; its progress is shown to the user. " +
-        "You will get a transcript note when it completes.",
+        "The job runs in the background and can take minutes. Call " +
+        "wait_for_job with this jobId to wait for it — one tool call covers " +
+        "the whole run. Never re-read state in a loop to check on it.",
     },
   };
 }
@@ -1644,7 +1955,10 @@ const registry: { [name: string]: IAgentToolEntry } = {
   compute_property: {
     // Starts a compute job, so it is gated like run_worker.
     gated: true,
-    execute: async (input: { propertyId?: string }) => {
+    execute: async (
+      input: { propertyId?: string },
+      context: IAgentToolContext,
+    ) => {
       requireLogin();
       requireDataset();
       const property = propertyStore.properties.find(
@@ -1666,7 +1980,8 @@ const registry: { [name: string]: IAgentToolEntry } = {
             propertyId: property.id,
             note:
               `Property "${property.name}" is already computing (job ` +
-              `${runningJobId}). Wait for it before starting another run.`,
+              `${runningJobId}). Call wait_for_job with this jobId instead of ` +
+              "starting another run.",
           },
         };
       }
@@ -1687,6 +2002,25 @@ const registry: { [name: string]: IAgentToolEntry } = {
           }`,
         );
       }
+      // Same completion tracking as run_worker (the transcript note and
+      // wait_for_job): addJob is idempotent for an already-tracked job — it
+      // adds a listener and hands back the promise that settles when the job
+      // does — so this works whether or not computeProperty's own registration
+      // has landed yet.
+      const onCompletion = trackAgentJob({
+        jobId: computeJob.jobId,
+        label: `Property "${property.name}"`,
+        progress:
+          propertyStore.propertyStatuses[property.id]?.progressInfo ?? {},
+        errors: errorInfo,
+        notify: context.notify,
+      });
+      jobsStore
+        .addJob({
+          jobId: computeJob.jobId,
+          datasetId: main.dataset?.id ?? null,
+        })
+        .then(onCompletion);
       return {
         result: {
           propertyId: property.id,
@@ -1694,8 +2028,9 @@ const registry: { [name: string]: IAgentToolEntry } = {
           started: true,
           jobId: computeJob.jobId,
           note:
-            "Computation started; values populate as the job runs. Use " +
-            "get_property_values to read the results.",
+            "Computation runs in the background. Call wait_for_job with this " +
+            "jobId to wait for it, then get_property_values to read the " +
+            "results. Never re-read state in a loop to check on it.",
         },
       };
     },
@@ -2099,7 +2434,19 @@ const registry: { [name: string]: IAgentToolEntry } = {
     gated: true,
     execute: runWorkerTool,
   },
+
+  // Read-only: it starts nothing, it only blocks until a job it is told about
+  // finishes, so it is not gated.
+  wait_for_job: {
+    execute: waitForJobTool,
+  },
 };
+
+// Every tool the frontend can execute. Exported for the parity check against
+// the backend's agent_tools.json (see executors.test.ts): a name in only one of
+// the two is either dead code (the model is never told the tool exists) or a
+// guaranteed "Unknown tool" error at runtime.
+export const AGENT_TOOL_NAMES = Object.keys(registry);
 
 export function isGatedTool(name: string): boolean {
   return registry[name]?.gated === true;
@@ -2299,6 +2646,12 @@ export function describeAgentToolCall(name: string, input: any): string {
     case "run_worker": {
       const tool = main.tools.find((t) => t.id === input?.toolId);
       return `Run worker "${tool?.name ?? input?.toolId}" — starts a compute job that may create many annotations`;
+    }
+    case "wait_for_job": {
+      const label = agentJobs.get(
+        typeof input?.jobId === "string" ? input.jobId : "",
+      )?.label;
+      return `Wait for ${label ?? "the background job"} to finish`;
     }
     default:
       return name;

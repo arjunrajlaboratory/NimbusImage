@@ -792,6 +792,25 @@
     }
   },
   {
+    "name": "wait_for_job",
+    "description": "Block until a background job started by run_worker or compute_property finishes, then report its outcome. This is how you wait for a worker: it returns as soon as the job completes (it listens for the completion event, it does not poll), so one call covers a run of any length. Never check on a job by re-reading state (get_interface_state / get_annotation_summary / get_property_values) in a loop — that burns your turns and you will run out before the job is done. If the wait budget runs out before the job finishes, the result says stillRunning and you may call this again with the same jobId, or tell the user it is still going. Read-only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "description": "The jobId returned by run_worker or compute_property."
+        },
+        "timeoutSeconds": {
+          "type": "number",
+          "description": "How long to wait before giving up on this call, 30-1800 seconds (default 600). Values outside that range are clamped. Segmentation of a large dataset can take many minutes, so prefer the default over a short wait."
+        }
+      },
+      "required": ["jobId"],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "read_help_topic",
     "description": "Read NimbusImage documentation on a topic — how a feature works, or how the user can do something themselves in the UI. Call this before explaining a workflow you are unsure about. The available topic slugs are listed in the system prompt.",
     "input_schema": {
