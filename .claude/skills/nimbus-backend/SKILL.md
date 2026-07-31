@@ -363,6 +363,18 @@ job = JobModel().createLocalJob(
 JobModel().scheduleJob(job)
 ```
 
+### Every Job Title Reaches Users — Never Ship a Placeholder
+
+Job titles are user-visible: they are listed in Settings → **Jobs & Logs** and quoted in the frontend's job notifications (`src/store/jobs.ts`). A title that doesn't identify the work is a support burden — issue #1294 was a `girder_job_title` defaulting to the literal `"unknown"` for worker *interface* requests (containers named `unknown_None_<ts>`), which users saw appear right before their segmentation run with no way to tell the two apart.
+
+Rules when adding a job, or a helper that creates jobs:
+
+- **Default to something meaningful, not a placeholder.** If the title comes from caller-supplied data (`params.get("name")`), fall back to the request/job type, never to `"unknown"`. Check *every* caller — one caller omitting the field is how the placeholder reaches production.
+- **Derive the container name and the title separately.** Docker names allow only `[a-zA-Z0-9_.-]`, so sanitizing shared text costs the title its spaces, `/` and `:`. `runJobRequest` takes an explicit `jobTitle` for this reason (`server/helpers/tasks.py`).
+- **Don't interpolate `None` into a name.** Join only the parts that exist — `datasetId` is absent for interface requests.
+- **A caller-supplied name may not be a string.** `re.findall` on an int is a 500; guard with `isinstance(name, str)`.
+- **If users didn't start the job, document it** in `girder-claude-chat/girder_claude_chat/help/troubleshooting.md`, so the assistant can answer "what is this job?" instead of guessing.
+
 ### Progress Reporting via SSE
 
 Jobs report progress through `Job().updateJob()` which emits SSE events:

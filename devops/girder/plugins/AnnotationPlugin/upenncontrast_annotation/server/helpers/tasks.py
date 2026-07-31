@@ -18,10 +18,24 @@ import re
 # )
 
 
-def runJobRequest(image, datasetId, params, requestType):
-    name = params.get("name", "unknown")
-    # Make sure name is a valid name for a docker container
-    name = "".join(re.findall("[a-zA-Z0-9_.-]", name))
+def runJobRequest(image, datasetId, params, requestType, jobTitle=None):
+    # The container name and the job title are derived separately: docker
+    # only accepts [a-zA-Z0-9_.-] in a name, while the title is shown to
+    # users in Jobs & Logs and can keep spaces, "/" and ":". Requests with
+    # no name of their own (interface requests) pass an explicit jobTitle,
+    # and fall back to the request type rather than a bare "unknown".
+    name = params.get("name")
+    if not isinstance(name, str) or not name.strip():
+        name = requestType
+    containerName = "_".join(
+        str(part)
+        for part in (
+            "".join(re.findall("[a-zA-Z0-9_.-]", name)) or requestType,
+            datasetId,
+            datetime.datetime.now().timestamp(),
+        )
+        if part
+    )
     params = json.dumps(params)
 
     containerArgs = [
@@ -45,10 +59,8 @@ def runJobRequest(image, datasetId, params, requestType):
                 "pull_image": False,
                 "container_args": containerArgs,
                 "remove_container": True,
-                "name": "{}_{}_{}".format(
-                    name, datasetId, datetime.datetime.now().timestamp()
-                ),
-                "girder_job_title": name,
+                "name": containerName,
+                "girder_job_title": jobTitle or name,
                 # 'girder_result_hooks': [testHook]
             },
             # Route to the "cpu" or "gpu" queue by worker class; interface
