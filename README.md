@@ -73,9 +73,18 @@ wget "https://huggingface.co/rajlab/sam_vit_b/resolve/main/encoder.onnx" -O enco
 Start docker images for the backend:
 
 ```sh
+docker compose pull
 docker compose build
 docker compose up -d
 ```
+
+Do not skip `docker compose pull`. The `worker` service runs the prebuilt
+`girder/girder_worker` image rather than one built from this repo, so
+`docker compose build` never updates it -- not even with `--no-cache` -- and
+`docker compose up` reuses whatever copy is already cached locally. If you
+installed some time ago, you can silently be running a years-old worker image.
+See [worker interfaces never load](#worker-interfaces-never-load) for the
+symptom this causes.
 
 This will set up Girder (backend) running on `http://localhost:8080`
 
@@ -114,6 +123,44 @@ chmod +x build_workers.sh
 ```
 
 That will install all the workers. The machine learning workers will run on CPU on Linux if a GPU is not available, although will run much more slowly.
+
+### Worker interfaces never load
+
+If selecting a worker in the UI hangs forever on the interface load step -- no
+error in the browser, in the Girder log, or in the worker log -- the usual cause
+is a stale `girder/girder_worker` image.
+
+Girder routes jobs to the `cpu` and `gpu` Celery queues, and `docker-compose.yaml`
+subscribes the local worker to both via `command: -Q celery,cpu,gpu`. But
+`girder_worker` images built before 2025-02-17 have a `/docker-entrypoint.sh`
+that does not forward its arguments, so that queue list is silently discarded and
+the worker subscribes only to the default `celery` queue. Jobs then pile up in
+`cpu`/`gpu` with nothing consuming them. Girder still returns `200` for the
+dispatch request, and no worker container is ever launched, so there is nothing
+to see in any log.
+
+Check the age of your image:
+
+```sh
+docker inspect girder/girder_worker:latest --format '{{.Created}}'
+```
+
+Confirm the queue subscriptions and look for a queue with zero consumers:
+
+```sh
+docker exec worker ps -eo args | grep girder_worker
+# expect: ... -Q celery,cpu,gpu   (only "-l info" means the arguments were dropped)
+
+docker compose exec broker rabbitmqctl list_queues name messages_ready consumers
+# every queue should have >= 1 consumer; cpu or gpu at 0 is the bug
+```
+
+The fix is to update the image and recreate the container:
+
+```sh
+docker compose pull worker
+docker compose up -d worker
+```
 
 ## Login details
 
