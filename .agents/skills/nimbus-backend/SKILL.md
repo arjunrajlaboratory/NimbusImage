@@ -305,6 +305,12 @@ Match each kind of request-data access to its helper:
 
 Rules: validation and `RestException` live in the API layer, never in models. Validate NESTED elements, not just the top-level container — each list entry (`[123]`) and nested map (`propertyValues: {"a1": 5}`) is caller-supplied; `.get()`/`.items()` on a non-dict entry → 500. Add a backend test per malformed-input case (malformed body → 400, not 500); `test/test_validation.py` unit-tests the helpers directly, and endpoint tests assert the 400. When you fix one endpoint, sweep the other endpoints in the same file for the identical gap — reviewers flag one instance per round.
 
+**`assertStatus(resp, 400)` alone is not a regression test for input validation.** These endpoints have *other* 400 paths — a missing `datasetId`, an unknown dataset id, a failed schema validation — so a malformed-body test can pass while the body is never validated at all. Observed for real: a `/upenn_annotation/compute` test using a syntactically valid but nonexistent `datasetId` passed **before** its fix, because the model's dataset lookup rejected the request first.
+
+Two habits close it:
+- **Assert the message, not just the status** (`assert "must be a JSON object" in resp.json["message"]`), and set up the request so the code actually reaches the validation — use a real `utilities.createFolder(...)` dataset when the handler looks one up before touching the body.
+- **`git stash push <source files>` and confirm the test fails**, leaving the new test file in place (untracked files aren't stashed). A malformed-input test that passes both ways is worse than none.
+
 ## Loading Plugin Changes Into the Running Backend
 
 The `girder` container bakes the plugin into its image (no source mount). After editing backend plugin code:

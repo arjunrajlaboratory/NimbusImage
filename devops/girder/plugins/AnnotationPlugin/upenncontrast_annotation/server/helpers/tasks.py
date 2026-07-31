@@ -19,18 +19,22 @@ import re
 
 
 def runJobRequest(image, datasetId, params, requestType, jobTitle=None):
-    # The container name and the job title are derived separately: docker
-    # only accepts [a-zA-Z0-9_.-] in a name, while the title is shown to
-    # users in Jobs & Logs and can keep spaces, "/" and ":". Requests with
-    # no name of their own (interface requests) pass an explicit jobTitle,
-    # and fall back to the request type rather than a bare "unknown".
+    # The container name and the job title are derived separately: the
+    # container name is constrained by docker (see below), while the title is
+    # shown to users in Jobs & Logs and can keep spaces, "/" and ":".
+    # Requests with no name of their own (interface requests) pass an explicit
+    # jobTitle, and fall back to the request type rather than a bare
+    # "unknown".
     name = params.get("name")
     if not isinstance(name, str) or not name.strip():
         name = requestType
+    # Docker container names must match [a-zA-Z0-9][a-zA-Z0-9_.-]*, so a
+    # leading "_", "-" or "." survives the character filter but still makes
+    # the name invalid — strip it rather than let docker reject the run.
     containerName = "_".join(
         str(part)
         for part in (
-            "".join(re.findall("[a-zA-Z0-9_.-]", name)) or requestType,
+            re.sub("[^a-zA-Z0-9_.-]", "", name).lstrip("_.-") or requestType,
             datasetId,
             datetime.datetime.now().timestamp(),
         )
