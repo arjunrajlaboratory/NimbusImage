@@ -15,13 +15,9 @@ import {
   IAnnotationListRow,
   IAnnotationListSort,
   IAnnotationListFilters,
-  ITagAnnotationFilter,
-  IIdAnnotationFilter,
-  IAnnotationLocation,
 } from "./model";
 import {
-  IListPropertyFilterInput,
-  buildPropertyListFilters,
+  buildListFilters,
   filtersMatchNothing,
 } from "@/utils/annotationListFilters";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
@@ -38,59 +34,10 @@ const pageRequestGuard = createSequenceGuard();
 // cleanup. Every ordinary page fetch also invalidates pending navigation.
 const navigationRequestGuard = createSequenceGuard();
 
-// Pure: translate the client filter store into backend list filters.
-export function buildListFilters(input: {
-  tagFilter: Pick<ITagAnnotationFilter, "enabled" | "exclusive" | "tags">;
-  onlyCurrentFrame: boolean;
-  currentFrame: IAnnotationLocation;
-  idSubstring: string;
-  propertyFilters: IListPropertyFilterInput[];
-  selectionFilter: IIdAnnotationFilter;
-  annotationIdFilters: IIdAnnotationFilter[];
-  // One membership set per active analysis gate (already resolved to ids).
-  analysisGates?: string[][];
-}): IAnnotationListFilters {
-  const out: IAnnotationListFilters = {};
-  if (input.tagFilter.enabled && input.tagFilter.tags.length > 0) {
-    out.tags = {
-      values: input.tagFilter.tags,
-      exclusive: input.tagFilter.exclusive,
-    };
-  }
-  if (input.onlyCurrentFrame) {
-    out.location = { ...input.currentFrame };
-  }
-  if (input.idSubstring) {
-    out.idSubstring = input.idSubstring;
-  }
-  // Build the id constraints (AND of membership sets), mirroring the
-  // client filteredAnnotations semantics: the selection filter is one set,
-  // and the enabled annotation-id filters are unioned into a second set.
-  const idConstraints: string[][] = [];
-  if (
-    input.selectionFilter.enabled &&
-    input.selectionFilter.annotationIds.length > 0
-  ) {
-    idConstraints.push(input.selectionFilter.annotationIds);
-  }
-  const enabledIdFilters = input.annotationIdFilters.filter((f) => f.enabled);
-  if (enabledIdFilters.length > 0) {
-    idConstraints.push(enabledIdFilters.flatMap((f) => f.annotationIds));
-  }
-  // Analysis gates compose with AND (sequential gating), so each one is its own
-  // membership set — unlike the annotation-id filters, which are unioned above.
-  for (const gate of input.analysisGates ?? []) {
-    idConstraints.push(gate);
-  }
-  if (idConstraints.length > 0) {
-    out.idConstraints = idConstraints;
-  }
-  const pfs = buildPropertyListFilters(input.propertyFilters);
-  if (pfs.length > 0) {
-    out.propertyFilters = pfs;
-  }
-  return out;
-}
+// buildListFilters moved to @/utils/annotationListFilters so the filters
+// store can reuse it (importing it from here would be circular — this module
+// imports the filters store). Re-exported for existing import sites.
+export { buildListFilters } from "@/utils/annotationListFilters";
 
 @Module({ dynamic: true, store, name: "annotationListServer" })
 export class AnnotationListServer extends VuexModule {

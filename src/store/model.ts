@@ -1839,6 +1839,31 @@ export interface IAnalysisGatePlotRequest {
   gate: IAnalysisGate;
 }
 
+// Server-binned display data for one analysis plot above the cap
+// (SERVER_GATING.md, Phase 2). Rows of `counts` are y bins, columns x bins.
+export interface IAnalysisHistogramResponse {
+  counts: number[][];
+  xEdges: number[] | null;
+  yEdges: number[] | null;
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+  inputCount: number;
+  plottedCount: number;
+  // |own gate ∩ input| — the chained badge count — when a gate was sent.
+  gateCount: number | null;
+}
+
+export interface IAnalysisHistogramRequest {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+  bins: { x: number; y: number };
+  upstreamGates: Omit<IAnalysisGatePlotRequest, "id">[];
+  filters: IAnnotationListFilters;
+  gate: IAnalysisGate | null;
+}
+
 export interface IAnnotationPropertyConfiguration {
   name: string;
   image: string;

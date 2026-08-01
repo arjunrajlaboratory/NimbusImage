@@ -20,6 +20,7 @@ import {
   populationSignature,
   resolveGateIds,
   selectionEventToGate,
+  shapeToGate,
 } from "@/utils/analysisGating";
 import {
   AnnotationShape,
@@ -666,5 +667,62 @@ describe("analysisCategoricalKeys", () => {
 
   it("returns nothing when every axis is a property", () => {
     expect(analysisCategoricalKeys([plot(AREA, INTENSITY)])).toEqual([]);
+  });
+});
+
+describe("shapeToGate", () => {
+  const CATS = {
+    xCategories: [encodeAnalysisCategoryKey(["a"])],
+    yCategories: null,
+  };
+
+  it("parses a closed plotly path into gate vertices", () => {
+    const gate = shapeToGate(
+      { type: "path", path: "M1,2L3,4L5,0Z" },
+      CATS,
+    );
+    expect(gate).toEqual({
+      categoryKeyVersion: 1,
+      vertices: [
+        { x: 1, y: 2 },
+        { x: 3, y: 4 },
+        { x: 5, y: 0 },
+      ],
+      xCategories: CATS.xCategories,
+      yCategories: null,
+    });
+  });
+
+  it("parses decimals and negative coordinates", () => {
+    const gate = shapeToGate(
+      { type: "path", path: "M-1.5,2.25L3e2,-4L5,0Z" },
+      CATS,
+    );
+    expect(gate?.vertices).toEqual([
+      { x: -1.5, y: 2.25 },
+      { x: 300, y: -4 },
+      { x: 5, y: 0 },
+    ]);
+  });
+
+  it("converts a rect shape into four corners", () => {
+    const gate = shapeToGate(
+      { type: "rect", x0: 1, x1: 5, y0: 2, y1: 6 },
+      CATS,
+    );
+    expect(gate?.vertices).toEqual([
+      { x: 1, y: 2 },
+      { x: 5, y: 2 },
+      { x: 5, y: 6 },
+      { x: 1, y: 6 },
+    ]);
+  });
+
+  it("returns null for malformed or degenerate shapes", () => {
+    expect(shapeToGate({ type: "path", path: "M1,2Z" }, CATS)).toBeNull();
+    expect(shapeToGate({ type: "path", path: "garbage" }, CATS)).toBeNull();
+    expect(shapeToGate({ type: "rect", x0: 1 }, CATS)).toBeNull();
+    expect(shapeToGate({ type: "circle" } as any, CATS)).toBeNull();
+    expect(shapeToGate(null, CATS)).toBeNull();
   });
 });

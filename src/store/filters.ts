@@ -16,7 +16,10 @@ import {
   tagCloudFilterFunction,
   annotationTestPoints,
 } from "@/utils/annotation";
-import { buildPropertyListFilters } from "@/utils/annotationListFilters";
+import {
+  buildListFilters,
+  buildPropertyListFilters,
+} from "@/utils/annotationListFilters";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
 import { idListSignature } from "@/utils/signatures";
 
@@ -37,7 +40,10 @@ import {
   IAnnotationListFilters,
   TAnalysisAxis,
 } from "./model";
-import { MAX_ANALYSIS_PLOT_POINTS } from "./constants";
+import {
+  MAX_ANALYSIS_PLOT_POINTS,
+  MAX_HISTOGRAM_ID_CONSTRAINT,
+} from "./constants";
 import {
   analysisCategoricalKeys,
   analysisPropertyPaths,
@@ -646,6 +652,57 @@ export class Filters extends VuexModule {
       ),
       paths.length > 0 ? properties.propertyValuesRevision : "-",
     ].join("|");
+  }
+
+  // What the over-cap heatmaps can and cannot reflect (SERVER_GATING.md,
+  // Phase 2). The serializable filters ride along in the histogram request;
+  // filters the list schema cannot express — ROI polygons, the hidden-layer
+  // rule, id lists past MAX_HISTOGRAM_ID_CONSTRAINT — are REPORTED in
+  // `skipped` so the panel can say the distribution may over-include. The
+  // direction is one-sided by construction: a skipped filter widens the
+  // pictured population, never narrows it (id filters union, so one
+  // oversized member drops the whole union). Gate RESOLUTION is
+  // filter-independent and never degrades.
+  get analysisHistogramFilterSpec(): {
+    filters: IAnnotationListFilters;
+    skipped: string[];
+  } {
+    const skipped: string[] = [];
+    const selectionOversized =
+      this.selectionFilter.enabled &&
+      this.selectionFilter.annotationIds.length >
+        MAX_HISTOGRAM_ID_CONSTRAINT;
+    if (selectionOversized) {
+      skipped.push("selection filter");
+    }
+    const idFiltersOversized = this.annotationIdFilters.some(
+      (filter) =>
+        filter.enabled &&
+        filter.annotationIds.length > MAX_HISTOGRAM_ID_CONSTRAINT,
+    );
+    if (idFiltersOversized) {
+      skipped.push("object-list filters");
+    }
+    const filters = buildListFilters({
+      tagFilter: this.tagFilter,
+      onlyCurrentFrame: this.onlyCurrentFrame,
+      currentFrame: { XY: main.xy, Z: main.z, Time: main.time },
+      idSubstring: "",
+      propertyFilters: this.propertyFilters,
+      selectionFilter: selectionOversized
+        ? { ...this.selectionFilter, enabled: false }
+        : this.selectionFilter,
+      annotationIdFilters: idFiltersOversized
+        ? []
+        : this.annotationIdFilters,
+    });
+    if (this.roiFilters.some((filter) => filter.enabled)) {
+      skipped.push("region (ROI) filters");
+    }
+    if (!main.showAnnotationsFromHiddenLayers) {
+      skipped.push("hidden-layer visibility");
+    }
+    return { filters, skipped };
   }
 
   @Mutation

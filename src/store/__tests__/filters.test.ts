@@ -44,6 +44,7 @@ vi.mock("@/store/index", () => ({
     },
     scheduleAnnotationBrowserSave: () => {},
     isLoggedIn: true,
+    showAnnotationsFromHiddenLayers: true,
   },
 }));
 
@@ -1130,5 +1131,75 @@ describe("filters.refreshAnalysis above the cap (server resolution)", () => {
     fetchAnalysisGateIds.mockResolvedValue({ p1: [] });
     await filters.refreshAnalysis();
     expect(filters.analysisValues).toEqual({});
+  });
+});
+
+// What the over-cap heatmaps can and cannot reflect (SERVER_GATING.md,
+// Phase 2): the serializable filters ride along; inexpressible ones are
+// REPORTED, so the panel can say the distribution may over-include. Gate
+// resolution is filter-independent and never degrades.
+describe("filters.analysisHistogramFilterSpec", () => {
+  beforeEach(() => {
+    filters.resetFilterState();
+    // resetFilterState deliberately preserves the frame toggle (a view
+    // preference, not dataset-scoped state) — reset it here.
+    filters.setOnlyCurrentFrame(false);
+  });
+
+  it("serializes tag, frame, and property filters", () => {
+    filters.setTagFilter({
+      id: "tagFilter",
+      exclusive: true,
+      enabled: true,
+      tags: ["nucleus"],
+    });
+    filters.setOnlyCurrentFrame(true);
+    addAreaRangeFilter(1, 5);
+    const spec = filters.analysisHistogramFilterSpec;
+    expect(spec.filters.tags).toEqual({
+      values: ["nucleus"],
+      exclusive: true,
+    });
+    expect(spec.filters.location).toEqual({ XY: 0, Z: 0, Time: 0 });
+    expect(spec.filters.propertyFilters).toEqual([
+      { path: ["p", "Area"], mode: "range", min: 1, max: 5 },
+    ]);
+    expect(spec.skipped).toEqual([]);
+  });
+
+  it("inlines bounded id lists and skips oversized ones with labels", () => {
+    filters.newAnnotationIdFilter(["a", "b"]);
+    expect(filters.analysisHistogramFilterSpec.filters.idConstraints).toEqual([
+      ["a", "b"],
+    ]);
+    expect(filters.analysisHistogramFilterSpec.skipped).toEqual([]);
+    filters.newAnnotationIdFilter(
+      Array.from({ length: 50001 }, (_, i) => `big-${i}`),
+    );
+    const spec = filters.analysisHistogramFilterSpec;
+    // Id filters are UNIONED into one constraint, so dropping only the
+    // oversized member would shrink the set — under-including. The whole
+    // union is dropped instead: the histogram may over-include, never
+    // under-include.
+    expect(spec.filters.idConstraints).toBeUndefined();
+    expect(spec.skipped).toEqual(["object-list filters"]);
+  });
+
+  it("reports region filters and the hidden-layer rule as skipped", () => {
+    filters.newROIFilter();
+    filters.validateNewROIFilter([
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+    ]);
+    const spec = filters.analysisHistogramFilterSpec;
+    expect(spec.skipped).toContain("region (ROI) filters");
+    expect(spec.filters.idConstraints).toBeUndefined();
+  });
+
+  it("is empty when nothing is active", () => {
+    const spec = filters.analysisHistogramFilterSpec;
+    expect(spec.filters).toEqual({});
+    expect(spec.skipped).toEqual([]);
   });
 });

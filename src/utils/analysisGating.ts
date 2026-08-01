@@ -393,6 +393,75 @@ export function selectionEventToGate(
 }
 
 /**
+ * Translate a Plotly layout SHAPE (drawclosedpath / drawrect, the drawing
+ * tools available on a heatmap, where lasso selection does not exist) into a
+ * persistable gate. The pinned category orders come from the axis metadata
+ * in effect when the shape was drawn — above the cap that is the
+ * server-derived order from the histogram response.
+ *
+ * Returns null for anything that does not describe an area (malformed path,
+ * fewer than 3 vertices, missing rect corners, unknown shape type), so the
+ * caller leaves the existing gate alone.
+ */
+export function shapeToGate(
+  shape:
+    | {
+        type?: string;
+        path?: string;
+        x0?: number;
+        x1?: number;
+        y0?: number;
+        y1?: number;
+      }
+    | null
+    | undefined,
+  categories: {
+    xCategories: string[] | null;
+    yCategories: string[] | null;
+  },
+): IAnalysisGate | null {
+  if (!shape) {
+    return null;
+  }
+  const base = {
+    categoryKeyVersion: ANALYSIS_CATEGORY_KEY_VERSION,
+    xCategories: categories.xCategories,
+    yCategories: categories.yCategories,
+  };
+  if (shape.type === "path" && typeof shape.path === "string") {
+    // Plotly emits "M x,y L x,y ... Z" with plain decimal/exponent numbers.
+    const NUMBER = "-?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?";
+    const vertexPattern = new RegExp(`[ML](${NUMBER}),(${NUMBER})`, "g");
+    const vertices: IGeoJSPosition[] = [];
+    for (const match of shape.path.matchAll(vertexPattern)) {
+      vertices.push({ x: parseFloat(match[1]), y: parseFloat(match[2]) });
+    }
+    return vertices.length >= 3 ? { vertices, ...base } : null;
+  }
+  if (shape.type === "rect") {
+    const { x0, x1, y0, y1 } = shape;
+    if (
+      typeof x0 !== "number" ||
+      typeof x1 !== "number" ||
+      typeof y0 !== "number" ||
+      typeof y1 !== "number"
+    ) {
+      return null;
+    }
+    return {
+      vertices: [
+        { x: x0, y: y0 },
+        { x: x1, y: y0 },
+        { x: x1, y: y1 },
+        { x: x0, y: y1 },
+      ],
+      ...base,
+    };
+  }
+  return null;
+}
+
+/**
  * Walk the plot chain: entry `i` is the population reaching plot `i`, i.e. the
  * base narrowed by the gates of plots `0..i-1`. A plot never sees its own gate,
  * or the points just lassoed would disappear from the plot they were drawn on.

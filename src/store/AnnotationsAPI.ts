@@ -18,6 +18,8 @@ import {
   IAnnotationListRow,
   IAnnotationListFilters,
   IAnalysisGatePlotRequest,
+  IAnalysisHistogramRequest,
+  IAnalysisHistogramResponse,
 } from "./model";
 
 import { filtersMatchNothing } from "@/utils/annotationListFilters";
@@ -176,6 +178,27 @@ export default class AnnotationsAPI {
       return response.data.gateIds as { [plotId: string]: string[] };
     } catch (error) {
       logError("Failed to resolve analysis gates server-side:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Server-binned display data for one over-cap analysis plot
+   * (SERVER_GATING.md, Phase 2). Returns null on failure so callers can
+   * distinguish "no data" from "request failed".
+   */
+  async fetchAnalysisHistogram(
+    datasetId: string,
+    request: IAnalysisHistogramRequest,
+  ): Promise<IAnalysisHistogramResponse | null> {
+    try {
+      const response = await this.client.post(
+        "upenn_annotation/analysis/histogram2d",
+        { datasetId, ...request },
+      );
+      return response.data as IAnalysisHistogramResponse;
+    } catch (error) {
+      logError("Failed to fetch analysis histogram:", error);
       return null;
     }
   }
