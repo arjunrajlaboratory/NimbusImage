@@ -115,7 +115,7 @@ This keeps every actionable item discoverable from the Findings Summary table by
 | **Partial Persistence** | One logical change issuing several writes of the same key, so a mid-sequence failure leaves the resource partially updated |
 | **Error Message Mangling** | Store action throwing or propagating without `rawError: true`, so callers get `ERR_ACTION_ACCESS_UNDEFINED` instead of the reason |
 | **Symmetric Path Drift** | One of two twin paths changed: create-styling ↔ update-restyling, draw ↔ retain/clear, register ↔ teardown, one guarded call site ↔ its siblings, client ↔ server end of a contract |
-| **Empty-State Contract** | Present-but-empty list collapsed into "no constraint" (`ids \|\| []`, `if ids:`), or a failure return indistinguishable from an empty success |
+| **Empty-State Contract** | Two of the three list states merged, in either direction (`if ids:` in Python; `ids?.length` guards or `?? []` defaults in TS), or a failure return indistinguishable from an empty success |
 | **Lossy Change Identity** | Signature/hash that misses changes it exists to detect: sampled elements, undelimited nested lists, content changes with stable membership |
 | **Stale Derived State** | Derived ids/caches surviving an input replacement or upstream change; sequence-guard token claimed after early returns |
 | **Stale String Reference** | `dispatch("...")`/event-name string not updated when the member was renamed |
@@ -137,8 +137,8 @@ The most repeated finding shape in this repo: a rule applied to one of two symme
 - the client end ↔ the server end of a wire contract
 
 ### 2. "Empty" Is Not a Signal — Three-State List Contracts
-An optional id-list parameter has three meanings: absent/null = "no constraint", non-empty = "these", present-but-empty = "none". Code that collapses present-but-empty into absent turns "act on zero matches" into "act on everything" — in PR #1298, exporting an empty filtered set silently downloaded the entire dataset because `annotationIds || []` on the client AND `if annotationIds:` on the server each collapsed it. Check:
-- Truthiness tests on possibly-empty lists: `if (ids)`, `ids || []`, `ids?.length` in TS; `if ids:` in Python.
+An optional id-list parameter has three meanings: absent/null = "no constraint", non-empty = "these", present-but-empty = "none". Code that merges any two of those states turns "act on zero matches" into "act on everything" — in PR #1298, exporting an empty filtered set silently downloaded the entire dataset: the client's `annotationIds || []` had merged "no constraint" (null) into `[]` before the request, and the server's `if annotationIds:` then read `[]` back as "no constraint". Two opposite-direction merges, one destroyed contract. Check:
+- Any expression that merges two of the three states, in either direction. Python: `if ids:` treats `[]` as absent. TypeScript: arrays are always truthy, so `if (ids)` is safe — the merges are `if (ids?.length)` / `ids.length > 0 ? ids : undefined` (empty → absent) and `|| []` / `?? []` defaults (absent → empty, erasing "no constraint" before it reaches the wire).
 - **Both ends of the wire** — fixing one end and not the other is a twin-sweep miss.
 - Failure vs empty: an API helper that catches errors and returns `{}`/`[]`/`null`-as-data makes a transient network error indistinguishable from a real empty result. In #1298 this became "every gate resolves to zero matches and the whole dataset disappears"; in #1279 a failed batch POST was misreported as successful deduplication. Failures must propagate (return null or throw), and the caller must leave existing derived state alone on failure.
 - An empty *prerequisite* is not "nothing to do": "no property values to fetch" still requires resolving categorical-only gates. Skip the fetch, never the downstream resolve.
