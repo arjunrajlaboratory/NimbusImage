@@ -129,11 +129,7 @@ export default class ExportAPI {
     const body = {
       datasetId: options.datasetId,
       propertyPaths: options.propertyPaths || [],
-      // NOT `|| []`: the backend reads absent/null as "every annotation" and a
-      // present-but-empty list as "none", so collapsing an undefined option
-      // into [] would have exported the whole dataset whenever a caller asked
-      // for a filtered set that was empty.
-      annotationIds: options.annotationIds ?? null,
+      annotationIds: options.annotationIds || [],
       undefinedValue: options.undefinedValue ?? "",
       delimiter: options.delimiter || ",",
       sanitizeColumnNames: options.sanitizeColumnNames ?? false,

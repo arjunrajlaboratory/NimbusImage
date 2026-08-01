@@ -4,7 +4,9 @@ The Analysis palette plots any two computed property values — or a numeric
 property against a categorical annotation field — as a scatter, and lets the
 user lasso points to keep. A lasso becomes a **gate** that is ANDed into
 `filteredAnnotations`, so it narrows the viewer, the Object Browser, the
-Connections list and every export exactly like a property-range filter does.
+Connections list and the filtered CSV export exactly like a property-range
+filter does. The zero-result CSV contract is fixed separately in prerequisite
+PR [#1299](https://github.com/arjunrajlaboratory/NimbusImage/pull/1299).
 
 Multiple plots **chain**: plot *n* shows the population passing the gates of
 plots *0..n-1*, so a sequence of plots reads as a flow-cytometry-style gating
@@ -225,12 +227,16 @@ guarded `fetchPage` and `fetchPageContaining` and missed `fetchMatchingIds`, the
 action behind "Select all" and "Delete Unselected". At the request boundary
 there is nothing left to miss.
 
-The same distinction exists in the **export** path, where both ends collapsed it
-and the failure was worse than a 400. `annotationIds` carries three meanings:
-absent/null = every annotation, a non-empty list = those, present-but-empty =
-none. `export.py` had `if annotationIds:` and `ExportAPI.ts` had `|| []`, so
+The same distinction exists in the **CSV export** path, where the failure was
+worse than a 400. `annotationIds` carries three meanings: omitted = every
+annotation, a non-empty list = those, and present-but-empty = none.
+`export.py` used `if annotationIds:` while `ExportAPI.ts` used `|| []`, so
 exporting a filtered set that resolved to zero downloaded the **whole dataset** —
-silently the opposite of the request. Both ends now distinguish `null` from `[]`.
+silently the opposite of the request. This is a general export-endpoint contract
+bug rather than Analysis feature code. Its fix and regression coverage were
+split into prerequisite PR
+[#1299](https://github.com/arjunrajlaboratory/NimbusImage/pull/1299), keeping
+this PR frontend-only; merge #1299 before #1298.
 
 ## Derived state must not outlive the input that defines it
 
@@ -354,9 +360,6 @@ Change any of this and re-check these. Each item names the test that holds it.
 - No id request is issued either (this is the sibling the first fix missed) — *"returns no ids without issuing a request"*
 - A fully-populated constraint still sends the request — *"still sends the request when every constraint is non-empty"*
 
-**Export contract (`devops/girder/plugins/AnnotationPlugin/.../test/test_export.py`)**
-- `annotationIds` null / non-empty / empty mean all / those / none — *"testIterAnnotationsDistinguishesNoneFromEmpty"*
-
 **Verified live, not covered by a test**
 - The GeoJS viewer draws exactly the gated set (709k-object Xenium dataset: gate of 305 → header read "Showing 305 of 305 in view", layer held 305 features).
 - Plotly's own lasso hit-testing. Tests drive `plotly_selected` with a known
@@ -379,18 +382,17 @@ Change any of this and re-check these. Each item names the test that holds it.
 
 Delivered on branch `analysis-panel-scatter-gating`, PR
 [#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), through
-`05e4d4df` (the feature, three Codex-fix rounds, and this documentation).
+`3e206adb` (the feature, four Codex-fix rounds, and this documentation).
 **Not merged.**
 
-Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and 3,393 frontend
-tests. The previously committed backend work passed 359 tests (`tox` in
-`devops/girder/plugins/AnnotationPlugin`) plus `flake8` on the touched backend
-file.
+Current branch gates: `pnpm tsc`, `pnpm lint:ci`, and 3,393 frontend tests.
+There are no backend changes in #1298. The general CSV endpoint correction and
+its backend tests live in prerequisite #1299.
 
 ### Round 4 review resolution
 
 Codex has reviewed four times. Rounds 1–3 (eleven findings) are committed;
-**round 4 is fixed in the working tree and awaiting commit**:
+**round 4 is fixed and committed at `3e206adb`**:
 
 > **P1 — Invalidate downstream gate IDs after upstream edits.** Editing a plot
 > that precedes other gated plots drops only the edited plot's ids, but
@@ -419,19 +421,19 @@ opening the panel), server-mode list refetch, 3D-mode survival, the over-cap
 notice on the 709k-object Xenium dataset, categorical gating, empty-gate
 match-none, and palette stacking.
 
-Verified by tests and revert-and-watch-it-fail only: the three round-3 fixes.
+Verified by tests and revert-and-watch-it-fail only: the two round-3 fixes that
+remain in this branch. The third finding, the general empty-subset CSV contract,
+is tested separately in prerequisite #1299.
 The round-4 suffix-invalidation fix is also verified live: on HCR squares, a
 three-plot chain used a property axis downstream to keep refresh asynchronous;
 disabling plot 1 preserved its `gate: 26,142` while plots 2 and 3 immediately
 became unresolved (`gate: …`). The temporary plots were removed, and a hard
 reload confirmed the shared configuration was back to its original no-plot
 state.
-The browser session used for live testing was lost near the end (the replacement
-carried a token for a user id absent from the local database, so every dataset
-404s/400s on access) and re-authenticating needs a human. The **export** change
-additionally needs `docker compose build girder && docker compose up -d girder`
-to exercise end to end — the plugin is baked into the image, so a restart will
-not pick it up.
+The browser session was reauthenticated and used for that round-4 check. The
+separate #1299 export fix still needs `docker compose build girder && docker
+compose up -d girder` for an end-to-end browser exercise — the plugin is baked
+into the image, so a restart will not pick it up.
 
 ### Review history, and what it suggests
 

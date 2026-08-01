@@ -383,14 +383,8 @@ class Export(Resource):
         # Property paths are already parsed from JSON body
         parsedPropertyPaths = propertyPaths or []
 
-        # `annotationIds` distinguishes THREE cases, so `if annotationIds:`
-        # is wrong: absent/null means "every annotation", a non-empty list
-        # restricts to it, and a PRESENT BUT EMPTY list means "no annotations".
-        # Collapsing the last into the first exported the whole dataset when a
-        # caller asked to export a filtered set that happened to be empty --
-        # silently the opposite of what was requested.
         parsedAnnotationIds = None
-        if annotationIds is not None:
+        if annotationIds:
             parsedAnnotationIds = [
                 ObjectId(aid) for aid in annotationIds
             ]
@@ -549,16 +543,10 @@ class Export(Resource):
         return columns, includedPaths
 
     def _iterAnnotations(self, datasetId, annotationIds):
-        """Iterate annotations, chunking $in queries to stay under limit.
-
-        `annotationIds` of None means every annotation in the dataset; an empty
-        list means none. See the caller for why the two must stay distinct.
-        """
-        if annotationIds is None:
+        """Iterate annotations, chunking $in queries to stay under limit."""
+        if not annotationIds:
             for ann in self._annotationModel.find({"datasetId": datasetId}):
                 yield ann
-            return
-        if not annotationIds:
             return
 
         IN_CHUNK_SIZE = 500000

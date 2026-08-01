@@ -149,31 +149,6 @@ class TestExport:
         assert ann1_id in result["annotationPropertyValues"]
         assert "test_property" in result["annotationPropertyValues"][ann1_id]
 
-    def testIterAnnotationsDistinguishesNoneFromEmpty(self, admin):
-        """`annotationIds` has three meanings, not two.
-
-        None (absent) means every annotation, a non-empty list restricts to it,
-        and a PRESENT BUT EMPTY list means none. Collapsing the last into the
-        first exported the whole dataset when a caller asked to export a
-        filtered set that happened to be empty -- silently the opposite of the
-        request, and easy to hit now that an analysis gate can resolve to zero.
-        """
-        dataset, annotations, _ = createDatasetWithData(admin)
-        export = Export()
-
-        # None -> everything.
-        assert len(list(export._iterAnnotations(dataset["_id"], None))) == 2
-
-        # A non-empty list -> just those.
-        picked = [annotations[0]["_id"]]
-        assert [
-            a["_id"]
-            for a in export._iterAnnotations(dataset["_id"], picked)
-        ] == picked
-
-        # An empty list -> nothing. This is the case that used to yield all.
-        assert list(export._iterAnnotations(dataset["_id"], [])) == []
-
     def testExportJsonWithConfiguration(self, admin):
         """Test export with a specific configuration."""
         dataset, _, _ = createDatasetWithData(admin)
