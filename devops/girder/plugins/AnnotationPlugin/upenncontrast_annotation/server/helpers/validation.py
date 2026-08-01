@@ -350,6 +350,24 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
     # filters.get(...) below and raise AttributeError -> 500.
     if not isinstance(filters, dict):
         raise RestException("filters must be an object", code=400)
+    analysisGates = filters.get("analysisGates")
+    if analysisGates is not None:
+        # Gate DEFINITIONS as filter terms (SERVER_GATING.md, Phase 3): the
+        # model resolves them to id constraints once per request.
+        analysisGates = requireList(analysisGates, "analysisGates")
+        requireCountWithin(
+            len(analysisGates), MAX_ANALYSIS_PLOTS, "analysisGates"
+        )
+        for gatePlot in analysisGates:
+            if not isinstance(gatePlot, dict):
+                raise RestException(
+                    "each analysis gate must be an object", code=400
+                )
+            _validateAnalysisAxis(gatePlot.get("xAxis"), "gate xAxis")
+            _validateAnalysisAxis(gatePlot.get("yAxis"), "gate yAxis")
+            _validateGateObject(
+                gatePlot.get("gate"), gatePlot["xAxis"], gatePlot["yAxis"]
+            )
     propertyFilters = filters.get("propertyFilters")
     if propertyFilters is not None:
         if not isinstance(propertyFilters, list):

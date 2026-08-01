@@ -423,6 +423,29 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 )
         return docs, valuesById
 
+    def resolveListGateConstraints(self, datasetId, filters):
+        """Convert `filters['analysisGates']` (gate DEFINITIONS, validated at
+        the API boundary) into `idConstraints` entries, in place.
+
+        Called once per request, before the paged/count/ids pipelines, so a
+        page+count pair never resolves the same gate twice. A gate matching
+        nothing becomes an empty $in — zero rows, deliberately not an error
+        (unlike a client-sent empty idConstraints entry, which validation
+        rejects because the client already knows that answer).
+        """
+        gates = filters.pop("analysisGates", None)
+        if not gates:
+            return filters
+        axes = [
+            axis for gate in gates for axis in (gate["xAxis"], gate["yAxis"])
+        ]
+        docs, valuesById = self._analysisData(datasetId, axes)
+        constraints = filters.setdefault("idConstraints", [])
+        for gate in gates:
+            ids = analysis.resolve_gate_ids(docs, valuesById, gate)
+            constraints.append([ObjectId(i) for i in ids])
+        return filters
+
     def resolveAnalysisGates(self, datasetId, plots):
         """Resolve each plot's gate polygon to matching annotation ids.
 

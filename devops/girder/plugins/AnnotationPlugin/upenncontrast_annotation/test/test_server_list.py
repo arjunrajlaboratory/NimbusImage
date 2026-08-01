@@ -1132,3 +1132,126 @@ class TestServerListCountConsistency:
         result = parseStreaming(resp)
         assert result["total"] == len(result["rows"])
         assert result["total"] == 1
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestServerListAnalysisGates:
+    """Gate definitions as first-class list filter terms (SERVER_GATING.md,
+    Phase 3): the client sends polygons, the server resolves them once per
+    request as pure predicates and ANDs them into the query — no gate id
+    lists round-trip on page fetches."""
+
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        anns = []
+        for val in (30, 10, 20):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": val}}, a["_id"], folder["_id"])
+            anns.append(a)
+        noval = makeAnnotation(folder["_id"])
+        return folder, anns, noval
+
+    @staticmethod
+    def gateFilter(low, high):
+        return {
+            "xAxis": {"type": "property", "path": ["p", "Area"]},
+            "yAxis": {"type": "property", "path": ["p", "Area"]},
+            "gate": {
+                "categoryKeyVersion": 1,
+                "vertices": [
+                    {"x": low, "y": low}, {"x": high, "y": low},
+                    {"x": high, "y": high}, {"x": low, "y": high},
+                ],
+                "xCategories": None,
+                "yCategories": None,
+            },
+        }
+
+    def testGateNarrowsListIds(self, admin, server):
+        folder, anns, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [self.gateFilter(5, 25)]},
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        # Area 10 and 20 fall inside [5,25]²; 30 and the no-values
+        # annotation do not.
+        assert result["total"] == 2
+        assert sorted(result["ids"]) == sorted(
+            [str(anns[1]["_id"]), str(anns[2]["_id"])]
+        )
+
+    def testGateComposesWithPropertyFilter(self, admin, server):
+        folder, anns, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {
+                "analysisGates": [self.gateFilter(5, 25)],
+                "propertyFilters": [
+                    {"path": ["p", "Area"], "mode": "range",
+                     "min": 15, "max": 100},
+                ],
+            },
+        })
+        assertStatusOk(resp)
+        assert parseStreaming(resp)["ids"] == [str(anns[2]["_id"])]
+
+    def testZeroMatchGateIsZeroRowsNot400(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [self.gateFilter(1000, 1001)]},
+        })
+        assertStatusOk(resp)
+        assert parseStreaming(resp)["total"] == 0
+
+    def testGateAppliesToPageAndCount(self, admin, server):
+        folder, anns, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [self.gateFilter(5, 25)]},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0,
+            "limit": 10,
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == 2
+        assert [r["values"]["p"]["Area"] for r in result["rows"]] == [10, 20]
+
+    def testTwoGatesAnd(self, admin, server):
+        folder, anns, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [
+                self.gateFilter(5, 25),   # keeps 10, 20
+                self.gateFilter(15, 25),  # keeps 20
+            ]},
+        })
+        assertStatusOk(resp)
+        assert parseStreaming(resp)["ids"] == [str(anns[2]["_id"])]
+
+    def testMalformedGateIs400(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        bad = self.gateFilter(0, 1)
+        bad["xAxis"] = {"type": "nope"}
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [bad]},
+        })
+        assertStatus(resp, 400)
+
+    def testNonListAnalysisGatesIs400(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": {"gate": None}},
+        })
+        assertStatus(resp, 400)

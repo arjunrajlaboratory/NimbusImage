@@ -591,6 +591,7 @@ class Annotation(Resource):
         filters = bodyJson.get("filters") or {}
         validateListInputs(filters)
         dropNoOpPropertyFilters(filters)
+        self._annotationModel.resolveListGateConstraints(datasetId, filters)
         ids = self._annotationModel.listIds(datasetId, filters)
 
         prefix = b'{"total":' + str(len(ids)).encode() + b',"ids":['
@@ -688,6 +689,10 @@ class Annotation(Resource):
 
         validateListInputs(filters, sort, propertyPaths)
         dropNoOpPropertyFilters(filters)
+        # Resolve gate definitions ONCE here, so the page, count, and anchor
+        # position below all reuse the same constraints (SERVER_GATING.md,
+        # Phase 3).
+        self._annotationModel.resolveListGateConstraints(datasetId, filters)
 
         # Build the page first: its pipeline construction validates the sort
         # field (ValueError -> 400) before the expensive count aggregation
