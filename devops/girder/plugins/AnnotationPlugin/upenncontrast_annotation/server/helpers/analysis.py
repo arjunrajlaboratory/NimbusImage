@@ -50,22 +50,44 @@ def jitter_from_id(annotation_id, salt):
     return ((h % 1000) / 1000 - 0.5) * 0.56
 
 
+def _code_unit_matrix(annotation_ids):
+    """(codes, mask) UTF-16 code units per id, right-padded.
+
+    Fast path for the overwhelmingly common case — every id the same length
+    and pure BMP (24-char hex ObjectIds) — decodes the whole batch in one
+    frombuffer instead of a Python loop per id. At 700K ids that is the
+    difference between ~1.9s and ~0.2s, and it runs on every gate refresh.
+    """
+    count = len(annotation_ids)
+    lengths = {len(i) for i in annotation_ids}
+    if len(lengths) == 1:
+        length = lengths.pop()
+        joined = "".join(annotation_ids)
+        units = np.frombuffer(joined.encode("utf-16-le"), dtype=np.uint16)
+        if units.size == count * length:  # no surrogate pairs
+            codes = units.reshape(count, length).astype(np.uint32)
+            return codes, np.ones((count, max(length, 1)), dtype=bool)
+    rows = [_utf16_units(annotation_id) for annotation_id in annotation_ids]
+    width = max((len(r) for r in rows), default=0)
+    codes = np.zeros((count, max(width, 1)), dtype=np.uint32)
+    mask = np.zeros((count, max(width, 1)), dtype=bool)
+    for row, rowUnits in enumerate(rows):
+        if rowUnits:
+            codes[row, : len(rowUnits)] = rowUnits
+            mask[row, : len(rowUnits)] = True
+    return codes, mask
+
+
 def jitter_from_ids(annotation_ids, salt):
     """Vectorized jitter_from_id over many ids (float64 ndarray)."""
     if not annotation_ids:
         return np.empty(0, dtype=np.float64)
-    units = [_utf16_units(annotation_id) for annotation_id in annotation_ids]
-    length = max(len(u) for u in units)
-    codes = np.zeros((len(units), max(length, 1)), dtype=np.uint32)
-    mask = np.zeros((len(units), max(length, 1)), dtype=bool)
-    for row, rowUnits in enumerate(units):
-        if rowUnits:
-            codes[row, : len(rowUnits)] = rowUnits
-            mask[row, : len(rowUnits)] = True
-    h = np.full(len(units), salt & 0xFFFFFFFF, dtype=np.uint32)
+    codes, mask = _code_unit_matrix(annotation_ids)
+    h = np.full(len(annotation_ids), salt & 0xFFFFFFFF, dtype=np.uint32)
+    allSet = mask.all()
     for col in range(codes.shape[1]):
         step = h * np.uint32(31) + codes[:, col]
-        h = np.where(mask[:, col], step, h)
+        h = step if allSet else np.where(mask[:, col], step, h)
     return ((h % 1000) / 1000.0 - 0.5) * 0.56
 
 
@@ -107,6 +129,32 @@ def categorical_raw_identity(doc, key):
     raise ValueError("unknown categorical key: %s" % key)
 
 
+def _category_key_encoder(key):
+    """encode_category_key for one axis, memoized by raw identity.
+
+    A dataset has a handful of distinct categories and hundreds of
+    thousands of annotations, so encoding per annotation ran json.dumps
+    700K times (~1s per axis per refresh) to produce a few distinct
+    strings. The memo collapses that to one call per category.
+    """
+    cache = {}
+
+    def encode(doc):
+        raw = categorical_raw_identity(doc, key)
+        # Lists are unhashable; tags are the only list-valued identity.
+        memoKey = tuple(raw) if isinstance(raw, list) else raw
+        # Guard the (int 0 / bool False / str) namespace collision that a
+        # bare dict key would conflate.
+        memoKey = (type(memoKey).__name__, memoKey)
+        encoded = cache.get(memoKey)
+        if encoded is None:
+            encoded = encode_category_key(raw)
+            cache[memoKey] = encoded
+        return encoded
+
+    return encode
+
+
 def _property_value(values, path):
     """Walk a nested values document; None when the path has no number.
 
@@ -141,12 +189,10 @@ def axis_coordinates(docs, values_by_id, axis, categories, salt):
                 coords[i] = value
         return coords
     index_of = {key: i for i, key in enumerate(categories or [])}
+    encode = _category_key_encoder(axis["key"])
     known = []
     for i, doc in enumerate(docs):
-        key = encode_category_key(
-            categorical_raw_identity(doc, axis["key"])
-        )
-        index = index_of.get(key)
+        index = index_of.get(encode(doc))
         if index is not None:
             coords[i] = index
             known.append(i)
@@ -264,13 +310,27 @@ def histogram2d(docs, values_by_id, spec):
     }
     gate = spec.get("gate")
     if gate is not None:
-        response["gateCount"] = len(
-            resolve_gate_ids(
-                docs,
-                values_by_id,
-                {"xAxis": x_axis, "yAxis": y_axis, "gate": gate},
+        # Reuse the coordinates just computed rather than re-resolving from
+        # the docs: the gate is over the SAME axes, and recomputing meant
+        # every histogram paid the coordinate build twice.
+        if gate["xCategories"] != spec.get("xCategories") or gate[
+            "yCategories"
+        ] != spec.get("yCategories"):
+            # A gate pinned to a different category order has a different
+            # coordinate space; fall back to a full resolve.
+            response["gateCount"] = len(
+                resolve_gate_ids(
+                    docs,
+                    values_by_id,
+                    {"xAxis": x_axis, "yAxis": y_axis, "gate": gate},
+                )
             )
-        )
+        elif len(gate["vertices"]) < 3:
+            response["gateCount"] = 0
+        else:
+            response["gateCount"] = int(
+                points_in_polygon(xs, ys, gate["vertices"]).sum()
+            )
     return response
 
 

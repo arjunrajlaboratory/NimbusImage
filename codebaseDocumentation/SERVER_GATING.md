@@ -251,10 +251,26 @@ Endpoint flow (in `api/annotation.py`, model logic in
    collect ids. Missing value on either axis → excluded (NaN never passes).
 4. Return `{gateIds}`.
 
-Cost envelope at 700K annotations: two projected scans (~1–3 s worst case,
-index-hinted) + vectorized polygon tests (tens of ms per gate). Fine for a
-gate-edit-triggered call; **not** fine per list-page-fetch — that tension is
-resolved in Phase 3's notes.
+**Measured cost** on the 708,983-object Xenium dataset (local Docker, warm):
+gate resolution **~4.5 s**, histogram **~7.3 s**, a gate-carrying list page
+**~4.8 s**. The polygon test itself is ~0 — the time is the projected Mongo
+scan plus building coordinates for 700K rows.
+
+Two optimizations were required to get there from a first-cut ~16.7 s / 33.4 s
+(both preserve results exactly; the parity fixture proves it):
+
+- **Memoize the category-key encoding per axis.** A dataset has a handful of
+  distinct categories and hundreds of thousands of annotations, so encoding
+  per annotation ran `json.dumps` 700K times per axis (~1 s each) to produce
+  a few distinct strings.
+- **Batch-decode id code units.** When every id is the same length and pure
+  BMP — 24-char hex ObjectIds, i.e. always — the whole batch decodes in one
+  `frombuffer` instead of a Python loop per id (1.9 s → 0.05 s).
+- The histogram additionally reuses the coordinates it just built for the
+  badge count instead of re-resolving the gate from the docs.
+
+That is fine for a gate-edit-triggered call and acceptable per list-page
+fetch; see Phase 3's cost note for the escape hatches if it ever isn't.
 
 ### Client integration (Phase 1)
 
@@ -437,7 +453,8 @@ analysisGates?: {
 ### Cost note (decided: no server cache in v1)
 
 Sending definitions makes every list page fetch re-resolve the gates
-server-side (~1–3 s at 700K). That is measurable and acceptable for v1;
+server-side (measured ~4.8 s at 700K). That is measurable and acceptable for
+v1;
 a server-side resolution cache would need invalidation keyed to annotation
 and PV mutations, which is precisely the class of complexity this feature
 just spent twelve review rounds paying down. If profiling shows the
