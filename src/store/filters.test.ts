@@ -166,6 +166,7 @@ describe("analysis plot gates", () => {
   it("passes everything through while no gate is drawn", () => {
     filters.addAnalysisPlot("p1");
     expect(filteredIds()).toEqual(["a", "b", "c"]);
+    expect(filters.activeAnalysisGateCount).toBe(0);
     expect(filters.activeFilterCount).toBe(0);
   });
 
@@ -175,6 +176,7 @@ describe("analysis plot gates", () => {
     filters.addAnalysisPlot("p1");
     filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
     expect(filteredIds()).toEqual(["a", "b", "c"]);
+    expect(filters.activeAnalysisGateCount).toBe(0);
     expect(filters.activeFilterCount).toBe(0);
   });
 
@@ -186,11 +188,16 @@ describe("analysis plot gates", () => {
 
     filters.setAnalysisGateIds({ p1: ["a", "b"] });
     expect(filteredIds()).toEqual(["a", "b"]);
-    expect(filters.activeFilterCount).toBe(1);
+    // Gates count on the ANALYSIS badge, not the Filters badge: each badge
+    // counts what its own panel shows, so a lone gate no longer makes the
+    // Filters button claim a filter its panel cannot display.
+    expect(filters.activeAnalysisGateCount).toBe(1);
+    expect(filters.activeFilterCount).toBe(0);
 
     filters.setAnalysisGateIds({ p1: ["a", "b"], p2: ["b", "c"] });
     expect(filteredIds()).toEqual(["b"]);
-    expect(filters.activeFilterCount).toBe(2);
+    expect(filters.activeAnalysisGateCount).toBe(2);
+    expect(filters.activeFilterCount).toBe(0);
 
     // Disabling drops the constraint without losing the drawn polygon.
     filters.toggleAnalysisPlotGateEnabled("p2");

@@ -398,7 +398,13 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Loading is tracked explicitly, so an empty result is not mistaken for pending — *"tracks loading explicitly so an empty result is not mistaken for pending"*, *"clears the loading flag when it bails out early"*
 
 **Gate composition (`src/store/filters.test.ts`)**
-- No drawn gate passes everything through and adds 0 to `activeFilterCount` — *"passes everything through while no gate is drawn"*
+- No drawn gate passes everything through and adds 0 to
+  `activeAnalysisGateCount` — *"passes everything through while no gate is
+  drawn"*
+- Gates count on the **Analysis** badge, never the Filters badge, so neither
+  button claims a filter its own panel cannot show — *"stays 0 for a
+  resolved, enabled gate"*, *"counts only the panel's own filters alongside a
+  gate"*, *"keeps the two badges independent"*
 - A drawn but unresolved gate constrains nothing, so drawing never flashes empty — *"does not constrain a drawn gate until its ids have been resolved"*
 - Multiple enabled gates AND (not union); disabling one drops its constraint but keeps its polygon; clearing restores — *"ANDs the enabled resolved gates into filteredAnnotations"*
 - An empty resolved gate filters everything out, and is not treated as "no gate" — *"treats an empty resolved gate as filtering everything out"*

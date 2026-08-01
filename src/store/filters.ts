@@ -1073,13 +1073,19 @@ export class Filters extends VuexModule {
     );
   }
 
-  // How many filters are currently narrowing the set of visible objects.
-  // Drives the count badge on the app-bar Filters button, so active filters
-  // stay discoverable while the panel is closed. Each enabled filter row
-  // counts once; the boolean toggles count once when set away from their
-  // permissive default (showAnnotationsFromHiddenLayers defaults to true, so
-  // it only counts when off). `emptyROIFilter` is a region still being drawn
-  // and filters nothing yet, so it is excluded.
+  // How many rows in the FILTERS panel are narrowing the visible set. Drives
+  // the count badge on the app-bar Filters button, so active filters stay
+  // discoverable while the panel is closed. Each enabled filter row counts
+  // once; the boolean toggles count once when set away from their permissive
+  // default (showAnnotationsFromHiddenLayers defaults to true, so it only
+  // counts when off). `emptyROIFilter` is a region still being drawn and
+  // filters nothing yet, so it is excluded.
+  //
+  // Analysis gates narrow the same set but are deliberately NOT counted here:
+  // each badge counts what its own panel shows, and gates have their own
+  // badge (activeAnalysisGateCount). Counting them here meant a lone gate
+  // rendered "Filters: 1" on a button whose panel then displayed nothing —
+  // the badge pointed at a filter the user could not find or clear.
   get activeFilterCount() {
     const countEnabled = (filterList: IAnnotationFilter[]) =>
       filterList.filter((filter: IAnnotationFilter) => filter.enabled).length;
@@ -1090,8 +1096,7 @@ export class Filters extends VuexModule {
       (main.showAnnotationsFromHiddenLayers ? 0 : 1) +
       countEnabled(this.propertyFilters) +
       countEnabled(this.roiFilters) +
-      countEnabled(this.annotationIdFilters) +
-      this.activeAnalysisGateCount
+      countEnabled(this.annotationIdFilters)
     );
   }
 

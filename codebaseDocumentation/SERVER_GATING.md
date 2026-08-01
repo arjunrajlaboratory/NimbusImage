@@ -314,9 +314,12 @@ the cap **nothing changes**.
   during bulk edits); below-cap behavior is untouched. The sequence guard
   makes overlapping requests safe regardless.
 - **The panel above the cap still shows the over-cap banner in Phase 1** —
-  amended to say gates still apply and will become drawable in Phase 2. The
-  Filters-button badge (`activeAnalysisGateCount`) already counts gates, not
-  ids, and works as-is.
+  amended to say gates still apply and will become drawable in Phase 2.
+  Gates are surfaced by their own badge on the **Analysis** button
+  (`activeAnalysisGateCount`), which counts gates rather than ids and so
+  works unchanged above the cap. Note that badge is on Analysis, not
+  Filters: `activeFilterCount` deliberately excludes gates, because each
+  badge counts only what its own panel can display.
 
 ### What Phase 1 explicitly does not do
 

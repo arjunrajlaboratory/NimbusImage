@@ -156,3 +156,63 @@ describe("filters.activeFilterCount", () => {
     expect(filters.activeFilterCount).toBe(0);
   });
 });
+
+// Each badge counts what its own panel shows. Analysis gates used to add to
+// this count, which meant a lone gate rendered "Filters: 1" on a button whose
+// panel then showed nothing — the count pointed at a filter the user could not
+// find. Gates are surfaced by the Analysis badge (activeAnalysisGateCount).
+describe("filters.activeFilterCount excludes analysis gates", () => {
+  beforeEach(() => {
+    filters.resetFilterState();
+    filters.setOnlyCurrentFrame(false);
+    mainMock.showAnnotationsFromHiddenLayers = true;
+  });
+
+  it("stays 0 for a resolved, enabled gate", () => {
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: {
+        categoryKeyVersion: 1,
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+        ],
+        xCategories: null,
+        yCategories: null,
+      },
+    });
+    filters.setAnalysisGateIds({ p1: ["a"] });
+    expect(filters.activeAnalysisGateCount).toBe(1);
+    expect(filters.activeFilterCount).toBe(0);
+  });
+
+  it("counts only the panel's own filters alongside a gate", () => {
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: {
+        categoryKeyVersion: 1,
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+        ],
+        xCategories: null,
+        yCategories: null,
+      },
+    });
+    filters.setAnalysisGateIds({ p1: ["a"] });
+    filters.setTagFilter({
+      id: "tagFilter",
+      exclusive: false,
+      enabled: true,
+      tags: ["nucleus"],
+    });
+    addAreaFilter(true);
+    // Two rows in the Filters panel, one gate in the Analysis panel.
+    expect(filters.activeFilterCount).toBe(2);
+    expect(filters.activeAnalysisGateCount).toBe(1);
+  });
+});
