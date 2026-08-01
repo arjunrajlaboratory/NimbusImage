@@ -209,6 +209,51 @@ shipped in exactly that state: the viewer and the count badge updated, the table
 did not, and the selection-clearing watcher *did* fire — so it read as a
 selection bug rather than a stale list.
 
+## A gate that matches nothing is not a gate that is absent
+
+A gate resolved to zero annotations — an empty lasso — is a real constraint
+meaning "nothing", and reaches the list API as an empty inner `idConstraints`
+entry. The API deliberately rejects `[[]]` with a 400
+(`server/helpers/validation.py` wants match-none explicit rather than an
+accidental `$in: []`), so sending it failed the request and left the previous
+rows on screen.
+
+The client knows the answer without asking, so it answers: `filtersMatchNothing`
+in `@/utils/annotationListFilters`, applied **inside `AnnotationsAPI`** rather
+than in each store action. That placement is the point — the first attempt
+guarded `fetchPage` and `fetchPageContaining` and missed `fetchMatchingIds`, the
+action behind "Select all" and "Delete Unselected". At the request boundary
+there is nothing left to miss.
+
+The same distinction exists in the **export** path, where both ends collapsed it
+and the failure was worse than a 400. `annotationIds` carries three meanings:
+absent/null = every annotation, a non-empty list = those, present-but-empty =
+none. `export.py` had `if annotationIds:` and `ExportAPI.ts` had `|| []`, so
+exporting a filtered set that resolved to zero downloaded the **whole dataset** —
+silently the opposite of the request. Both ends now distinguish `null` from `[]`.
+
+## Derived state must not outlive the input that defines it
+
+`analysisGateIds` is derived from a plot's polygon and from the population
+reaching that plot. Whenever either changes, the ids must be dropped, not
+merely scheduled for recomputation:
+
+- **Its own gate or axes changed.** `setAnalysisPlotGate` drops on *every*
+  change, not just on clear. Keeping them across a re-lasso meant the plot
+  highlighted the new selection while the viewer and list filtered by the old
+  one — and because `refreshAnalysis` deliberately leaves ids untouched when its
+  fetch fails, a failure right after re-lassoing stranded the stale constraint
+  permanently.
+- **An UPSTREAM plot changed.** Every later plot's ids were resolved against the
+  population passing its predecessors, so editing plot 1 invalidates plots
+  2..n — including on an enable-state toggle, which changes what reaches
+  downstream even though plot 1's own ids stay valid. See "Open review threads"
+  below; this one is not fixed yet.
+
+Unresolved contributes no constraint, so the interim state shows **more** than
+the final answer rather than something wrong. That is the safe direction and
+the reason dropping is preferred to leaving stale ids in place.
+
 ## The panel is always mounted
 
 `FloatingPalette` keeps its content mounted and hides it with `display: none`.
@@ -246,6 +291,7 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Above the cap: no fetch and no gate — *"refuses to fetch or gate above the point cap"*
 - The polygon resolves to ids and the values are published for the panel to reuse — *"resolves the polygon into ids and publishes the values it fetched"*
 - Derived state is cleared when the last gate goes — *"clears derived state when the last gate goes away"*
+- Re-lassoing drops the previous gate's ids, so a failed follow-up cannot strand them — *"drops the previous gate's ids when a new lasso replaces it"*
 - The gate signature samples ids rather than counting them, so a same-size gate edit registers — *"samples gate ids in the signature, not just their count"*
 - Loading is tracked explicitly, so an empty result is not mistaken for pending — *"tracks loading explicitly so an empty result is not mistaken for pending"*, *"clears the loading flag when it bails out early"*
 
@@ -300,6 +346,15 @@ Change any of this and re-check these. Each item names the test that holds it.
 
 **Server-mode list (`src/store/__tests__/annotationListServer.test.ts`)**
 - One `idConstraints` entry per gate, never a union — *"adds one AND constraint per analysis gate, not a union"*
+- An empty gate is recognised as match-none — *"is true when a gate resolved to no annotations"*, *"is false again once the gate matches something"*
+
+**Match-none at the request boundary (`src/store/__tests__/annotationsAPI.test.ts`)**
+- No page request is issued for an impossible query — *"returns an empty page without issuing a request"*
+- No id request is issued either (this is the sibling the first fix missed) — *"returns no ids without issuing a request"*
+- A fully-populated constraint still sends the request — *"still sends the request when every constraint is non-empty"*
+
+**Export contract (`devops/girder/plugins/AnnotationPlugin/.../test/test_export.py`)**
+- `annotationIds` null / non-empty / empty mean all / those / none — *"testIterAnnotationsDistinguishesNoneFromEmpty"*
 
 **Verified live, not covered by a test**
 - The GeoJS viewer draws exactly the gated set (709k-object Xenium dataset: gate of 305 → header read "Showing 305 of 305 in view", layer held 305 features).
@@ -318,6 +373,66 @@ Change any of this and re-check these. Each item names the test that holds it.
   dropdowns then look "open but unclickable" app-wide, including pre-existing
   ones. Check `document.visibilityState` and count rAF frames before
   investigating a layering bug. See the `in-browser-testing` skill, trap #2.
+
+## Status, and what a fresh reader should know
+
+Delivered on branch `analysis-panel-scatter-gating`, PR
+[#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), as three
+commits: the feature, then two rounds of Codex fixes. **Not merged.**
+
+Gates at the time of writing: `pnpm tsc`, `pnpm lint:ci`, 3,389 frontend tests
+and 359 backend tests (`tox` in `devops/girder/plugins/AnnotationPlugin`), plus
+`flake8` on the touched backend file.
+
+### Open review threads
+
+Codex has reviewed four times. Rounds 1–3 (eleven findings) are fixed; **round 4
+is outstanding**:
+
+> **P1 — Invalidate downstream gate IDs after upstream edits.** Editing a plot
+> that precedes other gated plots drops only the edited plot's ids, but
+> `resolveAnalysisGateIds` derived every later gate from the population passing
+> its predecessors. Downstream ids therefore keep the old upstream constraint,
+> and if the property fetch fails they filter the viewer, list and exports by
+> the stale chain permanently. Must invalidate the edited plot **and every
+> following plot**, including on upstream axis changes, removal, and
+> enable-state toggles.
+
+This is real, and it contradicts a claim made in the round-3 reply on the PR
+("`toggleAnalysisPlotGateEnabled` deliberately keeps them — the ids stay
+valid"). That is true of the toggled plot itself and false of everything
+downstream of it. The fix belongs in `filters.ts`: a helper that drops the ids
+for a plot and all plots after it, called from `setAnalysisPlotGate`,
+`setAnalysisPlotAxes`, `removeAnalysisPlot` and
+`toggleAnalysisPlotGateEnabled`. A test should chain three plots, edit the
+first, and assert the third's ids are gone.
+
+### What is verified live vs by test only
+
+Verified in a running browser: the full gating flow including a real lasso drag
+through Plotly, the persistence round trip (reload → gate re-resolves without
+opening the panel), server-mode list refetch, 3D-mode survival, the over-cap
+notice on the 709k-object Xenium dataset, categorical gating, empty-gate
+match-none, and palette stacking.
+
+Verified by tests and revert-and-watch-it-fail only: the three round-3 fixes.
+The browser session used for live testing was lost near the end (the replacement
+carried a token for a user id absent from the local database, so every dataset
+404s/400s on access) and re-authenticating needs a human. The **export** change
+additionally needs `docker compose build girder && docker compose up -d girder`
+to exercise end to end — the plugin is baked into the image, so a restart will
+not pick it up.
+
+### Review history, and what it suggests
+
+Eleven of the twelve findings across four rounds were real. Notably, most of the
+later ones were consequences of *earlier fixes* rather than of the original
+feature — the gate-replacement bug only became permanent because of the
+failed-fetch fix; the `fetchMatchingIds` miss came from guarding call sites
+instead of the request boundary; the palette overlap came from fixing eviction
+without fixing layout. The feature core has been stable since round 1. If a
+fifth round comes back clean, this is done; if it finds more of the same, the
+branch may be better squashed and re-read than patched again.
 
 ## Possible follow-ups
 
