@@ -270,11 +270,14 @@ describe("analysis plot gates", () => {
   it("signs the id-membership filters without serializing their ids", () => {
     // A select-all puts tens of thousands of ids in the selection filter, and
     // the watchers keyed off this re-evaluate on every frame scrub.
-    filters.newAnnotationIdFilter(["a", "b", "c"]);
+    filters.newAnnotationIdFilter(["aaa", "bbb", "ccc"]);
     const sig = filters.membershipFilterSignature;
-    expect(sig).not.toContain('"a"');
-    expect(sig).toContain("3:a,b,c");
-    filters.newAnnotationIdFilter(["x", "y", "z"]);
+    expect(sig).not.toContain("aaa");
+    expect(sig).not.toContain("ccc");
+    // ...and it still changes when the membership does, including a same-length
+    // change at a position a sampled signature would have missed.
+    filters.removeAnnotationIdFilter("Annotation List Filter 0");
+    filters.newAnnotationIdFilter(["aaa", "ZZZ", "ccc"]);
     expect(filters.membershipFilterSignature).not.toBe(sig);
   });
 });

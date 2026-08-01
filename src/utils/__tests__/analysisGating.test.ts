@@ -368,7 +368,8 @@ describe("populationSignature", () => {
     expect(populationSignature(pop(["a", "b"]))).toBe(
       populationSignature(pop(["a", "b"])),
     );
-    expect(populationSignature([])).toBe("0");
+    expect(populationSignature([])).toBe(populationSignature([]));
+    expect(populationSignature([])).not.toBe(populationSignature(pop(["a"])));
   });
 });
 

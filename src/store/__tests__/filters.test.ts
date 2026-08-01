@@ -260,16 +260,80 @@ describe("filters.refreshAnalysis", () => {
     expect(paths).toEqual([["prop", "Area"]]);
   });
 
-  it("does not fetch when both axes are categorical", async () => {
+  it("resolves a categorical-only gate without fetching anything", async () => {
+    // "Nothing to fetch" is not "nothing to do". Categorical axes read
+    // annotation fields, so a Tags-vs-Shape gate needs no property values — and
+    // bailing out on the empty path list left it drawn, persisted and totally
+    // inert: it plotted and lassoed normally and filtered nothing.
+    annotationMock.annotationsForIteration = [
+      { ...makeStub("a"), tags: ["keep"], shape: "point" },
+      { ...makeStub("b"), tags: ["drop"], shape: "point" },
+    ];
     await filters.addAnalysisPlot("p1");
     await filters.setAnalysisPlotAxes({
       id: "p1",
       xAxis: { type: "categorical", key: "tags" },
       yAxis: { type: "categorical", key: "shape" },
     });
-    await filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
+    // Category order pinned so the polygon's x range means "the 'drop' column".
+    await filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: {
+        vertices: [
+          { x: -0.5, y: -0.5 },
+          { x: 0.5, y: -0.5 },
+          { x: 0.5, y: 0.5 },
+          { x: -0.5, y: 0.5 },
+        ],
+        xCategories: ["drop", "keep"],
+        yCategories: ["point"],
+      },
+    });
     await filters.refreshAnalysis();
+
     expect(getValues).not.toHaveBeenCalled();
+    expect(filters.analysisGateIds.p1).toEqual(["b"]);
+    expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["b"]);
+  });
+
+  it("leaves gate ids untouched when the value fetch fails", async () => {
+    // Resolving against an empty map marks every property gate
+    // resolved-with-zero-matches, hiding the entire dataset after a blip.
+    getValues.mockResolvedValue([
+      { annotationId: "a", values: { prop: { Area: 5 } } },
+    ]);
+    await addPlot("p1", GATE);
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds.p1).toEqual(["a"]);
+
+    getValues.mockRejectedValueOnce(new Error("network"));
+    await filters.setAnalysisPlotGate({ id: "p1", gate: { ...GATE } });
+    await filters.refreshAnalysis();
+
+    expect(filters.analysisGateIds.p1).toEqual(["a"]); // not []
+    expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["a"]);
+    expect(filters.analysisLoading).toBe(false);
+  });
+
+  it("invalidates an in-flight request before bailing out", async () => {
+    // The token used to advance only on the non-bailout path, so a bail-out
+    // could clear the gate and then let the older request commit ids resolved
+    // against inputs that no longer apply, reactivating a filter that is off.
+    const gateValues = deferred<any[]>();
+    getValues.mockReturnValueOnce(gateValues.promise as any);
+    await addPlot("p1", GATE);
+    const inFlight = filters.refreshAnalysis();
+
+    // Clear the gate while that request is pending: nothing left to resolve.
+    await filters.setAnalysisPlotGate({ id: "p1", gate: null });
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({});
+
+    // The stale request resolves last and must NOT reinstate a gate.
+    gateValues.resolve([{ annotationId: "a", values: { prop: { Area: 5 } } }]);
+    await inFlight;
+    expect(filters.analysisGateIds).toEqual({});
+    expect(filters.filteredAnnotations).toHaveLength(2);
   });
 
   it("refuses to fetch or gate above the point cap", async () => {

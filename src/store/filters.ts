@@ -545,16 +545,24 @@ export class Filters extends VuexModule {
    */
   @Action
   async refreshAnalysis() {
+    // Invalidate any in-flight refresh FIRST, before any early return.
+    // Advancing the token only on the non-bailout path left a running request
+    // "current", so a bail-out could clear the gate and then have the older
+    // request commit ids resolved against a population that no longer applies —
+    // e.g. one captured below the cap, committed after the cap was crossed,
+    // reactivating a gate that should be off. (properties.ts's
+    // ensureVisiblePropertyValues claims its token up front for the same
+    // reason.)
+    const token = analysisGateGuard.next();
     const datasetId = main.dataset?.id;
-    const paths = analysisPropertyPaths(this.analysisPlots);
-    const hasGate = this.analysisPlots.some(
+    const plots = this.analysisPlots;
+    const hasGate = plots.some(
       (plot) => plot.gate !== null && plot.xAxis && plot.yAxis,
     );
     const base = this.annotationsPassingNonGateFilters;
     if (
       !datasetId ||
       !(hasGate || this.analysisPanelOpen) ||
-      paths.length === 0 ||
       // Matches the panel's refusal to plot: a gate is only meaningful against
       // the population it was drawn on, and above the cap we do not draw one.
       base.length > MAX_ANALYSIS_PLOT_POINTS
@@ -562,16 +570,33 @@ export class Filters extends VuexModule {
       this.clearAnalysisDerivedState();
       return;
     }
-    const token = analysisGateGuard.next();
-    this.setAnalysisLoading(true);
-    const values = await fetchAnalysisValues(datasetId, paths, base);
-    if (!analysisGateGuard.isCurrent(token)) {
-      // A newer refresh owns the loading flag now; leave it alone.
-      return;
+
+    // "Nothing to FETCH" is not "nothing to DO". A gate on two categorical axes
+    // needs no property values at all — categorical axes read annotation fields
+    // — so bailing out here left such a gate drawn, persisted, and completely
+    // inert: it plotted and lassoed normally and then filtered nothing.
+    const paths = analysisPropertyPaths(plots);
+    let values: IAnnotationPropertyValues = {};
+    if (paths.length > 0) {
+      this.setAnalysisLoading(true);
+      const fetched = await fetchAnalysisValues(datasetId, paths, base);
+      if (!analysisGateGuard.isCurrent(token)) {
+        // A newer refresh owns the loading flag now; leave it alone.
+        return;
+      }
+      if (fetched === null) {
+        // The fetch FAILED. Leave the existing gate ids untouched rather than
+        // resolving every property gate against an empty value map: that marks
+        // each one resolved-with-zero-matches and hides every annotation in the
+        // dataset after a transient network error.
+        this.setAnalysisLoading(false);
+        return;
+      }
+      values = fetched;
     }
     this.setAnalysisValues(values);
     this.setAnalysisGateIds(
-      resolveAnalysisGateIds(this.analysisPlots, base, values, (channel) =>
+      resolveAnalysisGateIds(plots, base, values, (channel) =>
         channelDisplayName(channel),
       ),
     );
@@ -630,6 +655,10 @@ export class Filters extends VuexModule {
   // set) outside lazy mode or when no property filter is active.
   @Action
   async refreshPropertyFilterPassingIds() {
+    // Claimed before the guards below, not after: a bail-out that left an
+    // in-flight request current would let it commit ids for a filter the user
+    // has since turned off. Same shape as refreshAnalysis above.
+    const token = propertyFilterRequestGuard.next();
     const datasetId = main.dataset?.id;
     if (
       !datasetId ||
@@ -639,7 +668,6 @@ export class Filters extends VuexModule {
       this.setPropertyFilterPassingIds(null);
       return;
     }
-    const token = propertyFilterRequestGuard.next();
     const listFilters: IAnnotationListFilters = {
       propertyFilters: buildPropertyListFilters(this.propertyFilters),
     };
@@ -895,6 +923,7 @@ function channelDisplayName(channel: number): string {
 
 /**
  * Fetch the property values the analysis plots' axes need, for one population.
+ * Returns null when the request fails — see the catch block.
  *
  * Projected to just those paths, which is what makes this affordable: the
  * shared `properties.propertyValues` map is projected to the Annotation
@@ -905,7 +934,7 @@ async function fetchAnalysisValues(
   datasetId: string,
   paths: string[][],
   population: TAnnotationOrStub[],
-): Promise<IAnnotationPropertyValues> {
+): Promise<IAnnotationPropertyValues | null> {
   if (paths.length === 0 || population.length === 0) {
     return {};
   }
@@ -921,8 +950,11 @@ async function fetchAnalysisValues(
     }
     return values;
   } catch (error) {
+    // null, NOT {}: an empty map is a legitimate response (a property computed
+    // for no annotation yet), and conflating the two resolved every gate to
+    // zero matches on a transient error. The caller leaves the gate alone.
     logError(`Analysis gate value fetch failed: ${(error as Error).message}`);
-    return {};
+    return null;
   }
 }
 

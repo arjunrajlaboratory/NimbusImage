@@ -209,6 +209,22 @@ describe("AnalysisScatterPlot", () => {
     expect(wrapper.find(".ap-hint").exists()).toBe(true);
   });
 
+  it("renders when axes are chosen after mount (series null -> set)", async () => {
+    // The plot div is behind v-if="series", so a pre-flush watcher fires while
+    // the ref is still undefined and renderPlot returns early. Property axes
+    // masked this via a second update when their values arrived; a
+    // categorical-only plot computes its series once and stayed blank forever.
+    wrapper = mountPlot({ series: null });
+    await flushPromises();
+    expect(mocks.react).not.toHaveBeenCalled();
+
+    await wrapper.setProps({ series: SERIES });
+    await flushPromises();
+    expect(mocks.react).toHaveBeenCalledTimes(1);
+    const [, traces] = mocks.react.mock.calls[0] as unknown as any[];
+    expect(traces[0].x).toEqual(SERIES.x);
+  });
+
   it("purges the plot on unmount", async () => {
     wrapper = mountPlot();
     await flushPromises();

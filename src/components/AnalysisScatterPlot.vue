@@ -262,6 +262,14 @@ watch(
   () => {
     renderPlot();
   },
+  // flush: "post" so the callback runs AFTER the DOM updates. The plot div is
+  // behind `v-if="series"`, so on the transition null -> series a default
+  // pre-flush watcher fires while `plotEl` is still undefined, renderPlot
+  // returns early, and nothing ever renders. Property axes masked this — their
+  // values arrive in a second update that re-fires the watcher once the div
+  // exists — but a categorical-only plot computes its series once and never
+  // changes, so it stayed permanently blank.
+  { flush: "post" },
 );
 
 onMounted(() => {

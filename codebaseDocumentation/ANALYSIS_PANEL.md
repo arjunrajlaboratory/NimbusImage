@@ -144,10 +144,14 @@ reactive touch (`currentFilters` reads `xy/z/time` unconditionally to assemble
 on every Z-scrub.
 
 Built on it: `currentFiltersSignature`, `membershipFilterSignature`,
-`analysisGateSignature`, `populationSignature` — **all four**, including the
-gate one, which shipped counting ids instead of sampling them and so missed a
-lasso moved to a different region of the same size. Length **alone is not
-enough**:
+`analysisGateSignature`, `populationSignature` — **all four**.
+
+The identity must be **exact, not sampled**. A first/middle/last sample was
+tried and is wrong: two same-length sets differing only at an unsampled position
+collide, and the watchers then skip the server-list refetch and — worse — skip
+clearing the annotation selection, leaving hidden rows for a later bulk action.
+`signatures.ts` hashes every id instead (cyrb53, no allocation, memoized by
+array identity for the id constraints, which are replaced wholesale). Length
 scrubbing a frame under "current frame only" routinely swaps a set for a
 different one of the same size, so each signature samples fixed positions too. A
 length-only population key once left fetched values keyed to the previous
@@ -158,6 +162,30 @@ error.
 first fix here corrected one instance and left its sibling watcher in
 `AnnotationList.vue` untouched, which is how the server-mode list ended up
 never refetching on a gate change.
+
+## "Empty" is not a signal
+
+Two bugs on this feature came from reading an empty collection as "nothing to
+do":
+
+- `refreshAnalysis` bailed when `analysisPropertyPaths()` was empty. But a gate
+  on **two categorical axes** needs no property values at all, so such a gate
+  drew, lassoed and persisted normally and then filtered nothing. Skip the
+  *fetch*, never the *resolve*.
+- `fetchAnalysisValues` returned `{}` on failure, which is indistinguishable
+  from a successful response for a property nothing has been computed for. Every
+  property gate then resolved to zero matches and the whole dataset vanished
+  after a transient network error. It returns `null` on failure now, and the
+  caller leaves the existing gate ids alone.
+
+## Invalidate stale requests before every early return
+
+`refreshAnalysis` and `refreshPropertyFilterPassingIds` both claim their
+sequence-guard token as the **first statement**, before any bail-out. Advancing
+it only on the path that actually fetches leaves a running request "current", so
+a bail-out can clear the derived state and then have the older request commit
+results for inputs that no longer apply — reinstating a filter that is off.
+`properties.ts`'s `ensureVisiblePropertyValues` documents the same rule.
 
 ## The refresh trigger must survive a view-mode switch
 
@@ -212,7 +240,9 @@ Change any of this and re-check these. Each item names the test that holds it.
 - A gated plot resolves with the panel closed, because a gate is a filter — *"fetches for a gated plot even with the panel closed"*
 - Opening the panel fetches for ungated plots so they can be drawn — *"fetches for an ungated plot once the panel opens"*
 - Only the axes' paths are requested, projected — *"requests only the axes' property paths, projected"*
-- Categorical-only axes need no fetch — *"does not fetch when both axes are categorical"*
+- A categorical-only gate resolves with no fetch at all — *"resolves a categorical-only gate without fetching anything"*
+- A failed value fetch leaves gate ids alone rather than resolving every gate to zero matches — *"leaves gate ids untouched when the value fetch fails"*
+- A bail-out invalidates any in-flight request, so a stale one cannot reinstate a gate — *"invalidates an in-flight request before bailing out"*
 - Above the cap: no fetch and no gate — *"refuses to fetch or gate above the point cap"*
 - The polygon resolves to ids and the values are published for the panel to reuse — *"resolves the polygon into ids and publishes the values it fetched"*
 - Derived state is cleared when the last gate goes — *"clears derived state when the last gate goes away"*
