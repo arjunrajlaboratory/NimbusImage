@@ -467,6 +467,26 @@ describe("AnnotationCSVDialog", () => {
       expect(csv).not.toContain("s2");
     });
 
+    it("stale selected ids never widen the export to the whole dataset", async () => {
+      // A deleted annotation can linger in selectedAnnotationIds (e.g. a
+      // context-menu delete, or an undo). If stale ids counted toward the
+      // "is this the whole dataset" comparison, selecting 1 live + 1 stale
+      // id in a 2-annotation dataset would omit annotationIds and export
+      // everything.
+      setStoreStubs(sampleStubs.slice(0, 2)); // s1, s2 live
+      (annotationStore as any).selectedAnnotationIds = new Set([
+        "s1",
+        "deleted-id",
+      ]);
+      const wrapper = mountComponent({ annotations: sampleStubs.slice(0, 2) });
+      const vm = wrapper.vm as any;
+      vm.annotationScope = "selected";
+      vm.propertyExportMode = "all";
+      await vm.download();
+      const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+      expect(arg.annotationIds).toEqual(["s1"]);
+    });
+
     it("counts come from the stub-aware annotationCount", () => {
       const wrapper = mountComponent({ annotations: sampleStubs.slice(0, 1) });
       const vm = wrapper.vm as any;

@@ -2,6 +2,7 @@
 
 Codex rounds on `codex/fix-empty-csv-export`, 2026-08-01.
 Round 1: head d634f5db (F1–F3). Round 2: head c1b4a05e (F4).
+Round 3: head 4857c3eb (checklist below). Round 4: head 821b1e37 (F5).
 
 ## F1 (P1) — Stub-only mode loses the selected subset
 
@@ -89,6 +90,27 @@ per id via the new O(1) store getter
 stub iteration array" (a throwing `annotationsForIteration` accessor), plus
 "selected-scope preview resolves stubs by id lookup".
 
+## F5 (P2, round 4) — Stale selection ids could widen a subset to "all"
+
+`AnnotationCSVDialog.vue` + `src/store/annotation.ts`
+
+`deleteAnnotations` removed the annotation/stub but never pruned
+`selectedAnnotationIds` (only the `deleteSelectedAnnotations` wrapper cleared
+it), so a context-menu delete left the deleted id selected. With F4's
+count-based subset check, 1 live + 1 stale selected id in a 2-annotation
+dataset compared equal to `annotationCount` → `annotationIds` omitted →
+whole dataset exported.
+
+Fix, both layers: `deleteAnnotations` now prunes deleted ids from the
+selection and clears a dangling `hoveredAnnotationId` (the same
+delete-leaves-paired-state-dangling shape the connection list was flagged
+for), and the dialog's selected scope filters ids through
+`getAnnotationOrStubFromId` before the count comparison — covering stale
+sources deletion pruning can't reach (e.g. undo).
+
+**Status:** fixed (this branch) — test: `AnnotationCSVDialog.test.ts`
+"stale selected ids never widen the export to the whole dataset".
+
 ## Regression checklist
 
 One line per invariant, each naming the test that holds it. When changing the
@@ -101,42 +123,47 @@ getters: re-check these. Frontend tests live in
 ### Subset correctness (which rows end up in the file)
 
 - [ ] "Selected" scope exports exactly the selected ids in stub-only mode —
-  CSV: *selected scope sends the selected ids, not an omitted field*
+  CSV: *"selected scope sends the selected ids, not an omitted field"*
 - [ ] "Selected" scope exports the selected ids in full mode —
-  CSV: *download sends the selected subset's ids*
+  CSV: *"download sends the selected subset's ids"*
 - [ ] "Filtered" scope exports the filtered ids in stub-only mode —
-  CSV: *filtered scope sends the filtered ids*
+  CSV: *"filtered scope sends the filtered ids"*
 - [ ] "All" scope omits `annotationIds` (full and stub-only) —
-  CSV: *download calls exportAPI.exportCsv with correct params*,
-  *all scope still omits annotationIds*
+  CSV: *"download calls exportAPI.exportCsv with correct params"*,
+  *"all scope still omits annotationIds"*
+- [ ] Stale ids lingering in the selection (delete/undo) are dropped before
+  the subset-vs-whole-dataset comparison —
+  CSV: *"stale selected ids never widen the export to the whole dataset"*
 - [ ] An explicitly empty subset survives the API layer (omitted field ≠
-  empty array) — ExportAPI: *omits annotationIds when no subset is
-  supplied*, *preserves an explicitly empty annotation subset*
+  empty array) — ExportAPI: *"omits annotationIds when no subset is
+  supplied"*, *"preserves an explicitly empty annotation subset"*
 - [ ] The endpoint distinguishes omitted / subset / empty —
-  backend: `testExportCsvPreservesExactAnnotationSubset`,
-  `testIterAnnotationsDistinguishesNoneFromEmpty`
+  backend: *"testExportCsvPreservesExactAnnotationSubset"*,
+  *"testIterAnnotationsDistinguishesNoneFromEmpty"*
 - [ ] Dialog counts and radio enablement come from the stub-aware
-  `annotationCount` — CSV: *counts come from the stub-aware annotationCount*
+  `annotationCount` —
+  CSV: *"counts come from the stub-aware annotationCount"*
 
 ### Cost (no visible behavior — regresses silently)
 
 - [ ] A subset download never materializes the stub iteration array
   (`annotationsForIteration` is dataset-sized in stub-only mode) —
-  CSV: *selected-scope download never materializes the stub iteration array*
+  CSV: *"selected-scope download never materializes the stub iteration
+  array"*
 - [ ] Preview resolves annotation objects per id (O(1) lookups bounded by
   `PREVIEW_ANNOTATION_LIMIT`), never by scanning —
-  CSV: *selected-scope preview resolves stubs by id lookup*
+  CSV: *"selected-scope preview resolves stubs by id lookup"*
 - [ ] An empty-subset export skips the dataset-wide property-values scan —
-  backend: `testEmptySubsetSkipsPropertyValueFetch`
+  backend: *"testEmptySubsetSkipsPropertyValueFetch"*
 
 ### Boundary validation (public endpoints, 400 not 500)
 
 - [ ] Malformed `annotationIds` entries, `datasetId`, and `propertyPaths`
   property ids on `/export/csv` are a clean 400 —
-  backend: `testExportCsvRejectsMalformedInput`
+  backend: *"testExportCsvRejectsMalformedInput"*
 - [ ] The `/export/json` twin rejects malformed `datasetId` and
   `configurationId` the same way —
-  backend: `testExportJsonRejectsMalformedIds`
+  backend: *"testExportJsonRejectsMalformedIds"*
 
 ### Process rules this feature proved
 

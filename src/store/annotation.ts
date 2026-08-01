@@ -1386,6 +1386,17 @@ export class Annotations extends VuexModule {
           ),
         );
       }
+      // Prune id-holding UI state so nothing keeps referencing the deleted
+      // annotations (a stale selection id can widen a subset CSV export to
+      // the whole dataset; a stale hover id dangles like the connection-list
+      // case did).
+      this.unselectAnnotations(ids);
+      if (
+        this.hoveredAnnotationId !== null &&
+        ids.includes(this.hoveredAnnotationId)
+      ) {
+        this.setHoveredAnnotationId(null);
+      }
     } finally {
       // Always set the state back to false, even if there's an error
       sync.setSaving(false);
