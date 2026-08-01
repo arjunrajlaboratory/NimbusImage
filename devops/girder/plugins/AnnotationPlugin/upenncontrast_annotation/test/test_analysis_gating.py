@@ -781,3 +781,114 @@ class TestAnalysisHistogramEndpoint:
             server, admin, "/upenn_annotation/analysis/histogram2d", body,
         )
         assertStatus(resp, 400)
+
+
+# --- Codex review findings (PR #1302) ---
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestAnalysisGatingReviewFindings:
+    """Regression tests for the three findings on PR #1302."""
+
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        return folder
+
+    def testGateCountExcludesAppendedCategories(self, admin, server):
+        """P2: the histogram's gateCount fast path must apply the same
+        unknown-category exclusion resolve_gate_ids does.
+
+        A gate pinned to one category, on a dataset that has since gained a
+        second: the appended category is display-only and can never be inside
+        the gate, however far the polygon reaches.
+        """
+        folder = self._setup(admin)
+        makeAnnotation(folder["_id"], tags=["known"])
+        makeAnnotation(folder["_id"], tags=["appeared-later"])
+        knownKey = analysis.encode_category_key(["known"])
+        gate = {
+            "categoryKeyVersion": 1,
+            # Spans well past the pinned column, over the appended one too.
+            "vertices": [
+                {"x": -0.5, "y": -0.5}, {"x": 9, "y": -0.5},
+                {"x": 9, "y": 0.5}, {"x": -0.5, "y": 0.5},
+            ],
+            "xCategories": [knownKey],
+            "yCategories": [analysis.encode_category_key(0)],
+        }
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                xAxis={"type": "categorical", "key": "tags"},
+                yAxis={"type": "categorical", "key": "channel"},
+                xCategories=[knownKey],
+                yCategories=[analysis.encode_category_key(0)],
+                bins={"x": 1, "y": 1},
+                gate=gate,
+            ),
+        )
+        assertStatusOk(resp)
+        # Both plot (the unknown is appended for display)...
+        assert resp.json["plottedCount"] == 2
+        assert len(resp.json["xCategories"]) == 2
+        # ...but only the pinned one is inside the gate.
+        assert resp.json["gateCount"] == 1
+        # And it must agree with the authoritative resolver.
+        gateResp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]), "plots": [{
+                "id": "p", "xAxis": {"type": "categorical", "key": "tags"},
+                "yAxis": {"type": "categorical", "key": "channel"},
+                "gate": gate}]},
+        )
+        assertStatusOk(gateResp)
+        assert len(gateResp.json["gateIds"]["p"]) == resp.json["gateCount"]
+
+    def testHugeCategoricalGridIsRejected(self, admin, server):
+        """P1: a public request must not be able to allocate a 10k x 10k
+        histogram (~800MB) just by listing many categories."""
+        folder = self._setup(admin)
+        makeAnnotation(folder["_id"], tags=["a"])
+        many = [analysis.encode_category_key([f"c{i}"]) for i in range(3000)]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                xAxis={"type": "categorical", "key": "tags"},
+                yAxis={"type": "categorical", "key": "shape"},
+                xCategories=many,
+                yCategories=many,
+                bins={"x": 1, "y": 1},
+            ),
+        )
+        assertStatus(resp, 400)
+
+    def testDataDerivedCategoriesAreAlsoBounded(self, admin, server):
+        """The same explosion is reachable without a hostile request: a
+        dataset whose annotations each carry a distinct tag makes
+        derive_axis_categories produce one column per annotation."""
+        folder = self._setup(admin)
+        for i in range(40):
+            makeAnnotation(folder["_id"], tags=[f"tag{i}"])
+        # Bound well below the real cap so the test stays fast.
+        original = analysis.MAX_HISTOGRAM_CELLS
+        analysis.MAX_HISTOGRAM_CELLS = 100
+        try:
+            resp = postJson(
+                server, admin, "/upenn_annotation/analysis/histogram2d",
+                histogramBody(
+                    folder["_id"],
+                    xAxis={"type": "categorical", "key": "tags"},
+                    yAxis={"type": "categorical", "key": "tags"},
+                    xCategories=None, yCategories=None,
+                    bins={"x": 1, "y": 1},
+                ),
+            )
+            # 40 x 40 = 1600 cells > 100: must degrade, not allocate.
+            assertStatus(resp, 400)
+        finally:
+            analysis.MAX_HISTOGRAM_CELLS = original

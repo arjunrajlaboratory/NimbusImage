@@ -591,7 +591,12 @@ class Annotation(Resource):
         filters = bodyJson.get("filters") or {}
         validateListInputs(filters)
         dropNoOpPropertyFilters(filters)
-        self._annotationModel.resolveListGateConstraints(datasetId, filters)
+        try:
+            self._annotationModel.resolveListGateConstraints(
+                datasetId, filters
+            )
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
         ids = self._annotationModel.listIds(datasetId, filters)
 
         prefix = b'{"total":' + str(len(ids)).encode() + b',"ids":['
@@ -651,7 +656,13 @@ class Annotation(Resource):
             level=AccessType.READ, exc=True,
         )
         spec = validateAnalysisHistogramRequest(bodyJson)
-        return self._annotationModel.analysisHistogram(datasetId, spec)
+        try:
+            return self._annotationModel.analysisHistogram(datasetId, spec)
+        except ValueError as exc:
+            # Domain errors from the pure helpers (e.g. a categorical grid
+            # whose size only becomes known after deriving categories from
+            # the data) are client-input problems, not 500s.
+            raise RestException(str(exc), code=400)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -691,8 +702,14 @@ class Annotation(Resource):
         dropNoOpPropertyFilters(filters)
         # Resolve gate definitions ONCE here, so the page, count, and anchor
         # position below all reuse the same constraints (SERVER_GATING.md,
-        # Phase 3).
-        self._annotationModel.resolveListGateConstraints(datasetId, filters)
+        # Phase 3). Over-budget gates raise ValueError -> 400, like a bad
+        # sort key below.
+        try:
+            self._annotationModel.resolveListGateConstraints(
+                datasetId, filters
+            )
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
 
         # Build the page first: its pipeline construction validates the sort
         # field (ValueError -> 400) before the expensive count aggregation

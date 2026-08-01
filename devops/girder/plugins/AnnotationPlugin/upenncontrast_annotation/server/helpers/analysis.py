@@ -27,6 +27,15 @@ CATEGORY_KEY_PREFIX = "v1:"
 
 CATEGORICAL_KEYS = ("tags", "shape", "channel", "xy", "z", "time")
 
+# Ceiling on total histogram cells. A categorical axis gets one bin per
+# category rather than a clamped bin count, so without this a request (or
+# merely a dataset where every annotation carries a distinct tag) could ask
+# for a 10,000 x 10,000 grid — 800 MB of float64 plus 100M Python ints to
+# serialize, on a PUBLIC endpoint. Set to the budget the numeric cap already
+# permits (MAX_HISTOGRAM_BINS squared), so no request can allocate more than
+# a numeric plot already could.
+MAX_HISTOGRAM_CELLS = 512 * 512
+
 
 def _utf16_units(value):
     """The string as UTF-16 code units, exactly what charCodeAt iterates."""
@@ -294,6 +303,17 @@ def histogram2d(docs, values_by_id, spec):
     else:
         y_bins, y_range = _numeric_bin_spec(paired_y, spec["bins"]["y"])
 
+    # Checked AFTER deriving categories, not only at the API boundary: the
+    # count can come from the DATA (a dataset where every annotation carries
+    # a distinct tag yields one column per annotation), not just from a
+    # hostile request. ValueError, per the layering rule — the API maps it.
+    if x_bins * y_bins > MAX_HISTOGRAM_CELLS:
+        raise ValueError(
+            "histogram grid of %d x %d cells exceeds the maximum of %d; "
+            "these axes have too many distinct categories to plot"
+            % (x_bins, y_bins, MAX_HISTOGRAM_CELLS)
+        )
+
     counts, x_edges, y_edges = np.histogram2d(
         paired_x, paired_y, bins=[x_bins, y_bins], range=[x_range, y_range]
     )
@@ -328,9 +348,23 @@ def histogram2d(docs, values_by_id, spec):
         elif len(gate["vertices"]) < 3:
             response["gateCount"] = 0
         else:
-            response["gateCount"] = int(
-                points_in_polygon(xs, ys, gate["vertices"]).sum()
-            )
+            inside = points_in_polygon(xs, ys, gate["vertices"])
+            # The reused coordinates were built from the DERIVED categories
+            # (pinned order + categories the dataset has since gained), but a
+            # gate only spans its pinned columns — an appended category is
+            # display-only and is never inside, however far the polygon
+            # reaches. Without this mask the badge over-counts relative to
+            # resolve_gate_ids. Same rule, same place as the client's
+            # resolveGateIds: jitter is bounded by +/-0.28, so rounding the
+            # coordinate recovers the category index exactly.
+            for coords, categories, pinned in (
+                (xs, x_categories, gate["xCategories"]),
+                (ys, y_categories, gate["yCategories"]),
+            ):
+                if categories is not None and pinned is not None:
+                    with np.errstate(invalid="ignore"):
+                        inside &= np.rint(coords) < len(pinned)
+            response["gateCount"] = int(inside.sum())
     return response
 
 

@@ -1255,3 +1255,60 @@ class TestServerListAnalysisGates:
             "filters": {"analysisGates": {"gate": None}},
         })
         assertStatus(resp, 400)
+
+    def testMajorityGateUsesComplementNotAGiantIn(self, admin, server):
+        """A gate matching most of the dataset must not materialize every
+        match into one `$in`: near a million objects that array alone
+        approaches MongoDB's 16 MB command limit. Excluding the complement is
+        equivalent inside a dataset-scoped pipeline and is strictly smaller.
+        """
+        from upenncontrast_annotation.server.models.annotation import (
+            Annotation as AnnotationModel,
+        )
+        folder, anns, noval = self._setup(admin)
+        # Areas 30/10/20 plus one annotation without values. A gate over
+        # [5, 100] keeps 3 of 4 — a majority, so the complement is smaller.
+        filters = {"analysisGates": [self.gateFilter(5, 100)]}
+        AnnotationModel().resolveListGateConstraints(folder["_id"], filters)
+        clauses = filters.get("gateMatchClauses") or []
+        assert len(clauses) == 1
+        assert "$nin" in clauses[0]["_id"], clauses
+        # The complement is the one annotation with no values.
+        assert clauses[0]["_id"]["$nin"] == [noval["_id"]]
+        assert not filters.get("idConstraints")
+
+    def testMinorityGateStillUsesIn(self, admin, server):
+        from upenncontrast_annotation.server.models.annotation import (
+            Annotation as AnnotationModel,
+        )
+        folder, anns, _ = self._setup(admin)
+        filters = {"analysisGates": [self.gateFilter(5, 15)]}  # keeps Area 10
+        AnnotationModel().resolveListGateConstraints(folder["_id"], filters)
+        clauses = filters.get("gateMatchClauses") or []
+        assert len(clauses) == 1
+        assert clauses[0]["_id"]["$in"] == [anns[1]["_id"]]
+
+    def testComplementAndInAgreeThroughTheEndpoint(self, admin, server):
+        """Whichever representation is chosen, the answer is the same."""
+        folder, anns, _ = self._setup(admin)
+        for low, high, expected in ((5, 100, 3), (5, 15, 1)):
+            resp = postList(server, admin, "/upenn_annotation/list/ids", {
+                "datasetId": str(folder["_id"]),
+                "filters": {"analysisGates": [self.gateFilter(low, high)]},
+            })
+            assertStatusOk(resp)
+            assert parseStreaming(resp)["total"] == expected, (low, high)
+
+    def testOversizedGateConstraintIs400NotAMongoFailure(
+        self, admin, server, monkeypatch
+    ):
+        """Past the budget the request must fail with a comprehensible 400
+        rather than an opaque BSON-limit error from MongoDB."""
+        from upenncontrast_annotation.server.models import annotation as mod
+        folder, _, _ = self._setup(admin)
+        monkeypatch.setattr(mod, "MAX_GATE_CONSTRAINT_IDS", 1)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [self.gateFilter(5, 25)]},
+        })
+        assertStatus(resp, 400)

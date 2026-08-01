@@ -14,6 +14,8 @@ from bson.objectid import ObjectId
 
 from girder.exceptions import RestException
 
+from . import analysis
+
 # Request-size sanity ceilings: reject only degenerate/garbage payloads that
 # would build a pathological pipeline, while never affecting real use (a
 # dataset has well under 1K properties; the frontend hydration budget is ~40K
@@ -25,7 +27,13 @@ MAX_ANNOTATION_IDS = 10_000_000
 # Analysis-gating request ceilings (SERVER_GATING.md "Limits"): abuse guards
 # on the public gate-resolution endpoint, far above real use (a panel holds a
 # handful of plots; a lasso records a few hundred vertices).
-MAX_ANALYSIS_PLOTS = 100
+# Plots per gate-resolution request. Each plot rebuilds coordinates for both
+# its axes over the whole dataset (~0.7s per categorical axis at 700K), so
+# this is a CPU bound on a public endpoint, not just a payload guard: at 100
+# it bought one request ~130s of work. A sequential gating strategy is a
+# handful of plots; 20 is already generous. (Same shape as the categorical
+# grid cap — a public endpoint with a lenient cap on an expensive unit.)
+MAX_ANALYSIS_PLOTS = 20
 MAX_GATE_VERTICES = 10_000
 MAX_GATE_CATEGORIES = 10_000
 # Histogram bin clamp per axis (512² cells ≈ a 1–2 MB response worst case).
@@ -312,6 +320,17 @@ def validateAnalysisHistogramRequest(body):
         categories = body.get(name)
         if categories is not None:
             _validateGateCategories(axis, categories, name)
+    # Reject an oversized categorical grid up front, before any query runs.
+    # analysis.histogram2d re-checks after deriving categories from the data,
+    # which is the case this cannot see.
+    xCount = len(body.get("xCategories") or []) or 1
+    yCount = len(body.get("yCategories") or []) or 1
+    if xCount * yCount > analysis.MAX_HISTOGRAM_CELLS:
+        raise RestException(
+            "requested categorical grid exceeds the maximum of %d cells"
+            % analysis.MAX_HISTOGRAM_CELLS,
+            code=400,
+        )
     bins = body.get("bins")
     if not isinstance(bins, dict):
         raise RestException("bins must be an object", code=400)

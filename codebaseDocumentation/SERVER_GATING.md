@@ -453,6 +453,41 @@ analysisGates?: {
   epoch (gate results can change under a fixed definition when values are
   recomputed — include `propertyValuesRevision` and `contentRevision`).
 
+### Size bound (this is a real limit, not just a cost)
+
+A resolved gate reaches the list query as ObjectIds, and each id costs ~20
+bytes in a BSON array, so a gate matching most of a large dataset can push
+the pipeline toward MongoDB's **16 MB command limit**. Two mitigations, both
+implemented:
+
+- **A majority gate is expressed as `$nin` of its complement**, not `$in` of
+  its matches. Inside a pipeline already scoped to the dataset these are
+  equivalent, and the complement is strictly smaller — a gate keeping 95% of
+  a dataset now costs 5% of the ids instead of 95%. This halves the worst
+  case (which is a gate matching exactly half).
+- **`MAX_GATE_CONSTRAINT_IDS = 400_000`** across all gates in one request
+  (~8 MB, half the command limit). Past it the request fails with a
+  comprehensible 400 rather than an opaque BSON error.
+
+So "exact at any dataset size" holds for gate *resolution*
+(`analysis/gate_ids` streams ids and has no such bound) but **not** for the
+list/page path, which tops out near a gate matching ~400K objects — around
+800K on a dataset where the complement trick applies. The proper fix is to
+stop materializing ids for the list at all: push the gate's own predicate
+into the query (a property axis' polygon bounding box is a `$gte`/`$lte`
+range on the PV collection; a categorical axis is an `$in` on tags/channel
+plus a jitter sub-range), and use exact point-in-polygon only to refine.
+That is a larger change and is not done here.
+
+**Trap this created, worth remembering.** Gate clauses live under
+`filters["gateMatchClauses"]` rather than `filters["idConstraints"]`,
+because a `$nin` cannot be expressed as an id list. Anything that *inspects*
+id constraints must consider both — `_hasAnnotationFieldFilters` decides
+between the PV-driven and annotation-driven pipelines, and omitting the new
+key sent gate + property-filter queries down the PV path where an `_id`
+clause is never applied, so the gate silently stopped filtering. Held by
+*"testGateComposesWithPropertyFilter"*.
+
 ### Cost note (decided: no server cache in v1)
 
 Sending definitions makes every list page fetch re-resolve the gates
@@ -502,7 +537,9 @@ build any of them speculatively.
 | `MAX_ANALYSIS_PLOTS` | 100 | plots per gate_ids request |
 | `MAX_GATE_VERTICES` | 10,000 | vertices per gate |
 | `MAX_GATE_CATEGORIES` | 10,000 | pinned categories per axis |
-| `MAX_HISTOGRAM_BINS` | 512 | bins per axis |
+| `MAX_HISTOGRAM_BINS` | 512 | bins per numeric axis |
+| `MAX_HISTOGRAM_CELLS` | 512² | total histogram cells — a **categorical** axis gets one bin per category, so it bypasses the per-axis bin clamp entirely. Checked at the boundary AND after deriving categories, because the count can come from the data (a dataset where every annotation carries a distinct tag yields one column per annotation), not only from a hostile request |
+| `MAX_GATE_CONSTRAINT_IDS` | 400,000 | ids all gates may push into one list query (see the size bound above) |
 | `MAX_HISTOGRAM_ID_CONSTRAINT` | 50,000 | ids the client will inline into a histogram request |
 
 `numpy` gets declared in `setup.py` `install_requires` (already a de facto
@@ -639,6 +676,21 @@ Every invariant names the test that holds it (format enforced by
   *"testTwoGatesAnd"*, *"testGateComposesWithPropertyFilter"*
 - A zero-match gate is zero rows, not an error —
   *"testZeroMatchGateIsZeroRowsNot400"*
+
+**Resource bounds (added after the round-1 review of PR #1302)**
+- A categorical grid cannot exhaust the process, whether the category count
+  comes from the request or from the data — *"testHugeCategoricalGridIsRejected"*,
+  *"testDataDerivedCategoriesAreAlsoBounded"*
+- A majority gate ships as `$nin` of its complement, a minority as `$in`,
+  and both give the same answer — *"testMajorityGateUsesComplementNotAGiantIn"*,
+  *"testMinorityGateStillUsesIn"*, *"testComplementAndInAgreeThroughTheEndpoint"*
+- Past the id budget the request 400s instead of failing inside MongoDB —
+  *"testOversizedGateConstraintIs400NotAMongoFailure"*
+- Gate clauses are honored on the property-filter path too (they are `_id`
+  constraints in a different representation, so the PV/annotation pipeline
+  choice must see them) — *"testGateComposesWithPropertyFilter"*
+- The histogram badge applies the same unknown-category exclusion the
+  resolver does — *"testGateCountExcludesAppendedCategories"*
 
 **Boundary hardening (`test_analysis_gating.py` / `test_server_list.py`)**
 - Malformed input is a 400, never a 500, on every endpoint —

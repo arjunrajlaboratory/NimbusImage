@@ -22,6 +22,14 @@ from .propertyValues import AnnotationPropertyValues
 # connection. 5 minutes: comfortably above the slowest legitimate query, but a
 # hard ceiling against a runaway one.
 AGGREGATION_MAX_TIME_MS = 300000
+
+# Ceiling on how many ObjectIds all analysis gates together may push into a
+# list query. Each id costs ~20 bytes in a BSON array (12-byte oid + index
+# key + type), so 400K is ~8 MB — half of MongoDB's 16 MB command limit,
+# leaving room for the rest of the pipeline. Resolving a majority gate as
+# `$nin` of its complement (see resolveListGateConstraints) already halves
+# the worst case; this is the backstop past that.
+MAX_GATE_CONSTRAINT_IDS = 400_000
 DEFAULT_AGGREGATE_HINT = {"datasetId": 1, "_id": 1}
 
 
@@ -336,11 +344,15 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # and annotationIdFilters membership semantics. Ids are already
         # ObjectId-converted at the API boundary (_validateListInputs).
         idConstraints = filters.get("idConstraints")
-        if idConstraints:
-            match["$and"] = [
-                {"_id": {"$in": list(ids)}}
-                for ids in idConstraints
-            ]
+        andClauses = [
+            {"_id": {"$in": list(ids)}} for ids in (idConstraints or [])
+        ]
+        # Server-resolved analysis gates arrive as ready-made clauses because
+        # a majority gate is expressed as `$nin` of its complement rather
+        # than `$in` of its matches (see resolveListGateConstraints).
+        andClauses += filters.get("gateMatchClauses") or []
+        if andClauses:
+            match["$and"] = andClauses
 
         stages = [{"$match": match}]
 
@@ -440,10 +452,38 @@ class Annotation(AccessControlMixin, ProxiedModel):
             axis for gate in gates for axis in (gate["xAxis"], gate["yAxis"])
         ]
         docs, valuesById = self._analysisData(datasetId, axes)
-        constraints = filters.setdefault("idConstraints", [])
+        allIds = [doc["id"] for doc in docs]
+        clauses = filters.setdefault("gateMatchClauses", [])
+        budget = 0
         for gate in gates:
             ids = analysis.resolve_gate_ids(docs, valuesById, gate)
-            constraints.append([ObjectId(i) for i in ids])
+            complementSize = len(allIds) - len(ids)
+            if complementSize < len(ids):
+                # More than half the dataset matches. Inside a pipeline
+                # already scoped to this dataset, excluding the complement is
+                # equivalent to including the matches and is strictly
+                # smaller — the difference between a 14 MB `$in` and a small
+                # `$nin` when a gate keeps almost everything.
+                matched = set(ids)
+                selected = [
+                    ObjectId(i) for i in allIds if i not in matched
+                ]
+                clauses.append({"_id": {"$nin": selected}})
+            else:
+                selected = [ObjectId(i) for i in ids]
+                clauses.append({"_id": {"$in": selected}})
+            budget += len(selected)
+        if budget > MAX_GATE_CONSTRAINT_IDS:
+            # Even the smaller side of every gate can overflow MongoDB's
+            # 16 MB command limit on a large enough dataset. Fail with a
+            # comprehensible message instead of an opaque BSON error. The
+            # real remedy is to push the gate predicate into the query rather
+            # than materializing ids at all — see SERVER_GATING.md.
+            raise ValueError(
+                "analysis gates resolve to %d ids, over the %d the list "
+                "query can carry; narrow the filters first"
+                % (budget, MAX_GATE_CONSTRAINT_IDS)
+            )
         return filters
 
     def resolveAnalysisGates(self, datasetId, plots):
@@ -595,6 +635,13 @@ class Annotation(AccessControlMixin, ProxiedModel):
         if any(location.get(k) is not None for k in ("XY", "Z", "Time")):
             return True
         if filters.get("idConstraints"):
+            return True
+        # Server-resolved gate clauses are `_id` constraints too, just in a
+        # different representation (see resolveListGateConstraints). Omitting
+        # them here sent a gate + property-filter query down the PV-driven
+        # path, where an `_id` clause on the annotation collection is never
+        # applied — the gate silently stopped filtering.
+        if filters.get("gateMatchClauses"):
             return True
         if filters.get("idSubstring"):
             return True
