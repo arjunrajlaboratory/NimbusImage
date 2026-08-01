@@ -842,7 +842,37 @@ The post-round-12 cold branch review found no additional actionable findings.
 Above the cap, the scalable design is server-side: a 2D density histogram for
 display plus polygon-to-ids resolution on the backend (the same shape as
 `refreshPropertyFilterPassingIds`). Now that a gate *is* a polygon, that is a
-backend endpoint rather than a data-model change. A cheaper intermediate step:
-**rectangular** gates, which are exactly two numeric range filters and therefore
-already expressible through the existing property-filter path — exact at any
-dataset size, with no new endpoint.
+backend endpoint rather than a data-model change. **Built** — see
+`SERVER_GATING.md`. A cheaper intermediate step that was considered and
+skipped: **rectangular** gates, which are exactly two numeric range filters
+and therefore already expressible through the existing property-filter path.
+
+### Known defect: the two jitter salts are not independent
+
+`jitterFromId` is `h = salt; for each char: h = h*31 + code`, which is
+**affine in the seed**: `h(salt, id) = salt·31ᴸ + f(id) (mod 2³²)`. For
+fixed-length ids — 24-char hex ObjectIds, i.e. always — the X and Y hashes
+therefore differ by a *constant*, not independently. Measured on the
+708,983-object dataset: `h(31,·) − h(17,·) = 983,840,270` for every id
+sampled, exactly the predicted `(31−17)·31²⁴`.
+
+Consequence: the Y jitter is the X jitter shifted, so after `% 1000` the
+pairs land on a lattice. A 10×10 grid over one categorical cell had **60
+empty cells** and a 5.6× density peak. Global Pearson r is only 0.037, so a
+correlation check alone does not reveal it — measure 2D occupancy instead.
+
+Impact is **display only**, and only on categorical × categorical plots,
+where points form stripes rather than filling the cell (much of the cell is
+unreachable, so it cannot be gated). Gating stays exact: drawing and
+resolution share the jitter, and TS↔Python parity over 708,983 ids is
+bit-exact with zero mismatches.
+
+**Why it was not fixed on discovery:** gate polygons are stored in jittered
+coordinate space, so changing the jitter function silently changes the
+membership of every persisted gate. This needs what `categoryKeyVersion`
+got — a version bump plus a hydration rule that refuses (or migrates) gates
+drawn under the old jitter. The fix itself is small: give each axis a
+genuinely different mixer (a distinct multiplier per salt, or a final
+avalanche step), not just a different seed. Regenerate
+`analysis_gating_parity.json` afterward; the Python port will fail until it
+matches, which is the intended behavior.
