@@ -48,6 +48,7 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | **A rule applied to one of two symmetric paths** | Anywhere the same concept has two implementations | See below — this was the single most-repeated finding across a 10-round review |
 | **Derived-state invalidation stops at the edited item** | Ordered pipelines, chained filters, dependent plots, wizard steps | Map the dependency closure: if item N changes the input to N+1, invalidate N (when its own derivation changed) and every downstream item; a toggle can preserve N's own result while still invalidating N+1..end |
 | **Cost before the guard** | Getters/handlers with a cheap precondition and expensive body | Does the cheap check run FIRST? A cap that resolves 700K annotations to discover the limit was exceeded is doing the work it exists to prevent |
+| **A signature hashes values but not their structure** | Incremental hashes over nested rows, fields, or variable-length lists | Feed field/record boundaries into the hash, not only value separators and a final count; test two inputs with the same flattened values redistributed across records |
 
 #### The symmetric-path pattern
 

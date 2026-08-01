@@ -49,6 +49,13 @@ export function createHasher() {
       h2 = Math.imul(h2 ^ 0x1f, 3266489909);
     },
     countItem() {
+      // Record separator. Value separators alone preserve the flattened value
+      // stream but not how it is divided into items: ["a"]/["b"] and
+      // ["a","b"] / [] used to hash identically. `count` only records how
+      // many boundaries exist, not WHERE they occur, so mix the boundary into
+      // both lanes before incrementing it.
+      h1 = Math.imul(h1 ^ 0x1e, 2246822507);
+      h2 = Math.imul(h2 ^ 0x1e, 3266489909);
       count++;
     },
     digest(): string {

@@ -133,6 +133,33 @@ describe("AnalysisPanel", () => {
     expect(mocks.setAnalysisPanelOpen).toHaveBeenLastCalledWith(false);
   });
 
+  it("does no display work and retains no plot populations while hidden", async () => {
+    setPopulation(3);
+    mocks.values = { "id-0": { p: { Area: 1 } } };
+    setPlots([makePlot("p1")]);
+    const wrapper = mountPanel({ visible: false });
+    await flushPromises();
+
+    expect(wrapper.vm.plotInputs).toEqual([]);
+    expect(wrapper.vm.seriesByPlot).toEqual({});
+    expect(
+      wrapper.findComponent({ name: "AnalysisScatterPlot" }).exists(),
+    ).toBe(false);
+
+    await wrapper.setProps({ visible: true });
+    await flushPromises();
+    expect(wrapper.vm.plotInputs).toHaveLength(1);
+    expect(Object.keys(wrapper.vm.seriesByPlot)).toEqual(["p1"]);
+    expect(
+      wrapper.findComponent({ name: "AnalysisScatterPlot" }).exists(),
+    ).toBe(true);
+
+    await wrapper.setProps({ visible: false });
+    await flushPromises();
+    expect(wrapper.vm.plotInputs).toEqual([]);
+    expect(wrapper.vm.seriesByPlot).toEqual({});
+  });
+
   it("refuses to plot above the point cap", async () => {
     setPlots([makePlot("p1")]);
     setPopulation(50001);

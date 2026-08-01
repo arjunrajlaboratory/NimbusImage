@@ -104,6 +104,10 @@ const NOT_OURS = new Set([
   ".venv",
   "__pycache__",
   ".pnpm-store",
+  // Agent/IDE-created linked worktrees contain a second copy of every owned
+  // test tree, but are not part of this checkout's sources. Descending into
+  // them makes the completeness guard report those copies as new roots.
+  "worktrees",
 ]);
 
 /**

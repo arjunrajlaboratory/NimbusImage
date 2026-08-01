@@ -793,6 +793,14 @@ export class Properties extends VuexModule {
       this.setPropertiesImpl(previous);
       throw error;
     }
+    // The persisted plot resolver drops axes whose property is unknown, but a
+    // live deletion must do the same immediately. Reconcile only AFTER the
+    // propertyIds write succeeds so a failed backend sync leaves both the
+    // property list and every plot untouched. The plural action batches all
+    // affected plots into one annotation-browser configuration save.
+    await (
+      await import("./filters")
+    ).default.reconcileAnalysisPlotsForPropertyIds(propertyIds);
   }
 
   @Mutation
@@ -938,14 +946,16 @@ export class Properties extends VuexModule {
     return newProperty;
   }
 
-  @Action
+  // Both deletion actions propagate configuration-sync failures to callers;
+  // rawError preserves the backend message across each decorator boundary.
+  @Action({ rawError: true })
   async deleteProperty(propertyId: string) {
     await this.deleteProperties([propertyId]);
   }
 
   // Batch variant: removes all the given properties with a single
   // configuration sync instead of one per property.
-  @Action
+  @Action({ rawError: true })
   async deleteProperties(propertyIds: string[]) {
     // TODO: temp another configuration could be using this property!
     // await this.propertiesAPI.deleteProperty(propertyId);

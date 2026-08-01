@@ -1,5 +1,5 @@
 <template>
-  <div class="analysis-panel">
+  <div v-if="visible" class="analysis-panel">
     <div class="analysis-intro">
       Plot any two object properties against each other, then lasso-select the
       points to keep. Each plot shows the objects passing the previous plot's
@@ -63,7 +63,6 @@ import { MAX_ANALYSIS_PLOT_POINTS } from "@/store/constants";
 import AnalysisScatterPlot from "@/components/AnalysisScatterPlot.vue";
 import { CATEGORICAL_AXES, encodeAxis, IAxisItem } from "@/utils/analysisAxes";
 import {
-  analysisPropertyPaths,
   buildPlotSeries,
   chainPlotInputs,
   IAnalysisSeries,
@@ -92,7 +91,6 @@ const overCap = computed(() => baseCount.value > MAX_ANALYSIS_PLOT_POINTS);
 // projected to the Annotation Browser's displayed columns, so an arbitrary axis
 // is usually absent from it, and in lazy mode it holds only the viewport subset.
 const values = computed(() => filterStore.analysisValues);
-const neededPaths = computed(() => analysisPropertyPaths(plots.value));
 // Read from the store rather than inferred from `values` being empty: an empty
 // result is a real outcome (a property computed for only some objects), and
 // inferring left this spinning forever on it.
@@ -133,13 +131,15 @@ const previousInputs = new Map<string, TAnnotationOrStub[]>();
 
 watch(
   () =>
-    chainPlotInputs(
-      plots.value,
-      gateIds.value,
-      filterStore.annotationsPassingNonGateFilters,
-    ),
+    props.visible
+      ? chainPlotInputs(
+          plots.value,
+          gateIds.value,
+          filterStore.annotationsPassingNonGateFilters,
+        )
+      : [],
   (next) => {
-    const plotIds = plots.value.map((plot) => plot.id);
+    const plotIds = props.visible ? plots.value.map((plot) => plot.id) : [];
     const reconciled = next.map((rows, i) => {
       const previous = previousInputs.get(plotIds[i]);
       if (
@@ -182,6 +182,9 @@ const channelName = (channel: number) =>
 // store gates with.
 const seriesByPlot = computed(() => {
   const result: { [plotId: string]: IAnalysisSeries } = {};
+  if (!props.visible) {
+    return result;
+  }
   plots.value.forEach((plot, index) => {
     if (!plot.xAxis || !plot.yAxis) {
       return;
@@ -217,7 +220,6 @@ defineExpose({
   passingCount,
   baseCount,
   overCap,
-  neededPaths,
   MAX_ANALYSIS_PLOT_POINTS,
 });
 </script>

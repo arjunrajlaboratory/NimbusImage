@@ -13,6 +13,10 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  scheduleAnnotationBrowserSave: vi.fn(),
+}));
+
 // The filters module only touches these dependencies inside getters/actions
 // that this test does not exercise, but they must be importable so the module
 // evaluates. Mock them to avoid pulling in the full store/geojs graph.
@@ -23,7 +27,7 @@ vi.mock("./index", () => ({
     time: 0,
     dataset: null,
     showAnnotationsFromHiddenLayers: true,
-    scheduleAnnotationBrowserSave: () => {},
+    scheduleAnnotationBrowserSave: mocks.scheduleAnnotationBrowserSave,
   },
 }));
 vi.mock("./annotation", () => ({
@@ -136,6 +140,7 @@ describe("filters.resetFilterState", () => {
 describe("analysis plot gates", () => {
   beforeEach(() => {
     filters.resetFilterState();
+    mocks.scheduleAnnotationBrowserSave.mockClear();
   });
 
   const filteredIds = () =>
@@ -223,6 +228,45 @@ describe("analysis plot gates", () => {
       key: "tags",
     });
     expect(filteredIds()).toEqual(["a", "b", "c"]);
+  });
+
+  it("drops missing property axes and invalidates their dependent plot suffix", () => {
+    filters.hydrateAnalysisPlots([
+      {
+        id: "p1",
+        xAxis: { type: "property", path: ["kept", "Area"] },
+        yAxis: { type: "categorical", key: "tags" },
+        gate: GATE,
+        gateEnabled: true,
+      },
+      {
+        id: "p2",
+        xAxis: { type: "property", path: ["deleted", "Area"] },
+        yAxis: { type: "categorical", key: "shape" },
+        gate: GATE,
+        gateEnabled: true,
+      },
+      {
+        id: "p3",
+        xAxis: { type: "categorical", key: "channel" },
+        yAxis: { type: "categorical", key: "tags" },
+        gate: GATE,
+        gateEnabled: true,
+      },
+    ]);
+    filters.setAnalysisGateIds({ p1: ["a", "b"], p2: ["b"], p3: ["b"] });
+
+    filters.reconcileAnalysisPlotsForPropertyIds(["kept"]);
+
+    expect(filters.analysisPlots[0].xAxis).toEqual({
+      type: "property",
+      path: ["kept", "Area"],
+    });
+    expect(filters.analysisPlots[0].gate).toEqual(GATE);
+    expect(filters.analysisPlots[1].xAxis).toBeNull();
+    expect(filters.analysisPlots[1].gate).toBeNull();
+    expect(filters.analysisGateIds).toEqual({ p1: ["a", "b"] });
+    expect(mocks.scheduleAnnotationBrowserSave).toHaveBeenCalledTimes(1);
   });
 
   it("removing a plot removes its gate from the composition", () => {

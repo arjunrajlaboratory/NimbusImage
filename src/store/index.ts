@@ -2333,11 +2333,11 @@ export class Main extends VuexModule {
       filterPaths: config.filterPaths,
       propertyFilters: config.propertyFilters,
     });
-    // Restored gates hold polygons, not ids: resolving them needs the dataset's
-    // property values, so hydration seeds the plots and the refresh below turns
-    // them back into a filter.
+    // Restored gates hold polygons, not ids. Hydration only seeds the plots;
+    // Viewer owns resolution through its analysisInputSignature watcher, which
+    // reacts to this state change in both 2D and 3D. Dispatching here as well
+    // issued the same property-values request twice on dataset open.
     this.context.dispatch("hydrateAnalysisPlots", config.analysisPlots ?? []);
-    this.context.dispatch("refreshAnalysis");
   }
 
   @Action

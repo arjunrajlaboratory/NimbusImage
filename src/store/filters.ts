@@ -425,6 +425,45 @@ export class Filters extends VuexModule {
     this.setAnalysisGateIds({});
   }
 
+  /**
+   * Reconcile live plots after the configuration's attached properties change.
+   * Hydration already rejects unknown property axes, but property deletion used
+   * to leave them (and their invisible gates) active until the next reload.
+   *
+   * This is plural because a batch property removal must update every affected
+   * plot, invalidate the earliest dependent suffix, and persist once.
+   */
+  @Action
+  reconcileAnalysisPlotsForPropertyIds(propertyIds: string[]) {
+    const knownPropertyIds = new Set(propertyIds);
+    let firstChangedPlotId: string | null = null;
+    const nextPlots = this.analysisPlots.map((plot) => {
+      const xAxis =
+        plot.xAxis?.type === "property" &&
+        !knownPropertyIds.has(plot.xAxis.path[0])
+          ? null
+          : plot.xAxis;
+      const yAxis =
+        plot.yAxis?.type === "property" &&
+        !knownPropertyIds.has(plot.yAxis.path[0])
+          ? null
+          : plot.yAxis;
+      if (xAxis === plot.xAxis && yAxis === plot.yAxis) {
+        return plot;
+      }
+      firstChangedPlotId ??= plot.id;
+      return { ...plot, xAxis, yAxis, gate: null };
+    });
+    if (firstChangedPlotId === null) {
+      return;
+    }
+    this.dropAnalysisGateIdsFromPlot({
+      id: firstChangedPlotId,
+      includePlot: true,
+    });
+    this.applyAnalysisPlots(nextPlots);
+  }
+
   @Mutation
   setAnalysisGateIds(gateIds: { [plotId: string]: string[] }) {
     // markRaw for the same reason as propertyFilterPassingIds: a gate can hold

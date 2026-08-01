@@ -398,6 +398,16 @@ describe("categoricalContentSignature", () => {
     expect(after).not.toBe(before);
   });
 
+  it("preserves annotation boundaries when tag values are redistributed", () => {
+    // Flattening the values makes these populations indistinguishable even
+    // though the first annotation moves from one tag column into two and the
+    // second moves into the empty-tag category. A gate refresh must observe
+    // that structural change.
+    expect(categoricalContentSignature(pop(["a"], ["b"]), ["tags"])).not.toBe(
+      categoricalContentSignature(pop(["a", "b"], []), ["tags"]),
+    );
+  });
+
   it("changes when a shape, channel or frame field changes", () => {
     const base = annotation("x", {
       shape: AnnotationShape.Point,

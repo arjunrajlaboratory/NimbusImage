@@ -954,12 +954,14 @@ watch(
   },
 );
 
-// Scope server-mode selection to the current query. The selection set is
+// Scope selection to the current query in BOTH list modes. The selection set is
 // global, and deleteSelected/tag/color act on it directly, so a selection made
 // under one filter would otherwise persist — hidden — after switching filters,
 // and a later "delete selected" would silently delete rows no longer in view.
 // Clearing on any query change keeps the selection equal to "things in the
-// current filtered list", which is also what the header checkbox now reports.
+// current filtered list", which is also what the header checkbox reports. In
+// client mode `selectedIds` only HIDES ids outside `filteredAnnotationIdToIdx`;
+// it does not prune the global set consumed by the destructive actions.
 //
 // We key off currentFilters (the canonical query definition) so projection-only
 // changes (displayedPropertyPaths) and sort/page changes — none of which change
@@ -976,12 +978,7 @@ watch(
 // nested filter changes are still tracked.
 watch(
   () => annotationListServer.currentFiltersSignature,
-  () => {
-    if (!isServerMode.value) {
-      return;
-    }
-    annotationStore.setSelected([]);
-  },
+  () => annotationStore.setSelected([]),
 );
 
 // Server mode can now engage outside stub-only mode (fully-fetched dataset
