@@ -234,6 +234,7 @@ describe("annotation browser config persistence", () => {
 
   describe("analysis plots", () => {
     const GATE = {
+      categoryKeyVersion: 1 as const,
       vertices: [
         { x: 0, y: 0 },
         { x: 1, y: 0 },
@@ -294,12 +295,16 @@ describe("annotation browser config persistence", () => {
       expect(resolved.analysisPlots![0].gate).toBeNull();
     });
 
-    it("drops legacy display-label category orders that are not injective", () => {
+    it("drops an unversioned legacy label even when it looks encoded", () => {
       const resolved = resolveAnnotationBrowserConfig(
         {
           analysisPlots: [
             plot({
-              gate: { ...GATE, yCategories: ["(untagged)"] },
+              gate: {
+                ...GATE,
+                categoryKeyVersion: undefined,
+                yCategories: ['v1:["A"]'],
+              },
             }) as any,
           ],
         },
@@ -307,6 +312,27 @@ describe("annotation browser config persistence", () => {
       );
 
       expect(resolved.analysisPlots![0].gate).toBeNull();
+    });
+
+    it("upgrades a legacy property-only gate to the current key version", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        {
+          analysisPlots: [
+            plot({
+              yAxis: { type: "property", path: ["prop-a", "Mean"] },
+              gate: {
+                ...GATE,
+                categoryKeyVersion: undefined,
+                xCategories: null,
+                yCategories: null,
+              },
+            }) as any,
+          ],
+        },
+        ["prop-a"],
+      );
+
+      expect(resolved.analysisPlots![0].gate?.categoryKeyVersion).toBe(1);
     });
 
     it("drops malformed gates and plots", () => {

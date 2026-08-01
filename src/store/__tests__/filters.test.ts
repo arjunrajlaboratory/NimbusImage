@@ -210,6 +210,7 @@ describe("filters.refreshAnalysis", () => {
     path: ["other", "Intensity"],
   };
   const GATE = {
+    categoryKeyVersion: 1 as const,
     vertices: [
       { x: 0, y: 0 },
       { x: 10, y: 0 },
@@ -342,6 +343,7 @@ describe("filters.refreshAnalysis", () => {
     await filters.setAnalysisPlotGate({
       id: "p1",
       gate: {
+        categoryKeyVersion: 1,
         vertices: [
           { x: -0.5, y: -0.5 },
           { x: 0.5, y: -0.5 },
@@ -404,6 +406,7 @@ describe("filters.refreshAnalysis", () => {
     await filters.setAnalysisPlotGate({
       id: "gated",
       gate: {
+        categoryKeyVersion: 1,
         vertices: [
           { x: -0.5, y: -0.5 },
           { x: 0.5, y: -0.5 },

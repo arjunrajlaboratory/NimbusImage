@@ -153,6 +153,7 @@ describe("analysis plot gates", () => {
   // pin the COMPOSITION rules; resolveAnalysisGateIds (polygon -> ids) is
   // covered in analysisGating.test.ts.
   const GATE = {
+    categoryKeyVersion: 1 as const,
     vertices: [
       { x: 0, y: 0 },
       { x: 1, y: 0 },

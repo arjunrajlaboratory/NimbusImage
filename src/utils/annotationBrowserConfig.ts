@@ -5,6 +5,7 @@ import type {
   IPropertyAnnotationFilter,
   TAnalysisAxis,
 } from "@/store/model";
+import { ANALYSIS_CATEGORY_KEY_VERSION } from "@/store/model";
 import { isCategoricalAxisKey } from "@/utils/analysisAxes";
 import { isEncodedAnalysisCategoryKey } from "@/utils/analysisGating";
 import { createPathStringFromPathArray } from "@/utils/paths";
@@ -95,11 +96,16 @@ function resolveAxis(
   return null;
 }
 
-function resolveGate(gate: unknown): IAnalysisGate | null {
+type TResolvedGateCandidate = Omit<IAnalysisGate, "categoryKeyVersion"> & {
+  categoryKeyVersion: unknown;
+};
+
+function resolveGate(gate: unknown): TResolvedGateCandidate | null {
   if (!gate || typeof gate !== "object") {
     return null;
   }
   const candidate = gate as {
+    categoryKeyVersion?: unknown;
     vertices?: unknown;
     xCategories?: unknown;
     yCategories?: unknown;
@@ -124,6 +130,7 @@ function resolveGate(gate: unknown): IAnalysisGate | null {
       ? value
       : null;
   return {
+    categoryKeyVersion: candidate.categoryKeyVersion,
     vertices: vertices.map(({ x, y }) => ({ x, y })),
     xCategories: categories(candidate.xCategories),
     yCategories: categories(candidate.yCategories),
@@ -133,10 +140,12 @@ function resolveGate(gate: unknown): IAnalysisGate | null {
 function categoryOrderMatchesAxis(
   axis: TAnalysisAxis,
   categories: string[] | null,
+  categoryKeyVersion: unknown,
 ): boolean {
   return axis.type === "property"
     ? categories === null
     : categories !== null &&
+        categoryKeyVersion === ANALYSIS_CATEGORY_KEY_VERSION &&
         new Set(categories).size === categories.length &&
         categories.every(isEncodedAnalysisCategoryKey);
 }
@@ -165,9 +174,20 @@ function resolveAnalysisPlot(
     resolvedGate &&
     xAxis &&
     yAxis &&
-    categoryOrderMatchesAxis(xAxis, resolvedGate.xCategories) &&
-    categoryOrderMatchesAxis(yAxis, resolvedGate.yCategories)
-      ? resolvedGate
+    categoryOrderMatchesAxis(
+      xAxis,
+      resolvedGate.xCategories,
+      resolvedGate.categoryKeyVersion,
+    ) &&
+    categoryOrderMatchesAxis(
+      yAxis,
+      resolvedGate.yCategories,
+      resolvedGate.categoryKeyVersion,
+    )
+      ? {
+          ...resolvedGate,
+          categoryKeyVersion: ANALYSIS_CATEGORY_KEY_VERSION,
+        }
       : null;
   return {
     id: candidate.id,

@@ -52,6 +52,7 @@ const CHANNEL = { type: "categorical" as const, key: "channel" as const };
 
 // A unit square gate covering x in [0,10], y in [0,10].
 const SQUARE = {
+  categoryKeyVersion: 1 as const,
   vertices: [
     { x: 0, y: 0 },
     { x: 10, y: 0 },
@@ -168,6 +169,7 @@ describe("buildPlotSeries", () => {
     const untaggedColumn = Math.round(series.x[series.ids.indexOf("untagged")]);
     expect(
       resolveGateIds(series, {
+        categoryKeyVersion: 1,
         vertices: [
           { x: untaggedColumn - 0.4, y: 0.5 },
           { x: untaggedColumn + 0.4, y: 0.5 },
@@ -205,6 +207,7 @@ describe("buildPlotSeries", () => {
     );
     expect(
       resolveGateIds(series, {
+        categoryKeyVersion: 1,
         vertices: [
           { x: firstChannelColumn - 0.4, y: 0.5 },
           { x: firstChannelColumn + 0.4, y: 0.5 },
@@ -307,6 +310,7 @@ describe("resolveGateIds", () => {
     // A lasso is routinely concave; a bounding-box shortcut would wrongly
     // include points in the notch.
     const vShape = {
+      categoryKeyVersion: 1 as const,
       vertices: [
         { x: 0, y: 0 },
         { x: 10, y: 0 },
@@ -352,6 +356,7 @@ describe("selectionEventToGate", () => {
       series,
     );
     expect(gate).toEqual({
+      categoryKeyVersion: 1,
       vertices: [
         { x: 0, y: 0 },
         { x: 1, y: 0 },

@@ -208,6 +208,7 @@ describe("buildListFilters", () => {
 // PREVIOUS rows on screen instead of showing zero results.
 describe("queryMatchesNothing", () => {
   const GATE = {
+    categoryKeyVersion: 1 as const,
     vertices: [
       { x: 0, y: 0 },
       { x: 1, y: 0 },

@@ -35,7 +35,8 @@ It also keeps the configuration small. An id list runs to tens of thousands of
 For a categorical axis a coordinate is a **category index**, so the ordering is
 part of the gate's meaning and travels with it (`xCategories`/`yCategories`).
 Those arrays contain versioned, collision-free keys derived from raw values;
-human-readable tick labels are display-only. This keeps no-tags distinct from
+the gate carries an explicit `categoryKeyVersion` rather than inferring that
+schema from any key prefix. Human-readable tick labels are display-only. This keeps no-tags distinct from
 the literal tag `(untagged)`, tag arrays distinct from delimiter-containing tag
 names, and channels distinct even when their display names match. Re-deriving
 the order from whatever categories happen to be present in the next dataset
@@ -300,10 +301,14 @@ contains the same points when re-resolved in a later session.
 
 Category identity and presentation stay separate throughout the pipeline:
 `buildPlotSeries` assigns each raw value a versioned key for coordinates and
-gate persistence, plus an aligned label array for Plotly ticks. A legacy gate
-whose category order contains only display labels is dropped during hydration;
-such an order cannot be migrated safely because one old label may represent
-multiple raw categories. The plot and axes remain so the gate can be redrawn.
+gate persistence, plus an aligned label array for Plotly ticks. New gates set
+`categoryKeyVersion: 1`. An unversioned categorical gate is dropped during
+hydration even if one of its legacy labels happens to look like a versioned
+key; display labels are user-controlled, so their string content cannot prove a
+schema. Such an order cannot be migrated safely because one old label may
+represent multiple raw categories. Property-only gates have no category-key
+semantics and can be upgraded to the current version without guessing. The plot
+and axes remain so a dropped categorical gate can be redrawn.
 
 ## Regression checklist
 
@@ -384,9 +389,12 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Resolved ids never reach the configuration — *"never persists resolved annotation ids"*
 - An axis whose property left the configuration is dropped, taking its gate — *"drops a plot's axis when its property left the configuration"*
 - An unknown categorical key is rejected rather than trusted — *"drops an unknown categorical key rather than trusting it"*
-- A legacy label-only categorical order is dropped rather than silently
-  reinterpreted — *"drops legacy display-label category orders that are not
-  injective"*
+- An unversioned legacy label is dropped even when its user-controlled text
+  looks exactly like a current key — *"drops an unversioned legacy label even
+  when it looks encoded"*
+- A legacy property-only gate is retained and normalized because it has no
+  category-key semantics — *"upgrades a legacy property-only gate to the
+  current key version"*
 - Malformed gates/plots are dropped — *"drops malformed gates and plots"*
 - Older configurations without the key still load — *"tolerates a configuration saved before analysis plots existed"*
 
@@ -445,10 +453,10 @@ Change any of this and re-check these. Each item names the test that holds it.
 
 Delivered on branch `analysis-panel-scatter-gating`, PR
 [#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), through
-the round-7 category-identity fix described below (the feature, seven
+the round-8 category-schema fix described below (the feature, eight
 Codex-fix rounds, documentation, and the export split). **Not merged.**
 
-Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,410 frontend
+Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,411 frontend
 tests.
 There are no backend changes in #1298. The general CSV endpoint correction and
 its backend tests live in prerequisite #1299.
@@ -582,10 +590,24 @@ Codex reviewed `29634c61` and found one category-identity collision:
    regressions *"keeps tag identities separate when their display labels
    collide"*, *"keeps channels separate when their display names collide"*,
    and *"uses display labels rather than category identity keys for ticks"*
-   cover the flagged path and both twins. Hydration drops pre-fix label-only
-   gates because an ambiguous old label cannot be migrated without guessing;
-   *"drops legacy display-label category orders that are not injective"* pins
-   that correctness boundary.
+   cover the flagged path and both twins.
+
+### Round 8 Codex review tracker
+
+Codex reviewed `24989764` and found one migration namespace collision:
+
+1. **P2 — the key encoding was inferred from a user-controlled prefix**
+   (`src/utils/annotationBrowserConfig.ts`). A legacy Tags gate for the literal
+   tag `v1:["A"]` passed the new-key predicate and was reinterpreted as the raw
+   tag array `["A"]`, so the polygon could silently select the wrong population.
+   **Status: fixed in this round.** `IAnalysisGate` now persists an explicit
+   `categoryKeyVersion`; both categorical axes require the current version
+   before any encoded key is trusted. The regression *"drops an unversioned
+   legacy label even when it looks encoded"* reproduces the exact collision.
+   Property-only gates are safely normalized because their category arrays are
+   null and no key interpretation is involved; *"upgrades a legacy
+   property-only gate to the current key version"* holds that compatibility
+   boundary.
 
 ### What is verified live vs by test only
 
@@ -641,9 +663,15 @@ plots with no browser warnings or errors. The deliberate colliding-tag and
 duplicate-channel-name populations are exercised by the pure regressions rather
 than by mutating the shared dataset to manufacture them.
 
+The round-8 explicit-version fix was checked with the same live categorical
+path. A new Tags × Shape box gate resolved 26,141 of 26,142 objects, survived a
+hard reload, and re-resolved to the same population. The temporary plot was
+removed; a second hard reload confirmed zero plots and 26,142 of 26,142 objects,
+with no browser warnings or errors.
+
 ### Review history, and what it suggests
 
-Nearly every finding across seven Codex rounds plus the cold follow-up review was
+Nearly every finding across eight Codex rounds plus the cold follow-up review was
 real. Most of the later ones were consequences of *earlier fixes* rather than
 of the original feature — the gate-replacement bug
 only became permanent because of the failed-fetch fix; the `fetchMatchingIds`
@@ -652,7 +680,7 @@ overlap came from fixing eviction without fixing layout. The feature core has
 been stable since round 1, but the seams now have regression coverage for the
 failure shapes that kept recurring.
 
-The post-round-7 cold branch review found no additional actionable findings.
+The post-round-8 cold branch review found no additional actionable findings.
 
 ## Possible follow-ups
 

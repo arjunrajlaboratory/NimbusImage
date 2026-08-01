@@ -1789,6 +1789,11 @@ export type TAnalysisAxis =
   | { type: "property"; path: string[] }
   | { type: "categorical"; key: TAnalysisCategoricalKey };
 
+// Explicitly identifies how categorical values in a gate are encoded. This
+// cannot be inferred from a string prefix: legacy display labels are
+// user-controlled and may themselves begin with that prefix.
+export const ANALYSIS_CATEGORY_KEY_VERSION = 1 as const;
+
 // A drawn gate, stored as the lasso polygon in PLOT COORDINATE space rather
 // than as the annotation ids it happened to contain.
 //
@@ -1803,6 +1808,7 @@ export type TAnalysisAxis =
 // is part of the gate's meaning and is stored with it. Human-readable labels
 // are display-only and are not persisted as identities.
 export interface IAnalysisGate {
+  categoryKeyVersion: typeof ANALYSIS_CATEGORY_KEY_VERSION;
   vertices: IGeoJSPosition[];
   xCategories: string[] | null;
   yCategories: string[] | null;

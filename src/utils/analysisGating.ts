@@ -1,4 +1,5 @@
 import {
+  ANALYSIS_CATEGORY_KEY_VERSION,
   IAnalysisGate,
   IAnalysisPlot,
   IAnnotationPropertyValues,
@@ -333,6 +334,7 @@ export function selectionEventToGate(
   series: IAnalysisSeries,
 ): IAnalysisGate | null {
   const categories = {
+    categoryKeyVersion: ANALYSIS_CATEGORY_KEY_VERSION,
     xCategories: series.xCategories,
     yCategories: series.yCategories,
   };

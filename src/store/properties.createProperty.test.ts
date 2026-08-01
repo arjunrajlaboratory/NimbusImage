@@ -107,6 +107,7 @@ describe("createProperty propagates the real failure reason", () => {
       { id: "kept", name: "Kept" },
     ]);
     const gate = {
+      categoryKeyVersion: 1 as const,
       vertices: [
         { x: 0, y: 0 },
         { x: 1, y: 0 },

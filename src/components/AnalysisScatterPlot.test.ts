@@ -134,6 +134,7 @@ describe("AnalysisScatterPlot", () => {
     expect(mocks.setAnalysisPlotGate).toHaveBeenCalledWith({
       id: "p1",
       gate: {
+        categoryKeyVersion: 1,
         vertices: [
           { x: 0, y: 0 },
           { x: 5, y: 0 },
