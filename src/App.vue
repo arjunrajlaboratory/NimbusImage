@@ -430,8 +430,8 @@
       v-model="annotationPanel"
       title="Object Browser"
       :width="RIGHT_PALETTE_WIDTHS.objectBrowser"
-      :top="annotationBrowserTop"
-      :max-height="annotationBrowserMaxHeight"
+      :top="stackedHostTop"
+      :max-height="stackedHostMaxHeight"
     >
       <annotation-browser></annotation-browser>
     </floating-palette>
@@ -450,6 +450,8 @@
       v-model="analysisPanel"
       title="Analysis"
       :width="RIGHT_PALETTE_WIDTHS.analysis"
+      :top="stackedHostTop"
+      :max-height="stackedHostMaxHeight"
     >
       <!-- FloatingPalette keeps its content mounted and hides it with
            display:none, so the panel needs the open state explicitly: without
@@ -926,26 +928,34 @@ function observePaletteHeight(
   return observer;
 }
 
-// Right zone: Filters stacks above the Object Browser.
+// Right zone: Filters stacks above whichever primary is hosting it. Both the
+// Object Browser and the Analysis panel host it (see paletteRoles), and the two
+// are mutually exclusive primaries, so at most one host is open at a time and
+// one shared offset covers both. Keyed on the host set rather than the Object
+// Browser alone: making Filters a companion of Analysis without this left the
+// two palettes at the same top/right, with the wider Analysis panel drawn over
+// Filters — so the Analysis panel's "narrow the filters" guidance was still
+// unusable without closing it first.
 const filtersPaletteRef = ref<PaletteRefEl>();
 const filtersHeight = ref(0);
 let filtersResizeObserver: ResizeObserver | null = null;
 
 const filtersStacked = computed(
-  () => filtersPanel.value && annotationPanel.value,
+  () => filtersPanel.value && (annotationPanel.value || analysisPanel.value),
 );
 
-const annotationBrowserTop = computed(() =>
+// Top edge of whichever primary Filters is currently stacked above.
+const stackedHostTop = computed(() =>
   filtersStacked.value
     ? PALETTE_TOP + filtersHeight.value + STACK_GAP
     : PALETTE_TOP,
 );
 
-const annotationBrowserMaxHeight = computed(
-  () => `calc(100vh - ${annotationBrowserTop.value + COLUMN_BOTTOM_INSET}px)`,
+const stackedHostMaxHeight = computed(
+  () => `calc(100vh - ${stackedHostTop.value + COLUMN_BOTTOM_INSET}px)`,
 );
 
-// When stacked, cap Filters so the Browser always keeps a minimum height.
+// When stacked, cap Filters so its host always keeps a minimum height.
 const filtersMaxHeight = computed(() =>
   filtersStacked.value
     ? `calc(100vh - ${
@@ -1285,7 +1295,7 @@ defineExpose({
   hasUncomputedProperties,
   filteredToursByCategory,
   filtersStacked,
-  annotationBrowserTop,
+  stackedHostTop,
   fetchConfig,
   loadAllTours,
   goHome,

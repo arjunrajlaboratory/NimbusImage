@@ -89,6 +89,12 @@ export class Properties extends VuexModule {
   // can't be walked for the full path set. Empty in wholesale mode.
   discoveredPropertyPaths: string[][] = markRaw([]);
 
+  // Bumped whenever the dataset's property values are (re)loaded — after a
+  // compute or an import, not on a viewport pan. Consumers that must re-derive
+  // from property values (the analysis gates) watch this: values live
+  // server-side, so there is nothing client-side for them to diff.
+  propertyValuesRevision = 0;
+
   // Lazy mode (stub-only) only: server-computed count of annotations still
   // awaiting each property's computation ({propertyId: count}). In wholesale
   // mode the count is derived client-side from the resident annotation set
@@ -244,6 +250,11 @@ export class Properties extends VuexModule {
     }
     // Associate the worker interface with the image
     this.setWorkerInterface({ image, workerInterface });
+  }
+
+  @Mutation
+  bumpPropertyValuesRevision() {
+    this.propertyValuesRevision++;
   }
 
   @Mutation
@@ -817,6 +828,7 @@ export class Properties extends VuexModule {
     if (!main.dataset?.id) {
       return;
     }
+    this.bumpPropertyValuesRevision();
     if (annotations.stubOnlyMode) {
       await this.fetchPropertyPathsSample();
       this.ensureVisiblePropertyValues();

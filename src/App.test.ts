@@ -187,6 +187,36 @@ describe("App", () => {
     expect(vm.filtersPanel).toBe(true);
   });
 
+  it("Filters and the Analysis panel can be open together", () => {
+    // The Analysis panel's over-cap guidance is "narrow the filters", so
+    // opening Filters must not evict it.
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.togglePalette("analysisPanel");
+    vm.togglePalette("filtersPanel");
+    expect(vm.analysisPanel).toBe(true);
+    expect(vm.filtersPanel).toBe(true);
+  });
+
+  it("stacks Filters above whichever primary hosts it", () => {
+    // Coexisting is not enough: both palettes are right-anchored, so without a
+    // stacking offset the wider Analysis panel simply covers Filters and the
+    // guidance to use it stays unusable. The offset must apply to BOTH hosts.
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.filtersStacked).toBe(false);
+
+    vm.togglePalette("annotationPanel");
+    vm.togglePalette("filtersPanel");
+    expect(vm.filtersStacked).toBe(true);
+
+    // Switch the host to the Analysis panel: still stacked, not overlapping.
+    vm.togglePalette("analysisPanel");
+    expect(vm.analysisPanel).toBe(true);
+    expect(vm.filtersPanel).toBe(true);
+    expect(vm.filtersStacked).toBe(true);
+  });
+
   it("Filters stays open when the Object Browser is closed", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;

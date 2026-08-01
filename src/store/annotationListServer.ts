@@ -159,6 +159,23 @@ export class AnnotationListServer extends VuexModule {
     return `${JSON.stringify(rest)}|${constraints}`;
   }
 
+  /**
+   * True when the query cannot match anything, so no request should be sent.
+   *
+   * An analysis gate resolved to zero annotations is a REAL gate meaning
+   * "nothing" — an empty lasso — and surfaces here as an empty inner
+   * `idConstraints` entry. The list API deliberately rejects `[[]]` with a 400
+   * (see `helpers/validation.py`: it wants match-none to be explicit rather
+   * than an accidental `$in: []`), so sending it left the request failed and
+   * the PREVIOUS rows on screen instead of showing zero results. The client is
+   * the side that knows the answer without asking, so it answers.
+   */
+  get queryMatchesNothing(): boolean {
+    return (this.currentFilters.idConstraints ?? []).some(
+      (ids) => ids.length === 0,
+    );
+  }
+
   // The query fields shared by every list fetch; each action adds its own
   // offset (and anchorId for navigation) plus the datasetId it guarded on.
   get listQueryBase() {
@@ -178,6 +195,11 @@ export class AnnotationListServer extends VuexModule {
     }
     navigationRequestGuard.next();
     const token = pageRequestGuard.next();
+    if (this.queryMatchesNothing) {
+      this.setPageResult({ rows: [], total: 0 });
+      this.setLoading(false);
+      return;
+    }
     this.setLoading(true);
     try {
       const page = await main.annotationsAPI.fetchAnnotationListPage({
@@ -209,6 +231,12 @@ export class AnnotationListServer extends VuexModule {
     }
     const navigationToken = navigationRequestGuard.next();
     const pageToken = pageRequestGuard.next();
+    if (this.queryMatchesNothing) {
+      // Nothing matches, so no row can be navigated to.
+      this.setPageResult({ rows: [], total: 0 });
+      this.setLoading(false);
+      return false;
+    }
     this.setLoading(true);
     try {
       const page = await main.annotationsAPI.fetchAnnotationListPage({

@@ -14,6 +14,7 @@ const { fetchAnnotationListIds, annotationMock, propertiesMock } = vi.hoisted(
     },
     propertiesMock: {
       propertyValues: {} as Record<string, any>,
+      propertyValuesRevision: 0,
       propertiesAPI: {
         getPropertyHistogram: vi.fn(),
         getPropertyValuesForIds: vi.fn(
@@ -53,6 +54,7 @@ vi.mock("geojs", () => ({
 }));
 
 import filters from "@/store/filters";
+import { categoricalContentSignature } from "@/utils/analysisGating";
 import { PropertyFilterMode } from "@/store/model";
 
 function deferred<T>() {
@@ -390,6 +392,47 @@ describe("filters.refreshAnalysis", () => {
     await filters.setAnalysisPlotGate({ id: "p1", gate: null });
     await filters.refreshAnalysis();
     expect(filters.analysisLoading).toBe(false);
+  });
+
+  it("folds categorical content and the property revision into its identity", () => {
+    // Membership alone left a Tags-axis gate filtering by the old category
+    // after a tag edit (ids unchanged), and left every gate stale after a
+    // property recompute (values live server-side). Whether those hashes
+    // CHANGE on an edit is covered purely in analysisGating.test.ts; what
+    // matters here is that they are actually part of the identity — the Vuex
+    // getter cache plus a non-reactive mock makes an in-test mutation
+    // unobservable, so this asserts the ingredients rather than the reaction.
+    const population = [
+      { ...makeStub("a"), tags: ["red"], shape: "point" },
+      { ...makeStub("b"), tags: ["blue"], shape: "point" },
+    ];
+    annotationMock.annotationsForIteration = population;
+    propertiesMock.propertyValuesRevision = 4242;
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotAxes({
+      id: "p1",
+      xAxis: { type: "categorical", key: "tags" },
+      yAxis: { type: "categorical", key: "shape" },
+    });
+    filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
+
+    const signature = filters.analysisInputSignature;
+    expect(signature).toContain(
+      categoricalContentSignature(population as any, ["tags", "shape"]),
+    );
+    expect(signature).toContain("4242");
+    // ...and a different tag really does produce a different ingredient.
+    const edited = [{ ...population[0], tags: ["green"] }, population[1]];
+    expect(signature).not.toContain(
+      categoricalContentSignature(edited as any, ["tags", "shape"]),
+    );
+  });
+
+  it("stays idle — and touches nothing — when no gate exists and nobody looks", () => {
+    // The content hash and population walk must not run for a dataset with no
+    // analysis, or every frame scrub would pay for a feature nobody opened.
+    filters.addAnalysisPlot("p1");
+    expect(filters.analysisInputSignature).toBe("idle");
   });
 
   it("clears derived state when the last gate goes away", async () => {

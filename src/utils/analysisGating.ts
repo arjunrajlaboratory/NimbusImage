@@ -11,7 +11,7 @@ import {
   createPathStringFromPathArray,
   getValueFromObjectAndPath,
 } from "@/utils/paths";
-import { idSignatureOf } from "@/utils/signatures";
+import { createHasher, idSignatureOf } from "@/utils/signatures";
 
 /**
  * Coordinate/gating maths for the Analysis panel.
@@ -306,4 +306,71 @@ export function analysisPropertyPaths(plots: IAnalysisPlot[]): string[][] {
 /** A cheap identity for a population. See idSignatureOf for why it samples. */
 export function populationSignature(population: TAnnotationOrStub[]): string {
   return idSignatureOf(population);
+}
+
+/** The categorical axis keys the given plots actually use. */
+export function analysisCategoricalKeys(
+  plots: IAnalysisPlot[],
+): TAnalysisCategoricalKey[] {
+  const keys = new Set<TAnalysisCategoricalKey>();
+  for (const plot of plots) {
+    for (const axis of [plot.xAxis, plot.yAxis]) {
+      if (axis?.type === "categorical") {
+        keys.add(axis.key);
+      }
+    }
+  }
+  return [...keys];
+}
+
+/**
+ * An identity for the annotation CONTENT a categorical axis reads.
+ *
+ * Membership is not enough. Editing an annotation's tags leaves the population
+ * and its ids identical while moving that point to a different column, so a
+ * signature built only from ids never re-runs the gate resolution: the panel
+ * redraws the point under its new category while the gate keeps filtering by
+ * the old one.
+ *
+ * Hashed from the raw fields rather than from `categoricalLabel` so nothing is
+ * allocated per annotation — this runs whenever a gate is active. It is not the
+ * canonical label (tags are not sorted here), which is fine: it only has to
+ * CHANGE when the content does. A reordering triggers a harmless extra refresh.
+ */
+export function categoricalContentSignature(
+  annotations: TAnnotationOrStub[],
+  keys: TAnalysisCategoricalKey[],
+): string {
+  if (keys.length === 0) {
+    return "-";
+  }
+  const hasher = createHasher();
+  for (const annotation of annotations) {
+    for (const key of keys) {
+      switch (key) {
+        case "tags":
+          for (const tag of annotation.tags) {
+            hasher.feedString(tag);
+          }
+          break;
+        case "shape":
+          hasher.feedString(annotation.shape);
+          break;
+        case "channel":
+          hasher.feedNumber(annotation.channel);
+          break;
+        case "xy":
+          hasher.feedNumber(annotation.location.XY);
+          break;
+        case "z":
+          hasher.feedNumber(annotation.location.Z);
+          break;
+        case "time":
+          hasher.feedNumber(annotation.location.Time);
+          break;
+      }
+    }
+    hasher.countItem();
+  }
+  return hasher.digest();
 }

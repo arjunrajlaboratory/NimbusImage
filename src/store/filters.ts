@@ -38,8 +38,10 @@ import {
 } from "./model";
 import { MAX_ANALYSIS_PLOT_POINTS } from "./constants";
 import {
+  analysisCategoricalKeys,
   analysisPropertyPaths,
   buildPlotSeries,
+  categoricalContentSignature,
   chainPlotInputs,
   populationSignature,
   resolveGateIds,
@@ -497,20 +499,36 @@ export class Filters extends VuexModule {
     return populationSignature(this.annotationsPassingNonGateFilters);
   }
 
-  // What refreshAnalysis' result depends on: the plots (small — axes plus a
-  // polygon), whether anyone is looking, and the population resolved against.
+  // What refreshAnalysis' result depends on.
+  //
+  // Membership alone is NOT enough. Editing an annotation's tags leaves the
+  // population and its ids identical while moving that point to a different
+  // column, so an id-only signature never re-ran the resolution: the panel
+  // redrew the point under its new category while the gate kept filtering by
+  // the old one. Property values have the same problem from the other side —
+  // they live server-side, so a recompute changes nothing the client can diff.
+  // Hence the content hash for the categorical axes in use, and the property
+  // store's load revision for the property axes.
   get analysisInputSignature(): string {
     const wanted =
       this.analysisPanelOpen ||
       this.analysisPlots.some((plot) => plot.gate !== null);
     if (!wanted) {
       // Nothing to fetch or resolve: don't even look at the population, so a
-      // dataset nobody is analysing never pays for this getter.
+      // dataset nobody is analysing never pays for any of this.
       return "idle";
     }
-    return `${JSON.stringify(this.analysisPlots)}|${
-      this.analysisPanelOpen
-    }|${this.analysisPopulationSignature}`;
+    const base = this.annotationsPassingNonGateFilters;
+    return [
+      JSON.stringify(this.analysisPlots),
+      this.analysisPanelOpen,
+      populationSignature(base),
+      categoricalContentSignature(
+        base,
+        analysisCategoricalKeys(this.analysisPlots),
+      ),
+      properties.propertyValuesRevision,
+    ].join("|");
   }
 
   @Mutation

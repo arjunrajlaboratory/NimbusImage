@@ -2337,7 +2337,7 @@ export class Main extends VuexModule {
     // property values, so hydration seeds the plots and the refresh below turns
     // them back into a filter.
     this.context.dispatch("hydrateAnalysisPlots", config.analysisPlots ?? []);
-    this.context.dispatch("refreshAnalysisGateIds");
+    this.context.dispatch("refreshAnalysis");
   }
 
   @Action

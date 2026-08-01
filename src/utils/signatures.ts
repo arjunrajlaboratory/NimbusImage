@@ -18,31 +18,59 @@
  * inside a frame, and only paid while a filter of that size is actually active.
  */
 
-// cyrb53: a fast, well-distributed 53-bit string hash. Two independent 32-bit
-// lanes are mixed at the end, so the result is far past birthday-collision range
-// for the set sizes involved here.
-function hashIds(length: number, read: (index: number) => string) {
+/**
+ * Incremental cyrb53: a fast, well-distributed 53-bit hash. Two independent
+ * 32-bit lanes are mixed at the end, so the result is far past
+ * birthday-collision range for the set sizes involved here.
+ *
+ * Streaming rather than string-building on purpose — the whole point is to
+ * derive an identity for tens of thousands of values without allocating.
+ */
+export function createHasher() {
   let h1 = 0xdeadbeef;
   let h2 = 0x41c6ce57;
-  for (let i = 0; i < length; i++) {
-    const id = read(i);
-    for (let j = 0; j < id.length; j++) {
-      const ch = id.charCodeAt(j);
+  let count = 0;
+  const feedString = (value: string) => {
+    for (let i = 0; i < value.length; i++) {
+      const ch = value.charCodeAt(i);
       h1 = Math.imul(h1 ^ ch, 2654435761);
       h2 = Math.imul(h2 ^ ch, 1597334677);
     }
-    // Separator, so ["ab","c"] and ["a","bc"] cannot hash alike.
+    // Separator, so ("ab","c") and ("a","bc") cannot hash alike.
     h1 = Math.imul(h1 ^ 0x1f, 2246822507);
     h2 = Math.imul(h2 ^ 0x1f, 3266489909);
+  };
+  return {
+    feedString,
+    feedNumber(value: number) {
+      h1 = Math.imul(h1 ^ (value | 0), 2654435761);
+      h2 = Math.imul(h2 ^ (value | 0), 1597334677);
+      h1 = Math.imul(h1 ^ 0x1f, 2246822507);
+      h2 = Math.imul(h2 ^ 0x1f, 3266489909);
+    },
+    countItem() {
+      count++;
+    },
+    digest(): string {
+      const m1 =
+        Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
+        Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+      const m2 =
+        Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
+        Math.imul(m1 ^ (m1 >>> 13), 3266489909);
+      const value = 4294967296 * (2097151 & m2) + (m1 >>> 0);
+      return `${count}:${value.toString(36)}`;
+    },
+  };
+}
+
+function hashIds(length: number, read: (index: number) => string) {
+  const hasher = createHasher();
+  for (let i = 0; i < length; i++) {
+    hasher.feedString(read(i));
+    hasher.countItem();
   }
-  h1 =
-    Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
-    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 =
-    Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
-    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  const value = 4294967296 * (2097151 & h2) + (h1 >>> 0);
-  return `${length}:${value.toString(36)}`;
+  return hasher.digest();
 }
 
 /**

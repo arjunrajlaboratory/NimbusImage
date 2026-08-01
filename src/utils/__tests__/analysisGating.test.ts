@@ -10,7 +10,9 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  analysisCategoricalKeys,
   analysisPropertyPaths,
+  categoricalContentSignature,
   buildPlotSeries,
   chainPlotInputs,
   jitterFromId,
@@ -379,5 +381,77 @@ describe("jitterFromId", () => {
       expect(Math.abs(jitterFromId(id, 17))).toBeLessThan(0.3);
     }
     expect(jitterFromId("a", 17)).not.toBe(jitterFromId("a", 31));
+  });
+});
+
+describe("categoricalContentSignature", () => {
+  const pop = (...tagLists: string[][]) =>
+    tagLists.map((tags, i) => annotation(`id-${i}`, { tags }));
+
+  it("changes when a tag changes but membership does not", () => {
+    // The bug: editing an annotation's tags leaves the population and its ids
+    // identical while moving the point to a different column, so an id-only
+    // signature never re-ran the gate — the plot redrew under the new category
+    // while the gate kept filtering by the old one.
+    const before = categoricalContentSignature(pop(["a"], ["b"]), ["tags"]);
+    const after = categoricalContentSignature(pop(["a"], ["c"]), ["tags"]);
+    expect(after).not.toBe(before);
+  });
+
+  it("changes when a shape, channel or frame field changes", () => {
+    const base = annotation("x", {
+      shape: AnnotationShape.Point,
+      channel: 0,
+      location: { XY: 0, Z: 0, Time: 0 },
+    });
+    const sig = (a: TAnnotationOrStub, keys: any[]) =>
+      categoricalContentSignature([a], keys);
+    expect(sig({ ...base, channel: 1 }, ["channel"])).not.toBe(
+      sig(base, ["channel"]),
+    );
+    expect(
+      sig({ ...base, location: { XY: 0, Z: 3, Time: 0 } }, ["z"]),
+    ).not.toBe(sig(base, ["z"]));
+    expect(
+      sig({ ...base, shape: AnnotationShape.Polygon }, ["shape"]),
+    ).not.toBe(sig(base, ["shape"]));
+  });
+
+  it("only hashes the keys actually in use", () => {
+    // A tag edit must not disturb a plot whose axes are shape-only, or every
+    // unrelated edit would refetch.
+    const a = pop(["a"]);
+    const b = pop(["b"]);
+    expect(categoricalContentSignature(b, ["shape"])).toBe(
+      categoricalContentSignature(a, ["shape"]),
+    );
+  });
+
+  it("is stable for identical content and cheap when no key is used", () => {
+    expect(categoricalContentSignature(pop(["a"]), ["tags"])).toBe(
+      categoricalContentSignature(pop(["a"]), ["tags"]),
+    );
+    expect(categoricalContentSignature(pop(["a"]), [])).toBe("-");
+  });
+});
+
+describe("analysisCategoricalKeys", () => {
+  const plot = (x: any, y: any) =>
+    ({
+      id: "p",
+      xAxis: x,
+      yAxis: y,
+      gate: null,
+      gateEnabled: true,
+    }) as IAnalysisPlot;
+
+  it("collects the categorical keys in use and de-duplicates them", () => {
+    expect(
+      analysisCategoricalKeys([plot(TAGS, AREA), plot(TAGS, TAGS)]),
+    ).toEqual(["tags"]);
+  });
+
+  it("returns nothing when every axis is a property", () => {
+    expect(analysisCategoricalKeys([plot(AREA, INTENSITY)])).toEqual([]);
   });
 });
