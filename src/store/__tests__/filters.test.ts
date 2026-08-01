@@ -202,6 +202,10 @@ describe("filters property-filter server membership (D Stage 2)", () => {
 describe("filters.refreshAnalysis", () => {
   const getValues = propertiesMock.propertiesAPI.getPropertyValuesForIds;
   const AXIS = { type: "property" as const, path: ["prop", "Area"] };
+  const OTHER_AXIS = {
+    type: "property" as const,
+    path: ["other", "Intensity"],
+  };
   const GATE = {
     vertices: [
       { x: 0, y: 0 },
@@ -215,7 +219,7 @@ describe("filters.refreshAnalysis", () => {
   beforeEach(() => {
     filters.resetFilterState();
     filters.setAnalysisPanelOpen(false);
-    getValues.mockClear();
+    getValues.mockReset();
     getValues.mockResolvedValue([]);
     annotationMock.annotationsForIteration = [makeStub("a"), makeStub("b")];
   });
@@ -260,6 +264,57 @@ describe("filters.refreshAnalysis", () => {
     expect(datasetId).toBe("ds1");
     expect(ids).toEqual(["a", "b"]);
     expect(paths).toEqual([["prop", "Area"]]);
+  });
+
+  it("requests only gated plot paths while the panel is closed", async () => {
+    await addPlot("gated", GATE);
+    await filters.addAnalysisPlot("display-only");
+    await filters.setAnalysisPlotAxes({
+      id: "display-only",
+      xAxis: OTHER_AXIS,
+      yAxis: OTHER_AXIS,
+    });
+
+    await filters.refreshAnalysis();
+
+    expect(getValues).toHaveBeenCalledTimes(1);
+    const [, , paths] = getValues.mock.calls[0] as unknown as [
+      string,
+      string[],
+      string[][],
+    ];
+    expect(paths).toEqual([["prop", "Area"]]);
+  });
+
+  it("does not fetch hidden ungated paths for a categorical-only gate", async () => {
+    annotationMock.annotationsForIteration = [
+      { ...makeStub("a"), tags: ["keep"], shape: "point" },
+      { ...makeStub("b"), tags: ["drop"], shape: "point" },
+    ];
+    await filters.addAnalysisPlot("gated");
+    await filters.setAnalysisPlotAxes({
+      id: "gated",
+      xAxis: { type: "categorical", key: "tags" },
+      yAxis: { type: "categorical", key: "shape" },
+    });
+    await filters.setAnalysisPlotGate({
+      id: "gated",
+      gate: {
+        ...GATE,
+        xCategories: ["drop", "keep"],
+        yCategories: ["point"],
+      },
+    });
+    await filters.addAnalysisPlot("display-only");
+    await filters.setAnalysisPlotAxes({
+      id: "display-only",
+      xAxis: OTHER_AXIS,
+      yAxis: OTHER_AXIS,
+    });
+
+    await filters.refreshAnalysis();
+
+    expect(getValues).not.toHaveBeenCalled();
   });
 
   it("resolves a categorical-only gate without fetching anything", async () => {
@@ -308,14 +363,133 @@ describe("filters.refreshAnalysis", () => {
     await filters.refreshAnalysis();
     expect(filters.analysisGateIds.p1).toEqual(["a"]);
 
-    // Refresh again with the request failing — WITHOUT touching the gate, since
-    // replacing a gate legitimately drops its ids (see the test below).
+    // Widen the visible display scope with an ungated property plot. That needs
+    // another path fetch, but it does not change the population or values the
+    // existing gate was resolved against.
+    await filters.addAnalysisPlot("display-only");
+    await filters.setAnalysisPlotAxes({
+      id: "display-only",
+      xAxis: OTHER_AXIS,
+      yAxis: OTHER_AXIS,
+    });
+    filters.setAnalysisPanelOpen(true);
     getValues.mockRejectedValueOnce(new Error("network"));
     await filters.refreshAnalysis();
 
     expect(filters.analysisGateIds.p1).toEqual(["a"]); // not []
     expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["a"]);
     expect(filters.analysisLoading).toBe(false);
+  });
+
+  it("still resolves a categorical gate when a display-only fetch fails", async () => {
+    annotationMock.annotationsForIteration = [
+      { ...makeStub("a"), tags: ["keep"], shape: "point" },
+      { ...makeStub("b"), tags: ["drop"], shape: "point" },
+    ];
+    await filters.addAnalysisPlot("gated");
+    await filters.setAnalysisPlotAxes({
+      id: "gated",
+      xAxis: { type: "categorical", key: "tags" },
+      yAxis: { type: "categorical", key: "shape" },
+    });
+    await filters.setAnalysisPlotGate({
+      id: "gated",
+      gate: {
+        vertices: [
+          { x: -0.5, y: -0.5 },
+          { x: 0.5, y: -0.5 },
+          { x: 0.5, y: 0.5 },
+          { x: -0.5, y: 0.5 },
+        ],
+        xCategories: ["drop", "keep"],
+        yCategories: ["point"],
+      },
+    });
+    await filters.addAnalysisPlot("display-only");
+    await filters.setAnalysisPlotAxes({
+      id: "display-only",
+      xAxis: OTHER_AXIS,
+      yAxis: OTHER_AXIS,
+    });
+    filters.setAnalysisPanelOpen(true);
+    getValues.mockRejectedValueOnce(new Error("network"));
+
+    await filters.refreshAnalysis();
+
+    expect(filters.analysisGateIds.gated).toEqual(["b"]);
+    expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["b"]);
+  });
+
+  it("uses cached gate paths when a widened display fetch fails", async () => {
+    getValues.mockResolvedValue([
+      { annotationId: "a", values: { prop: { Area: 5 } } },
+    ]);
+    await addPlot("gated", GATE);
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds.gated).toEqual(["a"]);
+
+    await filters.addAnalysisPlot("display-only");
+    await filters.setAnalysisPlotAxes({
+      id: "display-only",
+      xAxis: OTHER_AXIS,
+      yAxis: OTHER_AXIS,
+    });
+    filters.setAnalysisPanelOpen(true);
+    await filters.setAnalysisPlotGate({
+      id: "gated",
+      gate: { ...GATE, vertices: [...GATE.vertices] },
+    });
+    expect(filters.analysisGateIds.gated).toBeUndefined();
+    getValues.mockRejectedValueOnce(new Error("network"));
+
+    await filters.refreshAnalysis();
+
+    expect(filters.analysisGateIds.gated).toEqual(["a"]);
+    expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["a"]);
+  });
+
+  it("drops gate ids before a changed-population fetch can fail", async () => {
+    annotationMock.annotationsForIteration = [
+      makeStub("a"),
+      makeStub("b"),
+      makeStub("newly-eligible"),
+    ];
+    filters.newAnnotationIdFilter(["a", "b"]);
+    getValues.mockResolvedValue([
+      { annotationId: "a", values: { prop: { Area: 5 } } },
+    ]);
+    await addPlot("p1", GATE);
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds.p1).toEqual(["a"]);
+
+    // Removing a non-gate filter expands the reactive base population.
+    filters.removeAnnotationIdFilter("Annotation List Filter 0");
+    getValues.mockRejectedValueOnce(new Error("network"));
+    await filters.refreshAnalysis();
+
+    expect(filters.analysisGateIds.p1).toBeUndefined();
+    expect(filters.filteredAnnotations).toHaveLength(3);
+    expect(filters.analysisLoading).toBe(false);
+  });
+
+  it("reuses resolved values instead of refetching on palette toggles", async () => {
+    getValues.mockResolvedValue([
+      { annotationId: "a", values: { prop: { Area: 5 } } },
+    ]);
+    await addPlot("p1", GATE);
+    await filters.refreshAnalysis();
+    expect(getValues).toHaveBeenCalledTimes(1);
+    const closedSignature = filters.analysisInputSignature;
+
+    filters.setAnalysisPanelOpen(true);
+    expect(filters.analysisInputSignature).toBe(closedSignature);
+    await filters.refreshAnalysis();
+    filters.setAnalysisPanelOpen(false);
+    expect(filters.analysisInputSignature).toBe(closedSignature);
+    await filters.refreshAnalysis();
+
+    expect(getValues).toHaveBeenCalledTimes(1);
+    expect(filters.analysisGateIds.p1).toEqual(["a"]);
   });
 
   it("invalidates an in-flight request before bailing out", async () => {
@@ -363,7 +537,7 @@ describe("filters.refreshAnalysis", () => {
     expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["a"]);
   });
 
-  it("samples gate ids in the signature, not just their count", async () => {
+  it("hashes every gate id in the signature", async () => {
     // A lasso moved to a different region with the SAME number of objects must
     // still register, or the server-mode list keeps the previous gate's rows.
     await addPlot("p1", GATE);
@@ -395,7 +569,7 @@ describe("filters.refreshAnalysis", () => {
     expect(filters.analysisLoading).toBe(false);
   });
 
-  it("folds categorical content and the property revision into its identity", () => {
+  it("folds gated categorical content and property revision into its identity", () => {
     // Membership alone left a Tags-axis gate filtering by the old category
     // after a tag edit (ids unchanged), and left every gate stale after a
     // property recompute (values live server-side). Whether those hashes
@@ -413,19 +587,19 @@ describe("filters.refreshAnalysis", () => {
     filters.setAnalysisPlotAxes({
       id: "p1",
       xAxis: { type: "categorical", key: "tags" },
-      yAxis: { type: "categorical", key: "shape" },
+      yAxis: AXIS,
     });
     filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
 
     const signature = filters.analysisInputSignature;
     expect(signature).toContain(
-      categoricalContentSignature(population as any, ["tags", "shape"]),
+      categoricalContentSignature(population as any, ["tags"]),
     );
     expect(signature).toContain("4242");
     // ...and a different tag really does produce a different ingredient.
     const edited = [{ ...population[0], tags: ["green"] }, population[1]];
     expect(signature).not.toContain(
-      categoricalContentSignature(edited as any, ["tags", "shape"]),
+      categoricalContentSignature(edited as any, ["tags"]),
     );
   });
 
@@ -436,7 +610,7 @@ describe("filters.refreshAnalysis", () => {
     expect(filters.analysisInputSignature).toBe("idle");
   });
 
-  it("drops the previous gate's ids when a new lasso replaces it", async () => {
+  it("drops previous ids on re-lasso and resolves from retained values", async () => {
     // Keeping them meant the plot highlighted the NEW selection while the
     // viewer and the server list still filtered by the old one — and because
     // refreshAnalysis deliberately leaves ids alone when its fetch fails, a
@@ -448,19 +622,21 @@ describe("filters.refreshAnalysis", () => {
     await filters.refreshAnalysis();
     expect(filters.analysisGateIds.p1).toEqual(["a"]);
 
-    // Re-lasso, and make the follow-up resolution fail.
-    getValues.mockRejectedValueOnce(new Error("network"));
+    getValues.mockClear();
+    // Re-lasso: the mutation must synchronously drop the old constraint.
     await filters.setAnalysisPlotGate({
       id: "p1",
       gate: { ...GATE, vertices: [...GATE.vertices] },
     });
     expect(filters.analysisGateIds.p1).toBeUndefined();
+
+    // The population, property revision and requested paths are unchanged, so
+    // the new polygon can resolve from retained values with no request window.
     await filters.refreshAnalysis();
 
-    // Unresolved contributes no constraint — the interim shows more, not the
-    // wrong thing.
-    expect(filters.analysisGateIds.p1).toBeUndefined();
-    expect(filters.filteredAnnotations).toHaveLength(2);
+    expect(getValues).not.toHaveBeenCalled();
+    expect(filters.analysisGateIds.p1).toEqual(["a"]);
+    expect(filters.filteredAnnotations).toHaveLength(1);
   });
 
   it("clears derived state when the last gate goes away", async () => {

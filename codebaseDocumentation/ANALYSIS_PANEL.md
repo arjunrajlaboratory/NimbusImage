@@ -78,7 +78,7 @@ it arriving therefore shows everything rather than flashing empty.
 ## Gate resolution is owned by the store, not the panel
 
 `refreshAnalysisGateIds` fetches the axes' values and turns each polygon into
-ids. It lives in the filters store, triggered from `AnnotationViewer.vue`,
+ids. It lives in the filters store, triggered from `Viewer.vue`,
 because **a gate is a filter**: it has to apply whether or not the Analysis
 palette is open, and a gate restored from the configuration has to resolve on
 load. It no-ops when no plot has a gate, so a dataset with no analysis pays
@@ -98,10 +98,14 @@ the result as `filters.analysisValues` for the panel to draw from. The panel
 briefly had its own copy; that meant two fetches over the same population — up
 to `MAX_ANALYSIS_PLOT_POINTS` ids — on exactly the path the feature exists for.
 
-It fetches when a plot has a gate to resolve, **or** when the panel is open and
-needs values to draw an ungated plot. Neither means no fetch, so a configuration
-carrying plots costs nothing until someone looks at them; the panel reports its
-visibility through `setAnalysisPanelOpen`.
+While hidden it fetches only the property paths belonging to plots with gates;
+ungated plots are display-only and must cost nothing. Opening the panel may
+widen that set to the paths needed to draw every ready plot. The retained values
+are keyed by dataset, exact population, property revision, and fetched path set,
+so a cached superset is reused across palette toggles instead of posting the
+same population again. A configuration carrying only ungated plots still costs
+nothing until someone looks at it; the panel reports its visibility through
+`setAnalysisPanelOpen`.
 
 Do not "optimize" this into reading `propertyStore.propertyValues`:
 
@@ -260,6 +264,11 @@ merely scheduled for recomputation:
   2..n — including on an enable-state toggle, which changes what reaches
   downstream even though plot 1's own ids stay valid. The four plot mutators
   all invalidate the affected suffix before scheduling the configuration save.
+- **The non-gate population or values changed.** `analysisGateDataSignature`
+  records the dataset, exact base population, categorical content, and property
+  revision that produced the current ids. A refresh against different inputs
+  drops every gate id **before** awaiting property values. A failed identical
+  retry may retain ids; a failed changed-input request may not.
 
 Unresolved contributes no constraint, so the interim state shows **more** than
 the final answer rather than something wrong. That is the safe direction and
@@ -302,14 +311,31 @@ Change any of this and re-check these. Each item names the test that holds it.
 - A gated plot resolves with the panel closed, because a gate is a filter — *"fetches for a gated plot even with the panel closed"*
 - Opening the panel fetches for ungated plots so they can be drawn — *"fetches for an ungated plot once the panel opens"*
 - Only the axes' paths are requested, projected — *"requests only the axes' property paths, projected"*
+- While hidden, only gated plots contribute requested paths; an ungated property
+  plot after a categorical gate issues no request — *"requests only gated plot
+  paths while the panel is closed"*, *"does not fetch hidden ungated paths for
+  a categorical-only gate"*
 - A categorical-only gate resolves with no fetch at all — *"resolves a categorical-only gate without fetching anything"*
-- A failed value fetch leaves gate ids alone rather than resolving every gate to zero matches — *"leaves gate ids untouched when the value fetch fails"*
+- A failed value fetch preserves ids only when their gate inputs are unchanged;
+  changing the base population drops them before the request — *"leaves gate
+  ids untouched when the value fetch fails"*, *"drops gate ids before a
+  changed-population fetch can fail"*
+- Failure of a display-only path does not block gates that can resolve from
+  categorical fields or retained gate-property paths — *"still resolves a
+  categorical gate when a display-only fetch fails"*, *"uses cached gate paths
+  when a widened display fetch fails"*
+- Opening or closing the palette does not refetch an already-resolved gate when
+  its required path set is unchanged — *"reuses resolved values instead of
+  refetching on palette toggles"*
 - A bail-out invalidates any in-flight request, so a stale one cannot reinstate a gate — *"invalidates an in-flight request before bailing out"*
 - Above the cap: no fetch and no gate — *"refuses to fetch or gate above the point cap"*
 - The polygon resolves to ids and the values are published for the panel to reuse — *"resolves the polygon into ids and publishes the values it fetched"*
 - Derived state is cleared when the last gate goes — *"clears derived state when the last gate goes away"*
-- Re-lassoing drops the previous gate's ids, so a failed follow-up cannot strand them — *"drops the previous gate's ids when a new lasso replaces it"*
-- The gate signature samples ids rather than counting them, so a same-size gate edit registers — *"samples gate ids in the signature, not just their count"*
+- Re-lassoing drops the previous ids synchronously, then resolves the new polygon
+  from retained same-input values without another request — *"drops previous
+  ids on re-lasso and resolves from retained values"*
+- The gate signature hashes every id rather than counting or sampling them, so
+  a same-size gate edit registers — *"hashes every gate id in the signature"*
 - Loading is tracked explicitly, so an empty result is not mistaken for pending — *"tracks loading explicitly so an empty result is not mistaken for pending"*, *"clears the loading flag when it bails out early"*
 
 **Gate composition (`src/store/filters.test.ts`)**
@@ -403,11 +429,10 @@ Change any of this and re-check these. Each item names the test that holds it.
 
 Delivered on branch `analysis-panel-scatter-gating`, PR
 [#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), through
-`aef8d2eb` (the feature, four Codex-fix rounds, documentation, and the export
-split). The round-5 follow-up fixes below are in the working tree and are not
-committed yet. **Not merged.**
+`9da54518` plus the round-6 refresh-state fix described below (the feature, six
+Codex-fix rounds, documentation, and the export split). **Not merged.**
 
-Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,400 frontend
+Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,406 frontend
 tests.
 There are no backend changes in #1298. The general CSV endpoint correction and
 its backend tests live in prerequisite #1299.
@@ -445,8 +470,8 @@ together across context clears.
 1. **High — stale client-mode selection after a gate change**
    (`src/components/AnnotationBrowser/AnnotationList.vue`). A selected object
    can become hidden by an analysis gate while remaining in the global
-   selection that powers delete/tag/color actions. **Status: fixed in the
-   working tree (uncommitted).** The canonical query-signature watcher now
+   selection that powers delete/tag/color actions. **Status: fixed in
+   `9da54518`.** The canonical query-signature watcher now
    clears selection in both client and server modes, covering analysis gates
    and every sibling filter path; *"clears the global selection when an
    analysis gate changes in client mode"* pins the destructive-action source of
@@ -454,15 +479,15 @@ together across context clears.
 2. **High — categorical signatures omit annotation boundaries**
    (`src/utils/analysisGating.ts`, `src/utils/signatures.ts`). Different tag
    distributions with the same flattened values can collide exactly, so a gate
-   refresh can be skipped. **Status: fixed in the working tree
-   (uncommitted).** `countItem()` now mixes a record separator into both hash
+   refresh can be skipped. **Status: fixed in `9da54518`.** `countItem()` now
+   mixes a record separator into both hash
    lanes, so boundaries affect the digest rather than only the final count;
    *"preserves annotation boundaries when tag values are redistributed"*
    reproduces the former exact collision.
 3. **Medium — a closed Analysis palette still builds plot inputs and mounts
    Plotly** (`src/components/AnalysisPanel.vue`). `v-show` keeps the panel
    mounted, so display-only work and retained populations survive while hidden.
-   **Status: fixed in the working tree (uncommitted).** The hidden panel now
+   **Status: fixed in `9da54518`.** The hidden panel now
    renders no plot subtree, the input-chain watcher unsubscribes from plot data
    and clears its memoised populations, and the series computed returns before
    touching plot inputs. *"does no display work and retains no plot populations
@@ -470,7 +495,7 @@ together across context clears.
 4. **Medium — configuration hydration requests analysis twice**
    (`src/store/index.ts`, `src/views/datasetView/Viewer.vue`). Hydration
    dispatches a refresh directly and also changes the signature watched by the
-   Viewer. **Status: fixed in the working tree (uncommitted).** Hydration now
+   Viewer. **Status: fixed in `9da54518`.** Hydration now
    only seeds plot state; the Viewer remains the single refresh owner in both
    2D and 3D. *"hydrates plots without directly dispatching a duplicate
    analysis refresh"* observes the real Vuex action stream, alongside the
@@ -478,8 +503,8 @@ together across context clears.
 5. **Medium — deleting a property leaves plots that reference it active**
    (`src/store/properties.ts`, `src/store/filters.ts`). Unknown axes are pruned
    on reload but not reconciled immediately, leaving invisible or match-none
-   gates during the current session. **Status: fixed in the working tree
-   (uncommitted).** After a successful property-ID sync, one plural filters
+   gates during the current session. **Status: fixed in `9da54518`.** After a
+   successful property-ID sync, one plural filters
    action clears every missing axis and its gate, invalidates from the earliest
    changed plot through the dependent suffix, and schedules one config save.
    *"drops missing property axes and invalidates their dependent plot suffix"*
@@ -488,8 +513,43 @@ together across context clears.
    preserve backend errors through both Vuex decorator boundaries.
 6. **Nit — obsolete `neededPaths` panel exposure**
    (`src/components/AnalysisPanel.vue`). The store owns property fetching and
-   no caller reads this computed anymore. **Status: fixed in the working tree
-   (uncommitted).** The computed, import, and exposed property are removed.
+   no caller reads this computed anymore. **Status: fixed in `9da54518`.** The
+   computed, import, and exposed property are removed.
+
+### Round 6 Codex review tracker
+
+Codex reviewed `9da54518` and found three more variants in the analysis refresh
+state machine. All three are confirmed:
+
+1. **P1 — base-population changes can strand stale gate ids after a failed
+   fetch** (`src/store/filters.ts`). Gate ids are retained on every fetch
+   failure, even when the non-gate population has changed since those ids were
+   resolved. **Status: fixed in this round.** `analysisGateDataSignature`
+   distinguishes identical retries from changed dataset/population/category/
+   property inputs, and changed inputs drop all gate ids before the await.
+   Regression: *"drops gate ids before a changed-population fetch can fail"*.
+2. **P2 — hidden refreshes include ungated plots' property paths**
+   (`src/store/filters.ts`). A categorical gate followed by an ungated property
+   plot fetches the display-only path while the palette is closed. **Status:
+   fixed in this round.** The watcher signature and action share one
+   `analysisRefreshScope`: hidden mode selects gated plots; visible mode selects
+   every ready plot. Regressions: *"requests only gated plot paths while the panel is
+   closed"* and *"does not fetch hidden ungated paths for a categorical-only
+   gate"*.
+3. **P2 — palette visibility refetches already-resolved property gates**
+   (`src/store/filters.ts`). Visibility is part of the refresh identity even
+   when it does not change the required path set, and the action never reuses
+   its retained values. **Status: fixed in this round.** The signature records
+   the actual required path set rather than visibility, and the value cache
+   reuses a same-source path superset. Regression: *"reuses resolved values
+   instead of refetching on palette toggles"*.
+
+The branch-wide sweep found one sibling not cited by Codex: widening the visible
+path set couples gate correctness to a display-only request. If that request
+fails, categorical gates and property gates whose required paths are already
+cached still resolve; *"still resolves a categorical gate when a display-only
+fetch fails"* and *"uses cached gate paths when a widened display fetch fails"*
+pin both paths.
 
 ### What is verified live vs by test only
 
@@ -526,11 +586,21 @@ recorded. Property-deletion reconciliation, the exact categorical hash
 collision, and single-owner hydration are verified by their store/unit
 regressions rather than by destructive live probes.
 
+The round-6 refresh fix was also checked from a hard-reloaded HCR squares view.
+A temporary TotalIntensity × Shape plot rendered 17,078 of 26,142 objects;
+closing and reopening Analysis restored the same rendered and filtered
+populations, then the temporary plot was removed. No browser errors appeared;
+only the pre-existing Vue Router warning about a discarded `configurationId`
+parameter was recorded. Exact request reuse, hidden-path scope, failed-fetch
+invalidation, and the display-only failure sibling are pinned by the focused
+store regressions because those failure paths are not safely injectable through
+the live UI.
+
 ### Review history, and what it suggests
 
-Seventeen of the eighteen findings across four Codex rounds plus the cold
-follow-up review were real. Notably, most of the later ones were consequences of
-*earlier fixes* rather than of the original feature — the gate-replacement bug
+Nearly every finding across six Codex rounds plus the cold follow-up review was
+real. Most of the later ones were consequences of *earlier fixes* rather than
+of the original feature — the gate-replacement bug
 only became permanent because of the failed-fetch fix; the `fetchMatchingIds`
 miss came from guarding call sites instead of the request boundary; the palette
 overlap came from fixing eviction without fixing layout. The feature core has

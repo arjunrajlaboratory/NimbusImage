@@ -112,6 +112,13 @@ export class Filters extends VuexModule {
   // replaced wholesale.
   analysisValues: IAnnotationPropertyValues = markRaw({});
 
+  // Cache identity for analysisValues. A visibility change may widen or narrow
+  // the requested property paths without changing the dataset, population, or
+  // property revision; retaining the identity lets refreshAnalysis reuse a
+  // cached superset rather than posting the same 50k ids again.
+  analysisValuesSourceSignature: string | null = null;
+  analysisValuePathKeys: string[] = markRaw([]);
+
   // True while a refreshAnalysis fetch is in flight. Explicit rather than
   // inferred from `analysisValues` being empty: an empty result is a real
   // outcome (a property computed for only some objects, or one with no values
@@ -129,6 +136,12 @@ export class Filters extends VuexModule {
   // values needed to resolve it are still loading. markRaw: see
   // setAnalysisGateIds.
   analysisGateIds: { [plotId: string]: string[] } = markRaw({});
+
+  // The dataset/value inputs the current gate ids were resolved against. Plot
+  // edits invalidate their affected suffix synchronously in the mutators; this
+  // identity covers the other half of the dependency: the non-gate population
+  // and the values/categories read from it.
+  analysisGateDataSignature: string | null = null;
 
   // Lazy (stub-only) mode only: the set of annotation ids passing the active
   // property filters, fetched server-side so client-side filtered drawing no
@@ -170,6 +183,9 @@ export class Filters extends VuexModule {
     this.analysisPlots = [];
     this.analysisGateIds = markRaw({});
     this.analysisValues = markRaw({});
+    this.analysisValuesSourceSignature = null;
+    this.analysisValuePathKeys = markRaw([]);
+    this.analysisGateDataSignature = null;
     this.analysisLoading = false;
   }
 
@@ -423,6 +439,7 @@ export class Filters extends VuexModule {
   hydrateAnalysisPlots(plots: IAnalysisPlot[]) {
     this.setAnalysisPlotsImpl(plots);
     this.setAnalysisGateIds({});
+    this.setAnalysisGateDataSignature(null);
   }
 
   /**
@@ -544,10 +561,10 @@ export class Filters extends VuexModule {
       .join("|");
   }
 
-  // A cheap identity for the gate constraints, same reasoning. The ids are
-  // SAMPLED, not just counted: moving a lasso to a different region that
-  // happens to contain the same number of objects has to register, or the
-  // server-mode list keeps the previous gate's rows.
+  // A cheap identity for the gate constraints, same reasoning. Every id is
+  // hashed, not just counted or sampled: moving a lasso to a different region
+  // with the same number of objects has to register, or the server-mode list
+  // keeps the previous gate's rows.
   get analysisGateSignature(): string {
     return this.analysisPlots
       .map((plot) => {
@@ -559,8 +576,8 @@ export class Filters extends VuexModule {
       .join("|");
   }
 
-  // A cheap identity for the population the analysis panel plots and gates
-  // against. See populationSignature for why it samples rather than hashes.
+  // An allocation-free exact identity for the population the analysis panel
+  // plots and gates against. See populationSignature.
   get analysisPopulationSignature(): string {
     return populationSignature(this.annotationsPassingNonGateFilters);
   }
@@ -576,24 +593,26 @@ export class Filters extends VuexModule {
   // Hence the content hash for the categorical axes in use, and the property
   // store's load revision for the property axes.
   get analysisInputSignature(): string {
-    const wanted =
-      this.analysisPanelOpen ||
-      this.analysisPlots.some((plot) => plot.gate !== null);
-    if (!wanted) {
+    const { gatedPlots, paths } = analysisRefreshScope(
+      this.analysisPlots,
+      this.analysisPanelOpen,
+    );
+    if (gatedPlots.length === 0 && paths.length === 0) {
       // Nothing to fetch or resolve: don't even look at the population, so a
       // dataset nobody is analysing never pays for any of this.
       return "idle";
     }
     const base = this.annotationsPassingNonGateFilters;
     return [
-      JSON.stringify(this.analysisPlots),
-      this.analysisPanelOpen,
+      // Ungated plots affect the store only through the property paths needed
+      // to display them. Omitting the visibility boolean means opening a panel
+      // whose gates already need the same paths does not trigger a duplicate
+      // refresh; genuinely new display paths still change this identity.
+      JSON.stringify(gatedPlots),
+      analysisPathKeys(paths).join(","),
       populationSignature(base),
-      categoricalContentSignature(
-        base,
-        analysisCategoricalKeys(this.analysisPlots),
-      ),
-      properties.propertyValuesRevision,
+      categoricalContentSignature(base, analysisCategoricalKeys(gatedPlots)),
+      paths.length > 0 ? properties.propertyValuesRevision : "-",
     ].join("|");
   }
 
@@ -608,8 +627,26 @@ export class Filters extends VuexModule {
   }
 
   @Mutation
-  setAnalysisValues(values: IAnnotationPropertyValues) {
-    this.analysisValues = markRaw(values);
+  private setAnalysisValueCache(payload: {
+    values: IAnnotationPropertyValues;
+    sourceSignature: string;
+    pathKeys: string[];
+  }) {
+    this.analysisValues = markRaw(payload.values);
+    this.analysisValuesSourceSignature = payload.sourceSignature;
+    this.analysisValuePathKeys = markRaw(payload.pathKeys);
+  }
+
+  @Mutation
+  private clearAnalysisValueCache() {
+    this.analysisValues = markRaw({});
+    this.analysisValuesSourceSignature = null;
+    this.analysisValuePathKeys = markRaw([]);
+  }
+
+  @Mutation
+  private setAnalysisGateDataSignature(signature: string | null) {
+    this.analysisGateDataSignature = signature;
   }
 
   /**
@@ -623,9 +660,9 @@ export class Filters extends VuexModule {
    * population runs to MAX_ANALYSIS_PLOT_POINTS ids, and fetching it twice
    * doubled the wait on exactly the path the feature exists for.
    *
-   * Fetches when a plot has a gate to resolve, or when the panel is open and
-   * needs values to draw. Neither means no fetch, so a configuration that
-   * carries plots costs nothing until someone looks at them.
+   * Hidden mode requests only paths belonging to gated plots. Visible mode may
+   * widen that set for display-only plots; a cached superset for the same
+   * dataset/population/revision is reused rather than fetched again.
    */
   @Action
   async refreshAnalysis() {
@@ -640,28 +677,79 @@ export class Filters extends VuexModule {
     const token = analysisGateGuard.next();
     const datasetId = main.dataset?.id;
     const plots = this.analysisPlots;
-    const hasGate = plots.some(
-      (plot) => plot.gate !== null && plot.xAxis && plot.yAxis,
+    const { gatedPlots, paths } = analysisRefreshScope(
+      plots,
+      this.analysisPanelOpen,
     );
-    const base = this.annotationsPassingNonGateFilters;
-    if (
-      !datasetId ||
-      !(hasGate || this.analysisPanelOpen) ||
-      // Matches the panel's refusal to plot: a gate is only meaningful against
-      // the population it was drawn on, and above the cap we do not draw one.
-      base.length > MAX_ANALYSIS_PLOT_POINTS
-    ) {
+    if (!datasetId || (gatedPlots.length === 0 && paths.length === 0)) {
       this.clearAnalysisDerivedState();
       return;
+    }
+    const base = this.annotationsPassingNonGateFilters;
+    // Matches the panel's refusal to plot: a gate is only meaningful against
+    // the population it was drawn on, and above the cap we do not draw one.
+    if (base.length > MAX_ANALYSIS_PLOT_POINTS) {
+      this.clearAnalysisDerivedState();
+      return;
+    }
+
+    const population = populationSignature(base);
+    const gatedPaths = analysisPropertyPaths(gatedPlots);
+    const gateDataSignature =
+      gatedPlots.length > 0
+        ? [
+            datasetId,
+            population,
+            categoricalContentSignature(
+              base,
+              analysisCategoricalKeys(gatedPlots),
+            ),
+            gatedPaths.length > 0 ? properties.propertyValuesRevision : "-",
+          ].join("|")
+        : null;
+    if (this.analysisGateDataSignature !== gateDataSignature) {
+      // A fetch failure may retain ids only for an identical retry. When the
+      // base population, categorical inputs, dataset, or property revision has
+      // changed, every gate was derived from obsolete data; drop the constraint
+      // before awaiting so a failed request cannot strand it indefinitely.
+      if (Object.keys(this.analysisGateIds).length > 0) {
+        this.setAnalysisGateIds({});
+      }
+      this.setAnalysisGateDataSignature(null);
     }
 
     // "Nothing to FETCH" is not "nothing to DO". A gate on two categorical axes
     // needs no property values at all — categorical axes read annotation fields
     // — so bailing out here left such a gate drawn, persisted, and completely
     // inert: it plotted and lassoed normally and then filtered nothing.
-    const paths = analysisPropertyPaths(plots);
-    let values: IAnnotationPropertyValues = {};
-    if (paths.length > 0) {
+    const valuesSourceSignature = [
+      datasetId,
+      population,
+      properties.propertyValuesRevision,
+    ].join("|");
+    const pathKeys = analysisPathKeys(paths);
+    const gatedPathKeys = analysisPathKeys(gatedPaths);
+    const cachedPaths = new Set(this.analysisValuePathKeys);
+    const cachedValuesMatchSource =
+      this.analysisValuesSourceSignature === valuesSourceSignature;
+    const canReuseValues =
+      cachedValuesMatchSource &&
+      pathKeys.every((path) => cachedPaths.has(path));
+    const canResolveGatesFromRetainedValues =
+      gateDataSignature !== null &&
+      (gatedPathKeys.length === 0 ||
+        (cachedValuesMatchSource &&
+          gatedPathKeys.every((path) => cachedPaths.has(path))));
+    const commitGateResolution = (gateValues: IAnnotationPropertyValues) => {
+      this.setAnalysisGateIds(
+        resolveAnalysisGateIds(plots, base, gateValues, (channel) =>
+          channelDisplayName(channel),
+        ),
+      );
+      this.setAnalysisGateDataSignature(gateDataSignature);
+    };
+    let values = canReuseValues ? this.analysisValues : {};
+    if (!canReuseValues && paths.length > 0) {
       this.setAnalysisLoading(true);
       const fetched = await fetchAnalysisValues(datasetId, paths, base);
       if (!analysisGateGuard.isCurrent(token)) {
@@ -669,21 +757,36 @@ export class Filters extends VuexModule {
         return;
       }
       if (fetched === null) {
-        // The fetch FAILED. Leave the existing gate ids untouched rather than
-        // resolving every property gate against an empty value map: that marks
-        // each one resolved-with-zero-matches and hides every annotation in the
-        // dataset after a transient network error.
+        // A display-only path can fail even though every value needed by the
+        // gates is already retained (or the gates are categorical and need no
+        // values). Resolve those gates instead of making their correctness
+        // depend on an unrelated plot. Otherwise leave same-input ids intact;
+        // changed-input ids were invalidated before the request above.
+        if (canResolveGatesFromRetainedValues) {
+          commitGateResolution(
+            cachedValuesMatchSource ? this.analysisValues : {},
+          );
+        }
         this.setAnalysisLoading(false);
         return;
       }
       values = fetched;
+      this.setAnalysisValueCache({
+        values,
+        sourceSignature: valuesSourceSignature,
+        pathKeys,
+      });
+    } else if (!canReuseValues) {
+      // A categorical-only gate still needs a cache identity: on a later panel
+      // open, display-only property paths can tell that no values were fetched
+      // for them and widen the cache correctly.
+      this.setAnalysisValueCache({
+        values,
+        sourceSignature: valuesSourceSignature,
+        pathKeys,
+      });
     }
-    this.setAnalysisValues(values);
-    this.setAnalysisGateIds(
-      resolveAnalysisGateIds(plots, base, values, (channel) =>
-        channelDisplayName(channel),
-      ),
-    );
+    commitGateResolution(values);
     this.setAnalysisLoading(false);
   }
 
@@ -695,8 +798,14 @@ export class Filters extends VuexModule {
     if (Object.keys(this.analysisGateIds).length > 0) {
       this.setAnalysisGateIds({});
     }
-    if (Object.keys(this.analysisValues).length > 0) {
-      this.setAnalysisValues({});
+    if (this.analysisGateDataSignature !== null) {
+      this.setAnalysisGateDataSignature(null);
+    }
+    if (
+      this.analysisValuesSourceSignature !== null ||
+      Object.keys(this.analysisValues).length > 0
+    ) {
+      this.clearAnalysisValueCache();
     }
   }
 
@@ -1000,6 +1109,21 @@ export default getModule(Filters);
 // Stale-response guard for the analysis gate refresh: filter edits can fire
 // several refreshes in quick succession, and only the latest may commit.
 const analysisGateGuard = createSequenceGuard();
+
+function analysisRefreshScope(plots: IAnalysisPlot[], panelOpen: boolean) {
+  const readyPlots = plots.filter(
+    (plot) => plot.xAxis !== null && plot.yAxis !== null,
+  );
+  const gatedPlots = readyPlots.filter((plot) => plot.gate !== null);
+  return {
+    gatedPlots,
+    paths: analysisPropertyPaths(panelOpen ? readyPlots : gatedPlots),
+  };
+}
+
+function analysisPathKeys(paths: string[][]): string[] {
+  return paths.map((path) => createPathStringFromPathArray(path)).sort();
+}
 
 function channelDisplayName(channel: number): string {
   return main.dataset?.channelNames.get(channel) ?? `Channel ${channel}`;

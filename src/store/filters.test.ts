@@ -346,6 +346,11 @@ describe("analysis plot gates", () => {
     // touch the population.
     filters.addAnalysisPlot("p1");
     expect(filters.analysisInputSignature).toBe("idle");
+    filters.setAnalysisPlotAxes({
+      id: "p1",
+      xAxis: { type: "property", path: ["prop", "Area"] },
+      yAxis: { type: "property", path: ["prop", "Intensity"] },
+    });
     filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
     expect(filters.analysisInputSignature).not.toBe("idle");
   });
@@ -354,6 +359,11 @@ describe("analysis plot gates", () => {
     // The panel needs values for ungated plots to draw them, so opening it has
     // to trigger the fetch even though no gate needs resolving.
     filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotAxes({
+      id: "p1",
+      xAxis: { type: "property", path: ["prop", "Area"] },
+      yAxis: { type: "categorical", key: "shape" },
+    });
     expect(filters.analysisInputSignature).toBe("idle");
     filters.setAnalysisPanelOpen(true);
     expect(filters.analysisInputSignature).not.toBe("idle");
