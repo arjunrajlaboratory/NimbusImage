@@ -704,8 +704,56 @@ the per-id jitter:
   **427-byte** filter payload, server list total 352,994 matching the
   client, list page fetch ~4.9 s.
 
-Not exercised live: chaining a second plot off the first, the disabled-gate
-display path, and the honesty banner (no ROI filter was active).
+**Chaining verified live** (two plots on the 708,983-object dataset), which
+is where the pure/chained split is observable:
+
+- Plot 2's *display* is chained: its footer read `352,994 of 352,994 objects
+  binned` while plot 1's read `708,983 of 708,983` — `upstreamGates` at work.
+- Plot 2's *resolved ids are pure*: 353,283, i.e. the predicate over the
+  whole dataset, not narrowed by plot 1.
+- Its *badge shows the chained count* (198,354 = |gate₂ ∩ input₂|), not the
+  pure count — the deliberate distinction in `AnalysisScatterPlot`.
+- Filtering telescopes: `filteredAnnotations` = 198,354 = |pure₁ ∩ pure₂|,
+  and the server list independently returned 198,354 from a **557-byte**
+  two-definition payload with no id constraints. This is the redundancy
+  argument from "a gate is a pure predicate" confirmed on real data.
+- Editing plot 1's gate dropped **both** plots' ids synchronously (checked
+  before any await), then both re-resolved: plot 1 → 187,919, plot 2 still
+  353,283 (pure, correctly unchanged), plot 2's displayed input → 187,919,
+  intersection → 38,901. A JS recomputation over all 708,983 stubs matched
+  every one of those with zero mismatches.
+
+Not exercised live: the disabled-gate display path, and the honesty banner
+(no ROI filter was active).
+
+## Found while chaining: the two jitter salts are not independent
+
+`jitterFromId` (client, pre-dating this work) is `h = salt; for each char:
+h = h*31 + code`. That hash is **affine in the seed**:
+`h(salt, id) = salt·31ᴸ + f(id) (mod 2³²)`. For fixed-length ids — 24-char
+hex ObjectIds, i.e. always — the X and Y hashes therefore differ by a
+*constant*: measured `h(31,·) − h(17,·) = 983,840,270` across every id
+sampled, exactly matching the predicted `(31−17)·31²⁴`.
+
+So the Y jitter is the X jitter shifted by a constant, not an independent
+draw. After `% 1000` the pairs land on a lattice: over 708,983 objects, a
+10×10 grid of one categorical cell had **60 empty cells** and a peak of
+5.6× the expected density (global Pearson r is only 0.037, which is why a
+correlation check alone misses it).
+
+**This is not a gating-correctness bug** — drawing and resolution use the
+same jitter, so a gate selects exactly the points shown, and every parity
+check above passed with zero mismatches. It is a *display* defect specific
+to categorical × categorical plots, where points form stripes instead of
+filling the cell, leaving much of the cell ungateable.
+
+**Deliberately not fixed here.** Gate polygons are stored in jittered
+coordinate space, so changing the jitter function silently changes the
+membership of every persisted gate. That needs the same treatment
+`categoryKeyVersion` got: a version bump plus a hydration rule, not a
+drive-by change. The cheap correct fix when someone does it is to give each
+axis a genuinely different mixer (e.g. a distinct multiplier per salt, or a
+final avalanche step) rather than only a different seed.
 
 **Two environment notes for the next person.** The viewer route is
 `#/datasetView/<datasetViewId>/view` — the `/view` suffix is required and
