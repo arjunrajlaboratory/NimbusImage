@@ -171,6 +171,27 @@ export class Annotations extends VuexModule {
     };
   }
 
+  /**
+   * Resolve an id to whatever representation is loaded — hydrated, full, or
+   * raw stub — without materializing the whole stub map. Unlike
+   * `getAnnotationFromId`, this returns non-point stubs as-is (typed as the
+   * honest union), so callers that only need stub fields can look ids up in
+   * O(1) instead of scanning `annotationsForIteration`.
+   */
+  get getAnnotationOrStubFromId() {
+    return (annotationId: string): TAnnotationOrStub | undefined => {
+      const hydrated = this.hydratedAnnotations.get(annotationId);
+      if (hydrated) {
+        return hydrated;
+      }
+      const idx = this.annotationIdToIdx[annotationId];
+      if (idx !== undefined) {
+        return this.annotations[idx];
+      }
+      return this.annotationStubs.get(annotationId);
+    };
+  }
+
   get annotationTags() {
     const tagSet: Set<string> = new Set();
     if (this.stubOnlyMode) {

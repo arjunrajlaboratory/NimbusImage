@@ -172,7 +172,7 @@
             <v-alert type="info" variant="tonal" class="mb-4">
               Preview is not available for more than
               {{ PREVIEW_ANNOTATION_LIMIT }} annotations ({{
-                annotationsToExport.length
+                exportAnnotationCount
               }}
               annotations to export). Download will export using the server.
             </v-alert>
@@ -394,22 +394,48 @@ const bulkExporting = ref(false);
 const bulkExportProgress = ref(0);
 const bulkExportError = ref("");
 
-const annotationsToExport = computed((): TAnnotationOrStub[] => {
+// The ids to export; null means "every annotation" (the download omits the
+// field so the backend exports all without a dataset-sized $in query). Ids
+// only — never resolves annotation objects, so a subset download costs
+// O(subset) even when the stub map holds the whole dataset.
+const exportAnnotationIds = computed((): string[] | null => {
   if (annotationScope.value === "selected") {
-    const ids = annotationStore.selectedAnnotationIds;
-    return annotationStore.annotationsForIteration.filter((a) => ids.has(a.id));
+    return Array.from(annotationStore.selectedAnnotationIds);
+  }
+  if (annotationScope.value === "filtered") {
+    return props.annotations.map((annotation) => annotation.id);
+  }
+  return null;
+});
+
+const exportAnnotationCount = computed(() =>
+  exportAnnotationIds.value === null
+    ? annotationStore.annotationCount
+    : exportAnnotationIds.value.length,
+);
+
+// Annotation rows for the client-side preview. Only read when the export is
+// within PREVIEW_ANNOTATION_LIMIT (the count check above never materializes
+// anything), so the id lookups here stay bounded by the preview limit.
+const annotationsToExport = computed((): TAnnotationOrStub[] => {
+  const ids = exportAnnotationIds.value;
+  if (ids === null) {
+    return annotationStore.annotationsForIteration;
   }
   if (annotationScope.value === "filtered") {
     return props.annotations;
   }
-  return annotationStore.annotationsForIteration;
+  const resolve = annotationStore.getAnnotationOrStubFromId;
+  return ids
+    .map(resolve)
+    .filter((annotation): annotation is TAnnotationOrStub => !!annotation);
 });
 
 const { loadingDatasets, collectionDatasets, configuration, allDatasetsLabel } =
   useCollectionDatasets(dialog, exportScope);
 
 const isTooLargeForPreview = computed(() => {
-  return annotationsToExport.value.length > PREVIEW_ANNOTATION_LIMIT;
+  return exportAnnotationCount.value > PREVIEW_ANNOTATION_LIMIT;
 });
 
 const canUseClipboard = computed(() => {
@@ -635,15 +661,14 @@ async function downloadSingleDataset() {
   try {
     // Only send annotationIds when exporting a subset, to avoid
     // exceeding MongoDB's 16MB BSON query size limit.
-    const exportAnnotations = annotationsToExport.value;
-    const isSubset = exportAnnotations.length < annotationStore.annotationCount;
+    const exportIds = exportAnnotationIds.value;
+    const isSubset =
+      exportIds !== null && exportIds.length < annotationStore.annotationCount;
 
     await store.exportAPI.exportCsv({
       datasetId: store.dataset.id,
       propertyPaths: getIncludedPropertyPaths(),
-      ...(isSubset
-        ? { annotationIds: exportAnnotations.map((a) => a.id) }
-        : {}),
+      ...(isSubset ? { annotationIds: exportIds } : {}),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
       sanitizeColumnNames: sanitizeColumnNames.value,

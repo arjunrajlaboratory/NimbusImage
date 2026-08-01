@@ -1,6 +1,7 @@
 # Empty-subset CSV export — review findings (PR #1299)
 
-Codex round 1 on `codex/fix-empty-csv-export` (head d634f5db), 2026-08-01.
+Codex rounds on `codex/fix-empty-csv-export`, 2026-08-01.
+Round 1: head d634f5db (F1–F3). Round 2: head c1b4a05e (F4).
 
 ## F1 (P1) — Stub-only mode loses the selected subset
 
@@ -66,3 +67,24 @@ All converted at the API boundary via `requireObjectId` → 400.
 **Status:** fixed (this branch) — tests:
 `test_export.py::testExportCsvRejectsMalformedInput`,
 `testExportJsonRejectsMalformedIds`.
+
+## F4 (P2, round 2) — Selected export scanned every stub
+
+`src/components/AnnotationBrowser/AnnotationCSVDialog.vue`
+
+The F1 fix routed the "selected" scope through `annotationsForIteration`,
+which in stub-only mode is an `Array.from` over the whole stub map — a
+dataset-sized allocation and O(N) scan to pick out ids already sitting in
+`selectedAnnotationIds`. (Cost-before-guard, again.)
+
+Fix: `exportAnnotationIds` derives ids straight from the selection/filter
+(never resolving objects), the download and count/preview-limit checks use
+only ids/`annotationCount`, and annotation *objects* materialize solely for
+the preview — which only runs within `PREVIEW_ANNOTATION_LIMIT` — resolved
+per id via the new O(1) store getter
+`annotationStore.getAnnotationOrStubFromId`.
+
+**Status:** fixed (this branch) — regression test:
+`AnnotationCSVDialog.test.ts` "selected-scope download never materializes the
+stub iteration array" (a throwing `annotationsForIteration` accessor), plus
+"selected-scope preview resolves stubs by id lookup".
