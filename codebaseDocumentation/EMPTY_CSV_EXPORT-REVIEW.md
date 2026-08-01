@@ -3,7 +3,10 @@
 Codex rounds on `codex/fix-empty-csv-export`, 2026-08-01.
 Round 1: head d634f5db (F1–F3). Round 2: head c1b4a05e (F4).
 Round 3: head 4857c3eb (checklist below). Round 4: head 821b1e37 (F5).
-Round 5: head a35b5481 (F6).
+Round 5: head a35b5481 (F6). Round 6: head 1492fc97 (store-level tests for
+F5's deletion pruning — the dialog test mocks the store and could not catch
+a pruning regression; `src/store/annotation-delete.test.ts` exercises the
+real module).
 
 ## F1 (P1) — Stub-only mode loses the selected subset
 
@@ -163,6 +166,17 @@ getters: re-check these. Frontend tests live in
 - [ ] Dialog counts and radio enablement come from the stub-aware
   `annotationCount` —
   CSV: *"counts come from the stub-aware annotationCount"*
+
+### Destructive actions (deletion must not leave dangling id state)
+
+- [ ] Deleting prunes the deleted ids from `selectedAnnotationIds` (full
+  mode) — store: *"prunes deleted ids from the selection in full mode"*
+- [ ] Deleting prunes selection, hover, and the stub map in stub-only mode —
+  store: *"prunes selection, hover, and the stub map in stub-only mode"*
+- [ ] Deleting the hovered annotation clears `hoveredAnnotationId` —
+  store: *"clears the hovered id when the hovered annotation is deleted"*
+- [ ] Deleting an unrelated annotation preserves selection and hover —
+  store: *"keeps an unrelated hovered id and selection"*
 
 ### Cost (no visible behavior — regresses silently)
 
