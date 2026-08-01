@@ -7,6 +7,8 @@ Kept here so annotation.py and propertyValues.py share one implementation
 rather than importing validators across API modules.
 """
 
+import math
+
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
 
@@ -19,6 +21,13 @@ from girder.exceptions import RestException
 # tuning knobs — runtime is bounded by AGGREGATION_MAX_TIME_MS, not by these.
 MAX_UNCOMPUTED_PROPERTIES = 10_000_000
 MAX_ANNOTATION_IDS = 10_000_000
+
+# Analysis-gating request ceilings (SERVER_GATING.md "Limits"): abuse guards
+# on the public gate-resolution endpoint, far above real use (a panel holds a
+# handful of plots; a lasso records a few hundred vertices).
+MAX_ANALYSIS_PLOTS = 100
+MAX_GATE_VERTICES = 10_000
+MAX_GATE_CATEGORIES = 10_000
 
 # Upper clamp on the page size accepted by the public /list endpoint. This is
 # an abuse guard, not a tuning knob: it caps how many full annotation rows an
@@ -177,6 +186,108 @@ def dropNoOpPropertyFilters(filters):
         filters["propertyFilters"] = active
     else:
         del filters["propertyFilters"]
+
+
+# The client's TAnalysisCategoricalKey values and gate schema version
+# (src/store/model.ts). A version mismatch means the key encoding changed;
+# resolving under the wrong encoding silently gates the wrong categories.
+ANALYSIS_CATEGORICAL_KEYS = ("tags", "shape", "channel", "xy", "z", "time")
+ANALYSIS_CATEGORY_KEY_VERSION = 1
+
+
+def _isFiniteNumber(value):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _validateAnalysisAxis(axis, name):
+    if not isinstance(axis, dict):
+        raise RestException("%s must be an object" % name, code=400)
+    axisType = axis.get("type")
+    if axisType == "property":
+        if not isValidPropertyPath(axis.get("path")):
+            raise RestException(
+                "%s needs a valid property 'path'" % name, code=400
+            )
+    elif axisType == "categorical":
+        if axis.get("key") not in ANALYSIS_CATEGORICAL_KEYS:
+            raise RestException(
+                "%s has an unknown categorical key" % name, code=400
+            )
+    else:
+        raise RestException(
+            "%s type must be 'property' or 'categorical'" % name, code=400
+        )
+
+
+def _validateGateCategories(axis, categories, name):
+    if axis.get("type") == "property":
+        if categories is not None:
+            raise RestException(
+                "%s must be null for a property axis" % name, code=400
+            )
+        return
+    # A categorical axis without a pinned order has no defined coordinate
+    # space — the client always pins categories when a gate is drawn.
+    if (
+        not isinstance(categories, list)
+        or not all(isinstance(key, str) for key in categories)
+    ):
+        raise RestException(
+            "%s must be a list of category keys" % name, code=400
+        )
+    requireCountWithin(len(categories), MAX_GATE_CATEGORIES, name)
+
+
+def validateAnalysisGatePlots(plots):
+    """Validate the `plots` payload of a gate-resolution request.
+
+    Each plot carries both axes and a drawn gate (vertices in plot space +
+    per-axis pinned category orders). Returns the validated list. Fewer than
+    3 vertices is NOT an error — it resolves to an empty gate, matching the
+    client's resolveGateIds.
+    """
+    plots = requireList(plots, "plots")
+    requireCountWithin(len(plots), MAX_ANALYSIS_PLOTS, "plots")
+    for plot in plots:
+        if not isinstance(plot, dict):
+            raise RestException("each plot must be an object", code=400)
+        if not isinstance(plot.get("id"), str) or not plot["id"]:
+            raise RestException(
+                "each plot needs a non-empty string 'id'", code=400
+            )
+        _validateAnalysisAxis(plot.get("xAxis"), "xAxis")
+        _validateAnalysisAxis(plot.get("yAxis"), "yAxis")
+        gate = plot.get("gate")
+        if not isinstance(gate, dict):
+            raise RestException("each plot needs a 'gate' object", code=400)
+        if gate.get("categoryKeyVersion") != ANALYSIS_CATEGORY_KEY_VERSION:
+            raise RestException(
+                "gate categoryKeyVersion must be %d"
+                % ANALYSIS_CATEGORY_KEY_VERSION,
+                code=400,
+            )
+        vertices = requireList(gate.get("vertices"), "gate vertices")
+        requireCountWithin(len(vertices), MAX_GATE_VERTICES, "gate vertices")
+        for vertex in vertices:
+            if (
+                not isinstance(vertex, dict)
+                or not _isFiniteNumber(vertex.get("x"))
+                or not _isFiniteNumber(vertex.get("y"))
+            ):
+                raise RestException(
+                    "gate vertices must be {x, y} finite numbers", code=400
+                )
+        _validateGateCategories(
+            plot["xAxis"], gate.get("xCategories"), "gate.xCategories"
+        )
+        _validateGateCategories(
+            plot["yAxis"], gate.get("yCategories"), "gate.yCategories"
+        )
+    return plots
 
 
 def validateListInputs(filters, sort=None, propertyPaths=None):

@@ -11,6 +11,7 @@ from girder.models.folder import Folder
 
 from girder.utility.acl_mixin import AccessControlMixin
 
+from ..helpers import analysis
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
@@ -370,6 +371,70 @@ class Annotation(AccessControlMixin, ProxiedModel):
         pipeline.append({"$project": {"_id": 1}})
         cursor = self._aggregate(self.collection, pipeline)
         return [str(doc["_id"]) for doc in cursor]
+
+    def resolveAnalysisGates(self, datasetId, plots):
+        """Resolve each plot's gate polygon to matching annotation ids.
+
+        Each answer is the PURE per-annotation predicate over the whole
+        dataset — independent of every other plot and of any filter state
+        (SERVER_GATING.md, "a gate is a pure predicate"). Returns
+        {plotId: [id string, ...]}.
+
+        At most two projected scans regardless of plot count: one over the
+        annotation collection (always — annotation docs anchor existence, so
+        an orphaned property-value doc can never produce an id) and one over
+        the property-values collection when any axis is a property axis.
+        """
+        propertyPaths = {}
+        categoricalKeys = set()
+        for plot in plots:
+            for axis in (plot["xAxis"], plot["yAxis"]):
+                if axis["type"] == "property":
+                    propertyPaths[".".join(axis["path"])] = axis["path"]
+                else:
+                    categoricalKeys.add(axis["key"])
+        if not plots:
+            return {}
+
+        fields = {"_id": 1}
+        if "tags" in categoricalKeys:
+            fields["tags"] = 1
+        if "shape" in categoricalKeys:
+            fields["shape"] = 1
+        if "channel" in categoricalKeys:
+            fields["channel"] = 1
+        if categoricalKeys & {"xy", "z", "time"}:
+            fields["location"] = 1
+        docs = []
+        cursor = self._aggregate(
+            self.collection,
+            [{"$match": {"datasetId": datasetId}}, {"$project": fields}],
+        )
+        for doc in cursor:
+            doc["id"] = str(doc.pop("_id"))
+            docs.append(doc)
+
+        valuesById = {}
+        if propertyPaths:
+            pvFields = {"_id": 0, "annotationId": 1}
+            for path in propertyPaths.values():
+                pvFields["values." + ".".join(path)] = 1
+            pvCursor = self._aggregate(
+                self._pvModel.collection,
+                [
+                    {"$match": {"datasetId": datasetId}},
+                    {"$project": pvFields},
+                ],
+            )
+            for doc in pvCursor:
+                valuesById[str(doc["annotationId"])] = (
+                    doc.get("values") or {}
+                )
+
+        return {
+            plot["id"]: analysis.resolve_gate_ids(docs, valuesById, plot)
+            for plot in plots
+        }
 
     def _centroidAddFields(self):
         return {"$addFields": {"centroid": {

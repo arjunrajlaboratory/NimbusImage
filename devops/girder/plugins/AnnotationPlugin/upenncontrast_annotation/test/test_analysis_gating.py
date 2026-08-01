@@ -16,7 +16,17 @@ import os
 import numpy as np
 import pytest
 
+from bson import ObjectId
+from pytest_girder.assertions import assertStatus, assertStatusOk
+
 from upenncontrast_annotation.server.helpers import analysis
+from upenncontrast_annotation.server.models.annotation import Annotation
+from upenncontrast_annotation.server.models.propertyValues import (
+    AnnotationPropertyValues,
+)
+
+from . import girder_utilities as utilities
+from . import upenn_testing_utilities as upenn_utilities
 
 
 FIXTURE_PATH = os.path.join(
@@ -252,3 +262,284 @@ class TestGateResolutionParity:
                     f"{case['name']} plot {plotIndex}: {resolved} != "
                     f"{case['expected'][plotIndex]}"
                 )
+
+
+# --- Endpoint: POST /upenn_annotation/analysis/gate_ids ---
+
+
+def postJson(server, user, path, body):
+    return server.request(
+        path=path, method="POST", user=user,
+        body=json.dumps(body), type="application/json",
+    )
+
+
+def makeAnnotation(datasetId, tags=None, channel=0, location=None):
+    ann = upenn_utilities.getSampleAnnotation(datasetId)
+    if tags is not None:
+        ann["tags"] = tags
+    ann["channel"] = channel
+    if location is not None:
+        ann["location"] = location
+    return Annotation().create(ann)
+
+
+def propertyPlot(plotId, vertices):
+    return {
+        "id": plotId,
+        "xAxis": {"type": "property", "path": ["p", "Area"]},
+        "yAxis": {"type": "property", "path": ["p", "Mean"]},
+        "gate": {
+            "categoryKeyVersion": 1,
+            "vertices": vertices,
+            "xCategories": None,
+            "yCategories": None,
+        },
+    }
+
+
+BOX_0_10 = [
+    {"x": 0, "y": 0}, {"x": 10, "y": 0},
+    {"x": 10, "y": 10}, {"x": 0, "y": 10},
+]
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestAnalysisGateIdsEndpoint:
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        anns = []
+        for area, mean, tags in (
+            (5, 5, ["in"]),
+            (50, 5, ["out"]),
+            (5, 50, ["in"]),
+        ):
+            a = makeAnnotation(folder["_id"], tags=tags)
+            pv.appendValues(
+                {"p": {"Area": area, "Mean": mean}}, a["_id"], folder["_id"]
+            )
+            anns.append(a)
+        noValues = makeAnnotation(folder["_id"], tags=["in"])
+        return folder, anns, noValues
+
+    def testPropertyGateResolvesPureMembership(self, admin, server):
+        folder, anns, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [propertyPlot("plot-1", BOX_0_10)],
+            },
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"] == {"plot-1": [str(anns[0]["_id"])]}
+
+    def testPlotsResolveIndependentlyNotChained(self, admin, server):
+        # Two plots whose polygons overlap on one annotation: each answer is
+        # the pure predicate over the whole dataset — the second plot's list
+        # is NOT narrowed by the first plot's gate.
+        folder, anns, _ = self._setup(admin)
+        wideBox = [
+            {"x": 0, "y": 0}, {"x": 100, "y": 0},
+            {"x": 100, "y": 100}, {"x": 0, "y": 100},
+        ]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [
+                    propertyPlot("narrow", BOX_0_10),
+                    propertyPlot("wide", wideBox),
+                ],
+            },
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"]["narrow"] == [str(anns[0]["_id"])]
+        assert sorted(resp.json["gateIds"]["wide"]) == sorted(
+            str(a["_id"]) for a in anns
+        )
+
+    def testCategoricalGateReadsAnnotationFields(self, admin, server):
+        folder, anns, noValues = self._setup(admin)
+        inKey = analysis.encode_category_key(["in"])
+        outKey = analysis.encode_category_key(["out"])
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [{
+                    "id": "cat",
+                    "xAxis": {"type": "categorical", "key": "tags"},
+                    "yAxis": {"type": "categorical", "key": "channel"},
+                    "gate": {
+                        "categoryKeyVersion": 1,
+                        "vertices": [
+                            {"x": -0.4, "y": -0.4},
+                            {"x": 0.4, "y": -0.4},
+                            {"x": 0.4, "y": 0.4},
+                            {"x": -0.4, "y": 0.4},
+                        ],
+                        "xCategories": [inKey, outKey],
+                        "yCategories": [analysis.encode_category_key(0)],
+                    },
+                }],
+            },
+        )
+        assertStatusOk(resp)
+        expected = sorted(
+            [str(anns[0]["_id"]), str(anns[2]["_id"]),
+             str(noValues["_id"])]
+        )
+        assert sorted(resp.json["gateIds"]["cat"]) == expected
+
+    def testOrphanValueDocNeverProducesAnId(self, admin, server):
+        # A property-value doc whose annotation is gone must not resolve:
+        # annotation docs anchor existence (unlike listIds' PV-driven path).
+        folder, anns, _ = self._setup(admin)
+        AnnotationPropertyValues().appendValues(
+            {"p": {"Area": 5, "Mean": 5}}, ObjectId(), folder["_id"]
+        )
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [propertyPlot("plot-1", BOX_0_10)],
+            },
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"] == {"plot-1": [str(anns[0]["_id"])]}
+
+    def testEmptyGateIsARealAnswer(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        farBox = [
+            {"x": 1000, "y": 1000}, {"x": 1001, "y": 1000},
+            {"x": 1001, "y": 1001}, {"x": 1000, "y": 1001},
+        ]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [propertyPlot("empty", farBox)],
+            },
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"] == {"empty": []}
+
+    def testDegenerateGateMatchesNothingWithoutError(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [propertyPlot("degenerate", BOX_0_10[:2])],
+            },
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"] == {"degenerate": []}
+
+    def testEmptyPlotsResolvesToNothing(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]), "plots": []},
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"] == {}
+
+    def testRequiresReadAccess(self, admin, user, server):
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        resp = postJson(
+            server, user, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [propertyPlot("plot-1", BOX_0_10)],
+            },
+        )
+        assertStatus(resp, 403)
+
+    def testUnknownDatasetIs400(self, admin, server):
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": "not-an-id", "plots": []},
+        )
+        assertStatus(resp, 400)
+
+    @pytest.mark.parametrize("mutate", [
+        lambda p: p.pop("id"),
+        lambda p: p.update(id=7),
+        lambda p: p.update(xAxis="Area"),
+        lambda p: p.update(xAxis={"type": "nope"}),
+        lambda p: p.update(
+            xAxis={"type": "property", "path": ["bad.dot"]}
+        ),
+        lambda p: p.update(
+            xAxis={"type": "categorical", "key": "name"}
+        ),
+        lambda p: p.update(gate=None),
+        lambda p: p["gate"].update(categoryKeyVersion=2),
+        lambda p: p["gate"].update(vertices="nope"),
+        lambda p: p["gate"].update(vertices=[{"x": 0, "y": True}] * 3),
+        lambda p: p["gate"].update(vertices=[{"x": 0}] * 3),
+        lambda p: p["gate"].update(xCategories=["k"]),
+        lambda p: p["gate"].pop("vertices"),
+    ])
+    def testMalformedPlotIs400Not500(self, admin, server, mutate):
+        folder, _, _ = self._setup(admin)
+        plot = propertyPlot("plot-1", BOX_0_10)
+        mutate(plot)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]), "plots": [plot]},
+        )
+        assertStatus(resp, 400)
+
+    def testCategoricalAxisRequiresPinnedCategories(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [{
+                    "id": "cat",
+                    "xAxis": {"type": "categorical", "key": "tags"},
+                    "yAxis": {"type": "property", "path": ["p", "Mean"]},
+                    "gate": {
+                        "categoryKeyVersion": 1,
+                        "vertices": BOX_0_10,
+                        "xCategories": None,
+                        "yCategories": None,
+                    },
+                }],
+            },
+        )
+        assertStatus(resp, 400)
+
+    def testNonListPlotsIs400(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]), "plots": {"id": "x"}},
+        )
+        assertStatus(resp, 400)
+
+    def testTooManyPlotsIs400(self, admin, server, monkeypatch):
+        from upenncontrast_annotation.server.helpers import validation
+        monkeypatch.setattr(validation, "MAX_ANALYSIS_PLOTS", 1)
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [
+                    propertyPlot("a", BOX_0_10),
+                    propertyPlot("b", BOX_0_10),
+                ],
+            },
+        )
+        assertStatus(resp, 400)
