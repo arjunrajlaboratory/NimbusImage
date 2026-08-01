@@ -119,7 +119,7 @@ This keeps every actionable item discoverable from the Findings Summary table by
 | **Lossy Change Identity** | Signature/hash that misses changes it exists to detect: sampled elements, undelimited nested lists, content changes with stable membership |
 | **Stale Derived State** | Derived ids/caches surviving an input replacement or upstream change; sequence-guard token claimed after early returns |
 | **Stale String Reference** | `dispatch("...")`/event-name string not updated when the member was renamed |
-| **Hidden-Mounted Work** | Expensive mount-time or per-scrub work in `v-show`-hidden palettes/tabs not gated on visibility |
+| **Hidden-Mounted Work** | Expensive work in hidden-but-mounted content not gated on visibility: mount-time work in `FloatingPalette` slots, per-scrub computeds in palettes or once-opened `VWindowItem` tabs |
 | **Overlay Stacking** | New floating palette/panel absent from the shared right-edge clearance computation |
 
 ## Cross-Cutting Checks
@@ -255,9 +255,13 @@ For any action shaped "read inputs → maybe bail out → fetch → commit deriv
 `dispatch("name")`, `commit("name")` and event names are invisible to `tsc`: after a rename, the stale string logs an unknown-action error and resolves as a silent no-op, usually masked by a watcher doing similar work. When the diff renames a store member, sweep every string reference against the declared members. PR #1298 adds `src/__tests__/dispatchedActions.test.ts` to police dispatch names — check that a rename updates it rather than gets exempted from it.
 
 ### 13. Hidden-but-Mounted Work
-`FloatingPalette` and inactive `VWindowItem` tabs hide with `v-show` — content stays mounted. `onMounted` runs at every dataset load, and computeds re-evaluate on every store change, even if the panel has never been opened. This recurred in three consecutive feature PRs (#1279: scoped counts scanning every annotation per scrub from a hidden tab; #1288: a full connection scan not gated on timelapse mode; #1298: an invisible WebGL Plotly render at dataset startup). Flag:
-- Mount-time heavy work (dynamic imports, WebGL contexts, full-collection scans) not gated on a `:visible` prop.
-- Per-scrub or per-store-change computeds inside palette/tab content not gated on visibility or mode.
+Two container lifecycles hide content without unmounting it, with different cost profiles — don't conflate them:
+- `FloatingPalette` mounts its slot content immediately and hides it with `display: none`, so `onMounted` runs at every dataset load and computeds re-evaluate on every store change **even if the panel has never been opened** (#1298: an invisible WebGL Plotly render at dataset startup; #1288: a full connection scan not gated on timelapse mode).
+- An inactive `VWindowItem` tab mounts **lazily on first activation**, then stays mounted and is hidden with `v-show` (documented in `AnnotationBrowser.vue`), so its cost starts at first open but persists from the hidden tab afterward (#1279: scoped counts scanning every annotation per scrub once the Connections tab had been opened).
+
+The shape recurred in three consecutive feature PRs. Flag:
+- Mount-time heavy work (dynamic imports, WebGL contexts, full-collection scans) in palette content not gated on a `:visible` prop.
+- Per-scrub or per-store-change computeds inside palette/tab content not gated on visibility, tab activation, or mode.
 - Caps evaluated after the expensive work they exist to prevent — a 500-object cap that first materializes every selected annotation prevents nothing.
 
 ### 14. Overlay and Palette Stacking Combinations
