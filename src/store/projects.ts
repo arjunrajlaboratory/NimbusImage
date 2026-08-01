@@ -286,6 +286,45 @@ export class Projects extends VuexModule {
     }
   }
 
+  @Action({ rawError: true })
+  async addCollectionsToProject(params: {
+    projectId: string;
+    collectionIds: string[];
+  }): Promise<string[]> {
+    if (!main.isLoggedIn) {
+      throw new Error("You must be logged in to add collections to a project.");
+    }
+
+    sync.setSaving(true);
+    try {
+      const project = await main.projectsAPI.addCollectionsToProject(
+        params.projectId,
+        params.collectionIds,
+      );
+      const projectCollectionIds = new Set(
+        project.meta.collections.map((entry) => entry.collectionId),
+      );
+      const confirmedIds = params.collectionIds.filter((collectionId) =>
+        projectCollectionIds.has(collectionId),
+      );
+      if (confirmedIds.length !== params.collectionIds.length) {
+        throw new Error(
+          "The project response did not confirm every selected collection.",
+        );
+      }
+      this.updateProjectImpl(project);
+      sync.setSaving(false);
+      return confirmedIds;
+    } catch (error) {
+      logError(
+        `Failed to add collections to project ${params.projectId}:`,
+        error,
+      );
+      sync.setSaving(error as Error);
+      throw error;
+    }
+  }
+
   @Action
   async removeCollectionFromProject(params: {
     projectId: string;

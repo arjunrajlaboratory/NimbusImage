@@ -430,6 +430,14 @@ body {
   color: rgb(var(--v-theme-project)) !important;
 }
 
+/* Relation chips that carry their own accent through a --chip-color custom
+   property (dataset chips in the file and collection browsers). */
+.v-chip.colored-chip {
+  color: var(--chip-color) !important;
+  border-color: var(--chip-color) !important;
+  background: transparent !important;
+}
+
 .v-theme--dark
   .v-chip:not([style*="background-color"]):not(.bg-primary):not(
     .bg-success

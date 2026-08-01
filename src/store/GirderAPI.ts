@@ -8,8 +8,11 @@ import {
   IGirderAssetstore,
   IGirderLargeImage,
   IGirderApiKey,
+  ICollectionSummary,
   IUPennCollection,
   IGirderLocation,
+  IGirderBatchResource,
+  IGirderProjectedResource,
 } from "@/girder";
 import {
   configurationBaseKeys,
@@ -595,32 +598,81 @@ export default class GirderAPI {
   }
 
   // Batch resolve multiple resources (folders, items, collections, users)
+  /**
+   * Batch-resolve resource ids to documents, one request per call.
+   *
+   * Pass `fields` to trim every returned document to those keys plus `_id`.
+   * Without it the backend ships whole documents, which is what forces callers
+   * resolving a single field (e.g. folder names for a table column) to either
+   * chunk their requests or transfer far more than they need.
+   */
   async batchResources(args: {
     folder?: string[];
     item?: string[];
     upenn_collection?: string[];
     user?: string[];
+    fields: string[];
   }): Promise<{
-    folder?: Record<string, IGirderFolder>;
-    item?: Record<string, IGirderItem>;
-    upenn_collection?: Record<string, IGirderItem>;
-    user?: Record<string, IGirderUser>;
-  }> {
-    try {
-      const response = await this.client.post("resource/batch", args);
-      return response.data;
-    } catch (error) {
-      // Handle 401 (Unauthorized) errors gracefully - user may not be logged in
-      if (isAxiosError(error) && error.response?.status === 401) {
-        logWarning(
-          "Batch resources request unauthorized (user may not be logged in)",
-        );
-        // Return empty result instead of throwing
-        return {};
-      }
-      // Re-throw other errors
-      throw error;
-    }
+    folder?: Record<string, IGirderProjectedResource<IGirderFolder>>;
+    item?: Record<string, IGirderProjectedResource<IGirderItem>>;
+    upenn_collection?: Record<
+      string,
+      IGirderProjectedResource<IUPennCollection>
+    >;
+    user?: Record<string, IGirderProjectedResource<IGirderUser>>;
+  }>;
+  async batchResources(args: {
+    folder?: string[];
+    item?: string[];
+    upenn_collection?: string[];
+    user?: string[];
+    fields?: undefined;
+  }): Promise<{
+    folder?: Record<string, IGirderBatchResource<IGirderFolder>>;
+    item?: Record<string, IGirderBatchResource<IGirderItem>>;
+    upenn_collection?: Record<string, IGirderBatchResource<IUPennCollection>>;
+    user?: Record<string, IGirderBatchResource<IGirderUser>>;
+  }>;
+  async batchResources(args: {
+    folder?: string[];
+    item?: string[];
+    upenn_collection?: string[];
+    user?: string[];
+    fields?: string[];
+  }) {
+    const response = await this.client.post("resource/batch", args);
+    return response.data;
+  }
+
+  /**
+   * List collections without their (potentially very large) "meta" document.
+   * Omit folderId to list every collection the user can read, across folders.
+   * The server caps a single response at MAX_COLLECTION_LIST_LIMIT entries and
+   * reports `hasMore` so the caller knows whether to page with `offset`.
+   */
+  async listCollections(options: {
+    folderId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ collections: ICollectionSummary[]; hasMore: boolean }> {
+    const response = await this.client.get("upenn_collection/list", {
+      params: {
+        folderId: options.folderId,
+        limit: options.limit,
+        offset: options.offset,
+        sort: "updated",
+        sortdir: -1,
+      },
+    });
+    return {
+      collections: response.data.collections.map(
+        (collection: Omit<ICollectionSummary, "_modelType">) => ({
+          ...collection,
+          _modelType: "upenn_collection" as const,
+        }),
+      ),
+      hasMore: response.data.hasMore,
+    };
   }
 
   // Bulk fetch collections by multiple folder ids

@@ -1,6 +1,6 @@
 ---
 name: nimbus-frontend
-description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button conventions (5-role taxonomy — primary/secondary/tertiary/destructive/icon-only — with required variant and size), button loading states, @girder/components compatibility, and style guidelines."
+description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode, and how an unlayered global rule silently beats every Vuetify utility), select slot patterns (no .raw wrapper) vs v-data-table's update:currentItems (wrapped items — row under .raw), per-page async work in data tables, dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button conventions (5-role taxonomy — primary/secondary/tertiary/destructive/icon-only — with required variant and size), button loading states, @girder/components compatibility, and style guidelines."
 ---
 
 # Nimbus Frontend Development
@@ -255,6 +255,8 @@ Vuetify 4 changed the default theme from `"light"` to `"system"`. Our config set
 
 Vuetify 4 removed the `.raw` wrapper from select slot items. Items are passed directly. This applies to ALL slot types: `#item`, `#chip`, and `#selection`.
 
+> **Scope this to selects.** "Vuetify 4 removed `.raw`" is NOT a framework-wide rule, and generalizing it is how PR #1278 shipped a broken column. `VDataTable`'s `update:currentItems` still emits **wrapped** items whose row is under `.raw` — see *Doing per-page work in a client-side `v-data-table`* below for the per-emit table.
+
 **Object items** — access properties directly:
 ```vue
 <!-- Vuetify 4: access properties directly on object items -->
@@ -402,6 +404,102 @@ GirderFileManager (from `@girder/components`) uses **Vuetify 3 prop naming**, no
 - `itemsPerPageOptions` (kebab: `items-per-page-options`) — array of page size choices.
 
 These props are defined in `node_modules/@girder/components/src/components/FileManager.vue`. If you use a wrong prop name, it silently falls through as an unrecognized attribute and the component uses its internal default (10).
+
+### Doing per-page work in a client-side `v-data-table`
+
+When each visible row needs an async lookup (dataset chips, resolved names), fetch for the **current page** rather than for every item — otherwise a listing of thousands of rows fans out into thousands of lookups on mount. `VDataTable` emits `update:currentItems` with the **post-filter, post-sort, post-pagination** slice, which is exactly the set you want:
+
+```vue
+<v-data-table :items="filteredRows" @update:current-items="onCurrentItemsChange" />
+```
+
+**But that payload is NOT your rows — the row is under `.raw`** (PR #1278 shipped this bug; the Datasets column never resolved a single chip):
+
+```typescript
+// WRONG: undefined for every row, so nothing ever resolves and the Set of
+// requested ids collapses to a single `undefined` entry.
+function onCurrentItemsChange(items) { items.map((item) => item._id) }
+
+// RIGHT
+function onCurrentItemsChange(items) { items.map((item) => item.raw._id) }
+```
+
+`VDataTable.js` draws the distinction itself — `items: paginatedItemsWithoutGroups.value.map(i => i.raw)` vs `internalItems: paginatedItemsWithoutGroups.value` — and `paginate.js` emits the wrapped array via `vm.emit('update:currentItems', val)`.
+
+**The two payloads are asymmetric, which is exactly why they drift:**
+
+| Emit / slot | Payload |
+|---|---|
+| `@update:current-items` | **wrapped** — `{ key, index, value, raw, columns, selectable, type }` |
+| `@click:row="(event, { item }) => …"` | **raw** row (`VDataTableRows.js`: `item: item.raw`) |
+| `v-slot:item.<col>="{ item }"` | **raw** row |
+| `:row-props="({ item }) => …"` | **raw** row |
+
+So `onRowClick` reading `item._id` is correct while `onCurrentItemsChange` reading `item._id` is broken, and the two handlers sit ten lines apart looking identical. Classic *one of two symmetric paths*.
+
+Neither `tsc` nor a naive unit test catches it: Vuetify types the emit `(value: any) => any`, and a test that calls the handler with **raw** objects passes while the real table is broken. Any test driving `currentItems` must construct the wrapped shape — see the `wrappedItem` helper in `CollectionList.test.ts`.
+
+Don't try to derive the page slice yourself from `v-model:page` / `v-model:sort-by` — that means reimplementing Vuetify's sort and filter to stay in sync. Keep a `Set` of already-requested ids so paging back to a visited page doesn't refetch, and enqueue the work through a serialized, non-rejecting promise chain (see the promise section above). **Release those ids in the failure path**, or one failed burst pins those rows on "Loading…" for the component's lifetime.
+
+Two related gotchas:
+- The `hover` prop gives row hover styling, but row clicks need `@click:row="(event, { item }) => …"` — the payload's second argument is an object, not the item.
+- Sorting a column whose values are resolved asynchronously (a name looked up after the rows load) only works if the resolution covers **every loaded row**, not just the visible page — otherwise the sort silently orders by whatever happens to be resolved. Either resolve for the whole loaded set, or make the column non-sortable.
+
+### A generation counter does not protect a SECOND request started mid-refetch
+
+The `fetchGeneration` idiom (bump on entry, re-check after every await, bail if it moved) protects the refetch from stale responses. It does **not** protect a *different* request the user starts while the refetch is in flight — that request captures the **already-bumped** generation, so its own check passes and it writes into the replacement listing (PR #1278: "Load more" clicked during a scope change appended outgoing-scope rows).
+
+Three things have to line up, and the first is the one that gets missed:
+
+```typescript
+async function fetchCollections() {
+  const generation = ++fetchGeneration;
+  loading.value = true;
+  hasMore.value = false;   // (1) the alert renders OUTSIDE `v-if="loading"`,
+                           //     so leaving this set keeps it clickable
+  ...
+}
+
+async function loadMore() {
+  // (2) `loading`, not just `loadingMore` — paging onto a listing being
+  //     replaced is the bug, and the two flags are different states.
+  if (loadingMore.value || loading.value || !hasMore.value) return;
+  const folderId = loadedFolderId;   // (3) pin it; don't re-read the mutable
+  ...                                //     module var after the await
+}
+```
+
+Check the *rendered* position of any control that triggers the second request: a spinner guarding the table body does not disable a button that sits above it.
+
+**Testing a race requires controlling resolution ORDER.** Mocking both requests with one `mockResolvedValue` produces a test that passes before the fix — whichever response lands second wins, and sometimes that is the right one. Use two hand-released deferred promises, and release them in the order that exposes the bug (here: the refetch first, so the paging response arrives after the listing it no longer belongs to).
+
+### Chunking a looped API call is not a fix — ask the backend for less
+
+When a frontend loop exists to bound response *size* (`batchResources` returns whole documents, so resolve ids 500 at a time), it has traded one problem for another: up to 20 sequential round-trips, a waterfall, and a looped frontend API call the repo forbids. `Promise.all` over the chunks removes the waterfall but is still N calls.
+
+The fix is a projection. `POST /resource/batch` accepts an optional `fields` list and trims each document to those keys plus `_id`, so the whole set resolves in **one** request:
+
+```typescript
+await store.api.batchResources({ folder: unresolvedIds, fields: ["name"] });
+```
+
+Keep the projection **opt-in** — omitting `fields` must return whole documents, because the other callers depend on it, and pin that with a test. Validate the field list at the API boundary (plain non-empty strings, no `.` or `$`): it builds a Mongo projection out of caller input.
+
+### A non-scoped element selector leaks into every component (fixed once, guard it)
+
+`AnnotationBrowser/AnnotationList.vue` **used to** carry, in a non-scoped `<style>` block:
+
+```css
+td span { display: block; text-align: center; margin: auto; }   /* now .annotation-list-panel td span */
+```
+
+Both that and a sibling `tbody tr:hover` are now scoped to the component root, and `src/globalStyleLeaks.test.ts` fails if any `.vue` file gains a new top-level element selector in a non-scoped block. The history is worth keeping because the diagnosis is not obvious and the shape recurs: an unscoped element selector applies app-wide. Any new `v-data-table` gets its text cells centered under left-aligned headers, and the tell is a computed `margin-left` of some odd pixel value (e.g. `184.844px`) — that's `margin: auto` resolved against the flex free space, not a rule anyone wrote for your component.
+
+Two consequences worth knowing before you debug this for an hour:
+- Scanning `document.styleSheets` for the offending rule is how you find it, but **don't return `sheet.href`** from a devtools/`javascript_tool` probe — Vite dev URLs carry a `?t=` query string that trips content guards.
+- jsdom does not apply SFC styles, so **no runtime test can observe the cascade**. Guard it with a source-scan test asserting each cell carries the override class (precedent: `src/vuetifyDeprecations.test.ts`), and note that `import.meta.url` is not a `file://` URL under the jsdom environment — resolve from `process.cwd()`.
+
+**Fix it at the source, not with a per-table workaround.** Scoping the offending rule took one line; the interim `cell-text` class in `CollectionList.vue` and the compensating chip margins were then dead code, and a review flagged them as an obsolete invariant constraining future columns. If you must patch locally first (the source fix has app-wide visual blast radius and may deserve its own change), delete the workaround when the real fix lands — including its tests.
 
 ### Overriding Girder DataTable Row Styles
 
@@ -593,6 +691,50 @@ const gated = chain.then(() =>
   }),
 );
 ```
+
+**The serialized-queue variant of the same bug (PR #1278).** A "run these one at a time" queue built by reassigning a module/closure promise has the identical failure mode, and it hides behind a `.catch` that looks like it handles things but is in the wrong position:
+
+```typescript
+// BAD: the leading .catch absorbs only the PREVIOUS link. If this link
+// rejects and no further enqueue ever happens, its rejection is never
+// handled -> unhandled rejection.
+queue = queue
+  .catch(() => {})
+  .then(() => doWork(items))
+  .then(applyResult)
+  .finally(bookkeeping);
+
+// GOOD: terminate the chain with .catch, so the promise stored in `queue`
+// can never settle rejected. The leading .catch then becomes unnecessary.
+queue = queue
+  .then(() => doWork(items))
+  .then(applyResult)
+  .catch((error) => logError("...", error))
+  .finally(bookkeeping);
+```
+
+Rule of thumb: whatever promise you *store* for the next link to chain onto must be non-rejecting. `.finally()` passes rejections through, so it can never be the terminator. Note this is invisible to `tsc`, lint, and tests — a test that always resolves the work function never exercises the reject path.
+
+### Project `batchResources` calls to the fields you need
+
+`store.api.batchResources({ folder: ids })` resolves ids in one backend `$in`
+query, but omitting `fields` returns full Girder documents including `meta`.
+Callers that only need a display field should ask for it explicitly:
+
+```typescript
+await store.api.batchResources({ folder: ids, fields: ["name"] });
+```
+
+This keeps the entire set in one request. Do not sequentially chunk the ids:
+that creates a waterfall and is still a looped frontend API call. Resolve only
+resources the rendered mode needs; if sorting/searching depends on a resolved
+field, resolve the whole loaded set once with a projection.
+
+Projected responses are deliberately typed as partial documents: `_id` is the
+only unconditional field, while requested fields can still be absent on older
+documents. Guard optional values instead of casting the response to a full
+`IGirderFolder`/`IGirderUser`. Batch-request failures, including 401s, propagate;
+do not turn them into `{}` and cache fallback labels as if resolution succeeded.
 
 ## Native File / Folder Pickers (`src/utils/fileUpload.ts`)
 

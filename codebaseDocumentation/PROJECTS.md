@@ -385,6 +385,7 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 | POST | `/project/:id/dataset` | Add dataset to project |
 | DELETE | `/project/:id/dataset/:datasetId` | Remove dataset from project |
 | POST | `/project/:id/collection` | Add collection to project |
+| POST | `/project/:id/collections` | Validate and add multiple collections in one project write |
 | DELETE | `/project/:id/collection/:collectionId` | Remove collection from project |
 | PUT | `/project/:id/status` | Update project status |
 | PUT | `/project/:id/metadata` | Update publication metadata |
@@ -416,6 +417,7 @@ type TProjectStatus = 'draft' | 'exporting' | 'exported';
 - `addDatasetToProject({ projectId, datasetId })` - Add dataset reference
 - `removeDatasetFromProject({ projectId, datasetId })` - Remove dataset reference
 - `addCollectionToProject({ projectId, collectionId })` - Add collection reference
+- `addCollectionsToProject({ projectId, collectionIds })` - Add collection references in one validated request
 - `removeCollectionFromProject({ projectId, collectionId })` - Remove collection reference
 - `updateProjectMetadata({ projectId, metadata })` - Update publication metadata
 - `updateProjectStatus({ projectId, status })` - Update workflow status

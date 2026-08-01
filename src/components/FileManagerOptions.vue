@@ -262,7 +262,7 @@ async function moveFolderToAssetstore(folderId: string, assetstoreId: string) {
 
 function onItemsChanged() {
   if (props.items.length === 1) {
-    newName.value = props.items[0].name;
+    newName.value = props.items[0].name ?? "";
   }
 }
 

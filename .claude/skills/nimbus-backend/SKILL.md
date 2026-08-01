@@ -1,6 +1,6 @@
 ---
 name: nimbus-backend
-description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API vs model layer separation (API raises RestException, models raise ValueError — never mix these), API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic, permission escalation risks), database queries (Model.find not collection.find, batch $in queries not loops), model loading (exc=True not manual null checks), error handling (catch specific exceptions, never except Exception), public endpoint input validation (inline isinstance guards → RestException 400, MAX_* clamps, bson InvalidId → 400), loading plugin changes into the running container (rebuild, not restart), and backend test patterns. Use this skill even for small backend changes."
+description: "Use when writing or modifying Python code in the Girder backend plugin (devops/girder/plugins/AnnotationPlugin/), creating REST API endpoints, writing database queries with MongoDB, implementing access control and sharing, running backend tests with tox/pytest, or debugging Docker compose services. Covers: API vs model layer separation (API raises RestException, models raise ValueError — never mix these), API endpoint patterns (@autoDescribeRoute, modelParam), access control (AccessType, setUserAccess, setPublic, permission escalation risks), database queries (Model.find not collection.find, batch $in queries not loops), model loading (exc=True not manual null checks), error handling (catch specific exceptions, never except Exception), public endpoint input validation (the shared server/helpers/validation.py helpers → RestException 400, never hand-rolled isinstance guards; MAX_* clamps traced for -1/0/MAX+1; sort-key allowlists; bson InvalidId → 400), loading plugin changes into the running container (rebuild, not restart), and backend test patterns (no wall-clock-dependent ordering; clamp tests must be able to fail). Use this skill even for small backend changes."
 ---
 
 # Nimbus Backend Development (Girder)
@@ -13,10 +13,20 @@ description: "Use when writing or modifying Python code in the Girder backend pl
 |-------|----------|---------|
 | -1 | (none) | No access / Remove access |
 | 0 | `AccessType.READ` | View-only access |
-| 1 | `AccessType.WRITE` | Edit access |
-| 2 | `AccessType.ADMIN` | Owner — can manage access (share, set public, delete) |
+| 1 | `AccessType.WRITE` | Edit access — **and delete, for item-like resources** |
+| 2 | `AccessType.ADMIN` | Owner — manage access (share, set public), delete a container |
 
 **Important:** `AccessType.ADMIN` means **owner of that document**, not a site-wide admin. The creator of a project/dataset gets ADMIN on it and can share it with others.
+
+**Do not conclude that deleting requires ADMIN.** Reading "ADMIN … delete" off this table and flagging a `WRITE`-level delete is a false positive — it happened auditing PR #1278. The convention follows Girder core, where `DELETE /item` is `WRITE` while `DELETE /folder` is `ADMIN`:
+
+| Resource | Delete level | Why |
+|---|---|---|
+| `upenn_annotation`, `annotation_connection`, `annotation_property`, `dataset_view`, `upenn_collection` | `WRITE` | item-like, lives inside a folder |
+| `upenn_project` | `ADMIN` | container that owns datasets and collections |
+| `project/:id/dataset/:id`, `project/:id/collection/:id` | `WRITE` | removing a child, not deleting the container |
+
+Before changing a level, grep the sibling endpoints — `grep -n "def delete" -B 14 server/api/*.py | grep -E "@access|AccessType"` — and match them. Changing WRITE to ADMIN is a **behavior change** that stops collaborators from deleting, not a hardening no-op.
 
 Use `-1` (not `null`) to remove a user's access.
 
@@ -305,6 +315,103 @@ Match each kind of request-data access to its helper:
 
 Rules: validation and `RestException` live in the API layer, never in models. Validate NESTED elements, not just the top-level container — each list entry (`[123]`) and nested map (`propertyValues: {"a1": 5}`) is caller-supplied; `.get()`/`.items()` on a non-dict entry → 500. Add a backend test per malformed-input case (malformed body → 400, not 500); `test/test_validation.py` unit-tests the helpers directly, and endpoint tests assert the 400. When you fix one endpoint, sweep the other endpoints in the same file for the identical gap — reviewers flag one instance per round.
 
+### `autoDescribeRoute` + `pagingParams` does NOT validate for you
+
+Everything above is written around **body**-parsing endpoints (`describeRoute` + `getBodyJson()` + `requireObjectBody`). That framing is a trap: on an `autoDescribeRoute` endpoint with `.param()` / `.pagingParams()`, Girder declares param types and coerces some of them, which *feels* like the boundary is covered. It isn't, and this shipped a P1 (PR #1278) even though the helpers above were already documented. What Girder actually does:
+
+| Declared | Girder's behavior | Still your job |
+|---|---|---|
+| `.param('folderId', ...)` (no dataType) | passes the raw **string** through | `requireObjectId` — `ObjectId('nope')` raises `InvalidId` → 500 |
+| `.pagingParams(...)` → `limit`, `offset` | `_handleInt` → clean `RestException` on non-numeric | **negatives pass straight through** — clamp them |
+| `.pagingParams(...)` → `sort` | passes any field name through as `[(field, dir)]` | restrict to an allowlist (see below) |
+| `.jsonParam(..., requireObject=True)` | 400 if the body isn't a dict/array | nested elements inside it |
+
+So the clamp idiom is required even when the params look framework-managed:
+
+```python
+offset = max(0, offset)                       # a negative offset makes PyMongo raise
+limit = min(max(1, limit or MAX_X_LIMIT), MAX_X_LIMIT)
+```
+
+### `limit + 1` for `hasMore` interacts with Girder's limit=0 sentinel
+
+Reading one extra row to compute `hasMore` avoids a second count query, but `limit=0` means **unlimited** to Girder. So an unclamped negative limit becomes a total bypass of the cap, not merely a wrong page size:
+
+```python
+# BAD: limit=-1 -> min(-1, MAX) == -1 -> limit+1 == 0 -> Girder "unlimited"
+# -> materializes EVERY accessible document, returns all but the last via
+# documents[:-1]. The MAX_* cap is gone, on a public endpoint.
+limit = min(limit or MAX_X_LIMIT, MAX_X_LIMIT)
+
+# GOOD: every input lands in [1, MAX_X_LIMIT], so limit+1 is never 0
+limit = min(max(1, limit or MAX_X_LIMIT), MAX_X_LIMIT)
+```
+
+Whenever you write `limit + 1` (or any arithmetic on a limit), trace the value for **`-1`, `0`, and `MAX+1`** by hand. `-1` is the dangerous one and the easiest to skip: `0` and `MAX+1` both behave, so a spot-check of "does a MAX_ constant exist" passes while the bypass sits there. Regression-test `limit=-1` specifically, asserting a clamped page — not just "no 500".
+
+### An endpoint that hand-builds its response has no `@filtermodel` — filter it yourself
+
+`@filtermodel` is what strips keys the model does not expose at the caller's access level. An endpoint that returns something other than a bare model document — a map keyed by id, a multi-type envelope, a computed summary — cannot use the decorator, and it is easy to miss that **nothing else is filtering**. `findWithPermissions` decides *which documents* you may see; it says nothing about *which fields*.
+
+`POST /resource/batch` shipped that way and leaked, to any signed-in caller (found auditing PR #1278):
+
+| Type | Leaked | Because |
+|---|---|---|
+| `folder` | `access` | who holds READ/WRITE/ADMIN, by user and group |
+| `user` | **`salt`** (the bcrypt password hash), `email`, `groups`, `status` | User exposes only `_id/admin/created/firstName/lastName/login/public` at READ |
+
+The fix is to call the same thing the decorator calls:
+
+```python
+mapping[str(doc['_id'])] = model.filter(doc, user)
+```
+
+**A field projection interacts with this — order matters.** `filter()` calls `getAccessLevel(doc, user)`, which reads the document's own `access` and `public`. Project those away and every document looks unreadable, silently stripping fields the caller *is* entitled to. So fetch them and drop them afterwards:
+
+```python
+fields=list(set(requested) | {'_id', 'access', 'public'})   # for the query
+...
+narrowed = {k: v for k, v in model.filter(doc, user).items() if k in requested}
+```
+
+Filter **then** narrow — never narrow then filter, or `fields: ["salt"]` becomes an exfiltration primitive. Regression-test exactly that: request an unexposed key explicitly and assert you get only `_id` back.
+
+Check exposure levels rather than guessing — `email` sits at ADMIN, not READ:
+
+```python
+docker compose exec -T girder python -c "
+from girder.models.user import User
+u=User(); print({lvl: sorted(k) for lvl, k in u._filterKeys.items()})"
+```
+
+Expect frontend fallout when you fix one of these: the UI may have been rendering data it should never have had. Here three call sites interpolated `user.email` and two produced `"Name (undefined)"` once it was correctly withheld.
+
+### Offset paging needs a TOTAL order — append `_id`
+
+A `limit`/`offset` endpoint is only coherent if the sort is deterministic. Mongo stores datetimes at **millisecond** resolution, so any bulk operation stamps many documents with the same `updated`/`created`; tied documents have no defined order, and a page-2 request can then repeat a row from page 1 or skip one entirely **with the data unchanged**. Nothing errors, and it is invisible in a single-page test.
+
+```python
+# The endpoint's sort allowlist runs first, then the tie-breaker is appended.
+sort = withIdTieBreaker(requireSortableFields(sort))
+```
+
+`_id` is unique, so appending it makes the order total; give it the primary key's direction so ties read the same way as the sorted column. Then put `_id` in the index — `([('updated', -1), ('_id', -1)], {})` — and drop the now-redundant single-field index, since an index whose *prefix* is `updated` still serves a plain `updated` sort.
+
+To write a test that can actually fail: ObjectIds are monotonic, so create A then B and give both the same timestamp. `_id` descending expects **B first**, the opposite of insertion order — which is what Mongo returns without the tie-breaker (verified: the assertion fails with `'collection_first' != 'collection_second'`). Then page one row at a time and assert the union has no duplicates.
+
+### Sort keys are caller input too
+
+`pagingParams` exposes `sort` as a free-form field name. Clamping `limit` while leaving `sort` open still lets an unauthenticated caller force a blocking sort over every accessible document — including on a large `meta` subdocument. This is especially easy to miss right after adding an index for the *default* sort: the index covers `?sort=updated` and nothing else.
+
+```python
+for field, _direction in sort or []:
+    if field not in X_SUMMARY_FIELDS:
+        raise RestException(
+            'sort must be one of: %s' % ', '.join(X_SUMMARY_FIELDS), code=400)
+```
+
+Restricting the allowlist to the fields the endpoint actually returns is usually the right scope, and turns a typo into a clean 400.
+
 ## Loading Plugin Changes Into the Running Backend
 
 The `girder` container bakes the plugin into its image (no source mount). After editing backend plugin code:
@@ -387,6 +494,38 @@ The frontend subscribes to job SSE events via `src/store/jobs.ts`. Log entries c
 For detailed testing patterns beyond basics: read `references/testing-patterns.md`
 
 Testing basics (running tox, test structure, linting): see `CLAUDE.md`
+
+### Two ways a backend test lies (both shipped in PR #1278)
+
+**1. Never assert an order that depends on wall-clock timing.** MongoDB stores datetimes at **millisecond** resolution. A test that creates one document, then touches another to make it "more recent", routinely lands both in the same millisecond — the sort then has a tie and Mongo returns an arbitrary order. The test passes alone and fails as soon as another test file shifts the timing, which reads like flakiness in unrelated code:
+
+```python
+# BAD: both land in the same millisecond; the assertion is a coin flip.
+older = createCollection(admin, folder, "older")
+createCollection(admin, folder, "newer")
+Collection().updateFields(older, description="touched")   # "now newest"
+
+# GOOD: write the timestamps, so the expected order is unambiguous.
+base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+older['updated'] = base
+newer['updated'] = base + datetime.timedelta(hours=1)
+Collection().save(older)
+Collection().save(newer)
+```
+
+Also **scope the request to the test's own folder**. An exact-list assertion against an unfiltered cross-folder listing is at the mercy of every other test file. And run the file *after* a big one (`tox -- .../test_annotations.py .../test_collection_list.py`), not just alone — order-only failures are invisible to a single-file run.
+
+**2. A clamp test with production-sized constants cannot fail.** Asserting that `limit=0` is capped at 10,000 is vacuous when the fixture has 3 documents: capped and uncapped both return 3. `monkeypatch` the ceiling down so the difference is observable:
+
+```python
+def testClampsLimit(self, admin, server, monkeypatch):
+    monkeypatch.setattr(collectionApi, "MAX_COLLECTION_LIST_LIMIT", 2)
+    # ...create 3 documents...
+    resp = ...  # limit=0
+    assert len(resp.json) == 2      # fails at 3 without the clamp
+```
+
+This requires the handler to read the module constant **at call time** (a module-level helper referencing the global does; a default argument captured at import does not). Note `limit=-1` may pass such a test by accident — PyMongo's `limit(-1)` returns at most one document — so assert the `limit=0` case specifically, which is the one that means *unlimited*.
 
 ## Codebase Documentation References
 
