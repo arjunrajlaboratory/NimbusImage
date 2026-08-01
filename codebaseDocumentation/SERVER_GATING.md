@@ -685,6 +685,25 @@ cap, with real `Area`/`Perimeter` values), driving the real UI:
   **485 bytes** instead of ~560 KB of ids — and the server list
   independently returned the same 22,478.
 
+**Also verified in the browser on the 708,983-object Xenium dataset**, which
+is a different regime — stub-only mode, 14× the objects, and no computed
+properties, so both axes are categorical and membership depends entirely on
+the per-id jitter:
+
+- Heatmap binned all 708,983; a box drawn over the left half of the jitter
+  strip resolved to **352,994**, and the header went from "Showing 17,022 of
+  708,983 in view" to "…of 352,994".
+- **Bit-exact TS↔Python jitter parity at full scale.** The JS reference
+  jitter was recomputed in the browser over all 708,983 stubs and compared
+  against the server's resolved set: **zero mismatches**. This is the case a
+  single floating-point ULP would break — points sit at
+  `index ± jitter(id)`, so any divergence flips membership near the gate
+  edge. The committed parity fixture pins the same property in CI; this
+  confirms it against a real dataset.
+- Wire format held: `analysisGates` 1 definition, `idConstraints` empty,
+  **427-byte** filter payload, server list total 352,994 matching the
+  client, list page fetch ~4.9 s.
+
 Not exercised live: chaining a second plot off the first, the disabled-gate
 display path, and the honesty banner (no ROI filter was active).
 
