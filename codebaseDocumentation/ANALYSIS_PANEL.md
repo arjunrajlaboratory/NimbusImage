@@ -138,6 +138,13 @@ endpoint was needed — `annotation_property_values/batch` already projects by
 
 ## The point cap, and why there is no sampling
 
+> **Superseded above the cap by `SERVER_GATING.md`.** Gates now resolve
+> server-side as pure predicates and plots render as server-binned heatmaps,
+> so the cap bounds CLIENT work (scatter rendering, population hashing,
+> value fetches) rather than disabling gating. The reasoning below — why a
+> sample is not an acceptable answer — is exactly why that had to move
+> server-side rather than be approximated.
+
 `MAX_ANALYSIS_PLOT_POINTS = 50000` (`src/store/constants.ts`, matching
 `DEFAULT_VISIBILITY_CONFIG.maxVisible`). Above it the panel shows a "narrow the
 filters" notice and plots nothing, and gate resolution stops too.

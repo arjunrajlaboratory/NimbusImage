@@ -652,3 +652,25 @@ Every invariant names the test that holds it (format enforced by
   (the 708,983-object Xenium dataset).
 - The parity fixture regenerates only from the TS reference implementation;
   a hand-edited fixture is a spec violation.
+
+## What is verified, and what is not
+
+**Verified live against the 708,983-object Xenium dataset** (through the real
+REST API, `scratchpad/verify_gating.py`): a whole-dataset categorical gate
+resolves to exactly 708,983 ids; a narrow slice through the jittered strip
+resolves to 227,901 and is byte-stable across repeated requests; the
+histogram's `gateCount` badge equals the `gate_ids` answer exactly; property
+axes on a dataset with no computed values resolve to empty rather than
+erroring; and `list/ids` and a filtered `list` page carrying the same gate
+DEFINITION return the identical 227,901 objects. Timings above.
+
+**Verified by test only:** the browser rendering path — heatmap trace
+construction, `drawclosedpath`/`drawrect` → gate conversion, the panel's
+fetch scoping and honesty banner. These are covered by
+`AnalysisScatterPlot.test.ts` / `AnalysisPanel.test.ts`, but **not yet
+clicked in a live browser**: the local app requires an interactive login,
+which the agent that built this could not perform. Before merging, open the
+Xenium dataset, open Analysis, and confirm: heatmaps appear instead of the
+"narrow the filters" notice; drawing a closed shape produces a gate chip
+with a count; the viewer and Objects tab narrow accordingly; and a second
+plot chains off the first.
