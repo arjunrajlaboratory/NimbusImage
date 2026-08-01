@@ -1828,6 +1828,17 @@ export interface IAnalysisPlot {
   gateEnabled: boolean;
 }
 
+// One plot in a server-side gate-resolution request: a DRAWN plot's
+// definition (both axes chosen, gate present). The server resolves the gate
+// as a pure per-annotation predicate over the whole dataset; see
+// codebaseDocumentation/SERVER_GATING.md.
+export interface IAnalysisGatePlotRequest {
+  id: string;
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;
+}
+
 export interface IAnnotationPropertyConfiguration {
   name: string;
   image: string;

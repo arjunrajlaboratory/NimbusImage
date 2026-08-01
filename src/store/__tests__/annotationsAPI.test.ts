@@ -71,3 +71,51 @@ describe("AnnotationsAPI match-nothing short-circuit", () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 });
+
+// Server-side gate resolution (SERVER_GATING.md, Phase 1). Failure returns
+// null — never {} — so the caller can keep same-input gate ids on a transient
+// error instead of resolving every gate to zero matches.
+describe("fetchAnalysisGateIds", () => {
+  const plot = {
+    id: "plot-1",
+    xAxis: { type: "property" as const, path: ["p", "Area"] },
+    yAxis: { type: "property" as const, path: ["p", "Mean"] },
+    gate: {
+      categoryKeyVersion: 1 as const,
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+      ],
+      xCategories: null,
+      yCategories: null,
+    },
+  };
+
+  it("posts the plots and returns the gateIds map", async () => {
+    const post = vi
+      .fn()
+      .mockResolvedValue({ data: { gateIds: { "plot-1": ["a", "b"] } } });
+    const api = new AnnotationsAPI({ post } as any);
+    expect(await api.fetchAnalysisGateIds("ds1", [plot])).toEqual({
+      "plot-1": ["a", "b"],
+    });
+    expect(post).toHaveBeenCalledWith(
+      "upenn_annotation/analysis/gate_ids",
+      { datasetId: "ds1", plots: [plot] },
+    );
+  });
+
+  it("short-circuits an empty plots list without a request", async () => {
+    const post = vi.fn();
+    const api = new AnnotationsAPI({ post } as any);
+    expect(await api.fetchAnalysisGateIds("ds1", [])).toEqual({});
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("returns null on failure, not an empty map", async () => {
+    const post = vi.fn().mockRejectedValue(new Error("network down"));
+    const api = new AnnotationsAPI({ post } as any);
+    expect(await api.fetchAnalysisGateIds("ds1", [plot])).toBeNull();
+  });
+});

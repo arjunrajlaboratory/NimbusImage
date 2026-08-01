@@ -17,6 +17,7 @@ import {
   IAnnotationListPage,
   IAnnotationListRow,
   IAnnotationListFilters,
+  IAnalysisGatePlotRequest,
 } from "./model";
 
 import { filtersMatchNothing } from "@/utils/annotationListFilters";
@@ -151,6 +152,32 @@ export default class AnnotationsAPI {
       filters,
     });
     return response.data.ids as string[];
+  }
+
+  /**
+   * Resolve gate polygons server-side (SERVER_GATING.md, Phase 1): each
+   * plot's answer is the pure per-annotation predicate over the whole
+   * dataset. Returns null on failure — never {} — so the caller can keep
+   * same-input gate ids on a transient error instead of resolving every
+   * gate to zero matches.
+   */
+  async fetchAnalysisGateIds(
+    datasetId: string,
+    plots: IAnalysisGatePlotRequest[],
+  ): Promise<{ [plotId: string]: string[] } | null> {
+    if (plots.length === 0) {
+      return {};
+    }
+    try {
+      const response = await this.client.post(
+        "upenn_annotation/analysis/gate_ids",
+        { datasetId, plots },
+      );
+      return response.data.gateIds as { [plotId: string]: string[] };
+    } catch (error) {
+      logError("Failed to resolve analysis gates server-side:", error);
+      return null;
+    }
   }
 
   async hydrateAnnotations(
