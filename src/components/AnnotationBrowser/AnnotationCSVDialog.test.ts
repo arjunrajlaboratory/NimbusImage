@@ -467,6 +467,32 @@ describe("AnnotationCSVDialog", () => {
       expect(csv).not.toContain("s2");
     });
 
+    it("filtered-scope count/preview guard never allocates the id array", async () => {
+      // Twin of the selected-scope allocation test: with a filter matching
+      // hundreds of thousands of stubs, the count and preview-limit checks
+      // must read props.annotations.length only; the dataset-sized id array
+      // may be built exactly once, at download time.
+      const filteredStubs = sampleStubs.slice(0, 2);
+      let mapCalls = 0;
+      const spiedAnnotations = Object.assign([...filteredStubs], {
+        map(...args: Parameters<typeof Array.prototype.map>) {
+          mapCalls++;
+          return Array.prototype.map.apply(this, args);
+        },
+      });
+      const wrapper = mountComponent({ annotations: spiedAnnotations });
+      const vm = wrapper.vm as any;
+      vm.annotationScope = "filtered";
+      vm.propertyExportMode = "all";
+      expect(vm.exportAnnotationCount).toBe(2);
+      expect(vm.isTooLargeForPreview).toBe(false);
+      expect(mapCalls).toBe(0);
+      await vm.download();
+      const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+      expect(arg.annotationIds).toEqual(["s1", "s2"]);
+      expect(mapCalls).toBe(1);
+    });
+
     it("stale selected ids never widen the export to the whole dataset", async () => {
       // A deleted annotation can linger in selectedAnnotationIds (e.g. a
       // context-menu delete, or an undo). If stale ids counted toward the

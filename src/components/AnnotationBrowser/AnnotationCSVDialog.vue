@@ -415,22 +415,32 @@ const exportAnnotationIds = computed((): string[] | null => {
   return null;
 });
 
-const exportAnnotationCount = computed(() =>
-  exportAnnotationIds.value === null
-    ? annotationStore.annotationCount
-    : exportAnnotationIds.value.length,
-);
+// Count without building the id array: the filter can match hundreds of
+// thousands of stubs, and this drives the count label and preview-limit
+// guard on every render. Only the "selected" branch touches
+// exportAnnotationIds, whose selected path is O(selection).
+const exportAnnotationCount = computed(() => {
+  if (annotationScope.value === "filtered") {
+    return props.annotations.length;
+  }
+  if (annotationScope.value === "selected") {
+    return exportAnnotationIds.value?.length ?? 0;
+  }
+  return annotationStore.annotationCount;
+});
 
 // Annotation rows for the client-side preview. Only read when the export is
 // within PREVIEW_ANNOTATION_LIMIT (the count check above never materializes
-// anything), so the id lookups here stay bounded by the preview limit.
+// anything), so the id lookups here stay bounded by the preview limit. The
+// filtered branch comes first so this never evaluates exportAnnotationIds'
+// dataset-sized filtered id array.
 const annotationsToExport = computed((): TAnnotationOrStub[] => {
+  if (annotationScope.value === "filtered") {
+    return props.annotations;
+  }
   const ids = exportAnnotationIds.value;
   if (ids === null) {
     return annotationStore.annotationsForIteration;
-  }
-  if (annotationScope.value === "filtered") {
-    return props.annotations;
   }
   const resolve = annotationStore.getAnnotationOrStubFromId;
   return ids

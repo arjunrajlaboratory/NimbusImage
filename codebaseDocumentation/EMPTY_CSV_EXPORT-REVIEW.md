@@ -3,6 +3,7 @@
 Codex rounds on `codex/fix-empty-csv-export`, 2026-08-01.
 Round 1: head d634f5db (F1–F3). Round 2: head c1b4a05e (F4).
 Round 3: head 4857c3eb (checklist below). Round 4: head 821b1e37 (F5).
+Round 5: head a35b5481 (F6).
 
 ## F1 (P1) — Stub-only mode loses the selected subset
 
@@ -111,6 +112,25 @@ sources deletion pruning can't reach (e.g. undo).
 **Status:** fixed (this branch) — test: `AnnotationCSVDialog.test.ts`
 "stale selected ids never widen the export to the whole dataset".
 
+## F6 (P2, round 5) — Filtered-scope count allocated the id array
+
+`AnnotationCSVDialog.vue`
+
+The filtered-scope twin of F4: `exportAnnotationCount` (evaluated on every
+render for the count label and preview-limit guard) reached through
+`exportAnnotationIds`, whose filtered branch maps the whole filtered array —
+potentially hundreds of thousands of stubs — into a second dataset-sized id
+array just to read its length. `annotationsToExport` also evaluated
+`exportAnnotationIds` before its own filtered early-return.
+
+Fix: the count reads `props.annotations.length` for the filtered scope (and
+`annotationCount` for "all"); `annotationsToExport` checks the filtered
+scope before touching `exportAnnotationIds`. The filtered id array is now
+built exactly once, at download time.
+
+**Status:** fixed (this branch) — test: `AnnotationCSVDialog.test.ts`
+"filtered-scope count/preview guard never allocates the id array".
+
 ## Regression checklist
 
 One line per invariant, each naming the test that holds it. When changing the
@@ -153,6 +173,9 @@ getters: re-check these. Frontend tests live in
 - [ ] Preview resolves annotation objects per id (O(1) lookups bounded by
   `PREVIEW_ANNOTATION_LIMIT`), never by scanning —
   CSV: *"selected-scope preview resolves stubs by id lookup"*
+- [ ] The filtered-scope count/preview guard reads a length, never building
+  the dataset-sized id array (built exactly once, at download) —
+  CSV: *"filtered-scope count/preview guard never allocates the id array"*
 - [ ] An empty-subset export skips the dataset-wide property-values scan —
   backend: *"testEmptySubsetSkipsPropertyValueFetch"*
 
