@@ -223,7 +223,7 @@ The backend's human reviewer flags these reliably; catch them first.
 - No `self` on a function that isn't a method — move it to module level.
 - No decorator whose benefit can't be stated for *this* endpoint (memoization on a request that runs once per file).
 
-**No in-band sentinels:** a reserved value inside a user-data field (a tag literally named `exclusive` that switches behavior) collides with legitimate user data — make it a separate request argument.
+**No in-band sentinels:** a reserved value *inside* a user-data field (a magic tag name in a `values` list that switches behavior) collides with legitimate user data — the mode belongs in a separate request argument. The sibling-field shape is the correct resolution, not a violation: the list-filter `tags` field `{values: string[], exclusive: boolean}` was questioned in review and ruled by-design, because `exclusive` is already a separate argument and a tag literally named "exclusive" works fine (`codebaseDocumentation/PR1203-PAUL-REVIEW.md`). Flag only values that live inside the data itself and change behavior.
 
 **Answer the reviewer's questions before review does.** For each new parameter or data path, the questions asked in past rounds: can this be `None`? What happens on re-run/re-import when the data already exists (overwrite, duplicate, or delete-old)? What happens to non-scalar values (a dict landing in a CSV cell)? Handle it in code, or say why not in a comment.
 
