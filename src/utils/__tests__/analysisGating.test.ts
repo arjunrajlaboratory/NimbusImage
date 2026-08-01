@@ -333,6 +333,97 @@ describe("resolveGateIds", () => {
     };
     expect(resolveGateIds(points, vShape)).toEqual(["leftArm", "rightArm"]);
   });
+
+  it("excludes categories the gate's pinned order does not know", () => {
+    // SERVER_GATING.md "unknown categories are outside the gate": a category
+    // that did not exist when the gate was drawn plots (appended after the
+    // pinned ones) but never resolves into the gate, no matter how far the
+    // polygon reaches. Population-dependent appended indices are what made
+    // the old inclusion arbitrary — and inexpressible server-side.
+    const gate = {
+      categoryKeyVersion: 1 as const,
+      vertices: [
+        { x: -0.5, y: -1 },
+        { x: 5, y: -1 },
+        { x: 5, y: 2 },
+        { x: -0.5, y: 2 },
+      ],
+      xCategories: [encodeAnalysisCategoryKey(["known"])],
+      yCategories: null,
+    };
+    const series = buildPlotSeries({
+      annotations: [
+        annotation("a", { tags: ["known"] }),
+        annotation("b", { tags: ["appeared-later"] }),
+      ],
+      values: {
+        a: { prop: { Mean: 1 } },
+        b: { prop: { Mean: 1 } },
+      },
+      xAxis: TAGS,
+      yAxis: INTENSITY,
+      channelName,
+      xCategoryOrder: gate.xCategories,
+    });
+    // Both plot (the unknown category is appended at index 1, inside the
+    // polygon's x-range) but only the pinned category resolves.
+    expect(series.ids).toEqual(["a", "b"]);
+    expect(Math.round(series.x[1])).toBe(1);
+    expect(resolveGateIds(series, gate)).toEqual(["a"]);
+  });
+
+  it("applies the unknown-category rule per axis", () => {
+    const gate = {
+      categoryKeyVersion: 1 as const,
+      vertices: [
+        { x: -1, y: -1 },
+        { x: 9, y: -1 },
+        { x: 9, y: 9 },
+        { x: -1, y: 9 },
+      ],
+      xCategories: [encodeAnalysisCategoryKey(["known"])],
+      yCategories: [encodeAnalysisCategoryKey(0)],
+    };
+    const series = buildPlotSeries({
+      annotations: [
+        annotation("both-known", { tags: ["known"], channel: 0 }),
+        annotation("y-unknown", { tags: ["known"], channel: 3 }),
+      ],
+      values: {},
+      xAxis: TAGS,
+      yAxis: CHANNEL,
+      channelName,
+      xCategoryOrder: gate.xCategories,
+      yCategoryOrder: gate.yCategories,
+    });
+    expect(resolveGateIds(series, gate)).toEqual(["both-known"]);
+  });
+});
+
+describe("appended-category ordering", () => {
+  it("appends categories unknown to a pinned order sorted by label, not encounter order", () => {
+    // Deterministic display: the same population must plot appended
+    // categories at the same indices regardless of iteration order.
+    const build = (order: string[]) =>
+      buildPlotSeries({
+        annotations: order.map((tag, i) => annotation(`n${i}`, { tags: [tag] })),
+        values: Object.fromEntries(
+          order.map((_, i) => [`n${i}`, { prop: { Mean: 1 } }]),
+        ),
+        xAxis: TAGS,
+        yAxis: INTENSITY,
+        channelName,
+        xCategoryOrder: [encodeAnalysisCategoryKey(["pinned"])],
+      });
+    const forward = build(["pinned", "delta", "carol"]);
+    const reversed = build(["carol", "delta", "pinned"]);
+    expect(forward.xCategories).toEqual([
+      encodeAnalysisCategoryKey(["pinned"]),
+      encodeAnalysisCategoryKey(["carol"]),
+      encodeAnalysisCategoryKey(["delta"]),
+    ]);
+    expect(reversed.xCategories).toEqual(forward.xCategories);
+  });
 });
 
 describe("selectionEventToGate", () => {

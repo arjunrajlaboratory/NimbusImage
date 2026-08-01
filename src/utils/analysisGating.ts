@@ -233,26 +233,32 @@ export function buildPlotSeries(input: {
         : categoricalLabelFromRaw(decoded, axis.key, channelName);
     };
     // A pinned ordering wins, extended with any category it does not know so
-    // new categories still plot (at the end) instead of vanishing.
+    // new categories still plot (at the end) instead of vanishing. Note that
+    // appended categories are display-only: a gate never contains them (see
+    // resolveGateIds), so their indices carry no gate semantics.
     const categories = order ? [...order] : [];
     const indexOf = new Map(categories.map((key, idx) => [key, idx]));
+    // Sort by readable label, then raw identity so duplicate display labels
+    // remain deterministic and separate. Applied to the whole axis when no
+    // ordering is pinned, and to the appended slice when one is — appended
+    // indices must not depend on population iteration order.
+    const byLabelThenKey = (left: string, right: string) =>
+      labelForKey(left).localeCompare(labelForKey(right)) ||
+      left.localeCompare(right);
+    const appended: string[] = [];
     for (const { key } of categoryValues) {
       if (!indexOf.has(key)) {
-        indexOf.set(key, categories.length);
-        categories.push(key);
+        indexOf.set(key, 0); // marker; real indices assigned below
+        appended.push(key);
       }
     }
+    appended.sort(byLabelThenKey);
+    categories.push(...appended);
     if (!order) {
-      // No pinned ordering: sort by readable label, then raw identity so
-      // duplicate display labels remain deterministic and separate.
-      categories.sort(
-        (left, right) =>
-          labelForKey(left).localeCompare(labelForKey(right)) ||
-          left.localeCompare(right),
-      );
-      indexOf.clear();
-      categories.forEach((key, idx) => indexOf.set(key, idx));
+      categories.sort(byLabelThenKey);
     }
+    indexOf.clear();
+    categories.forEach((key, idx) => indexOf.set(key, idx));
     return {
       coords: categoryValues.map(
         ({ key }, i) => indexOf.get(key)! + jitterFromId(ids[i], salt),
@@ -299,7 +305,17 @@ function isPointInPolygon(
   return inside;
 }
 
-/** The ids of `series` whose point falls inside `gate`. */
+/**
+ * The ids of `series` whose point falls inside `gate`.
+ *
+ * A categorical point whose category is NOT in the gate's pinned order is
+ * never inside, no matter where the polygon reaches (SERVER_GATING.md,
+ * "unknown categories are outside the gate"). Appended categories plot at
+ * indices ≥ the pinned count, and jitter is bounded by ±0.28, so rounding
+ * the coordinate recovers the index exactly. This is what keeps the gate a
+ * pure per-annotation predicate — the property that lets the server resolve
+ * it without knowing the client's population.
+ */
 export function resolveGateIds(
   series: IAnalysisSeries,
   gate: IAnalysisGate,
@@ -309,8 +325,22 @@ export function resolveGateIds(
   if (gate.vertices.length < 3) {
     return [];
   }
+  const xPinned =
+    series.xCategories !== null && gate.xCategories !== null
+      ? gate.xCategories.length
+      : null;
+  const yPinned =
+    series.yCategories !== null && gate.yCategories !== null
+      ? gate.yCategories.length
+      : null;
   const ids: string[] = [];
   for (let i = 0; i < series.ids.length; i++) {
+    if (xPinned !== null && Math.round(series.x[i]) >= xPinned) {
+      continue;
+    }
+    if (yPinned !== null && Math.round(series.y[i]) >= yPinned) {
+      continue;
+    }
     if (isPointInPolygon(series.x[i], series.y[i], gate.vertices)) {
       ids.push(series.ids[i]);
     }

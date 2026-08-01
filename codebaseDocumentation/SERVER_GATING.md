@@ -526,10 +526,12 @@ heatmap; page the Objects tab; export CSV of gated subset; kill the network
 mid-refresh and confirm no empty-gate wipeout. Do this from a fresh page
 load on a dataset that actually exceeds the cap.
 
-## Regression checklist seed
+## Planned regression coverage
 
-Grows in the manner of `CONNECTION_LIST.md`; every line names its test once
-implemented.
+Becomes a real "Regression checklist" section (with `*"test name"*` citations,
+enforced by `regressionChecklist.test.ts`) at the end of implementation —
+tests must exist before a checklist may cite them. Until then this is the
+list of invariants each phase must land a named test for.
 
 - Above-cap gate resolution never reads client filter state
   (`filters.test.ts`: over-cap signature invariant under filter changes).
