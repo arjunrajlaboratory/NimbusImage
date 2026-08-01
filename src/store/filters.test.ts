@@ -237,6 +237,55 @@ describe("analysis plot gates", () => {
     expect(filteredIds()).toEqual(["a", "b", "c"]);
   });
 
+  it.each([
+    {
+      edit: "replacing an upstream gate",
+      mutate: () =>
+        filters.setAnalysisPlotGate({
+          id: "p1",
+          gate: { ...GATE, vertices: [...GATE.vertices] },
+        }),
+      expectedFirstIds: undefined,
+    },
+    {
+      edit: "changing an upstream axis",
+      mutate: () =>
+        filters.setAnalysisPlotAxes({
+          id: "p1",
+          xAxis: { type: "categorical" as const, key: "tags" as const },
+        }),
+      expectedFirstIds: undefined,
+    },
+    {
+      edit: "removing an upstream plot",
+      mutate: () => filters.removeAnalysisPlot("p1"),
+      expectedFirstIds: undefined,
+    },
+    {
+      edit: "toggling an upstream gate",
+      mutate: () => filters.toggleAnalysisPlotGateEnabled("p1"),
+      // Enabling/disabling a plot changes the population reaching later plots,
+      // but not the population against which this plot's own gate was resolved.
+      expectedFirstIds: ["a", "b"],
+    },
+  ])("drops stale downstream ids after $edit", async (testCase) => {
+    for (const id of ["p1", "p2", "p3"]) {
+      await filters.addAnalysisPlot(id);
+      await filters.setAnalysisPlotGate({ id, gate: GATE });
+    }
+    filters.setAnalysisGateIds({
+      p1: ["a", "b"],
+      p2: ["b"],
+      p3: ["b"],
+    });
+
+    await testCase.mutate();
+
+    expect(filters.analysisGateIds.p1).toEqual(testCase.expectedFirstIds);
+    expect(filters.analysisGateIds.p2).toBeUndefined();
+    expect(filters.analysisGateIds.p3).toBeUndefined();
+  });
+
   it("exposes active gates as raw id lists, not Sets", () => {
     // buildListFilters forwards these straight to the backend, so materializing
     // a Set per gate just to hand it back as an array would be pure waste.

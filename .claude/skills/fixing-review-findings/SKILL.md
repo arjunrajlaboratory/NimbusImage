@@ -46,6 +46,7 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | Partial persistence: one change writing the same config key twice | Handlers that change several fields of one resource | All inputs validated *before* the first write? Two actions in the handler both syncing the same key? (see nimbus-frontend skill) |
 | Store action throws/propagates without `rawError: true` | Any `src/store/*.ts` | Audit **every** store module and the **whole** chain — errors re-wrap at each `@Action` boundary, and an action needs the flag when it merely propagates (no `throw` of its own) |
 | **A rule applied to one of two symmetric paths** | Anywhere the same concept has two implementations | See below — this was the single most-repeated finding across a 10-round review |
+| **Derived-state invalidation stops at the edited item** | Ordered pipelines, chained filters, dependent plots, wizard steps | Map the dependency closure: if item N changes the input to N+1, invalidate N (when its own derivation changed) and every downstream item; a toggle can preserve N's own result while still invalidating N+1..end |
 | **Cost before the guard** | Getters/handlers with a cheap precondition and expensive body | Does the cheap check run FIRST? A cap that resolves 700K annotations to discover the limit was exceeded is doing the work it exists to prevent |
 
 #### The symmetric-path pattern
@@ -121,6 +122,24 @@ in-place restyle) over no reflection at all.
 
 Grep for the twin by concept, not by identifier: the two implementations rarely
 share a name, which is exactly why they drift.
+
+#### The transitive-invalidation pattern
+
+Derived state can depend on more than the object that stores it. In an ordered
+chain, item N's cached result may be computed from every predecessor, so editing
+item 0 invalidates a suffix even when items 1..N were not directly edited. A
+one-key cache delete looks locally correct and leaves every dependent result
+stale; a later failed recomputation can make that stale state permanent.
+
+Write down the dependency direction before fixing the flagged mutator, then
+sweep every operation that changes the chain: editing inputs, replacing the
+derived rule, removing an item, reordering, and enable-state toggles. Preserve
+results that remain mathematically valid — toggling an item can keep its own
+result when that result depends only on predecessors, while still invalidating
+all following items because their input population changed. Prefer one
+suffix-invalidation helper and a three-item regression that exercises every
+mutation path; a two-item test proves only the immediate neighbor, not the full
+dependency closure.
 
 #### The cost-before-guard pattern
 

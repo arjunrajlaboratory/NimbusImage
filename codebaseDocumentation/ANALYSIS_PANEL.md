@@ -247,8 +247,8 @@ merely scheduled for recomputation:
 - **An UPSTREAM plot changed.** Every later plot's ids were resolved against the
   population passing its predecessors, so editing plot 1 invalidates plots
   2..n — including on an enable-state toggle, which changes what reaches
-  downstream even though plot 1's own ids stay valid. See "Open review threads"
-  below; this one is not fixed yet.
+  downstream even though plot 1's own ids stay valid. The four plot mutators
+  all invalidate the affected suffix before scheduling the configuration save.
 
 Unresolved contributes no constraint, so the interim state shows **more** than
 the final answer rather than something wrong. That is the safe direction and
@@ -302,6 +302,7 @@ Change any of this and re-check these. Each item names the test that holds it.
 - An empty resolved gate filters everything out, and is not treated as "no gate" — *"treats an empty resolved gate as filtering everything out"*
 - Changing an axis nulls both the gate and its resolved ids — *"invalidates the gate and its ids when an axis changes"*
 - Removing a plot removes its gate and its ids — *"removing a plot removes its gate from the composition"*
+- Editing, removing, or toggling an upstream plot drops every downstream gate's ids; a toggle keeps only the toggled plot's still-valid ids — *"drops stale downstream ids after $edit"*
 - Active gates are exposed as raw id lists, so forwarding them to the backend never builds a Set — *"exposes active gates as raw id lists, not Sets"*
 - The analysis signature short-circuits when nothing needs resolving, so an idle dataset never touches the population — *"short-circuits the analysis signature when nothing needs resolving"*
 - Opening the panel wakes it even with no gate — *"wakes the analysis signature when the panel opens with no gate"*
@@ -377,17 +378,19 @@ Change any of this and re-check these. Each item names the test that holds it.
 ## Status, and what a fresh reader should know
 
 Delivered on branch `analysis-panel-scatter-gating`, PR
-[#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), as three
-commits: the feature, then two rounds of Codex fixes. **Not merged.**
+[#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), through
+`05e4d4df` (the feature, three Codex-fix rounds, and this documentation).
+**Not merged.**
 
-Gates at the time of writing: `pnpm tsc`, `pnpm lint:ci`, 3,389 frontend tests
-and 359 backend tests (`tox` in `devops/girder/plugins/AnnotationPlugin`), plus
-`flake8` on the touched backend file.
+Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and 3,393 frontend
+tests. The previously committed backend work passed 359 tests (`tox` in
+`devops/girder/plugins/AnnotationPlugin`) plus `flake8` on the touched backend
+file.
 
-### Open review threads
+### Round 4 review resolution
 
-Codex has reviewed four times. Rounds 1–3 (eleven findings) are fixed; **round 4
-is outstanding**:
+Codex has reviewed four times. Rounds 1–3 (eleven findings) are committed;
+**round 4 is fixed in the working tree and awaiting commit**:
 
 > **P1 — Invalidate downstream gate IDs after upstream edits.** Editing a plot
 > that precedes other gated plots drops only the edited plot's ids, but
@@ -398,14 +401,15 @@ is outstanding**:
 > following plot**, including on upstream axis changes, removal, and
 > enable-state toggles.
 
-This is real, and it contradicts a claim made in the round-3 reply on the PR
+This was real, and it contradicted a claim made in the round-3 reply on the PR
 ("`toggleAnalysisPlotGateEnabled` deliberately keeps them — the ids stay
 valid"). That is true of the toggled plot itself and false of everything
-downstream of it. The fix belongs in `filters.ts`: a helper that drops the ids
-for a plot and all plots after it, called from `setAnalysisPlotGate`,
-`setAnalysisPlotAxes`, `removeAnalysisPlot` and
-`toggleAnalysisPlotGateEnabled`. A test should chain three plots, edit the
-first, and assert the third's ids are gone.
+downstream of it. `dropAnalysisGateIdsFromPlot` now invalidates the affected
+suffix from `setAnalysisPlotGate`, `setAnalysisPlotAxes`,
+`removeAnalysisPlot`, and `toggleAnalysisPlotGateEnabled`. The toggle path
+starts at the following plot, preserving its own still-valid ids. The
+table-driven *"drops stale downstream ids after $edit"* regression chains three
+plots and covers all four mutations.
 
 ### What is verified live vs by test only
 
@@ -416,6 +420,12 @@ notice on the 709k-object Xenium dataset, categorical gating, empty-gate
 match-none, and palette stacking.
 
 Verified by tests and revert-and-watch-it-fail only: the three round-3 fixes.
+The round-4 suffix-invalidation fix is also verified live: on HCR squares, a
+three-plot chain used a property axis downstream to keep refresh asynchronous;
+disabling plot 1 preserved its `gate: 26,142` while plots 2 and 3 immediately
+became unresolved (`gate: …`). The temporary plots were removed, and a hard
+reload confirmed the shared configuration was back to its original no-plot
+state.
 The browser session used for live testing was lost near the end (the replacement
 carried a token for a user id absent from the local database, so every dataset
 404s/400s on access) and re-authenticating needs a human. The **export** change

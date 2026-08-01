@@ -339,8 +339,8 @@ export class Filters extends VuexModule {
   }
 
   // Every plot edit funnels through here so exactly one place schedules the
-  // configuration save. The gate ids are NOT touched: they are derived state,
-  // refreshed by refreshAnalysisGateIds.
+  // configuration save. Each mutator invalidates any affected derived gate ids
+  // before entering this common persistence path.
   @Action
   private applyAnalysisPlots(plots: IAnalysisPlot[]) {
     this.setAnalysisPlotsImpl(plots);
@@ -357,10 +357,10 @@ export class Filters extends VuexModule {
 
   @Action
   removeAnalysisPlot(id: string) {
+    this.dropAnalysisGateIdsFromPlot({ id, includePlot: true });
     this.applyAnalysisPlots(
       this.analysisPlots.filter((plot) => plot.id !== id),
     );
-    this.dropAnalysisGateIds(id);
   }
 
   @Action
@@ -372,6 +372,7 @@ export class Filters extends VuexModule {
     // Changing an axis invalidates the gate: its polygon lives in the old
     // axes' coordinate space, so keeping it would silently filter on criteria
     // the user can no longer see.
+    this.dropAnalysisGateIdsFromPlot({ id: payload.id, includePlot: true });
     this.applyAnalysisPlots(
       this.analysisPlots.map((plot) =>
         plot.id === payload.id
@@ -384,28 +385,31 @@ export class Filters extends VuexModule {
           : plot,
       ),
     );
-    this.dropAnalysisGateIds(payload.id);
   }
 
   @Action
   setAnalysisPlotGate(payload: { id: string; gate: IAnalysisGate | null }) {
-    this.applyAnalysisPlots(
-      this.analysisPlots.map((plot) =>
-        plot.id === payload.id ? { ...plot, gate: payload.gate } : plot,
-      ),
-    );
     // Drop the derived ids on EVERY change, not just on clear. Re-lassoing kept
     // the previous gate's ids active while the new polygon's request was in
     // flight — so the plot highlighted the new selection while the viewer and
     // the list still filtered by the old one — and if that request then failed
     // (refreshAnalysis deliberately leaves ids untouched on failure) the stale
-    // constraint stuck permanently. Unresolved contributes no constraint, so
-    // the interim shows MORE than the final answer rather than less.
-    this.dropAnalysisGateIds(payload.id);
+    // constraint stuck permanently. Later plots are derived from the population
+    // passing this gate, so their ids are stale too.
+    this.dropAnalysisGateIdsFromPlot({ id: payload.id, includePlot: true });
+    this.applyAnalysisPlots(
+      this.analysisPlots.map((plot) =>
+        plot.id === payload.id ? { ...plot, gate: payload.gate } : plot,
+      ),
+    );
   }
 
   @Action
   toggleAnalysisPlotGateEnabled(id: string) {
+    // This plot's ids are still valid: enabling it changes whether they narrow
+    // the population, not the population they were resolved against. Every
+    // later plot was resolved against the old enable state and must be dropped.
+    this.dropAnalysisGateIdsFromPlot({ id, includePlot: false });
     this.applyAnalysisPlots(
       this.analysisPlots.map((plot) =>
         plot.id === id ? { ...plot, gateEnabled: !plot.gateEnabled } : plot,
@@ -431,13 +435,31 @@ export class Filters extends VuexModule {
   }
 
   @Mutation
-  dropAnalysisGateIds(plotId: string) {
-    if (this.analysisGateIds[plotId] === undefined) {
+  private dropAnalysisGateIdsFromPlot(payload: {
+    id: string;
+    includePlot: boolean;
+  }) {
+    const plotIndex = this.analysisPlots.findIndex(
+      (plot) => plot.id === payload.id,
+    );
+    if (plotIndex < 0) {
       return;
     }
     const next = { ...this.analysisGateIds };
-    delete next[plotId];
-    this.analysisGateIds = markRaw(next);
+    let changed = false;
+    for (const plot of this.analysisPlots.slice(
+      plotIndex + (payload.includePlot ? 0 : 1),
+    )) {
+      if (next[plot.id] !== undefined) {
+        delete next[plot.id];
+        changed = true;
+      }
+    }
+    if (changed) {
+      // Unresolved contributes no constraint, so the interim shows MORE than
+      // the final answer rather than filtering by a stale population.
+      this.analysisGateIds = markRaw(next);
+    }
   }
 
   // How many gates are narrowing the filtered set. Counted from the plots
