@@ -201,6 +201,34 @@ For every new or modified `@access.public` endpoint:
 - Class-level constants (allowed-field sets, collection names, `MAX_*`) belong at the top of the class definition, not between methods mid-file.
 - Aggregation `$count` output fields should be named `count`, not a cryptic short name — easier to debug. Dense `$addFields`/`$cond`/`$ifNull` stages need a comment explaining what the stage computes and why.
 
+### 12. Girder Built-Ins, Python Idioms, and Reviewer Questions (pchoisel's recurring comments, PRs #1071–#1247)
+The backend's human reviewer flags these reliably; catch them first.
+
+**Girder provides it — don't hand-roll it.** These get flagged with a link to the Girder source:
+- `self.getCurrentUser()` returns the already-loaded user document — don't re-load it by id afterward.
+- `getServerMode()` answers "is this production?" — don't invent env flags or tox-level configuration for it.
+- `Model()` construction is a cached singleton (see check 11) — no lazy-loading properties.
+- When a change needs plumbing (user loading, env detection, caching), search girder/girder for an existing mechanism before writing one.
+
+**Factorization habits:**
+- N near-identical consecutive statements → a for-loop over a small spec list.
+- A block that duplicates logic in another function (or that other API files will want) → a shared helper — and apply the new helper to the *existing* call sites in the same file, not just the new one.
+
+**Python idioms for readability:**
+- Grouping into a dict of lists → `collections.defaultdict(list)`, not conditional-insert dances.
+- Copies → `mylist.copy()` / `mydict.copy()`, not `list(x)` / `dict(x)`.
+- Parallel arrays that must stay index-aligned (e.g. column names + per-column quoted flags) → one dataclass/object per row, so adding or reordering a field can't desynchronize them.
+
+**Signature hygiene** (extends check 11):
+- No `self` on a function that isn't a method — move it to module level.
+- No decorator whose benefit can't be stated for *this* endpoint (memoization on a request that runs once per file).
+
+**No in-band sentinels:** a reserved value inside a user-data field (a tag literally named `exclusive` that switches behavior) collides with legitimate user data — make it a separate request argument.
+
+**Answer the reviewer's questions before review does.** For each new parameter or data path, the questions asked in past rounds: can this be `None`? What happens on re-run/re-import when the data already exists (overwrite, duplicate, or delete-old)? What happens to non-scalar values (a dict landing in a CSV cell)? Handle it in code, or say why not in a comment.
+
+**Why-comments on non-obvious mechanisms** ("for future us"): anything relying on subtle semantics — aggregation stages, context-manager/GC behavior — needs a comment saying why it matters, written for a reader who doesn't know that corner of Python or Mongo.
+
 ## Frontend-Specific Checks
 
 When reviewing changes to `src/`, apply these additional checks:
