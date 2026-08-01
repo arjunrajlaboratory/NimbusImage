@@ -6,6 +6,7 @@ import type {
   TAnalysisAxis,
 } from "@/store/model";
 import { isCategoricalAxisKey } from "@/utils/analysisAxes";
+import { isEncodedAnalysisCategoryKey } from "@/utils/analysisGating";
 import { createPathStringFromPathArray } from "@/utils/paths";
 
 // Assemble the annotation-browser state to persist in the configuration.
@@ -76,7 +77,7 @@ export function resolveAnnotationBrowserConfig(
 
 // An axis survives only if it still resolves: a property axis whose property
 // left the configuration would plot nothing, and an unknown categorical key
-// would fall through every branch of categoricalLabel and yield undefined.
+// would fall through the category identity builder and yield undefined.
 function resolveAxis(
   axis: unknown,
   isKnownPath: (path: unknown) => path is string[],
@@ -129,6 +130,17 @@ function resolveGate(gate: unknown): IAnalysisGate | null {
   };
 }
 
+function categoryOrderMatchesAxis(
+  axis: TAnalysisAxis,
+  categories: string[] | null,
+): boolean {
+  return axis.type === "property"
+    ? categories === null
+    : categories !== null &&
+        new Set(categories).size === categories.length &&
+        categories.every(isEncodedAnalysisCategoryKey);
+}
+
 function resolveAnalysisPlot(
   plot: unknown,
   isKnownPath: (path: unknown) => path is string[],
@@ -144,7 +156,19 @@ function resolveAnalysisPlot(
   const yAxis = resolveAxis(candidate.yAxis, isKnownPath);
   // A gate's coordinates only mean anything alongside the axes they were drawn
   // against, so an axis that failed to resolve takes the gate with it.
-  const gate = xAxis && yAxis ? resolveGate(candidate.gate) : null;
+  const resolvedGate = xAxis && yAxis ? resolveGate(candidate.gate) : null;
+  // The old implementation persisted display labels as identities. Those
+  // orders cannot be migrated safely because one label may represent several
+  // raw categories, so drop the gate instead of silently selecting the wrong
+  // population. The axes and plot remain available for the user to redraw it.
+  const gate =
+    resolvedGate &&
+    xAxis &&
+    yAxis &&
+    categoryOrderMatchesAxis(xAxis, resolvedGate.xCategories) &&
+    categoryOrderMatchesAxis(yAxis, resolvedGate.yCategories)
+      ? resolvedGate
+      : null;
   return {
     id: candidate.id,
     xAxis,

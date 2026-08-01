@@ -34,10 +34,13 @@ It also keeps the configuration small. An id list runs to tens of thousands of
 
 For a categorical axis a coordinate is a **category index**, so the ordering is
 part of the gate's meaning and travels with it (`xCategories`/`yCategories`).
-Re-deriving the order from whatever categories happen to be present in the next
-dataset would move the gate onto different categories. Categories the stored
-ordering has never seen are appended, so a new tag still plots instead of
-vanishing.
+Those arrays contain versioned, collision-free keys derived from raw values;
+human-readable tick labels are display-only. This keeps no-tags distinct from
+the literal tag `(untagged)`, tag arrays distinct from delimiter-containing tag
+names, and channels distinct even when their display names match. Re-deriving
+the order from whatever categories happen to be present in the next dataset
+would move the gate onto different categories. Categories the stored ordering
+has never seen are appended, so a new tag still plots instead of vanishing.
 
 ## Where things live
 
@@ -295,6 +298,13 @@ need no fetch at all. Points get a **deterministic** per-id jitter
 re-render — and, more importantly, so a gate drawn over a jittered column still
 contains the same points when re-resolved in a later session.
 
+Category identity and presentation stay separate throughout the pipeline:
+`buildPlotSeries` assigns each raw value a versioned key for coordinates and
+gate persistence, plus an aligned label array for Plotly ticks. A legacy gate
+whose category order contains only display labels is dropped during hydration;
+such an order cannot be migrated safely because one old label may represent
+multiple raw categories. The plot and axes remain so the gate can be redrawn.
+
 ## Regression checklist
 
 Change any of this and re-check these. Each item names the test that holds it.
@@ -357,6 +367,8 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Annotations missing either axis value are dropped and counted — *"drops annotations missing a value on either axis, and counts them"*
 - NaN/Infinity count as missing, never as a plottable coordinate — *"treats a non-finite property value as missing"*
 - Categories map to sorted indices, jittered deterministically across rebuilds — *"maps categories to sorted indices with deterministic jitter"*
+- Raw tag identities remain separate when their readable labels collide — *"keeps tag identities separate when their display labels collide"*
+- Raw channel indices remain separate when channel display names collide — *"keeps channels separate when their display names collide"*
 - A gate's stored category ordering wins over the current data's — *"pins category indices to a gate's stored ordering"*
 - An unseen category is appended rather than dropped — *"appends a category the stored ordering has never seen"*
 - Every categorical axis kind labels from stub-available fields — *"labels each categorical axis kind from stub-available fields"*
@@ -372,6 +384,9 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Resolved ids never reach the configuration — *"never persists resolved annotation ids"*
 - An axis whose property left the configuration is dropped, taking its gate — *"drops a plot's axis when its property left the configuration"*
 - An unknown categorical key is rejected rather than trusted — *"drops an unknown categorical key rather than trusting it"*
+- A legacy label-only categorical order is dropped rather than silently
+  reinterpreted — *"drops legacy display-label category orders that are not
+  injective"*
 - Malformed gates/plots are dropped — *"drops malformed gates and plots"*
 - Older configurations without the key still load — *"tolerates a configuration saved before analysis plots existed"*
 
@@ -392,6 +407,7 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Every query change clears the global object selection in client and server modes, so an analysis gate cannot hide a selected object that a later bulk action deletes — *"clears the global selection when an analysis gate changes in client mode"*
 
 **Plotly wiring (`src/components/AnalysisScatterPlot.test.ts`)**
+- Plotly tick text comes from readable labels, never persisted identity keys — *"uses display labels rather than category identity keys for ticks"*
 - A lasso reaches the store as a polygon, not as ids — *"sends a lasso to the store as a polygon, not as ids"*
 - Handlers attach exactly once even when two renders overlap, so one lasso fires once — *"attaches selection handlers exactly once when two renders overlap"*, *"attaches selection handlers exactly once across repeated renders"*
 - A bare selection event leaves the gate alone — *"ignores a selection event carrying no lasso or range"*
@@ -429,10 +445,10 @@ Change any of this and re-check these. Each item names the test that holds it.
 
 Delivered on branch `analysis-panel-scatter-gating`, PR
 [#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), through
-`9da54518` plus the round-6 refresh-state fix described below (the feature, six
+the round-7 category-identity fix described below (the feature, seven
 Codex-fix rounds, documentation, and the export split). **Not merged.**
 
-Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,406 frontend
+Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,410 frontend
 tests.
 There are no backend changes in #1298. The general CSV endpoint correction and
 its backend tests live in prerequisite #1299.
@@ -519,7 +535,7 @@ together across context clears.
 ### Round 6 Codex review tracker
 
 Codex reviewed `9da54518` and found three more variants in the analysis refresh
-state machine. All three are confirmed:
+state machine. All three are confirmed and fixed in `29634c61`:
 
 1. **P1 — base-population changes can strand stale gate ids after a failed
    fetch** (`src/store/filters.ts`). Gate ids are retained on every fetch
@@ -550,6 +566,26 @@ fails, categorical gates and property gates whose required paths are already
 cached still resolve; *"still resolves a categorical gate when a display-only
 fetch fails"* and *"uses cached gate paths when a widened display fetch fails"*
 pin both paths.
+
+### Round 7 Codex review tracker
+
+Codex reviewed `29634c61` and found one category-identity collision:
+
+1. **P2 — categorical display labels are used as category identities**
+   (`src/utils/analysisGating.ts`). Untagged annotations collide with the
+   literal tag `(untagged)`, the tag pair `["A", "B"]` collides with the single
+   tag `"A, B"`, and channels with duplicate display names collide. Distinct
+   populations therefore share a plot column and cannot be gated separately.
+   **Status: fixed in this round.** Versioned JSON keys derived from the raw
+   tag array, channel index, or other categorical value now drive coordinates
+   and persisted gate ordering; aligned label arrays drive Plotly ticks. The
+   regressions *"keeps tag identities separate when their display labels
+   collide"*, *"keeps channels separate when their display names collide"*,
+   and *"uses display labels rather than category identity keys for ticks"*
+   cover the flagged path and both twins. Hydration drops pre-fix label-only
+   gates because an ambiguous old label cannot be migrated without guessing;
+   *"drops legacy display-label category orders that are not injective"* pins
+   that correctness boundary.
 
 ### What is verified live vs by test only
 
@@ -596,9 +632,18 @@ invalidation, and the display-only failure sibling are pinned by the focused
 store regressions because those failure paths are not safely injectable through
 the live UI.
 
+The round-7 category-identity fix was checked from another hard-reloaded HCR
+squares view. A temporary Tags × Shape plot rendered all 26,142 objects with
+readable ticks such as `Cy5 point`, `DAPI point`, and `polygon`; no versioned
+identity key appeared in the UI. A real box drag resolved a 26,142-object gate.
+The temporary plot was removed, and a final hard reload confirmed zero persisted
+plots with no browser warnings or errors. The deliberate colliding-tag and
+duplicate-channel-name populations are exercised by the pure regressions rather
+than by mutating the shared dataset to manufacture them.
+
 ### Review history, and what it suggests
 
-Nearly every finding across six Codex rounds plus the cold follow-up review was
+Nearly every finding across seven Codex rounds plus the cold follow-up review was
 real. Most of the later ones were consequences of *earlier fixes* rather than
 of the original feature — the gate-replacement bug
 only became permanent because of the failed-fetch fix; the `fetchMatchingIds`
@@ -606,6 +651,8 @@ miss came from guarding call sites instead of the request boundary; the palette
 overlap came from fixing eviction without fixing layout. The feature core has
 been stable since round 1, but the seams now have regression coverage for the
 failure shapes that kept recurring.
+
+The post-round-7 cold branch review found no additional actionable findings.
 
 ## Possible follow-ups
 

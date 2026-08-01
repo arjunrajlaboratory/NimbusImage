@@ -15,6 +15,7 @@ import {
   categoricalContentSignature,
   buildPlotSeries,
   chainPlotInputs,
+  encodeAnalysisCategoryKey,
   jitterFromId,
   populationSignature,
   resolveGateIds,
@@ -47,6 +48,7 @@ function annotation(
 const AREA = { type: "property" as const, path: ["prop", "Area"] };
 const INTENSITY = { type: "property" as const, path: ["prop", "Mean"] };
 const TAGS = { type: "categorical" as const, key: "tags" as const };
+const CHANNEL = { type: "categorical" as const, key: "channel" as const };
 
 // A unit square gate covering x in [0,10], y in [0,10].
 const SQUARE = {
@@ -116,10 +118,15 @@ describe("buildPlotSeries", () => {
         channelName,
       });
     const first = build();
-    expect(first.xCategories).toEqual(["(untagged)", "alpha", "beta"]);
+    expect(first.xCategoryLabels).toEqual(["(untagged)", "alpha", "beta"]);
+    expect(first.xCategories).toEqual([
+      encodeAnalysisCategoryKey([]),
+      encodeAnalysisCategoryKey(["alpha"]),
+      encodeAnalysisCategoryKey(["beta"]),
+    ]);
     // Each point sits within half a slot of its category index.
     first.ids.forEach((id, i) => {
-      const category = first.xCategories!.indexOf(
+      const category = first.xCategoryLabels!.indexOf(
         id === "a" ? "beta" : id === "b" ? "alpha" : "(untagged)",
       );
       expect(Math.abs(first.x[i] - category)).toBeLessThan(0.3);
@@ -128,6 +135,86 @@ describe("buildPlotSeries", () => {
     // Stable across rebuilds — a gate drawn over a jittered column has to
     // contain the same points when it is re-resolved in a later session.
     expect(build().x).toEqual(first.x);
+  });
+
+  it("keeps tag identities separate when their display labels collide", () => {
+    const annotations = [
+      annotation("untagged", { tags: [] }),
+      annotation("literal", { tags: ["(untagged)"] }),
+      annotation("pair", { tags: ["A", "B"] }),
+      annotation("joined", { tags: ["A, B"] }),
+    ];
+    const values = Object.fromEntries(
+      annotations.map(({ id }) => [id, { prop: { Mean: 1 } }]),
+    );
+
+    const series = buildPlotSeries({
+      annotations,
+      values,
+      xAxis: TAGS,
+      yAxis: INTENSITY,
+      channelName,
+    });
+
+    expect(new Set(series.x.map(Math.round))).toHaveLength(4);
+    expect(series.xCategories).toHaveLength(4);
+    expect(
+      series.xCategoryLabels?.filter((label) => label === "(untagged)"),
+    ).toHaveLength(2);
+    expect(
+      series.xCategoryLabels?.filter((label) => label === "A, B"),
+    ).toHaveLength(2);
+
+    const untaggedColumn = Math.round(series.x[series.ids.indexOf("untagged")]);
+    expect(
+      resolveGateIds(series, {
+        vertices: [
+          { x: untaggedColumn - 0.4, y: 0.5 },
+          { x: untaggedColumn + 0.4, y: 0.5 },
+          { x: untaggedColumn + 0.4, y: 1.5 },
+          { x: untaggedColumn - 0.4, y: 1.5 },
+        ],
+        xCategories: series.xCategories,
+        yCategories: null,
+      }),
+    ).toEqual(["untagged"]);
+  });
+
+  it("keeps channels separate when their display names collide", () => {
+    const annotations = [
+      annotation("channel-0", { channel: 0 }),
+      annotation("channel-1", { channel: 1 }),
+    ];
+    const series = buildPlotSeries({
+      annotations,
+      values: {
+        "channel-0": { prop: { Mean: 1 } },
+        "channel-1": { prop: { Mean: 1 } },
+      },
+      xAxis: CHANNEL,
+      yAxis: INTENSITY,
+      channelName: () => "DAPI",
+    });
+
+    expect(new Set(series.x.map(Math.round))).toHaveLength(2);
+    expect(series.xCategories).toHaveLength(2);
+    expect(series.xCategoryLabels).toEqual(["DAPI", "DAPI"]);
+
+    const firstChannelColumn = Math.round(
+      series.x[series.ids.indexOf("channel-0")],
+    );
+    expect(
+      resolveGateIds(series, {
+        vertices: [
+          { x: firstChannelColumn - 0.4, y: 0.5 },
+          { x: firstChannelColumn + 0.4, y: 0.5 },
+          { x: firstChannelColumn + 0.4, y: 1.5 },
+          { x: firstChannelColumn - 0.4, y: 1.5 },
+        ],
+        xCategories: series.xCategories,
+        yCategories: null,
+      }),
+    ).toEqual(["channel-0"]);
   });
 
   it("pins category indices to a gate's stored ordering", () => {
@@ -140,9 +227,12 @@ describe("buildPlotSeries", () => {
       xAxis: TAGS,
       yAxis: INTENSITY,
       channelName,
-      xCategoryOrder: ["alpha", "beta"],
+      xCategoryOrder: [
+        encodeAnalysisCategoryKey(["alpha"]),
+        encodeAnalysisCategoryKey(["beta"]),
+      ],
     });
-    expect(series.xCategories).toEqual(["alpha", "beta"]);
+    expect(series.xCategoryLabels).toEqual(["alpha", "beta"]);
     expect(Math.round(series.x[0])).toBe(1); // beta keeps index 1
   });
 
@@ -155,9 +245,12 @@ describe("buildPlotSeries", () => {
       xAxis: TAGS,
       yAxis: INTENSITY,
       channelName,
-      xCategoryOrder: ["alpha", "beta"],
+      xCategoryOrder: [
+        encodeAnalysisCategoryKey(["alpha"]),
+        encodeAnalysisCategoryKey(["beta"]),
+      ],
     });
-    expect(series.xCategories).toEqual(["alpha", "beta", "gamma"]);
+    expect(series.xCategoryLabels).toEqual(["alpha", "beta", "gamma"]);
     expect(series.ids).toEqual(["a"]);
   });
 
@@ -174,7 +267,7 @@ describe("buildPlotSeries", () => {
         xAxis: { type: "categorical", key },
         yAxis: INTENSITY,
         channelName,
-      }).xCategories![0];
+      }).xCategoryLabels![0];
     expect(label("tags")).toBe("a, z"); // sorted, so tag order can't split a group
     expect(label("channel")).toBe("Ch2");
     expect(label("xy")).toBe("XY 2"); // 1-based for display
@@ -190,6 +283,8 @@ describe("resolveGateIds", () => {
     y: [5, 50, 20],
     xCategories: null,
     yCategories: null,
+    xCategoryLabels: null,
+    yCategoryLabels: null,
     skipped: 0,
   };
 
@@ -228,6 +323,8 @@ describe("resolveGateIds", () => {
       y: [8, 8, 8],
       xCategories: null,
       yCategories: null,
+      xCategoryLabels: null,
+      yCategoryLabels: null,
       skipped: 0,
     };
     expect(resolveGateIds(points, vShape)).toEqual(["leftArm", "rightArm"]);
@@ -239,8 +336,13 @@ describe("selectionEventToGate", () => {
     ids: [],
     x: [],
     y: [],
-    xCategories: ["a", "b"],
+    xCategories: [
+      encodeAnalysisCategoryKey(["a"]),
+      encodeAnalysisCategoryKey(["b"]),
+    ],
     yCategories: null,
+    xCategoryLabels: ["a", "b"],
+    yCategoryLabels: null,
     skipped: 0,
   };
 
@@ -255,7 +357,10 @@ describe("selectionEventToGate", () => {
         { x: 1, y: 0 },
         { x: 1, y: 1 },
       ],
-      xCategories: ["a", "b"],
+      xCategories: [
+        encodeAnalysisCategoryKey(["a"]),
+        encodeAnalysisCategoryKey(["b"]),
+      ],
       yCategories: null,
     });
   });

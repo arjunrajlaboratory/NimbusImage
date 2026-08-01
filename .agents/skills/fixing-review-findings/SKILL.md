@@ -51,6 +51,7 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | **Correctness work coupled to display-only data** | Hidden panels whose data also powers filters/exports | Compute mandatory and visible-only input scopes separately. Hidden mode requests only mandatory inputs; failure of an optional widened fetch must not block correctness work that can use local fields or a cached mandatory subset. Sign the actual required input set, not the visibility flag, and reuse a cached superset. |
 | **Cost before the guard** | Getters/handlers with a cheap precondition and expensive body | Does the cheap check run FIRST? A cap that resolves 700K annotations to discover the limit was exceeded is doing the work it exists to prevent |
 | **A signature hashes values but not their structure** | Incremental hashes over nested rows, fields, or variable-length lists | Feed field/record boundaries into the hash, not only value separators and a final count; test two inputs with the same flattened values redistributed across records |
+| **Display text used as identity** | Categorical plots, select options, persisted group/order state | Carry a collision-free raw key separately from its human-readable label. Test sentinel-label collisions, delimiter collisions, and duplicate display names; persist keys and render labels. |
 
 #### The symmetric-path pattern
 

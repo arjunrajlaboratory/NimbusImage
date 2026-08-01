@@ -148,7 +148,7 @@ function axisTitle(axis: TAnalysisAxis | null): string {
 
 function axisLayout(
   axis: TAnalysisAxis | null,
-  categories: string[] | null,
+  categoryLabels: string[] | null,
 ): Record<string, unknown> {
   const base: Record<string, unknown> = {
     title: { text: axisTitle(axis), font: { size: 11 } },
@@ -156,11 +156,11 @@ function axisLayout(
     zeroline: false,
     automargin: true,
   };
-  if (categories) {
+  if (categoryLabels) {
     base.tickmode = "array";
-    base.tickvals = categories.map((_, idx) => idx);
-    base.ticktext = categories;
-    base.range = [-0.6, categories.length - 0.4];
+    base.tickvals = categoryLabels.map((_, idx) => idx);
+    base.ticktext = categoryLabels;
+    base.range = [-0.6, categoryLabels.length - 0.4];
   }
   return base;
 }
@@ -217,8 +217,8 @@ async function renderPlot() {
     paper_bgcolor: "transparent",
     plot_bgcolor: "transparent",
     font: { color: theme.current.value.colors["on-surface"], size: 10 },
-    xaxis: axisLayout(props.plot.xAxis, series.xCategories),
-    yaxis: axisLayout(props.plot.yAxis, series.yCategories),
+    xaxis: axisLayout(props.plot.xAxis, series.xCategoryLabels),
+    yaxis: axisLayout(props.plot.yAxis, series.yCategoryLabels),
   };
 
   const element = plotEl.value as any;

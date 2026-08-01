@@ -240,7 +240,7 @@ describe("annotation browser config persistence", () => {
         { x: 1, y: 1 },
       ],
       xCategories: null,
-      yCategories: null,
+      yCategories: ["v1:[]"],
     };
     const plot = (overrides: any = {}) => ({
       id: "p1",
@@ -291,6 +291,21 @@ describe("annotation browser config persistence", () => {
         ["prop-a"],
       );
       expect(resolved.analysisPlots![0].yAxis).toBeNull();
+      expect(resolved.analysisPlots![0].gate).toBeNull();
+    });
+
+    it("drops legacy display-label category orders that are not injective", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        {
+          analysisPlots: [
+            plot({
+              gate: { ...GATE, yCategories: ["(untagged)"] },
+            }) as any,
+          ],
+        },
+        ["prop-a"],
+      );
+
       expect(resolved.analysisPlots![0].gate).toBeNull();
     });
 

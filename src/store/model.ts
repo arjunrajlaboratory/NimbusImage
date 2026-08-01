@@ -1798,9 +1798,10 @@ export type TAnalysisAxis =
 // property-value space, so it re-resolves correctly in any dataset, which is
 // also the point of a gating strategy: draw it once, apply it to each replicate.
 //
-// For a categorical axis a coordinate is a category index, so the ordering that
-// was in effect when the gate was drawn is part of the gate's meaning and is
-// stored with it.
+// For a categorical axis a coordinate is a category index, so the ordering of
+// collision-free raw category keys that was in effect when the gate was drawn
+// is part of the gate's meaning and is stored with it. Human-readable labels
+// are display-only and are not persisted as identities.
 export interface IAnalysisGate {
   vertices: IGeoJSPosition[];
   xCategories: string[] | null;

@@ -28,11 +28,49 @@ export interface IAnalysisSeries {
   ids: string[];
   x: number[];
   y: number[];
-  // Category labels in index order, for a categorical axis; null when numeric.
+  // Collision-free category identities in index order. These are persisted in
+  // a gate because its polygon coordinates refer to category indices.
   xCategories: string[] | null;
   yCategories: string[] | null;
+  // Human-readable tick text aligned with the category identities above.
+  xCategoryLabels: string[] | null;
+  yCategoryLabels: string[] | null;
   // Annotations dropped because an axis had no value for them.
   skipped: number;
+}
+
+type TAnalysisCategoryRaw = string | string[] | number;
+
+const ANALYSIS_CATEGORY_KEY_PREFIX = "v1:";
+
+/** Encode a raw category identity without conflating it with its display text. */
+export function encodeAnalysisCategoryKey(raw: TAnalysisCategoryRaw): string {
+  return `${ANALYSIS_CATEGORY_KEY_PREFIX}${JSON.stringify(raw)}`;
+}
+
+function decodeAnalysisCategoryKey(key: string): TAnalysisCategoryRaw | null {
+  if (!key.startsWith(ANALYSIS_CATEGORY_KEY_PREFIX)) {
+    return null;
+  }
+  try {
+    const raw: unknown = JSON.parse(
+      key.slice(ANALYSIS_CATEGORY_KEY_PREFIX.length),
+    );
+    if (typeof raw === "string" || typeof raw === "number") {
+      return raw;
+    }
+    if (Array.isArray(raw) && raw.every((entry) => typeof entry === "string")) {
+      return raw;
+    }
+  } catch {
+    // Invalid persisted keys are rejected by isEncodedAnalysisCategoryKey.
+  }
+  return null;
+}
+
+/** True for the versioned, collision-free category identities stored in gates. */
+export function isEncodedAnalysisCategoryKey(key: string): boolean {
+  return decodeAnalysisCategoryKey(key) !== null;
 }
 
 /**
@@ -54,37 +92,62 @@ export function jitterFromId(id: string, salt: number): number {
 const X_JITTER_SALT = 17;
 const Y_JITTER_SALT = 31;
 
-export function categoricalLabel(
+function categoricalRawIdentity(
   annotation: TAnnotationOrStub,
+  key: TAnalysisCategoricalKey,
+): TAnalysisCategoryRaw {
+  switch (key) {
+    case "tags":
+      return [...annotation.tags].sort();
+    case "shape":
+      return annotation.shape;
+    case "channel":
+      return annotation.channel;
+    case "xy":
+      return annotation.location.XY;
+    case "z":
+      return annotation.location.Z;
+    case "time":
+      return annotation.location.Time;
+  }
+}
+
+function categoricalLabelFromRaw(
+  raw: TAnalysisCategoryRaw,
   key: TAnalysisCategoricalKey,
   channelName: (channel: number) => string,
 ): string {
   switch (key) {
-    case "tags":
-      return annotation.tags.length > 0
-        ? [...annotation.tags].sort().join(", ")
-        : "(untagged)";
+    case "tags": {
+      const tags = raw as string[];
+      return tags.length > 0 ? tags.join(", ") : "(untagged)";
+    }
     case "shape":
-      return annotation.shape;
+      return raw as string;
     case "channel":
-      return channelName(annotation.channel);
+      return channelName(raw as number);
     case "xy":
-      return `XY ${annotation.location.XY + 1}`;
+      return `XY ${(raw as number) + 1}`;
     case "z":
-      return `Z ${annotation.location.Z + 1}`;
+      return `Z ${(raw as number) + 1}`;
     case "time":
-      return `T ${annotation.location.Time + 1}`;
+      return `T ${(raw as number) + 1}`;
   }
 }
 
-// Raw per-annotation axis value: a number for a property axis, a label for a
-// categorical one, or null when the annotation has no value on this axis.
+interface IAnalysisCategoricalValue {
+  key: string;
+  label: string;
+}
+
+// Raw per-annotation axis value: a number for a property axis, a key/label pair
+// for a categorical one, or null when the annotation has no value on this axis.
 function rawAxisValue(
   annotation: TAnnotationOrStub,
   axis: TAnalysisAxis,
   values: IAnnotationPropertyValues,
   channelName: (channel: number) => string,
-): number | string | null {
+): number | IAnalysisCategoricalValue | null {
   if (axis.type === "property") {
     const value = getValueFromObjectAndPath(
       values[annotation.id] ?? {},
@@ -92,7 +155,11 @@ function rawAxisValue(
     );
     return typeof value === "number" && isFinite(value) ? value : null;
   }
-  return categoricalLabel(annotation, axis.key, channelName);
+  const raw = categoricalRawIdentity(annotation, axis.key);
+  return {
+    key: encodeAnalysisCategoryKey(raw),
+    label: categoricalLabelFromRaw(raw, axis.key, channelName),
+  };
 }
 
 /**
@@ -117,8 +184,8 @@ export function buildPlotSeries(input: {
   const { annotations, values, xAxis, yAxis, channelName } = input;
 
   const ids: string[] = [];
-  const rawX: (number | string)[] = [];
-  const rawY: (number | string)[] = [];
+  const rawX: (number | IAnalysisCategoricalValue)[] = [];
+  const rawY: (number | IAnalysisCategoricalValue)[] = [];
   for (const annotation of annotations) {
     const x = rawAxisValue(annotation, xAxis, values, channelName);
     if (x === null) {
@@ -135,35 +202,62 @@ export function buildPlotSeries(input: {
 
   const buildAxis = (
     axis: TAnalysisAxis,
-    raw: (number | string)[],
+    raw: (number | IAnalysisCategoricalValue)[],
     order: string[] | null | undefined,
     salt: number,
-  ): { coords: number[]; categories: string[] | null } => {
+  ): {
+    coords: number[];
+    categories: string[] | null;
+    categoryLabels: string[] | null;
+  } => {
     if (axis.type === "property") {
-      return { coords: raw as number[], categories: null };
+      return {
+        coords: raw as number[],
+        categories: null,
+        categoryLabels: null,
+      };
     }
-    const labels = raw as string[];
+    const categoryValues = raw as IAnalysisCategoricalValue[];
+    const labelsByKey = new Map(
+      categoryValues.map(({ key, label }) => [key, label]),
+    );
+    const labelForKey = (key: string): string => {
+      const presentLabel = labelsByKey.get(key);
+      if (presentLabel !== undefined) {
+        return presentLabel;
+      }
+      const decoded = decodeAnalysisCategoryKey(key);
+      return decoded === null
+        ? key
+        : categoricalLabelFromRaw(decoded, axis.key, channelName);
+    };
     // A pinned ordering wins, extended with any category it does not know so
     // new categories still plot (at the end) instead of vanishing.
     const categories = order ? [...order] : [];
-    const indexOf = new Map(categories.map((label, idx) => [label, idx]));
-    for (const label of labels) {
-      if (!indexOf.has(label)) {
-        indexOf.set(label, categories.length);
-        categories.push(label);
+    const indexOf = new Map(categories.map((key, idx) => [key, idx]));
+    for (const { key } of categoryValues) {
+      if (!indexOf.has(key)) {
+        indexOf.set(key, categories.length);
+        categories.push(key);
       }
     }
     if (!order) {
-      // No pinned ordering: sort for a stable, readable axis, then re-index.
-      categories.sort();
+      // No pinned ordering: sort by readable label, then raw identity so
+      // duplicate display labels remain deterministic and separate.
+      categories.sort(
+        (left, right) =>
+          labelForKey(left).localeCompare(labelForKey(right)) ||
+          left.localeCompare(right),
+      );
       indexOf.clear();
-      categories.forEach((label, idx) => indexOf.set(label, idx));
+      categories.forEach((key, idx) => indexOf.set(key, idx));
     }
     return {
-      coords: labels.map(
-        (label, i) => indexOf.get(label)! + jitterFromId(ids[i], salt),
+      coords: categoryValues.map(
+        ({ key }, i) => indexOf.get(key)! + jitterFromId(ids[i], salt),
       ),
       categories,
+      categoryLabels: categories.map(labelForKey),
     };
   };
 
@@ -175,6 +269,8 @@ export function buildPlotSeries(input: {
     y: y.coords,
     xCategories: x.categories,
     yCategories: y.categories,
+    xCategoryLabels: x.categoryLabels,
+    yCategoryLabels: y.categoryLabels,
     skipped: annotations.length - ids.length,
   };
 }
@@ -303,7 +399,7 @@ export function analysisPropertyPaths(plots: IAnalysisPlot[]): string[][] {
   return [...seen.values()];
 }
 
-/** A cheap identity for a population. See idSignatureOf for why it samples. */
+/** An exact identity for a population. See idSignatureOf for why it hashes all ids. */
 export function populationSignature(population: TAnnotationOrStub[]): string {
   return idSignatureOf(population);
 }
@@ -332,7 +428,7 @@ export function analysisCategoricalKeys(
  * redraws the point under its new category while the gate keeps filtering by
  * the old one.
  *
- * Hashed from the raw fields rather than from `categoricalLabel` so nothing is
+ * Hashed from the raw fields rather than from display labels so nothing is
  * allocated per annotation — this runs whenever a gate is active. It is not the
  * canonical label (tags are not sorted here), which is fine: it only has to
  * CHANGE when the content does. A reordering triggers a harmless extra refresh.

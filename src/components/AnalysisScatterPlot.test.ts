@@ -52,6 +52,8 @@ const SERIES = {
   y: [1, 2, 3],
   xCategories: null,
   yCategories: null,
+  xCategoryLabels: null,
+  yCategoryLabels: null,
   skipped: 1,
 };
 
@@ -100,6 +102,24 @@ describe("AnalysisScatterPlot", () => {
     const [, traces] = mocks.react.mock.calls[0] as unknown as any[];
     expect(traces[0].x).toEqual(SERIES.x);
     expect(traces[0].customdata).toEqual(SERIES.ids);
+  });
+
+  it("uses display labels rather than category identity keys for ticks", async () => {
+    wrapper = mountPlot({
+      plot: {
+        ...PLOT,
+        xAxis: { type: "categorical", key: "channel" },
+      },
+      series: {
+        ...SERIES,
+        xCategories: ["v1:0", "v1:1"],
+        xCategoryLabels: ["DAPI", "DAPI"],
+      },
+    });
+    await flushPromises();
+
+    const [, , layout] = mocks.react.mock.calls[0] as unknown as any[];
+    expect(layout.xaxis.ticktext).toEqual(["DAPI", "DAPI"]);
   });
 
   it("sends a lasso to the store as a polygon, not as ids", async () => {

@@ -54,7 +54,10 @@ vi.mock("geojs", () => ({
 }));
 
 import filters from "@/store/filters";
-import { categoricalContentSignature } from "@/utils/analysisGating";
+import {
+  categoricalContentSignature,
+  encodeAnalysisCategoryKey,
+} from "@/utils/analysisGating";
 import { PropertyFilterMode } from "@/store/model";
 
 function deferred<T>() {
@@ -301,8 +304,11 @@ describe("filters.refreshAnalysis", () => {
       id: "gated",
       gate: {
         ...GATE,
-        xCategories: ["drop", "keep"],
-        yCategories: ["point"],
+        xCategories: [
+          encodeAnalysisCategoryKey(["drop"]),
+          encodeAnalysisCategoryKey(["keep"]),
+        ],
+        yCategories: [encodeAnalysisCategoryKey("point")],
       },
     });
     await filters.addAnalysisPlot("display-only");
@@ -342,8 +348,11 @@ describe("filters.refreshAnalysis", () => {
           { x: 0.5, y: 0.5 },
           { x: -0.5, y: 0.5 },
         ],
-        xCategories: ["drop", "keep"],
-        yCategories: ["point"],
+        xCategories: [
+          encodeAnalysisCategoryKey(["drop"]),
+          encodeAnalysisCategoryKey(["keep"]),
+        ],
+        yCategories: [encodeAnalysisCategoryKey("point")],
       },
     });
     await filters.refreshAnalysis();
@@ -401,8 +410,11 @@ describe("filters.refreshAnalysis", () => {
           { x: 0.5, y: 0.5 },
           { x: -0.5, y: 0.5 },
         ],
-        xCategories: ["drop", "keep"],
-        yCategories: ["point"],
+        xCategories: [
+          encodeAnalysisCategoryKey(["drop"]),
+          encodeAnalysisCategoryKey(["keep"]),
+        ],
+        yCategories: [encodeAnalysisCategoryKey("point")],
       },
     });
     await filters.addAnalysisPlot("display-only");
