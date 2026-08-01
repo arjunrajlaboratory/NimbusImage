@@ -137,11 +137,17 @@ export class Filters extends VuexModule {
   // setAnalysisGateIds.
   analysisGateIds: { [plotId: string]: string[] } = markRaw({});
 
-  // The dataset/value inputs the current gate ids were resolved against. Plot
+  // The dataset/value inputs the enabled gate ids were resolved against. Plot
   // edits invalidate their affected suffix synchronously in the mutators; this
   // identity covers the other half of the dependency: the non-gate population
   // and the values/categories read from it.
   analysisGateDataSignature: string | null = null;
+
+  // The corresponding input identity for every gate resolved while the panel
+  // is visible, including disabled display-only gates. Kept separate from the
+  // enabled-gate identity so merely opening the panel can invalidate stale
+  // counts/highlights without temporarily dropping still-valid filters.
+  analysisVisibleGateDataSignature: string | null = null;
 
   // Lazy (stub-only) mode only: the set of annotation ids passing the active
   // property filters, fetched server-side so client-side filtered drawing no
@@ -186,6 +192,7 @@ export class Filters extends VuexModule {
     this.analysisValuesSourceSignature = null;
     this.analysisValuePathKeys = markRaw([]);
     this.analysisGateDataSignature = null;
+    this.analysisVisibleGateDataSignature = null;
     this.analysisLoading = false;
   }
 
@@ -440,6 +447,7 @@ export class Filters extends VuexModule {
     this.setAnalysisPlotsImpl(plots);
     this.setAnalysisGateIds({});
     this.setAnalysisGateDataSignature(null);
+    this.setAnalysisVisibleGateDataSignature(null);
   }
 
   /**
@@ -665,6 +673,11 @@ export class Filters extends VuexModule {
     this.analysisGateDataSignature = signature;
   }
 
+  @Mutation
+  private setAnalysisVisibleGateDataSignature(signature: string | null) {
+    this.analysisVisibleGateDataSignature = signature;
+  }
+
   /**
    * Fetch the values the analysis plots need and resolve every drawn gate's
    * polygon into the annotation ids it contains.
@@ -711,28 +724,57 @@ export class Filters extends VuexModule {
     }
 
     const population = populationSignature(base);
-    const gatedPaths = analysisPropertyPaths(gatedPlots);
-    const gateDataSignature =
-      gatedPlots.length > 0
+    const dataSignatureForPlots = (plotsToDescribe: IAnalysisPlot[]) =>
+      plotsToDescribe.length > 0
         ? [
             datasetId,
             population,
             categoricalContentSignature(
               base,
-              analysisCategoricalKeys(gatedPlots),
+              analysisCategoricalKeys(plotsToDescribe),
             ),
-            gatedPaths.length > 0 ? properties.propertyValuesRevision : "-",
+            analysisPropertyPaths(plotsToDescribe).length > 0
+              ? properties.propertyValuesRevision
+              : "-",
           ].join("|")
         : null;
+    const gateDataSignature = dataSignatureForPlots(gatedPlots);
+    const visibleGateDataSignature = panelOpen
+      ? dataSignatureForPlots(resolutionPlots)
+      : null;
     if (this.analysisGateDataSignature !== gateDataSignature) {
       // A fetch failure may retain ids only for an identical retry. When the
       // base population, categorical inputs, dataset, or property revision has
-      // changed, every gate was derived from obsolete data; drop the constraint
-      // before awaiting so a failed request cannot strand it indefinitely.
+      // changed, every active gate was derived from obsolete data; drop every
+      // id before awaiting because later gates depend on the enabled chain.
       if (Object.keys(this.analysisGateIds).length > 0) {
         this.setAnalysisGateIds({});
       }
       this.setAnalysisGateDataSignature(null);
+      this.setAnalysisVisibleGateDataSignature(null);
+    } else if (
+      panelOpen &&
+      this.analysisVisibleGateDataSignature !== visibleGateDataSignature
+    ) {
+      // Visible disabled gates have derived ids too, but they do not constrain
+      // any later population. If only their input identity changed, preserve
+      // the still-valid enabled constraints while making stale display-only
+      // counts/highlights unresolved before a request that may fail.
+      const activePlotIds = new Set(gatedPlots.map((plot) => plot.id));
+      const activeGateIds = Object.fromEntries(
+        Object.entries(this.analysisGateIds).filter(([plotId]) =>
+          activePlotIds.has(plotId),
+        ),
+      );
+      if (
+        Object.keys(activeGateIds).length !==
+        Object.keys(this.analysisGateIds).length
+      ) {
+        this.setAnalysisGateIds(activeGateIds);
+      }
+      this.setAnalysisVisibleGateDataSignature(null);
+    } else if (!panelOpen && this.analysisVisibleGateDataSignature !== null) {
+      this.setAnalysisVisibleGateDataSignature(null);
     }
 
     // "Nothing to FETCH" is not "nothing to DO". A gate on two categorical axes
@@ -781,6 +823,7 @@ export class Filters extends VuexModule {
         ),
       );
       this.setAnalysisGateDataSignature(gateDataSignature);
+      this.setAnalysisVisibleGateDataSignature(visibleGateDataSignature);
     };
     let values = canReuseValues ? this.analysisValues : {};
     if (!canReuseValues && paths.length > 0) {
@@ -835,6 +878,9 @@ export class Filters extends VuexModule {
     }
     if (this.analysisGateDataSignature !== null) {
       this.setAnalysisGateDataSignature(null);
+    }
+    if (this.analysisVisibleGateDataSignature !== null) {
+      this.setAnalysisVisibleGateDataSignature(null);
     }
     if (
       this.analysisValuesSourceSignature !== null ||

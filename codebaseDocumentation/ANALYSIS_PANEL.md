@@ -488,10 +488,10 @@ Change any of this and re-check these. Each item names the test that holds it.
 
 Delivered on branch `analysis-panel-scatter-gating`, PR
 [#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), through
-the round-11 cap/fallback fixes described below (the feature, eleven Codex-fix
+the round-12 validity-scope fix described below (the feature, twelve Codex-fix
 rounds, documentation, and the export split). **Not merged.**
 
-Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,418 frontend
+Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,420 frontend
 tests.
 There are no backend changes in #1298. The general CSV endpoint correction and
 its backend tests live in prerequisite #1299.
@@ -712,6 +712,20 @@ comes from the retained resolution subset itself while separately requiring
 every enabled predecessor to be resolvable. Regression: *"still resolves a
 visible disabled categorical gate after a display fetch fails"*.
 
+### Round 12 Codex review tracker
+
+Codex reviewed `e8465924` and found that successful visible-disabled property
+gate ids still shared only the enabled-gate validity identity. With every gate
+disabled, that active identity is null; a later population/property-revision
+change followed by a failed fetch therefore left the old visible count and
+highlight in place. **Status: fixed in this round.** Enabled/filtering gate ids
+and visible-disabled derived ids now carry separate input identities. A changed
+visible-only identity drops only disabled ids, preserving still-valid active
+constraints while a widened request is in flight. Regressions:
+*"invalidates a visible disabled property gate before a changed-value fetch can
+fail"* and *"preserves active gate ids while a changed visible-only scope is
+loading"*.
+
 ### What is verified live vs by test only
 
 Verified in a running browser: the full gating flow including a real lasso drag
@@ -799,7 +813,7 @@ observable there without manufacturing partial network failures in the live UI.
 
 ### Review history, and what it suggests
 
-Nearly every finding across eleven Codex rounds plus the cold follow-up reviews was
+Nearly every finding across twelve Codex rounds plus the cold follow-up reviews was
 real. Most of the later ones were consequences of *earlier fixes* rather than
 of the original feature — the gate-replacement bug
 only became permanent because of the failed-fetch fix; the `fetchMatchingIds`
@@ -808,7 +822,7 @@ overlap came from fixing eviction without fixing layout. The feature core has
 been stable since round 1, but the seams now have regression coverage for the
 failure shapes that kept recurring.
 
-The post-round-11 cold branch review found no additional actionable findings.
+The post-round-12 cold branch review found no additional actionable findings.
 
 ## Possible follow-ups
 

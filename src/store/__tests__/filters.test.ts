@@ -225,6 +225,7 @@ describe("filters.refreshAnalysis", () => {
     filters.setAnalysisPanelOpen(false);
     getValues.mockReset();
     getValues.mockResolvedValue([]);
+    propertiesMock.propertyValuesRevision = 0;
     annotationMock.annotationsForIteration = [makeStub("a"), makeStub("b")];
   });
 
@@ -586,6 +587,66 @@ describe("filters.refreshAnalysis", () => {
     expect(filters.analysisGateIds.active).toEqual(["a"]);
     expect(filters.analysisGateIds.disabled).toBeUndefined();
     expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["a"]);
+  });
+
+  it("invalidates a visible disabled property gate before a changed-value fetch can fail", async () => {
+    // Disabled gates do not filter, but their visible count/highlight is still
+    // derived state. Its validity must therefore follow the visible resolution
+    // scope even when there is no enabled-gate signature at all.
+    filters.setAnalysisPanelOpen(true);
+    getValues.mockResolvedValueOnce([
+      { annotationId: "a", values: { prop: { Area: 5 } } },
+    ]);
+    await addPlot("disabled", GATE);
+    await filters.toggleAnalysisPlotGateEnabled("disabled");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds.disabled).toEqual(["a"]);
+
+    propertiesMock.propertyValuesRevision += 1;
+    getValues.mockRejectedValueOnce(new Error("network"));
+    await filters.refreshAnalysis();
+
+    expect(filters.analysisGateIds.disabled).toBeUndefined();
+    expect(filters.filteredAnnotations).toHaveLength(2);
+  });
+
+  it("preserves active gate ids while a changed visible-only scope is loading", async () => {
+    // The visible identity is deliberately separate from the enabled-gate
+    // identity. Opening the panel may add a disabled plot to the fetch, but it
+    // must not temporarily unfilter the viewer while that wider request runs.
+    getValues.mockResolvedValueOnce([
+      { annotationId: "a", values: { prop: { Area: 5 } } },
+    ]);
+    await addPlot("active", GATE);
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds.active).toEqual(["a"]);
+
+    await filters.addAnalysisPlot("disabled");
+    await filters.setAnalysisPlotAxes({
+      id: "disabled",
+      xAxis: OTHER_AXIS,
+      yAxis: OTHER_AXIS,
+    });
+    await filters.setAnalysisPlotGate({ id: "disabled", gate: GATE });
+    await filters.toggleAnalysisPlotGateEnabled("disabled");
+    filters.setAnalysisPanelOpen(true);
+    const widenedValues = deferred<any[]>();
+    getValues.mockReturnValueOnce(widenedValues.promise as any);
+
+    const refresh = filters.refreshAnalysis();
+    expect(filters.analysisGateIds.active).toEqual(["a"]);
+    expect(filters.analysisGateIds.disabled).toBeUndefined();
+    expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["a"]);
+
+    widenedValues.resolve([
+      {
+        annotationId: "a",
+        values: { prop: { Area: 5 }, other: { Intensity: 5 } },
+      },
+    ]);
+    await refresh;
+    expect(filters.analysisGateIds.active).toEqual(["a"]);
+    expect(filters.analysisGateIds.disabled).toEqual(["a"]);
   });
 
   it("drops gate ids before a changed-population fetch can fail", async () => {
