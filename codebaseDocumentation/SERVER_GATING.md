@@ -1,0 +1,553 @@
+# Server-side analysis gating (spec)
+
+**Status: specification — implementation in progress on `analysis-server-gating`
+(branched off `analysis-panel-scatter-gating`, PR #1298).**
+
+This document is the contract to build against and iterate on. It extends
+`ANALYSIS_PANEL.md` (the client-side design record); nothing here relaxes an
+invariant recorded there. Read that document first.
+
+## Why
+
+The Analysis panel refuses to work above `MAX_ANALYSIS_PLOT_POINTS = 50,000`
+filtered objects (`src/store/constants.ts:30`): plotting is refused, gate
+resolution stops, and the panel shows a "narrow the filters" notice. That was
+the correct call for a client-side design — a gate resolves to an id set, and
+resolving it against a sample or a viewport subset silently excludes every
+object the client never saw (see "The point cap, and why there is no
+sampling", ANALYSIS_PANEL.md).
+
+But the datasets this feature exists for are exactly the ones above the cap
+(the Xenium lymph-node dataset has 708,983 objects). The property values live
+server-side; the polygon test is trivial; so resolution belongs server-side
+where the full population is.
+
+Three phases, each independently shippable:
+
+| Phase | Deliverable | What it unlocks |
+|---|---|---|
+| 1 | `POST /upenn_annotation/analysis/gate_ids` — resolve gate polygons to id lists server-side; client uses it above the cap | Gates *filter* correctly at any dataset size |
+| 2 | `POST /upenn_annotation/analysis/histogram2d` — server-binned 2D counts; heatmap rendering + shape-drawn gates above the cap | Users can *see and draw* gates at any size |
+| 3 | Gate definitions as first-class terms in the `/list` and `/list/ids` filter objects | The Objects tab and export stop round-tripping gate id lists on every page fetch |
+
+## The core semantic decision: a gate is a pure predicate
+
+### Statement
+
+A gate's membership predicate is a **pure function of the gate definition and
+one annotation** — never of the population the gate is evaluated against:
+
+```
+inGate(annotation, gate, xAxis, yAxis) =
+    x := axisCoordinate(annotation, xAxis, gate.xCategories)
+    y := axisCoordinate(annotation, yAxis, gate.yCategories)
+    x ≠ null ∧ y ≠ null ∧ pointInPolygon((x, y), gate.vertices)
+```
+
+where `axisCoordinate` is:
+
+- **Property axis** (`{type: "property", path}`): the value at
+  `values.<path>` for this annotation. Must be a finite number; anything else
+  (missing document, missing key, string, NaN, Infinity, null) → `null` →
+  **outside the gate** (matches `rawAxisValue`, `src/utils/analysisGating.ts:146`).
+- **Categorical axis** (`{type: "categorical", key}`): let `k` be the encoded
+  category key of the annotation's raw identity (see *Category keys* below).
+  If `k` is at index `i` in the gate's pinned order (`gate.xCategories` /
+  `gate.yCategories`), the coordinate is `i + jitter(annotationId, salt)`.
+  **If `k` is not in the pinned order, the coordinate is `null` → outside the
+  gate.**
+- Fewer than 3 vertices → matches nothing (parity with `resolveGateIds`).
+- Point-in-polygon is **even-odd ray casting**, exactly the algorithm in
+  `analysisGating.ts:284` (strict inequalities and all).
+
+### Why purity is sound (the chain-redundancy argument)
+
+Today the client resolves gate *i* against the population reaching plot *i*
+(base filters ∧ gates 0..i−1, via `chainPlotInputs`). For **filtering**, that
+restriction is redundant: `filteredAnnotations` is
+`base ∩ ⋂ᵢ gateSetᵢ`, with `gateSetᵢ = polygonᵢ ∩ upstreamᵢ` and
+`upstreamᵢ = base ∩ polygon₀ ∩ … ∩ polygonᵢ₋₁`; the whole intersection
+telescopes to exactly `base ∩ ⋂ᵢ polygonᵢ`. The chain matters only for **display** — which points
+appear on plot *i*, and the per-plot "gate: N" badge — and display can compose
+the chain client-side from the pure sets.
+
+Purity is what makes server-side resolution *stateless*: the request carries
+the gate definition, the answer depends only on the dataset's current
+contents, and none of the client's filter state (selection sets, ROI
+polygons, hidden-layer rules) has to be serialized, mirrored, or invalidated.
+The entire class of invalidation findings from review rounds 3–12 (upstream
+edits, base-population changes, palette toggles) does not exist for the
+server path, because the answer never depended on those inputs.
+
+### The one deliberate behavior change: unknown categories are outside the gate
+
+Today, a category absent from a gate's pinned order is appended to the end of
+the axis in *population encounter order* (`buildPlotSeries`'s `buildAxis`),
+so an annotation in a brand-new category can fall inside an old polygon that
+happens to reach that index. That membership depends on which other unknown
+categories exist and the iteration order of the population — it is arbitrary,
+unreproducible server-side, and inexpressible as a per-annotation predicate.
+
+**New rule, applied in BOTH implementations: an annotation whose category key
+is not in the gate's pinned order is outside that gate.** Unknown categories
+still *plot* (appended after the pinned ones, sorted by label then key, so
+users see them); to gate them, redraw the lasso — redrawing re-pins the order
+including the new categories. This is the flow-cytometry meaning of a gate: a
+region in the coordinate space that existed when it was drawn.
+
+Client change required: `resolveGateIds` must exclude points whose categorical
+index is ≥ the gate's pinned-category count (`Math.round(coord) >=
+gate.xCategories.length`; jitter is bounded by ±0.28 so rounding recovers the
+index exactly). Sorting appended categories (instead of encounter order) is a
+display-determinism fix that rides along.
+
+Cross-the-cap consistency is the hard requirement behind this: a dataset that
+grows past the cap **must not change gate membership** by switching resolvers.
+One predicate, two implementations, one shared test fixture (below).
+
+### Category keys in Python
+
+`encodeAnalysisCategoryKey` is `"v1:" + JSON.stringify(raw)` where raw is a
+sorted string array (tags), a string (shape), or an int (channel, xy, z,
+time). Python parity:
+
+```python
+def encode_category_key(raw) -> str:
+    return "v1:" + json.dumps(raw, separators=(",", ":"))
+```
+
+`json.dumps` with `separators=(",", ":")` matches `JSON.stringify` for
+strings, string arrays, and integers (the only raw types; floats never occur
+— locations and channel are ints). One divergence to handle: tags are sorted
+before encoding, and JS `Array.prototype.sort` compares **UTF-16 code
+units** while Python's `str` comparison uses code points. These differ only
+when a string contains astral-plane characters (JS compares their surrogate
+pairs). `helpers/analysis.py` therefore sorts tags with a UTF-16 code-unit
+sort key (encode each string to its sequence of UTF-16 code units and
+compare those), and the parity fixture includes an astral-plane tag to pin
+this exact case.
+
+### Jitter in Python (bit-exact)
+
+`jitterFromId` (`analysisGating.ts:84`) is 32-bit integer arithmetic plus one
+IEEE-754 double expression — both exactly reproducible:
+
+```python
+def jitter_from_id(annotation_id: str, salt: int) -> float:
+    h = salt
+    for ch in annotation_id:
+        h = (h * 31 + ord(ch)) & 0xFFFFFFFF   # JS (h*31+c)|0 then >>>0
+    return ((h % 1000) / 1000 - 0.5) * 0.56
+```
+
+JS computes `(h * 31 + c) | 0` in signed 32-bit and finally `h >>> 0`;
+keeping the value reduced mod 2³² unsigned is the same bits. `(h % 1000) /
+1000 - 0.5) * 0.56` is double math in both languages → identical to the last
+bit. Salts: X = 17, Y = 31. Annotation ids are 24-char hex (ASCII), but the
+implementation must handle arbitrary BMP strings the way `charCodeAt` does
+(UTF-16 code units) — the numpy version operates on code-unit arrays.
+Vectorized form: ids as a `(N, L)` uint32 array of code units, 24 fused
+multiply-adds under `np.uint32` wrap-around.
+
+**The cross-language contract tests are the most important tests in this
+feature.** A vitest test writes JSON fixtures
+(`test/fixtures/analysis_gating_parity.json`, committed) containing:
+(a) ~20 ids × both salts → expected jitter doubles;
+(b) a small synthetic population (mixed property/categorical axes, missing
+values, an astral-plane tag, duplicate labels) + several gates (lasso, box,
+<3 vertices, polygon crossing a jittered strip boundary) → expected id sets.
+The Python suite loads the same fixture and asserts equality **to the bit**
+for jitter and exactly for id sets. If either implementation changes, the
+fixture regenerates from TS (the reference implementation) and the Python
+test fails until parity is restored.
+
+## Phase 1 — `POST /upenn_annotation/analysis/gate_ids`
+
+### Request
+
+```jsonc
+{
+  "datasetId": "<hex id>",
+  "plots": [                       // plots with DRAWN gates, in plot order
+    {
+      "id": "<plot uuid>",         // opaque; echoed back as the result key
+      "xAxis": {"type": "property", "path": ["<propId>", "Area"]},
+      "yAxis": {"type": "categorical", "key": "tags"},
+      "gate": {
+        "categoryKeyVersion": 1,
+        "vertices": [{"x": 1.5, "y": 2.5}, ...],
+        "xCategories": null,               // pinned order, per axis type
+        "yCategories": ["v1:[\"A\"]", ...]
+      }
+    }
+  ]
+}
+```
+
+### Response
+
+```jsonc
+{ "gateIds": { "<plot uuid>": ["<annotation hex id>", ...], ... } }
+```
+
+Each list is that gate's **pure-predicate membership over the whole dataset**
+— independent of every other plot in the request (no chaining server-side;
+see the redundancy argument). An empty list is a real answer ("this lasso
+contains nothing"), distinct from the plot being absent from the request.
+
+### Validation (all 400s, `server/helpers/validation.py` style)
+
+- Body must be an object; `datasetId` via `requireObjectId`.
+- `plots` via `requireList`; length ≤ `MAX_ANALYSIS_PLOTS = 100`.
+- Each plot: object with string `id`; `xAxis`/`yAxis` each
+  `{type: "property", path}` (path via `isValidPropertyPath` — non-empty
+  string list, no `.`/`$`) or `{type: "categorical", key}` with key in the
+  six known keys.
+- `gate`: object; `vertices` a list of `{x, y}` finite numbers, length ≤
+  `MAX_GATE_VERTICES = 10_000` (< 3 is **not** an error — it resolves to `[]`,
+  parity with the client); `categoryKeyVersion` must equal 1; per-axis
+  categories: `null` for property axes, list of strings (≤
+  `MAX_GATE_CATEGORIES = 10_000`) for categorical axes. A categorical axis
+  with `null` categories is a 400 (the client always pins on draw).
+- Booleans rejected where numbers are expected (mirror `validateListInputs`).
+
+### Access & abuse bounds
+
+- `@access.public(scope=TokenScope.DATA_READ)` + `Folder().load(datasetId,
+  user=..., level=AccessType.READ, exc=True)` — the `/list/ids` pattern
+  exactly.
+- All Mongo reads through model methods / `_aggregate` (maxTimeMS 300s,
+  `allowDiskUse`, hint `{datasetId: 1, _id: 1}` where applicable) — never raw
+  unbounded `collection.find`.
+- Work is bounded by the validation caps above plus dataset size; no
+  response-size cap, same rationale as `/list/ids` (validation.py:15–19).
+
+### Implementation sketch (backend)
+
+New module `server/helpers/analysis.py` — pure functions, no HTTP concerns,
+shared by Phases 1–3:
+
+```python
+def resolve_gate_ids(annotations, values_by_id, plot) -> list[str]
+def axis_coordinates(annotations, values_by_id, axis, categories) -> np.ndarray  # NaN = no value
+def points_in_polygon(xs, ys, vertices) -> np.ndarray[bool]   # even-odd, vectorized
+def jitter_from_ids(ids, salt) -> np.ndarray[float64]
+def encode_category_key(raw) -> str
+```
+
+Endpoint flow (in `api/annotation.py`, model logic in
+`models/annotation.py` per the API/model layering rule):
+
+1. Validate + access-check (API layer).
+2. One projected query per collection, not per plot:
+   - annotation collection: `{datasetId}` → `_id, tags, shape, channel,
+     location` (only the fields any requested categorical axis needs; skip
+     entirely if all axes are property axes).
+   - PV collection: `{datasetId}` → `annotationId` + `values.<path>` for the
+     union of requested property paths (the `findByAnnotationIds` projection
+     shape, but matched on `datasetId` alone — no id list).
+3. numpy: per plot, build x/y coordinate arrays, run `points_in_polygon`,
+   collect ids. Missing value on either axis → excluded (NaN never passes).
+4. Return `{gateIds}`.
+
+Cost envelope at 700K annotations: two projected scans (~1–3 s worst case,
+index-hinted) + vectorized polygon tests (tens of ms per gate). Fine for a
+gate-edit-triggered call; **not** fine per list-page-fetch — that tension is
+resolved in Phase 3's notes.
+
+### Client integration (Phase 1)
+
+The dividing line is `analysisPopulation.length > MAX_ANALYSIS_PLOT_POINTS`
+— the same cap, now routing to the server instead of clearing state. Below
+the cap **nothing changes**.
+
+- **`analysisInputSignature`** (filters.ts): the over-cap branch stops
+  returning the constant `"over-cap"` and returns the server-mode identity:
+  `["server", datasetId, JSON.stringify(gate-relevant fields of
+  resolutionPlots), propertyValuesRevision, annotation.contentRevision]`.
+  Note what it deliberately does NOT include: the population signature,
+  categorical content hash, or any filter state — the pure predicate does
+  not depend on them. This is the payoff of purity: the over-cap signature is
+  O(plots), not O(population).
+- **`annotation.contentRevision`** (new, annotation store): a monotonic
+  counter bumped by every mutation that changes annotation content or
+  membership (`setAnnotations`, `setAnnotation`, `setAnnotationsAtIndices`,
+  stub updates, create/delete paths). It is the server-mode stand-in for
+  `categoricalContentSignature` + `populationSignature` (an annotation edit
+  must re-resolve gates, and the client cannot hash 700K stubs per reactive
+  touch). Coarse over-triggering is tempered by the refresh debounce below.
+- **`refreshAnalysis`**: claims `analysisGateGuard` token first (unchanged
+  invariant), then branches: over-cap + any `resolutionPlots` with drawn
+  gates → `fetchServerGateIds(datasetId, plots)` (new method in
+  `AnnotationsAPI.ts`; POSTs the request above). Commit via the existing
+  `setAnalysisGateIds` + `setAnalysisGateDataSignature` machinery, with the
+  server-mode signature in place of `gateDataSignature`. Failure handling is
+  the existing contract: `null` on request failure (never `{}`); same-input
+  retry may keep prior ids; changed-input ids are dropped before awaiting.
+  Scope reuses `analysisRefreshScope` verbatim: hidden → enabled drawn gates
+  only; panel open → all drawn gates (badges in Phase 2 need them).
+- **What lands in `analysisGateIds` above the cap: the PURE id lists**, not
+  chain-intersected ones. `filteredAnnotations` (`base ∩ ⋂ gateSets`) is
+  unchanged and provably equal to today's semantics. Composition with the
+  server list (`activeAnalysisGateIdLists` → `idConstraints`) and CSV export
+  work unchanged. Empty pure lists flow into the existing
+  `filtersMatchNothing` guard — the match-none path is already correct.
+- **Debounce**: the Viewer watcher on `analysisInputSignature` gains a 300 ms
+  debounce for the server-mode signature only (contentRevision can burst
+  during bulk edits); below-cap behavior is untouched. The sequence guard
+  makes overlapping requests safe regardless.
+- **The panel above the cap still shows the over-cap banner in Phase 1** —
+  amended to say gates still apply and will become drawable in Phase 2. The
+  Filters-button badge (`activeAnalysisGateCount`) already counts gates, not
+  ids, and works as-is.
+
+### What Phase 1 explicitly does not do
+
+- No histogram/heatmap (Phase 2). Users cannot *draw* a new gate above the
+  cap yet; persisted/below-cap-drawn gates now *apply* above it.
+- No change to below-cap resolution, or to how gates reach the server list.
+- No frontend fallback for a backend without the endpoint (per repo policy:
+  the frontend does not compensate for outdated backends). Deploy backend
+  first.
+
+## Phase 2 — `POST /upenn_annotation/analysis/histogram2d`
+
+### Purpose
+
+Above the cap the panel renders each plot as a server-binned 2D histogram
+(Plotly `heatmap`) instead of a scatter, and gates are drawn as shapes
+(`drawclosedpath` / `drawrect`) instead of lasso selections. Resolution is
+Phase 1's endpoint; this endpoint is **display only**.
+
+### Request
+
+```jsonc
+{
+  "datasetId": "<hex id>",
+  "xAxis": {...}, "yAxis": {...},          // TAnalysisAxis, as Phase 1
+  "xCategories": [...] | null,             // pinned order if this plot has a gate
+  "yCategories": [...] | null,
+  "bins": {"x": 128, "y": 128},            // clamped to [1, MAX_HISTOGRAM_BINS=512]
+  "upstreamGates": [ {xAxis, yAxis, gate}, ... ],   // ENABLED gates of plots before this one
+  "filters": { ...IAnnotationListFilters... }        // the serializable base filters
+}
+```
+
+- `upstreamGates` reproduce the chain for display: the histogram shows the
+  population *reaching* this plot. Server applies them as pure predicates.
+- `filters` reuses the existing list-filter schema and `validateListInputs`
+  (tags, location, propertyFilters, idConstraints, idSubstring) so the
+  histogram reflects the same narrowing the server list already understands.
+
+### Response
+
+```jsonc
+{
+  "counts": [[...], ...],            // len(yBins) rows × len(xBins) columns
+  "xEdges": [..] | null,             // numeric axis: bin edges (len = bins+1)
+  "yEdges": [..] | null,
+  "xCategories": [..] | null,        // categorical axis: keys in index order
+  "yCategories": [..] | null,        //   (pinned order extended w/ sorted unknowns)
+  "inputCount": 123456,              // population after filters + upstream gates
+  "plottedCount": 120000,            // rows with values on both axes
+  "gateCount": 4521 | null           // |this plot's own gate ∩ input|, when the
+                                     // plot's gate is sent (badge parity)
+}
+```
+
+For a categorical axis, each category is one bin at its integer index
+(jitter is irrelevant for binning; it only matters for polygon membership).
+Numeric edges come from the population min/max after filters; degenerate
+(min == max) → one bin.
+
+### Client integration
+
+- `AnalysisScatterPlot.vue` gains an over-cap mode: heatmap trace (log-scaled
+  color option deferred), axis layout from edges/categories, and
+  `layout.dragmode: "drawclosedpath"` with `modebar` adding `drawrect` +
+  `eraseshape`. `plotly_relayout` events carrying `shapes` are parsed
+  (`M/L/Z` path → vertices; rect → 4 corners) by a new pure util
+  `shapeToGate` in `analysisGating.ts`, then stored via the existing
+  `setAnalysisPlotGate` — downstream identical to a lasso. One drawn shape
+  per plot: drawing a new one replaces the gate (and the rendered shape).
+- The existing gate polygon is re-rendered as a layout shape so a persisted
+  gate is visible on the heatmap.
+- Fetching is display work and must obey the palette-visibility invariant
+  (ANALYSIS_PANEL.md "The panel component is always mounted; its display
+  work is not"): histogram requests fire only while the panel is open, keyed
+  by a per-plot signature (axes + bins + upstream-gate definitions +
+  serializable-filters JSON + contentRevision + propertyValuesRevision),
+  with a sequence guard per plot.
+- **Honesty banner**: filters the client applies that the request cannot
+  express (ROI polygons, hidden-layer rules, id-list filters above
+  `MAX_HISTOGRAM_ID_CONSTRAINT = 50_000` ids) render a per-plot notice:
+  "distribution ignores: <names>" — the histogram may show a superset. The
+  *gate resolution* (Phase 1) is unaffected — it is filter-independent — so
+  filtering correctness never degrades; only the picture can over-include.
+  This mirrors the server list's existing documented ROI limitation.
+- The per-plot badge above the cap reads `gateCount` from the histogram
+  response (chained semantics preserved) rather than `gateIds.length` (pure
+  count, which would over-state).
+
+## Phase 3 — gate definitions as first-class list-query terms
+
+### Problem
+
+Above the cap a resolved gate can hold hundreds of thousands of ids, and
+`buildListFilters` currently ships every gate's full id list as an
+`idConstraints` entry **on every page fetch, count, and select-all**. That is
+megabytes of upload per pagination click.
+
+### Change
+
+`IAnnotationListFilters` gains:
+
+```ts
+analysisGates?: {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;       // vertices + pinned categories + version
+}[];
+```
+
+- `buildListFilters` sends **definitions** for the analysis gates (all modes,
+  above and below the cap — one code path) and stops pushing gate id lists
+  into `idConstraints`. Selection and annotation-id filters keep using
+  `idConstraints` unchanged.
+- The client-side match-none short-circuit moves off `filtersMatchNothing`'s
+  `idConstraints` scan for gates: a new getter (`hasEmptyResolvedGate`) — any
+  *resolved* gate whose id list is empty — feeds the same short-circuit in
+  `AnnotationsAPI` (answer `{total: 0}` without asking). The server also
+  answers correctly if asked (a gate matching nothing yields zero rows);
+  the short-circuit is an optimization, not load-bearing correctness.
+- Backend: `validateListInputs` validates `analysisGates` with Phase 1's
+  validators; `models/annotation.py` resolves each gate to an ObjectId set
+  via `helpers/analysis.py` **once per request**, then appends
+  `{"_id": {"$in": ids}}` to the match stages (same AND shape as
+  `idConstraints`). 300K ObjectIds ≈ 3.6 MB in-pipeline — inside BSON limits.
+- `currentFiltersSignature` must hash gate definitions (small: vertices) —
+  they replace id lists in the filters object, so the existing
+  "never-serialize-id-lists" rule is *easier* to keep, but the signature and
+  the `AnnotationList.vue` refetch watcher must be re-pointed from
+  `analysisGateSignature`'s id hashes to the definition JSON + a resolution
+  epoch (gate results can change under a fixed definition when values are
+  recomputed — include `propertyValuesRevision` and `contentRevision`).
+
+### Cost note (decided: no server cache in v1)
+
+Sending definitions makes every list page fetch re-resolve the gates
+server-side (~1–3 s at 700K). That is measurable and acceptable for v1;
+a server-side resolution cache would need invalidation keyed to annotation
+and PV mutations, which is precisely the class of complexity this feature
+just spent twelve review rounds paying down. If profiling shows the
+re-resolution dominating, the recorded escape hatches are (in order):
+per-request memo across the page+count pair; client-side hint
+`knownGateIds` for small results (< 10K ids — semantics identical, pure
+optimization); a proper cache with mutation-hooked invalidation. Do not
+build any of them speculatively.
+
+## Invariants carried forward (unchanged, and load-bearing here)
+
+1. **Sequence-guard tokens are claimed as the first statement** of every
+   refresh action, before any bail-out (`analysisGateGuard`, per-plot
+   histogram guards, `propertyFilterRequestGuard` precedent).
+2. **Failure ≠ empty.** Request failures return `null` and leave same-input
+   state alone; `{}`/`[]` are real answers. The server endpoints must never
+   convert an internal failure into an empty result (a Mongo timeout raises;
+   it does not return zero rows).
+3. **A gate that matches nothing is a real constraint.** Empty resolved
+   lists flow to the match-none short-circuit; the backend continues to
+   reject `[[]]` id constraints; Phase 3's definition path answers zero rows.
+4. **Never serialize id lists for identity.** Server-mode signatures are
+   built from definitions, revisions, and counters — never from hashing the
+   population (that is what the revision counters are for).
+5. **No display work while the palette is hidden.** Histogram fetches are
+   panel-open-only; gate *resolution* is not display work and continues
+   hidden (it powers filtering).
+6. **Scope comes from `analysisRefreshScope`** — the server path consumes
+   `resolutionPlots`/`gatedPlots` from the same function as the client path.
+   No new plot-subset predicates anywhere else.
+7. **API/model layering** (backend): validation and RestException at the API
+   boundary; models and `helpers/analysis.py` raise ValueError/domain errors
+   only; all reads through model methods or `_aggregate` (never raw
+   unbounded pymongo); `exc=True` loads; no `except Exception`.
+8. **Frontend does not compensate for outdated backends.** No
+   endpoint-missing fallbacks; deploy order is backend → frontend.
+
+## Limits (all new constants in `server/helpers/validation.py`)
+
+| Constant | Value | Guards |
+|---|---|---|
+| `MAX_ANALYSIS_PLOTS` | 100 | plots per gate_ids request |
+| `MAX_GATE_VERTICES` | 10,000 | vertices per gate |
+| `MAX_GATE_CATEGORIES` | 10,000 | pinned categories per axis |
+| `MAX_HISTOGRAM_BINS` | 512 | bins per axis |
+| `MAX_HISTOGRAM_ID_CONSTRAINT` | 50,000 | ids the client will inline into a histogram request |
+
+`numpy` gets declared in `setup.py` `install_requires` (already a de facto
+dependency via `helpers/connections.py`; today it arrives transitively).
+
+## Test strategy
+
+**Cross-language parity (the keystone):** committed JSON fixture generated by
+a vitest test from the TS reference implementation; Python asserts bit-exact
+jitter and exact gate id sets. Regenerating the fixture is the only sanctioned
+way to change gating semantics, and it fails the other language's suite until
+both match. Fixture cases: property×property, property×categorical,
+categorical×categorical, missing values on each axis, astral-plane tag,
+duplicate display labels, box gate, <3-vertex gate, polygon slicing through a
+jittered categorical strip, unknown-category exclusion.
+
+**Backend (tox, `test_analysis_gating.py`):** validation 400s for every
+malformed input (mirroring `TestServerListValidation`'s coverage style);
+403/404 access tests (private folder, bad dataset id); empty dataset; empty
+gate; per-plot independence (two plots, results don't chain); property path
+depth (nested `Centroid.x`); orphan PV docs excluded (values doc whose
+annotation is gone must not produce an id — join against the annotation
+collection, unlike `listIds`'s documented asymmetry); histogram bin edges,
+categorical bins, upstream-gate narrowing, `gateCount`, filters application,
+bins clamping. Phase 3: definition-carrying list/count/ids requests, AND
+composition with other constraints, zero-match gates.
+
+**Frontend (vitest):** signature branch (over-cap signature contains
+revisions and definitions, not population hashes; changes when a vertex
+moves, not when an unrelated filter toggles); guard ordering (late response
+after newer token discarded — the stale-guard-before-early-return shape);
+failure retention (same-input failure keeps ids, changed-input failure
+drops); debounce; `contentRevision` bumps on each mutating path;
+unknown-category exclusion in `resolveGateIds`; `shapeToGate` parsing;
+heatmap-mode rendering + badge from `gateCount`; Phase 3 `buildListFilters`
+emits definitions and no gate id lists, `hasEmptyResolvedGate`
+short-circuit, refetch watcher fires on definition change.
+
+**Live verification (in-browser, per repo process):** on the 708,983-object
+Xenium dataset — persisted gate applies on fresh load above cap; draw on
+heatmap; page the Objects tab; export CSV of gated subset; kill the network
+mid-refresh and confirm no empty-gate wipeout. Do this from a fresh page
+load on a dataset that actually exceeds the cap.
+
+## Regression checklist seed
+
+Grows in the manner of `CONNECTION_LIST.md`; every line names its test once
+implemented.
+
+- Above-cap gate resolution never reads client filter state
+  (`filters.test.ts`: over-cap signature invariant under filter changes).
+- Same fixture gates resolve to identical id sets in TS and Python
+  (`analysisGatingParity` fixture tests, both suites).
+- A failed server resolution never empties a same-input gate
+  (`filters.test.ts`).
+- A stale server response never overwrites a newer one (`filters.test.ts`).
+- No request fires while the panel is closed unless an enabled drawn gate
+  exists (`filters.test.ts`, scope).
+- Histogram fetches never fire while the palette is hidden
+  (`AnalysisPanel.test.ts`).
+- The Objects tab refetches when a gate definition changes and not when an
+  unrelated frame scrubs (`AnnotationList.test.ts`).
+- `[[]]` never reaches the wire; an empty resolved gate short-circuits to
+  zero rows (`annotationsAPI.test.ts`).
+- Unknown-to-gate categories are excluded below AND above the cap
+  (`analysisGating.test.ts` + parity fixture).
+- gate_ids and histogram2d reject every malformed-input shape with 400, not
+  500 (`test_analysis_gating.py`).
+- Private-dataset requests 403 for non-readers (`test_analysis_gating.py`).
