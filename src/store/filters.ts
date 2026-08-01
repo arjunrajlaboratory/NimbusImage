@@ -18,19 +18,33 @@ import {
 } from "@/utils/annotation";
 import { buildPropertyListFilters } from "@/utils/annotationListFilters";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
+import { idListSignature } from "@/utils/signatures";
 
 import {
   TAnnotationOrStub,
+  IAnalysisGate,
+  IAnalysisPlot,
   IAnnotationFilter,
   ITagAnnotationFilter,
   IPropertyAnnotationFilter,
   IROIAnnotationFilter,
   IIdAnnotationFilter,
   IGeoJSPosition,
+  IAnnotationPropertyValues,
   TPropertyHistogram,
   IAnnotationLocation,
   IAnnotationListFilters,
+  TAnalysisAxis,
 } from "./model";
+import { MAX_ANALYSIS_PLOT_POINTS } from "./constants";
+import {
+  analysisPropertyPaths,
+  buildPlotSeries,
+  chainPlotInputs,
+  populationSignature,
+  resolveGateIds,
+} from "@/utils/analysisGating";
+import { logError } from "@/utils/log";
 
 import geo from "geojs";
 import {
@@ -79,6 +93,41 @@ export class Filters extends VuexModule {
 
   annotationIdFilters: IIdAnnotationFilter[] = [];
 
+  // Analysis panel: ordered scatter plots whose gates narrow the filtered set
+  // sequentially (see IAnalysisPlot in model.ts). Persisted in the
+  // configuration's annotationBrowserConfig — the gate POLYGONS are, anyway;
+  // the annotation ids they resolve to live in analysisGateIds below and are
+  // never persisted, since they belong to one dataset while a configuration is
+  // shared by all of them.
+  analysisPlots: IAnalysisPlot[] = [];
+
+  // Derived, session-only: the property values the analysis plots' axes need,
+  // over the current population, projected to just those paths. Owned by the
+  // store rather than fetched separately by the panel so the gate resolution
+  // and the panel's display share ONE round trip — the population can run to
+  // MAX_ANALYSIS_PLOT_POINTS ids, so fetching it twice doubled the wait on
+  // exactly the path the feature exists for. markRaw: it is a large map that is
+  // replaced wholesale.
+  analysisValues: IAnnotationPropertyValues = markRaw({});
+
+  // True while a refreshAnalysis fetch is in flight. Explicit rather than
+  // inferred from `analysisValues` being empty: an empty result is a real
+  // outcome (a property computed for only some objects, or one with no values
+  // yet), and inferring left the panel spinning forever on it.
+  analysisLoading = false;
+
+  // True while the Analysis palette is showing. The panel needs values for
+  // plots that have NO gate (to draw them), which nothing else needs, so the
+  // fetch scope depends on whether anyone is looking.
+  analysisPanelOpen = false;
+
+  // Derived, session-only: {plotId: ids inside that plot's gate}, produced by
+  // refreshAnalysisGateIds. A plot missing from this map has an unresolved gate
+  // and contributes no constraint, so drawing never flashes empty while the
+  // values needed to resolve it are still loading. markRaw: see
+  // setAnalysisGateIds.
+  analysisGateIds: { [plotId: string]: string[] } = markRaw({});
+
   // Lazy (stub-only) mode only: the set of annotation ids passing the active
   // property filters, fetched server-side so client-side filtered drawing no
   // longer requires every annotation's property value in memory (D Stage 2).
@@ -116,6 +165,10 @@ export class Filters extends VuexModule {
     this.filterPaths = [];
     this.histograms = {};
     this.annotationIdFilters = [];
+    this.analysisPlots = [];
+    this.analysisGateIds = markRaw({});
+    this.analysisValues = markRaw({});
+    this.analysisLoading = false;
   }
 
   // Clear per-dataset filter state. Call when switching datasets so stale
@@ -278,6 +331,266 @@ export class Filters extends VuexModule {
     );
   }
 
+  @Mutation
+  private setAnalysisPlotsImpl(plots: IAnalysisPlot[]) {
+    this.analysisPlots = plots;
+  }
+
+  // Every plot edit funnels through here so exactly one place schedules the
+  // configuration save. The gate ids are NOT touched: they are derived state,
+  // refreshed by refreshAnalysisGateIds.
+  @Action
+  private applyAnalysisPlots(plots: IAnalysisPlot[]) {
+    this.setAnalysisPlotsImpl(plots);
+    main.scheduleAnnotationBrowserSave();
+  }
+
+  @Action
+  addAnalysisPlot(id: string) {
+    this.applyAnalysisPlots([
+      ...this.analysisPlots,
+      { id, xAxis: null, yAxis: null, gate: null, gateEnabled: true },
+    ]);
+  }
+
+  @Action
+  removeAnalysisPlot(id: string) {
+    this.applyAnalysisPlots(
+      this.analysisPlots.filter((plot) => plot.id !== id),
+    );
+    this.dropAnalysisGateIds(id);
+  }
+
+  @Action
+  setAnalysisPlotAxes(payload: {
+    id: string;
+    xAxis?: TAnalysisAxis | null;
+    yAxis?: TAnalysisAxis | null;
+  }) {
+    // Changing an axis invalidates the gate: its polygon lives in the old
+    // axes' coordinate space, so keeping it would silently filter on criteria
+    // the user can no longer see.
+    this.applyAnalysisPlots(
+      this.analysisPlots.map((plot) =>
+        plot.id === payload.id
+          ? {
+              ...plot,
+              xAxis: payload.xAxis !== undefined ? payload.xAxis : plot.xAxis,
+              yAxis: payload.yAxis !== undefined ? payload.yAxis : plot.yAxis,
+              gate: null,
+            }
+          : plot,
+      ),
+    );
+    this.dropAnalysisGateIds(payload.id);
+  }
+
+  @Action
+  setAnalysisPlotGate(payload: { id: string; gate: IAnalysisGate | null }) {
+    this.applyAnalysisPlots(
+      this.analysisPlots.map((plot) =>
+        plot.id === payload.id ? { ...plot, gate: payload.gate } : plot,
+      ),
+    );
+    if (payload.gate === null) {
+      this.dropAnalysisGateIds(payload.id);
+    }
+  }
+
+  @Action
+  toggleAnalysisPlotGateEnabled(id: string) {
+    this.applyAnalysisPlots(
+      this.analysisPlots.map((plot) =>
+        plot.id === id ? { ...plot, gateEnabled: !plot.gateEnabled } : plot,
+      ),
+    );
+  }
+
+  // Restore plots persisted in the configuration. Uses the raw mutation so
+  // hydration never schedules a save of its own.
+  @Action
+  hydrateAnalysisPlots(plots: IAnalysisPlot[]) {
+    this.setAnalysisPlotsImpl(plots);
+    this.setAnalysisGateIds({});
+  }
+
+  @Mutation
+  setAnalysisGateIds(gateIds: { [plotId: string]: string[] }) {
+    // markRaw for the same reason as propertyFilterPassingIds: a gate can hold
+    // up to MAX_ANALYSIS_PLOT_POINTS ids, and proxying it would make every
+    // membership pass walk a reactive array. The slot reference is replaced
+    // wholesale to drive reactivity.
+    this.analysisGateIds = markRaw(gateIds);
+  }
+
+  @Mutation
+  dropAnalysisGateIds(plotId: string) {
+    if (this.analysisGateIds[plotId] === undefined) {
+      return;
+    }
+    const next = { ...this.analysisGateIds };
+    delete next[plotId];
+    this.analysisGateIds = markRaw(next);
+  }
+
+  // How many gates are narrowing the filtered set. Counted from the plots
+  // rather than from activeAnalysisGateSets so the badge never materializes a
+  // Set per gate just to read its length.
+  get activeAnalysisGateCount(): number {
+    return this.analysisPlots.filter(
+      (plot) =>
+        plot.gateEnabled &&
+        plot.gate !== null &&
+        this.analysisGateIds[plot.id] !== undefined,
+    ).length;
+  }
+
+  // The gates that actually narrow the filtered set right now, in plot order.
+  // A plot contributes once it has a drawn, enabled gate whose ids have been
+  // resolved (see refreshAnalysisGateIds). Raw id lists rather than Sets, so
+  // callers that only forward them to the backend never build one.
+  get activeAnalysisGateIdLists(): string[][] {
+    return this.analysisPlots.reduce<string[][]>((lists, plot) => {
+      const ids = this.analysisGateIds[plot.id];
+      if (plot.gateEnabled && plot.gate !== null && ids !== undefined) {
+        lists.push(ids);
+      }
+      return lists;
+    }, []);
+  }
+
+  get activeAnalysisGateSets(): Set<string>[] {
+    return this.activeAnalysisGateIdLists.map((ids) => new Set(ids));
+  }
+
+  // A cheap identity for the id-membership filters, for watchers that must
+  // react when they change without serializing their id lists. See
+  // @/utils/signatures — a select-all puts tens of thousands of ids in here.
+  get membershipFilterSignature(): string {
+    const describe = (filter: IIdAnnotationFilter) =>
+      `${filter.id}:${filter.enabled}:${filter.exclusive}:${idListSignature(
+        filter.annotationIds,
+      )}`;
+    return [this.selectionFilter, ...this.annotationIdFilters]
+      .map(describe)
+      .join("|");
+  }
+
+  // A cheap identity for the gate constraints, same reasoning. The ids are
+  // SAMPLED, not just counted: moving a lasso to a different region that
+  // happens to contain the same number of objects has to register, or the
+  // server-mode list keeps the previous gate's rows.
+  get analysisGateSignature(): string {
+    return this.analysisPlots
+      .map((plot) => {
+        const ids = this.analysisGateIds[plot.id];
+        return `${plot.id}:${plot.gateEnabled}:${
+          ids ? idListSignature(ids) : "-"
+        }`;
+      })
+      .join("|");
+  }
+
+  // A cheap identity for the population the analysis panel plots and gates
+  // against. See populationSignature for why it samples rather than hashes.
+  get analysisPopulationSignature(): string {
+    return populationSignature(this.annotationsPassingNonGateFilters);
+  }
+
+  // What refreshAnalysis' result depends on: the plots (small — axes plus a
+  // polygon), whether anyone is looking, and the population resolved against.
+  get analysisInputSignature(): string {
+    const wanted =
+      this.analysisPanelOpen ||
+      this.analysisPlots.some((plot) => plot.gate !== null);
+    if (!wanted) {
+      // Nothing to fetch or resolve: don't even look at the population, so a
+      // dataset nobody is analysing never pays for this getter.
+      return "idle";
+    }
+    return `${JSON.stringify(this.analysisPlots)}|${
+      this.analysisPanelOpen
+    }|${this.analysisPopulationSignature}`;
+  }
+
+  @Mutation
+  setAnalysisPanelOpen(open: boolean) {
+    this.analysisPanelOpen = open;
+  }
+
+  @Mutation
+  setAnalysisLoading(loading: boolean) {
+    this.analysisLoading = loading;
+  }
+
+  @Mutation
+  setAnalysisValues(values: IAnnotationPropertyValues) {
+    this.analysisValues = markRaw(values);
+  }
+
+  /**
+   * Fetch the values the analysis plots need and resolve every drawn gate's
+   * polygon into the annotation ids it contains.
+   *
+   * Owned by the store, not the panel, because a gate is a filter: it must
+   * apply whether or not the Analysis palette is open, and a gate restored from
+   * the configuration has to resolve on load. The panel reads `analysisValues`
+   * rather than fetching its own copy, so this is the only round trip — the
+   * population runs to MAX_ANALYSIS_PLOT_POINTS ids, and fetching it twice
+   * doubled the wait on exactly the path the feature exists for.
+   *
+   * Fetches when a plot has a gate to resolve, or when the panel is open and
+   * needs values to draw. Neither means no fetch, so a configuration that
+   * carries plots costs nothing until someone looks at them.
+   */
+  @Action
+  async refreshAnalysis() {
+    const datasetId = main.dataset?.id;
+    const paths = analysisPropertyPaths(this.analysisPlots);
+    const hasGate = this.analysisPlots.some(
+      (plot) => plot.gate !== null && plot.xAxis && plot.yAxis,
+    );
+    const base = this.annotationsPassingNonGateFilters;
+    if (
+      !datasetId ||
+      !(hasGate || this.analysisPanelOpen) ||
+      paths.length === 0 ||
+      // Matches the panel's refusal to plot: a gate is only meaningful against
+      // the population it was drawn on, and above the cap we do not draw one.
+      base.length > MAX_ANALYSIS_PLOT_POINTS
+    ) {
+      this.clearAnalysisDerivedState();
+      return;
+    }
+    const token = analysisGateGuard.next();
+    this.setAnalysisLoading(true);
+    const values = await fetchAnalysisValues(datasetId, paths, base);
+    if (!analysisGateGuard.isCurrent(token)) {
+      // A newer refresh owns the loading flag now; leave it alone.
+      return;
+    }
+    this.setAnalysisValues(values);
+    this.setAnalysisGateIds(
+      resolveAnalysisGateIds(this.analysisPlots, base, values, (channel) =>
+        channelDisplayName(channel),
+      ),
+    );
+    this.setAnalysisLoading(false);
+  }
+
+  @Action
+  private clearAnalysisDerivedState() {
+    if (this.analysisLoading) {
+      this.setAnalysisLoading(false);
+    }
+    if (Object.keys(this.analysisGateIds).length > 0) {
+      this.setAnalysisGateIds({});
+    }
+    if (Object.keys(this.analysisValues).length > 0) {
+      this.setAnalysisValues({});
+    }
+  }
+
   get hasActivePropertyFilter() {
     return this.propertyFilters.some(
       (filter: IPropertyAnnotationFilter) => filter.enabled,
@@ -301,7 +614,8 @@ export class Filters extends VuexModule {
       (main.showAnnotationsFromHiddenLayers ? 0 : 1) +
       countEnabled(this.propertyFilters) +
       countEnabled(this.roiFilters) +
-      countEnabled(this.annotationIdFilters)
+      countEnabled(this.annotationIdFilters) +
+      this.activeAnalysisGateCount
     );
   }
 
@@ -339,7 +653,10 @@ export class Filters extends VuexModule {
     }
   }
 
-  get filteredAnnotations() {
+  // Annotations passing every filter EXCEPT the analysis-plot gates. The
+  // analysis panel plots populations from this base (plus upstream gates), so
+  // a plot's own gate must not remove points from its own scatter.
+  get annotationsPassingNonGateFilters() {
     const selectionFilter = this.selectionFilter;
     const tagFilter = this.tagFilter;
     const propertyFilters = this.propertyFilters;
@@ -473,6 +790,17 @@ export class Filters extends VuexModule {
     );
   }
 
+  get filteredAnnotations() {
+    const gateSets = this.activeAnalysisGateSets;
+    const base = this.annotationsPassingNonGateFilters;
+    if (gateSets.length === 0) {
+      return base;
+    }
+    return base.filter((annotation: TAnnotationOrStub) =>
+      gateSets.every((gate) => gate.has(annotation.id)),
+    );
+  }
+
   get filteredAnnotationIdToIdx() {
     const idToIdx: Map<string, number> = new Map();
     const annotations = this.filteredAnnotations;
@@ -556,6 +884,88 @@ export class Filters extends VuexModule {
 }
 
 export default getModule(Filters);
+
+// Stale-response guard for the analysis gate refresh: filter edits can fire
+// several refreshes in quick succession, and only the latest may commit.
+const analysisGateGuard = createSequenceGuard();
+
+function channelDisplayName(channel: number): string {
+  return main.dataset?.channelNames.get(channel) ?? `Channel ${channel}`;
+}
+
+/**
+ * Fetch the property values the analysis plots' axes need, for one population.
+ *
+ * Projected to just those paths, which is what makes this affordable: the
+ * shared `properties.propertyValues` map is projected to the Annotation
+ * Browser's displayed columns (so an arbitrary axis is usually absent from it)
+ * and, in lazy mode, holds only the viewport subset.
+ */
+async function fetchAnalysisValues(
+  datasetId: string,
+  paths: string[][],
+  population: TAnnotationOrStub[],
+): Promise<IAnnotationPropertyValues> {
+  if (paths.length === 0 || population.length === 0) {
+    return {};
+  }
+  try {
+    const entries = await properties.propertiesAPI.getPropertyValuesForIds(
+      datasetId,
+      population.map((annotation) => annotation.id),
+      paths,
+    );
+    const values: IAnnotationPropertyValues = {};
+    for (const entry of entries) {
+      values[entry.annotationId] = entry.values;
+    }
+    return values;
+  } catch (error) {
+    logError(`Analysis gate value fetch failed: ${(error as Error).message}`);
+    return {};
+  }
+}
+
+/**
+ * Walk the plot chain and resolve each drawn gate's polygon into ids.
+ *
+ * Exported for tests: this is the whole of the gating semantics, and it is the
+ * half that has no visible symptom when it breaks (a gate silently selects the
+ * wrong objects rather than erroring).
+ */
+export function resolveAnalysisGateIds(
+  plots: IAnalysisPlot[],
+  base: TAnnotationOrStub[],
+  values: IAnnotationPropertyValues,
+  channelName: (channel: number) => string,
+): { [plotId: string]: string[] } {
+  const gateIds: { [plotId: string]: string[] } = {};
+  for (let i = 0; i < plots.length; i++) {
+    const plot = plots[i];
+    if (!plot.xAxis || !plot.yAxis || plot.gate === null) {
+      continue;
+    }
+    // Re-chain rather than threading a running population: plot i's input
+    // depends only on gates 0..i-1, which are already resolved, so this walks
+    // the SAME chainPlotInputs the panel displays. Keeping one implementation
+    // is what stops the gate from selecting points other than the ones drawn
+    // under it, and it is worth the cost — but the cost is not zero: this is
+    // O(plots^2 x population), so ten chained plots over 50k objects is ~5M
+    // filter operations per refresh. Revisit if plot counts ever grow.
+    const input = chainPlotInputs(plots, gateIds, base)[i];
+    const series = buildPlotSeries({
+      annotations: input,
+      values,
+      xAxis: plot.xAxis,
+      yAxis: plot.yAxis,
+      channelName,
+      xCategoryOrder: plot.gate.xCategories,
+      yCategoryOrder: plot.gate.yCategories,
+    });
+    gateIds[plot.id] = resolveGateIds(series, plot.gate);
+  }
+  return gateIds;
+}
 
 // Self-accept HMR to prevent vuex-module-decorators from re-registering
 // the dynamic module (which causes duplicate getters and state overwrites).

@@ -1,7 +1,11 @@
 import type {
+  IAnalysisGate,
+  IAnalysisPlot,
   IAnnotationBrowserConfig,
   IPropertyAnnotationFilter,
+  TAnalysisAxis,
 } from "@/store/model";
+import { isCategoricalAxisKey } from "@/utils/analysisAxes";
 import { createPathStringFromPathArray } from "@/utils/paths";
 
 // Assemble the annotation-browser state to persist in the configuration.
@@ -11,6 +15,7 @@ export function buildAnnotationBrowserConfig(
   displayedPropertyPaths: string[][],
   filterPaths: string[][],
   propertyFilters: IPropertyAnnotationFilter[],
+  analysisPlots: IAnalysisPlot[],
 ): IAnnotationBrowserConfig {
   const visiblePaths = new Set(filterPaths.map(createPathStringFromPathArray));
   return {
@@ -19,6 +24,16 @@ export function buildAnnotationBrowserConfig(
     propertyFilters: propertyFilters.filter((filter) =>
       visiblePaths.has(createPathStringFromPathArray(filter.propertyPath)),
     ),
+    // Only the gate polygon travels, never the annotation ids it resolves to —
+    // ids belong to one dataset and this configuration is shared by all of
+    // them. See IAnalysisGate.
+    analysisPlots: analysisPlots.map((plot) => ({
+      id: plot.id,
+      xAxis: plot.xAxis,
+      yAxis: plot.yAxis,
+      gate: plot.gate,
+      gateEnabled: plot.gateEnabled,
+    })),
   };
 }
 
@@ -49,5 +64,92 @@ export function resolveAnnotationBrowserConfig(
       visiblePaths.has(createPathStringFromPathArray(filter.propertyPath)),
   );
 
-  return { displayedPropertyPaths, filterPaths, propertyFilters };
+  return {
+    displayedPropertyPaths,
+    filterPaths,
+    propertyFilters,
+    analysisPlots: asArray(config?.analysisPlots)
+      .map((plot) => resolveAnalysisPlot(plot, isKnownPath))
+      .filter((plot): plot is IAnalysisPlot => plot !== null),
+  };
+}
+
+// An axis survives only if it still resolves: a property axis whose property
+// left the configuration would plot nothing, and an unknown categorical key
+// would fall through every branch of categoricalLabel and yield undefined.
+function resolveAxis(
+  axis: unknown,
+  isKnownPath: (path: unknown) => path is string[],
+): TAnalysisAxis | null {
+  if (!axis || typeof axis !== "object") {
+    return null;
+  }
+  const candidate = axis as { type?: unknown; path?: unknown; key?: unknown };
+  if (candidate.type === "property" && isKnownPath(candidate.path)) {
+    return { type: "property", path: candidate.path };
+  }
+  if (isCategoricalAxisKey(candidate.key) && candidate.type === "categorical") {
+    return { type: "categorical", key: candidate.key };
+  }
+  return null;
+}
+
+function resolveGate(gate: unknown): IAnalysisGate | null {
+  if (!gate || typeof gate !== "object") {
+    return null;
+  }
+  const candidate = gate as {
+    vertices?: unknown;
+    xCategories?: unknown;
+    yCategories?: unknown;
+  };
+  // Fewer than 3 vertices bounds no area, so such a gate could only ever select
+  // nothing — drop it rather than persisting a filter that hides everything.
+  if (!Array.isArray(candidate.vertices) || candidate.vertices.length < 3) {
+    return null;
+  }
+  const vertices = candidate.vertices.filter(
+    (vertex): vertex is { x: number; y: number } =>
+      !!vertex &&
+      typeof vertex === "object" &&
+      typeof (vertex as { x?: unknown }).x === "number" &&
+      typeof (vertex as { y?: unknown }).y === "number",
+  );
+  if (vertices.length !== candidate.vertices.length) {
+    return null;
+  }
+  const categories = (value: unknown): string[] | null =>
+    Array.isArray(value) && value.every((entry) => typeof entry === "string")
+      ? value
+      : null;
+  return {
+    vertices: vertices.map(({ x, y }) => ({ x, y })),
+    xCategories: categories(candidate.xCategories),
+    yCategories: categories(candidate.yCategories),
+  };
+}
+
+function resolveAnalysisPlot(
+  plot: unknown,
+  isKnownPath: (path: unknown) => path is string[],
+): IAnalysisPlot | null {
+  if (!plot || typeof plot !== "object") {
+    return null;
+  }
+  const candidate = plot as Partial<IAnalysisPlot>;
+  if (typeof candidate.id !== "string" || candidate.id.length === 0) {
+    return null;
+  }
+  const xAxis = resolveAxis(candidate.xAxis, isKnownPath);
+  const yAxis = resolveAxis(candidate.yAxis, isKnownPath);
+  // A gate's coordinates only mean anything alongside the axes they were drawn
+  // against, so an axis that failed to resolve takes the gate with it.
+  const gate = xAxis && yAxis ? resolveGate(candidate.gate) : null;
+  return {
+    id: candidate.id,
+    xAxis,
+    yAxis,
+    gate,
+    gateEnabled: candidate.gateEnabled !== false,
+  };
 }

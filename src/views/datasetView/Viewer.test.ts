@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount, flushPromises } from "@vue/test-utils";
+import { reactive } from "vue";
+
+const { volumeViewMock, filtersMock } = vi.hoisted(() => ({
+  volumeViewMock: { viewMode: "2d" },
+  // `state` is replaced with a reactive object per test: a plain property here
+  // would let the watcher assertions pass without any reactivity involved.
+  filtersMock: {
+    state: { signature: "idle" } as { signature: string },
+    refreshAnalysis: vi.fn(),
+  },
+}));
 
 vi.mock("@/components/ImageViewer.vue", () => ({
   default: { template: "<div></div>", name: "ImageViewer" },
@@ -28,6 +39,19 @@ vi.mock("@/store/properties", () => ({
   },
 }));
 
+vi.mock("@/store/volumeView", () => ({
+  default: volumeViewMock,
+}));
+
+vi.mock("@/store/filters", () => ({
+  default: {
+    get analysisInputSignature() {
+      return filtersMock.state.signature;
+    },
+    refreshAnalysis: filtersMock.refreshAnalysis,
+  },
+}));
+
 vi.mock("@/store/toolSuggestions", () => ({
   default: {
     clear: vi.fn(),
@@ -40,6 +64,7 @@ import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import toolSuggestionsStore from "@/store/toolSuggestions";
 import Viewer from "./Viewer.vue";
+import volumeViewStore from "@/store/volumeView";
 
 function mountComponent() {
   return shallowMount(Viewer, {});
@@ -150,5 +175,34 @@ describe("Viewer", () => {
     (wrapper.vm as any).shouldResetMaps = true;
     (wrapper.vm as any).handleResetComplete();
     expect((wrapper.vm as any).shouldResetMaps).toBe(false);
+  });
+});
+
+// The analysis gate refresh is hosted here rather than in AnnotationViewer
+// because ImageViewer — and with it AnnotationViewer — is unmounted entirely in
+// 3D mode. Hosted there, a dataset opened directly in 3D never resolved its
+// persisted gate, so a saved filter silently did not apply.
+describe("Viewer analysis gate refresh", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    volumeViewStore.viewMode = "2d";
+    filtersMock.state = reactive({ signature: "idle" });
+  });
+
+  it("refreshes on mount, so a gate hydrated before this view resolves", () => {
+    shallowMount(Viewer, {});
+    expect(filtersMock.refreshAnalysis).toHaveBeenCalledTimes(1);
+  });
+
+  it("still refreshes when the dataset opens in 3D volume mode", async () => {
+    volumeViewStore.viewMode = "3d";
+    const wrapper = shallowMount(Viewer, {});
+    expect(wrapper.findComponent({ name: "ImageViewer" }).exists()).toBe(false);
+    expect(filtersMock.refreshAnalysis).toHaveBeenCalledTimes(1);
+
+    // ...and keeps refreshing while in 3D, where AnnotationViewer is gone.
+    filtersMock.state.signature = "changed";
+    await flushPromises();
+    expect(filtersMock.refreshAnalysis).toHaveBeenCalledTimes(2);
   });
 });

@@ -226,6 +226,22 @@
             </template>
           </v-tooltip>
           <v-tooltip
+            text="Analysis: plot object properties against each other and lasso-select objects to keep"
+          >
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: analysisPanel }"
+                aria-label="Analysis plots"
+                @click.stop="togglePalette('analysisPanel')"
+              >
+                <v-icon size="18">mdi-chart-scatter-plot</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip
             text="Snapshots for bookmarking and downloading cropped regions in your dataset"
           >
             <template v-slot:activator="{ props: activatorProps }">
@@ -430,6 +446,18 @@
       <filters-panel />
     </floating-palette>
 
+    <floating-palette
+      v-model="analysisPanel"
+      title="Analysis"
+      :width="RIGHT_PALETTE_WIDTHS.analysis"
+    >
+      <!-- FloatingPalette keeps its content mounted and hides it with
+           display:none, so the panel needs the open state explicitly: without
+           it, its property-value fetch would run on every dataset open even for
+           users who never open the palette. -->
+      <analysis-panel :visible="analysisPanel" />
+    </floating-palette>
+
     <template v-if="store.dataset && routeName === 'datasetview'">
       <floating-palette
         ref="navigatorPaletteRef"
@@ -505,6 +533,7 @@ import Snapshots from "./components/Snapshots.vue";
 import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.vue";
 import DataIoMenu from "@/components/DataIOMenu.vue";
 import FiltersPanel from "@/components/FiltersPanel.vue";
+import AnalysisPanel from "@/components/AnalysisPanel.vue";
 import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
 import PipelineDialog from "@/components/PipelineDialog.vue";
 import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
@@ -552,6 +581,7 @@ void AnnotationsSettings;
 void Snapshots;
 void AnnotationBrowser;
 void FiltersPanel;
+void AnalysisPanel;
 void AnalyzeDialog;
 void PipelineDialog;
 void UndoRedoButtons;
@@ -575,6 +605,7 @@ const snapshotPanelFull = ref(false);
 const annotationPanel = ref(false);
 const settingsPanel = ref(false);
 const filtersPanel = ref(false);
+const analysisPanel = ref(false);
 const analyzePanel = ref(false);
 const aiPanelOpen = ref(false);
 
@@ -625,6 +656,7 @@ const rightEdgeClearance = computed(() =>
   rightEdgeClearX([
     { open: annotationPanel.value, width: RIGHT_PALETTE_WIDTHS.objectBrowser },
     { open: filtersPanel.value, width: RIGHT_PALETTE_WIDTHS.filters },
+    { open: analysisPanel.value, width: RIGHT_PALETTE_WIDTHS.analysis },
     { open: settingsPanel.value, width: RIGHT_PALETTE_WIDTHS.settings },
     { open: snapshotPanel.value, width: RIGHT_PALETTE_WIDTHS.snapshots },
     {
@@ -757,6 +789,7 @@ const helpPanelIsOpen = ref(false);
 type PaletteId =
   | "annotationPanel"
   | "filtersPanel"
+  | "analysisPanel"
   | "snapshotPanel"
   | "settingsPanel"
   | "navigatorPanel"
@@ -768,12 +801,15 @@ type PaletteZone = "left" | "right";
 interface PaletteRole {
   role: "primary" | "companion";
   zone: PaletteZone;
-  host?: PaletteId;
+  // Primaries a companion may share the column with. A companion evicts any
+  // primary NOT listed here.
+  hosts?: PaletteId[];
 }
 
 const paletteOpen: Record<PaletteId, Ref<boolean>> = {
   annotationPanel,
   filtersPanel,
+  analysisPanel,
   snapshotPanel,
   settingsPanel,
   navigatorPanel,
@@ -783,9 +819,17 @@ const paletteOpen: Record<PaletteId, Ref<boolean>> = {
 
 const paletteRoles: Record<PaletteId, PaletteRole> = {
   annotationPanel: { role: "primary", zone: "right" },
+  analysisPanel: { role: "primary", zone: "right" },
   snapshotPanel: { role: "primary", zone: "right" },
   settingsPanel: { role: "primary", zone: "right" },
-  filtersPanel: { role: "companion", zone: "right", host: "annotationPanel" },
+  // Filters hosts alongside both the Object Browser and the Analysis panel:
+  // the Analysis panel's own guidance above the cap is "narrow the filters",
+  // which would be self-defeating if opening Filters closed it.
+  filtersPanel: {
+    role: "companion",
+    zone: "right",
+    hosts: ["annotationPanel", "analysisPanel"],
+  },
   navigatorPanel: { role: "primary", zone: "left" },
   toolsPanel: { role: "primary", zone: "left" },
   layersPanel: { role: "primary", zone: "left" },
@@ -805,12 +849,18 @@ function openPalette(id: PaletteId) {
       const otherDef = paletteRoles[other];
       if (def.role === "primary") {
         // A new primary clears every other primary, plus any companion that
-        // isn't hosted by it.
-        if (otherDef.role === "primary" || otherDef.host !== id) {
+        // doesn't host with it.
+        if (
+          otherDef.role === "primary" ||
+          !(otherDef.hosts ?? []).includes(id)
+        ) {
           paletteOpen[other].value = false;
         }
-      } else if (otherDef.role === "primary" && other !== def.host) {
-        // A companion evicts any primary that isn't its host.
+      } else if (
+        otherDef.role === "primary" &&
+        !(def.hosts ?? []).includes(other)
+      ) {
+        // A companion evicts any primary that isn't one of its hosts.
         paletteOpen[other].value = false;
       }
     }

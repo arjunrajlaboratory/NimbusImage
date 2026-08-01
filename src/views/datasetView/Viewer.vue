@@ -15,6 +15,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
+import filterStore from "@/store/filters";
 import ImageViewer from "@/components/ImageViewer.vue";
 import VolumeViewer from "@/components/VolumeViewer.vue";
 import ToolSuggestions from "@/components/ToolSuggestions.vue";
@@ -37,6 +38,27 @@ const dataset = computed(() => store.dataset);
 const configuration = computed(() => store.configuration);
 // Read-only: the 2D/3D toggle lives in the top app bar (App.vue).
 const volumeViewMode = computed(() => volumeViewStore.viewMode);
+
+// Analysis gates are stored as polygons, so the annotation ids they contain
+// have to be resolved against the current dataset's property values.
+//
+// This lives HERE, not in AnnotationViewer, because this component is mounted
+// for the whole dataset view while ImageViewer (and with it AnnotationViewer)
+// is swapped out entirely in 3D mode. Hosted there, a dataset opened directly
+// in 3D never resolved its persisted gate, so a saved filter silently did not
+// apply. A gate is a filter: it must resolve in every view mode, and whether
+// or not the Analysis palette is open.
+//
+// The signature is cheap and short-circuits when there is no gate and nobody is
+// looking, so datasets without an analysis pay nothing. immediate: covers plots
+// hydrated before this view mounted.
+watch(
+  () => filterStore.analysisInputSignature,
+  () => {
+    filterStore.refreshAnalysis();
+  },
+  { immediate: true },
+);
 
 // Auto tool-suggestions need the user logged in (worker catalog) and the tool
 // templates loaded. Both load asynchronously at startup and can arrive after

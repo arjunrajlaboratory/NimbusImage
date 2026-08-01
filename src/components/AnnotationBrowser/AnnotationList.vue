@@ -934,13 +934,17 @@ watch(
       filterStore.tagFilter,
       filterStore.propertyFilters,
       filterStore.onlyCurrentFrame,
-      filterStore.selectionFilter,
-      filterStore.annotationIdFilters,
       propertyStore.displayedPropertyPaths,
       store.xy,
       store.z,
       store.time,
-    ]),
+    ]) +
+    // The id-membership filters and the analysis gates contribute SIGNATURES,
+    // never their id arrays: a select-all selection filter or a gate holds tens
+    // of thousands of ids, and this key re-evaluates on every frame scrub
+    // because it reads xy/z/time. See @/utils/signatures.
+    `|${filterStore.membershipFilterSignature}` +
+    `|${filterStore.analysisGateSignature}`,
   () => {
     if (!isServerMode.value) {
       return;
@@ -960,7 +964,8 @@ watch(
 // We key off currentFilters (the canonical query definition) so projection-only
 // changes (displayedPropertyPaths) and sort/page changes — none of which change
 // the matching set — don't drop the selection. We watch its JSON-serialized
-// value, NOT the object with { deep: true }: currentFilters is rebuilt as a new
+// SIGNATURE (see currentFiltersSignature — it excludes the potentially huge id
+// constraint arrays), NOT the object with { deep: true }: currentFilters is rebuilt as a new
 // object on every read and its getter reads the frame (xy/z/time)
 // unconditionally to assemble currentFrame, so main.z is a reactive dependency
 // even though the frame is only included in the output when onlyCurrentFrame is
@@ -970,7 +975,7 @@ watch(
 // the query content genuinely changes; stringify also traverses the object, so
 // nested filter changes are still tracked.
 watch(
-  () => JSON.stringify(annotationListServer.currentFilters),
+  () => annotationListServer.currentFiltersSignature,
   () => {
     if (!isServerMode.value) {
       return;

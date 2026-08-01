@@ -167,4 +167,35 @@ describe("buildListFilters", () => {
     });
     expect(filters.idConstraints).toBeUndefined();
   });
+
+  it("adds one AND constraint per analysis gate, not a union", () => {
+    const filters = buildListFilters({
+      tagFilter: { enabled: false, exclusive: false, tags: [] },
+      onlyCurrentFrame: false,
+      currentFrame: { XY: 0, Z: 0, Time: 0 },
+      idSubstring: "",
+      propertyFilters: [],
+      selectionFilter: disabledSelectionFilter,
+      annotationIdFilters: disabledAnnotationIdFilters,
+      // Only active gates reach here — the store's activeAnalysisGateIdLists
+      // has already dropped disabled and unresolved ones.
+      analysisGates: [["a", "b"], ["b"]],
+    });
+    // Two sets, NOT one unioned set: sequential gating is an AND.
+    expect(filters.idConstraints).toEqual([["a", "b"], ["b"]]);
+  });
+
+  it("omits idConstraints when there are no analysis gates", () => {
+    const filters = buildListFilters({
+      tagFilter: { enabled: false, exclusive: false, tags: [] },
+      onlyCurrentFrame: false,
+      currentFrame: { XY: 0, Z: 0, Time: 0 },
+      idSubstring: "",
+      propertyFilters: [],
+      selectionFilter: disabledSelectionFilter,
+      annotationIdFilters: disabledAnnotationIdFilters,
+      analysisGates: [],
+    });
+    expect(filters.idConstraints).toBeUndefined();
+  });
 });
