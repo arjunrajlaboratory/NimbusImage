@@ -376,13 +376,17 @@ const isDownloading = ref(false);
 
 const annotationScope = ref<"all" | "filtered" | "selected">("all");
 
-const allAnnotationCount = computed(() => annotationStore.annotations.length);
+// Counts and scopes read the stub-aware store members (annotationCount,
+// annotationsForIteration): in stub-only mode annotations[] is empty by
+// design, and deriving from it would silently turn a subset export into a
+// full export.
+const allAnnotationCount = computed(() => annotationStore.annotationCount);
 const filteredAnnotationCount = computed(() => props.annotations.length);
 const selectedAnnotationCount = computed(
   () => annotationStore.selectedAnnotationIds.size,
 );
 const hasActiveFilter = computed(
-  () => props.annotations.length < annotationStore.annotations.length,
+  () => props.annotations.length < annotationStore.annotationCount,
 );
 
 const exportScope = ref<"current" | "all">("current");
@@ -390,15 +394,15 @@ const bulkExporting = ref(false);
 const bulkExportProgress = ref(0);
 const bulkExportError = ref("");
 
-const annotationsToExport = computed(() => {
+const annotationsToExport = computed((): TAnnotationOrStub[] => {
   if (annotationScope.value === "selected") {
     const ids = annotationStore.selectedAnnotationIds;
-    return annotationStore.annotations.filter((a) => ids.has(a.id));
+    return annotationStore.annotationsForIteration.filter((a) => ids.has(a.id));
   }
   if (annotationScope.value === "filtered") {
     return props.annotations;
   }
-  return annotationStore.annotations;
+  return annotationStore.annotationsForIteration;
 });
 
 const { loadingDatasets, collectionDatasets, configuration, allDatasetsLabel } =
@@ -632,8 +636,7 @@ async function downloadSingleDataset() {
     // Only send annotationIds when exporting a subset, to avoid
     // exceeding MongoDB's 16MB BSON query size limit.
     const exportAnnotations = annotationsToExport.value;
-    const isSubset =
-      exportAnnotations.length < annotationStore.annotations.length;
+    const isSubset = exportAnnotations.length < annotationStore.annotationCount;
 
     await store.exportAPI.exportCsv({
       datasetId: store.dataset.id,

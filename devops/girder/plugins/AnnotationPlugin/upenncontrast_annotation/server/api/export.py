@@ -26,6 +26,10 @@ from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from ..models.datasetView import DatasetView as DatasetViewModel
 from ..helpers.serialization import orJsonDefaults
+from ..helpers.validation import (
+    requireObjectId,
+    validateAnnotationIdCount,
+)
 
 
 @dataclass
@@ -174,7 +178,7 @@ class Export(Resource):
         }
         """
         # Permission check - will raise RestException if access denied
-        datasetObjectId = ObjectId(datasetId)
+        datasetObjectId = requireObjectId(datasetId, "datasetId")
         Folder().load(
             datasetObjectId,
             user=self.getCurrentUser(),
@@ -182,7 +186,10 @@ class Export(Resource):
             exc=True
         )
 
-        configObjectId = ObjectId(configurationId) if configurationId else None
+        configObjectId = (
+            requireObjectId(configurationId, "configurationId")
+            if configurationId else None
+        )
 
         # Ensure filename ends with .json
         safe_filename = (
@@ -375,7 +382,7 @@ class Export(Resource):
         filename = body.get("filename", "export.csv")
 
         # Permission check
-        datasetObjectId = ObjectId(datasetId)
+        datasetObjectId = requireObjectId(datasetId, "datasetId")
         Folder().load(
             datasetObjectId,
             user=self.getCurrentUser(),
@@ -383,13 +390,21 @@ class Export(Resource):
             exc=True
         )
 
-        # Property paths are already parsed from JSON body
+        # The jsonParam schema guarantees shapes (lists of strings), but not
+        # that id strings are valid ObjectIds. Convert them all here at the
+        # API boundary: the CSV body is generated lazily while streaming, so
+        # an InvalidId raised there could not become a clean 400 anymore.
         parsedPropertyPaths = propertyPaths or []
+        for path in parsedPropertyPaths:
+            if path:
+                requireObjectId(path[0], "propertyPaths property id")
 
         parsedAnnotationIds = None
         if annotationIds is not None:
+            validateAnnotationIdCount(len(annotationIds))
             parsedAnnotationIds = [
-                ObjectId(aid) for aid in annotationIds
+                requireObjectId(aid, "annotationIds entry")
+                for aid in annotationIds
             ]
 
         # Validate delimiter
@@ -457,6 +472,11 @@ class Export(Resource):
             else:
                 headerRow.append(col.name)
         yield delimiter.join(headerRow) + '\n'
+
+        # An explicitly empty subset has no rows, so skip the dataset-wide
+        # property-values scan below entirely.
+        if parsedAnnotationIds is not None and not parsedAnnotationIds:
+            return
 
         # Load all property values for the dataset
         propertyValues = self._getPropertyValues(datasetObjectId)
