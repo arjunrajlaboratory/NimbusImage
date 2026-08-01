@@ -372,29 +372,20 @@ class Annotation(AccessControlMixin, ProxiedModel):
         cursor = self._aggregate(self.collection, pipeline)
         return [str(doc["_id"]) for doc in cursor]
 
-    def resolveAnalysisGates(self, datasetId, plots):
-        """Resolve each plot's gate polygon to matching annotation ids.
-
-        Each answer is the PURE per-annotation predicate over the whole
-        dataset — independent of every other plot and of any filter state
-        (SERVER_GATING.md, "a gate is a pure predicate"). Returns
-        {plotId: [id string, ...]}.
-
-        At most two projected scans regardless of plot count: one over the
+    def _analysisData(self, datasetId, axes):
+        """(docs, valuesById) for the analysis endpoints, from at most two
+        projected scans regardless of how many plots share them: one over the
         annotation collection (always — annotation docs anchor existence, so
         an orphaned property-value doc can never produce an id) and one over
         the property-values collection when any axis is a property axis.
         """
         propertyPaths = {}
         categoricalKeys = set()
-        for plot in plots:
-            for axis in (plot["xAxis"], plot["yAxis"]):
-                if axis["type"] == "property":
-                    propertyPaths[".".join(axis["path"])] = axis["path"]
-                else:
-                    categoricalKeys.add(axis["key"])
-        if not plots:
-            return {}
+        for axis in axes:
+            if axis["type"] == "property":
+                propertyPaths[".".join(axis["path"])] = axis["path"]
+            else:
+                categoricalKeys.add(axis["key"])
 
         fields = {"_id": 1}
         if "tags" in categoricalKeys:
@@ -430,11 +421,46 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 valuesById[str(doc["annotationId"])] = (
                     doc.get("values") or {}
                 )
+        return docs, valuesById
 
+    def resolveAnalysisGates(self, datasetId, plots):
+        """Resolve each plot's gate polygon to matching annotation ids.
+
+        Each answer is the PURE per-annotation predicate over the whole
+        dataset — independent of every other plot and of any filter state
+        (SERVER_GATING.md, "a gate is a pure predicate"). Returns
+        {plotId: [id string, ...]}.
+        """
+        if not plots:
+            return {}
+        axes = [
+            axis for plot in plots for axis in (plot["xAxis"], plot["yAxis"])
+        ]
+        docs, valuesById = self._analysisData(datasetId, axes)
         return {
             plot["id"]: analysis.resolve_gate_ids(docs, valuesById, plot)
             for plot in plots
         }
+
+    def analysisHistogram(self, datasetId, spec):
+        """Binned 2D counts for one plot, display only (SERVER_GATING.md,
+        Phase 2): the population is the dataset narrowed by the serializable
+        `filters` (the list-endpoint schema) and by the upstream plots'
+        gates, so the picture matches what reaches the plot.
+        """
+        axes = [spec["xAxis"], spec["yAxis"]]
+        for upstream in spec["upstreamGates"]:
+            axes += [upstream["xAxis"], upstream["yAxis"]]
+        docs, valuesById = self._analysisData(datasetId, axes)
+        if spec["filters"]:
+            passing = set(self.listIds(datasetId, spec["filters"]))
+            docs = [doc for doc in docs if doc["id"] in passing]
+        for upstream in spec["upstreamGates"]:
+            inside = set(
+                analysis.resolve_gate_ids(docs, valuesById, upstream)
+            )
+            docs = [doc for doc in docs if doc["id"] in inside]
+        return analysis.histogram2d(docs, valuesById, spec)
 
     def _centroidAddFields(self):
         return {"$addFields": {"centroid": {

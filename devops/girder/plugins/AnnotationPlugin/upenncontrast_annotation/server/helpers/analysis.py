@@ -180,6 +180,100 @@ def points_in_polygon(xs, ys, vertices):
     return inside
 
 
+def derive_axis_categories(docs, key, pinned):
+    """The display category order for one categorical axis.
+
+    Pinned order first (a gate's coordinate space), then categories present
+    in `docs` but unknown to it, appended in deterministic UTF-16 key order.
+    Appended categories are display-only — a gate never contains them.
+    """
+    known = list(pinned or [])
+    known_set = set(known)
+    present = set()
+    for doc in docs:
+        present.add(encode_category_key(categorical_raw_identity(doc, key)))
+    return known + sorted(present - known_set, key=utf16_sort_key)
+
+
+def _numeric_bin_spec(paired_coords, requested_bins):
+    """(bins, range) for a numeric axis over the paired-valid coordinates.
+
+    Degenerate cases collapse to one bin: no data (range is arbitrary) and a
+    single distinct value (min == max would make histogram2d divide by zero).
+    """
+    if len(paired_coords) == 0:
+        return 1, (0.0, 1.0)
+    low = float(paired_coords.min())
+    high = float(paired_coords.max())
+    if low == high:
+        return 1, (low - 0.5, high + 0.5)
+    return requested_bins, (low, high)
+
+
+def histogram2d(docs, values_by_id, spec):
+    """Binned 2D counts for one plot's population — display only.
+
+    `spec` carries xAxis/yAxis, optional pinned x/yCategories, clamped
+    bins {x, y}, and optionally the plot's own gate (for the chained badge
+    count). Rows of `counts` are y bins, columns are x bins.
+    """
+    x_axis, y_axis = spec["xAxis"], spec["yAxis"]
+    x_categories = (
+        derive_axis_categories(docs, x_axis["key"], spec.get("xCategories"))
+        if x_axis["type"] == "categorical"
+        else None
+    )
+    y_categories = (
+        derive_axis_categories(docs, y_axis["key"], spec.get("yCategories"))
+        if y_axis["type"] == "categorical"
+        else None
+    )
+    xs = axis_coordinates(
+        docs, values_by_id, x_axis, x_categories, X_JITTER_SALT
+    )
+    ys = axis_coordinates(
+        docs, values_by_id, y_axis, y_categories, Y_JITTER_SALT
+    )
+    valid = np.isfinite(xs) & np.isfinite(ys)
+    paired_x, paired_y = xs[valid], ys[valid]
+
+    if x_categories is not None:
+        x_bins = max(len(x_categories), 1)
+        x_range = (-0.5, x_bins - 0.5)
+    else:
+        x_bins, x_range = _numeric_bin_spec(paired_x, spec["bins"]["x"])
+    if y_categories is not None:
+        y_bins = max(len(y_categories), 1)
+        y_range = (-0.5, y_bins - 0.5)
+    else:
+        y_bins, y_range = _numeric_bin_spec(paired_y, spec["bins"]["y"])
+
+    counts, x_edges, y_edges = np.histogram2d(
+        paired_x, paired_y, bins=[x_bins, y_bins], range=[x_range, y_range]
+    )
+    response = {
+        # Transposed: numpy's first axis is x, plotly heatmap rows are y.
+        "counts": [[int(count) for count in row] for row in counts.T],
+        "xEdges": x_edges.tolist() if x_categories is None else None,
+        "yEdges": y_edges.tolist() if y_categories is None else None,
+        "xCategories": x_categories,
+        "yCategories": y_categories,
+        "inputCount": len(docs),
+        "plottedCount": int(valid.sum()),
+        "gateCount": None,
+    }
+    gate = spec.get("gate")
+    if gate is not None:
+        response["gateCount"] = len(
+            resolve_gate_ids(
+                docs,
+                values_by_id,
+                {"xAxis": x_axis, "yAxis": y_axis, "gate": gate},
+            )
+        )
+    return response
+
+
 def resolve_gate_ids(docs, values_by_id, plot):
     """Ids of the docs inside one plot's gate — the pure predicate.
 

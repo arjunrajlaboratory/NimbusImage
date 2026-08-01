@@ -20,6 +20,7 @@ from ..helpers.validation import (
     requireObjectBody,
     requireObjectId,
     validateAnalysisGatePlots,
+    validateAnalysisHistogramRequest,
     validateAnnotationIdCount,
     validateListInputs,
     validateUncomputedCountsProperties,
@@ -123,6 +124,9 @@ class Annotation(Resource):
         self.route("POST", ("list", "ids"), self.listAnnotationIds)
         self.route(
             "POST", ("analysis", "gate_ids"), self.analysisGateIds
+        )
+        self.route(
+            "POST", ("analysis", "histogram2d"), self.analysisHistogram2d
         )
         self.route("POST", ("uncomputed_counts",), self.uncomputedCounts)
 
@@ -619,6 +623,34 @@ class Annotation(Resource):
                 datasetId, plots
             )
         }
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Binned 2D counts for one analysis plot")
+        .notes(
+            "Display only: the population is the dataset narrowed by the "
+            "serializable list filters and the upstream plots' gates. Gate "
+            "RESOLUTION uses analysis/gate_ids, not this. See "
+            "codebaseDocumentation/SERVER_GATING.md."
+        )
+        .param(
+            "body",
+            "JSON: {datasetId, xAxis, yAxis, xCategories?, yCategories?, "
+            "bins, upstreamGates, filters, gate?}",
+            paramType="body",
+        )
+        .errorResponse()
+        .errorResponse("Read access denied.", 403)
+    )
+    def analysisHistogram2d(self, params):
+        bodyJson = requireObjectBody(self.getBodyJson())
+        datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetId, user=self.getCurrentUser(),
+            level=AccessType.READ, exc=True,
+        )
+        spec = validateAnalysisHistogramRequest(bodyJson)
+        return self._annotationModel.analysisHistogram(datasetId, spec)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(

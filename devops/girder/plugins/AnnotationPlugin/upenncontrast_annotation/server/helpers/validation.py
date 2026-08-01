@@ -28,6 +28,8 @@ MAX_ANNOTATION_IDS = 10_000_000
 MAX_ANALYSIS_PLOTS = 100
 MAX_GATE_VERTICES = 10_000
 MAX_GATE_CATEGORIES = 10_000
+# Histogram bin clamp per axis (512² cells ≈ a 1–2 MB response worst case).
+MAX_HISTOGRAM_BINS = 512
 
 # Upper clamp on the page size accepted by the public /list endpoint. This is
 # an abuse guard, not a tuning knob: it caps how many full annotation rows an
@@ -242,6 +244,35 @@ def _validateGateCategories(axis, categories, name):
     requireCountWithin(len(categories), MAX_GATE_CATEGORIES, name)
 
 
+def _validateGateObject(gate, xAxis, yAxis):
+    """One drawn gate: version, vertex polygon, pinned category orders."""
+    if not isinstance(gate, dict):
+        raise RestException("gate must be an object", code=400)
+    if gate.get("categoryKeyVersion") != ANALYSIS_CATEGORY_KEY_VERSION:
+        raise RestException(
+            "gate categoryKeyVersion must be %d"
+            % ANALYSIS_CATEGORY_KEY_VERSION,
+            code=400,
+        )
+    vertices = requireList(gate.get("vertices"), "gate vertices")
+    requireCountWithin(len(vertices), MAX_GATE_VERTICES, "gate vertices")
+    for vertex in vertices:
+        if (
+            not isinstance(vertex, dict)
+            or not _isFiniteNumber(vertex.get("x"))
+            or not _isFiniteNumber(vertex.get("y"))
+        ):
+            raise RestException(
+                "gate vertices must be {x, y} finite numbers", code=400
+            )
+    _validateGateCategories(
+        xAxis, gate.get("xCategories"), "gate.xCategories"
+    )
+    _validateGateCategories(
+        yAxis, gate.get("yCategories"), "gate.yCategories"
+    )
+
+
 def validateAnalysisGatePlots(plots):
     """Validate the `plots` payload of a gate-resolution request.
 
@@ -261,33 +292,54 @@ def validateAnalysisGatePlots(plots):
             )
         _validateAnalysisAxis(plot.get("xAxis"), "xAxis")
         _validateAnalysisAxis(plot.get("yAxis"), "yAxis")
-        gate = plot.get("gate")
-        if not isinstance(gate, dict):
-            raise RestException("each plot needs a 'gate' object", code=400)
-        if gate.get("categoryKeyVersion") != ANALYSIS_CATEGORY_KEY_VERSION:
-            raise RestException(
-                "gate categoryKeyVersion must be %d"
-                % ANALYSIS_CATEGORY_KEY_VERSION,
-                code=400,
-            )
-        vertices = requireList(gate.get("vertices"), "gate vertices")
-        requireCountWithin(len(vertices), MAX_GATE_VERTICES, "gate vertices")
-        for vertex in vertices:
-            if (
-                not isinstance(vertex, dict)
-                or not _isFiniteNumber(vertex.get("x"))
-                or not _isFiniteNumber(vertex.get("y"))
-            ):
-                raise RestException(
-                    "gate vertices must be {x, y} finite numbers", code=400
-                )
-        _validateGateCategories(
-            plot["xAxis"], gate.get("xCategories"), "gate.xCategories"
-        )
-        _validateGateCategories(
-            plot["yAxis"], gate.get("yCategories"), "gate.yCategories"
-        )
+        _validateGateObject(plot.get("gate"), plot["xAxis"], plot["yAxis"])
     return plots
+
+
+def validateAnalysisHistogramRequest(body):
+    """Validate a histogram2d request body in place; returns the body.
+
+    Unlike a gate's pinned categories, the request-level display categories
+    may be null for a categorical axis — the server derives them for a
+    gateless plot. `bins` values are CLAMPED to [1, MAX_HISTOGRAM_BINS]
+    rather than rejected (mirroring MAX_LIST_LIMIT); non-integers still 400.
+    """
+    xAxis = body.get("xAxis")
+    yAxis = body.get("yAxis")
+    _validateAnalysisAxis(xAxis, "xAxis")
+    _validateAnalysisAxis(yAxis, "yAxis")
+    for name, axis in (("xCategories", xAxis), ("yCategories", yAxis)):
+        categories = body.get(name)
+        if categories is not None:
+            _validateGateCategories(axis, categories, name)
+    bins = body.get("bins")
+    if not isinstance(bins, dict):
+        raise RestException("bins must be an object", code=400)
+    body["bins"] = {
+        key: min(MAX_HISTOGRAM_BINS, max(1, requireInt(
+            bins.get(key), "bins.%s" % key
+        )))
+        for key in ("x", "y")
+    }
+    upstream = requireList(body.get("upstreamGates", []), "upstreamGates")
+    requireCountWithin(len(upstream), MAX_ANALYSIS_PLOTS, "upstreamGates")
+    for gatePlot in upstream:
+        if not isinstance(gatePlot, dict):
+            raise RestException(
+                "each upstream gate must be an object", code=400
+            )
+        _validateAnalysisAxis(gatePlot.get("xAxis"), "upstream xAxis")
+        _validateAnalysisAxis(gatePlot.get("yAxis"), "upstream yAxis")
+        _validateGateObject(
+            gatePlot.get("gate"), gatePlot["xAxis"], gatePlot["yAxis"]
+        )
+    if body.get("gate") is not None:
+        _validateGateObject(body["gate"], xAxis, yAxis)
+    filters = body.get("filters") or {}
+    validateListInputs(filters)
+    dropNoOpPropertyFilters(filters)
+    body["filters"] = filters
+    return body
 
 
 def validateListInputs(filters, sort=None, propertyPaths=None):

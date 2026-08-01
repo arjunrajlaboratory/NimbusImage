@@ -543,3 +543,241 @@ class TestAnalysisGateIdsEndpoint:
             },
         )
         assertStatus(resp, 400)
+
+
+# --- Endpoint: POST /upenn_annotation/analysis/histogram2d ---
+
+
+def histogramBody(datasetId, **overrides):
+    body = {
+        "datasetId": str(datasetId),
+        "xAxis": {"type": "property", "path": ["p", "Area"]},
+        "yAxis": {"type": "property", "path": ["p", "Mean"]},
+        "xCategories": None,
+        "yCategories": None,
+        "bins": {"x": 2, "y": 2},
+        "upstreamGates": [],
+        "filters": {},
+        "gate": None,
+    }
+    body.update(overrides)
+    return body
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestAnalysisHistogramEndpoint:
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        anns = []
+        # Four quadrants of the (Area, Mean) plane in [0,10]²: one point per
+        # quadrant, plus one annotation with no values at all.
+        for area, mean, tags in (
+            (1, 1, ["low"]),
+            (9, 1, ["high"]),
+            (1, 9, ["low"]),
+            (9, 9, ["high"]),
+        ):
+            a = makeAnnotation(folder["_id"], tags=tags)
+            pv.appendValues(
+                {"p": {"Area": area, "Mean": mean}}, a["_id"], folder["_id"]
+            )
+            anns.append(a)
+        noValues = makeAnnotation(folder["_id"], tags=["low"])
+        return folder, anns, noValues
+
+    def testNumericHistogramBinsAndCounts(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"]),
+        )
+        assertStatusOk(resp)
+        result = resp.json
+        assert result["inputCount"] == 5
+        assert result["plottedCount"] == 4
+        assert len(result["xEdges"]) == 3
+        assert len(result["yEdges"]) == 3
+        assert result["xCategories"] is None
+        # counts rows are y bins, columns are x bins; one point per cell.
+        assert result["counts"] == [[1, 1], [1, 1]]
+        assert result["gateCount"] is None
+
+    def testCategoricalAxisBinsPerCategory(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        lowKey = analysis.encode_category_key(["low"])
+        highKey = analysis.encode_category_key(["high"])
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                xAxis={"type": "categorical", "key": "tags"},
+                xCategories=[lowKey, highKey],
+                bins={"x": 7, "y": 1},
+            ),
+        )
+        assertStatusOk(resp)
+        result = resp.json
+        # A categorical axis bins one category per index, ignoring bins.x.
+        assert result["xCategories"] == [lowKey, highKey]
+        assert result["xEdges"] is None
+        # Rows = the single y bin; columns = categories. The no-values
+        # annotation is plottable on tags x but not on Mean y.
+        assert result["counts"] == [[2, 2]]
+        assert result["inputCount"] == 5
+        assert result["plottedCount"] == 4
+
+    def testUnknownCategoriesAppendSortedByKey(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        lowKey = analysis.encode_category_key(["low"])
+        highKey = analysis.encode_category_key(["high"])
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                xAxis={"type": "categorical", "key": "tags"},
+                xCategories=[lowKey],
+                bins={"x": 1, "y": 1},
+            ),
+        )
+        assertStatusOk(resp)
+        # Pinned first, then unknowns in deterministic (key) order.
+        assert resp.json["xCategories"] == [lowKey, highKey]
+
+    def testUpstreamGatesNarrowTheInput(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        # Upstream gate keeps only Area < 5 (the two "low x" quadrants).
+        leftHalf = {
+            "xAxis": {"type": "property", "path": ["p", "Area"]},
+            "yAxis": {"type": "property", "path": ["p", "Mean"]},
+            "gate": {
+                "categoryKeyVersion": 1,
+                "vertices": [
+                    {"x": 0, "y": 0}, {"x": 5, "y": 0},
+                    {"x": 5, "y": 10}, {"x": 0, "y": 10},
+                ],
+                "xCategories": None,
+                "yCategories": None,
+            },
+        }
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], upstreamGates=[leftHalf]),
+        )
+        assertStatusOk(resp)
+        assert resp.json["inputCount"] == 2
+        assert resp.json["plottedCount"] == 2
+
+    def testFiltersNarrowTheInput(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                filters={"tags": {"values": ["high"], "exclusive": False}},
+            ),
+        )
+        assertStatusOk(resp)
+        assert resp.json["inputCount"] == 2
+
+    def testOwnGateCountUsesChainedInput(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        ownGate = {
+            "categoryKeyVersion": 1,
+            "vertices": [
+                {"x": 0, "y": 0}, {"x": 5, "y": 0},
+                {"x": 5, "y": 10}, {"x": 0, "y": 10},
+            ],
+            "xCategories": None,
+            "yCategories": None,
+        }
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                gate=ownGate,
+                filters={"tags": {"values": ["low"], "exclusive": False}},
+            ),
+        )
+        assertStatusOk(resp)
+        # Filters keep the two valued "low" annotations (plus the no-values
+        # one); the gate keeps the two with Area < 5.
+        assert resp.json["inputCount"] == 3
+        assert resp.json["gateCount"] == 2
+
+    def testDegenerateNumericRangeIsASingleBin(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "flat", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        for _ in range(3):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues(
+                {"p": {"Area": 7, "Mean": 7}}, a["_id"], folder["_id"]
+            )
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], bins={"x": 128, "y": 128}),
+        )
+        assertStatusOk(resp)
+        assert resp.json["counts"] == [[3]]
+        assert len(resp.json["xEdges"]) == 2
+
+    def testEmptyPopulationIsARealAnswer(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "empty", upenn_utilities.datasetMetadata
+        )
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], bins={"x": 2, "y": 2}),
+        )
+        assertStatusOk(resp)
+        assert resp.json["inputCount"] == 0
+        assert resp.json["plottedCount"] == 0
+        assert sum(sum(row) for row in resp.json["counts"]) == 0
+
+    def testBinsAreClamped(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], bins={"x": 100000, "y": 1}),
+        )
+        assertStatusOk(resp)
+        assert len(resp.json["xEdges"]) - 1 <= 512
+
+    def testRequiresReadAccess(self, admin, user, server):
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        resp = postJson(
+            server, user, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"]),
+        )
+        assertStatus(resp, 403)
+
+    @pytest.mark.parametrize("mutate", [
+        lambda b: b.update(xAxis={"type": "nope"}),
+        lambda b: b.update(bins="many"),
+        lambda b: b.update(bins={"x": "many", "y": 1}),
+        lambda b: b.update(xCategories=["k"]),
+        lambda b: b.update(upstreamGates={"gate": None}),
+        lambda b: b.update(filters={"idConstraints": [[]]}),
+        lambda b: b.update(gate={"vertices": "nope"}),
+        # Display categories may be null (the server derives them for a
+        # gateless categorical plot) but never a non-list value.
+        lambda b: b.update(
+            xAxis={"type": "categorical", "key": "tags"},
+            xCategories=42,
+        ),
+    ])
+    def testMalformedRequestIs400Not500(self, admin, server, mutate):
+        folder, _, _ = self._setup(admin)
+        body = histogramBody(folder["_id"])
+        mutate(body)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d", body,
+        )
+        assertStatus(resp, 400)
