@@ -564,16 +564,20 @@ export class Filters extends VuexModule {
   // A cheap identity for the gate constraints, same reasoning. Every id is
   // hashed, not just counted or sampled: moving a lasso to a different region
   // with the same number of objects has to register, or the server-mode list
-  // keeps the previous gate's rows.
+  // keeps the previous gate's rows. Display-only plots are omitted because
+  // they do not change the list query and must not schedule a server refetch.
   get analysisGateSignature(): string {
-    return this.analysisPlots
-      .map((plot) => {
+    return this.analysisPlots.reduce<string>((signature, plot) => {
+      if (plot.gateEnabled && plot.gate !== null) {
         const ids = this.analysisGateIds[plot.id];
-        return `${plot.id}:${plot.gateEnabled}:${
-          ids ? idListSignature(ids) : "-"
-        }`;
-      })
-      .join("|");
+        if (ids !== undefined) {
+          return `${signature}${signature ? "|" : ""}${
+            plot.id
+          }:${idListSignature(ids)}`;
+        }
+      }
+      return signature;
+    }, "");
   }
 
   // An allocation-free exact identity for the population the analysis panel
@@ -677,10 +681,8 @@ export class Filters extends VuexModule {
     const token = analysisGateGuard.next();
     const datasetId = main.dataset?.id;
     const plots = this.analysisPlots;
-    const { gatedPlots, paths } = analysisRefreshScope(
-      plots,
-      this.analysisPanelOpen,
-    );
+    const panelOpen = this.analysisPanelOpen;
+    const { gatedPlots, paths } = analysisRefreshScope(plots, panelOpen);
     if (!datasetId || (gatedPlots.length === 0 && paths.length === 0)) {
       this.clearAnalysisDerivedState();
       return;
@@ -742,8 +744,14 @@ export class Filters extends VuexModule {
           gatedPathKeys.every((path) => cachedPaths.has(path))));
     const commitGateResolution = (gateValues: IAnnotationPropertyValues) => {
       this.setAnalysisGateIds(
-        resolveAnalysisGateIds(plots, base, gateValues, (channel) =>
-          channelDisplayName(channel),
+        resolveAnalysisGateIds(
+          // Disabled gates are display-only. While hidden, omitting them avoids
+          // resolving against the narrower value projection requested for the
+          // enabled gates; opening the panel widens both paths and resolution.
+          panelOpen ? plots : gatedPlots,
+          base,
+          gateValues,
+          (channel) => channelDisplayName(channel),
         ),
       );
       this.setAnalysisGateDataSignature(gateDataSignature);
@@ -1114,7 +1122,12 @@ function analysisRefreshScope(plots: IAnalysisPlot[], panelOpen: boolean) {
   const readyPlots = plots.filter(
     (plot) => plot.xAxis !== null && plot.yAxis !== null,
   );
-  const gatedPlots = readyPlots.filter((plot) => plot.gate !== null);
+  // A disabled gate is display-only until it is re-enabled. While hidden it
+  // must cost the same as an ungated plot; opening the panel widens `paths` to
+  // every ready plot, and re-enabling makes it active here again.
+  const gatedPlots = readyPlots.filter(
+    (plot) => plot.gate !== null && plot.gateEnabled,
+  );
   return {
     gatedPlots,
     paths: analysisPropertyPaths(panelOpen ? readyPlots : gatedPlots),

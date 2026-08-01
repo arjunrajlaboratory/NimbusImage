@@ -102,8 +102,11 @@ the result as `filters.analysisValues` for the panel to draw from. The panel
 briefly had its own copy; that meant two fetches over the same population — up
 to `MAX_ANALYSIS_PLOT_POINTS` ids — on exactly the path the feature exists for.
 
-While hidden it fetches only the property paths belonging to plots with gates;
-ungated plots are display-only and must cost nothing. Opening the panel may
+While hidden it fetches only the property paths belonging to **enabled** plots
+with gates; ungated and disabled plots are display-only and must cost nothing.
+The hidden resolver walks that same enabled subset, so it cannot manufacture a
+bogus empty id list for a disabled gate from a narrower value projection.
+Opening the panel may
 widen that set to the paths needed to draw every ready plot. The retained values
 are keyed by dataset, exact population, property revision, and fetched path set,
 so a cached superset is reused across palette toggles instead of posting the
@@ -324,6 +327,8 @@ Change any of this and re-check these. Each item names the test that holds it.
 **Fetch scope — owned by the store (`src/store/__tests__/filters.test.ts`)**
 - An ungated plot costs nothing while the panel is closed — *"does not fetch for an ungated plot while the panel is closed"*
 - A gated plot resolves with the panel closed, because a gate is a filter — *"fetches for a gated plot even with the panel closed"*
+- A disabled gate is display-only while hidden, then wakes the refresh when it
+  is re-enabled — *"does not fetch for a disabled gate while the panel is closed"*
 - Opening the panel fetches for ungated plots so they can be drawn — *"fetches for an ungated plot once the panel opens"*
 - Only the axes' paths are requested, projected — *"requests only the axes' property paths, projected"*
 - While hidden, only gated plots contribute requested paths; an ungated property
@@ -331,6 +336,9 @@ Change any of this and re-check these. Each item names the test that holds it.
   paths while the panel is closed"*, *"does not fetch hidden ungated paths for
   a categorical-only gate"*
 - A categorical-only gate resolves with no fetch at all — *"resolves a categorical-only gate without fetching anything"*
+- Another enabled gate's hidden refresh neither fetches paths nor publishes ids
+  for a disabled gate — *"does not resolve a disabled gate during another hidden
+  gate's refresh"*
 - A failed value fetch preserves ids only when their gate inputs are unchanged;
   changing the base population drops them before the request — *"leaves gate
   ids untouched when the value fetch fails"*, *"drops gate ids before a
@@ -350,7 +358,9 @@ Change any of this and re-check these. Each item names the test that holds it.
   from retained same-input values without another request — *"drops previous
   ids on re-lasso and resolves from retained values"*
 - The gate signature hashes every id rather than counting or sampling them, so
-  a same-size gate edit registers — *"hashes every gate id in the signature"*
+  a same-size gate edit registers, while display-only plots do not refetch the
+  server list — *"hashes every gate id in the signature"*, *"omits disabled and
+  ungated plots from the server-list signature"*
 - Loading is tracked explicitly, so an empty result is not mistaken for pending — *"tracks loading explicitly so an empty result is not mistaken for pending"*, *"clears the loading flag when it bails out early"*
 
 **Gate composition (`src/store/filters.test.ts`)**
@@ -453,10 +463,10 @@ Change any of this and re-check these. Each item names the test that holds it.
 
 Delivered on branch `analysis-panel-scatter-gating`, PR
 [#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), through
-the round-8 category-schema fix described below (the feature, eight
+the round-9 hidden-disabled-gate fix described below (the feature, nine
 Codex-fix rounds, documentation, and the export split). **Not merged.**
 
-Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,411 frontend
+Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,414 frontend
 tests.
 There are no backend changes in #1298. The general CSV endpoint correction and
 its backend tests live in prerequisite #1299.
@@ -609,6 +619,28 @@ Codex reviewed `24989764` and found one migration namespace collision:
    property-only gate to the current key version"* holds that compatibility
    boundary.
 
+### Round 9 Codex review tracker
+
+Codex reviewed `8dee5367` and found one hidden-mode cost leak:
+
+1. **P2 — disabled gates still wake hidden refreshes**
+   (`src/store/filters.ts`). A persisted property gate with
+   `gateEnabled: false` remained in `gatedPlots`, so loading a dataset fetched
+   up to 50,000 property rows even though the gate neither filtered nor needed
+   display data. **Status: fixed in this round.** Hidden refresh scope now
+   contains only enabled gates; re-enabling the gate or opening the panel widens
+   the signature and fetches when needed. Regression: *"does not fetch for a
+   disabled gate while the panel is closed"*.
+
+The branch-wide sweep found two siblings. Hidden resolution now walks the same
+enabled subset, rather than resolving a disabled property gate from another
+gate's narrower projection and publishing a bogus empty id list. The
+server-list signature likewise includes only enabled, resolved constraints, so
+display-only plot edits do not reset page 1 and schedule a list refetch.
+Regressions: *"does not resolve a disabled gate during another hidden gate's
+refresh"* and *"omits disabled and ungated plots from the server-list
+signature"*.
+
 ### What is verified live vs by test only
 
 Verified in a running browser: the full gating flow including a real lasso drag
@@ -669,9 +701,19 @@ hard reload, and re-resolved to the same population. The temporary plot was
 removed; a second hard reload confirmed zero plots and 26,142 of 26,142 objects,
 with no browser warnings or errors.
 
+The round-9 disabled-state fix was checked with a TotalIntensity × Shape box
+gate over HCR squares. The 6,365-object gate was disabled and persisted; after a
+hard reload with Analysis closed, the viewer remained unfiltered at 26,142 of
+26,142 objects. Opening Analysis restored the disabled plot, and re-enabling it
+reapplied the same 6,365-object population. The temporary plot was removed, and
+a final hard reload confirmed zero persisted plots and the full population.
+The exact hidden no-request boundary and the mixed enabled/disabled projection
+are pinned by the store regressions, where request count and requested paths
+are directly observable.
+
 ### Review history, and what it suggests
 
-Nearly every finding across eight Codex rounds plus the cold follow-up review was
+Nearly every finding across nine Codex rounds plus the cold follow-up reviews was
 real. Most of the later ones were consequences of *earlier fixes* rather than
 of the original feature — the gate-replacement bug
 only became permanent because of the failed-fetch fix; the `fetchMatchingIds`
@@ -680,7 +722,7 @@ overlap came from fixing eviction without fixing layout. The feature core has
 been stable since round 1, but the seams now have regression coverage for the
 failure shapes that kept recurring.
 
-The post-round-8 cold branch review found no additional actionable findings.
+The post-round-9 cold branch review found no additional actionable findings.
 
 ## Possible follow-ups
 

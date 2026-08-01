@@ -250,6 +250,54 @@ describe("filters.refreshAnalysis", () => {
     expect(getValues).toHaveBeenCalledTimes(1);
   });
 
+  it("does not fetch for a disabled gate while the panel is closed", async () => {
+    // A persisted disabled gate is display-only until it is re-enabled. It must
+    // not wake the Viewer watcher and fetch a 50k-row property population on
+    // every dataset load while the Analysis palette is hidden.
+    await addPlot("p1", GATE);
+    await filters.toggleAnalysisPlotGateEnabled("p1");
+
+    expect(filters.analysisInputSignature).toBe("idle");
+    await filters.refreshAnalysis();
+
+    expect(getValues).not.toHaveBeenCalled();
+
+    await filters.toggleAnalysisPlotGateEnabled("p1");
+    expect(filters.analysisInputSignature).not.toBe("idle");
+    await filters.refreshAnalysis();
+    expect(getValues).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resolve a disabled gate during another hidden gate's refresh", async () => {
+    // Once disabled paths are omitted, resolving that plot from the enabled
+    // gate's narrower value projection would publish a bogus empty id list.
+    // Re-enabling would then briefly filter everything until its own fetch won.
+    await addPlot("disabled", GATE);
+    await filters.toggleAnalysisPlotGateEnabled("disabled");
+    await filters.addAnalysisPlot("active");
+    await filters.setAnalysisPlotAxes({
+      id: "active",
+      xAxis: OTHER_AXIS,
+      yAxis: OTHER_AXIS,
+    });
+    await filters.setAnalysisPlotGate({ id: "active", gate: GATE });
+    getValues.mockResolvedValue([
+      { annotationId: "a", values: { other: { Intensity: 5 } } },
+    ]);
+
+    await filters.refreshAnalysis();
+
+    expect(getValues).toHaveBeenCalledTimes(1);
+    const [, , paths] = getValues.mock.calls[0] as unknown as [
+      string,
+      string[],
+      string[][],
+    ];
+    expect(paths).toEqual([["other", "Intensity"]]);
+    expect(filters.analysisGateIds.disabled).toBeUndefined();
+    expect(filters.analysisGateIds.active).toEqual(["a"]);
+  });
+
   it("fetches for an ungated plot once the panel opens", async () => {
     await addPlot("p1");
     filters.setAnalysisPanelOpen(true);
@@ -560,6 +608,20 @@ describe("filters.refreshAnalysis", () => {
     const before = filters.analysisGateSignature;
     filters.setAnalysisGateIds({ p1: ["c", "d"] });
     expect(filters.analysisGateSignature).not.toBe(before);
+  });
+
+  it("omits disabled and ungated plots from the server-list signature", async () => {
+    // Only resolved constraints change the list query. Display-only plot edits
+    // must not reset page 1 and schedule another server request.
+    await addPlot("disabled", GATE);
+    filters.setAnalysisGateIds({ disabled: ["a"] });
+    await filters.toggleAnalysisPlotGateEnabled("disabled");
+    const displayOnlySignature = filters.analysisGateSignature;
+
+    filters.setAnalysisGateIds({ disabled: ["b"] });
+    await addPlot("ungated");
+
+    expect(filters.analysisGateSignature).toBe(displayOnlySignature);
   });
 
   it("tracks loading explicitly so an empty result is not mistaken for pending", async () => {
