@@ -1,4 +1,7 @@
+import json
+
 import pytest
+from pytest_girder.assertions import assertStatusOk
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models.connections import (
@@ -148,6 +151,52 @@ class TestExport:
         ann1_id = str(annotations[0]["_id"])
         assert ann1_id in result["annotationPropertyValues"]
         assert "test_property" in result["annotationPropertyValues"][ann1_id]
+
+    def testIterAnnotationsDistinguishesNoneFromEmpty(self, admin):
+        """An omitted ID filter exports all; an empty subset exports none."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+        export = Export()
+
+        assert len(list(export._iterAnnotations(dataset["_id"], None))) == 2
+
+        picked = [annotations[0]["_id"]]
+        assert [
+            annotation["_id"]
+            for annotation in export._iterAnnotations(
+                dataset["_id"], picked
+            )
+        ] == picked
+
+        assert list(export._iterAnnotations(dataset["_id"], [])) == []
+
+    def testExportCsvPreservesExactAnnotationSubset(
+        self, admin, server
+    ):
+        """The endpoint distinguishes all, one, and no annotations."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+        baseBody = {
+            "datasetId": str(dataset["_id"]),
+            "propertyPaths": [],
+        }
+
+        def exportLines(annotationIds="omitted"):
+            body = baseBody.copy()
+            if annotationIds != "omitted":
+                body["annotationIds"] = annotationIds
+            response = server.request(
+                path="/export/csv",
+                method="POST",
+                user=admin,
+                body=json.dumps(body),
+                type="application/json",
+                isJson=False,
+            )
+            assertStatusOk(response)
+            return b"".join(response.body).decode().splitlines()
+
+        assert len(exportLines()) == 3
+        assert len(exportLines([str(annotations[0]["_id"])])) == 2
+        assert len(exportLines([])) == 1
 
     def testExportJsonWithConfiguration(self, admin):
         """Test export with a specific configuration."""

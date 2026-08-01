@@ -319,7 +319,10 @@ class Export(Resource):
                     },
                     "annotationIds": {
                         "type": "array",
-                        "description": "Array of annotation IDs to filter",
+                        "description": (
+                            "Annotation IDs to export. Omit for all "
+                            "annotations; an empty array exports none."
+                        ),
                         "items": {"type": "string"}
                     },
                     "undefinedValue": {
@@ -384,7 +387,7 @@ class Export(Resource):
         parsedPropertyPaths = propertyPaths or []
 
         parsedAnnotationIds = None
-        if annotationIds:
+        if annotationIds is not None:
             parsedAnnotationIds = [
                 ObjectId(aid) for aid in annotationIds
             ]
@@ -543,10 +546,12 @@ class Export(Resource):
         return columns, includedPaths
 
     def _iterAnnotations(self, datasetId, annotationIds):
-        """Iterate annotations, chunking $in queries to stay under limit."""
-        if not annotationIds:
+        """Iterate annotations, preserving an explicitly empty subset."""
+        if annotationIds is None:
             for ann in self._annotationModel.find({"datasetId": datasetId}):
                 yield ann
+            return
+        if not annotationIds:
             return
 
         IN_CHUNK_SIZE = 500000
