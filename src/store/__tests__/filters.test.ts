@@ -483,6 +483,53 @@ describe("filters.refreshAnalysis", () => {
     expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["b"]);
   });
 
+  it("still resolves a visible disabled categorical gate after a display fetch fails", async () => {
+    // Visible disabled gates have no filtering signature, but their count and
+    // highlight are still derived UI state. A categorical gate needs no cache,
+    // so an unrelated property request failure must not block that work.
+    annotationMock.annotationsForIteration = [
+      { ...makeStub("a"), tags: ["keep"], shape: "point" },
+      { ...makeStub("b"), tags: ["drop"], shape: "point" },
+    ];
+    await filters.addAnalysisPlot("disabled");
+    await filters.setAnalysisPlotAxes({
+      id: "disabled",
+      xAxis: { type: "categorical", key: "tags" },
+      yAxis: { type: "categorical", key: "shape" },
+    });
+    await filters.setAnalysisPlotGate({
+      id: "disabled",
+      gate: {
+        categoryKeyVersion: 1,
+        vertices: [
+          { x: -0.5, y: -0.5 },
+          { x: 0.5, y: -0.5 },
+          { x: 0.5, y: 0.5 },
+          { x: -0.5, y: 0.5 },
+        ],
+        xCategories: [
+          encodeAnalysisCategoryKey(["drop"]),
+          encodeAnalysisCategoryKey(["keep"]),
+        ],
+        yCategories: [encodeAnalysisCategoryKey("point")],
+      },
+    });
+    await filters.toggleAnalysisPlotGateEnabled("disabled");
+    await filters.addAnalysisPlot("display-only");
+    await filters.setAnalysisPlotAxes({
+      id: "display-only",
+      xAxis: OTHER_AXIS,
+      yAxis: OTHER_AXIS,
+    });
+    filters.setAnalysisPanelOpen(true);
+    getValues.mockRejectedValueOnce(new Error("network"));
+
+    await filters.refreshAnalysis();
+
+    expect(filters.analysisGateIds.disabled).toEqual(["b"]);
+    expect(filters.filteredAnnotations).toHaveLength(2);
+  });
+
   it("uses cached gate paths when a widened display fetch fails", async () => {
     getValues.mockResolvedValue([
       { annotationId: "a", values: { prop: { Area: 5 } } },
@@ -508,6 +555,36 @@ describe("filters.refreshAnalysis", () => {
     await filters.refreshAnalysis();
 
     expect(filters.analysisGateIds.gated).toEqual(["a"]);
+    expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["a"]);
+  });
+
+  it("does not resolve a visible disabled gate from missing retained paths", async () => {
+    // The enabled gate's values are retained from hidden mode. Opening the
+    // panel widens the request to a disabled gate on another property; if that
+    // request fails, the fallback may still resolve the enabled gate, but it
+    // must not publish [] for the disabled gate from a map lacking its path.
+    getValues.mockResolvedValueOnce([
+      { annotationId: "a", values: { prop: { Area: 5 } } },
+    ]);
+    await addPlot("active", GATE);
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds.active).toEqual(["a"]);
+
+    await filters.addAnalysisPlot("disabled");
+    await filters.setAnalysisPlotAxes({
+      id: "disabled",
+      xAxis: OTHER_AXIS,
+      yAxis: OTHER_AXIS,
+    });
+    await filters.setAnalysisPlotGate({ id: "disabled", gate: GATE });
+    await filters.toggleAnalysisPlotGateEnabled("disabled");
+    filters.setAnalysisPanelOpen(true);
+    getValues.mockRejectedValueOnce(new Error("network"));
+
+    await filters.refreshAnalysis();
+
+    expect(filters.analysisGateIds.active).toEqual(["a"]);
+    expect(filters.analysisGateIds.disabled).toBeUndefined();
     expect(filters.filteredAnnotations.map((x: any) => x.id)).toEqual(["a"]);
   });
 
@@ -583,6 +660,26 @@ describe("filters.refreshAnalysis", () => {
     );
     await addPlot("p1", GATE);
     await filters.refreshAnalysis();
+    expect(getValues).not.toHaveBeenCalled();
+    expect(filters.analysisGateIds).toEqual({});
+  });
+
+  it("stops collecting an over-cap population before hashing its tail", async () => {
+    const untouched = makeStub("must-not-touch");
+    Object.defineProperty(untouched, "id", {
+      get() {
+        throw new Error("walked past the analysis point cap");
+      },
+    });
+    annotationMock.annotationsForIteration = [
+      ...Array.from({ length: 50001 }, (_, i) => makeStub(`id-${i}`)),
+      untouched,
+    ];
+    await addPlot("p1", GATE);
+
+    expect(filters.analysisInputSignature).toBe("over-cap");
+    await expect(filters.refreshAnalysis()).resolves.toBeUndefined();
+
     expect(getValues).not.toHaveBeenCalled();
     expect(filters.analysisGateIds).toEqual({});
   });

@@ -9,10 +9,10 @@
 
     <div v-if="overCap" class="analysis-overcap">
       <v-icon size="16" class="mr-1">mdi-information-outline</v-icon>
-      {{ baseCount.toLocaleString() }} objects pass the current filters — more
-      than the {{ MAX_ANALYSIS_PLOT_POINTS.toLocaleString() }} a scatter plot
-      can gate exactly. Narrow the filters (by tag, property range, or region)
-      and the plots will appear here.
+      More than {{ MAX_ANALYSIS_PLOT_POINTS.toLocaleString() }} objects pass the
+      current filters — too many for a scatter plot to gate exactly. Narrow the
+      filters (by tag, property range, or region) and the plots will appear
+      here.
     </div>
 
     <template v-else>
@@ -78,9 +78,11 @@ const props = defineProps<{ visible: boolean }>();
 const plots = computed(() => filterStore.analysisPlots);
 const gateIds = computed(() => filterStore.analysisGateIds);
 
-const baseCount = computed(
-  () => filterStore.annotationsPassingNonGateFilters.length,
-);
+// Bounded at cap + 1. The panel only needs to know whether the cap was crossed;
+// collecting and retaining the remaining hundreds of thousands of rows would
+// defeat the guard before any plot or gate has a chance to bail out.
+const analysisPopulation = computed(() => filterStore.analysisPopulation);
+const baseCount = computed(() => analysisPopulation.value.length);
 const overCap = computed(() => baseCount.value > MAX_ANALYSIS_PLOT_POINTS);
 
 // Values come from the store, which owns the single fetch: it must resolve
@@ -132,11 +134,7 @@ const previousInputs = new Map<string, TAnnotationOrStub[]>();
 watch(
   () =>
     props.visible
-      ? chainPlotInputs(
-          plots.value,
-          gateIds.value,
-          filterStore.annotationsPassingNonGateFilters,
-        )
+      ? chainPlotInputs(plots.value, gateIds.value, analysisPopulation.value)
       : [],
   (next) => {
     const plotIds = props.visible ? plots.value.map((plot) => plot.id) : [];

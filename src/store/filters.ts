@@ -580,10 +580,16 @@ export class Filters extends VuexModule {
     }, "");
   }
 
-  // An allocation-free exact identity for the population the analysis panel
-  // plots and gates against. See populationSignature.
+  // The exact identity for the population the analysis panel plots and gates
+  // against. Above the plotting cap there is deliberately no exact identity:
+  // analysisPopulation stops as soon as it proves the cap was crossed, so a
+  // persisted gate on a 700k-object dataset does not hash or retain the rest of
+  // that population just to decide that it cannot run.
   get analysisPopulationSignature(): string {
-    return populationSignature(this.annotationsPassingNonGateFilters);
+    const population = this.analysisPopulation;
+    return population.length > MAX_ANALYSIS_PLOT_POINTS
+      ? "over-cap"
+      : populationSignature(population);
   }
 
   // What refreshAnalysis' result depends on.
@@ -606,7 +612,10 @@ export class Filters extends VuexModule {
       // dataset nobody is analysing never pays for any of this.
       return "idle";
     }
-    const base = this.annotationsPassingNonGateFilters;
+    const base = this.analysisPopulation;
+    if (base.length > MAX_ANALYSIS_PLOT_POINTS) {
+      return "over-cap";
+    }
     return [
       // Ungated plots affect the store only through the property paths needed
       // to display them. Omitting the visibility boolean means opening a panel
@@ -693,7 +702,7 @@ export class Filters extends VuexModule {
       this.clearAnalysisDerivedState();
       return;
     }
-    const base = this.annotationsPassingNonGateFilters;
+    const base = this.analysisPopulation;
     // Matches the panel's refusal to plot: a gate is only meaningful against
     // the population it was drawn on, and above the cap we do not draw one.
     if (base.length > MAX_ANALYSIS_PLOT_POINTS) {
@@ -736,25 +745,36 @@ export class Filters extends VuexModule {
       properties.propertyValuesRevision,
     ].join("|");
     const pathKeys = analysisPathKeys(paths);
-    const gatedPathKeys = analysisPathKeys(gatedPaths);
     const cachedPaths = new Set(this.analysisValuePathKeys);
     const cachedValuesMatchSource =
       this.analysisValuesSourceSignature === valuesSourceSignature;
     const canReuseValues =
       cachedValuesMatchSource &&
       pathKeys.every((path) => cachedPaths.has(path));
-    const canResolveGatesFromRetainedValues =
-      gateDataSignature !== null &&
-      (gatedPathKeys.length === 0 ||
+    const hasRetainedValuesForPlot = (plot: IAnalysisPlot) => {
+      const plotPathKeys = analysisPathKeys(analysisPropertyPaths([plot]));
+      return (
+        plotPathKeys.length === 0 ||
         (cachedValuesMatchSource &&
-          gatedPathKeys.every((path) => cachedPaths.has(path))));
-    const commitGateResolution = (gateValues: IAnnotationPropertyValues) => {
+          plotPathKeys.every((path) => cachedPaths.has(path)))
+      );
+    };
+    const retainedResolutionPlots = resolutionPlots.filter(
+      hasRetainedValuesForPlot,
+    );
+    const canResolveGatesFromRetainedValues =
+      retainedResolutionPlots.length > 0 &&
+      gatedPlots.every(hasRetainedValuesForPlot);
+    const commitGateResolution = (
+      plotsToResolve: IAnalysisPlot[],
+      gateValues: IAnnotationPropertyValues,
+    ) => {
       this.setAnalysisGateIds(
         resolveAnalysisGateIds(
           // Disabled gates are display-only. While hidden, omitting them avoids
           // resolving against the narrower value projection requested for the
           // enabled gates; opening the panel widens both paths and resolution.
-          resolutionPlots,
+          plotsToResolve,
           base,
           gateValues,
           (channel) => channelDisplayName(channel),
@@ -778,6 +798,7 @@ export class Filters extends VuexModule {
         // changed-input ids were invalidated before the request above.
         if (canResolveGatesFromRetainedValues) {
           commitGateResolution(
+            retainedResolutionPlots,
             cachedValuesMatchSource ? this.analysisValues : {},
           );
         }
@@ -800,7 +821,7 @@ export class Filters extends VuexModule {
         pathKeys,
       });
     }
-    commitGateResolution(values);
+    commitGateResolution(resolutionPlots, values);
     this.setAnalysisLoading(false);
   }
 
@@ -892,136 +913,17 @@ export class Filters extends VuexModule {
   // analysis panel plots populations from this base (plus upstream gates), so
   // a plot's own gate must not remove points from its own scatter.
   get annotationsPassingNonGateFilters() {
-    const selectionFilter = this.selectionFilter;
-    const tagFilter = this.tagFilter;
-    const propertyFilters = this.propertyFilters;
-    const enabledPropertyFilters = propertyFilters.filter(
-      (filter: IPropertyAnnotationFilter) => filter.enabled,
-    );
-    const roiFilters = this.roiFilters;
-    const enabledRoiFilters = roiFilters.filter(
-      (filter: IROIAnnotationFilter) => filter.enabled,
-    );
-    const onlyCurrentFrame = this.onlyCurrentFrame;
-    const currentFrameLocation: IAnnotationLocation = {
-      XY: main.xy,
-      Z: main.z,
-      Time: main.time,
-    };
-    const enabledAnnotationIdFilters = this.annotationIdFilters.filter(
-      (filter: IIdAnnotationFilter) => filter.enabled,
-    );
-    // Captured before the callback shadows `annotation` with the item. Stubs
-    // carry no coordinates, so ROI filtering falls back to the centroid map
-    // (populated for every annotation id in both full and stub-only modes).
-    const centroidsById = annotation.annotationCentroids;
-    // In lazy mode the full property-value map is not loaded, so property
-    // filtering is driven by a server-fetched id set (D Stage 2) instead of
-    // reading each annotation's value client-side.
-    const useServerPropertyFilter =
-      annotation.stubOnlyMode && enabledPropertyFilters.length > 0;
-    const serverPassingIds = this.propertyFilterPassingIds;
-    return annotation.annotationsForIteration.filter(
-      (annotation: TAnnotationOrStub) => {
-        // Location filter
-        if (
-          onlyCurrentFrame &&
-          (annotation.location.XY !== currentFrameLocation.XY ||
-            annotation.location.Z !== currentFrameLocation.Z ||
-            annotation.location.Time !== currentFrameLocation.Time)
-        ) {
-          return false;
-        }
+    return collectAnnotationsPassingNonGateFilters(this);
+  }
 
-        // Selection filter
-        if (
-          selectionFilter.enabled &&
-          !selectionFilter.annotationIds.includes(annotation.id)
-        ) {
-          return false;
-        }
-
-        // Tag filter
-        if (
-          tagFilter.enabled &&
-          !tagCloudFilterFunction(
-            annotation.tags,
-            tagFilter.tags,
-            tagFilter.exclusive,
-          )
-        ) {
-          return false;
-        }
-
-        // Property filters
-        if (enabledPropertyFilters.length > 0) {
-          if (useServerPropertyFilter) {
-            // Lazy mode: membership in the server-fetched passing set. Until it
-            // loads (null), pass all so drawing doesn't flash empty.
-            if (
-              serverPassingIds !== null &&
-              !serverPassingIds.has(annotation.id)
-            ) {
-              return false;
-            }
-          } else {
-            const propertyValues =
-              properties.propertyValues[annotation.id] || {};
-            const matchesProperties = enabledPropertyFilters.every(
-              (filter: IPropertyAnnotationFilter) => {
-                const value = getValueFromObjectAndPath(
-                  propertyValues,
-                  filter.propertyPath,
-                );
-                if (filter.valuesOrRange === "values") {
-                  // If no values specified, don't filter
-                  if (!filter.values || filter.values.length === 0) {
-                    return true;
-                  }
-                  // Check if the value exists in the set of specified values
-                  return (
-                    typeof value === "number" && filter.values.includes(value)
-                  );
-                } else {
-                  // Default "range" behavior for histograms
-                  return (
-                    typeof value === "number" &&
-                    value >= filter.range.min &&
-                    value <= filter.range.max
-                  );
-                }
-              },
-            );
-            if (!matchesProperties) {
-              return false;
-            }
-          }
-        }
-
-        // Annotation ID filters
-        const matchesAnnotationIds =
-          enabledAnnotationIdFilters.length === 0 ||
-          enabledAnnotationIdFilters.some((filter) =>
-            filter.annotationIds.includes(annotation.id),
-          );
-        if (!matchesAnnotationIds) {
-          return false;
-        }
-
-        // ROI filters
-        const roiTestPoints = annotationTestPoints(
-          annotation,
-          centroidsById[annotation.id],
-        );
-        const isInROI =
-          enabledRoiFilters.length === 0 ||
-          enabledRoiFilters.some((filter: IROIAnnotationFilter) =>
-            roiTestPoints.some((point: IGeoJSPosition) =>
-              geo.util.pointInPolygon(point, filter.roi),
-            ),
-          );
-        return isInROI;
-      },
+  // The same population, but stop after cap + 1. At or below the cap this is
+  // the complete population; above it the extra row is only an overflow bit.
+  // Analysis rendering, hashing, fetching, and gate resolution must all use
+  // this bounded view so the cap prevents the expensive work it promises to.
+  get analysisPopulation() {
+    return collectAnnotationsPassingNonGateFilters(
+      this,
+      MAX_ANALYSIS_PLOT_POINTS + 1,
     );
   }
 
@@ -1123,6 +1025,138 @@ export default getModule(Filters);
 // Stale-response guard for the analysis gate refresh: filter edits can fire
 // several refreshes in quick succession, and only the latest may commit.
 const analysisGateGuard = createSequenceGuard();
+
+/**
+ * Apply every non-analysis filter, optionally stopping after enough matches to
+ * prove an upper bound was crossed. Keeping the predicate here gives the full
+ * viewer population and the bounded analysis population identical semantics;
+ * only the amount collected differs.
+ */
+function collectAnnotationsPassingNonGateFilters(
+  filters: Filters,
+  limit = Number.POSITIVE_INFINITY,
+): TAnnotationOrStub[] {
+  const selectionFilter = filters.selectionFilter;
+  const tagFilter = filters.tagFilter;
+  const enabledPropertyFilters = filters.propertyFilters.filter(
+    (filter: IPropertyAnnotationFilter) => filter.enabled,
+  );
+  const enabledRoiFilters = filters.roiFilters.filter(
+    (filter: IROIAnnotationFilter) => filter.enabled,
+  );
+  const onlyCurrentFrame = filters.onlyCurrentFrame;
+  // Read frame state only when the filter uses it. Previously these
+  // unconditional reads made every frame scrub rebuild a whole-dataset
+  // population even while the current-frame filter was off.
+  const currentFrameLocation: IAnnotationLocation | null = onlyCurrentFrame
+    ? { XY: main.xy, Z: main.z, Time: main.time }
+    : null;
+  const enabledAnnotationIdFilters = filters.annotationIdFilters.filter(
+    (filter: IIdAnnotationFilter) => filter.enabled,
+  );
+  const centroidsById = annotation.annotationCentroids;
+  // In lazy mode the full property-value map is not loaded, so property
+  // filtering is driven by a server-fetched id set (D Stage 2) instead of
+  // reading each annotation's value client-side.
+  const useServerPropertyFilter =
+    annotation.stubOnlyMode && enabledPropertyFilters.length > 0;
+  const serverPassingIds = filters.propertyFilterPassingIds;
+  const passing: TAnnotationOrStub[] = [];
+
+  for (const candidate of annotation.annotationsForIteration) {
+    if (
+      currentFrameLocation !== null &&
+      (candidate.location.XY !== currentFrameLocation.XY ||
+        candidate.location.Z !== currentFrameLocation.Z ||
+        candidate.location.Time !== currentFrameLocation.Time)
+    ) {
+      continue;
+    }
+    if (
+      selectionFilter.enabled &&
+      !selectionFilter.annotationIds.includes(candidate.id)
+    ) {
+      continue;
+    }
+    if (
+      tagFilter.enabled &&
+      !tagCloudFilterFunction(
+        candidate.tags,
+        tagFilter.tags,
+        tagFilter.exclusive,
+      )
+    ) {
+      continue;
+    }
+
+    if (enabledPropertyFilters.length > 0) {
+      if (useServerPropertyFilter) {
+        // Until the server result loads (null), pass all so drawing does not
+        // flash empty.
+        if (serverPassingIds !== null && !serverPassingIds.has(candidate.id)) {
+          continue;
+        }
+      } else {
+        const propertyValues = properties.propertyValues[candidate.id] || {};
+        const matchesProperties = enabledPropertyFilters.every((filter) => {
+          const value = getValueFromObjectAndPath(
+            propertyValues,
+            filter.propertyPath,
+          );
+          if (filter.valuesOrRange === "values") {
+            // If no values are specified, this row does not narrow anything.
+            return (
+              !filter.values ||
+              filter.values.length === 0 ||
+              (typeof value === "number" && filter.values.includes(value))
+            );
+          }
+          return (
+            typeof value === "number" &&
+            value >= filter.range.min &&
+            value <= filter.range.max
+          );
+        });
+        if (!matchesProperties) {
+          continue;
+        }
+      }
+    }
+
+    if (
+      enabledAnnotationIdFilters.length > 0 &&
+      !enabledAnnotationIdFilters.some((filter) =>
+        filter.annotationIds.includes(candidate.id),
+      )
+    ) {
+      continue;
+    }
+
+    // Do not build geometry test points when no ROI filter exists. Besides
+    // saving work on the common path, this keeps the cap walk proportional to
+    // the filters that are actually active.
+    if (enabledRoiFilters.length > 0) {
+      const roiTestPoints = annotationTestPoints(
+        candidate,
+        centroidsById[candidate.id],
+      );
+      const isInROI = enabledRoiFilters.some((filter) =>
+        roiTestPoints.some((point: IGeoJSPosition) =>
+          geo.util.pointInPolygon(point, filter.roi),
+        ),
+      );
+      if (!isInROI) {
+        continue;
+      }
+    }
+
+    passing.push(candidate);
+    if (passing.length >= limit) {
+      break;
+    }
+  }
+  return passing;
+}
 
 function analysisRefreshScope(plots: IAnalysisPlot[], panelOpen: boolean) {
   const readyPlots = plots.filter(

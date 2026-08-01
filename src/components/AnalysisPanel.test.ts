@@ -37,6 +37,13 @@ vi.mock("@/store/filters", () => ({
       mocks.signal.tick; // subscribe, so a test can force a recompute
       return mocks.population;
     },
+    get analysisPopulation() {
+      mocks.signal.tick;
+      // The real Vuex getter rebuilds a bounded array when a dependency
+      // changes. Return a fresh shallow array so the component's computed can
+      // notify its watcher while keeping the 50k test stubs non-reactive.
+      return mocks.population.slice(0, 50001);
+    },
     get filteredAnnotations() {
       return mocks.population;
     },

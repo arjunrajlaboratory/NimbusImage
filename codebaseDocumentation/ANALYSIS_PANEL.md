@@ -63,8 +63,10 @@ has never seen are appended, so a new tag still plots instead of vanishing.
 `filters.ts` splits the old `filteredAnnotations` in two:
 
 - **`annotationsPassingNonGateFilters`** — every filter *except* the analysis
-  gates. This is the panel's input population and what each scatter is drawn
-  from.
+  gates. This is the full population used by the viewer and list.
+- **`analysisPopulation`** — the same predicate, collected only through cap + 1.
+  At or below the cap this is the exact input population each scatter uses;
+  above it the extra row is only an overflow signal.
 - **`filteredAnnotations`** — the above, further narrowed by
   `activeAnalysisGateSets`.
 
@@ -110,12 +112,14 @@ Opening the panel widens property paths to every ready plot and gate resolution
 to every drawn plot, including disabled gates whose count/highlight is still
 visible. The watcher hashes those visible gates' polygons and categorical
 inputs, so an annotation edit cannot move the scatter while leaving the gate
-display stale. The retained values
-are keyed by dataset, exact population, property revision, and fetched path set,
-so a cached superset is reused across palette toggles instead of posting the
-same population again. A configuration carrying only ungated plots still costs
-nothing until someone looks at it; the panel reports its visibility through
-`setAnalysisPanelOpen`.
+display stale. If a widened visible fetch fails, fallback resolution is narrowed
+again to plots whose property paths are actually present in the retained cache;
+a disabled gate on a missing path remains unresolved instead of showing a
+plausible but false zero. The retained values are keyed by dataset, exact
+population, property revision, and fetched path set, so a cached superset is
+reused across palette toggles instead of posting the same population again. A
+configuration carrying only ungated plots still costs nothing until someone
+looks at it; the panel reports its visibility through `setAnalysisPanelOpen`.
 
 Do not "optimize" this into reading `propertyStore.propertyValues`:
 
@@ -137,6 +141,14 @@ endpoint was needed — `annotation_property_values/batch` already projects by
 `MAX_ANALYSIS_PLOT_POINTS = 50000` (`src/store/constants.ts`, matching
 `DEFAULT_VISIBILITY_CONFIG.maxVisible`). Above it the panel shows a "narrow the
 filters" notice and plots nothing, and gate resolution stops too.
+
+The guard uses one bounded `analysisPopulation` collection that stops after
+50,001 matches: at or below the cap it is exact, and above it the extra row is
+only an overflow bit. The Viewer signature, refresh action, and panel all use
+that bounded result, so a persisted gate on the 708,983-object dataset neither
+builds nor hashes the remaining population before discovering the cap. The
+shared non-gate predicate reads `xy/z/time` only when the current-frame filter
+is enabled, so ordinary frame scrubs do not wake this work either.
 
 Plotting a sample instead would be easy and wrong: a gate resolves to a set of
 ids, so a lasso over a sample would exclude every *unsampled* object while all
@@ -353,11 +365,18 @@ Change any of this and re-check these. Each item names the test that holds it.
   categorical fields or retained gate-property paths — *"still resolves a
   categorical gate when a display-only fetch fails"*, *"uses cached gate paths
   when a widened display fetch fails"*
+- The same fallback resolves visible disabled categorical gates that need no
+  cached values, but does not resolve a disabled property gate whose path is
+  absent — *"still resolves a visible disabled categorical gate after a display
+  fetch fails"*, *"does not resolve a visible disabled gate from missing
+  retained paths"*
 - Opening or closing the palette does not refetch an already-resolved gate when
   its required path set is unchanged — *"reuses resolved values instead of
   refetching on palette toggles"*
 - A bail-out invalidates any in-flight request, so a stale one cannot reinstate a gate — *"invalidates an in-flight request before bailing out"*
-- Above the cap: no fetch and no gate — *"refuses to fetch or gate above the point cap"*
+- Above the cap: no fetch and no gate, and the bounded walk stops before
+  collecting or hashing the tail — *"refuses to fetch or gate above the point
+  cap"*, *"stops collecting an over-cap population before hashing its tail"*
 - The polygon resolves to ids and the values are published for the panel to reuse — *"resolves the polygon into ids and publishes the values it fetched"*
 - Derived state is cleared when the last gate goes — *"clears derived state when the last gate goes away"*
 - Re-lassoing drops the previous ids synchronously, then resolves the new polygon
@@ -469,10 +488,10 @@ Change any of this and re-check these. Each item names the test that holds it.
 
 Delivered on branch `analysis-panel-scatter-gating`, PR
 [#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), through
-the round-10 visible-disabled-gate fix described below (the feature, ten
-Codex-fix rounds, documentation, and the export split). **Not merged.**
+the round-11 cap/fallback fixes described below (the feature, eleven Codex-fix
+rounds, documentation, and the export split). **Not merged.**
 
-Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,415 frontend
+Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,418 frontend
 tests.
 There are no backend changes in #1298. The general CSV endpoint correction and
 its backend tests live in prerequisite #1299.
@@ -664,6 +683,35 @@ scope:
    *"tracks a visible disabled gate's polygon and categorical inputs"* also
    pins re-lassoing while disabled.
 
+### Round 11 Codex review tracker
+
+Codex reviewed `2aa9b6f3` and found two consumers that still violated the scope
+boundaries above:
+
+1. **P1 — the point cap ran after full population construction and hashing**
+   (`src/store/filters.ts`). A persisted gate on an over-cap dataset caused the
+   Viewer watcher to filter and hash every annotation before `refreshAnalysis`
+   could reject it; unconditional frame-location reads repeated that work on
+   ordinary frame scrubs. **Status: fixed in this round.** A shared bounded walk
+   stops at cap + 1 and is consumed by the watcher, action, and panel; inactive
+   frame and ROI filters no longer add their dependencies/work. Regression:
+   *"stops collecting an over-cap population before hashing its tail"*.
+2. **P2 — mixed-scope failure resolved a disabled gate from missing values**
+   (`src/store/filters.ts`). When an enabled gate's values were cached and a
+   different disabled property gate widened the visible fetch, a request
+   failure proved only the enabled paths were retained but resolved every
+   visible gate. The disabled count/highlight became false zero. **Status: fixed
+   in this round.** Failure resolution now filters the visible plot scope by
+   the paths actually present in the same-source cache. Regression: *"does not
+   resolve a visible disabled gate from missing retained paths"*.
+
+The branch-wide failure-scope sweep found the opposite sibling: when every gate
+is disabled, `gateDataSignature` is null, but a visible categorical gate still
+has a count/highlight to derive without cached values. Fallback eligibility now
+comes from the retained resolution subset itself while separately requiring
+every enabled predecessor to be resolvable. Regression: *"still resolves a
+visible disabled categorical gate after a display fetch fails"*.
+
 ### What is verified live vs by test only
 
 Verified in a running browser: the full gating flow including a real lasso drag
@@ -742,9 +790,16 @@ count to 151 while the viewer correctly remained unfiltered at 26,142 of
 persisted plots and the full population. The annotation-category edit twin is
 pinned by the store regression rather than by mutating the shared dataset.
 
+The round-11 bounded-cap path was checked on the 708,983-object Xenium dataset.
+Opening Analysis displayed the deliberately non-exact “More than 50,000” notice
+without rendering Plotly or an Add plot control, and the browser recorded no
+warnings or errors. The cap-plus-one early stop and both retained-data failure
+paths are pinned by the store regressions because their boundaries are directly
+observable there without manufacturing partial network failures in the live UI.
+
 ### Review history, and what it suggests
 
-Nearly every finding across ten Codex rounds plus the cold follow-up reviews was
+Nearly every finding across eleven Codex rounds plus the cold follow-up reviews was
 real. Most of the later ones were consequences of *earlier fixes* rather than
 of the original feature — the gate-replacement bug
 only became permanent because of the failed-fetch fix; the `fetchMatchingIds`
@@ -753,7 +808,7 @@ overlap came from fixing eviction without fixing layout. The feature core has
 been stable since round 1, but the seams now have regression coverage for the
 failure shapes that kept recurring.
 
-The post-round-10 cold branch review found no additional actionable findings.
+The post-round-11 cold branch review found no additional actionable findings.
 
 ## Possible follow-ups
 
