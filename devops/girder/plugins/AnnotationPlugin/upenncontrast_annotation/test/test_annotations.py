@@ -612,3 +612,54 @@ class TestFindDefaultSort:
 
         returnedIds = [doc["_id"] for doc in resp.json]
         assert returnedIds == [str(i) for i in idsAscending]
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestCreateMultipleValidation:
+    """POST /upenn_annotation/multiple must reject malformed input with 400.
+
+    Regression for issue #1242: the bulk-create endpoint validated its body
+    far less than the bulk-update endpoint, so a non-list body, a non-dict
+    entry, or a malformed id raised a 500 instead of a clean 400.
+    """
+
+    def _post(self, server, user, body):
+        return server.request(
+            path="/upenn_annotation/multiple",
+            method="POST",
+            user=user,
+            body=json.dumps(body),
+            type="application/json",
+        )
+
+    def testNonListBodyReturns400(self, admin, server):
+        resp = self._post(server, admin, {"not": "a list"})
+        assertStatus(resp, 400)
+
+    def testNonDictEntryReturns400(self, admin, server):
+        resp = self._post(server, admin, [123])
+        assertStatus(resp, 400)
+
+    def testInvalidDatasetIdReturns400(self, admin, server):
+        sample = upenn_utilities.getSampleAnnotation("not-a-valid-object-id")
+        resp = self._post(server, admin, [sample])
+        assertStatus(resp, 400)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestComputeValidation:
+    """POST /upenn_annotation/compute must reject a malformed datasetId with
+    400, not a 500 from bson deep inside Folder().load."""
+
+    def testMalformedDatasetIdReturns400(self, admin, server):
+        resp = server.request(
+            path="/upenn_annotation/compute",
+            method="POST",
+            user=admin,
+            params={"datasetId": "not-a-valid-object-id"},
+            body=json.dumps({"image": "worker:latest"}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)

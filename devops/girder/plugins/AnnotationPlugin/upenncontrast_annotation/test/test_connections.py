@@ -2,11 +2,14 @@ import json
 import pytest
 import math
 
-from pytest_girder.assertions import assertStatusOk
+from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models.connections import (
     AnnotationConnection,
+)
+from upenncontrast_annotation.server.models.propertyValues import (
+    AnnotationPropertyValues,
 )
 from upenncontrast_annotation.server.models import connections
 from upenncontrast_annotation.server.helpers.connections import (
@@ -636,3 +639,112 @@ class TestConnectionEndpoints:
         )
         assertStatusOk(resp)
         assert len(resp.json) == 3
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestMultipleCreateValidation:
+    """POST /annotation_connection/multiple must reject malformed input.
+
+    Regression for issue #1242: the bulk-create endpoint didn't validate its
+    body shape, so a non-list body or a non-dict entry raised 500 not 400.
+    """
+
+    def _post(self, server, user, body):
+        return server.request(
+            path="/annotation_connection/multiple",
+            method="POST",
+            user=user,
+            body=json.dumps(body),
+            type="application/json",
+        )
+
+    def testNonListBodyReturns400(self, admin, server):
+        resp = self._post(server, admin, {"not": "a list"})
+        assertStatus(resp, 400)
+
+    def testNonDictEntryReturns400(self, admin, server):
+        resp = self._post(server, admin, [123])
+        assertStatus(resp, 400)
+
+    def testInvalidIdReturns400(self, admin, server):
+        (parent, child, dataset) = createTwoAnnotations(admin)
+        connection = upenn_utilities.getSampleConnection(
+            str(parent["_id"]), str(child["_id"]), "not-a-valid-object-id"
+        )
+        resp = self._post(server, admin, [connection])
+        assertStatus(resp, 400)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestBulkDeleteCleanup:
+    """Bulk-deleting annotations must clean up their dependent documents.
+
+    Regression for issue #1243: the bulk-delete path emits string ids into
+    the removeStringIds event, but property values (annotationId) and
+    connections (childId/parentId) are stored as ObjectIds. A string $in
+    never matches an ObjectId field, so bulk-deleted annotations left both
+    their property values AND their connections orphaned. (Single delete
+    passed an ObjectId and worked, hence the single-vs-bulk asymmetry.)
+    """
+
+    def _makeDataset(self, admin):
+        return utilities.createFolder(
+            admin, "cleanup-ds", upenn_utilities.datasetMetadata
+        )
+
+    def testBulkDeleteRemovesPropertyValues(self, admin):
+        dataset = self._makeDataset(admin)
+        annotations = [
+            Annotation().create(
+                upenn_utilities.getSampleAnnotation(dataset["_id"])
+            )
+            for _ in range(3)
+        ]
+        for annotation in annotations:
+            AnnotationPropertyValues().appendValues(
+                {"propA": 1.0}, annotation["_id"], dataset["_id"]
+            )
+        annotationIds = [a["_id"] for a in annotations]
+        assert len(list(AnnotationPropertyValues().find(
+            {"annotationId": {"$in": annotationIds}}
+        ))) == 3
+
+        # Bulk delete via the string-id path (what the REST endpoint uses).
+        Annotation().deleteMultiple([str(i) for i in annotationIds])
+
+        assert len(list(AnnotationPropertyValues().find(
+            {"annotationId": {"$in": annotationIds}}
+        ))) == 0
+
+    def testBulkDeleteRemovesConnections(self, admin):
+        dataset = self._makeDataset(admin)
+        annotations = [
+            Annotation().create(
+                upenn_utilities.getSampleAnnotation(dataset["_id"])
+            )
+            for _ in range(3)
+        ]
+        annotationIds = [a["_id"] for a in annotations]
+        # A chain of connections referencing the annotations.
+        AnnotationConnection().create(
+            upenn_utilities.getSampleConnection(
+                annotationIds[0], annotationIds[1], dataset["_id"]
+            )
+        )
+        AnnotationConnection().create(
+            upenn_utilities.getSampleConnection(
+                annotationIds[1], annotationIds[2], dataset["_id"]
+            )
+        )
+        assert len(list(AnnotationConnection().find(
+            {"datasetId": dataset["_id"]}
+        ))) == 2
+
+        # Bulk delete via the string-id path (what the REST endpoint uses).
+        Annotation().deleteMultiple([str(i) for i in annotationIds])
+
+        assert len(list(AnnotationConnection().find(
+            {"datasetId": dataset["_id"]}
+        ))) == 0

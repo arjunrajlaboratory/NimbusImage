@@ -2,13 +2,17 @@ import json
 
 import pytest
 
-from pytest_girder.assertions import assertStatusOk
+from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.models.property import (
     AnnotationProperty,
 )
 
 from girder.constants import AccessType
+from girder.models.folder import Folder
+
+from . import girder_utilities as utilities
+from . import upenn_testing_utilities as upenn_utilities
 
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
@@ -59,3 +63,68 @@ class TestPropertyEndpoints:
         assert "_malicious" not in loaded
         assert "accessLevel" not in loaded
         assert "unknownField" not in loaded
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestPropertyComputeAccess:
+    """Access-control tests for POST /annotation_property/:id/compute.
+
+    Regression for issue #1241: the compute endpoint spawned a worker job
+    against a caller-supplied datasetId without checking the caller had
+    WRITE access to that dataset (unlike the annotation compute path, which
+    is gated). A user with only READ on the dataset must be refused before a
+    worker is ever scheduled.
+    """
+
+    def _createProperty(self, owner):
+        prop = {
+            "name": "compute-prop",
+            "image": "test-image:latest",
+            "shape": "point",
+            "tags": {"tags": [], "exclusive": False},
+            "workerInterface": {},
+        }
+        model = AnnotationProperty()
+        model.setUserAccess(
+            prop, user=owner, level=AccessType.ADMIN, save=False
+        )
+        return model.save(prop)
+
+    def testReadOnlyDatasetAccessIsRefused(self, admin, user, server):
+        """A user with only READ on the dataset gets 403 (never reaches the
+        worker), because the dataset is loaded at WRITE first."""
+        dataset = utilities.createFolder(
+            admin, "compute-ds", upenn_utilities.datasetMetadata
+        )
+        # Share the dataset with `user` at READ only.
+        Folder().setUserAccess(
+            dataset, user=user, level=AccessType.READ, save=True
+        )
+        # `user` owns the property, so @loadmodel (READ on the property)
+        # passes and the dataset WRITE check is what must reject the request.
+        prop = self._createProperty(user)
+
+        resp = server.request(
+            path="/annotation_property/%s/compute" % prop["_id"],
+            method="POST",
+            user=user,
+            params={"datasetId": str(dataset["_id"])},
+            body=json.dumps({}),
+            type="application/json",
+        )
+        assertStatus(resp, 403)
+
+    def testMalformedDatasetIdReturns400(self, admin, server):
+        """A malformed datasetId is a clean 400, not a 500 from bson deep in
+        Folder().load."""
+        prop = self._createProperty(admin)
+        resp = server.request(
+            path="/annotation_property/%s/compute" % prop["_id"],
+            method="POST",
+            user=admin,
+            params={"datasetId": "not-a-valid-object-id"},
+            body=json.dumps({}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)

@@ -4,6 +4,7 @@ from girder.constants import AccessType, TokenScope
 from girder.api.rest import Resource, loadmodel
 from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
+from ..helpers.validation import requireObjectId
 from girder.exceptions import RestException, AccessException
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -61,9 +62,17 @@ class AnnotationProperty(Resource):
     )
     def compute(self, annotation_property, params):
         datasetId = params.get("datasetId", None)
-        if datasetId and id:
+        if datasetId:
+            # Validate the id shape at the API boundary so a malformed
+            # datasetId is a clean 400, not a 500 from bson deep inside
+            # Folder().load. Keep the original string: runJobRequest passes
+            # datasetId to the worker as a string container arg.
+            requireObjectId(datasetId, "datasetId")
             return self._propertyModel.compute(
-                annotation_property, datasetId, self.getBodyJson()
+                annotation_property,
+                datasetId,
+                self.getBodyJson(),
+                self.getCurrentUser(),
             )
         return {}
 
