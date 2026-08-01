@@ -21,6 +21,11 @@ Review code changes on a feature branch, checking for:
 - Redundant validation that duplicates framework behavior
 - API calls placed directly in Vue components instead of API files (frontend)
 - Frontend code compensating for backend issues
+- Symmetric-path twins changed on only one side (create↔update, draw↔clear, client↔server)
+- Three-state list contracts (`[]` vs `null`) and failures indistinguishable from empty results
+- Lossy change-identity signatures and derived state that outlives its inputs
+- Hidden-but-mounted palette work and overlay stacking combinations
+- Regressions introduced by earlier review-round fixes on the same branch
 
 ## Usage
 
@@ -38,7 +43,10 @@ Review code changes on a feature branch, checking for:
 ```bash
 git diff [base-branch]...HEAD --stat
 git diff [base-branch]...HEAD
+git log [base-branch]..HEAD --oneline
 ```
+
+If the log shows commits addressing earlier review rounds ("Address review", "Address Codex round N"), treat those fixes as the riskiest part of the diff — see Cross-Cutting check 3.
 
 ### Step 2: Read Changed Files
 
@@ -106,6 +114,40 @@ This keeps every actionable item discoverable from the Findings Summary table by
 | **Naming** | Generic variable names or function names that no longer match their behavior |
 | **Partial Persistence** | One logical change issuing several writes of the same key, so a mid-sequence failure leaves the resource partially updated |
 | **Error Message Mangling** | Store action throwing or propagating without `rawError: true`, so callers get `ERR_ACTION_ACCESS_UNDEFINED` instead of the reason |
+| **Symmetric Path Drift** | One of two twin paths changed: create-styling ↔ update-restyling, draw ↔ retain/clear, register ↔ teardown, one guarded call site ↔ its siblings, client ↔ server end of a contract |
+| **Empty-State Contract** | Present-but-empty list collapsed into "no constraint" (`ids \|\| []`, `if ids:`), or a failure return indistinguishable from an empty success |
+| **Lossy Change Identity** | Signature/hash that misses changes it exists to detect: sampled elements, undelimited nested lists, content changes with stable membership |
+| **Stale Derived State** | Derived ids/caches surviving an input replacement or upstream change; sequence-guard token claimed after early returns |
+| **Stale String Reference** | `dispatch("...")`/event-name string not updated when the member was renamed |
+| **Hidden-Mounted Work** | Expensive mount-time or per-scrub work in `v-show`-hidden palettes/tabs not gated on visibility |
+| **Overlay Stacking** | New floating palette/panel absent from the shared right-edge clearance computation |
+
+## Cross-Cutting Checks
+
+These apply to the whole diff, frontend and backend alike. All three shapes recurred across the multi-round reviews of PRs #1279, #1288 and #1298.
+
+### 1. Symmetric-Path Twin Sweep
+The most repeated finding shape in this repo: a rule applied to one of two symmetric paths. For every behavior the diff adds or changes, name its twin and check the twin — the two implementations rarely share a name, so search by concept:
+- styling-on-create ↔ restyling-on-update (a rebuilt selected feature silently loses its highlight)
+- drawing ↔ retention/clearing predicates (mismatched criteria defeat incremental rendering)
+- hover ↔ selection, highlight ↔ click paths
+- registering a throttle/listener ↔ cancelling it in teardown (`onBeforeUnmount`)
+- one guarded call site ↔ its sibling call sites (see Cross-Cutting check 3)
+- one mode branch ↔ the other modes (timelapse on/off, unroll, server/local list mode, 2D/3D)
+- the client end ↔ the server end of a wire contract
+
+### 2. "Empty" Is Not a Signal — Three-State List Contracts
+An optional id-list parameter has three meanings: absent/null = "no constraint", non-empty = "these", present-but-empty = "none". Code that collapses present-but-empty into absent turns "act on zero matches" into "act on everything" — in PR #1298, exporting an empty filtered set silently downloaded the entire dataset because `annotationIds || []` on the client AND `if annotationIds:` on the server each collapsed it. Check:
+- Truthiness tests on possibly-empty lists: `if (ids)`, `ids || []`, `ids?.length` in TS; `if ids:` in Python.
+- **Both ends of the wire** — fixing one end and not the other is a twin-sweep miss.
+- Failure vs empty: an API helper that catches errors and returns `{}`/`[]`/`null`-as-data makes a transient network error indistinguishable from a real empty result. In #1298 this became "every gate resolves to zero matches and the whole dataset disappears"; in #1279 a failed batch POST was misreported as successful deduplication. Failures must propagate (return null or throw), and the caller must leave existing derived state alone on failure.
+- An empty *prerequisite* is not "nothing to do": "no property values to fetch" still requires resolving categorical-only gates. Skip the fetch, never the downstream resolve.
+
+### 3. Review-Fix Commits Are the Riskiest Part of the Diff
+When the branch contains commits addressing earlier review rounds, review those fixes as first-class changes, not as settled ground. Across four rounds on PR #1298, most later findings were consequences of earlier fixes rather than of the original feature. For each fix ask:
+- **Does it interact with a sibling fix?** "Leave ids alone when the fetch fails" × "drop old ids only when the gate is null" = a failure right after re-lassoing strands the stale constraint permanently.
+- **Does it guard call sites when the invariant belongs at the boundary?** An invariant like "never POST an empty constraint" belongs in the API client or the store action every caller funnels through. Round 2 guarded the two page fetches; round 3 found the sibling `fetchMatchingIds` still posting the rejected payload. A diff adding the same guard at two call sites is a finding even when no bug is visible yet.
+- **Did it fix half the problem?** Allowing two palettes to be open together (eviction) without adding the pair to the stacking layout (geometry) left the second palette covered.
 
 ## Backend-Specific Checks
 
@@ -195,6 +237,32 @@ For any handler that changes several fields of one resource, check:
 ### 9. Store Actions That Throw or Propagate Without `rawError: true`
 `vuex-module-decorators` replaces any error escaping a bare `@Action` with a generic `ERR_ACTION_ACCESS_UNDEFINED` message. Flag a new/edited action if it throws **or merely propagates** (awaits an API call or another action) and any caller reads `error.message`. Errors are re-wrapped at every boundary they cross, across modules, so check the whole chain, not just the action in the diff. `tsc`/lint/tests stay green either way, and a test that mocks the action bypasses the decorator entirely — so a real-dispatch test asserting the **exact** message is the only regression guard (substring assertions pass regardless; the wrapper embeds the original message in its stack). See nimbus-frontend skill.
 
+### 10. Lossy Change-Identity Signatures
+Any signature/hash whose comparison decides "skip the refetch / skip the recompute / skip clearing the selection" must change for every change it exists to detect (`src/utils/signatures.ts`). Flag:
+- **Sampling**: length + first/middle/last element is not an identity — two same-length id sets can differ anywhere else, and every watcher sharing the signature then skips the server refetch AND skips selection-clearing, leaving hidden rows for a later bulk action. Hash every element (PR #1298 uses `cyrb53`, memoized by array identity because these arrays are replaced wholesale).
+- **Undelimited nesting**: `[["a"], ["b"]]` and `[["a","b"], []]` must hash differently — feed a boundary marker or the row's id per row.
+- **Membership-only identity when content matters**: a tag edit keeps the id set identical while moving the point to another category; a server-side property recompute changes nothing the client can diff at all. The identity needs a content hash of the fields the feature actually reads, or a revision counter bumped on fetch (not on every mutation).
+- Watchers keying off filter state must never `JSON.stringify` it — id-membership filters hold tens of thousands of ids and those getters rebuild on every frame scrub.
+
+### 11. Async Refresh Actions: Stale Requests and Derived-State Invalidation
+For any action shaped "read inputs → maybe bail out → fetch → commit derived state":
+- **Claim the sequence-guard token first**, before every early return. A bail-out that doesn't invalidate the in-flight request leaves it "current", and its late response commits derived state for inputs that no longer apply — reinstating exactly what the bail-out cleared. Found twice in `filters.ts` on one branch; correct precedent: `properties.ts::ensureVisiblePropertyValues`.
+- **Invalidate on every input change, replacement included.** Dropping derived ids only when the new input is null keeps the old constraint active while the new one resolves — and permanently if the resolve fails. When inputs chain (plot n derives from plots 0..n−1), a change to link n must also invalidate every downstream dependent, including on axis, removal and enable-state changes.
+- **Unresolved must contribute no constraint**: the interim state should show more than the final answer, never something wrong.
+- **One owner per refresh**: an explicit dispatch alongside a watcher on the same signature issues the identical expensive request twice; the sequence guard discards a response, not the backend work.
+
+### 12. String-Keyed References After Renames
+`dispatch("name")`, `commit("name")` and event names are invisible to `tsc`: after a rename, the stale string logs an unknown-action error and resolves as a silent no-op, usually masked by a watcher doing similar work. When the diff renames a store member, sweep every string reference against the declared members. PR #1298 adds `src/__tests__/dispatchedActions.test.ts` to police dispatch names — check that a rename updates it rather than gets exempted from it.
+
+### 13. Hidden-but-Mounted Work
+`FloatingPalette` and inactive `VWindowItem` tabs hide with `v-show` — content stays mounted. `onMounted` runs at every dataset load, and computeds re-evaluate on every store change, even if the panel has never been opened. This recurred in three consecutive feature PRs (#1279: scoped counts scanning every annotation per scrub from a hidden tab; #1288: a full connection scan not gated on timelapse mode; #1298: an invisible WebGL Plotly render at dataset startup). Flag:
+- Mount-time heavy work (dynamic imports, WebGL contexts, full-collection scans) not gated on a `:visible` prop.
+- Per-scrub or per-store-change computeds inside palette/tab content not gated on visibility or mode.
+- Caps evaluated after the expensive work they exist to prevent — a 500-object cap that first materializes every selected annotation prevents nothing.
+
+### 14. Overlay and Palette Stacking Combinations
+A new floating palette or edge-anchored panel must join the shared right-edge clearance/stacking computation, and the check is combinatorial: consider every palette that can be open at the same time, not just the pair the feature was tested with. Recurred in #1288 (clearance computed from two of five right-edge palettes; action panels unhittable at 1280 px beneath a z-index-1006 palette) and #1298 (the Analysis panel covered the Filters panel — the very panel its own over-cap message told the user to open). Check both geometry (offsets, max-height) and z-index tiers (`FloatingPalette` 1006 vs action panels 1000).
+
 ## Example Output Format
 
 The output has exactly four sections, in this order: **Overall Assessment**, **Findings**, **Findings Summary**, **Checklist Coverage**. **Questions for Clarification** is optional and appears only if there are open questions. There is no separate "Minor Observations" section — small items become findings with Severity Nit.
@@ -265,6 +333,13 @@ The two tables are numbered and serve different purposes:
 | Naming | pass | — |
 | Partial persistence (same key written twice) | pass | — |
 | Actions that throw/propagate without rawError | pass | — |
+| Symmetric path drift | pass | — |
+| Empty-state contract ([] vs null, failure vs empty) | pass | — |
+| Lossy change identity | pass | — |
+| Stale derived state | pass | — |
+| Stale string reference | pass | — |
+| Hidden-mounted work | pass | — |
+| Overlay stacking | pass | — |
 
 ### Questions for Clarification
 [Only include this section if there are open questions. Otherwise omit it.]
