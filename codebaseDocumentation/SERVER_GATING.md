@@ -664,13 +664,32 @@ axes on a dataset with no computed values resolve to empty rather than
 erroring; and `list/ids` and a filtered `list` page carrying the same gate
 DEFINITION return the identical 227,901 objects. Timings above.
 
-**Verified by test only:** the browser rendering path — heatmap trace
-construction, `drawclosedpath`/`drawrect` → gate conversion, the panel's
-fetch scoping and honesty banner. These are covered by
-`AnalysisScatterPlot.test.ts` / `AnalysisPanel.test.ts`, but **not yet
-clicked in a live browser**: the local app requires an interactive login,
-which the agent that built this could not perform. Before merging, open the
-Xenium dataset, open Analysis, and confirm: heatmaps appear instead of the
-"narrow the filters" notice; drawing a closed shape produces a gate chip
-with a count; the viewer and Objects tab narrow accordingly; and a second
-plot chains off the first.
+**Verified in a live browser** on the 52,282-object HCR dataset (above the
+cap, with real `Area`/`Perimeter` values), driving the real UI:
+
+- Opening Analysis shows the over-cap banner and renders a **heatmap**, not
+  the old "narrow the filters" refusal. Footer read `34,154 of 52,282
+  objects binned (18,128 without values)` — matching the property-value doc
+  count in Mongo exactly.
+- A shape drawn with synthetic mouse events on the Plotly drag layer
+  (`dragmode: drawclosedpath`) became a real gate: 19 vertices → resolved
+  server-side → chip, viewer, and footer all updated.
+- Drawing over the data peak resolved to **22,478** objects; the badge read
+  `gate: 22,478`, the footer `22,478 of 52,282 filtered objects pass all
+  gates`, and the viewer visibly thinned. A first gate drawn over an empty
+  region correctly resolved to **0** — this dataset is degenerate (2
+  non-zero bins in 16,384; 22,508 objects piled at `(100, 40)`), so both
+  answers were checked against the actual distribution rather than assumed.
+- **Phase 3 on the wire:** `currentFilters` carried `analysisGates: [1
+  definition]` with `idConstraints: []` — the whole filter payload was
+  **485 bytes** instead of ~560 KB of ids — and the server list
+  independently returned the same 22,478.
+
+Not exercised live: chaining a second plot off the first, the disabled-gate
+display path, and the honesty banner (no ROI filter was active).
+
+**Two environment notes for the next person.** The viewer route is
+`#/datasetView/<datasetViewId>/view` — the `/view` suffix is required and
+the id is the **datasetView** id, not the dataset folder id; without both
+you get a blank body with no error. And `localStorage['nimbus.girderToken']`
+holds the live session: do not write to it.
