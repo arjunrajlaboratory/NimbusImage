@@ -462,8 +462,10 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Gated points are marked selected; unresolved gates leave it null — *"marks the gated points as selected in the trace"*, *"leaves selectedpoints null when no gate has been resolved"*
 
 **Server-mode list (`src/store/__tests__/annotationListServer.test.ts`)**
-- One `idConstraints` entry per gate, never a union — *"adds one AND constraint per analysis gate, not a union"*
-- An empty gate is recognised as match-none — *"is true when a gate resolved to no annotations"*, *"is false again once the gate matches something"*
+- Gates reach the list as AND-composed DEFINITIONS, never id lists
+  (SERVER_GATING.md, Phase 3) — *"sends gate DEFINITIONS, never gate id
+  lists (SERVER_GATING.md P3)"*
+- An empty gate is recognised as match-none — *"is true when a gate resolved to no annotations"*, *"is false again once the gate matches something"*, *"expresses a match-nothing gate as an empty id constraint"*
 
 **Match-none at the request boundary (`src/store/__tests__/annotationsAPI.test.ts`)**
 - No page request is issued for an impossible query — *"returns an empty page without issuing a request"*

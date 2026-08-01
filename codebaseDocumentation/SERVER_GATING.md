@@ -1,7 +1,8 @@
 # Server-side analysis gating (spec)
 
-**Status: specification — implementation in progress on `analysis-server-gating`
-(branched off `analysis-panel-scatter-gating`, PR #1298).**
+**Status: Phases 1–3 implemented on `analysis-server-gating` (branched off
+`analysis-panel-scatter-gating`, PR #1298). Backend + frontend suites green;
+see the regression checklist at the bottom.**
 
 This document is the contract to build against and iterate on. It extends
 `ANALYSIS_PANEL.md` (the client-side design record); nothing here relaxes an
@@ -526,30 +527,111 @@ heatmap; page the Objects tab; export CSV of gated subset; kill the network
 mid-refresh and confirm no empty-gate wipeout. Do this from a fresh page
 load on a dataset that actually exceeds the cap.
 
-## Planned regression coverage
+## Regression checklist
 
-Becomes a real "Regression checklist" section (with `*"test name"*` citations,
-enforced by `regressionChecklist.test.ts`) at the end of implementation —
-tests must exist before a checklist may cite them. Until then this is the
-list of invariants each phase must land a named test for.
+Every invariant names the test that holds it (format enforced by
+`regressionChecklist.test.ts`). Grouped by concern.
 
-- Above-cap gate resolution never reads client filter state
-  (`filters.test.ts`: over-cap signature invariant under filter changes).
-- Same fixture gates resolve to identical id sets in TS and Python
-  (`analysisGatingParity` fixture tests, both suites).
-- A failed server resolution never empties a same-input gate
-  (`filters.test.ts`).
-- A stale server response never overwrites a newer one (`filters.test.ts`).
-- No request fires while the panel is closed unless an enabled drawn gate
-  exists (`filters.test.ts`, scope).
-- Histogram fetches never fire while the palette is hidden
-  (`AnalysisPanel.test.ts`).
-- The Objects tab refetches when a gate definition changes and not when an
-  unrelated frame scrubs (`AnnotationList.test.ts`).
-- `[[]]` never reaches the wire; an empty resolved gate short-circuits to
-  zero rows (`annotationsAPI.test.ts`).
-- Unknown-to-gate categories are excluded below AND above the cap
-  (`analysisGating.test.ts` + parity fixture).
-- gate_ids and histogram2d reject every malformed-input shape with 400, not
-  500 (`test_analysis_gating.py`).
-- Private-dataset requests 403 for non-readers (`test_analysis_gating.py`).
+**Cross-language parity (`analysisGatingParity.test.ts` /
+`test_analysis_gating.py`, sharing `fixtures/analysis_gating_parity.json`)**
+- Jitter is bit-identical in both implementations — *"jitter($id, $salt) is
+  bit-exact"*, *"testScalarJitterMatchesFixtureBitExactly"*,
+  *"testVectorizedJitterMatchesScalar"*
+- Every fixture gate resolves to identical id sets —
+  *"matches the current inputs (fixture is not stale)"*,
+  *"testEveryFixtureCaseResolvesIdentically"*
+- Category keys encode identically, unescaped non-ASCII included —
+  *"testMatchesJavascriptJsonStringify"*, *"testDoesNotEscapeNonAscii"*,
+  *"testTagSortUsesUtf16CodeUnits"*
+
+**Pure-predicate semantics**
+- Unknown-to-gate categories are outside the gate, per axis — *"excludes
+  categories the gate's pinned order does not know"*, *"applies the
+  unknown-category rule per axis"*, *"testUnknownCategoryIsMissing"*
+- Appended categories plot deterministically — *"appends categories unknown
+  to a pinned order sorted by label, not encounter order"*
+- Plots resolve independently, never chained server-side —
+  *"testPlotsResolveIndependentlyNotChained"*
+- Missing/non-finite/boolean values are outside every gate —
+  *"testNonNumericPropertyValuesAreMissing"*, *"testNanCoordinatesNeverMatch"*
+- An orphaned property-value doc never produces an id —
+  *"testOrphanValueDocNeverProducesAnId"*
+
+**Over-cap resolution (`src/store/__tests__/filters.test.ts`)**
+- The over-cap signature reads definitions and revisions, never population
+  or filter state — *"keeps the signature free of population and filter
+  state"*, *"stops collecting an over-cap population before hashing its
+  tail"*
+- Pure server ids commit and compose with client filters — *"resolves via
+  the server above the point cap, without fetching values"*
+- Same-input failure keeps ids; changed-input failure drops them before the
+  await — *"keeps same-input ids on a failed retry"*
+- A stale response never overwrites a newer one — *"discards a stale
+  response that resolves after a newer request"*
+- Hidden refreshes skip disabled gates — *"skips disabled gates while the
+  panel is closed"*
+- Unchanged inputs never refetch (palette toggles) — *"does not re-request
+  when already resolved under the same inputs"*
+- An empty server answer is a real match-none constraint — *"treats an
+  empty server answer as a real match-none constraint"*,
+  *"testEmptyGateIsARealAnswer"*
+- Crossing the cap frees the retained value cache — *"clears the retained
+  value cache when crossing above the cap"*
+- Server-mode refreshes debounce; below-cap stays immediate and cancels a
+  pending server call — *"debounces server-mode signature changes into one
+  refresh"*, *"cancels a pending server refresh when dropping below the
+  cap"*
+
+**contentRevision (`annotationContentRevision.test.ts`)**
+- Every content-changing mutation bumps it — *"every content-changing
+  mutation bumps (source scan)"*
+- View-only mutations never bump it — *"does NOT bump on view-only
+  mutations"*
+
+**Heatmap display (`AnalysisPanel.test.ts` / `AnalysisScatterPlot.test.ts`)**
+- Above the cap the panel renders heatmaps and builds no client series —
+  *"switches to server-binned heatmaps above the point cap"*
+- Histogram fetches run panel-open only — *"does not fetch histograms while
+  hidden or below the cap"*
+- Reopening with unchanged inputs refetches nothing; failures retry on the
+  next open — *"does not refetch an unchanged histogram on reopen"*,
+  *"retries a failed histogram fetch on the next open"*
+- A drawn shape becomes a gate pinning the server-derived category order —
+  *"turns a drawn closed path into a gate"*, *"pins the server-derived
+  category order into a drawn gate"*
+- Non-shape relayouts and the persisted gate's own shape are ignored —
+  *"ignores non-shape relayouts and the persisted gate's own shape"*
+- The badge shows the chained count, not pure membership — *"shows the
+  chained badge count from the histogram, not pure ids"*
+- The honesty banner names inexpressible filters — *"names the filters the
+  distributions cannot express"*; the request spec errs one-sidedly toward
+  over-inclusion — *"inlines bounded id lists and skips oversized ones with
+  labels"*, *"reports region filters and the hidden-layer rule as skipped"*
+
+**Server list (`annotationListServer.test.ts` / `test_server_list.py`)**
+- Page fetches carry gate definitions, never id lists — *"sends gate
+  DEFINITIONS, never gate id lists (SERVER_GATING.md P3)"*
+- A match-nothing gate short-circuits at the API boundary — *"expresses a
+  match-nothing gate as an empty id constraint"*, *"returns an empty page
+  without issuing a request"*
+- Definitions narrow ids, pages, and counts consistently —
+  *"testGateNarrowsListIds"*, *"testGateAppliesToPageAndCount"*,
+  *"testTwoGatesAnd"*, *"testGateComposesWithPropertyFilter"*
+- A zero-match gate is zero rows, not an error —
+  *"testZeroMatchGateIsZeroRowsNot400"*
+
+**Boundary hardening (`test_analysis_gating.py` / `test_server_list.py`)**
+- Malformed input is a 400, never a 500, on every endpoint —
+  *"testMalformedPlotIs400Not500"*, *"testMalformedRequestIs400Not500"*,
+  *"testMalformedGateIs400"*, *"testNonListAnalysisGatesIs400"*
+- Private datasets 403 for non-readers — *"testRequiresReadAccess"*
+- Degenerate inputs answer instead of erroring —
+  *"testDegenerateGateMatchesNothingWithoutError"*,
+  *"testDegenerateNumericRangeIsASingleBin"*,
+  *"testEmptyPopulationIsARealAnswer"*
+
+**Process rules this feature re-proved**
+- Verify from a fresh page load on a dataset that actually exceeds the cap
+  (the 708,983-object Xenium dataset).
+- The parity fixture regenerates only from the TS reference implementation;
+  a hand-edited fixture is a spec violation.

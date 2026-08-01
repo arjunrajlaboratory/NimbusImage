@@ -26,6 +26,7 @@ import { idListSignature } from "@/utils/signatures";
 import {
   TAnnotationOrStub,
   IAnalysisGate,
+  IAnalysisGateFilterTerm,
   IAnalysisGatePlotRequest,
   IAnalysisPlot,
   IAnnotationFilter,
@@ -561,6 +562,47 @@ export class Filters extends VuexModule {
 
   get activeAnalysisGateSets(): Set<string>[] {
     return this.activeAnalysisGateIdLists.map((ids) => new Set(ids));
+  }
+
+  // The active gates as DEFINITIONS for the server list query
+  // (SERVER_GATING.md, Phase 3). Same three-way predicate as the id lists —
+  // enabled AND drawn AND resolved (an unresolved gate constrains nothing,
+  // so the interim list shows MORE, mirroring the viewer) — minus the gates
+  // known to match nothing, which hasEmptyResolvedGate short-circuits
+  // client-side instead of asking the server.
+  get activeAnalysisGateDefinitions(): IAnalysisGateFilterTerm[] {
+    return this.analysisPlots.reduce<IAnalysisGateFilterTerm[]>(
+      (definitions, plot) => {
+        const ids = this.analysisGateIds[plot.id];
+        if (
+          plot.gateEnabled &&
+          plot.gate !== null &&
+          plot.xAxis !== null &&
+          plot.yAxis !== null &&
+          ids !== undefined &&
+          ids.length > 0
+        ) {
+          definitions.push({
+            xAxis: plot.xAxis,
+            yAxis: plot.yAxis,
+            gate: plot.gate,
+          });
+        }
+        return definitions;
+      },
+      [],
+    );
+  }
+
+  // True when an active gate resolved to zero annotations: the whole query
+  // matches nothing and the client already knows it.
+  get hasEmptyResolvedGate(): boolean {
+    return this.analysisPlots.some(
+      (plot) =>
+        plot.gateEnabled &&
+        plot.gate !== null &&
+        this.analysisGateIds[plot.id]?.length === 0,
+    );
   }
 
   // A cheap identity for the id-membership filters, for watchers that must

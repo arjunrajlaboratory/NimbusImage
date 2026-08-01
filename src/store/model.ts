@@ -1604,6 +1604,16 @@ export interface IAnnotationListPropertyFilter {
   values?: number[];
 }
 
+// One analysis gate as a query term: the DEFINITION (axes + polygon +
+// pinned categories), which the server resolves per request as a pure
+// predicate (SERVER_GATING.md, Phase 3). Shipping definitions instead of
+// resolved id lists keeps page fetches small at any gate size.
+export interface IAnalysisGateFilterTerm {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;
+}
+
 export interface IAnnotationListFilters {
   shape?: string;
   tags?: { values: string[]; exclusive: boolean };
@@ -1613,6 +1623,8 @@ export interface IAnnotationListFilters {
   // A list of id-sets; an annotation matches iff its _id is in EVERY set
   // (AND of $in's). Used to apply the selection and annotation-id filters.
   idConstraints?: string[][];
+  // Analysis gate definitions, ANDed with everything above.
+  analysisGates?: IAnalysisGateFilterTerm[];
 }
 
 export interface IAnnotationListQuery {

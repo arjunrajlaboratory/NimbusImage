@@ -94,17 +94,23 @@ export class AnnotationListServer extends VuexModule {
       propertyFilters: filters.propertyFilters,
       selectionFilter: filters.selectionFilter,
       annotationIdFilters: filters.annotationIdFilters,
-      analysisGates: filters.activeAnalysisGateIdLists,
+      analysisGateDefinitions: filters.activeAnalysisGateDefinitions,
+      analysisGatesMatchNothing: filters.hasEmptyResolvedGate,
     });
   }
 
   // A cheap identity for `currentFilters`, for watchers that need to react when
   // the query changes. Never serialize `currentFilters` itself — see
-  // @/utils/signatures for why.
+  // @/utils/signatures for why. Gate DEFINITIONS are small (a lasso's worth
+  // of vertices) and serialize fine, but the ROWS a fixed definition matches
+  // can change when values are recomputed or annotations edited — the
+  // resolved-id hash appended here is what moves then.
   get currentFiltersSignature(): string {
     const { idConstraints, ...rest } = this.currentFilters;
     const constraints = (idConstraints ?? []).map(idListSignature).join(",");
-    return `${JSON.stringify(rest)}|${constraints}`;
+    return `${JSON.stringify(rest)}|${constraints}|${
+      filters.analysisGateSignature
+    }`;
   }
 
   /**

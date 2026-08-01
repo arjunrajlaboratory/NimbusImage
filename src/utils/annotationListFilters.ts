@@ -1,4 +1,5 @@
 import {
+  IAnalysisGateFilterTerm,
   IAnnotationListFilters,
   IAnnotationListPropertyFilter,
   IAnnotationListSort,
@@ -103,8 +104,14 @@ export function buildListFilters(input: {
   propertyFilters: IListPropertyFilterInput[];
   selectionFilter: IIdAnnotationFilter;
   annotationIdFilters: IIdAnnotationFilter[];
-  // One membership set per active analysis gate (already resolved to ids).
-  analysisGates?: string[][];
+  // Active analysis gates as DEFINITIONS, resolved server-side per request
+  // (SERVER_GATING.md, Phase 3) — id lists no longer ride on page fetches.
+  analysisGateDefinitions?: IAnalysisGateFilterTerm[];
+  // True when some active gate is known to match nothing. Expressed as an
+  // empty idConstraints entry, which the AnnotationsAPI boundary answers
+  // locally (filtersMatchNothing) — the wire never sees it, and no second
+  // short-circuit path exists to miss.
+  analysisGatesMatchNothing?: boolean;
 }): IAnnotationListFilters {
   const out: IAnnotationListFilters = {};
   if (input.tagFilter.enabled && input.tagFilter.tags.length > 0) {
@@ -133,13 +140,19 @@ export function buildListFilters(input: {
   if (enabledIdFilters.length > 0) {
     idConstraints.push(enabledIdFilters.flatMap((f) => f.annotationIds));
   }
-  // Analysis gates compose with AND (sequential gating), so each one is its own
-  // membership set — unlike the annotation-id filters, which are unioned above.
-  for (const gate of input.analysisGates ?? []) {
-    idConstraints.push(gate);
+  if (input.analysisGatesMatchNothing) {
+    idConstraints.push([]);
   }
   if (idConstraints.length > 0) {
     out.idConstraints = idConstraints;
+  }
+  // Gates compose with AND (sequential gating), each as its own term —
+  // unlike the annotation-id filters, which are unioned above.
+  if (
+    input.analysisGateDefinitions &&
+    input.analysisGateDefinitions.length > 0
+  ) {
+    out.analysisGates = input.analysisGateDefinitions;
   }
   const pfs = buildPropertyListFilters(input.propertyFilters);
   if (pfs.length > 0) {
