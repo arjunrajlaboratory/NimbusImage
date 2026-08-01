@@ -670,8 +670,7 @@ export class Filters extends VuexModule {
     const skipped: string[] = [];
     const selectionOversized =
       this.selectionFilter.enabled &&
-      this.selectionFilter.annotationIds.length >
-        MAX_HISTOGRAM_ID_CONSTRAINT;
+      this.selectionFilter.annotationIds.length > MAX_HISTOGRAM_ID_CONSTRAINT;
     if (selectionOversized) {
       skipped.push("selection filter");
     }
@@ -692,9 +691,7 @@ export class Filters extends VuexModule {
       selectionFilter: selectionOversized
         ? { ...this.selectionFilter, enabled: false }
         : this.selectionFilter,
-      annotationIdFilters: idFiltersOversized
-        ? []
-        : this.annotationIdFilters,
+      annotationIdFilters: idFiltersOversized ? [] : this.annotationIdFilters,
     });
     if (this.roiFilters.some((filter) => filter.enabled)) {
       skipped.push("region (ROI) filters");

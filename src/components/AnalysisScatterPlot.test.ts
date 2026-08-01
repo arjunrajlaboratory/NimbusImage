@@ -255,3 +255,142 @@ describe("AnalysisScatterPlot", () => {
     expect(mocks.purge).toHaveBeenCalled();
   });
 });
+
+// Heatmap mode (SERVER_GATING.md, Phase 2): above the cap the plot renders
+// server-binned counts, and gates arrive as drawn layout shapes instead of
+// lasso selections.
+describe("AnalysisScatterPlot heatmap mode", () => {
+  const HISTOGRAM = {
+    counts: [
+      [1, 2],
+      [3, 4],
+    ],
+    xEdges: [0, 5, 10],
+    yEdges: [0, 5, 10],
+    xCategories: null,
+    yCategories: null,
+    xCategoryLabels: null,
+    yCategoryLabels: null,
+    inputCount: 100000,
+    plottedCount: 90000,
+    gateCount: 4521,
+  };
+
+  beforeEach(() => {
+    Object.keys(mocks.handlers).forEach((key) => delete mocks.handlers[key]);
+    mocks.react.mockClear();
+    mocks.setAnalysisPlotGate.mockClear();
+  });
+
+  function mountHeatmap(overrides: Record<string, unknown> = {}) {
+    return mountPlot({
+      series: null,
+      overCap: true,
+      histogram: HISTOGRAM,
+      ...overrides,
+    });
+  }
+
+  it("renders a heatmap trace with shape drawing enabled", async () => {
+    wrapper = mountHeatmap();
+    await flushPromises();
+    const [, traces, layout] = mocks.react.mock.calls.at(-1)! as any[];
+    expect(traces[0].type).toBe("heatmap");
+    expect(traces[0].z).toEqual(HISTOGRAM.counts);
+    // Bin centers from edges.
+    expect(traces[0].x).toEqual([2.5, 7.5]);
+    expect(layout.dragmode).toBe("drawclosedpath");
+  });
+
+  it("turns a drawn closed path into a gate", async () => {
+    wrapper = mountHeatmap();
+    await flushPromises();
+    for (const handler of mocks.handlers["plotly_relayout"] ?? []) {
+      handler({ shapes: [{ type: "path", path: "M1,2L3,4L5,0Z" }] });
+    }
+    expect(mocks.setAnalysisPlotGate).toHaveBeenCalledWith({
+      id: "p1",
+      gate: {
+        categoryKeyVersion: 1,
+        vertices: [
+          { x: 1, y: 2 },
+          { x: 3, y: 4 },
+          { x: 5, y: 0 },
+        ],
+        xCategories: null,
+        yCategories: null,
+      },
+    });
+  });
+
+  it("pins the server-derived category order into a drawn gate", async () => {
+    wrapper = mountHeatmap({
+      histogram: {
+        ...HISTOGRAM,
+        xEdges: null,
+        xCategories: ['v1:["a"]', 'v1:["b"]'],
+        xCategoryLabels: ["a", "b"],
+      },
+    });
+    await flushPromises();
+    for (const handler of mocks.handlers["plotly_relayout"] ?? []) {
+      handler({ shapes: [{ type: "rect", x0: 0, x1: 1, y0: 0, y1: 1 }] });
+    }
+    const gate = mocks.setAnalysisPlotGate.mock.calls.at(-1)![0].gate;
+    expect(gate.xCategories).toEqual(['v1:["a"]', 'v1:["b"]']);
+  });
+
+  it("ignores non-shape relayouts and the persisted gate's own shape", async () => {
+    const gate = {
+      categoryKeyVersion: 1 as const,
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+      ],
+      xCategories: null,
+      yCategories: null,
+    };
+    wrapper = mountHeatmap({ plot: { ...PLOT, gate } });
+    await flushPromises();
+    for (const handler of mocks.handlers["plotly_relayout"] ?? []) {
+      handler({ "xaxis.autorange": true });
+      // Only the persisted shape present: nothing new was drawn.
+      handler({ shapes: [{ type: "path", path: "M0,0L1,0L1,1Z" }] });
+    }
+    expect(mocks.setAnalysisPlotGate).not.toHaveBeenCalled();
+  });
+
+  it("shows the chained badge count from the histogram, not pure ids", async () => {
+    wrapper = mountHeatmap({
+      plot: {
+        ...PLOT,
+        gate: {
+          categoryKeyVersion: 1 as const,
+          vertices: [
+            { x: 0, y: 0 },
+            { x: 1, y: 0 },
+            { x: 1, y: 1 },
+          ],
+          xCategories: null,
+          yCategories: null,
+        },
+      },
+      // Pure server ids over the whole dataset — NOT what the badge shows.
+      gateIds: Array.from({ length: 70000 }, (_, i) => `id-${i}`),
+    });
+    await flushPromises();
+    expect((wrapper.vm as any).gateBadgeCount).toBe(4521);
+  });
+
+  it("ignores lasso selection events in heatmap mode", async () => {
+    wrapper = mountHeatmap();
+    await flushPromises();
+    for (const handler of mocks.handlers["plotly_selected"] ?? []) {
+      handler({
+        lassoPoints: { x: [0, 1, 2], y: [0, 1, 0] },
+      });
+    }
+    expect(mocks.setAnalysisPlotGate).not.toHaveBeenCalled();
+  });
+});

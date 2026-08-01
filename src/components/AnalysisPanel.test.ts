@@ -13,10 +13,15 @@ import { reactive } from "vue";
 const mocks = vi.hoisted(() => ({
   setAnalysisPanelOpen: vi.fn(),
   addAnalysisPlot: vi.fn(),
+  fetchAnalysisHistogram: vi.fn(async (...args: any[]): Promise<any> => {
+    void args; // vi.fn needs the rest signature for typed spread calls
+    return null;
+  }),
   population: [] as any[],
   plots: [] as any[],
   gateIds: {} as { [plotId: string]: string[] },
   values: {} as Record<string, any>,
+  histogramSpec: { filters: {} as any, skipped: [] as string[] },
   // Reactivity lives on this small holder, not on the population array: the cap
   // tests build 50k stubs and making those reactive proxies exhausts the heap.
   signal: { tick: 0 } as { tick: number },
@@ -47,20 +52,34 @@ vi.mock("@/store/filters", () => ({
     get filteredAnnotations() {
       return mocks.population;
     },
+    get analysisHistogramFilterSpec() {
+      return mocks.histogramSpec;
+    },
     setAnalysisPanelOpen: mocks.setAnalysisPanelOpen,
     addAnalysisPlot: mocks.addAnalysisPlot,
   },
 }));
 
 vi.mock("@/store", () => ({
-  default: { dataset: { id: "ds1", channelNames: new Map([[0, "DAPI"]]) } },
+  default: {
+    dataset: { id: "ds1", channelNames: new Map([[0, "DAPI"]]) },
+    annotationsAPI: {
+      fetchAnalysisHistogram: (...args: any[]) =>
+        mocks.fetchAnalysisHistogram(...args),
+    },
+  },
 }));
 
 vi.mock("@/store/properties", () => ({
   default: {
     computedPropertyPaths: [["p", "Area"]],
     getFullNameFromPath: () => "Prop / Area",
+    propertyValuesRevision: 0,
   },
+}));
+
+vi.mock("@/store/annotation", () => ({
+  default: { contentRevision: 0 },
 }));
 
 import AnalysisPanel from "./AnalysisPanel.vue";
@@ -119,6 +138,9 @@ function mountPanel(props: { visible: boolean }) {
 describe("AnalysisPanel", () => {
   beforeEach(() => {
     mocks.setAnalysisPanelOpen.mockClear();
+    mocks.fetchAnalysisHistogram.mockClear();
+    mocks.fetchAnalysisHistogram.mockResolvedValue(null);
+    mocks.histogramSpec = { filters: {}, skipped: [] };
     setPlots([]);
     mocks.signal = reactive({ tick: 0 });
     mocks.gateIds = {};
@@ -168,13 +190,91 @@ describe("AnalysisPanel", () => {
     expect(wrapper.vm.seriesByPlot).toEqual({});
   });
 
-  it("refuses to plot above the point cap", async () => {
+  it("switches to server-binned heatmaps above the point cap", async () => {
+    // SERVER_GATING.md Phase 2: the cap no longer blanks the panel — plots
+    // render as heatmaps from histogram2d, and no client series is built
+    // (that would walk a 50k+ chain per touch).
     setPlots([makePlot("p1")]);
     setPopulation(50001);
     const wrapper = mountPanel({ visible: true });
     await flushPromises();
     expect(wrapper.vm.overCap).toBe(true);
     expect(wrapper.find(".analysis-overcap").exists()).toBe(true);
+    expect(wrapper.vm.seriesByPlot).toEqual({});
+    expect(
+      wrapper.findComponent({ name: "AnalysisScatterPlot" }).exists(),
+    ).toBe(true);
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
+    const [datasetId, request] = mocks.fetchAnalysisHistogram.mock.calls[0] as [
+      string,
+      any,
+    ];
+    expect(datasetId).toBe("ds1");
+    expect(request.xAxis).toEqual(AXIS);
+    expect(request.bins).toEqual({ x: 128, y: 128 });
+  });
+
+  it("does not fetch histograms while hidden or below the cap", async () => {
+    setPlots([makePlot("p1")]);
+    setPopulation(50001);
+    mountPanel({ visible: false });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).not.toHaveBeenCalled();
+    setPopulation(3);
+    mountPanel({ visible: true });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).not.toHaveBeenCalled();
+  });
+
+  it("does not refetch an unchanged histogram on reopen", async () => {
+    setPlots([makePlot("p1")]);
+    setPopulation(50001);
+    // A SUCCESSFUL response: a failed fetch deliberately forgets its
+    // signature so the next open retries it.
+    mocks.fetchAnalysisHistogram.mockResolvedValue({
+      counts: [[1]],
+      xEdges: [0, 1],
+      yEdges: [0, 1],
+      xCategories: null,
+      yCategories: null,
+      inputCount: 1,
+      plottedCount: 1,
+      gateCount: null,
+    });
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
+    await wrapper.setProps({ visible: false });
+    await flushPromises();
+    await wrapper.setProps({ visible: true });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed histogram fetch on the next open", async () => {
+    setPlots([makePlot("p1")]);
+    setPopulation(50001);
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
+    await wrapper.setProps({ visible: false });
+    await wrapper.setProps({ visible: true });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(2);
+  });
+
+  it("names the filters the distributions cannot express", async () => {
+    setPlots([makePlot("p1")]);
+    setPopulation(50001);
+    mocks.histogramSpec = {
+      filters: {},
+      skipped: ["region (ROI) filters"],
+    };
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(wrapper.find(".analysis-skipped").text()).toContain(
+      "region (ROI) filters",
+    );
   });
 
   it("plots at exactly the cap", async () => {

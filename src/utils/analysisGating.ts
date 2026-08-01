@@ -75,6 +75,22 @@ export function isEncodedAnalysisCategoryKey(key: string): boolean {
 }
 
 /**
+ * Display label for an encoded category key — used where categories arrive
+ * as keys without their population (the server-binned histograms). Falls
+ * back to the raw key for anything undecodable.
+ */
+export function labelForCategoryKey(
+  key: string,
+  axisKey: TAnalysisCategoricalKey,
+  channelName: (channel: number) => string,
+): string {
+  const decoded = decodeAnalysisCategoryKey(key);
+  return decoded === null
+    ? key
+    : categoricalLabelFromRaw(decoded, axisKey, channelName);
+}
+
+/**
  * Deterministic jitter in [-0.28, 0.28] spreading a categorical column into a
  * readable strip. Derived from the annotation id rather than Math.random so a
  * point does not move between renders — and, more importantly, so a gate drawn

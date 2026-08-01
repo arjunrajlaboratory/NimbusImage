@@ -442,7 +442,9 @@ Change any of this and re-check these. Each item names the test that holds it.
 **Panel (`src/components/AnalysisPanel.test.ts`)**
 - Visibility is reported to the store, including on unmount — *"reports its open state to the store, including on unmount"*
 - While hidden, no scatter child mounts, no series builds, and no memoised input population remains; reopening restores them — *"does no display work and retains no plot populations while hidden"*
-- Above the cap the panel refuses to plot — *"refuses to plot above the point cap"*; boundary held by *"plots at exactly the cap"*
+- Above the cap the panel switches to server-binned heatmaps and builds no
+  client series — *"switches to server-binned heatmaps above the point cap"*;
+  boundary held by *"plots at exactly the cap"*
 - Plot *n* receives gates *0..n-1* only — *"feeds each plot the population passing the PRECEDING gates only"*
 - Input arrays stay identity-stable when nothing changed, so a Z-scrub doesn't re-render every plot — *"keeps plot input arrays identity-stable when nothing changed"*
 - Memoised inputs for removed plots are dropped — *"drops memoised inputs for removed plots"*

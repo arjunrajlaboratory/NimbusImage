@@ -1853,6 +1853,14 @@ export interface IAnalysisHistogramResponse {
   gateCount: number | null;
 }
 
+// The histogram response plus display labels for categorical axes, resolved
+// by the panel (labels need the dataset's channel names, which the server
+// does not have).
+export interface IAnalysisHistogramDisplay extends IAnalysisHistogramResponse {
+  xCategoryLabels: string[] | null;
+  yCategoryLabels: string[] | null;
+}
+
 export interface IAnalysisHistogramRequest {
   xAxis: TAnalysisAxis;
   yAxis: TAnalysisAxis;

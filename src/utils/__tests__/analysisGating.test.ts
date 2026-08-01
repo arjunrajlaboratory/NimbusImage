@@ -677,10 +677,7 @@ describe("shapeToGate", () => {
   };
 
   it("parses a closed plotly path into gate vertices", () => {
-    const gate = shapeToGate(
-      { type: "path", path: "M1,2L3,4L5,0Z" },
-      CATS,
-    );
+    const gate = shapeToGate({ type: "path", path: "M1,2L3,4L5,0Z" }, CATS);
     expect(gate).toEqual({
       categoryKeyVersion: 1,
       vertices: [
