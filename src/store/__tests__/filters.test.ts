@@ -308,8 +308,9 @@ describe("filters.refreshAnalysis", () => {
     await filters.refreshAnalysis();
     expect(filters.analysisGateIds.p1).toEqual(["a"]);
 
+    // Refresh again with the request failing — WITHOUT touching the gate, since
+    // replacing a gate legitimately drops its ids (see the test below).
     getValues.mockRejectedValueOnce(new Error("network"));
-    await filters.setAnalysisPlotGate({ id: "p1", gate: { ...GATE } });
     await filters.refreshAnalysis();
 
     expect(filters.analysisGateIds.p1).toEqual(["a"]); // not []
@@ -433,6 +434,33 @@ describe("filters.refreshAnalysis", () => {
     // analysis, or every frame scrub would pay for a feature nobody opened.
     filters.addAnalysisPlot("p1");
     expect(filters.analysisInputSignature).toBe("idle");
+  });
+
+  it("drops the previous gate's ids when a new lasso replaces it", async () => {
+    // Keeping them meant the plot highlighted the NEW selection while the
+    // viewer and the server list still filtered by the old one — and because
+    // refreshAnalysis deliberately leaves ids alone when its fetch fails, a
+    // failure right after re-lassoing stranded the stale constraint for good.
+    getValues.mockResolvedValue([
+      { annotationId: "a", values: { prop: { Area: 5 } } },
+    ]);
+    await addPlot("p1", GATE);
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds.p1).toEqual(["a"]);
+
+    // Re-lasso, and make the follow-up resolution fail.
+    getValues.mockRejectedValueOnce(new Error("network"));
+    await filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: { ...GATE, vertices: [...GATE.vertices] },
+    });
+    expect(filters.analysisGateIds.p1).toBeUndefined();
+    await filters.refreshAnalysis();
+
+    // Unresolved contributes no constraint — the interim shows more, not the
+    // wrong thing.
+    expect(filters.analysisGateIds.p1).toBeUndefined();
+    expect(filters.filteredAnnotations).toHaveLength(2);
   });
 
   it("clears derived state when the last gate goes away", async () => {

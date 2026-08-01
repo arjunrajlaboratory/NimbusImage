@@ -27,3 +27,47 @@ describe("getAnnotationCount (Finding 5)", () => {
     await expect(api.getAnnotationCount("ds1")).rejects.toThrow("network down");
   });
 });
+
+// A present-but-empty id constraint means "nothing matches"; the list API
+// rejects it with a 400 rather than answering, so the client answers. Guarding
+// here rather than in each store action is deliberate: the first attempt
+// guarded the two page fetches and missed fetchMatchingIds, the action behind
+// "Select all" and "Delete Unselected".
+describe("AnnotationsAPI match-nothing short-circuit", () => {
+  const nothingFilters = { idConstraints: [["a"], []] };
+
+  it("returns an empty page without issuing a request", async () => {
+    const post = vi.fn();
+    const api = new AnnotationsAPI({ post } as any);
+    const page = await api.fetchAnnotationListPage({
+      datasetId: "ds1",
+      filters: nothingFilters,
+      sort: null,
+      propertyPaths: [],
+      offset: 0,
+      limit: 10,
+    } as any);
+    expect(post).not.toHaveBeenCalled();
+    expect(page).toEqual({ total: 0, rows: [], offset: null });
+  });
+
+  it("returns no ids without issuing a request", async () => {
+    const post = vi.fn();
+    const api = new AnnotationsAPI({ post } as any);
+    expect(
+      await api.fetchAnnotationListIds("ds1", nothingFilters as any),
+    ).toEqual([]);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("still sends the request when every constraint is non-empty", async () => {
+    const post = vi.fn().mockResolvedValue({ data: { ids: ["a"] } });
+    const api = new AnnotationsAPI({ post } as any);
+    expect(
+      await api.fetchAnnotationListIds("ds1", {
+        idConstraints: [["a"]],
+      } as any),
+    ).toEqual(["a"]);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+});

@@ -394,9 +394,14 @@ export class Filters extends VuexModule {
         plot.id === payload.id ? { ...plot, gate: payload.gate } : plot,
       ),
     );
-    if (payload.gate === null) {
-      this.dropAnalysisGateIds(payload.id);
-    }
+    // Drop the derived ids on EVERY change, not just on clear. Re-lassoing kept
+    // the previous gate's ids active while the new polygon's request was in
+    // flight — so the plot highlighted the new selection while the viewer and
+    // the list still filtered by the old one — and if that request then failed
+    // (refreshAnalysis deliberately leaves ids untouched on failure) the stale
+    // constraint stuck permanently. Unresolved contributes no constraint, so
+    // the interim shows MORE than the final answer rather than less.
+    this.dropAnalysisGateIds(payload.id);
   }
 
   @Action

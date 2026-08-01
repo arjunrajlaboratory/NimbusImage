@@ -22,6 +22,7 @@ import {
 import {
   IListPropertyFilterInput,
   buildPropertyListFilters,
+  filtersMatchNothing,
 } from "@/utils/annotationListFilters";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
 import { idListSignature } from "@/utils/signatures";
@@ -160,20 +161,13 @@ export class AnnotationListServer extends VuexModule {
   }
 
   /**
-   * True when the query cannot match anything, so no request should be sent.
-   *
-   * An analysis gate resolved to zero annotations is a REAL gate meaning
-   * "nothing" — an empty lasso — and surfaces here as an empty inner
-   * `idConstraints` entry. The list API deliberately rejects `[[]]` with a 400
-   * (see `helpers/validation.py`: it wants match-none to be explicit rather
-   * than an accidental `$in: []`), so sending it left the request failed and
-   * the PREVIOUS rows on screen instead of showing zero results. The client is
-   * the side that knows the answer without asking, so it answers.
+   * True when the current query cannot match anything — see
+   * `filtersMatchNothing`. The short-circuit itself lives in the API client so
+   * every caller is covered; this getter exists for the UI and for the actions
+   * below, which still skip their loading churn when there is nothing to ask.
    */
   get queryMatchesNothing(): boolean {
-    return (this.currentFilters.idConstraints ?? []).some(
-      (ids) => ids.length === 0,
-    );
+    return filtersMatchNothing(this.currentFilters);
   }
 
   // The query fields shared by every list fetch; each action adds its own
