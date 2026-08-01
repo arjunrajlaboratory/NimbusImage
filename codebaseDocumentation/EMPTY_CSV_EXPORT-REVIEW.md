@@ -88,3 +88,61 @@ per id via the new O(1) store getter
 `AnnotationCSVDialog.test.ts` "selected-scope download never materializes the
 stub iteration array" (a throwing `annotationsForIteration` accessor), plus
 "selected-scope preview resolves stubs by id lookup".
+
+## Regression checklist
+
+One line per invariant, each naming the test that holds it. When changing the
+CSV export dialog, the export endpoints, or the annotation store's stub
+getters: re-check these. Frontend tests live in
+`src/components/AnnotationBrowser/AnnotationCSVDialog.test.ts` (CSV) and
+`src/store/ExportAPI.test.ts` (API); backend tests in
+`upenncontrast_annotation/test/test_export.py`.
+
+### Subset correctness (which rows end up in the file)
+
+- [ ] "Selected" scope exports exactly the selected ids in stub-only mode —
+  CSV: *selected scope sends the selected ids, not an omitted field*
+- [ ] "Selected" scope exports the selected ids in full mode —
+  CSV: *download sends the selected subset's ids*
+- [ ] "Filtered" scope exports the filtered ids in stub-only mode —
+  CSV: *filtered scope sends the filtered ids*
+- [ ] "All" scope omits `annotationIds` (full and stub-only) —
+  CSV: *download calls exportAPI.exportCsv with correct params*,
+  *all scope still omits annotationIds*
+- [ ] An explicitly empty subset survives the API layer (omitted field ≠
+  empty array) — ExportAPI: *omits annotationIds when no subset is
+  supplied*, *preserves an explicitly empty annotation subset*
+- [ ] The endpoint distinguishes omitted / subset / empty —
+  backend: `testExportCsvPreservesExactAnnotationSubset`,
+  `testIterAnnotationsDistinguishesNoneFromEmpty`
+- [ ] Dialog counts and radio enablement come from the stub-aware
+  `annotationCount` — CSV: *counts come from the stub-aware annotationCount*
+
+### Cost (no visible behavior — regresses silently)
+
+- [ ] A subset download never materializes the stub iteration array
+  (`annotationsForIteration` is dataset-sized in stub-only mode) —
+  CSV: *selected-scope download never materializes the stub iteration array*
+- [ ] Preview resolves annotation objects per id (O(1) lookups bounded by
+  `PREVIEW_ANNOTATION_LIMIT`), never by scanning —
+  CSV: *selected-scope preview resolves stubs by id lookup*
+- [ ] An empty-subset export skips the dataset-wide property-values scan —
+  backend: `testEmptySubsetSkipsPropertyValueFetch`
+
+### Boundary validation (public endpoints, 400 not 500)
+
+- [ ] Malformed `annotationIds` entries, `datasetId`, and `propertyPaths`
+  property ids on `/export/csv` are a clean 400 —
+  backend: `testExportCsvRejectsMalformedInput`
+- [ ] The `/export/json` twin rejects malformed `datasetId` and
+  `configurationId` the same way —
+  backend: `testExportJsonRejectsMalformedIds`
+
+### Process rules this feature proved
+
+- When a rule is added to one export scope, check its twins (all/filtered/
+  selected; download/preview/counts) — F1 and F4 were both one-of-N-paths
+  misses.
+- Put the cheap check (id counts) before the expensive work (object
+  materialization); validate ids at the API boundary because the CSV body
+  streams lazily and cannot 400 mid-stream.
