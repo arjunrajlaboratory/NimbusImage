@@ -680,6 +680,64 @@ describe("filters.refreshAnalysis", () => {
     );
   });
 
+  it("tracks a visible disabled gate's polygon and categorical inputs", async () => {
+    // While visible, disabled gates still show a resolved count/highlight. The
+    // scatter reads annotation content directly, so omitting these keys from
+    // the watcher signature let the picture move while the gate stayed stale.
+    const population = [
+      { ...makeStub("a"), tags: ["red"], shape: "point" },
+      { ...makeStub("b"), tags: ["blue"], shape: "point" },
+    ];
+    annotationMock.annotationsForIteration = population;
+    await filters.addAnalysisPlot("p1");
+    await filters.setAnalysisPlotAxes({
+      id: "p1",
+      xAxis: { type: "categorical", key: "tags" },
+      yAxis: { type: "categorical", key: "shape" },
+    });
+    await filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: {
+        categoryKeyVersion: 1,
+        vertices: [
+          { x: -0.5, y: -0.5 },
+          { x: 1.5, y: -0.5 },
+          { x: 1.5, y: 0.5 },
+          { x: -0.5, y: 0.5 },
+        ],
+        xCategories: [
+          encodeAnalysisCategoryKey(["red"]),
+          encodeAnalysisCategoryKey(["blue"]),
+        ],
+        yCategories: [encodeAnalysisCategoryKey("point")],
+      },
+    });
+    await filters.toggleAnalysisPlotGateEnabled("p1");
+    filters.setAnalysisPanelOpen(true);
+
+    const before = filters.analysisInputSignature;
+    expect(before).not.toBe("idle");
+    expect(before).toContain(
+      categoricalContentSignature(population as any, ["tags", "shape"]),
+    );
+
+    await filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: {
+        ...filters.analysisPlots[0].gate!,
+        vertices: [
+          ...filters.analysisPlots[0].gate!.vertices,
+          { x: -0.25, y: -0.25 },
+        ],
+      },
+    });
+    expect(filters.analysisInputSignature).not.toBe(before);
+
+    await filters.refreshAnalysis();
+    expect(getValues).not.toHaveBeenCalled();
+    expect(filters.analysisGateIds.p1).toBeDefined();
+  });
+
   it("stays idle — and touches nothing — when no gate exists and nobody looks", () => {
     // The content hash and population walk must not run for a dataset with no
     // analysis, or every frame scrub would pay for a feature nobody opened.

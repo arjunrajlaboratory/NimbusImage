@@ -106,8 +106,11 @@ While hidden it fetches only the property paths belonging to **enabled** plots
 with gates; ungated and disabled plots are display-only and must cost nothing.
 The hidden resolver walks that same enabled subset, so it cannot manufacture a
 bogus empty id list for a disabled gate from a narrower value projection.
-Opening the panel may
-widen that set to the paths needed to draw every ready plot. The retained values
+Opening the panel widens property paths to every ready plot and gate resolution
+to every drawn plot, including disabled gates whose count/highlight is still
+visible. The watcher hashes those visible gates' polygons and categorical
+inputs, so an annotation edit cannot move the scatter while leaving the gate
+display stale. The retained values
 are keyed by dataset, exact population, property revision, and fetched path set,
 so a cached superset is reused across palette toggles instead of posting the
 same population again. A configuration carrying only ungated plots still costs
@@ -339,6 +342,9 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Another enabled gate's hidden refresh neither fetches paths nor publishes ids
   for a disabled gate — *"does not resolve a disabled gate during another hidden
   gate's refresh"*
+- While visible, a disabled categorical gate still tracks its polygon and raw
+  categorical inputs because its count/highlight is displayed — *"tracks a
+  visible disabled gate's polygon and categorical inputs"*
 - A failed value fetch preserves ids only when their gate inputs are unchanged;
   changing the base population drops them before the request — *"leaves gate
   ids untouched when the value fetch fails"*, *"drops gate ids before a
@@ -463,10 +469,10 @@ Change any of this and re-check these. Each item names the test that holds it.
 
 Delivered on branch `analysis-panel-scatter-gating`, PR
 [#1298](https://github.com/arjunrajlaboratory/NimbusImage/pull/1298), through
-the round-9 hidden-disabled-gate fix described below (the feature, nine
+the round-10 visible-disabled-gate fix described below (the feature, ten
 Codex-fix rounds, documentation, and the export split). **Not merged.**
 
-Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,414 frontend
+Current working-tree gates: `pnpm tsc`, `pnpm lint:ci`, and all 3,415 frontend
 tests.
 There are no backend changes in #1298. The general CSV endpoint correction and
 its backend tests live in prerequisite #1299.
@@ -641,6 +647,23 @@ Regressions: *"does not resolve a disabled gate during another hidden gate's
 refresh"* and *"omits disabled and ungated plots from the server-list
 signature"*.
 
+### Round 10 Codex review tracker
+
+Codex reviewed `cd981d84` and found the visible twin of the hidden disabled-gate
+scope:
+
+1. **P2 — visible disabled categorical gates are resolved but not signed**
+   (`src/store/filters.ts`). With Analysis open, a disabled Tags/Shape gate
+   still shows a resolved count and highlight, but the watcher hashed
+   categorical content only for enabled gates. Editing an annotation could
+   therefore redraw its point in a new category while leaving the displayed
+   gate derived from the old category. **Status: fixed in this round.** The
+   shared scope now distinguishes ready plots (visible property paths), drawn
+   plots (visible gate resolution), and enabled drawn plots (hidden filtering).
+   Both the action and its watcher use `resolutionPlots`; the regression
+   *"tracks a visible disabled gate's polygon and categorical inputs"* also
+   pins re-lassoing while disabled.
+
 ### What is verified live vs by test only
 
 Verified in a running browser: the full gating flow including a real lasso drag
@@ -711,9 +734,17 @@ The exact hidden no-request boundary and the mixed enabled/disabled projection
 are pinned by the store regressions, where request count and requested paths
 are directly observable.
 
+The round-10 visible-disabled path was checked with a live Tags × Shape plot.
+An enabled box gate initially resolved 12,119 objects; after disabling it, a
+second box selection on another categorical region updated the displayed gate
+count to 151 while the viewer correctly remained unfiltered at 26,142 of
+26,142. The temporary plot was removed, and a hard reload again confirmed zero
+persisted plots and the full population. The annotation-category edit twin is
+pinned by the store regression rather than by mutating the shared dataset.
+
 ### Review history, and what it suggests
 
-Nearly every finding across nine Codex rounds plus the cold follow-up reviews was
+Nearly every finding across ten Codex rounds plus the cold follow-up reviews was
 real. Most of the later ones were consequences of *earlier fixes* rather than
 of the original feature — the gate-replacement bug
 only became permanent because of the failed-fetch fix; the `fetchMatchingIds`
@@ -722,7 +753,7 @@ overlap came from fixing eviction without fixing layout. The feature core has
 been stable since round 1, but the seams now have regression coverage for the
 failure shapes that kept recurring.
 
-The post-round-9 cold branch review found no additional actionable findings.
+The post-round-10 cold branch review found no additional actionable findings.
 
 ## Possible follow-ups
 

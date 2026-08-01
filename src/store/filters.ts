@@ -597,11 +597,11 @@ export class Filters extends VuexModule {
   // Hence the content hash for the categorical axes in use, and the property
   // store's load revision for the property axes.
   get analysisInputSignature(): string {
-    const { gatedPlots, paths } = analysisRefreshScope(
+    const { resolutionPlots, paths } = analysisRefreshScope(
       this.analysisPlots,
       this.analysisPanelOpen,
     );
-    if (gatedPlots.length === 0 && paths.length === 0) {
+    if (resolutionPlots.length === 0 && paths.length === 0) {
       // Nothing to fetch or resolve: don't even look at the population, so a
       // dataset nobody is analysing never pays for any of this.
       return "idle";
@@ -612,10 +612,13 @@ export class Filters extends VuexModule {
       // to display them. Omitting the visibility boolean means opening a panel
       // whose gates already need the same paths does not trigger a duplicate
       // refresh; genuinely new display paths still change this identity.
-      JSON.stringify(gatedPlots),
+      JSON.stringify(resolutionPlots),
       analysisPathKeys(paths).join(","),
       populationSignature(base),
-      categoricalContentSignature(base, analysisCategoricalKeys(gatedPlots)),
+      categoricalContentSignature(
+        base,
+        analysisCategoricalKeys(resolutionPlots),
+      ),
       paths.length > 0 ? properties.propertyValuesRevision : "-",
     ].join("|");
   }
@@ -682,8 +685,11 @@ export class Filters extends VuexModule {
     const datasetId = main.dataset?.id;
     const plots = this.analysisPlots;
     const panelOpen = this.analysisPanelOpen;
-    const { gatedPlots, paths } = analysisRefreshScope(plots, panelOpen);
-    if (!datasetId || (gatedPlots.length === 0 && paths.length === 0)) {
+    const { gatedPlots, resolutionPlots, paths } = analysisRefreshScope(
+      plots,
+      panelOpen,
+    );
+    if (!datasetId || (resolutionPlots.length === 0 && paths.length === 0)) {
       this.clearAnalysisDerivedState();
       return;
     }
@@ -748,7 +754,7 @@ export class Filters extends VuexModule {
           // Disabled gates are display-only. While hidden, omitting them avoids
           // resolving against the narrower value projection requested for the
           // enabled gates; opening the panel widens both paths and resolution.
-          panelOpen ? plots : gatedPlots,
+          resolutionPlots,
           base,
           gateValues,
           (channel) => channelDisplayName(channel),
@@ -1122,14 +1128,17 @@ function analysisRefreshScope(plots: IAnalysisPlot[], panelOpen: boolean) {
   const readyPlots = plots.filter(
     (plot) => plot.xAxis !== null && plot.yAxis !== null,
   );
+  const drawnPlots = readyPlots.filter((plot) => plot.gate !== null);
   // A disabled gate is display-only until it is re-enabled. While hidden it
   // must cost the same as an ungated plot; opening the panel widens `paths` to
   // every ready plot, and re-enabling makes it active here again.
-  const gatedPlots = readyPlots.filter(
-    (plot) => plot.gate !== null && plot.gateEnabled,
-  );
+  const gatedPlots = drawnPlots.filter((plot) => plot.gateEnabled);
   return {
     gatedPlots,
+    // A visible disabled gate still shows a resolved count/highlight, so its
+    // polygon and categorical inputs must wake the same action that resolves
+    // it. Hidden mode retains the enabled-only cost boundary.
+    resolutionPlots: panelOpen ? drawnPlots : gatedPlots,
     paths: analysisPropertyPaths(panelOpen ? readyPlots : gatedPlots),
   };
 }
