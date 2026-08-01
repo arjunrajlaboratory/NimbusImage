@@ -4,28 +4,33 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // exercise the real refreshPropertyFilterPassingIds action and the
 // filteredAnnotations getter in isolation. ./root stays real — the dynamic
 // module registers on it.
-const { fetchAnnotationListIds, annotationMock, propertiesMock } = vi.hoisted(
-  () => ({
-    fetchAnnotationListIds: vi.fn(),
-    annotationMock: {
-      stubOnlyMode: false,
-      annotationsForIteration: [] as any[],
-      annotationCentroids: {} as Record<string, { x: number; y: number }>,
+const {
+  fetchAnnotationListIds,
+  fetchAnalysisGateIds,
+  annotationMock,
+  propertiesMock,
+} = vi.hoisted(() => ({
+  fetchAnnotationListIds: vi.fn(),
+  fetchAnalysisGateIds: vi.fn(),
+  annotationMock: {
+    stubOnlyMode: false,
+    annotationsForIteration: [] as any[],
+    annotationCentroids: {} as Record<string, { x: number; y: number }>,
+    contentRevision: 0,
+  },
+  propertiesMock: {
+    propertyValues: {} as Record<string, any>,
+    propertyValuesRevision: 0,
+    propertiesAPI: {
+      getPropertyHistogram: vi.fn(),
+      getPropertyValuesForIds: vi.fn(
+        async (): Promise<
+          { annotationId: string; values: Record<string, any> }[]
+        > => [],
+      ),
     },
-    propertiesMock: {
-      propertyValues: {} as Record<string, any>,
-      propertyValuesRevision: 0,
-      propertiesAPI: {
-        getPropertyHistogram: vi.fn(),
-        getPropertyValuesForIds: vi.fn(
-          async (): Promise<
-            { annotationId: string; values: Record<string, any> }[]
-          > => [],
-        ),
-      },
-    },
-  }),
-);
+  },
+}));
 
 vi.mock("@/store/index", () => ({
   default: {
@@ -35,25 +40,35 @@ vi.mock("@/store/index", () => ({
     time: 0,
     annotationsAPI: {
       fetchAnnotationListIds: (...a: any[]) => fetchAnnotationListIds(...a),
+      fetchAnalysisGateIds: (...a: any[]) => fetchAnalysisGateIds(...a),
     },
     scheduleAnnotationBrowserSave: () => {},
     isLoggedIn: true,
   },
 }));
 
-vi.mock("@/store/annotation", () => ({
-  default: annotationMock,
-}));
+// Reactive proxies, so getter caches invalidate when tests mutate store
+// members (e.g. contentRevision) — mutate through the imported proxy, not
+// the raw hoisted object, or the getters won't see the change (see
+// connectionList.test.ts for the same pattern).
+vi.mock("@/store/annotation", async () => {
+  const { reactive } = await import("vue");
+  return { default: reactive(annotationMock) };
+});
 
-vi.mock("@/store/properties", () => ({
-  default: propertiesMock,
-}));
+vi.mock("@/store/properties", async () => {
+  const { reactive } = await import("vue");
+  return { default: reactive(propertiesMock) };
+});
 
 vi.mock("geojs", () => ({
   default: { util: { pointInPolygon: vi.fn().mockReturnValue(false) } },
 }));
 
 import filters from "@/store/filters";
+// The mocked (reactive) store proxies — mutations must go through these.
+import annotationProxy from "@/store/annotation";
+import propertiesProxy from "@/store/properties";
 import {
   categoricalContentSignature,
   encodeAnalysisCategoryKey,
@@ -714,15 +729,27 @@ describe("filters.refreshAnalysis", () => {
     expect(filters.filteredAnnotations).toHaveLength(2);
   });
 
-  it("refuses to fetch or gate above the point cap", async () => {
+  it("resolves via the server above the point cap, without fetching values", async () => {
+    // SERVER_GATING.md Phase 1: the cap no longer disables gating — it
+    // routes resolution to the gate_ids endpoint. Property values are
+    // display data and are NOT fetched above the cap.
     annotationMock.annotationsForIteration = Array.from(
       { length: 50001 },
       (_, i) => makeStub(`id-${i}`),
     );
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-3", "id-7"] });
     await addPlot("p1", GATE);
     await filters.refreshAnalysis();
     expect(getValues).not.toHaveBeenCalled();
-    expect(filters.analysisGateIds).toEqual({});
+    expect(fetchAnalysisGateIds).toHaveBeenCalledWith("ds1", [
+      { id: "p1", xAxis: AXIS, yAxis: AXIS, gate: GATE },
+    ]);
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-3", "id-7"] });
+    // Pure server ids compose client-side exactly like resolved gates.
+    expect(filters.filteredAnnotations.map((a: any) => a.id)).toEqual([
+      "id-3",
+      "id-7",
+    ]);
   });
 
   it("stops collecting an over-cap population before hashing its tail", async () => {
@@ -736,13 +763,15 @@ describe("filters.refreshAnalysis", () => {
       ...Array.from({ length: 50001 }, (_, i) => makeStub(`id-${i}`)),
       untouched,
     ];
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: [] });
     await addPlot("p1", GATE);
 
-    expect(filters.analysisInputSignature).toBe("over-cap");
+    // The over-cap signature is built from definitions and revisions — it
+    // must not hash (or even finish collecting) the population.
+    expect(filters.analysisInputSignature.startsWith("server|")).toBe(true);
     await expect(filters.refreshAnalysis()).resolves.toBeUndefined();
 
     expect(getValues).not.toHaveBeenCalled();
-    expect(filters.analysisGateIds).toEqual({});
   });
 
   it("resolves the polygon into ids and publishes the values it fetched", async () => {
@@ -943,6 +972,163 @@ describe("filters.refreshAnalysis", () => {
     await filters.setAnalysisPlotGate({ id: "p1", gate: null });
     await filters.refreshAnalysis();
     expect(filters.analysisGateIds).toEqual({});
+    expect(filters.analysisValues).toEqual({});
+  });
+});
+
+// Server-side gate resolution above the cap (SERVER_GATING.md, Phase 1).
+// The gate is a pure predicate: no population hash, no filter state in the
+// signature, invalidation only via the two revision counters.
+describe("filters.refreshAnalysis above the cap (server resolution)", () => {
+  const AXIS = { type: "property" as const, path: ["prop", "Area"] };
+  const GATE = {
+    categoryKeyVersion: 1 as const,
+    vertices: [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 10 },
+    ],
+    xCategories: null,
+    yCategories: null,
+  };
+  const getValues = propertiesMock.propertiesAPI.getPropertyValuesForIds;
+
+  beforeEach(() => {
+    filters.resetFilterState();
+    filters.setAnalysisPanelOpen(false);
+    fetchAnalysisGateIds.mockReset();
+    getValues.mockReset();
+    getValues.mockResolvedValue([]);
+    propertiesProxy.propertyValuesRevision = 0;
+    annotationProxy.contentRevision = 0;
+    annotationProxy.stubOnlyMode = false;
+    (annotationProxy as any).annotationsForIteration = Array.from(
+      { length: 50001 },
+      (_, i) => makeStub(`id-${i}`),
+    ) as any;
+  });
+
+  const addGatedPlot = async (id: string, gate: any = GATE) => {
+    await filters.addAnalysisPlot(id);
+    await filters.setAnalysisPlotAxes({ id, xAxis: AXIS, yAxis: AXIS });
+    await filters.setAnalysisPlotGate({ id, gate });
+  };
+
+  it("keeps the signature free of population and filter state", async () => {
+    await addGatedPlot("p1");
+    const before = filters.analysisInputSignature;
+    expect(before.startsWith("server|")).toBe(true);
+    // Population content changes (same over-cap size) must not re-key the
+    // signature — the pure predicate does not depend on the population.
+    (annotationProxy as any).annotationsForIteration = Array.from(
+      { length: 50002 },
+      (_, i) => makeStub(`other-${i}`),
+    ) as any;
+    expect(filters.analysisInputSignature).toBe(before);
+    // But the revision counters and the gate definition must re-key it.
+    annotationProxy.contentRevision++;
+    const afterContent = filters.analysisInputSignature;
+    expect(afterContent).not.toBe(before);
+    propertiesProxy.propertyValuesRevision++;
+    const afterValues = filters.analysisInputSignature;
+    expect(afterValues).not.toBe(afterContent);
+    await filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: {
+        ...GATE,
+        vertices: [...GATE.vertices, { x: 0, y: 10 }],
+      },
+    });
+    expect(filters.analysisInputSignature).not.toBe(afterValues);
+  });
+
+  it("does not re-request when already resolved under the same inputs", async () => {
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds).toHaveBeenCalledTimes(1);
+    // Palette toggles and unrelated touches re-run the action; the resolved
+    // signature short-circuits the request (round-6 lesson).
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps same-input ids on a failed retry", async () => {
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+    // Force a re-request under identical inputs by clearing the resolved
+    // signature marker via a failed changed-input cycle: instead, simulate
+    // an identical-input retry after a transient failure by resetting the
+    // resolved ids' signature is NOT possible from outside — so exercise
+    // the real path: bump revision (drops ids), fail, then heal.
+    annotationProxy.contentRevision++;
+    fetchAnalysisGateIds.mockResolvedValueOnce(null);
+    await filters.refreshAnalysis();
+    // Changed-input failure: ids were dropped before the await and stay
+    // dropped — unresolved shows MORE, never stale.
+    expect(filters.analysisGateIds).toEqual({});
+    // Identical retry (inputs unchanged since the failure) now succeeds.
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-2"] });
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-2"] });
+    // A failure under those SAME inputs must not clear the good ids.
+    fetchAnalysisGateIds.mockResolvedValueOnce(null);
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-2"] });
+  });
+
+  it("discards a stale response that resolves after a newer request", async () => {
+    await addGatedPlot("p1");
+    const first = deferred<any>();
+    fetchAnalysisGateIds.mockReturnValueOnce(first.promise);
+    const firstRun = filters.refreshAnalysis();
+    // A newer refresh under changed inputs supersedes the in-flight one.
+    annotationProxy.contentRevision++;
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["fresh"] });
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["fresh"] });
+    first.resolve({ p1: ["stale"] });
+    await firstRun;
+    expect(filters.analysisGateIds).toEqual({ p1: ["fresh"] });
+  });
+
+  it("skips disabled gates while the panel is closed", async () => {
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await filters.toggleAnalysisPlotGateEnabled("p1");
+    fetchAnalysisGateIds.mockClear();
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds).not.toHaveBeenCalled();
+    expect(filters.analysisGateIds).toEqual({});
+  });
+
+  it("treats an empty server answer as a real match-none constraint", async () => {
+    fetchAnalysisGateIds.mockResolvedValue({ p1: [] });
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: [] });
+    expect(filters.filteredAnnotations).toEqual([]);
+    expect(filters.activeAnalysisGateIdLists).toEqual([[]]);
+  });
+
+  it("clears the retained value cache when crossing above the cap", async () => {
+    // Below the cap first: values get cached for the scatter.
+    (annotationProxy as any).annotationsForIteration = [makeStub("a")] as any;
+    getValues.mockResolvedValue([
+      { annotationId: "a", values: { prop: { Area: 5 } } },
+    ]);
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(Object.keys(filters.analysisValues)).toEqual(["a"]);
+    // Crossing the cap: the cache pins up to 50K values for nothing.
+    (annotationProxy as any).annotationsForIteration = Array.from(
+      { length: 50001 },
+      (_, i) => makeStub(`id-${i}`),
+    ) as any;
+    fetchAnalysisGateIds.mockResolvedValue({ p1: [] });
+    await filters.refreshAnalysis();
     expect(filters.analysisValues).toEqual({});
   });
 });

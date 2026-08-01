@@ -42,11 +42,7 @@ vi.mock("geojs", () => ({
 }));
 
 import annotationStore from "@/store/annotation";
-import {
-  AnnotationShape,
-  IAnnotation,
-  IAnnotationStub,
-} from "@/store/model";
+import { AnnotationShape, IAnnotation, IAnnotationStub } from "@/store/model";
 
 function makeAnnotation(id: string, tags: string[] = []): IAnnotation {
   return {
@@ -86,13 +82,15 @@ describe("annotation contentRevision", () => {
   }
 
   it("bumps on wholesale load (setAnnotations)", () => {
-    expect(bumped(() => annotationStore.setAnnotations([makeAnnotation("a")])))
-      .toBe(true);
+    expect(
+      bumped(() => annotationStore.setAnnotations([makeAnnotation("a")])),
+    ).toBe(true);
   });
 
   it("bumps on stub load (setStubsFromServer)", () => {
-    expect(bumped(() => annotationStore.setStubsFromServer([makeStub("s1")])))
-      .toBe(true);
+    expect(
+      bumped(() => annotationStore.setStubsFromServer([makeStub("s1")])),
+    ).toBe(true);
   });
 
   it("bumps on stub removal (removeAnnotationStubs)", () => {
@@ -106,9 +104,7 @@ describe("annotation contentRevision", () => {
     annotationStore.setStubsFromServer([makeStub("s1")]);
     expect(
       bumped(() =>
-        annotationStore.applyStubFieldUpdates([
-          { id: "s1", tags: ["edited"] },
-        ]),
+        annotationStore.applyStubFieldUpdates([{ id: "s1", tags: ["edited"] }]),
       ),
     ).toBe(true);
   });
@@ -147,10 +143,7 @@ describe("annotation contentRevision", () => {
   it("every content-changing mutation bumps (source scan)", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const source = readFileSync(
-      resolve(__dirname, "../annotation.ts"),
-      "utf8",
-    );
+    const source = readFileSync(resolve(__dirname, "../annotation.ts"), "utf8");
     const mutations = [
       "resetAnnotationStateImpl",
       "addAnnotationImpl",
@@ -166,9 +159,7 @@ describe("annotation contentRevision", () => {
       // Anchor on the DECLARATION (visibility modifier + name), not the
       // first occurrence — call sites like `this.addAnnotationImpl(...)`
       // appear earlier in the file.
-      const declaration = new RegExp(
-        `(?:public|private|protected) ${name}\\(`,
-      );
+      const declaration = new RegExp(`(?:public|private|protected) ${name}\\(`);
       const match = declaration.exec(source);
       expect(match, `${name} not found in annotation.ts`).not.toBeNull();
       const start = match!.index;
@@ -185,5 +176,4 @@ describe("annotation contentRevision", () => {
       ).toBe(true);
     }
   });
-
 });

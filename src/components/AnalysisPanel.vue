@@ -10,8 +10,9 @@
     <div v-if="overCap" class="analysis-overcap">
       <v-icon size="16" class="mr-1">mdi-information-outline</v-icon>
       More than {{ MAX_ANALYSIS_PLOT_POINTS.toLocaleString() }} objects pass the
-      current filters — too many for a scatter plot to gate exactly. Narrow the
-      filters (by tag, property range, or region) and the plots will appear
+      current filters — too many to plot as a scatter. Saved gates still apply
+      (they resolve on the server), but drawing new ones needs the plots: narrow
+      the filters (by tag, property range, or region) and the plots will appear
       here.
     </div>
 

@@ -14,7 +14,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { debounce } from "lodash";
 import filterStore from "@/store/filters";
 import ImageViewer from "@/components/ImageViewer.vue";
 import VolumeViewer from "@/components/VolumeViewer.vue";
@@ -52,13 +53,29 @@ const volumeViewMode = computed(() => volumeViewStore.viewMode);
 // The signature is cheap and short-circuits when there is no gate and nobody is
 // looking, so datasets without an analysis pay nothing. immediate: covers plots
 // hydrated before this view mounted.
+//
+// Above the cap the signature switches to server mode ("server|..."), where a
+// refresh is a whole-dataset request and its contentRevision input can burst
+// during bulk edits — those debounce. Below-cap refreshes stay immediate (the
+// sequence guard makes overlap safe either way), and a below-cap signature
+// cancels any pending server call so it cannot double-fire.
+const debouncedServerRefresh = debounce(
+  () => filterStore.refreshAnalysis(),
+  300,
+);
 watch(
   () => filterStore.analysisInputSignature,
-  () => {
-    filterStore.refreshAnalysis();
+  (signature) => {
+    if (signature.startsWith("server|")) {
+      debouncedServerRefresh();
+    } else {
+      debouncedServerRefresh.cancel();
+      filterStore.refreshAnalysis();
+    }
   },
   { immediate: true },
 );
+onBeforeUnmount(() => debouncedServerRefresh.cancel());
 
 // Auto tool-suggestions need the user logged in (worker catalog) and the tool
 // templates loaded. Both load asynchronously at startup and can arrive after

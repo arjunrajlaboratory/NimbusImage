@@ -100,10 +100,10 @@ describe("fetchAnalysisGateIds", () => {
     expect(await api.fetchAnalysisGateIds("ds1", [plot])).toEqual({
       "plot-1": ["a", "b"],
     });
-    expect(post).toHaveBeenCalledWith(
-      "upenn_annotation/analysis/gate_ids",
-      { datasetId: "ds1", plots: [plot] },
-    );
+    expect(post).toHaveBeenCalledWith("upenn_annotation/analysis/gate_ids", {
+      datasetId: "ds1",
+      plots: [plot],
+    });
   });
 
   it("short-circuits an empty plots list without a request", async () => {

@@ -205,4 +205,42 @@ describe("Viewer analysis gate refresh", () => {
     await flushPromises();
     expect(filtersMock.refreshAnalysis).toHaveBeenCalledTimes(2);
   });
+
+  // Server-mode (over-cap) signatures debounce: contentRevision bursts during
+  // bulk edits, and each refresh is a whole-dataset request
+  // (SERVER_GATING.md, Phase 1). Below-cap refreshes stay immediate.
+  it("debounces server-mode signature changes into one refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      filtersMock.state = reactive({ signature: "server|ds1|[]|0|0" });
+      shallowMount(Viewer, {});
+      expect(filtersMock.refreshAnalysis).not.toHaveBeenCalled();
+      filtersMock.state.signature = "server|ds1|[]|0|1";
+      await flushPromises();
+      filtersMock.state.signature = "server|ds1|[]|0|2";
+      await flushPromises();
+      expect(filtersMock.refreshAnalysis).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(300);
+      expect(filtersMock.refreshAnalysis).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending server refresh when dropping below the cap", async () => {
+    vi.useFakeTimers();
+    try {
+      filtersMock.state = reactive({ signature: "server|ds1|[]|0|0" });
+      shallowMount(Viewer, {});
+      // Below-cap signature arrives before the debounce fires: refresh runs
+      // immediately, and the stale debounced call must not double-fire.
+      filtersMock.state.signature = "idle";
+      await flushPromises();
+      expect(filtersMock.refreshAnalysis).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(1000);
+      expect(filtersMock.refreshAnalysis).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -374,9 +374,11 @@ Change any of this and re-check these. Each item names the test that holds it.
   its required path set is unchanged — *"reuses resolved values instead of
   refetching on palette toggles"*
 - A bail-out invalidates any in-flight request, so a stale one cannot reinstate a gate — *"invalidates an in-flight request before bailing out"*
-- Above the cap: no fetch and no gate, and the bounded walk stops before
-  collecting or hashing the tail — *"refuses to fetch or gate above the point
-  cap"*, *"stops collecting an over-cap population before hashing its tail"*
+- Above the cap: no value fetch — resolution goes server-side as a pure
+  predicate (SERVER_GATING.md) — and the bounded walk still stops before
+  collecting or hashing the tail — *"resolves via the server above the point
+  cap, without fetching values"*, *"stops collecting an over-cap population
+  before hashing its tail"*
 - The polygon resolves to ids and the values are published for the panel to reuse — *"resolves the polygon into ids and publishes the values it fetched"*
 - Derived state is cleared when the last gate goes — *"clears derived state when the last gate goes away"*
 - Re-lassoing drops the previous ids synchronously, then resolves the new polygon

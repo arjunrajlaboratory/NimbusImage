@@ -406,7 +406,9 @@ describe("appended-category ordering", () => {
     // categories at the same indices regardless of iteration order.
     const build = (order: string[]) =>
       buildPlotSeries({
-        annotations: order.map((tag, i) => annotation(`n${i}`, { tags: [tag] })),
+        annotations: order.map((tag, i) =>
+          annotation(`n${i}`, { tags: [tag] }),
+        ),
         values: Object.fromEntries(
           order.map((_, i) => [`n${i}`, { prop: { Mean: 1 } }]),
         ),

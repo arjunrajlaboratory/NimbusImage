@@ -23,6 +23,7 @@ import { idListSignature } from "@/utils/signatures";
 import {
   TAnnotationOrStub,
   IAnalysisGate,
+  IAnalysisGatePlotRequest,
   IAnalysisPlot,
   IAnnotationFilter,
   ITagAnnotationFilter,
@@ -622,7 +623,14 @@ export class Filters extends VuexModule {
     }
     const base = this.analysisPopulation;
     if (base.length > MAX_ANALYSIS_PLOT_POINTS) {
-      return "over-cap";
+      // Above the cap, resolution happens server-side against the whole
+      // dataset (SERVER_GATING.md): the identity is the gate definitions
+      // plus revision counters — never the population, which the bounded
+      // walk above deliberately stopped collecting.
+      const requestPlots = serverGateRequestPlots(resolutionPlots);
+      return requestPlots.length === 0
+        ? "server-idle"
+        : serverGateInputSignature(main.dataset?.id ?? "", requestPlots);
     }
     return [
       // Ungated plots affect the store only through the property paths needed
@@ -716,10 +724,15 @@ export class Filters extends VuexModule {
       return;
     }
     const base = this.analysisPopulation;
-    // Matches the panel's refusal to plot: a gate is only meaningful against
-    // the population it was drawn on, and above the cap we do not draw one.
+    // Above the cap, gates resolve server-side as pure predicates over the
+    // whole dataset (SERVER_GATING.md, Phase 1) — the cap bounds the client
+    // work (plotting, hashing, value fetches), not the gating.
     if (base.length > MAX_ANALYSIS_PLOT_POINTS) {
-      this.clearAnalysisDerivedState();
+      await this.refreshAnalysisAboveCap({
+        token,
+        datasetId,
+        resolutionPlots,
+      });
       return;
     }
 
@@ -866,6 +879,74 @@ export class Filters extends VuexModule {
     }
     commitGateResolution(resolutionPlots, values);
     this.setAnalysisLoading(false);
+  }
+
+  /**
+   * Over-cap half of refreshAnalysis: resolve drawn gates through the
+   * gate_ids endpoint and commit the PURE id lists. The committed ids are
+   * population-independent, so no filter change ever invalidates them —
+   * only the inputs named by serverGateInputSignature do.
+   *
+   * `token` is the caller's already-claimed sequence token (claimed as the
+   * first statement of refreshAnalysis, before any early return).
+   */
+  @Action
+  private async refreshAnalysisAboveCap(payload: {
+    token: number;
+    datasetId: string;
+    resolutionPlots: IAnalysisPlot[];
+  }) {
+    const { token, datasetId } = payload;
+    const requestPlots = serverGateRequestPlots(payload.resolutionPlots);
+    if (requestPlots.length === 0) {
+      this.clearAnalysisDerivedState();
+      return;
+    }
+    const serverSignature = serverGateInputSignature(datasetId, requestPlots);
+    if (
+      this.analysisGateDataSignature === serverSignature &&
+      requestPlots.every((plot) => this.analysisGateIds[plot.id] !== undefined)
+    ) {
+      // Same inputs, everything resolved: palette toggles and unrelated
+      // reactive touches must not refetch.
+      return;
+    }
+    if (this.analysisGateDataSignature !== serverSignature) {
+      // Changed inputs: every committed id was derived from obsolete data.
+      // Drop BEFORE awaiting — a failure may retain ids only for an
+      // identical retry, and unresolved shows MORE rather than stale.
+      if (Object.keys(this.analysisGateIds).length > 0) {
+        this.setAnalysisGateIds({});
+      }
+      this.setAnalysisGateDataSignature(null);
+      this.setAnalysisVisibleGateDataSignature(null);
+    }
+    // The value cache serves the below-cap scatter; above the cap it pins up
+    // to 50K values for nothing. It would self-invalidate by signature on
+    // the way back down — clearing here just frees the memory sooner.
+    if (
+      this.analysisValuesSourceSignature !== null ||
+      Object.keys(this.analysisValues).length > 0
+    ) {
+      this.clearAnalysisValueCache();
+    }
+    this.setAnalysisLoading(true);
+    const gateIds = await main.annotationsAPI.fetchAnalysisGateIds(
+      datasetId,
+      requestPlots,
+    );
+    if (!analysisGateGuard.isCurrent(token)) {
+      // A newer refresh owns the state (and the loading flag) now.
+      return;
+    }
+    this.setAnalysisLoading(false);
+    if (gateIds === null) {
+      // Failure ≠ empty: same-input ids stayed in place above; changed-input
+      // ids were dropped before the await. Either way, nothing to commit.
+      return;
+    }
+    this.setAnalysisGateIds(gateIds);
+    this.setAnalysisGateDataSignature(serverSignature);
   }
 
   @Action
@@ -1225,6 +1306,46 @@ function analysisRefreshScope(plots: IAnalysisPlot[], panelOpen: boolean) {
 
 function analysisPathKeys(paths: string[][]): string[] {
   return paths.map((path) => createPathStringFromPathArray(path)).sort();
+}
+
+/** The drawn plots of `plots`, shaped for the server gate_ids request. */
+function serverGateRequestPlots(
+  plots: IAnalysisPlot[],
+): IAnalysisGatePlotRequest[] {
+  return plots.reduce<IAnalysisGatePlotRequest[]>((request, plot) => {
+    if (plot.xAxis !== null && plot.yAxis !== null && plot.gate !== null) {
+      request.push({
+        id: plot.id,
+        xAxis: plot.xAxis,
+        yAxis: plot.yAxis,
+        gate: plot.gate,
+      });
+    }
+    return request;
+  }, []);
+}
+
+/**
+ * Identity of everything server-side gate resolution depends on
+ * (SERVER_GATING.md, Phase 1): the gate definitions plus the two revision
+ * counters standing in for population content. Deliberately NO population
+ * hash and no filter state — the pure predicate depends on neither, which is
+ * what keeps the over-cap signature O(plots) instead of O(population) and
+ * spares the invalidation matrix that population-derived gate ids need.
+ * Serializing the definitions is fine here: vertices are bounded by the
+ * lasso (hundreds), unlike the id lists signatures.ts exists to avoid.
+ */
+function serverGateInputSignature(
+  datasetId: string,
+  requestPlots: IAnalysisGatePlotRequest[],
+): string {
+  return [
+    "server",
+    datasetId,
+    JSON.stringify(requestPlots),
+    properties.propertyValuesRevision,
+    annotation.contentRevision,
+  ].join("|");
 }
 
 function channelDisplayName(channel: number): string {
