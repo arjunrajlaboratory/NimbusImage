@@ -54,6 +54,62 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | **A signature hashes values but not their structure** | Incremental hashes over nested rows, fields, or variable-length lists | Feed field/record boundaries into the hash, not only value separators and a final count; test two inputs with the same flattened values redistributed across records |
 | **Display text used as identity** | Categorical plots, select options, persisted group/order state | Carry a collision-free raw key separately from its human-readable label. Test sentinel-label collisions, delimiter collisions, and duplicate display names; persist keys and render labels. For persisted migrations, store an explicit schema version — never infer the version from a prefix in user-controlled display text. |
 
+#### The blast-radius sweep: who depended on what your fix changed?
+
+The pattern sweep above asks *"where else does this bug exist?"* That is not
+the question that keeps failing. On one 10-round review, **six of the last
+eight findings were consequences of the previous round's fix** — not sibling
+instances of the reported bug, but code that had encoded the invariant the
+fix changed. Fixing the reported bug and sweeping for siblings caught none of
+them.
+
+So run a second sweep, on your own diff. Write the change as one sentence:
+
+> **"X used to be true. Now Y is true instead."**
+
+Then find everything that assumed X. The mechanical version — check all five,
+because the last three are the ones that get missed:
+
+| Surface | What to look for |
+|---|---|
+| Other code paths | Anything branching on, short-circuiting from, or caching the old fact. **Especially guards and early returns**, which encode "nothing else can be true here" |
+| Tests | A test asserting X still passes and now pins the wrong behaviour |
+| **User-facing strings** | Banners, tooltips, error text, tool descriptions. These state invariants in prose and nothing typechecks them |
+| **Spec / doc prose** | `codebaseDocumentation/*.md` claims go stale silently; a wrong doc is a finding |
+| **Comments** | A comment explaining why the old thing was safe is now an argument for a bug |
+
+Worked examples, all from the same PR, all found by a reviewer *after* the fix
+shipped:
+
+- *"Invalidation was all-or-nothing; now it is per plot."* → the refusal
+  banner still said "the viewer shows everything the other filters allow"
+  (**user-facing string**), and a `stale.length === 0` early return still
+  skipped clearing the error (**guard**).
+- *"Gate ids were chained; now they are pure."* → the per-plot drop was
+  correct, but a whole-request signature one layer up threw the preserved ids
+  away anyway (**caller encoding the old fact**).
+- *"`null` was the decoder's `not-a-key` sentinel; now it is a legal category."*
+  → `isEncodedAnalysisCategoryKey` rejected a key the encoder could now
+  produce, silently discarding persisted gates.
+- *"This helper was synchronous; now it awaits the backend."* → a capacity
+  check above it became a TOCTOU, and the store's `addAnalysisPlot` no-ops
+  rather than throwing, so the tool reported creating something it had not.
+
+**The async sub-case deserves its own check.** Making a function `await`
+anything inserts a suspension point into every caller. Walk each call site and
+ask what was read *before* the new await and acted on *after* it — a check,
+a cap, a length, an index, a "current dataset" assumption. A concept grep
+cannot see this; only reading the call sites can. If the value can change
+during the await, re-derive it or confirm the effect landed. Prefer confirming
+the effect (*"is my plot actually in the list?"*) over re-reading the
+precondition, which is the same check-then-act one tick later.
+
+**Weakening an invariant is as dangerous as strengthening one.** Making a
+value legal that used to be impossible, a failure partial that used to be
+total, or state per-item that used to be global all widen the space of
+reachable states, and every consumer written against the narrower space is a
+candidate bug.
+
 #### The symmetric-path pattern
 
 By far the most repeated finding in this repo's review history: a rule is added

@@ -644,6 +644,34 @@ Before claiming a frontend change done:
 
 Component-level test patterns (AnnotationViewer harness, GeoJS mocks): see the nimbus-geojs skill and `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`.
 
+### A mock that cannot represent the bug makes its tests meaningless
+
+Worse than a mock returning the wrong constant is a mock that models *none* of
+the real action's effect. `addAnalysisPlot` was a bare `vi.fn()`, so
+`mockFilters.analysisPlots` stayed empty no matter what the code under test
+did. Nine tests passed against it — and none of them could observe whether the
+executor's plot had actually landed, which is precisely the state the bug
+produced (the store refuses at its cap by no-oping, and the executor went on
+to configure and report a plot that did not exist).
+
+The rule: **a mocked action must reproduce the state change its caller depends
+on, including its refusal behaviour.** If the real action appends, the mock
+appends; if the real one silently no-ops past a cap, the mock does too. When a
+test needs extra side effects on top, factor the default into a helper and
+call it, rather than replacing the implementation and silently dropping the
+effect the code under test is checking for:
+
+```ts
+function appendAnalysisPlot(id: string) { /* what the real action does */ }
+beforeEach(() => { mock.addAnalysisPlot.mockImplementation(appendAnalysisPlot); });
+// A test layering extra behaviour composes rather than replaces:
+mock.addAnalysisPlot.mockImplementation((id) => { appendAnalysisPlot(id); ...extra... });
+```
+
+Also reset such state in **every** `describe`'s `beforeEach`, not just the
+first — a test that flips a cap flag or swaps an API stub mid-await leaks it
+into every later block.
+
 ### A mock that returns a fixed value can fail your test for the wrong reason
 
 Shared mocks in this repo return constants chosen for the tests that existed when they were written, and a new test inherits them silently. The failure looks like a bug in the code under test, not in the harness.

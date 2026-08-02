@@ -977,6 +977,20 @@ Every invariant names the test that holds it (format enforced by
   *"testEmptyPopulationIsARealAnswer"*
 
 **Process rules this feature re-proved**
+- **Sweep the blast radius of each fix, not just the bug.** Six of this
+  feature's last eight findings were consequences of the *previous* fix
+  rather than siblings of the reported bug: per-plot invalidation left the
+  banner text and an early return describing all-or-nothing failure; pure
+  ids were thrown away by a whole-request signature one layer up; making
+  `null` a legal category collided with the decoder's sentinel; making
+  `rectangularGate` async turned a capacity check into a TOCTOU. State each
+  fix as "X used to be true; now Y is" and check code, tests, user-facing
+  strings, this document's prose, and comments. See CLAUDE.md obligation 2.
+- **A mock that cannot represent the bug makes every test around it
+  meaningless.** `addAnalysisPlot` was a bare `vi.fn()` that never appended,
+  so nine passing tests could not observe whether the executor's plot had
+  landed — exactly the state the cap race produces. Mocks mirror the real
+  action, including its refusal behaviour.
 - Verify from a fresh page load on a dataset that actually exceeds the cap
   (the 708,983-object Xenium dataset).
 - The parity fixture regenerates only from the TS reference implementation;
