@@ -24,10 +24,15 @@
       is unaffected.
     </div>
 
+    <!-- Says "some", and does not claim the gates are all off. Resolution is
+         per plot, so a failed batch leaves already-resolved gates filtering —
+         the previous wording ("the viewer shows everything the other filters
+         allow") described what happened before that change and now misstates
+         what is on screen. -->
     <div v-if="gateError" class="analysis-overcap analysis-gate-error">
       <v-icon size="16" class="mr-1">mdi-alert-circle-outline</v-icon>
-      Gates could not be applied: {{ gateError }} Until this resolves, the
-      viewer and the Objects tab show everything the other filters allow.
+      Some gates could not be resolved: {{ gateError }} Those gates are not
+      filtering anything for now; any gate that resolved earlier still is.
     </div>
 
     <!-- Sticky: the palette body scrolls, so a notice in the content flow

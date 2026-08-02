@@ -2591,6 +2591,22 @@ describe("view identity binding (finding #1)", () => {
 // Analysis-panel gating tools. A gate narrows the same `filteredAnnotations`
 // the other filters do, so these must resolve before reporting counts —
 // gate ids are derived, not stored.
+// What the real addAnalysisPlot does: APPEND, and no-op at the cap rather
+// than throw. A bare vi.fn() left analysisPlots empty, so no test could
+// observe whether the executor's plot actually landed — which is precisely
+// the state the cap race produces, and precisely what the executor now
+// verifies. Exported as a helper so a test layering extra side effects on
+// top does not silently drop the append.
+function appendAnalysisPlot(id: string) {
+  if (!mockFilters.canAddAnalysisPlot) {
+    return;
+  }
+  mockFilters.analysisPlots = [
+    ...mockFilters.analysisPlots,
+    { id, xAxis: null, yAxis: null, gate: null, gateEnabled: true },
+  ];
+}
+
 describe("analysis panel tools", () => {
   beforeEach(() => {
     mockFilters.analysisPlots = [];
@@ -2598,7 +2614,16 @@ describe("analysis panel tools", () => {
     mockFilters.canAddAnalysisPlot = true;
     // mockReset, not mockClear: one test installs an implementation that
     // reads addAnalysisPlot.mock.calls, which throws once those are cleared.
+    // Reset alongside the mock it gates: a test that fills the panel mid-await
+    // would otherwise leak both the cap and its histogram stub into every
+    // later describe.
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.analysisPlots = [];
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(
+      async () => [] as any[],
+    );
     mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.addAnalysisPlot.mockImplementation(appendAnalysisPlot);
     mockFilters.removeAnalysisPlot.mockReset();
     mockFilters.setAnalysisPlotAxes.mockReset();
     mockFilters.setAnalysisPlotGate.mockReset();
@@ -2647,7 +2672,8 @@ describe("analysis panel tools", () => {
   });
 
   it("reports the resolved gate count, not the request", async () => {
-    mockFilters.addAnalysisPlot.mockImplementation(() => {
+    mockFilters.addAnalysisPlot.mockImplementation((id: string) => {
+      appendAnalysisPlot(id);
       // The store resolves asynchronously; emulate ids appearing.
       mockFilters.analysisGateIds = {};
     });
@@ -2725,6 +2751,34 @@ describe("analysis panel tools", () => {
     ).rejects.toBeInstanceOf(ToolExecutionError);
   });
 
+  it("never reports a plot the store refused to create", async () => {
+    // Sizing an open bound awaits the backend, so the cap check at the top of
+    // the executor is stale by the time the plot is added — the user can fill
+    // the last slot during that wait. addAnalysisPlot no-ops at the cap
+    // instead of throwing, so the executor went on to apply axes and a gate
+    // to an id that does not exist, waited for it to resolve, and returned a
+    // plotId it had never created.
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => {
+      mockFilters.canAddAnalysisPlot = false; // the panel fills up mid-await
+      return [{ count: 1, min: 0, max: 10 }];
+    });
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { propertyPath: ["p1", "Area"] },
+          yAxis: { propertyPath: ["p1", "Perimeter"] },
+          xRange: { min: 1 },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/filled up/);
+    // ...and the failed call must not consume the per-turn budget or leave a
+    // half-configured plot behind.
+    expect(mockFilters.setAnalysisPlotAxes).not.toHaveBeenCalled();
+    expect(mockFilters.setAnalysisPlotGate).not.toHaveBeenCalled();
+  });
+
   it("refuses past the plot cap with an actionable message", async () => {
     mockFilters.canAddAnalysisPlot = false;
     await expect(
@@ -2783,7 +2837,16 @@ describe("create_analysis_plot waits for gate resolution", () => {
     mockFilters.analysisPlots = [];
     mockFilters.analysisGateIds = {};
     mockFilters.canAddAnalysisPlot = true;
+    // Reset alongside the mock it gates: a test that fills the panel mid-await
+    // would otherwise leak both the cap and its histogram stub into every
+    // later describe.
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.analysisPlots = [];
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(
+      async () => [] as any[],
+    );
     mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.addAnalysisPlot.mockImplementation(appendAnalysisPlot);
     mockFilters.setAnalysisPlotAxes.mockReset();
     mockFilters.setAnalysisPlotGate.mockReset();
     mockFilters.refreshAnalysis.mockReset();
@@ -2836,7 +2899,16 @@ describe("analysis tools: round 6 hardening", () => {
     mockFilters.analysisPlots = [];
     mockFilters.analysisGateIds = {};
     mockFilters.canAddAnalysisPlot = true;
+    // Reset alongside the mock it gates: a test that fills the panel mid-await
+    // would otherwise leak both the cap and its histogram stub into every
+    // later describe.
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.analysisPlots = [];
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(
+      async () => [] as any[],
+    );
     mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.addAnalysisPlot.mockImplementation(appendAnalysisPlot);
     mockFilters.setAnalysisPlotAxes.mockReset();
     mockFilters.setAnalysisPlotGate.mockReset();
     mockFilters.refreshAnalysis.mockReset();

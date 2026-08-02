@@ -2726,8 +2726,24 @@ const registry: { [name: string]: IAgentToolEntry } = {
       assertDatasetUnchanged(context);
 
       const plotId = uuidv4();
-      analysisPlotsCreatedThisTurn += 1;
       await filterStore.addAnalysisPlot(plotId);
+      // addAnalysisPlot no-ops at the cap rather than throwing, and the cap
+      // check above is now stale: sizing an open bound awaits the backend, so
+      // the user can add the last allowed plot during that wait. Without this
+      // the executor went on to apply axes and a gate to an id that does not
+      // exist, waited for it to resolve, and reported a plot it never created.
+      // Confirm insertion rather than re-reading canAddAnalysisPlot, which is
+      // the same check-then-act one tick later.
+      if (!filterStore.analysisPlots.some((plot) => plot.id === plotId)) {
+        throw new ToolExecutionError(
+          `The Analysis panel filled up to its maximum of ` +
+            `${MAX_ANALYSIS_PLOTS} plots while this one was being prepared. ` +
+            `Remove one and try again.`,
+        );
+      }
+      // Counted only once the plot really exists, so a failed call does not
+      // consume the per-turn budget.
+      analysisPlotsCreatedThisTurn += 1;
       await filterStore.setAnalysisPlotAxes({ id: plotId, xAxis, yAxis });
       if (gate) {
         await filterStore.setAnalysisPlotGate({ id: plotId, gate });
