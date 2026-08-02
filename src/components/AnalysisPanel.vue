@@ -24,9 +24,12 @@
       is unaffected.
     </div>
 
-    <div v-if="loadingValues" class="analysis-loading">
-      <v-progress-circular indeterminate size="18" width="2" class="mr-2" />
-      Loading property values…
+    <!-- Sticky: the palette body scrolls, so a notice in the content flow
+         disappears as soon as the user scrolls to a plot — which is exactly
+         when they are waiting on it. -->
+    <div v-if="busy" class="analysis-busy">
+      <v-progress-linear indeterminate color="primary" height="3" rounded />
+      <span class="analysis-busy-text">{{ busyLabel }}</span>
     </div>
 
     <analysis-scatter-plot
@@ -48,6 +51,12 @@
         color="primary"
         size="small"
         prepend-icon="mdi-plus"
+        :disabled="!canAddPlot"
+        :title="
+          canAddPlot
+            ? undefined
+            : `Maximum of ${MAX_ANALYSIS_PLOTS} plots reached`
+        "
         @click="addPlot"
       >
         Add plot
@@ -75,6 +84,7 @@ import {
 } from "@/store/model";
 import {
   ANALYSIS_HISTOGRAM_BINS,
+  MAX_ANALYSIS_PLOTS,
   MAX_ANALYSIS_PLOT_POINTS,
 } from "@/store/constants";
 import AnalysisScatterPlot from "@/components/AnalysisScatterPlot.vue";
@@ -125,6 +135,20 @@ const values = computed(() => filterStore.analysisValues);
 // result is a real outcome (a property computed for only some objects), and
 // inferring left this spinning forever on it.
 const loadingValues = computed(() => filterStore.analysisLoading);
+
+// How many histogram requests are outstanding. Above the cap these are the
+// slow part (seconds on a 700K dataset) and previously showed nothing at
+// all, so the panel looked idle while it was working hardest.
+const histogramsInFlight = shallowRef(0);
+
+const busy = computed(
+  () => loadingValues.value || histogramsInFlight.value > 0,
+);
+const busyLabel = computed(() =>
+  histogramsInFlight.value > 0
+    ? "Computing distributions…"
+    : "Loading property values…",
+);
 
 // Tell the store whether anyone is looking. It fetches for plots WITHOUT a gate
 // only while the panel is open — nothing else needs those values.
@@ -375,8 +399,12 @@ watch(
         histogramGuards.set(plotId, guard);
       }
       const token = guard.next();
+      histogramsInFlight.value += 1;
       void store.annotationsAPI
         .fetchAnalysisHistogram(datasetId, request)
+        .finally(() => {
+          histogramsInFlight.value -= 1;
+        })
         .then((response) => {
           if (!guard!.isCurrent(token)) {
             return;
@@ -399,6 +427,10 @@ watch(
 
 const passingCount = computed(() => filterStore.filteredAnnotations.length);
 
+// Disabled rather than silently no-op: the store refuses past the cap
+// because the backend rejects a larger request outright.
+const canAddPlot = computed(() => filterStore.canAddAnalysisPlot);
+
 function addPlot() {
   filterStore.addAnalysisPlot(uuidv4());
 }
@@ -412,6 +444,10 @@ defineExpose({
   passingCount,
   baseCount,
   overCap,
+  busy,
+  busyLabel,
+  canAddPlot,
+  MAX_ANALYSIS_PLOTS,
   histogramsByPlot,
   histogramWork,
   skippedHistogramFilters,
@@ -448,11 +484,23 @@ defineExpose({
   border-color: rgba(var(--v-theme-warning), 0.35);
 }
 
-.analysis-loading {
+.analysis-busy {
+  /* Pinned to the top of the scrolling palette body so it stays visible
+     while the user scrolls through plots. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0 8px;
+  /* Opaque, so plot content scrolling underneath does not show through. */
+  background: var(--nimbus-surface, #1e1e1e);
+}
+
+.analysis-busy-text {
   font-size: 12px;
-  color: var(--nimbus-text-muted, #8a8f98);
+  color: var(--nimbus-text-secondary, #d0d6e0);
 }
 
 .analysis-actions {

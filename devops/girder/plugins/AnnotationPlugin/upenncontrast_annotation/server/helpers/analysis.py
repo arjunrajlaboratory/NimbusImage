@@ -36,6 +36,16 @@ CATEGORICAL_KEYS = ("tags", "shape", "channel", "xy", "z", "time")
 # a numeric plot already could.
 MAX_HISTOGRAM_CELLS = 512 * 512
 
+# Per-axis ceiling on categories, enforced independently of the cell budget.
+# A product-only check lets one axis carry MAX_HISTOGRAM_CELLS categories
+# whenever the other collapses to a single bin — and the cost is not just
+# server memory: every category is returned and the client installs each as
+# an explicit Plotly tick (AnalysisScatterPlot's axisLayout), so a
+# distinct-tag dataset plotted against a constant property could ship
+# hundreds of thousands of labels and lock the browser. 512 matches the
+# numeric per-axis bin cap and is already far past readable.
+MAX_HISTOGRAM_AXIS_CATEGORIES = 512
+
 
 def _utf16_units(value):
     """The string as UTF-16 code units, exactly what charCodeAt iterates."""
@@ -307,6 +317,20 @@ def histogram2d(docs, values_by_id, spec):
     # count can come from the DATA (a dataset where every annotation carries
     # a distinct tag yields one column per annotation), not just from a
     # hostile request. ValueError, per the layering rule — the API maps it.
+    #
+    # Per-axis first: the product alone permits one enormous axis whenever
+    # the other collapses to a single bin, and every category becomes a
+    # Plotly tick on the client.
+    for categories, name in ((x_categories, "x"), (y_categories, "y")):
+        if (
+            categories is not None
+            and len(categories) > MAX_HISTOGRAM_AXIS_CATEGORIES
+        ):
+            raise ValueError(
+                "%s axis has %d distinct categories, over the maximum of "
+                "%d; it cannot be plotted as a categorical axis"
+                % (name, len(categories), MAX_HISTOGRAM_AXIS_CATEGORIES)
+            )
     if x_bins * y_bins > MAX_HISTOGRAM_CELLS:
         raise ValueError(
             "histogram grid of %d x %d cells exceeds the maximum of %d; "

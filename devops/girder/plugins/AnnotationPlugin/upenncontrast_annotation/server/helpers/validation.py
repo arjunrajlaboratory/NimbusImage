@@ -325,6 +325,13 @@ def validateAnalysisHistogramRequest(body):
     # which is the case this cannot see.
     xCount = len(body.get("xCategories") or []) or 1
     yCount = len(body.get("yCategories") or []) or 1
+    for count, name in ((xCount, "xCategories"), (yCount, "yCategories")):
+        if count > analysis.MAX_HISTOGRAM_AXIS_CATEGORIES:
+            raise RestException(
+                "%s exceeds the maximum of %d categories per axis"
+                % (name, analysis.MAX_HISTOGRAM_AXIS_CATEGORIES),
+                code=400,
+            )
     if xCount * yCount > analysis.MAX_HISTOGRAM_CELLS:
         raise RestException(
             "requested categorical grid exceeds the maximum of %d cells"

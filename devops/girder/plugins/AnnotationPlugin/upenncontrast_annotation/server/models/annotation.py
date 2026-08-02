@@ -479,25 +479,35 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 # Crossover sits near 0.67; 0.5 keeps us clear of it while
                 # still capturing the case this exists for.
                 matched = set(ids)
+                keep, operator = complementSize, "$nin"
+            else:
+                keep, operator = len(ids), "$in"
+            # Budget checked BEFORE converting and retaining, not after.
+            # Checking at the end still materialized every gate's ObjectIds
+            # first: the allowed 20 gates on a 700K dataset can each keep
+            # ~350K ids, so the guard against exhausting memory would hold
+            # ~7M ObjectIds on its way to returning the 400.
+            budget += keep
+            if budget > MAX_GATE_CONSTRAINT_IDS:
+                # Even the smaller side of every gate can overflow MongoDB's
+                # 16 MB command limit on a large enough dataset. Fail with a
+                # comprehensible message instead of an opaque BSON error. The
+                # real remedy is to push the gate predicate into the query
+                # rather than materializing ids — see SERVER_GATING.md.
+                filters.pop("gateMatchClauses", None)
+                raise ValueError(
+                    "analysis gates resolve to more than the %d ids the "
+                    "list query can carry; narrow the filters first"
+                    % MAX_GATE_CONSTRAINT_IDS
+                )
+            if operator == "$nin":
+                matched = set(ids)
                 selected = [
                     ObjectId(i) for i in allIds if i not in matched
                 ]
-                clauses.append({"_id": {"$nin": selected}})
             else:
                 selected = [ObjectId(i) for i in ids]
-                clauses.append({"_id": {"$in": selected}})
-            budget += len(selected)
-        if budget > MAX_GATE_CONSTRAINT_IDS:
-            # Even the smaller side of every gate can overflow MongoDB's
-            # 16 MB command limit on a large enough dataset. Fail with a
-            # comprehensible message instead of an opaque BSON error. The
-            # real remedy is to push the gate predicate into the query rather
-            # than materializing ids at all — see SERVER_GATING.md.
-            raise ValueError(
-                "analysis gates resolve to %d ids, over the %d the list "
-                "query can carry; narrow the filters first"
-                % (budget, MAX_GATE_CONSTRAINT_IDS)
-            )
+            clauses.append({"_id": {operator: selected}})
         return filters
 
     def resolveAnalysisGates(self, datasetId, plots):

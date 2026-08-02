@@ -1335,3 +1335,41 @@ class TestServerListAnalysisGates:
         clause = filters["gateMatchClauses"][0]["_id"]
         assert "$in" in clause, clause
         assert len(clause["$in"]) == 3
+
+    def testBudgetIsCheckedBeforeRetainingClauses(self, admin, server):
+        """Codex round 2: the budget must be enforced as ids accumulate, not
+        after. Checking at the end still materialized every gate's ObjectIds
+        first — 20 gates x ~350K on a 700K dataset is ~7M ObjectIds held
+        before the 400 is finally returned, i.e. the guard against a memory
+        blowup could itself blow memory."""
+        from upenncontrast_annotation.server.models import annotation as mod
+        folder, _, _ = self._setup(admin)
+        seen = []
+        realResolve = mod.analysis.resolve_gate_ids
+
+        def counting(docs, valuesById, gate):
+            ids = realResolve(docs, valuesById, gate)
+            seen.append(len(ids))
+            return ids
+
+        mod.analysis.resolve_gate_ids = counting
+        mod_max = mod.MAX_GATE_CONSTRAINT_IDS
+        mod.MAX_GATE_CONSTRAINT_IDS = 2
+        try:
+            filters = {"analysisGates": [self.gateFilter(5, 100)] * 5}
+            with pytest.raises(ValueError):
+                mod.Annotation().resolveListGateConstraints(
+                    folder["_id"], filters
+                )
+            # Must stop at the gate that crosses the budget, not resolve all
+            # five and check afterwards.
+            assert len(seen) < 5, seen
+            # And nothing oversized may be left retained on the filters.
+            retained = sum(
+                len(list(c["_id"].values())[0])
+                for c in filters.get("gateMatchClauses", [])
+            )
+            assert retained <= 2, retained
+        finally:
+            mod.analysis.resolve_gate_ids = realResolve
+            mod.MAX_GATE_CONSTRAINT_IDS = mod_max

@@ -38,6 +38,7 @@ vi.mock("geojs", () => ({
 }));
 
 import filters from "@/store/filters";
+import { MAX_ANALYSIS_PLOTS } from "@/store/constants";
 import { PropertyFilterMode } from "@/store/model";
 
 function addAreaFilter(enabled: boolean) {
@@ -214,5 +215,36 @@ describe("filters.activeFilterCount excludes analysis gates", () => {
     // Two rows in the Filters panel, one gate in the Analysis panel.
     expect(filters.activeFilterCount).toBe(2);
     expect(filters.activeAnalysisGateCount).toBe(1);
+  });
+});
+
+// Codex round 2: the backend caps a gate-resolution request at
+// MAX_ANALYSIS_PLOTS. Without a matching client limit, a 21st plot made
+// every request 400, fetchAnalysisGateIds returned null, and — because the
+// changed-input path clears resolved ids before awaiting — every gate
+// stopped filtering with no way to recover. The cap belongs where plots are
+// created, so the situation cannot arise.
+describe("filters plot count is capped", () => {
+  beforeEach(() => {
+    filters.resetFilterState();
+  });
+
+  it("stops adding plots at MAX_ANALYSIS_PLOTS", () => {
+    for (let i = 0; i < MAX_ANALYSIS_PLOTS + 5; i++) {
+      filters.addAnalysisPlot(`p${i}`);
+    }
+    expect(filters.analysisPlots).toHaveLength(MAX_ANALYSIS_PLOTS);
+    expect(filters.canAddAnalysisPlot).toBe(false);
+  });
+
+  it("allows adding again after one is removed", () => {
+    for (let i = 0; i < MAX_ANALYSIS_PLOTS; i++) {
+      filters.addAnalysisPlot(`p${i}`);
+    }
+    expect(filters.canAddAnalysisPlot).toBe(false);
+    filters.removeAnalysisPlot("p0");
+    expect(filters.canAddAnalysisPlot).toBe(true);
+    filters.addAnalysisPlot("fresh");
+    expect(filters.analysisPlots.map((p) => p.id)).toContain("fresh");
   });
 });

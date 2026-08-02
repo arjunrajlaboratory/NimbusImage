@@ -42,6 +42,7 @@ import {
   TAnalysisAxis,
 } from "./model";
 import {
+  MAX_ANALYSIS_PLOTS,
   MAX_ANALYSIS_PLOT_POINTS,
   MAX_HISTOGRAM_ID_CONSTRAINT,
 } from "./constants";
@@ -378,8 +379,18 @@ export class Filters extends VuexModule {
     main.scheduleAnnotationBrowserSave();
   }
 
+  // False once the plot list is at the backend's per-request limit. The
+  // panel disables "Add plot" on this rather than letting a 21st plot make
+  // every gate request 400 (see MAX_ANALYSIS_PLOTS).
+  get canAddAnalysisPlot(): boolean {
+    return this.analysisPlots.length < MAX_ANALYSIS_PLOTS;
+  }
+
   @Action
   addAnalysisPlot(id: string) {
+    if (!this.canAddAnalysisPlot) {
+      return;
+    }
     this.applyAnalysisPlots([
       ...this.analysisPlots,
       { id, xAxis: null, yAxis: null, gate: null, gateEnabled: true },

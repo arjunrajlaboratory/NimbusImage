@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   gateIds: {} as { [plotId: string]: string[] },
   values: {} as Record<string, any>,
   histogramSpec: { filters: {} as any, skipped: [] as string[] },
+  analysisLoading: false,
   // Reactivity lives on this small holder, not on the population array: the cap
   // tests build 50k stubs and making those reactive proxies exhausts the heap.
   signal: { tick: 0 } as { tick: number },
@@ -51,6 +52,12 @@ vi.mock("@/store/filters", () => ({
     },
     get filteredAnnotations() {
       return mocks.population;
+    },
+    get analysisLoading() {
+      return mocks.analysisLoading;
+    },
+    get canAddAnalysisPlot() {
+      return mocks.plots.length < 20;
     },
     get analysisHistogramFilterSpec() {
       return mocks.histogramSpec;
@@ -141,6 +148,7 @@ describe("AnalysisPanel", () => {
     mocks.fetchAnalysisHistogram.mockClear();
     mocks.fetchAnalysisHistogram.mockResolvedValue(null);
     mocks.histogramSpec = { filters: {}, skipped: [] };
+    mocks.analysisLoading = false;
     setPlots([]);
     mocks.signal = reactive({ tick: 0 });
     mocks.gateIds = {};
@@ -353,5 +361,47 @@ describe("AnalysisPanel", () => {
     expect(items).toContain("Shape");
     expect(items).toContain("Channel");
     expect(items).toContain("Prop / Area");
+  });
+  // -- Busy indicator --
+  //
+  // The palette body scrolls, so a notice in the content flow is invisible
+  // once the user scrolls to a plot — exactly when they are waiting on it.
+  // And above the cap the slow part is the per-plot histogram fetch
+  // (seconds at 700K), which previously showed nothing at all.
+  it("shows the busy bar while property values are loading", async () => {
+    mocks.analysisLoading = true;
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(wrapper.find(".analysis-busy").exists()).toBe(true);
+  });
+
+  it("shows the busy bar while a histogram request is in flight", async () => {
+    setPlots([makePlot("p1")]);
+    setPopulation(50001);
+    let release: (v: any) => void = () => {};
+    mocks.fetchAnalysisHistogram.mockReturnValue(
+      new Promise((r) => {
+        release = r;
+      }),
+    );
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(wrapper.find(".analysis-busy").exists()).toBe(true);
+    release(null);
+    await flushPromises();
+    expect(wrapper.find(".analysis-busy").exists()).toBe(false);
+  });
+
+  it("hides the busy bar when nothing is in flight", async () => {
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(wrapper.find(".analysis-busy").exists()).toBe(false);
+  });
+
+  it("disables Add plot at the cap", async () => {
+    setPlots(Array.from({ length: 20 }, (_, i) => makePlot(`p${i}`)));
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(wrapper.vm.canAddPlot).toBe(false);
   });
 });

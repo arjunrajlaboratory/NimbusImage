@@ -892,3 +892,36 @@ class TestAnalysisGatingReviewFindings:
             assertStatus(resp, 400)
         finally:
             analysis.MAX_HISTOGRAM_CELLS = original
+
+    def testSingleCategoricalAxisIsCappedIndependently(self, admin, server):
+        """Codex round 2: a product-only cell check lets one axis carry
+        MAX_HISTOGRAM_CELLS categories when the other collapses to a single
+        bin. The response returns every category and the client installs
+        each as an explicit Plotly tick, so an ordinary distinct-tag dataset
+        against a constant property could ship hundreds of thousands of
+        labels and lock the browser while staying inside the cell budget."""
+        from upenncontrast_annotation.server.helpers import analysis as an
+        folder = self._setup(admin)
+        pv = AnnotationPropertyValues()
+        for i in range(40):
+            a = makeAnnotation(folder["_id"], tags=[f"tag{i}"])
+            # Constant property value => the numeric axis collapses to 1 bin.
+            pv.appendValues({"p": {"Area": 7}}, a["_id"], folder["_id"])
+        original = an.MAX_HISTOGRAM_AXIS_CATEGORIES
+        an.MAX_HISTOGRAM_AXIS_CATEGORIES = 10
+        try:
+            resp = postJson(
+                server, admin, "/upenn_annotation/analysis/histogram2d",
+                histogramBody(
+                    folder["_id"],
+                    xAxis={"type": "categorical", "key": "tags"},
+                    yAxis={"type": "property", "path": ["p", "Area"]},
+                    xCategories=None, yCategories=None,
+                    bins={"x": 1, "y": 1},
+                ),
+            )
+            # 40 categories x 1 numeric bin = 40 cells, well inside the cell
+            # budget — only a per-axis limit catches this.
+            assertStatus(resp, 400)
+        finally:
+            an.MAX_HISTOGRAM_AXIS_CATEGORIES = original

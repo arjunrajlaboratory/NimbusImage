@@ -741,6 +741,25 @@ Every invariant names the test that holds it (format enforced by
 - The histogram badge applies the same unknown-category exclusion the
   resolver does — *"testGateCountExcludesAppendedCategories"*
 
+**Round-2 review findings (PR #1302), all consequences of the round-1 fixes**
+- The id budget is enforced as clauses accumulate, not after them, so the
+  guard against exhausting memory cannot itself exhaust memory —
+  *"testBudgetIsCheckedBeforeRetainingClauses"*
+- A single categorical axis is capped independently of the cell product, so
+  one axis cannot ship hundreds of thousands of Plotly ticks when the other
+  collapses to one bin — *"testSingleCategoricalAxisIsCappedIndependently"*
+- The client cannot create or hydrate more plots than the backend accepts,
+  so a request can never 400 into the state where every gate is cleared and
+  no retry succeeds — *"stops adding plots at MAX_ANALYSIS_PLOTS"*,
+  *"allows adding again after one is removed"*, *"disables Add plot at the cap"*
+
+**Busy feedback**
+- The busy bar covers property-value fetches AND histogram requests (the
+  slow path above the cap, previously silent) and is sticky, so it stays
+  visible when the panel is scrolled — *"shows the busy bar while property
+  values are loading"*, *"shows the busy bar while a histogram request is in
+  flight"*, *"hides the busy bar when nothing is in flight"*
+
 **Boundary hardening (`test_analysis_gating.py` / `test_server_list.py`)**
 - Malformed input is a 400, never a 500, on every endpoint —
   *"testMalformedPlotIs400Not500"*, *"testMalformedRequestIs400Not500"*,
