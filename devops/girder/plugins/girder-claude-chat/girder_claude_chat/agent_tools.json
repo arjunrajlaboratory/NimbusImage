@@ -1,7 +1,7 @@
 [
   {
     "name": "get_interface_state",
-    "description": "Get a structured snapshot of the current NimbusImage interface state: dataset, collection, location (XY/Z/Time), layer mode, camera, layers (id, name, channel, color, contrast, visibility), selected tool, active annotation filters, and annotation counts. Cheap and precise — prefer this over capture_screenshot for questions about application state. Read-only.",
+    "description": "Get a structured snapshot of the current NimbusImage interface state: dataset, collection, location (XY/Z/Time), layer mode, camera, layers (id, name, channel, color, contrast, visibility), selected tool, active annotation filters, and annotation counts. Cheap and precise \u2014 prefer this over capture_screenshot for questions about application state. Read-only.",
     "input_schema": {
       "type": "object",
       "properties": {},
@@ -16,7 +16,11 @@
       "properties": {
         "target": {
           "type": "string",
-          "enum": ["viewport", "interface", "both"],
+          "enum": [
+            "viewport",
+            "interface",
+            "both"
+          ],
           "description": "Which screenshot(s) to capture. Default: viewport."
         }
       },
@@ -44,7 +48,9 @@
           "properties": {
             "tags": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
             },
             "exclusive": {
@@ -53,16 +59,27 @@
             },
             "shape": {
               "type": "string",
-              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+              "enum": [
+                "point",
+                "line",
+                "polygon",
+                "rectangle",
+                "circle",
+                "ellipse"
+              ]
             },
-            "channel": { "type": "integer" },
+            "channel": {
+              "type": "integer"
+            },
             "currentFrameOnly": {
               "type": "boolean",
               "description": "Only annotations at the current XY/Z/Time location."
             },
             "ids": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Explicit annotation ids."
             }
           },
@@ -74,7 +91,10 @@
           "maximum": 200,
           "description": "Maximum number of annotations to return (default 50, hard-capped at 200). For larger match sets, page with offset or call get_annotation_summary for counts and breakdowns instead of listing them all."
         },
-        "offset": { "type": "integer", "minimum": 0 }
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "additionalProperties": false
     }
@@ -99,7 +119,7 @@
   },
   {
     "name": "get_worker_interface",
-    "description": "Get the parameter schema for a worker image: each parameter's name, type, default, and min/max, plus a `valueFormats` guide describing the exact value shape each type expects and a `channels` list giving the dataset's channel index↔name mapping. Call before run_worker or create_tool to know which workerInterfaceValues can be set and how to format them (channels are 0-based indices; channelCheckboxes slots take an array of indices like [0], not a map). May take a few seconds if the interface is not cached. Read-only.",
+    "description": "Get the parameter schema for a worker image: each parameter's name, type, default, and min/max, plus a `valueFormats` guide describing the exact value shape each type expects and a `channels` list giving the dataset's channel index\u2194name mapping. Call before run_worker or create_tool to know which workerInterfaceValues can be set and how to format them (channels are 0-based indices; channelCheckboxes slots take an array of indices like [0], not a map). May take a few seconds if the interface is not cached. Read-only.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -108,7 +128,9 @@
           "description": "The worker Docker image, as returned by list_workers or list_tools."
         }
       },
-      "required": ["image"],
+      "required": [
+        "image"
+      ],
       "additionalProperties": false
     }
   },
@@ -118,9 +140,18 @@
     "input_schema": {
       "type": "object",
       "properties": {
-        "xy": { "type": "integer", "minimum": 0 },
-        "z": { "type": "integer", "minimum": 0 },
-        "time": { "type": "integer", "minimum": 0 }
+        "xy": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "z": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "time": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "additionalProperties": false
     }
@@ -134,16 +165,29 @@
         "center": {
           "type": "object",
           "properties": {
-            "x": { "type": "number" },
-            "y": { "type": "number" }
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            }
           },
-          "required": ["x", "y"],
+          "required": [
+            "x",
+            "y"
+          ],
           "additionalProperties": false
         },
-        "zoom": { "type": "number" },
+        "zoom": {
+          "type": "number"
+        },
         "fit": {
           "type": "string",
-          "enum": ["annotations", "selection", "full"],
+          "enum": [
+            "annotations",
+            "selection",
+            "full"
+          ],
           "description": "Zoom/pan to frame these; ignores center/zoom if set."
         }
       },
@@ -158,13 +202,25 @@
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["single", "multiple", "unroll"]
+          "enum": [
+            "single",
+            "multiple",
+            "unroll"
+          ]
         },
-        "unrollXY": { "type": "boolean" },
-        "unrollZ": { "type": "boolean" },
-        "unrollT": { "type": "boolean" }
+        "unrollXY": {
+          "type": "boolean"
+        },
+        "unrollZ": {
+          "type": "boolean"
+        },
+        "unrollT": {
+          "type": "boolean"
+        }
       },
-      "required": ["mode"],
+      "required": [
+        "mode"
+      ],
       "additionalProperties": false
     }
   },
@@ -182,25 +238,48 @@
           "type": "string",
           "description": "Hex color like #RRGGBB."
         },
-        "visible": { "type": "boolean" },
+        "visible": {
+          "type": "boolean"
+        },
         "contrast": {
           "type": "object",
           "properties": {
-            "mode": { "type": "string", "enum": ["percentile", "absolute"] },
-            "blackPoint": { "type": "number" },
-            "whitePoint": { "type": "number" }
+            "mode": {
+              "type": "string",
+              "enum": [
+                "percentile",
+                "absolute"
+              ]
+            },
+            "blackPoint": {
+              "type": "number"
+            },
+            "whitePoint": {
+              "type": "number"
+            }
           },
-          "required": ["mode", "blackPoint", "whitePoint"],
+          "required": [
+            "mode",
+            "blackPoint",
+            "whitePoint"
+          ],
           "additionalProperties": false
         },
         "contrastScope": {
           "type": "string",
-          "enum": ["view", "configuration"],
+          "enum": [
+            "view",
+            "configuration"
+          ],
           "description": "Where to save contrast: 'view' (personal, default) or 'configuration' (shared collection)."
         },
-        "name": { "type": "string" }
+        "name": {
+          "type": "string"
+        }
       },
-      "required": ["layer"],
+      "required": [
+        "layer"
+      ],
       "additionalProperties": false
     }
   },
@@ -212,11 +291,15 @@
       "properties": {
         "visibleLayers": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Layer ids or names that should be visible."
         }
       },
-      "required": ["visibleLayers"],
+      "required": [
+        "visibleLayers"
+      ],
       "additionalProperties": false
     }
   },
@@ -226,18 +309,27 @@
     "input_schema": {
       "type": "object",
       "properties": {
-        "drawAnnotations": { "type": "boolean" },
+        "drawAnnotations": {
+          "type": "boolean"
+        },
         "annotationOpacity": {
           "type": "number",
           "description": "Annotation overlay opacity, 0 (transparent) to 1 (opaque)."
         },
-        "showScalebar": { "type": "boolean" },
-        "scalebarColor": { "type": "string", "description": "Hex color." },
+        "showScalebar": {
+          "type": "boolean"
+        },
+        "scalebarColor": {
+          "type": "string",
+          "description": "Hex color."
+        },
         "backgroundColor": {
           "type": "string",
           "description": "Hex color or CSS color name."
         },
-        "drawAnnotationConnections": { "type": "boolean" }
+        "drawAnnotationConnections": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     }
@@ -248,43 +340,91 @@
     "input_schema": {
       "type": "object",
       "properties": {
-        "mode": { "type": "string", "enum": ["2d", "3d"] }
+        "mode": {
+          "type": "string",
+          "enum": [
+            "2d",
+            "3d"
+          ]
+        }
       },
-      "required": ["mode"],
+      "required": [
+        "mode"
+      ],
       "additionalProperties": false
     }
   },
   {
     "name": "set_scale",
-    "description": "Set the dataset's physical scale in the collection so measurements use real units. Provide any of pixelSize / zStep (length units: nm, µm, mm, m) and tStep (time units: ms, s, m, h, d). Applies to the shared collection.",
+    "description": "Set the dataset's physical scale in the collection so measurements use real units. Provide any of pixelSize / zStep (length units: nm, \u00b5m, mm, m) and tStep (time units: ms, s, m, h, d). Applies to the shared collection.",
     "input_schema": {
       "type": "object",
       "properties": {
         "pixelSize": {
           "type": "object",
           "properties": {
-            "value": { "type": "number" },
-            "unit": { "type": "string", "enum": ["nm", "µm", "mm", "m"] }
+            "value": {
+              "type": "number"
+            },
+            "unit": {
+              "type": "string",
+              "enum": [
+                "nm",
+                "\u00b5m",
+                "mm",
+                "m"
+              ]
+            }
           },
-          "required": ["value", "unit"],
+          "required": [
+            "value",
+            "unit"
+          ],
           "additionalProperties": false
         },
         "zStep": {
           "type": "object",
           "properties": {
-            "value": { "type": "number" },
-            "unit": { "type": "string", "enum": ["nm", "µm", "mm", "m"] }
+            "value": {
+              "type": "number"
+            },
+            "unit": {
+              "type": "string",
+              "enum": [
+                "nm",
+                "\u00b5m",
+                "mm",
+                "m"
+              ]
+            }
           },
-          "required": ["value", "unit"],
+          "required": [
+            "value",
+            "unit"
+          ],
           "additionalProperties": false
         },
         "tStep": {
           "type": "object",
           "properties": {
-            "value": { "type": "number" },
-            "unit": { "type": "string", "enum": ["ms", "s", "m", "h", "d"] }
+            "value": {
+              "type": "number"
+            },
+            "unit": {
+              "type": "string",
+              "enum": [
+                "ms",
+                "s",
+                "m",
+                "h",
+                "d"
+              ]
+            }
           },
-          "required": ["value", "unit"],
+          "required": [
+            "value",
+            "unit"
+          ],
           "additionalProperties": false
         }
       },
@@ -303,7 +443,9 @@
           "properties": {
             "tags": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
             },
             "exclusive": {
@@ -312,16 +454,27 @@
             },
             "shape": {
               "type": "string",
-              "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+              "enum": [
+                "point",
+                "line",
+                "polygon",
+                "rectangle",
+                "circle",
+                "ellipse"
+              ]
             },
-            "channel": { "type": "integer" },
+            "channel": {
+              "type": "integer"
+            },
             "currentFrameOnly": {
               "type": "boolean",
               "description": "Only annotations at the current XY/Z/Time location."
             },
             "ids": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Explicit annotation ids."
             }
           },
@@ -329,10 +482,17 @@
         },
         "mode": {
           "type": "string",
-          "enum": ["replace", "add", "remove", "clear"]
+          "enum": [
+            "replace",
+            "add",
+            "remove",
+            "clear"
+          ]
         }
       },
-      "required": ["mode"],
+      "required": [
+        "mode"
+      ],
       "additionalProperties": false
     }
   },
@@ -344,14 +504,21 @@
       "properties": {
         "target": {
           "oneOf": [
-            { "type": "string", "enum": ["selection"] },
+            {
+              "type": "string",
+              "enum": [
+                "selection"
+              ]
+            },
             {
               "type": "object",
               "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
               "properties": {
                 "tags": {
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
                 },
                 "exclusive": {
@@ -360,16 +527,27 @@
                 },
                 "shape": {
                   "type": "string",
-                  "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+                  "enum": [
+                    "point",
+                    "line",
+                    "polygon",
+                    "rectangle",
+                    "circle",
+                    "ellipse"
+                  ]
                 },
-                "channel": { "type": "integer" },
+                "channel": {
+                  "type": "integer"
+                },
                 "currentFrameOnly": {
                   "type": "boolean",
                   "description": "Only annotations at the current XY/Z/Time location."
                 },
                 "ids": {
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "description": "Explicit annotation ids."
                 }
               },
@@ -378,7 +556,10 @@
           ]
         },
         "color": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Hex color like #RRGGBB, or null to clear."
         },
         "randomize": {
@@ -386,7 +567,10 @@
           "description": "Give each annotation a random color instead."
         }
       },
-      "required": ["target", "color"],
+      "required": [
+        "target",
+        "color"
+      ],
       "additionalProperties": false
     }
   },
@@ -398,14 +582,21 @@
       "properties": {
         "target": {
           "oneOf": [
-            { "type": "string", "enum": ["selection"] },
+            {
+              "type": "string",
+              "enum": [
+                "selection"
+              ]
+            },
             {
               "type": "object",
               "description": "Filter for annotations. All given conditions must match. Omit all fields to match every annotation.",
               "properties": {
                 "tags": {
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "description": "Annotations having at least one of these tags (or all, if exclusive is true)."
                 },
                 "exclusive": {
@@ -414,16 +605,27 @@
                 },
                 "shape": {
                   "type": "string",
-                  "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"]
+                  "enum": [
+                    "point",
+                    "line",
+                    "polygon",
+                    "rectangle",
+                    "circle",
+                    "ellipse"
+                  ]
                 },
-                "channel": { "type": "integer" },
+                "channel": {
+                  "type": "integer"
+                },
                 "currentFrameOnly": {
                   "type": "boolean",
                   "description": "Only annotations at the current XY/Z/Time location."
                 },
                 "ids": {
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "description": "Explicit annotation ids."
                 }
               },
@@ -433,15 +635,25 @@
         },
         "tags": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "minItems": 1
         },
         "mode": {
           "type": "string",
-          "enum": ["add", "remove", "replace"]
+          "enum": [
+            "add",
+            "remove",
+            "replace"
+          ]
         }
       },
-      "required": ["target", "tags", "mode"],
+      "required": [
+        "target",
+        "tags",
+        "mode"
+      ],
       "additionalProperties": false
     }
   },
@@ -453,11 +665,17 @@
       "properties": {
         "tags": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Show only annotations with at least one of these tags (all, if exclusive)."
         },
-        "exclusive": { "type": "boolean" },
-        "currentFrameOnly": { "type": "boolean" },
+        "exclusive": {
+          "type": "boolean"
+        },
+        "currentFrameOnly": {
+          "type": "boolean"
+        },
         "propertyFilters": {
           "type": "array",
           "description": "Keep only annotations whose property value is within [min, max]. Use the propertyPath from get_property_values.",
@@ -466,13 +684,21 @@
             "properties": {
               "propertyPath": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Full property value path from get_property_values."
               },
-              "min": { "type": "number" },
-              "max": { "type": "number" }
+              "min": {
+                "type": "number"
+              },
+              "max": {
+                "type": "number"
+              }
             },
-            "required": ["propertyPath"],
+            "required": [
+              "propertyPath"
+            ],
             "additionalProperties": false
           }
         },
@@ -494,21 +720,32 @@
     "input_schema": {
       "type": "object",
       "properties": {
-        "toolId": { "type": ["string", "null"] }
+        "toolId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
-      "required": ["toolId"],
+      "required": [
+        "toolId"
+      ],
       "additionalProperties": false
     }
   },
   {
     "name": "create_tool",
-    "description": "Add a new annotation tool to the current collection's toolset (e.g. 'set up a DAPI blob tool'). Provide EITHER manualShape for a hand-drawing tool OR workerImage for an automated worker tool (from list_workers), not both. ALWAYS provide tags: annotations the tool creates carry these tags, and tags are how annotations are filtered, measured and analyzed downstream — an untagged tool produces annotations that are hard to work with. For a worker tool, FIRST call get_worker_interface for the image and pass workerInterfaceValues: the values are saved with the tool (used when it is run from the UI, pipelines, or run_worker), and unset parameters fall back to defaults that are often wrong for the dataset. Optionally bind it to a channel with channelName and give it a name. Gated: the user approves before the tool is created. The tool is added but NOT activated; use select_tool to make it active, or run_worker to run a worker tool.",
+    "description": "Add a new annotation tool to the current collection's toolset (e.g. 'set up a DAPI blob tool'). Provide EITHER manualShape for a hand-drawing tool OR workerImage for an automated worker tool (from list_workers), not both. ALWAYS provide tags: annotations the tool creates carry these tags, and tags are how annotations are filtered, measured and analyzed downstream \u2014 an untagged tool produces annotations that are hard to work with. For a worker tool, FIRST call get_worker_interface for the image and pass workerInterfaceValues: the values are saved with the tool (used when it is run from the UI, pipelines, or run_worker), and unset parameters fall back to defaults that are often wrong for the dataset. Optionally bind it to a channel with channelName and give it a name. Gated: the user approves before the tool is created. The tool is added but NOT activated; use select_tool to make it active, or run_worker to run a worker tool.",
     "input_schema": {
       "type": "object",
       "properties": {
         "manualShape": {
           "type": "string",
-          "enum": ["polygon", "point", "line"],
+          "enum": [
+            "polygon",
+            "point",
+            "line"
+          ],
           "description": "For a manual hand-drawing tool: the annotation shape. 'polygon' is a blob outline."
         },
         "workerImage": {
@@ -525,12 +762,14 @@
         },
         "tags": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Tags applied to every annotation the tool creates (e.g. [\"nucleus\"]). Always provide at least one tag describing what the tool annotates."
         },
         "workerInterfaceValues": {
           "type": "object",
-          "description": "For worker tools only: parameter values keyed by parameter name, saved with the tool (call get_worker_interface first for the schema, valueFormats and channels list). Set every required parameter and any channel/select parameter — their built-in defaults (channel 0, empty selection) are usually wrong for the dataset. Format values per valueFormats: a channel parameter takes a 0-based channel index number; a channelCheckboxes 'slot' takes an array of channel indices to select, e.g. [0] (NOT a map like {\"0\": 0}, which selects nothing); a select takes one of its items. Anything omitted uses the interface default."
+          "description": "For worker tools only: parameter values keyed by parameter name, saved with the tool (call get_worker_interface first for the schema, valueFormats and channels list). Set every required parameter and any channel/select parameter \u2014 their built-in defaults (channel 0, empty selection) are usually wrong for the dataset. Format values per valueFormats: a channel parameter takes a 0-based channel index number; a channelCheckboxes 'slot' takes an array of channel indices to select, e.g. [0] (NOT a map like {\"0\": 0}, which selects nothing); a select takes one of its items. Anything omitted uses the interface default."
         }
       },
       "additionalProperties": false
@@ -547,7 +786,7 @@
   },
   {
     "name": "create_property",
-    "description": "Define a new annotation property (measurement) computed by a property worker (e.g. intensity, morphology). Pass propertyWorkerImage (a worker from list_workers whose isPropertyWorker is true) and the annotation shape it applies to; optionally restrict to tags, set worker parameters (get_worker_interface shows them), and name it. Gated: the user approves. This only defines the property — call compute_property to actually compute values.",
+    "description": "Define a new annotation property (measurement) computed by a property worker (e.g. intensity, morphology). Pass propertyWorkerImage (a worker from list_workers whose isPropertyWorker is true) and the annotation shape it applies to; optionally restrict to tags, set worker parameters (get_worker_interface shows them), and name it. Gated: the user approves. This only defines the property \u2014 call compute_property to actually compute values.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -557,12 +796,21 @@
         },
         "shape": {
           "type": "string",
-          "enum": ["point", "line", "polygon", "rectangle", "circle", "ellipse"],
+          "enum": [
+            "point",
+            "line",
+            "polygon",
+            "rectangle",
+            "circle",
+            "ellipse"
+          ],
           "description": "The annotation shape this property applies to."
         },
         "tags": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Only apply to annotations having these tags. Omit for all."
         },
         "exclusive": {
@@ -578,13 +826,16 @@
           "description": "Worker parameter overrides, formatted per get_worker_interface's valueFormats (channel = 0-based index number; channelCheckboxes slot = array of indices like [0]; select = one of its items); defaults are used for anything omitted."
         }
       },
-      "required": ["propertyWorkerImage", "shape"],
+      "required": [
+        "propertyWorkerImage",
+        "shape"
+      ],
       "additionalProperties": false
     }
   },
   {
     "name": "compute_property",
-    "description": "Compute an existing property definition's values for this dataset's annotations. Pass the propertyId (from list_properties or create_property). Gated: the user approves. Starts a background job; values populate as it runs — read them with get_property_values.",
+    "description": "Compute an existing property definition's values for this dataset's annotations. Pass the propertyId (from list_properties or create_property). Gated: the user approves. Starts a background job; values populate as it runs \u2014 read them with get_property_values.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -593,13 +844,15 @@
           "description": "The id of the property to compute (from list_properties/create_property)."
         }
       },
-      "required": ["propertyId"],
+      "required": [
+        "propertyId"
+      ],
       "additionalProperties": false
     }
   },
   {
     "name": "get_property_values",
-    "description": "Read computed property values as summary statistics (count, mean, std, min, max, median, p25, p75) per property value path — not a per-annotation dump. Optionally restrict to one propertyId and/or filter the annotations with a query (same shape as list_annotations). Read-only. Use to answer questions like 'what's the mean intensity of my nuclei?'.",
+    "description": "Read computed property values as summary statistics (count, mean, std, min, max, median, p25, p75) per property value path \u2014 not a per-annotation dump. Optionally restrict to one propertyId and/or filter the annotations with a query (same shape as list_annotations). Read-only. Use to answer questions like 'what's the mean intensity of my nuclei?'.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -623,7 +876,9 @@
       "properties": {
         "propertyPath": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Property value path segments, as returned by get_property_values' propertyPath."
         },
         "buckets": {
@@ -637,7 +892,9 @@
           "description": "Annotation filter (same fields as list_annotations' query)."
         }
       },
-      "required": ["propertyPath"],
+      "required": [
+        "propertyPath"
+      ],
       "additionalProperties": false
     }
   },
@@ -649,36 +906,53 @@
       "properties": {
         "propertyPaths": {
           "type": "array",
-          "items": { "type": "array", "items": { "type": "string" } },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "description": "Property value paths (each an array of segments)."
         },
-        "n": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "n": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
         "query": {
           "type": "object",
           "description": "Annotation filter (same fields as list_annotations' query)."
         }
       },
-      "required": ["propertyPaths"],
+      "required": [
+        "propertyPaths"
+      ],
       "additionalProperties": false
     }
   },
   {
     "name": "create_scatter_plot",
-    "description": "Create an interactive scatter plot of one property against another, rendered inline in the panel. Annotations missing a numeric value on either axis are dropped. Optionally color points by each annotation's first tag, and/or restrict annotations with a query (same shape as list_annotations). The raw points are never sent back to you — they render directly for the user; you receive only a plotId and point count. Refer to the plot by its title in your reply.",
+    "description": "Create an interactive scatter plot of one property against another, rendered inline in the panel. Annotations missing a numeric value on either axis are dropped. Optionally color points by each annotation's first tag, and/or restrict annotations with a query (same shape as list_annotations). The raw points are never sent back to you \u2014 they render directly for the user; you receive only a plotId and point count. Refer to the plot by its title in your reply.",
     "input_schema": {
       "type": "object",
       "properties": {
         "xPropertyPath": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Property value path for the x axis (from get_property_values' propertyPath)."
         },
         "yPropertyPath": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Property value path for the y axis (from get_property_values' propertyPath)."
         },
-        "title": { "type": "string" },
+        "title": {
+          "type": "string"
+        },
         "xLabel": {
           "type": "string",
           "description": "Optional x-axis label; defaults to the property's full name."
@@ -696,7 +970,11 @@
           "description": "Annotation filter (same fields as list_annotations' query)."
         }
       },
-      "required": ["xPropertyPath", "yPropertyPath", "title"],
+      "required": [
+        "xPropertyPath",
+        "yPropertyPath",
+        "title"
+      ],
       "additionalProperties": false
     }
   },
@@ -708,10 +986,14 @@
       "properties": {
         "propertyPath": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Property value path segments, as returned by get_property_values' propertyPath."
         },
-        "title": { "type": "string" },
+        "title": {
+          "type": "string"
+        },
         "buckets": {
           "type": "integer",
           "minimum": 1,
@@ -727,7 +1009,10 @@
           "description": "Annotation filter (same fields as list_annotations' query)."
         }
       },
-      "required": ["propertyPath", "title"],
+      "required": [
+        "propertyPath",
+        "title"
+      ],
       "additionalProperties": false
     }
   },
@@ -739,10 +1024,17 @@
       "properties": {
         "propertyPaths": {
           "type": "array",
-          "items": { "type": "array", "items": { "type": "string" } },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "description": "Property value paths (each an array of segments, from get_property_values' propertyPath)."
         },
-        "title": { "type": "string" },
+        "title": {
+          "type": "string"
+        },
         "groupByTag": {
           "type": "boolean",
           "description": "One box per annotation first-tag; requires exactly one propertyPath."
@@ -752,7 +1044,10 @@
           "description": "Annotation filter (same fields as list_annotations' query)."
         }
       },
-      "required": ["propertyPaths", "title"],
+      "required": [
+        "propertyPaths",
+        "title"
+      ],
       "additionalProperties": false
     }
   },
@@ -780,20 +1075,24 @@
     "input_schema": {
       "type": "object",
       "properties": {
-        "toolId": { "type": "string" },
+        "toolId": {
+          "type": "string"
+        },
         "workerInterfaceValues": {
           "type": "object",
           "description": "Parameter overrides keyed by parameter name, formatted per get_worker_interface's valueFormats (channel = 0-based index number; channelCheckboxes slot = array of indices like [0]; select = one of its items). Unspecified parameters use the tool's saved value or the interface default.",
           "additionalProperties": true
         }
       },
-      "required": ["toolId"],
+      "required": [
+        "toolId"
+      ],
       "additionalProperties": false
     }
   },
   {
     "name": "wait_for_job",
-    "description": "Block until a background job started by run_worker or compute_property finishes, then report its outcome. This is how you wait for a worker: it returns as soon as the job completes (it listens for the completion event, it does not poll), so one call covers a run of any length. Never check on a job by re-reading state (get_interface_state / get_annotation_summary / get_property_values) in a loop — that burns your turns and you will run out before the job is done. If the wait budget runs out before the job finishes, the result says stillRunning and you may call this again with the same jobId, or tell the user it is still going. Read-only.",
+    "description": "Block until a background job started by run_worker or compute_property finishes, then report its outcome. This is how you wait for a worker: it returns as soon as the job completes (it listens for the completion event, it does not poll), so one call covers a run of any length. Never check on a job by re-reading state (get_interface_state / get_annotation_summary / get_property_values) in a loop \u2014 that burns your turns and you will run out before the job is done. If the wait budget runs out before the job finishes, the result says stillRunning and you may call this again with the same jobId, or tell the user it is still going. Read-only.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -806,13 +1105,15 @@
           "description": "How long to wait before giving up on this call, 30-1800 seconds (default 600). Values outside that range are clamped. Segmentation of a large dataset can take many minutes, so prefer the default over a short wait."
         }
       },
-      "required": ["jobId"],
+      "required": [
+        "jobId"
+      ],
       "additionalProperties": false
     }
   },
   {
     "name": "read_help_topic",
-    "description": "Read NimbusImage documentation on a topic — how a feature works, or how the user can do something themselves in the UI. Call this before explaining a workflow you are unsure about. The available topic slugs are listed in the system prompt.",
+    "description": "Read NimbusImage documentation on a topic \u2014 how a feature works, or how the user can do something themselves in the UI. Call this before explaining a workflow you are unsure about. The available topic slugs are listed in the system prompt.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -821,7 +1122,110 @@
           "description": "The topic slug to read (e.g. \"workflows\", \"image-processing\"). Must be one of the slugs listed in the system prompt."
         }
       },
-      "required": ["topic"]
+      "required": [
+        "topic"
+      ]
+    }
+  },
+  {
+    "name": "create_analysis_plot",
+    "description": "Add a plot to the Analysis panel, optionally with a rectangular gate that filters the objects shown everywhere in the app. Plot two computed properties against each other (or a property against a categorical field like tags/channel). Supply xRange and/or yRange to gate \u2014 e.g. area 100-500 keeps only objects in that band, and the viewer, object list and exports all narrow to them. Gates chain: each plot narrows what the next one sees. Both axes must be properties to gate by range; for a categorical axis create the plot and let the user draw the gate. Prefer this over set_annotation_filter when the user is thinking in terms of a population on a scatter plot, or wants sequential gating. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "xAxis": {
+          "type": "object",
+          "description": "One axis: either a computed property (propertyPath) or an annotation field (categorical). Exactly one of the two.",
+          "properties": {
+            "propertyPath": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Property path as returned by get_property_values, e.g. [\"<propertyId>\", \"Area\"]."
+            },
+            "categorical": {
+              "type": "string",
+              "enum": [
+                "tags",
+                "shape",
+                "channel",
+                "xy",
+                "z",
+                "time"
+              ],
+              "description": "An annotation field to use as a category axis."
+            }
+          },
+          "additionalProperties": false
+        },
+        "yAxis": {
+          "type": "object",
+          "description": "One axis: either a computed property (propertyPath) or an annotation field (categorical). Exactly one of the two.",
+          "properties": {
+            "propertyPath": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Property path as returned by get_property_values, e.g. [\"<propertyId>\", \"Area\"]."
+            },
+            "categorical": {
+              "type": "string",
+              "enum": [
+                "tags",
+                "shape",
+                "channel",
+                "xy",
+                "z",
+                "time"
+              ],
+              "description": "An annotation field to use as a category axis."
+            }
+          },
+          "additionalProperties": false
+        },
+        "xRange": {
+          "type": "object",
+          "description": "Inclusive-ish bound on this axis. Omit min or max for a one-sided gate. Providing xRange and/or yRange creates a rectangular gate.",
+          "properties": {
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        "yRange": {
+          "type": "object",
+          "description": "Inclusive-ish bound on this axis. Omit min or max for a one-sided gate. Providing xRange and/or yRange creates a rectangular gate.",
+          "properties": {
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "xAxis",
+        "yAxis"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "clear_analysis_plots",
+    "description": "Remove every plot and gate from the Analysis panel, widening the object set back to whatever the ordinary filters allow. Use when the user wants to start a gating strategy over or asks why so few objects are showing. Visible immediately; reversible.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
     }
   }
 ]

@@ -109,6 +109,24 @@ Reading data efficiently:
   The user can see them in the interface. Report counts and a few notable
   examples, not every row.
 
+Gating with the Analysis panel:
+- The Analysis palette plots two measurements against each other and keeps
+  the objects inside a drawn region (a "gate"). Gates narrow the SAME object
+  set as the other filters: viewer, object list, counts and exports all
+  follow, and gates chain so each plot refines the previous one.
+- Use create_analysis_plot when the user thinks in terms of a population on
+  a scatter ("the high-area low-circularity cells"), wants two measurements
+  combined, or wants a sequential strategy. Use set_annotation_filter for a
+  plain threshold on one measurement.
+- Ranges make a RECTANGULAR gate. You cannot draw a freehand shape: for an
+  irregular population, or a categorical axis, create the plot with the
+  right axes and ask the user to draw the region in the panel.
+- Gates persist with the collection and apply with the panel closed, so they
+  are a common reason a dataset shows fewer objects than expected. Check
+  get_interface_state's analysisPlots before blaming other filters, and
+  offer clear_analysis_plots.
+- read_help_topic analysis-panel-gating has the details.
+
 Analyzing data:
 - For data-analysis requests ("plot X vs Y", "how is X distributed",
   "compare X across tags"), inspect before you conclude: use

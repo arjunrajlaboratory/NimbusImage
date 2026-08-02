@@ -156,6 +156,15 @@ vi.mock("@/store/filters", () => ({
     setTagFilter: vi.fn(),
     setOnlyCurrentFrame: vi.fn(),
     updatePropertyFilter: vi.fn(),
+    // Analysis panel (scatter gating)
+    analysisPlots: [] as any[],
+    analysisGateIds: {} as Record<string, string[]>,
+    canAddAnalysisPlot: true,
+    addAnalysisPlot: vi.fn(),
+    removeAnalysisPlot: vi.fn(),
+    setAnalysisPlotAxes: vi.fn(),
+    setAnalysisPlotGate: vi.fn(),
+    refreshAnalysis: vi.fn(),
   },
 }));
 
@@ -206,6 +215,7 @@ import {
   annotationsBoundingBox,
   clearTrackedAgentJobs,
   describeAgentToolCall,
+  buildInterfaceState,
   executeAgentTool,
   isGatedTool,
   restoreViewState,
@@ -2575,5 +2585,246 @@ describe("view identity binding (finding #1)", () => {
     const snapshot = snapshotViewState();
     await restoreViewState(snapshot);
     expect(mockMain.setViewContrastOverrides).toHaveBeenCalled();
+  });
+});
+
+// Analysis-panel gating tools. A gate narrows the same `filteredAnnotations`
+// the other filters do, so these must resolve before reporting counts —
+// gate ids are derived, not stored.
+describe("analysis panel tools", () => {
+  beforeEach(() => {
+    mockFilters.analysisPlots = [];
+    mockFilters.analysisGateIds = {};
+    mockFilters.canAddAnalysisPlot = true;
+    // mockReset, not mockClear: one test installs an implementation that
+    // reads addAnalysisPlot.mock.calls, which throws once those are cleared.
+    mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.removeAnalysisPlot.mockReset();
+    mockFilters.setAnalysisPlotAxes.mockReset();
+    mockFilters.setAnalysisPlotGate.mockReset();
+    mockFilters.refreshAnalysis.mockReset();
+  });
+
+  it("creates a plot with property axes and no gate", async () => {
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+      },
+      context,
+    );
+    expect(mockFilters.addAnalysisPlot).toHaveBeenCalledTimes(1);
+    expect(mockFilters.setAnalysisPlotGate).not.toHaveBeenCalled();
+    // Still refreshes: the panel needs values for the new axes.
+    expect(mockFilters.refreshAnalysis).toHaveBeenCalled();
+    expect(out.result.gate).toBeNull();
+    expect(out.result.note).toMatch(/draw/i);
+  });
+
+  it("turns ranges into a rectangular gate", async () => {
+    await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 100, max: 500 },
+        yRange: { max: 40 },
+      },
+      // No ids will land from the mock; skip the resolution wait.
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    const gate = mockFilters.setAnalysisPlotGate.mock.calls[0][0].gate;
+    expect(gate.categoryKeyVersion).toBe(1);
+    expect(gate.xCategories).toBeNull();
+    const xs = gate.vertices.map((v: any) => v.x);
+    const ys = gate.vertices.map((v: any) => v.y);
+    expect(Math.min(...xs)).toBe(100);
+    expect(Math.max(...xs)).toBe(500);
+    // Omitted min is one-sided, not zero.
+    expect(Math.min(...ys)).toBeLessThan(-1e6);
+    expect(Math.max(...ys)).toBe(40);
+  });
+
+  it("reports the resolved gate count, not the request", async () => {
+    mockFilters.addAnalysisPlot.mockImplementation(() => {
+      // The store resolves asynchronously; emulate ids appearing.
+      mockFilters.analysisGateIds = {};
+    });
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      const id = mockFilters.addAnalysisPlot.mock.calls[0][0];
+      mockFilters.analysisGateIds = { [id]: ["a", "b", "c"] };
+    });
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 1 },
+      },
+      context,
+    );
+    expect(out.result.gatedCount).toBe(3);
+  });
+
+  it("refuses to gate by range when an axis is categorical", async () => {
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { categorical: "tags" },
+          yAxis: { propertyPath: ["p1", "Area"] },
+          yRange: { min: 1 },
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockFilters.addAnalysisPlot).not.toHaveBeenCalled();
+  });
+
+  it("allows a categorical plot without ranges", async () => {
+    await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { categorical: "tags" },
+        yAxis: { propertyPath: ["p1", "Area"] },
+      },
+      context,
+    );
+    const axes = mockFilters.setAnalysisPlotAxes.mock.calls[0][0];
+    expect(axes.xAxis).toEqual({ type: "categorical", key: "tags" });
+  });
+
+  it("rejects an unknown categorical key and a bad property path", async () => {
+    for (const xAxis of [
+      { categorical: "nope" },
+      { propertyPath: [] },
+      { propertyPath: [123 as any] },
+    ]) {
+      await expect(
+        executeAgentTool(
+          "create_analysis_plot",
+          { xAxis, yAxis: { propertyPath: ["p1", "Area"] } },
+          context,
+        ),
+      ).rejects.toBeInstanceOf(ToolExecutionError);
+    }
+  });
+
+  it("rejects an inverted range rather than silently selecting nothing", async () => {
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { propertyPath: ["p1", "Area"] },
+          yAxis: { propertyPath: ["p1", "Perimeter"] },
+          xRange: { min: 500, max: 100 },
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("refuses past the plot cap with an actionable message", async () => {
+    mockFilters.canAddAnalysisPlot = false;
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { propertyPath: ["p1", "Area"] },
+          yAxis: { propertyPath: ["p1", "Perimeter"] },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/clear_analysis_plots/);
+  });
+
+  it("clears every plot and re-resolves", async () => {
+    mockFilters.analysisPlots = [{ id: "a" }, { id: "b" }];
+    const out = await executeAgentTool("clear_analysis_plots", {}, context);
+    expect(mockFilters.removeAnalysisPlot).toHaveBeenCalledTimes(2);
+    expect(mockFilters.refreshAnalysis).toHaveBeenCalled();
+    expect(out.result.removed).toBe(2);
+  });
+
+  it("reports gates in the interface state so the model can explain counts", () => {
+    mockFilters.analysisPlots = [
+      {
+        id: "plot-1",
+        xAxis: { type: "property", path: ["p1", "Area"] },
+        yAxis: { type: "categorical", key: "tags" },
+        gate: { vertices: [] },
+        gateEnabled: true,
+      },
+    ];
+    mockFilters.analysisGateIds = { "plot-1": ["a", "b"] };
+    const state = buildInterfaceState() as any;
+    expect(state.analysisPlots).toHaveLength(1);
+    expect(state.analysisPlots[0]).toMatchObject({
+      plotId: "plot-1",
+      hasGate: true,
+      gateEnabled: true,
+      gatedCount: 2,
+    });
+    expect(state.analysisPlots[0].yAxis).toEqual({
+      type: "categorical",
+      key: "tags",
+    });
+  });
+});
+
+// Live-found: awaiting refreshAnalysis is not enough. It claims a sequence
+// token first, so a concurrent refresh (the Viewer watches the same inputs)
+// supersedes ours and the await resolves before any commit. Observed in the
+// browser as a gate that resolved to 0 while the tool reported all 52,282
+// objects still passing.
+describe("create_analysis_plot waits for gate resolution", () => {
+  beforeEach(() => {
+    mockFilters.analysisPlots = [];
+    mockFilters.analysisGateIds = {};
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.setAnalysisPlotAxes.mockReset();
+    mockFilters.setAnalysisPlotGate.mockReset();
+    mockFilters.refreshAnalysis.mockReset();
+  });
+
+  it("reports no counts when the gate never resolves", async () => {
+    mockFilters.filteredAnnotations = new Array(52282).fill({});
+    // refreshAnalysis resolves without committing — the superseded case.
+    mockFilters.refreshAnalysis.mockResolvedValue(undefined);
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 50, max: 90 },
+      },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    // The pre-gate count is the misleading answer; null is the honest one.
+    expect(out.result.filteredCount).toBeNull();
+    expect(out.result.note).toMatch(/still resolving/i);
+    mockFilters.filteredAnnotations = [];
+  });
+
+  it("reports counts once the ids land", async () => {
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      const id = mockFilters.addAnalysisPlot.mock.calls[0][0];
+      mockFilters.analysisGateIds = { [id]: [] };
+      mockFilters.filteredAnnotations = [];
+    });
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 50, max: 90 },
+      },
+      context,
+    );
+    expect(out.result.gatedCount).toBe(0);
+    expect(out.result.filteredCount).toBe(0);
+    expect(out.result.note).toBeUndefined();
   });
 });

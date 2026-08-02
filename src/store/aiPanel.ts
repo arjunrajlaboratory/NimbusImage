@@ -90,6 +90,10 @@ const VIEW_STATE_TOOLS = new Set([
   "select_annotations",
   "set_annotation_filter",
   "select_tool",
+  // Analysis gates narrow the same filtered set as the other filters, so a
+  // turn that adds one must be revertible by the same affordance.
+  "create_analysis_plot",
+  "clear_analysis_plots",
 ]);
 
 // Kept outside Vuex state: the wire conversation contains base64 images and
