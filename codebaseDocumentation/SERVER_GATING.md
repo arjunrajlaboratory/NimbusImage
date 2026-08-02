@@ -586,6 +586,10 @@ build any of them speculatively.
 | `MAX_HISTOGRAM_BINS` | 512 | bins per numeric axis |
 | `MAX_HISTOGRAM_CELLS` | 512² | total histogram cells — a **categorical** axis gets one bin per category, so it bypasses the per-axis bin clamp entirely. Checked at the boundary AND after deriving categories, because the count can come from the data (a dataset where every annotation carries a distinct tag yields one column per annotation), not only from a hostile request |
 | `MAX_GATE_CONSTRAINT_IDS` | 400,000 | ids all gates may push into one list query (see the size bound above) |
+| `MAX_GATE_RESPONSE_IDS` | 2,000,000 | ids one gate-resolution response may return across all plots |
+| `MAX_GATE_VERTICES` | 1,000 | vertices per gate — cost is vertices × annotations of numpy work, uncovered by any DB timeout |
+| `MAX_TOTAL_GATE_VERTICES` | 10,000 | vertices across one request (~10 s of polygon work at 708K) |
+| `MAX_HISTOGRAM_AXIS_CATEGORIES` | 512 | categories on one axis — the cell product alone lets one axis explode when the other collapses to a single bin, and each category becomes a Plotly tick |
 | `MAX_HISTOGRAM_ID_CONSTRAINT` | 50,000 | ids the client will inline into a histogram request |
 
 `numpy` gets declared in `setup.py` `install_requires` (already a de facto
@@ -752,6 +756,21 @@ Every invariant names the test that holds it (format enforced by
   so a request can never 400 into the state where every gate is cleared and
   no retry succeeds — *"stops adding plots at MAX_ANALYSIS_PLOTS"*,
   *"allows adding again after one is removed"*, *"disables Add plot at the cap"*
+
+**Round-3 review findings (PR #1302) — resource bounds, again**
+- The gate-resolution RESPONSE has an aggregate id budget, not just the list
+  query: 20 broad gates on 700K is ~14M ids and hundreds of MB landing on
+  Girder and then the browser — *"testGateResponseIdBudgetIsEnforced"*
+- Polygon work is bounded per gate AND per request. `points_in_polygon` does
+  one full-length numpy pass per vertex, which no Mongo timeout covers.
+  Measured on 708,983 points: 200 vertices 0.22 s, 1,000 1.02 s, 4,000
+  4.16 s — so the old 10,000-vertex cap was ~10 s per gate, ~3.5 min across
+  a full request, for a lasso that really emits tens to a few hundred
+  points — *"testPerGateVertexCapIsRealistic"*,
+  *"testTotalVertexBudgetIsEnforced"*
+- Histogram requests are serialized: each re-scans the whole dataset, so one
+  per plot meant N concurrent full-dataset scans — *"serializes histogram
+  requests instead of firing one per plot"*
 
 **Busy feedback**
 - The busy bar covers property-value fetches AND histogram requests (the

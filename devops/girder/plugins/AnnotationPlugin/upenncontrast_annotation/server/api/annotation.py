@@ -624,11 +624,14 @@ class Annotation(Resource):
             level=AccessType.READ, exc=True,
         )
         plots = validateAnalysisGatePlots(bodyJson.get("plots"))
-        return {
-            "gateIds": self._annotationModel.resolveAnalysisGates(
-                datasetId, plots
-            )
-        }
+        try:
+            return {
+                "gateIds": self._annotationModel.resolveAnalysisGates(
+                    datasetId, plots
+                )
+            }
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(

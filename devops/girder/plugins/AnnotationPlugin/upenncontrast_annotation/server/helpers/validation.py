@@ -34,7 +34,15 @@ MAX_ANNOTATION_IDS = 10_000_000
 # handful of plots; 20 is already generous. (Same shape as the categorical
 # grid cap — a public endpoint with a lenient cap on an expensive unit.)
 MAX_ANALYSIS_PLOTS = 20
-MAX_GATE_VERTICES = 10_000
+# A drawn lasso is tens to a few hundred vertices (Plotly's drawclosedpath
+# emits well under 300). The old 10,000 bought nothing real and a lot of
+# CPU: points_in_polygon does one full-length numpy pass PER VERTEX, so
+# cost is vertices x annotations and no Mongo timeout covers it. Measured
+# on 708,983 points: 200 vertices 0.22s, 1,000 1.02s, 4,000 4.16s.
+MAX_GATE_VERTICES = 1_000
+# ...and a per-request total, so many modest gates cannot add up to the
+# same burn. 10,000 is ~10s of polygon work on the largest dataset here.
+MAX_TOTAL_GATE_VERTICES = 10_000
 MAX_GATE_CATEGORIES = 10_000
 # Histogram bin clamp per axis (512² cells ≈ a 1–2 MB response worst case).
 MAX_HISTOGRAM_BINS = 512
@@ -281,6 +289,11 @@ def _validateGateObject(gate, xAxis, yAxis):
     )
 
 
+def _requireTotalVertexBudget(plots):
+    total = sum(len(plot["gate"]["vertices"]) for plot in plots)
+    requireCountWithin(total, MAX_TOTAL_GATE_VERTICES, "total gate vertices")
+
+
 def validateAnalysisGatePlots(plots):
     """Validate the `plots` payload of a gate-resolution request.
 
@@ -301,6 +314,7 @@ def validateAnalysisGatePlots(plots):
         _validateAnalysisAxis(plot.get("xAxis"), "xAxis")
         _validateAnalysisAxis(plot.get("yAxis"), "yAxis")
         _validateGateObject(plot.get("gate"), plot["xAxis"], plot["yAxis"])
+    _requireTotalVertexBudget(plots)
     return plots
 
 

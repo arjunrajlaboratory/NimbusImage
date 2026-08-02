@@ -925,3 +925,58 @@ class TestAnalysisGatingReviewFindings:
             assertStatus(resp, 400)
         finally:
             an.MAX_HISTOGRAM_AXIS_CATEGORIES = original
+
+    def testTotalVertexBudgetIsEnforced(self, admin, server):
+        """Codex round 3: point_in_polygon does one full-length numpy pass
+        per vertex, so vertices x plots x annotations is unbounded CPU that
+        no Mongo timeout covers. Measured: 10,000 vertices over 708,983
+        points is ~10s per gate, ~3.5 min across the allowed plots."""
+        folder = self._setup(admin)
+        # 20 plots x 600 vertices = 12,000, over the 10,000 total budget,
+        # while each gate stays inside the per-gate cap.
+        many = [{"x": float(i), "y": float(i)} for i in range(600)]
+        plots = [propertyPlot(f"p{i}", many) for i in range(20)]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]), "plots": plots},
+        )
+        # 20 x 400 = 8,000 vertices, over the total budget.
+        assertStatus(resp, 400)
+
+    def testPerGateVertexCapIsRealistic(self, admin, server):
+        """A drawn lasso is tens to a few hundred vertices; the old 10,000
+        cap was 30-100x real use and bought only CPU burn."""
+        from upenncontrast_annotation.server.helpers import validation
+        assert validation.MAX_GATE_VERTICES <= 1000
+        folder = self._setup(admin)
+        tooMany = [{"x": 0.0, "y": 0.0}] * (validation.MAX_GATE_VERTICES + 1)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]),
+             "plots": [propertyPlot("p", tooMany)]},
+        )
+        assertStatus(resp, 400)
+
+    def testGateResponseIdBudgetIsEnforced(self, admin, server):
+        """Codex round 3: the resolved-id response had no aggregate budget.
+        20 plots each matching most of a 700K dataset is ~14M ids and
+        hundreds of MB of JSON, which lands on both Girder and the browser.
+        """
+        from upenncontrast_annotation.server.models import annotation as mod
+        folder = self._setup(admin)
+        pv = AnnotationPropertyValues()
+        for _ in range(3):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": 5, "Mean": 5}},
+                            a["_id"], folder["_id"])
+        original = mod.MAX_GATE_RESPONSE_IDS
+        mod.MAX_GATE_RESPONSE_IDS = 2
+        try:
+            plots = [propertyPlot(f"p{i}", BOX_0_10) for i in range(3)]
+            resp = postJson(
+                server, admin, "/upenn_annotation/analysis/gate_ids",
+                {"datasetId": str(folder["_id"]), "plots": plots},
+            )
+            assertStatus(resp, 400)
+        finally:
+            mod.MAX_GATE_RESPONSE_IDS = original

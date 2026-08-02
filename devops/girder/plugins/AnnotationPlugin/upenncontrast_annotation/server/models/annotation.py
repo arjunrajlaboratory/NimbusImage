@@ -30,6 +30,13 @@ AGGREGATION_MAX_TIME_MS = 300000
 # `$nin` of its complement (see resolveListGateConstraints) already halves
 # the worst case; this is the backstop past that.
 MAX_GATE_CONSTRAINT_IDS = 400_000
+
+# Ceiling on ids returned by one gate-resolution response, across all plots.
+# A single gate legitimately matches most of a large dataset (708K ids is
+# ~18 MB of JSON), but the allowed plot count multiplies that: 20 broad
+# gates on a 700K dataset is ~14M entries and hundreds of MB, which lands
+# on the Girder process and then on the browser parsing it.
+MAX_GATE_RESPONSE_IDS = 2_000_000
 DEFAULT_AGGREGATE_HINT = {"datasetId": 1, "_id": 1}
 
 
@@ -524,10 +531,22 @@ class Annotation(AccessControlMixin, ProxiedModel):
             axis for plot in plots for axis in (plot["xAxis"], plot["yAxis"])
         ]
         docs, valuesById = self._analysisData(datasetId, axes)
-        return {
-            plot["id"]: analysis.resolve_gate_ids(docs, valuesById, plot)
-            for plot in plots
-        }
+        resolved = {}
+        total = 0
+        for plot in plots:
+            ids = analysis.resolve_gate_ids(docs, valuesById, plot)
+            total += len(ids)
+            if total > MAX_GATE_RESPONSE_IDS:
+                # Checked as it accumulates, for the same reason the list
+                # budget is: the guard must not first build the thing it
+                # exists to prevent.
+                raise ValueError(
+                    "analysis gates resolve to more than the %d ids one "
+                    "response can carry; narrow the filters or disable "
+                    "some gates" % MAX_GATE_RESPONSE_IDS
+                )
+            resolved[plot["id"]] = ids
+        return resolved
 
     def analysisHistogram(self, datasetId, spec):
         """Binned 2D counts for one plot, display only (SERVER_GATING.md,

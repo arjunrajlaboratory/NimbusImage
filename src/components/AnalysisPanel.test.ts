@@ -404,4 +404,24 @@ describe("AnalysisPanel", () => {
     await flushPromises();
     expect(wrapper.vm.canAddPlot).toBe(false);
   });
+  it("serializes histogram requests instead of firing one per plot", async () => {
+    // Codex round 3: each histogram request independently re-scans the whole
+    // dataset server-side, so N plots opening at once meant N concurrent
+    // full-dataset scans. Requests are queued; only one is in flight.
+    setPopulation(50001);
+    setPlots([makePlot("p1"), makePlot("p2"), makePlot("p3")]);
+    const releases: ((v: any) => void)[] = [];
+    mocks.fetchAnalysisHistogram.mockImplementation(
+      () => new Promise((r) => releases.push(r)),
+    );
+    mountPanel({ visible: true });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
+    releases[0](null);
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(2);
+    releases[1](null);
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(3);
+  });
 });

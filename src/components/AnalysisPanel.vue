@@ -360,6 +360,52 @@ function toDisplay(
   };
 }
 
+// Histogram requests run ONE AT A TIME. Each one independently re-scans the
+// whole dataset and materializes the property values it needs server-side,
+// so firing one per plot on panel open (or on any signature change that
+// invalidates them all, like a property recompute) meant N concurrent
+// full-dataset scans — 20 of them on the supported plot count. The busy bar
+// covers the whole queue, so serializing costs visible latency but not
+// clarity.
+let histogramQueue: Promise<void> = Promise.resolve();
+
+function enqueueHistogram(
+  plotId: string,
+  request: IAnalysisHistogramRequest,
+  guard: ISequenceGuard,
+  token: number,
+  datasetId: string,
+) {
+  histogramsInFlight.value += 1;
+  histogramQueue = histogramQueue.then(async () => {
+    try {
+      // Superseded before it ever started: skip the round trip entirely.
+      if (!guard.isCurrent(token)) {
+        return;
+      }
+      const response = await store.annotationsAPI.fetchAnalysisHistogram(
+        datasetId,
+        request,
+      );
+      if (!guard.isCurrent(token)) {
+        return;
+      }
+      if (response === null) {
+        // Failure ≠ empty: keep whatever was displayed, and forget the
+        // signature so the next input change (or panel reopen) retries.
+        histogramSignatures.delete(plotId);
+        return;
+      }
+      histogramsByPlot.value = {
+        ...histogramsByPlot.value,
+        [plotId]: toDisplay(response, request),
+      };
+    } finally {
+      histogramsInFlight.value -= 1;
+    }
+  });
+}
+
 watch(
   histogramWork,
   (work) => {
@@ -399,27 +445,7 @@ watch(
         histogramGuards.set(plotId, guard);
       }
       const token = guard.next();
-      histogramsInFlight.value += 1;
-      void store.annotationsAPI
-        .fetchAnalysisHistogram(datasetId, request)
-        .finally(() => {
-          histogramsInFlight.value -= 1;
-        })
-        .then((response) => {
-          if (!guard!.isCurrent(token)) {
-            return;
-          }
-          if (response === null) {
-            // Failure ≠ empty: keep whatever was displayed, and forget the
-            // signature so the next input change (or panel reopen) retries.
-            histogramSignatures.delete(plotId);
-            return;
-          }
-          histogramsByPlot.value = {
-            ...histogramsByPlot.value,
-            [plotId]: toDisplay(response, request),
-          };
-        });
+      enqueueHistogram(plotId, request, guard, token, datasetId);
     }
   },
   { immediate: true },
