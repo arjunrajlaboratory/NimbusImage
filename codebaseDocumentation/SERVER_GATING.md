@@ -899,6 +899,14 @@ Every invariant names the test that holds it (format enforced by
   the palette adds a disabled gate to the request"*, *"re-resolves only the
   plot whose gate changed"*, *"re-resolves every plot when a revision
   counter moves"*
+- `analysisPureGateSignatures` never outlives the ids it describes.
+  `dropAnalysisGateIdsFromPlot` is the one writer that assigns
+  `analysisGateIds` directly rather than through `setAnalysisGateIds` (which
+  resets the signatures wholesale), so it deleted an id and left its
+  signature behind — and the no-stale early return compares only the id
+  maps, so nothing repaired the orphan. Pinned as the INVARIANT rather than
+  as one scenario, because the next writer that forgets will be a different
+  scenario — *"never leaves a pure signature without the ids it describes"*
 - Every scalar leaf that lands in the list `$match` is type-checked, not
   just the containers. `filters.shape` and `filters.location.*` were the
   gateMatchClauses hole's siblings in the same validator: `{"shape":

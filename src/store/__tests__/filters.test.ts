@@ -1299,6 +1299,42 @@ describe("filters.refreshAnalysis above the cap (server resolution)", () => {
     expect(fetchAnalysisGateIds.mock.calls[0][1]).toHaveLength(2);
   });
 
+  it("never leaves a pure signature without the ids it describes", async () => {
+    // analysisPureGateSignatures is only meaningful as a description of
+    // exactly the ids currently held. dropAnalysisGateIdsFromPlot is the one
+    // writer that assigns analysisGateIds directly rather than through
+    // setAnalysisGateIds (which resets the signatures wholesale), so it used
+    // to delete an id and leave its signature behind. Asserted as the
+    // invariant rather than one scenario of it, because the next writer that
+    // forgets will be a different scenario.
+    const sameKeys = () =>
+      expect(Object.keys(filters.analysisPureGateSignatures).sort()).toEqual(
+        Object.keys(filters.analysisGateIds).sort(),
+      );
+
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"], p2: ["id-2"] });
+    filters.setAnalysisPanelOpen(true);
+    await addGatedPlot("p1");
+    await addGatedPlot("p2");
+    await filters.refreshAnalysis();
+    sameKeys();
+
+    await filters.removeAnalysisPlot("p2");
+    sameKeys();
+
+    await filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: { ...GATE, vertices: [...GATE.vertices, { x: 0, y: 10 }] },
+    });
+    sameKeys();
+
+    await filters.setAnalysisPlotAxes({
+      id: "p1",
+      xAxis: { type: "categorical" as const, key: "tags" as const },
+    });
+    sameKeys();
+  });
+
   it("still drops a plot's own pure ids when its gate changes", async () => {
     // The other half: purity removes the SUFFIX, never the plot's own entry.
     // Its polygon moved, so its ids describe a shape that no longer exists.

@@ -612,7 +612,9 @@ export class Filters extends VuexModule {
       return;
     }
     const next = { ...this.analysisGateIds };
+    const nextSignatures = { ...this.analysisPureGateSignatures };
     let changed = false;
+    let signaturesChanged = false;
     // The suffix is dropped because chained ids for plot N were resolved
     // against the population surviving plots 1..N-1. PURE ids have no such
     // dependency, and dropping them was not merely wasteful: above the cap
@@ -631,11 +633,23 @@ export class Filters extends VuexModule {
         delete next[plot.id];
         changed = true;
       }
+      // Both maps, always. This is the one writer that assigns analysisGateIds
+      // directly instead of going through setAnalysisGateIds (which resets the
+      // signatures wholesale), so dropping an id here left its signature
+      // behind — and analysisPureGateSignatures is only meaningful as a
+      // description of exactly the ids currently held.
+      if (nextSignatures[plot.id] !== undefined) {
+        delete nextSignatures[plot.id];
+        signaturesChanged = true;
+      }
     }
     if (changed) {
       // Unresolved contributes no constraint, so the interim shows MORE than
       // the final answer rather than filtering by a stale population.
       this.analysisGateIds = markRaw(next);
+    }
+    if (signaturesChanged) {
+      this.analysisPureGateSignatures = markRaw(nextSignatures);
     }
   }
 
