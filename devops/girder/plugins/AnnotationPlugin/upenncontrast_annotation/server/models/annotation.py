@@ -501,9 +501,16 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 # real remedy is to push the gate predicate into the query
                 # rather than materializing ids — see SERVER_GATING.md.
                 filters.pop("gateMatchClauses", None)
+                # Says "redraw or disable a gate", NOT "narrow the filters".
+                # A gate is a pure predicate resolved over the WHOLE dataset
+                # before any tag/property/frame filter applies, so narrowing
+                # those cannot change this count by one id — the advice sent
+                # the user round a loop that kept returning the same 400.
                 raise ValueError(
                     "analysis gates resolve to more than the %d ids the "
-                    "list query can carry; narrow the filters first"
+                    "list query can carry. Gates are resolved over the whole "
+                    "dataset, so other filters will not reduce this: redraw "
+                    "a gate to cover fewer objects, or disable one."
                     % MAX_GATE_CONSTRAINT_IDS
                 )
             if operator == "$nin":
@@ -541,8 +548,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 # exists to prevent.
                 raise ValueError(
                     "analysis gates resolve to more than the %d ids one "
-                    "response can carry; narrow the filters or disable "
-                    "some gates" % MAX_GATE_RESPONSE_IDS
+                    "response can carry. Gates are resolved over the whole "
+                    "dataset, so other filters will not reduce this: redraw "
+                    "a gate to cover fewer objects, or disable one."
+                    % MAX_GATE_RESPONSE_IDS
                 )
             resolved[plot["id"]] = ids
         return resolved

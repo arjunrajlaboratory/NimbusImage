@@ -981,6 +981,63 @@ class TestAnalysisGatingReviewFindings:
         finally:
             mod.MAX_GATE_RESPONSE_IDS = original
 
+    def testBudgetErrorsDoNotRecommendNarrowingFilters(self, admin, server):
+        """Both id-budget messages told the user to "narrow the filters".
+
+        A gate is a PURE predicate resolved over the whole dataset before any
+        tag/property/frame filter is applied, so narrowing those cannot change
+        the resolved id count by one — the advice sent the user round a loop
+        that kept returning the same 400. The message has to name the thing
+        that actually helps: redraw a gate smaller, or disable one.
+
+        Asserted on the message text because the message IS the defect; the
+        400 itself was already correct.
+        """
+        from upenncontrast_annotation.server.models import annotation as mod
+        folder = self._setup(admin)
+        pv = AnnotationPropertyValues()
+        # Three inside BOX_0_10 and two outside, so the gate keeps a MINORITY
+        # and resolveListGateConstraints takes the `$in` branch. With all of
+        # them inside, the complement is empty, the `$nin` branch carries zero
+        # ids, and the list budget is never reached.
+        for area, mean in ((5, 5), (5, 5), (5, 5), (50, 50), (50, 50)):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": area, "Mean": mean}},
+                            a["_id"], folder["_id"])
+
+        def messageFor(endpoint, body, constant):
+            original = getattr(mod, constant)
+            setattr(mod, constant, 2)
+            try:
+                resp = postJson(server, admin, endpoint, body)
+                assertStatus(resp, 400)
+                return resp.json["message"]
+            finally:
+                setattr(mod, constant, original)
+
+        responseMessage = messageFor(
+            "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]),
+             "plots": [propertyPlot(f"p{i}", BOX_0_10) for i in range(3)]},
+            "MAX_GATE_RESPONSE_IDS",
+        )
+        listMessage = messageFor(
+            "/upenn_annotation/list/ids",
+            {"datasetId": str(folder["_id"]),
+             "filters": {"analysisGates": [{
+                 "xAxis": {"type": "property", "path": ["p", "Area"]},
+                 "yAxis": {"type": "property", "path": ["p", "Mean"]},
+                 "gate": {"categoryKeyVersion": 1, "vertices": BOX_0_10,
+                          "xCategories": None, "yCategories": None},
+             }]}},
+            "MAX_GATE_CONSTRAINT_IDS",
+        )
+        for message in (responseMessage, listMessage):
+            assert "narrow the filters" not in message.lower()
+            assert "whole dataset" in message.lower()
+            assert "redraw" in message.lower()
+            assert "disable" in message.lower()
+
     def testHistogramUpstreamGatesShareTheVertexBudget(self, admin, server):
         """Codex round 4: the aggregate vertex budget was applied only to
         gate_ids. histogram2d validates each upstream gate individually but

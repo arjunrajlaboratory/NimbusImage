@@ -917,6 +917,12 @@ Every invariant names the test that holds it (format enforced by
   confirmed rather than the cap re-read, since that is the same
   check-then-act one tick later — *"never reports a plot the store refused to
   create"*
+- Budget-exceeded messages name a remedy that can actually work. Both said
+  "narrow the filters", but a gate is resolved over the WHOLE dataset before
+  any tag/property/frame filter applies, so narrowing those cannot change the
+  resolved id count by one — the advice sent the user round a loop returning
+  the same 400. They now say to redraw a gate smaller or disable one —
+  *"testBudgetErrorsDoNotRecommendNarrowingFilters"*
 - A displayed histogram is dropped as soon as its inputs change, not merely
   replaced on success. Holding the old one across an axis change or dataset
   switch is not just a stale picture: `onShapesRelayout` pins
