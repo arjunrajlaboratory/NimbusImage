@@ -353,7 +353,6 @@ def histogram2d(docs, values_by_id, spec):
     else:
         y_bins, y_range = _numeric_bin_spec(paired_y, spec["bins"]["y"])
 
-    # Checked AFTER deriving categories, not only at the API boundary: the
     # The per-axis cap is enforced inside derive_axis_categories, as the
     # distinct set accumulates. Only the product is left to check here: it
     # bounds the grid two axes can form even when each is individually legal.

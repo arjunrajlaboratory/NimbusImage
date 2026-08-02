@@ -161,15 +161,13 @@ const plotReady = computed(() =>
 // instead, matching the below-cap meaning of "objects this gate keeps here".
 const gateBadgeCount = computed(() => {
   if (props.overCap) {
-    // Fall back to the resolved ids when the histogram is unavailable. It is
-    // the wrong number in principle (pure rather than chained) but it is a
-    // real one: a failed histogram fetch otherwise left the badge at "…"
-    // indefinitely while the gate visibly thinned the viewer, so nothing on
-    // screen accounted for the objects that had disappeared.
-    return (
-      props.histogram?.gateCount ??
-      (props.gateIds === null ? null : props.gateIds.length)
-    );
+    // Only the histogram's chained count, never gateIds.length. Falling back
+    // to the pure count while the histogram was in flight was worse than the
+    // "…" it replaced: the pure count over-states (it ignores the upstream
+    // gates), so every panel open showed a plausible wrong number for a few
+    // seconds and then silently changed it. A placeholder during a known
+    // wait is honest; a number that is quietly wrong is not.
+    return props.histogram?.gateCount ?? null;
   }
   return props.gateIds === null ? null : props.gateIds.length;
 });

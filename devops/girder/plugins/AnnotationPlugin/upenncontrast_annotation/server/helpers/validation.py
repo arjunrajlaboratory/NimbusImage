@@ -510,22 +510,42 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
             raise RestException(
                 "idConstraints contains an invalid id", code=400
             )
-    # The model's _buildListMatchStages does filters["tags"].get("values") and
-    # filters["location"].get("XY"): a truthy non-dict (e.g. a string) would
-    # be carried through and raise AttributeError -> 500 there. Guard the shape
-    # here at the API boundary.
+    # _buildListMatchStages assigns these values straight into the aggregation
+    # `$match`, so validating only the CONTAINER shape leaves the leaves as an
+    # operator channel: `{"shape": {"$ne": "polygon"}}` was applied as written,
+    # and `{"shape": {"$nope": 1}}` reached MongoDB as an unknown operator ->
+    # OperationFailure -> uncaught 500 on three @access.public endpoints. Same
+    # shape as the gateMatchClauses hole above; these are its siblings, so
+    # every leaf that lands in `$match` is type-checked to its scalar type.
     tags = filters.get("tags")
     if tags is not None:
         if not isinstance(tags, dict):
             raise RestException("filters.tags must be an object", code=400)
         tagValues = tags.get("values")
-        if tagValues is not None and not isinstance(tagValues, list):
-            raise RestException(
-                "filters.tags.values must be a list", code=400
-            )
+        if tagValues is not None:
+            requireList(tagValues, "filters.tags.values")
+            if not all(isinstance(tag, str) for tag in tagValues):
+                raise RestException(
+                    "filters.tags.values must be a list of strings", code=400
+                )
+    shape = filters.get("shape")
+    if shape is not None and not isinstance(shape, str):
+        raise RestException("filters.shape must be a string", code=400)
     location = filters.get("location")
-    if location is not None and not isinstance(location, dict):
-        raise RestException("filters.location must be an object", code=400)
+    if location is not None:
+        if not isinstance(location, dict):
+            raise RestException(
+                "filters.location must be an object", code=400
+            )
+        for axis in ("XY", "Z", "Time"):
+            value = location.get(axis)
+            # bool is an int in Python, and `{"XY": true}` is not a frame.
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int)
+            ):
+                raise RestException(
+                    "filters.location.%s must be an integer" % axis, code=400
+                )
     if sort is not None:
         if not isinstance(sort, dict) or sort.get("type") not in (
             "field", "property"

@@ -51,29 +51,42 @@ export function encodeAnalysisCategoryKey(raw: TAnalysisCategoryRaw): string {
   return `${ANALYSIS_CATEGORY_KEY_PREFIX}${JSON.stringify(raw)}`;
 }
 
-function decodeAnalysisCategoryKey(key: string): TAnalysisCategoryRaw | null {
+/**
+ * `null` is a legal decoded identity (a document missing the field), so it
+ * cannot double as "this is not a key" — reusing it made `"v1:null"`
+ * undecodable, and since isEncodedAnalysisCategoryKey guards the persisted
+ * pinned order, a gate drawn on such an axis was silently discarded on the
+ * next page load. A distinct sentinel keeps the two answers apart.
+ */
+const NOT_A_CATEGORY_KEY = Symbol("notACategoryKey");
+
+function decodeAnalysisCategoryKey(
+  key: string,
+): TAnalysisCategoryRaw | typeof NOT_A_CATEGORY_KEY {
   if (!key.startsWith(ANALYSIS_CATEGORY_KEY_PREFIX)) {
-    return null;
+    return NOT_A_CATEGORY_KEY;
   }
   try {
     const raw: unknown = JSON.parse(
       key.slice(ANALYSIS_CATEGORY_KEY_PREFIX.length),
     );
-    if (typeof raw === "string" || typeof raw === "number") {
-      return raw;
-    }
-    if (Array.isArray(raw) && raw.every((entry) => typeof entry === "string")) {
-      return raw;
+    if (
+      raw === null ||
+      typeof raw === "string" ||
+      typeof raw === "number" ||
+      (Array.isArray(raw) && raw.every((entry) => typeof entry === "string"))
+    ) {
+      return raw as TAnalysisCategoryRaw;
     }
   } catch {
     // Invalid persisted keys are rejected by isEncodedAnalysisCategoryKey.
   }
-  return null;
+  return NOT_A_CATEGORY_KEY;
 }
 
 /** True for the versioned, collision-free category identities stored in gates. */
 export function isEncodedAnalysisCategoryKey(key: string): boolean {
-  return decodeAnalysisCategoryKey(key) !== null;
+  return decodeAnalysisCategoryKey(key) !== NOT_A_CATEGORY_KEY;
 }
 
 /**
@@ -87,7 +100,7 @@ export function labelForCategoryKey(
   channelName: (channel: number) => string,
 ): string {
   const decoded = decodeAnalysisCategoryKey(key);
-  return decoded === null
+  return decoded === NOT_A_CATEGORY_KEY
     ? key
     : categoricalLabelFromRaw(decoded, axisKey, channelName);
 }
@@ -264,7 +277,7 @@ export function buildPlotSeries(input: {
         return presentLabel;
       }
       const decoded = decodeAnalysisCategoryKey(key);
-      return decoded === null
+      return decoded === NOT_A_CATEGORY_KEY
         ? key
         : categoricalLabelFromRaw(decoded, axis.key, channelName);
     };

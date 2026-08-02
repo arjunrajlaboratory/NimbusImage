@@ -16,7 +16,9 @@ import {
   buildPlotSeries,
   chainPlotInputs,
   encodeAnalysisCategoryKey,
+  isEncodedAnalysisCategoryKey,
   jitterFromId,
+  labelForCategoryKey,
   populationSignature,
   resolveGateIds,
   selectionEventToGate,
@@ -733,5 +735,34 @@ describe("shapeToGate", () => {
     expect(shapeToGate({ type: "rect", x0: 1 }, CATS)).toBeNull();
     expect(shapeToGate({ type: "circle" } as any, CATS)).toBeNull();
     expect(shapeToGate(null, CATS)).toBeNull();
+  });
+});
+
+describe("category keys for a document missing the field", () => {
+  // The backend's locationSchema declares XY/Z/Time without `required`, so
+  // `"location": {}` is a valid write; both sides coerce that to null, which
+  // encodes to "v1:null". That key then has to behave like any other.
+  const NULL_KEY = encodeAnalysisCategoryKey(null);
+
+  it("encodes to the key the server produces", () => {
+    expect(NULL_KEY).toBe("v1:null");
+  });
+
+  it("round-trips as a valid persisted category key", () => {
+    // isEncodedAnalysisCategoryKey guards a persisted gate's pinned order
+    // (resolveAnnotationBrowserConfig). While the decoder reused `null` as
+    // its "not a key" answer, a gate drawn on an axis containing a document
+    // with no location was silently discarded on the next page load — the
+    // gate vanished and its filtering stopped, with no message.
+    expect(isEncodedAnalysisCategoryKey(NULL_KEY)).toBe(true);
+    expect(isEncodedAnalysisCategoryKey("not-a-key")).toBe(false);
+    expect(isEncodedAnalysisCategoryKey("v1:{bad json")).toBe(false);
+  });
+
+  it("labels as (none) rather than as the raw key", () => {
+    // The same confusion made the over-cap heatmap tick read literally
+    // "v1:null" while the below-cap scatter read "(none)" — the cross-cap
+    // display divergence the key-order change exists to prevent.
+    expect(labelForCategoryKey(NULL_KEY, "z", channelName)).toBe("(none)");
   });
 });

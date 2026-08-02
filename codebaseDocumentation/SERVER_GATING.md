@@ -287,6 +287,15 @@ the cap **nothing changes**.
   categorical content hash, or any filter state — the pure predicate does
   not depend on them. This is the payoff of purity: the over-cap signature is
   O(plots), not O(population).
+  It DOES change with the palette's visibility, because `resolutionPlots`
+  widens to the disabled drawn gates when the panel opens. That only decides
+  whether a refresh is *considered*; what a refresh actually invalidates is
+  tracked per plot in `analysisPureGateSignatures`
+  (`["server", datasetId, JSON.stringify(one plot), propertyValuesRevision,
+  contentRevision]`), so opening the palette re-resolves only gates that were
+  not already resolved. Treating the whole request as one identity dropped
+  every gate's ids whenever the request set changed — see the round-7 entry
+  in the regression checklist.
 - **`annotation.contentRevision`** (new, annotation store): a monotonic
   counter bumped by every mutation that changes annotation content or
   membership (`setAnnotations`, `setAnnotation`, `setAnnotationsAtIndices`,
@@ -350,6 +359,7 @@ Phase 1's endpoint; this endpoint is **display only**.
   "yCategories": [...] | null,
   "bins": {"x": 128, "y": 128},            // clamped to [1, MAX_HISTOGRAM_BINS=512]
   "upstreamGates": [ {xAxis, yAxis, gate}, ... ],   // ENABLED gates of plots before this one
+  "gate": {...} | null,                    // this plot's OWN gate, for the chained badge count
   "filters": { ...IAnnotationListFilters... }        // the serializable base filters
 }
 ```
@@ -577,7 +587,13 @@ build any of them speculatively.
 8. **Frontend does not compensate for outdated backends.** No
    endpoint-missing fallbacks; deploy order is backend → frontend.
 
-## Limits (all new constants in `server/helpers/validation.py`)
+## Limits
+
+Constants live next to what they bound: request-shape ceilings in
+`server/helpers/validation.py`, the id budgets in `server/models/annotation.py`
+(`MAX_GATE_CONSTRAINT_IDS`, `MAX_GATE_RESPONSE_IDS`), and the histogram
+ceilings in `server/helpers/analysis.py` (`MAX_HISTOGRAM_CELLS`,
+`MAX_HISTOGRAM_AXIS_CATEGORIES`).
 
 | Constant | Value | Guards |
 |---|---|---|
@@ -869,6 +885,60 @@ Every invariant names the test that holds it (format enforced by
 - `describeAgentToolCall` never throws on the new tools' malformed input,
   and its tool list is DERIVED from the registry so it cannot drift again —
   *"never throws on malformed input"*
+
+**Round-7 / second self-review findings (PR #1302)**
+- Invalidation of PURE ids is tracked PER PLOT
+  (`analysisPureGateSignatures`), not by one identity over the whole
+  request. `resolutionPlots` widens to the disabled drawn gates when the
+  palette opens, so a whole-request identity moved on a palette toggle and
+  dropped every gate's ids before awaiting a re-resolution — for the seconds
+  that took at 700K the viewer, the Objects tab and the badge all widened to
+  the unfiltered dataset, and a refused re-resolution made it permanent. It
+  also re-resolved every gate whenever any one changed. This is the round-6
+  per-plot fix completed one layer up — *"keeps resolved ids when opening
+  the palette adds a disabled gate to the request"*, *"re-resolves only the
+  plot whose gate changed"*, *"re-resolves every plot when a revision
+  counter moves"*
+- Every scalar leaf that lands in the list `$match` is type-checked, not
+  just the containers. `filters.shape` and `filters.location.*` were the
+  gateMatchClauses hole's siblings in the same validator: `{"shape":
+  {"$ne": "polygon"}}` was applied as written and `{"$nope": 1}` reached
+  MongoDB as an unknown operator -> uncaught 500, on three public endpoints
+  — *"testListRejectsOperatorsInScalarFilterLeaves"*,
+  *"testScalarFilterLeavesStillAcceptLegitimateValues"*
+- `null` is a first-class category identity, so the decoder needs a distinct
+  "not a key" answer. Reusing `null` made `"v1:null"` fail
+  `isEncodedAnalysisCategoryKey`, which guards a persisted gate's pinned
+  order — a gate drawn on an axis containing a document with no `location`
+  was silently discarded on the next page load — and made its heatmap tick
+  render as the raw key while the scatter rendered "(none)" —
+  *"round-trips as a valid persisted category key"*, *"labels as (none)
+  rather than as the raw key"*
+- Hydration that replays identical plots changes nothing, so it invalidates
+  nothing. The resolution identity is built from plot CONTENT, so clearing
+  the ids there left the signature byte-identical and the Viewer's watcher
+  never fired; it was rescued only by `contentRevision` incidentally moving
+  around it — *"does not discard resolved ids when hydration replays
+  identical plots"*
+- The gate-refusal banner is cleared by a below-cap resolution and by
+  `resetFilterState`, not only by an over-cap success — otherwise narrowing
+  the filters below the cap left "gates could not be applied" on screen
+  while the gates were visibly applying — *"clears the refusal banner when
+  the population drops below the cap"*
+- The over-cap badge shows ONLY the histogram's chained count. Falling back
+  to `gateIds.length` while the histogram was in flight was worse than the
+  "…" it replaced: the pure count over-states, so every panel open showed a
+  plausible wrong number for a few seconds and then silently changed it —
+  *"shows the chained badge count from the histogram, not pure ids"*
+- CSV export scope is derived from the chosen SCOPE and from
+  `annotationStore.annotationCount`, never from `annotations.length`, which
+  is EMPTY in stub-only mode. Every scope decision collapsed there: "All
+  annotations (0)", the Filtered radio disabled on exactly the datasets
+  gating exists for, and — worst — picking "Selected" sent no id list, so
+  the server exported the whole dataset with nothing on screen saying the
+  selection had been dropped.
+- `currentFilters` reads frame state only when `onlyCurrentFrame` is on, the
+  untreated twin of the same fix in `analysisHistogramFilterSpec`.
 
 **Busy feedback**
 - The busy bar covers property-value fetches AND histogram requests (the

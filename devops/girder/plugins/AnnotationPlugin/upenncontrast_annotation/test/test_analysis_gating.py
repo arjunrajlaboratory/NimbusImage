@@ -1162,3 +1162,45 @@ class TestBranchReviewFindings:
         analysis.derive_axis_categories(docs, "shape", None, "x")
         # Two distinct categories over 500 documents.
         assert len(calls) == 2
+
+    @pytest.mark.parametrize("filters,label", [
+        ({"shape": {"$ne": "polygon"}}, "shape operator"),
+        ({"shape": {"$nope": 1}}, "shape unknown operator"),
+        ({"shape": 5}, "shape non-string"),
+        ({"location": {"XY": {"$nope": 1}}}, "location operator"),
+        ({"location": {"Z": "0"}}, "location non-integer"),
+        ({"tags": {"values": [{"$ne": "x"}]}}, "tag operator"),
+    ])
+    def testListRejectsOperatorsInScalarFilterLeaves(
+        self, admin, server, filters, label
+    ):
+        """The siblings of the gateMatchClauses hole, in the same validator.
+
+        _buildListMatchStages assigns these values straight into the
+        aggregation `$match`, so validating only the CONTAINER shape left the
+        leaves as an operator channel. Confirmed live before the fix:
+        `{"shape": {"$ne": "polygon"}}` was APPLIED (total 0 instead of
+        52,282) and `{"shape": {"$nope": 1}}` reached MongoDB as an unknown
+        operator -> OperationFailure -> uncaught 500 on three @access.public
+        endpoints. Generalizing the first finding to one key and stopping was
+        the "one of two symmetric paths" trap.
+        """
+        folder = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/list/ids",
+            {"datasetId": str(folder["_id"]), "filters": filters},
+        )
+        assertStatus(resp, 400)
+
+    def testScalarFilterLeavesStillAcceptLegitimateValues(self, admin, server):
+        """The guard must not reject the shapes the client actually sends."""
+        folder = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/list/ids",
+            {"datasetId": str(folder["_id"]),
+             "filters": {"shape": "point",
+                         "location": {"XY": 0, "Z": 0, "Time": 0},
+                         "tags": {"values": ["a"], "exclusive": False}}},
+        )
+        assertStatusOk(resp)
+        assert resp.json["total"] == 1

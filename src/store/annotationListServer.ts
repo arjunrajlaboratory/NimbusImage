@@ -89,7 +89,16 @@ export class AnnotationListServer extends VuexModule {
     return buildListFilters({
       tagFilter: filters.tagFilter,
       onlyCurrentFrame: filters.onlyCurrentFrame,
-      currentFrame: { XY: main.xy, Z: main.z, Time: main.time },
+      // Read frame state only when the filter uses it — the twin of the same
+      // rule in analysisHistogramFilterSpec and
+      // collectAnnotationsPassingNonGateFilters. Unconditionally, this getter
+      // depended on xy/z/time even when they are discarded, so every frame
+      // scrub re-ran buildListFilters and rebuilt enabledIdFilters' flatMap
+      // into a fresh array, missing idListSignature's identity-keyed memo and
+      // re-hashing up to 50,000 ids for a signature that cannot have changed.
+      currentFrame: filters.onlyCurrentFrame
+        ? { XY: main.xy, Z: main.z, Time: main.time }
+        : { XY: 0, Z: 0, Time: 0 },
       idSubstring: this.idSubstring,
       propertyFilters: filters.propertyFilters,
       selectionFilter: filters.selectionFilter,
