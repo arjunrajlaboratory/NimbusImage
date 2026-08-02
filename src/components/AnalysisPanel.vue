@@ -517,10 +517,30 @@ watch(
     if (!datasetId) {
       return;
     }
-    for (const { plotId, request, signature } of work) {
-      if (histogramSignatures.get(plotId) === signature) {
-        continue;
+    // Drop the displayed histogram for every plot whose inputs changed,
+    // BEFORE queueing the replacement. Only committing on success meant the
+    // previous response stayed on screen for the seconds a whole-dataset
+    // request takes — and indefinitely if it failed, since a failure
+    // deliberately preserves the display. That is right for the same inputs
+    // and wrong for new ones: the stale response describes the OLD axes, and
+    // `onShapesRelayout` pins `props.histogram.xCategories` into any gate
+    // drawn meanwhile, so a gate could be saved carrying the previous axis's
+    // category order — silently the wrong membership, not just a stale
+    // picture.
+    const changed = work.filter(
+      ({ plotId, signature }) => histogramSignatures.get(plotId) !== signature,
+    );
+    const staleDisplays = changed.filter(
+      ({ plotId }) => histogramsByPlot.value[plotId] !== undefined,
+    );
+    if (staleDisplays.length > 0) {
+      const cleared = { ...histogramsByPlot.value };
+      for (const { plotId } of staleDisplays) {
+        delete cleared[plotId];
       }
+      histogramsByPlot.value = cleared;
+    }
+    for (const { plotId, request, signature } of changed) {
       histogramSignatures.set(plotId, signature);
       let guard = histogramGuards.get(plotId);
       if (!guard) {

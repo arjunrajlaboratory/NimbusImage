@@ -917,6 +917,13 @@ Every invariant names the test that holds it (format enforced by
   confirmed rather than the cap re-read, since that is the same
   check-then-act one tick later — *"never reports a plot the store refused to
   create"*
+- A displayed histogram is dropped as soon as its inputs change, not merely
+  replaced on success. Holding the old one across an axis change or dataset
+  switch is not just a stale picture: `onShapesRelayout` pins
+  `props.histogram.xCategories` into any gate drawn meanwhile, so a gate
+  could be saved carrying the PREVIOUS axis's category order — silently the
+  wrong membership. A failed replacement must not resurrect it either —
+  *"drops the displayed histogram as soon as its inputs change"*
 - The refusal banner names a PARTIAL failure. Resolution is per plot, so a
   failed batch leaves already-resolved gates filtering; saying "the viewer
   shows everything the other filters allow" described the pre-per-plot

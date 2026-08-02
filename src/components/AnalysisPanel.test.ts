@@ -533,6 +533,49 @@ describe("AnalysisPanel", () => {
     expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(2);
   });
 
+  it("drops the displayed histogram as soon as its inputs change", async () => {
+    // Only committing on success left the previous response on screen for the
+    // seconds a whole-dataset request takes — and indefinitely if it failed,
+    // since a failure deliberately preserves the display. Right for the same
+    // inputs, wrong for new ones: the stale response describes the OLD axes,
+    // and AnalysisScatterPlot's onShapesRelayout pins
+    // `props.histogram.xCategories` into any gate drawn meanwhile, so a gate
+    // could be saved carrying the previous axis's category order — silently
+    // the wrong membership, not merely a stale picture.
+    setPopulation(50001);
+    setPlots([makePlot("p1")]);
+    mocks.fetchAnalysisHistogram.mockResolvedValue({
+      counts: [[1]],
+      xEdges: [0, 1],
+      yEdges: [0, 1],
+      xCategories: null,
+      yCategories: null,
+      inputCount: 1,
+      plottedCount: 1,
+      gateCount: null,
+    });
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(wrapper.vm.histogramsByPlot.p1).toBeTruthy();
+
+    // Change the axis, and hold the replacement in flight.
+    const releases: ((v: any) => void)[] = [];
+    mocks.fetchAnalysisHistogram.mockImplementation(
+      () => new Promise((r) => releases.push(r)),
+    );
+    setPlots([makePlot("p1", { xAxis: { type: "categorical", key: "tags" } })]);
+    mocks.signal.tick++;
+    await flushPromises();
+    // Nothing is displayed for the new axes yet, so nothing can be pinned
+    // from the old ones.
+    expect(wrapper.vm.histogramsByPlot.p1 ?? null).toBeNull();
+
+    // ...and a FAILED replacement must not resurrect the old display either.
+    releases[0](null);
+    await flushPromises();
+    expect(wrapper.vm.histogramsByPlot.p1 ?? null).toBeNull();
+  });
+
   it("describes a gate refusal as partial, not as everything being unfiltered", async () => {
     // Resolution is per plot, so a refused batch leaves already-resolved
     // gates filtering. The banner used to say "the viewer and the Objects tab
