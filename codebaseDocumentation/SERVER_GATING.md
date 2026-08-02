@@ -953,6 +953,11 @@ the per-id jitter:
   `index ± jitter(id)`, so any divergence flips membership near the gate
   edge. The committed parity fixture pins the same property in CI; this
   confirms it against a real dataset.
+- **Re-confirmed after the self-review changes** (which touched the encoder
+  path on both sides — `categorical_raw_identity` now reads defensively and
+  `derive_axis_categories` goes through the memo): the same gate resolved to
+  exactly **352,994** again, byte-for-byte the number recorded above. A
+  coercion that disagreed across the two languages would have moved it.
 - Wire format held: `analysisGates` 1 definition, `idConstraints` empty,
   **427-byte** filter payload, server list total 352,994 matching the
   client, list page fetch ~4.9 s.
