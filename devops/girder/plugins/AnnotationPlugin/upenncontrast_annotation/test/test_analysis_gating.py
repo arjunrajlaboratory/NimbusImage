@@ -1036,7 +1036,16 @@ class TestAnalysisGatingReviewFindings:
             assert "narrow the filters" not in message.lower()
             assert "whole dataset" in message.lower()
             assert "redraw" in message.lower()
-            assert "disable" in message.lower()
+        # The two paths differ in what "disable" achieves, so they must not
+        # give the same advice. The list path is fed
+        # activeAnalysisGateDefinitions, which is enabled-only, so unchecking
+        # a gate genuinely removes it. gate_ids receives resolutionPlots,
+        # which deliberately keeps DISABLED drawn gates while the panel is
+        # open so their counts can be shown — there, unchecking the box
+        # leaves the request identical and the retry fails the same way.
+        assert "disable" in listMessage.lower()
+        assert "disable" not in responseMessage.lower()
+        assert "remove a plot" in responseMessage.lower()
 
     def testHistogramUpstreamGatesShareTheVertexBudget(self, admin, server):
         """Codex round 4: the aggregate vertex budget was applied only to

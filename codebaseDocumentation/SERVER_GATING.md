@@ -921,7 +921,13 @@ Every invariant names the test that holds it (format enforced by
   "narrow the filters", but a gate is resolved over the WHOLE dataset before
   any tag/property/frame filter applies, so narrowing those cannot change the
   resolved id count by one — the advice sent the user round a loop returning
-  the same 400. They now say to redraw a gate smaller or disable one —
+  the same 400. The two paths also differ in what "disable" achieves, so
+  they must not give the same advice: the list path is fed
+  `activeAnalysisGateDefinitions` (enabled only), so unchecking a gate
+  genuinely removes it, while `gate_ids` receives `resolutionPlots`, which
+  keeps DISABLED drawn gates while the panel is open so their counts can be
+  shown — there the checkbox leaves the request identical, so the message
+  says to remove a plot —
   *"testBudgetErrorsDoNotRecommendNarrowingFilters"*
 - A displayed histogram is dropped as soon as its inputs change, not merely
   replaced on success. Holding the old one across an axis change or dataset

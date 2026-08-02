@@ -546,11 +546,18 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 # Checked as it accumulates, for the same reason the list
                 # budget is: the guard must not first build the thing it
                 # exists to prevent.
+                # "remove a plot", NOT "disable a gate" — unlike the list
+                # path, which is fed activeAnalysisGateDefinitions (enabled
+                # only), this endpoint receives analysisRefreshScope's
+                # resolutionPlots, which deliberately includes DISABLED drawn
+                # gates while the panel is open so their counts can be shown.
+                # Unchecking the box therefore leaves this request identical
+                # and the retry fails the same way.
                 raise ValueError(
                     "analysis gates resolve to more than the %d ids one "
                     "response can carry. Gates are resolved over the whole "
                     "dataset, so other filters will not reduce this: redraw "
-                    "a gate to cover fewer objects, or disable one."
+                    "a gate to cover fewer objects, or remove a plot."
                     % MAX_GATE_RESPONSE_IDS
                 )
             resolved[plot["id"]] = ids
