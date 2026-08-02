@@ -259,6 +259,37 @@ Report per-finding outcomes (fixed / stale / by-design / needs-decision) keyed t
 | Reverting a fix in a chained `cp bak && revert && test && cp back` command | An interrupt or a rejected call between the revert and the restore leaves the fix silently removed from the working tree. Use `git stash` / `git checkout -- <file>` to restore, and `git diff` against HEAD before continuing |
 | Trusting a probe that passed against drifted state | Re-verify from a **fresh load**: a churn probe reported "no problem" only because everything had hydrated by the time it ran, and a live behavior check disagreed with a passing unit test because the working tree had lost the fix |
 
+### A test written alongside a fix must contradict the OLD source of truth
+
+The recurring failure is not "the test is wrong" — it is that the test sets
+up the one state in which **both** the old and new code agree, so it passes
+against the bug it was written for.
+
+The sharpest case: when a fix changes **where** a value comes from, the test
+must make the OLD source **empty or wrong**. On PR #1302 an open gate bound
+moved from `propertyStore.propertyValues` (empty in the stub-only regime the
+feature exists for) to a server histogram. The accompanying test populated
+`propertyValues` *and* `annotations` — the single configuration in which the
+old code worked. It passed against a production path that always took the
+broken branch. The replacement sets `annotations = []` and
+`propertyValues = {}` and asserts the bound still reaches past the data.
+
+Two more from the same round:
+
+- **A hand-maintained list of things-to-check silently omits the new thing.**
+  `describeAgentToolCall`'s "never throws on malformed input" test iterated a
+  literal array of tool names. The two new tools weren't in it, so the test
+  that exists for exactly that bug class couldn't see the bug. Derive such
+  lists from the registry/enum (`AGENT_TOOL_NAMES`) so they cannot drift.
+- **Paired mock state drifts like paired product state.** In one mock
+  `propertyValuesRevision` was wired to the reactivity signal and
+  `contentRevision`, on the adjacent line of the same signature, was a plain
+  constant — so half the signature was untestable and nobody noticed.
+
+Mechanically: after writing the test, restore the pre-fix behaviour (`git
+stash`, or a scripted edit you undo from a backup) and **watch it fail**.
+"It would obviously fail" has been wrong here more than once.
+
 ### Verifying a fix live: pick a fixture that actually exercises it
 
 A live check on the wrong dataset is worse than none — it produces a confident result about nothing. Before claiming live verification, confirm the fixture has the property under test:

@@ -342,6 +342,44 @@ rule for `$in` vs `$nin` looked obviously right and *lost* time near the
 crossover, because `$nin` costs ~1.4× per element. Time both and put the
 table in the comment.
 
+## A dict that is both client input and an internal write target
+
+When a request dict is validated at the boundary and then *written to* by
+internal code, an allowlist is not enough — the validator must **remove**
+keys it does not own. Two things conspire:
+
+- validators check the fields they know about and pass everything else
+  through untouched;
+- internal writers commonly use `setdefault(...)` / `.get(...) or []`, which
+  **appends to** a client-supplied value instead of replacing it.
+
+On PR #1302 `filters["gateMatchClauses"]` was internal — the gate resolver
+wrote it and the pipeline builder spliced its contents straight into
+`$match.$and`. A client could set it on three `@access.public` endpoints:
+
+```python
+# Uncaught 500: andClauses += "x" -> {"$and": ["x"]} -> OperationFailure
+{"filters": {"gateMatchClauses": "x"}}
+# Arbitrary operator ANDed into the dataset match, on a public endpoint
+{"filters": {"gateMatchClauses": [{"tags": {"$regex": "(a+)+$"}}]}}
+```
+
+Rules:
+
+1. **Strip internal keys at the top of the validator**, before anything
+   reads the dict: `filters.pop("gateMatchClauses", None)`. Stripping (not
+   rejecting) is right for a key that is not part of the client-facing
+   shape — the request simply ignores it.
+2. **Grep the writers, not the readers.** The reader
+   (`_buildListMatchStages`) looks innocuous; the bug lives in the fact that
+   the same dict has two authors. Search for `setdefault`, `.get(x) or []`,
+   and `dict[...] =` against any name that also reaches a request body.
+3. **Test it from the client side.** Every existing test set the key through
+   the resolver, so none of them could see it. Assert the request *succeeds
+   and ignores it*, with a clause that would visibly narrow the result if it
+   were applied — otherwise "stripped" and "applied but harmless" look the
+   same.
+
 ## Loading Plugin Changes Into the Running Backend
 
 The `girder` container bakes the plugin into its image (no source mount). After editing backend plugin code:
