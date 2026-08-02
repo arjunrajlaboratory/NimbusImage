@@ -8,6 +8,7 @@ import volumeViewStore from "@/store/volumeView";
 import {
   AnnotationShape,
   IAnalysisGate,
+  IAnalysisPlot,
   IAnnotation,
   IChatImage,
   IContrast,
@@ -624,15 +625,34 @@ function describeAnalysisAxis(axis: TAnalysisAxis | null) {
 async function waitForGateResolution(
   plotId: string,
   timeoutMs: number = 15000,
+  abortSignal?: AbortSignal,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (filterStore.analysisGateIds[plotId] !== undefined) {
       return true;
     }
+    // Stop must unwind the turn immediately, like the other blocking tools.
+    // Without this the panel stayed busy for the rest of the deadline.
+    if (abortSignal?.aborted) {
+      return false;
+    }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
   return filterStore.analysisGateIds[plotId] !== undefined;
+}
+
+/**
+ * Gate creations so far in this agent turn. Each one re-resolves every gate
+ * accumulated so far — a whole-dataset server scan above the plot cap — so
+ * the count is bounded per turn rather than only by MAX_ANALYSIS_PLOTS.
+ * Reset by the panel at the start of each turn, alongside the job tracker.
+ */
+let analysisPlotsCreatedThisTurn = 0;
+const MAX_AGENT_PLOTS_PER_TURN = 4;
+
+export function clearAgentTurnLimits() {
+  analysisPlotsCreatedThisTurn = 0;
 }
 
 /** Turn an agent axis spec into the store's TAnalysisAxis. */
@@ -667,34 +687,50 @@ function resolveAgentAnalysisAxis(
 }
 
 /**
- * A rectangle as a gate polygon. An omitted bound is unbounded on that side,
- * which is how users phrase one-sided gates ("area over 100"); the finite
- * stand-in is large enough to cover any property value while staying well
- * inside float range so the polygon maths cannot overflow.
+ * A rectangle as a gate polygon, sized to the DATA rather than to a fixed
+ * sentinel.
+ *
+ * An omitted bound means "unbounded on that side", which is how users phrase
+ * one-sided gates ("area over 100"). A fixed stand-in silently broke that
+ * promise: with a constant 1e12, a property holding larger values had those
+ * objects excluded from an `x >= 100` gate, and a requested bound above the
+ * constant was rejected as an inverted range. The open side is therefore
+ * derived from the observed range of that axis and widened generously — the
+ * polygon only has to reach past the furthest real point, not to infinity.
  */
-const GATE_UNBOUNDED = 1e12;
+function openGateBound(
+  axis: TAnalysisAxis,
+  explicit: number | undefined,
+  direction: -1 | 1,
+): number {
+  if (explicit !== undefined) {
+    if (typeof explicit !== "number" || !isFinite(explicit)) {
+      throw new ToolExecutionError("Range bounds must be finite numbers.");
+    }
+    return explicit;
+  }
+  let extreme = 0;
+  if (axis.type === "property") {
+    for (const [, value] of collectPathValues(axis.path, null)) {
+      if (isFinite(value)) {
+        extreme = Math.max(extreme, Math.abs(value));
+      }
+    }
+  }
+  // Floor keeps an empty or all-zero property from collapsing the rectangle.
+  return direction * (Math.max(extreme, 1) * 1e3 + 1e6);
+}
 
 function rectangularGate(
+  xAxis: TAnalysisAxis,
+  yAxis: TAnalysisAxis,
   xRange: { min?: number; max?: number } | undefined,
   yRange: { min?: number; max?: number } | undefined,
 ): IAnalysisGate {
-  const bound = (
-    value: number | undefined,
-    fallback: number,
-    field: string,
-  ) => {
-    if (value === undefined) {
-      return fallback;
-    }
-    if (typeof value !== "number" || !isFinite(value)) {
-      throw new ToolExecutionError(`${field} must be a finite number.`);
-    }
-    return value;
-  };
-  const x0 = bound(xRange?.min, -GATE_UNBOUNDED, "xRange.min");
-  const x1 = bound(xRange?.max, GATE_UNBOUNDED, "xRange.max");
-  const y0 = bound(yRange?.min, -GATE_UNBOUNDED, "yRange.min");
-  const y1 = bound(yRange?.max, GATE_UNBOUNDED, "yRange.max");
+  const x0 = openGateBound(xAxis, xRange?.min, -1);
+  const x1 = openGateBound(xAxis, xRange?.max, 1);
+  const y0 = openGateBound(yAxis, yRange?.min, -1);
+  const y1 = openGateBound(yAxis, yRange?.max, 1);
   if (x1 <= x0 || y1 <= y0) {
     throw new ToolExecutionError(
       "Each range needs max greater than min; an inverted or empty range " +
@@ -2574,6 +2610,21 @@ const registry: { [name: string]: IAgentToolEntry } = {
       context: IAgentToolContext,
     ) => {
       requireDataset();
+      // Each call resolves EVERY gate accumulated so far, and above the cap
+      // that is a server-side scan of the whole dataset. The sequential-
+      // gating prompt actively encourages several calls per turn, so without
+      // a per-turn bound one natural-language request could reach the plot
+      // cap and cost 20 scans plus ~210 resolution passes. A gating strategy
+      // the model builds unattended is a handful of steps; beyond that it
+      // should hand back to the user.
+      if (analysisPlotsCreatedThisTurn >= MAX_AGENT_PLOTS_PER_TURN) {
+        throw new ToolExecutionError(
+          `Already created ${analysisPlotsCreatedThisTurn} analysis plots ` +
+            `in this turn, which is the limit — each one re-resolves every ` +
+            `gate over the whole dataset. Summarize what the current gates ` +
+            `show and let the user ask for more.`,
+        );
+      }
       if (!filterStore.canAddAnalysisPlot) {
         throw new ToolExecutionError(
           `The Analysis panel already holds the maximum of ` +
@@ -2597,13 +2648,19 @@ const registry: { [name: string]: IAgentToolEntry } = {
         );
       }
 
+      // Build and validate the gate BEFORE the first store mutation. An
+      // inverted range satisfies the JSON schema, so throwing after
+      // addAnalysisPlot left an orphan ungated plot behind on every failed
+      // call — and a few corrected retries would exhaust the plot cap.
+      const gate: IAnalysisGate | null = wantsGate
+        ? rectangularGate(xAxis, yAxis, input.xRange, input.yRange)
+        : null;
+
       const plotId = uuidv4();
+      analysisPlotsCreatedThisTurn += 1;
       await filterStore.addAnalysisPlot(plotId);
       await filterStore.setAnalysisPlotAxes({ id: plotId, xAxis, yAxis });
-
-      let gate: IAnalysisGate | null = null;
-      if (wantsGate) {
-        gate = rectangularGate(input.xRange, input.yRange);
+      if (gate) {
         await filterStore.setAnalysisPlotGate({ id: plotId, gate });
       }
       // Gate ids are DERIVED, never stored: without this the gate exists but
@@ -2616,7 +2673,11 @@ const registry: { [name: string]: IAgentToolEntry } = {
       // 0 while this reported the full 52,282 as passing. So wait for this
       // plot's ids to actually appear before reporting any count.
       const resolved = gate
-        ? await waitForGateResolution(plotId, context.waitForGateTimeoutMs)
+        ? await waitForGateResolution(
+            plotId,
+            context.waitForGateTimeoutMs,
+            context.abortSignal,
+          )
         : true;
 
       const gatedCount = filterStore.analysisGateIds[plotId] ?? null;
@@ -2943,6 +3004,10 @@ export interface IViewStateSnapshot {
   tagFilter: typeof filterStore.tagFilter;
   onlyCurrentFrame: boolean;
   propertyFilters: IPropertyAnnotationFilter[];
+  // Gates narrow the same object set as the filters above, so a revert that
+  // skipped them would leave a gate applied (or a cleared one deleted) while
+  // telling the user the view was restored.
+  analysisPlots: IAnalysisPlot[];
   selectedAnnotationIds: string[];
   selectedToolId: string | null;
   displayOptions: ReturnType<typeof currentDisplayOptions>;
@@ -2991,6 +3056,7 @@ export function snapshotViewState(): IViewStateSnapshot {
       tagFilter: filterStore.tagFilter,
       onlyCurrentFrame: filterStore.onlyCurrentFrame,
       propertyFilters: filterStore.propertyFilters,
+      analysisPlots: filterStore.analysisPlots,
       selectedAnnotationIds: [...annotationStore.selectedAnnotationIds],
       selectedToolId: main.selectedTool?.configuration.id ?? null,
       displayOptions: currentDisplayOptions(),
@@ -3072,6 +3138,17 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   }
   for (const saved of snapshot.propertyFilters) {
     filterStore.updatePropertyFilter(saved);
+  }
+  // Analysis plots are replaced wholesale (hydrateAnalysisPlots is the same
+  // path a saved configuration takes) and then re-resolved, since gate ids
+  // are derived. Only touched when they actually differ, so an ordinary
+  // revert does not pay a gate resolution.
+  const savedPlots = snapshot.analysisPlots ?? [];
+  if (
+    JSON.stringify(savedPlots) !== JSON.stringify(filterStore.analysisPlots)
+  ) {
+    await filterStore.hydrateAnalysisPlots(savedPlots);
+    await filterStore.refreshAnalysis();
   }
   annotationStore.setSelected(snapshot.selectedAnnotationIds);
   await main.setSelectedToolId(snapshot.selectedToolId);

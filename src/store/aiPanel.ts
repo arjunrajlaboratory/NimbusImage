@@ -16,6 +16,7 @@ import {
 } from "./AgentAPI";
 import {
   buildInterfaceState,
+  clearAgentTurnLimits,
   clearTrackedAgentJobs,
   describeAgentToolCall,
   executeAgentTool,
@@ -404,6 +405,9 @@ export class AiPanel extends VuexModule {
     this.setStopRequested(false);
     turnAbortController = new AbortController();
     turnSnapshot = snapshotViewState();
+    // Per-turn budgets (e.g. how many analysis gates the model may create,
+    // each of which re-resolves every gate over the whole dataset).
+    clearAgentTurnLimits();
     this.setCanRevert(false);
     // If the conversation is cleared mid-run (e.g. the user logs out/in),
     // conversationGeneration is bumped; the loop below bails on any mismatch

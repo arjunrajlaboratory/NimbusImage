@@ -164,6 +164,7 @@ vi.mock("@/store/filters", () => ({
     removeAnalysisPlot: vi.fn(),
     setAnalysisPlotAxes: vi.fn(),
     setAnalysisPlotGate: vi.fn(),
+    hydrateAnalysisPlots: vi.fn(),
     refreshAnalysis: vi.fn(),
   },
 }));
@@ -216,6 +217,7 @@ import {
   clearTrackedAgentJobs,
   describeAgentToolCall,
   buildInterfaceState,
+  clearAgentTurnLimits,
   executeAgentTool,
   isGatedTool,
   restoreViewState,
@@ -284,6 +286,9 @@ beforeEach(() => {
   mockJobs.fetchJobStatus = vi.fn(async () => null);
   mockJobs.addJob = vi.fn(() => new Promise<boolean>(() => {}));
   clearTrackedAgentJobs();
+  // Per-turn agent budgets are real module state; a leaked count made later
+  // tests hit the turn limit instead of the behaviour they assert.
+  clearAgentTurnLimits();
   clearPlots();
 });
 
@@ -2826,5 +2831,121 @@ describe("create_analysis_plot waits for gate resolution", () => {
     expect(out.result.gatedCount).toBe(0);
     expect(out.result.filteredCount).toBe(0);
     expect(out.result.note).toBeUndefined();
+  });
+});
+
+// Codex round 6. These are all "the fix created the next bug" shapes, so each
+// asserts the specific failure rather than the happy path.
+describe("analysis tools: round 6 hardening", () => {
+  beforeEach(() => {
+    mockFilters.analysisPlots = [];
+    mockFilters.analysisGateIds = {};
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.setAnalysisPlotAxes.mockReset();
+    mockFilters.setAnalysisPlotGate.mockReset();
+    mockFilters.refreshAnalysis.mockReset();
+  });
+
+  const axes = {
+    xAxis: { propertyPath: ["p1", "Area"] },
+    yAxis: { propertyPath: ["p1", "Perimeter"] },
+  };
+
+  it("leaves no orphan plot when the gate is invalid", async () => {
+    // The inverted range satisfies the JSON schema, so it can only be caught
+    // here — and throwing after addAnalysisPlot used to strand an ungated
+    // plot, letting a few corrected retries exhaust the plot cap.
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        { ...axes, xRange: { min: 500, max: 100 } },
+        { ...context, waitForGateTimeoutMs: 0 } as any,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockFilters.addAnalysisPlot).not.toHaveBeenCalled();
+    expect(mockFilters.setAnalysisPlotAxes).not.toHaveBeenCalled();
+  });
+
+  it("caps gate creations per turn, since each re-resolves everything", async () => {
+    const call = () =>
+      executeAgentTool("create_analysis_plot", axes, {
+        ...context,
+        waitForGateTimeoutMs: 0,
+      } as any);
+    for (let i = 0; i < 4; i++) {
+      await call();
+    }
+    await expect(call()).rejects.toThrow(/limit/i);
+    // ...and a new turn starts fresh.
+    clearAgentTurnLimits();
+    await expect(call()).resolves.toBeTruthy();
+  });
+
+  it("stops waiting for gate resolution when the turn is aborted", async () => {
+    const controller = new AbortController();
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      controller.abort(); // user pressed Stop while the refresh was superseded
+    });
+    const started = Date.now();
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 1 } },
+      { ...context, abortSignal: controller.signal } as any,
+    );
+    // Unwinds immediately rather than sitting out the 15s deadline.
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(out.result.filteredCount).toBeNull();
+  });
+
+  it("derives an open bound from the data, not a fixed sentinel", async () => {
+    // A property whose values exceed the old 1e12 constant: everything above
+    // it was silently excluded from an otherwise unbounded gate.
+    mockProperties.propertyValues = {
+      a1: { p1: { Area: 5e12 } },
+      a2: { p1: { Area: 1 } },
+    };
+    mockAnnotations.annotations = [
+      makeAnnotation({ id: "a1" }),
+      makeAnnotation({ id: "a2" }),
+    ];
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 100 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    const gate = mockFilters.setAnalysisPlotGate.mock.calls[0][0].gate;
+    const maxX = Math.max(...gate.vertices.map((v: any) => v.x));
+    expect(maxX).toBeGreaterThan(5e12);
+  });
+
+  it("captures and restores analysis plots in the revert snapshot", async () => {
+    const plot = {
+      id: "p1",
+      xAxis: null,
+      yAxis: null,
+      gate: null,
+      gateEnabled: true,
+    };
+    mockFilters.analysisPlots = [plot];
+    const snap = snapshotViewState();
+    expect(snap.analysisPlots).toEqual([plot]);
+
+    // A tool then adds a gate; reverting must put the saved plots back.
+    mockFilters.analysisPlots = [plot, { ...plot, id: "p2" }];
+    mockFilters.hydrateAnalysisPlots = vi.fn();
+    await restoreViewState(snap);
+    expect(mockFilters.hydrateAnalysisPlots).toHaveBeenCalledWith([plot]);
+    expect(mockFilters.refreshAnalysis).toHaveBeenCalled();
+  });
+
+  it("does not re-resolve gates on a revert that did not touch them", async () => {
+    mockFilters.analysisPlots = [];
+    const snap = snapshotViewState();
+    mockFilters.hydrateAnalysisPlots = vi.fn();
+    mockFilters.refreshAnalysis.mockClear();
+    await restoreViewState(snap);
+    expect(mockFilters.hydrateAnalysisPlots).not.toHaveBeenCalled();
+    expect(mockFilters.refreshAnalysis).not.toHaveBeenCalled();
   });
 });
