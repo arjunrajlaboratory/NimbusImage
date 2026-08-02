@@ -171,14 +171,22 @@ export class Filters extends VuexModule {
   // Why the last server-side gate resolution failed, or null. Shown in the
   // panel: the endpoint's id budgets are reachable with a few broad gates on
   // a large dataset, and the retry under identical inputs fails identically,
-  // so a console-only failure left every gate silently not filtering with
-  // nothing on screen to explain it.
+  // so a console-only failure left the gates in that batch silently not
+  // filtering with nothing on screen to explain it.
+  //
+  // Request-scoped, not per plot: resolution is per plot, so a failure is
+  // PARTIAL — the gates that were already current keep filtering. Anything
+  // reading this must say so rather than claim the viewer is unfiltered, and
+  // it must be cleared wherever "nothing is unresolved" becomes true again,
+  // which includes the no-stale early return.
   analysisGateError: string | null = null;
 
-  // The dataset/value inputs the enabled gate ids were resolved against. Plot
-  // edits invalidate their affected suffix synchronously in the mutators; this
-  // identity covers the other half of the dependency: the non-gate population
-  // and the values/categories read from it.
+  // BELOW-CAP ONLY. The dataset/value inputs the chained gate ids were
+  // resolved against; plot edits invalidate their affected suffix
+  // synchronously in the mutators, and this identity covers the other half of
+  // the dependency: the non-gate population and the values/categories read
+  // from it. Above the cap it is nulled and analysisPureGateSignatures is
+  // authoritative instead — pure ids depend on none of that.
   analysisGateDataSignature: string | null = null;
 
   // The corresponding input identity for every gate resolved while the panel
@@ -1102,8 +1110,11 @@ export class Filters extends VuexModule {
   /**
    * Over-cap half of refreshAnalysis: resolve drawn gates through the
    * gate_ids endpoint and commit the PURE id lists. The committed ids are
-   * population-independent, so no filter change ever invalidates them —
-   * only the inputs named by serverGateInputSignature do.
+   * population-independent, so no filter change ever invalidates them — only
+   * the inputs named by `pureGateSignature`, PER PLOT, do. (Not
+   * `serverGateInputSignature`, which is the watcher's whole-request wake-up
+   * identity: it moves when the palette opens, which says nothing about
+   * whether any already-resolved gate is still correct.)
    *
    * `token` is the caller's already-claimed sequence token (claimed as the
    * first statement of refreshAnalysis, before any early return).

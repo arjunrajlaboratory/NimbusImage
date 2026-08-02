@@ -118,8 +118,14 @@ def encode_category_key(raw) -> str:
 ```
 
 `json.dumps` with `separators=(",", ":")` matches `JSON.stringify` for
-strings, string arrays, and integers (the only raw types; floats never occur
-— locations and channel are ints). One divergence to handle: tags are sorted
+strings, string arrays, integers, and `null` (the only raw types; floats
+never occur — locations and channel are ints). `null` is the identity of a
+document missing the field: `locationSchema` declares XY/Z/Time without a
+`required` list, so `"location": {}` is a valid write, and both sides coerce
+the gap to `null` so it encodes to the same `"v1:null"`. Because `null` is a
+legal identity, the client's decoder must NOT reuse it as its "not a key"
+answer — doing so made `isEncodedAnalysisCategoryKey` reject a key the
+encoder produces, silently discarding persisted gates on that axis. One divergence to handle: tags are sorted
 before encoding, and JS `Array.prototype.sort` compares **UTF-16 code
 units** while Python's `str` comparison uses code points. These differ only
 when a string contains astral-plane characters (JS compares their surrogate
