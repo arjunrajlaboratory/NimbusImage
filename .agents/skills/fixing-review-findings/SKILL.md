@@ -227,6 +227,14 @@ Its three response signals are easy to confuse when polling:
 | 👍 | Reviewed, no suggestions. |
 | A plain PR comment ("Didn't find any major issues") | Also a clean result — arrives as an issue comment, *not* a review object with inline comments. |
 
+**A review object with an empty body is not a clean result.** Codex's review
+body is the same 621-character boilerplate whether or not it found anything;
+the findings are inline comments. Reading `gh pr view --json reviews` and
+seeing only boilerplate reports "no findings" while P2s sit in
+`/pulls/N/comments`. This misled two consecutive rounds of one review before
+it was noticed. Judge a round by the inline-comment count, paginated, never
+by the review body.
+
 Poll for all three. Watching only for a new review object plus 👍 reports a false timeout when the answer arrived as a comment. Findings themselves come as inline review comments (`/pulls/{n}/comments`), not in the review body, which only holds boilerplate.
 
 **The bot's login differs between the two GitHub APIs.** GraphQL (`gh pr view --json reviews`) reports `author.login` as `chatgpt-codex-connector`; REST (`gh api .../reviews`, `.../comments`) reports `user.login` as **`chatgpt-codex-connector[bot]`**. A REST poll filtering on the GraphQL spelling matches nothing and reports "no review yet" forever — this produced a confident false negative after the review had already landed. Match on a prefix, and prefer polling by timestamp rather than by author:
@@ -236,9 +244,21 @@ Poll for all three. Watching only for a new review object plus 👍 reports a fa
 gh api repos/OWNER/REPO/pulls/N/reviews \
   --jq "[.[] | select((.user.login|startswith(\"chatgpt-codex-connector\")) and .submitted_at > \"$LAST\")] | length"
 
-# The findings themselves:
-gh api repos/OWNER/REPO/pulls/N/comments \
+# The findings themselves. --paginate is NOT optional:
+gh api repos/OWNER/REPO/pulls/N/comments --paginate \
   --jq ".[] | select(.created_at > \"$LAST\") | \"=== \(.path):\(.line // .original_line)\n\(.body)\""
+```
+
+**Always `--paginate` the comments endpoint.** It returns 30 per page, and a
+long review thread passes that quickly — after which the *newest* finding is
+on page two and an unpaginated query reports zero. On a 13-round PR this
+produced a confident "the round was clean" when a P2 had in fact landed
+against the current head (30 comments returned vs 31 with `--paginate`).
+Sanity-check by counting both ways when a round reports clean:
+
+```bash
+gh api repos/$OWNER/pulls/$PR/comments --jq 'length'             # capped at 30
+gh api repos/$OWNER/pulls/$PR/comments --paginate --jq 'length'  # the real count
 ```
 
 Sanity-check a "nothing yet" result against `gh pr view N --json reviews` (GraphQL) before reporting it — if the two disagree, the filter is wrong, not the bot. Turnaround is 1–8 minutes and grows with diff size.
