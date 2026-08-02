@@ -23,6 +23,10 @@ const mocks = vi.hoisted(() => ({
   values: {} as Record<string, any>,
   histogramSpec: { filters: {} as any, skipped: [] as string[] },
   analysisLoading: false,
+  // The panel renders a banner from this. Absent from the mock, no component
+  // test could render it at all — so the checklist invariant about its
+  // wording had nothing holding it.
+  gateError: null as string | null,
   propertyValuesRevision: 0,
   // Behind the reactivity signal like its twin above. As a plain constant no
   // test could drive it, so the "an annotation edit refetches the histogram"
@@ -65,6 +69,10 @@ vi.mock("@/store/filters", () => ({
     },
     get analysisLoading() {
       return mocks.analysisLoading;
+    },
+    get analysisGateError() {
+      mocks.signal.tick;
+      return mocks.gateError;
     },
     get canAddAnalysisPlot() {
       return mocks.plots.length < 20;
@@ -170,6 +178,7 @@ describe("AnalysisPanel", () => {
     mocks.fetchAnalysisHistogram.mockResolvedValue(null);
     mocks.histogramSpec = { filters: {}, skipped: [] };
     mocks.analysisLoading = false;
+    mocks.gateError = null;
     setPlots([]);
     mocks.signal = reactive({ tick: 0 });
     mocks.gateIds = {};
@@ -522,6 +531,32 @@ describe("AnalysisPanel", () => {
     releases[1](null); // finish p2; queue advances to the p1 replacement
     await flushPromises();
     expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(2);
+  });
+
+  it("describes a gate refusal as partial, not as everything being unfiltered", async () => {
+    // Resolution is per plot, so a refused batch leaves already-resolved
+    // gates filtering. The banner used to say "the viewer and the Objects tab
+    // show everything the other filters allow", which described the
+    // all-or-nothing behaviour that preceded per-plot resolution and
+    // misstated what is on screen. Asserted on rendered text because that is
+    // the surface that was wrong — nothing typechecks a sentence.
+    mocks.gateError = "gates resolve to more than the 2000000 ids";
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+
+    const banner = wrapper.find(".analysis-gate-error");
+    expect(banner.exists()).toBe(true);
+    expect(banner.text()).toContain("2000000");
+    // Says the failure is partial...
+    expect(banner.text()).toMatch(/some gates/i);
+    expect(banner.text()).toMatch(/resolved earlier still is/i);
+    // ...and never claims the whole gate set is off.
+    expect(banner.text()).not.toMatch(/everything the other filters allow/i);
+
+    mocks.gateError = null;
+    mocks.signal.tick++;
+    await flushPromises();
+    expect(wrapper.find(".analysis-gate-error").exists()).toBe(false);
   });
 
   it("keeps invalidating after a close, reopen and close", async () => {

@@ -2751,6 +2751,29 @@ describe("analysis panel tools", () => {
     ).rejects.toBeInstanceOf(ToolExecutionError);
   });
 
+  it("never reports a plot that was removed while its gate resolved", async () => {
+    // The twin of the cap race, reached from the other end. Insertion is
+    // confirmed before configuring the plot, but refreshAnalysis and the
+    // resolution wait take seconds on a large dataset, and the user can
+    // delete the plot in that window — after which this returned the removed
+    // plotId with a "still resolving" note.
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      mockFilters.analysisPlots = []; // the user deletes it mid-resolution
+    });
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 1 },
+      },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(out.result.plotId).toBeNull();
+    expect(out.result.removed).toBe(true);
+    expect(out.result.note).toMatch(/removed while its gate was resolving/i);
+  });
+
   it("never reports a plot the store refused to create", async () => {
     // Sizing an open bound awaits the backend, so the cap check at the top of
     // the executor is stale by the time the plot is added — the user can fill

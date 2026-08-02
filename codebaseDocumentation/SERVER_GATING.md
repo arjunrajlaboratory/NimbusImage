@@ -905,6 +905,10 @@ Every invariant names the test that holds it (format enforced by
   the palette adds a disabled gate to the request"*, *"re-resolves only the
   plot whose gate changed"*, *"re-resolves every plot when a revision
   counter moves"*
+- The plot-creation tool never reports a plot that does not exist, checked at
+  BOTH ends of the work: after insertion, and again after the resolution
+  wait, since the user can delete the plot during the seconds those take —
+  *"never reports a plot that was removed while its gate resolved"*
 - The plot-creation tool never reports a plot the store refused to create.
   Sizing an open bound awaits the backend, so the cap check at the top is
   stale by the time the plot is added, and `addAnalysisPlot` no-ops at the
@@ -916,7 +920,10 @@ Every invariant names the test that holds it (format enforced by
 - The refusal banner names a PARTIAL failure. Resolution is per plot, so a
   failed batch leaves already-resolved gates filtering; saying "the viewer
   shows everything the other filters allow" described the pre-per-plot
-  behaviour and misstated what was on screen.
+  behaviour and misstated what was on screen. Asserted on rendered text,
+  since a sentence is what was wrong and nothing typechecks one —
+  *"describes a gate refusal as partial, not as everything being
+  unfiltered"*
 - The refusal banner clears once nothing is unresolved, including on the
   no-stale early return. Per-plot staleness means a refused batch leaves the
   current gates filtering, so deleting the refused gate makes every

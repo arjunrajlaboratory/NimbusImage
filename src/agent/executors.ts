@@ -2765,6 +2765,25 @@ const registry: { [name: string]: IAgentToolEntry } = {
           )
         : true;
 
+      // Confirm the plot is STILL there, not just that it once was. The
+      // insertion check above is the twin of this one: between them sit
+      // refreshAnalysis and waitForGateResolution, which take seconds on a
+      // large dataset, and the user can delete the plot in that window. The
+      // wait then times out and this returned the removed plotId with a
+      // "still resolving" note — the same stale report the cap race produced,
+      // reached from the other end.
+      if (!filterStore.analysisPlots.some((plot) => plot.id === plotId)) {
+        return {
+          result: {
+            plotId: null,
+            removed: true,
+            note:
+              "The plot was removed while its gate was resolving, so it no " +
+              "longer exists. Nothing was left behind.",
+          },
+        };
+      }
+
       const gatedCount = filterStore.analysisGateIds[plotId] ?? null;
       return {
         result: {
