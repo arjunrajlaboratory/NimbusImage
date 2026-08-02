@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   values: {} as Record<string, any>,
   histogramSpec: { filters: {} as any, skipped: [] as string[] },
   analysisLoading: false,
+  propertyValuesRevision: 0,
   // Reactivity lives on this small holder, not on the population array: the cap
   // tests build 50k stubs and making those reactive proxies exhausts the heap.
   signal: { tick: 0 } as { tick: number },
@@ -85,7 +86,10 @@ vi.mock("@/store/properties", () => ({
   default: {
     computedPropertyPaths: [["p", "Area"]],
     getFullNameFromPath: () => "Prop / Area",
-    propertyValuesRevision: 0,
+    get propertyValuesRevision() {
+      mocks.signal.tick;
+      return mocks.propertyValuesRevision;
+    },
   },
 }));
 
@@ -473,5 +477,38 @@ describe("AnalysisPanel", () => {
     await flushPromises();
     expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
     expect(Object.keys(wrapper.vm.histogramsByPlot)).not.toContain("p2");
+  });
+  it("still invalidates a requeued plot after an older generation finishes", async () => {
+    // Codex round 5: pending state keyed by plot id collapses generations.
+    // The OLD callback's cleanup deletes p1's entry, so a REPLACEMENT p1
+    // request queued behind p2 becomes invisible to invalidation. The order
+    // matters: the old generation must FINISH before the panel closes.
+    setPopulation(50001);
+    setPlots([makePlot("p1"), makePlot("p2")]);
+    const releases: ((v: any) => void)[] = [];
+    mocks.fetchAnalysisHistogram.mockImplementation(
+      () => new Promise((r) => releases.push(r)),
+    );
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1); // p1
+
+    // Supersede p1: a second p1 generation queues behind p2.
+    mocks.propertyValuesRevision = 1;
+    mocks.signal.tick++;
+    await flushPromises();
+
+    // Finish the OLD p1 — its cleanup runs, and p2 dispatches.
+    releases[0](null);
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(2); // p2
+
+    // Close the panel. The queued p1 replacement must be invalidated too.
+    await wrapper.setProps({ visible: false });
+    await flushPromises();
+
+    releases[1](null); // finish p2; queue advances to the p1 replacement
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(2);
   });
 });

@@ -784,6 +784,19 @@ Every invariant names the test that holds it (format enforced by
   work when the panel closes"*, *"drops queued histogram work for a removed
   plot"*
 
+**Round-5 review findings (PR #1302)**
+- histogram2d rejects `filters.analysisGates` outright: it was a SECOND
+  gate channel with its own budget, and `analysisHistogram` calls `listIds`
+  without `resolveListGateConstraints`, so those gates were validated and
+  then silently ignored — an accepted request whose picture quietly drops a
+  filter. Gating here travels through `upstreamGates` —
+  *"testHistogramRejectsFilterGates"*
+- Pending histogram work is counted PER GENERATION, not per plot: a
+  superseded request's cleanup used to remove the entry its own replacement
+  still needed, so the replacement became invisible to invalidation and
+  dispatched after the panel closed — *"still invalidates a requeued plot
+  after an older generation finishes"*
+
 **Busy feedback**
 - The busy bar covers property-value fetches AND histogram requests (the
   slow path above the cap, previously silent) and is sticky, so it stays

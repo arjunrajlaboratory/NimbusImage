@@ -389,6 +389,17 @@ def validateAnalysisHistogramRequest(body):
         + ([{"gate": body["gate"]}] if body.get("gate") is not None else [])
     )
     filters = body.get("filters") or {}
+    # Gating on this endpoint travels through `upstreamGates`, which share
+    # one request budget with the plot's own gate. `filters.analysisGates`
+    # is a SECOND gate channel with its own ceiling — and analysisHistogram
+    # calls listIds without resolveListGateConstraints, so those gates would
+    # be validated and then silently ignored, quietly changing the picture.
+    if isinstance(filters, dict) and filters.get("analysisGates"):
+        raise RestException(
+            "filters.analysisGates is not accepted here; pass gates as "
+            "upstreamGates so they share the request budget",
+            code=400,
+        )
     validateListInputs(filters)
     dropNoOpPropertyFilters(filters)
     body["filters"] = filters

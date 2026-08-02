@@ -1016,3 +1016,24 @@ class TestAnalysisGatingReviewFindings:
              "filters": {"analysisGates": gates}},
         )
         assertStatus(resp, 400)
+
+    def testHistogramRejectsFilterGates(self, admin, server):
+        """Codex round 5: histogram2d ran filters through validateListInputs,
+        which accepts `analysisGates` under its OWN budget — a second gate
+        channel with a second ceiling. Worse, analysisHistogram calls listIds
+        directly without resolveListGateConstraints, so those gates were
+        validated and then SILENTLY IGNORED: an accepted request whose
+        picture quietly ignores a filter. Gating on this endpoint travels
+        through upstreamGates; filter gates are rejected outright."""
+        folder = self._setup(admin)
+        gate = {
+            "xAxis": {"type": "property", "path": ["p", "Area"]},
+            "yAxis": {"type": "property", "path": ["p", "Mean"]},
+            "gate": {"categoryKeyVersion": 1, "vertices": BOX_0_10,
+                     "xCategories": None, "yCategories": None},
+        }
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], filters={"analysisGates": [gate]}),
+        )
+        assertStatus(resp, 400)

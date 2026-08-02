@@ -369,19 +369,27 @@ function toDisplay(
 // clarity.
 let histogramQueue: Promise<void> = Promise.resolve();
 
-// Plots whose request is queued or in flight. The queue captures a guard
-// OBJECT, so removing the plot's map entry does not stop its callback —
-// the guard has to be ADVANCED to supersede the captured token. Signatures
-// of invalidated work are forgotten too, so it refetches when relevant
-// again; completed signatures are untouched, which is what keeps a reopen
-// from refetching everything.
-const pendingHistograms = new Set<string>();
+// How many requests are queued or in flight PER PLOT. The queue captures a
+// guard OBJECT, so removing the plot's map entry does not stop its callback
+// — the guard has to be ADVANCED to supersede the captured token.
+//
+// A count, not a membership set: one plot can have several generations in
+// the queue at once (a superseded request whose replacement sits behind
+// another plot's). With a set, the older generation's cleanup removed the
+// entry the REPLACEMENT still needed, and invalidation could no longer see
+// it — so it dispatched a full-dataset scan after the panel had closed.
+//
+// Signatures of invalidated work are forgotten so it refetches when
+// relevant again; completed signatures are untouched, which is what keeps a
+// reopen from refetching everything.
+const pendingHistograms = new Map<string, number>();
 
 function invalidatePendingHistograms(plotIds: Iterable<string>) {
   for (const plotId of plotIds) {
     if (!pendingHistograms.has(plotId)) {
       continue;
     }
+    // Advancing supersedes EVERY generation queued for this plot at once.
     histogramGuards.get(plotId)?.next();
     histogramSignatures.delete(plotId);
     pendingHistograms.delete(plotId);
@@ -396,7 +404,7 @@ function enqueueHistogram(
   datasetId: string,
 ) {
   histogramsInFlight.value += 1;
-  pendingHistograms.add(plotId);
+  pendingHistograms.set(plotId, (pendingHistograms.get(plotId) ?? 0) + 1);
   histogramQueue = histogramQueue.then(async () => {
     try {
       // Superseded before it ever started: skip the round trip entirely.
@@ -421,7 +429,13 @@ function enqueueHistogram(
         [plotId]: toDisplay(response, request),
       };
     } finally {
-      pendingHistograms.delete(plotId);
+      // Only this generation is done; a newer one may still be queued.
+      const remaining = (pendingHistograms.get(plotId) ?? 1) - 1;
+      if (remaining > 0) {
+        pendingHistograms.set(plotId, remaining);
+      } else {
+        pendingHistograms.delete(plotId);
+      }
       histogramsInFlight.value -= 1;
     }
   });
@@ -438,7 +452,7 @@ watch(
     // reopening with unchanged inputs refetches nothing.
     if (props.visible && overCap.value) {
       const live = new Set(work.map(({ plotId }) => plotId));
-      const gone = [...pendingHistograms].filter((id) => !live.has(id));
+      const gone = [...pendingHistograms.keys()].filter((id) => !live.has(id));
       // Advance before forgetting the guard, or the queued callback still
       // holds a current token and repopulates the entry just pruned.
       invalidatePendingHistograms(gone);
@@ -461,7 +475,7 @@ watch(
     } else {
       // Hidden, or back below the cap: nothing queued has a reason to run.
       // Display work must not continue behind a closed palette.
-      invalidatePendingHistograms([...pendingHistograms]);
+      invalidatePendingHistograms([...pendingHistograms.keys()]);
     }
     if (!datasetId) {
       return;
