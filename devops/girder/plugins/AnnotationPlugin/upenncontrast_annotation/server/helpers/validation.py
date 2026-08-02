@@ -414,6 +414,17 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
     # filters.get(...) below and raise AttributeError -> 500.
     if not isinstance(filters, dict):
         raise RestException("filters must be an object", code=400)
+    # `gateMatchClauses` is INTERNAL: resolveListGateConstraints writes it and
+    # _buildListMatchStages splices its contents straight into the aggregation
+    # `$match.$and`. It is not part of the client-facing filter shape, and the
+    # resolver appends to it (setdefault) rather than replacing it, so a
+    # client-supplied value survived into the query. On these public endpoints
+    # that made it an arbitrary-operator channel: a string yielded
+    # `{"$and": ["x"]}` -> OperationFailure -> uncaught 500, and a list of real
+    # clauses ANDed anything the caller liked into the dataset-scoped match
+    # (a catastrophic-backtracking $regex could burn AGGREGATION_MAX_TIME_MS of
+    # Mongo CPU per unauthenticated request). Drop it before anything reads it.
+    filters.pop("gateMatchClauses", None)
     analysisGates = filters.get("analysisGates")
     if analysisGates is not None:
         # Gate DEFINITIONS as filter terms (SERVER_GATING.md, Phase 3): the

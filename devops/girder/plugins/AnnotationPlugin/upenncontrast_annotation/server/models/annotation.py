@@ -485,7 +485,6 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 #
                 # Crossover sits near 0.67; 0.5 keeps us clear of it while
                 # still capturing the case this exists for.
-                matched = set(ids)
                 keep, operator = complementSize, "$nin"
             else:
                 keep, operator = len(ids), "$in"

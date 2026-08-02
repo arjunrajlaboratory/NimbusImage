@@ -146,6 +146,20 @@ export class Filters extends VuexModule {
   // setAnalysisGateIds.
   analysisGateIds: { [plotId: string]: string[] } = markRaw({});
 
+  // Whether the ids currently held in analysisGateIds are PURE — resolved
+  // server-side, each gate independently against the whole dataset — rather
+  // than CHAINED, where plot N was resolved against the population surviving
+  // plots 1..N-1. Only chained ids have a dependent suffix to invalidate; see
+  // dropAnalysisGateIdsFromPlot, which used to drop that suffix either way.
+  analysisGateIdsArePure = false;
+
+  // Why the last server-side gate resolution failed, or null. Shown in the
+  // panel: the endpoint's id budgets are reachable with a few broad gates on
+  // a large dataset, and the retry under identical inputs fails identically,
+  // so a console-only failure left every gate silently not filtering with
+  // nothing on screen to explain it.
+  analysisGateError: string | null = null;
+
   // The dataset/value inputs the enabled gate ids were resolved against. Plot
   // edits invalidate their affected suffix synchronously in the mutators; this
   // identity covers the other half of the dependency: the non-gate population
@@ -470,6 +484,24 @@ export class Filters extends VuexModule {
   }
 
   /**
+   * Put back a previously captured set of plots — the agent's "Revert view
+   * changes" affordance. Identical to hydration except that it PERSISTS.
+   *
+   * Hydration deliberately does not save, because it runs when the store is
+   * catching up to the configuration. A revert runs in the other direction:
+   * the agent's create/clear already went through applyAnalysisPlots and was
+   * written to the shared configuration, so hydrating alone undid it in
+   * memory only. The next reload brought the agent's gates back, and any
+   * unrelated debounced save wrote the reverted state — the durable result
+   * depended on which happened first.
+   */
+  @Action
+  restoreAnalysisPlots(plots: IAnalysisPlot[]) {
+    this.hydrateAnalysisPlots(plots);
+    main.scheduleAnnotationBrowserSave();
+  }
+
+  /**
    * Reconcile live plots after the configuration's attached properties change.
    * Hydration already rejects unknown property axes, but property deletion used
    * to leave them (and their invisible gates) active until the next reload.
@@ -515,6 +547,20 @@ export class Filters extends VuexModule {
     // membership pass walk a reactive array. The slot reference is replaced
     // wholesale to drive reactivity.
     this.analysisGateIds = markRaw(gateIds);
+    // Chained unless the committer says otherwise, so every clear and every
+    // below-cap resolution resets it without having to remember to. The pure
+    // path marks itself immediately after committing.
+    this.analysisGateIdsArePure = false;
+  }
+
+  @Mutation
+  setAnalysisGateIdsArePure(pure: boolean) {
+    this.analysisGateIdsArePure = pure;
+  }
+
+  @Mutation
+  setAnalysisGateError(message: string | null) {
+    this.analysisGateError = message;
   }
 
   @Mutation
@@ -530,9 +576,20 @@ export class Filters extends VuexModule {
     }
     const next = { ...this.analysisGateIds };
     let changed = false;
-    for (const plot of this.analysisPlots.slice(
-      plotIndex + (payload.includePlot ? 0 : 1),
-    )) {
+    // The suffix is dropped because chained ids for plot N were resolved
+    // against the population surviving plots 1..N-1. PURE ids have no such
+    // dependency, and dropping them was not merely wasteful: above the cap
+    // the refresh identity (serverGateInputSignature) projects only
+    // {id, xAxis, yAxis, gate}, so a mutation that changes none of those —
+    // toggling gateEnabled, or removing/re-axing an UNGATED plot that
+    // precedes a gated one — dropped downstream ids while leaving the
+    // identity untouched. Nothing then asked for a refresh, so those gates
+    // stopped filtering for the rest of the session and the badge went to 0.
+    const start = plotIndex + (payload.includePlot ? 0 : 1);
+    const end = this.analysisGateIdsArePure
+      ? plotIndex + (payload.includePlot ? 1 : 0)
+      : undefined;
+    for (const plot of this.analysisPlots.slice(start, end)) {
       if (next[plot.id] !== undefined) {
         delete next[plot.id];
         changed = true;
@@ -738,7 +795,15 @@ export class Filters extends VuexModule {
     const filters = buildListFilters({
       tagFilter: this.tagFilter,
       onlyCurrentFrame: this.onlyCurrentFrame,
-      currentFrame: { XY: main.xy, Z: main.z, Time: main.time },
+      // Read frame state only when the filter uses it (same rule as
+      // collectAnnotationsPassingNonGateFilters). Reading it unconditionally
+      // made this getter depend on xy/z/time even when they are discarded, so
+      // every frame scrub with the palette open re-ran buildListFilters —
+      // including the enabledIdFilters flatMap, whose fresh array misses
+      // idListSignature's WeakMap memo and re-hashes up to 50,000 ids.
+      currentFrame: this.onlyCurrentFrame
+        ? { XY: main.xy, Z: main.z, Time: main.time }
+        : { XY: 0, Z: 0, Time: 0 },
       idSubstring: "",
       propertyFilters: this.propertyFilters,
       selectionFilter: selectionOversized
@@ -1038,9 +1103,13 @@ export class Filters extends VuexModule {
       this.clearAnalysisValueCache();
     }
     this.setAnalysisLoading(true);
+    let failure: string | null = null;
     const gateIds = await main.annotationsAPI.fetchAnalysisGateIds(
       datasetId,
       requestPlots,
+      (message) => {
+        failure = message;
+      },
     );
     if (!analysisGateGuard.isCurrent(token)) {
       // A newer refresh owns the state (and the loading flag) now.
@@ -1049,10 +1118,17 @@ export class Filters extends VuexModule {
     this.setAnalysisLoading(false);
     if (gateIds === null) {
       // Failure ≠ empty: same-input ids stayed in place above; changed-input
-      // ids were dropped before the await. Either way, nothing to commit.
+      // ids were dropped before the await. Either way, nothing to commit —
+      // but say so, because the changed-input path just left every gate
+      // unresolved and the retry will fail the same way.
+      this.setAnalysisGateError(failure);
       return;
     }
+    if (this.analysisGateError !== null) {
+      this.setAnalysisGateError(null);
+    }
     this.setAnalysisGateIds(gateIds);
+    this.setAnalysisGateIdsArePure(true);
     this.setAnalysisGateDataSignature(serverSignature);
   }
 
@@ -1060,6 +1136,10 @@ export class Filters extends VuexModule {
   private clearAnalysisDerivedState() {
     if (this.analysisLoading) {
       this.setAnalysisLoading(false);
+    }
+    if (this.analysisGateError !== null) {
+      // No gates left to resolve, so nothing is failing any more.
+      this.setAnalysisGateError(null);
     }
     if (Object.keys(this.analysisGateIds).length > 0) {
       this.setAnalysisGateIds({});

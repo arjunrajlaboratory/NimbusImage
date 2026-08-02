@@ -165,6 +165,10 @@ vi.mock("@/store/filters", () => ({
     setAnalysisPlotAxes: vi.fn(),
     setAnalysisPlotGate: vi.fn(),
     hydrateAnalysisPlots: vi.fn(),
+    // Mirrors the real action: hydrate PLUS persist. Modelled as two separate
+    // recordable calls so a test can tell "restored in memory" apart from
+    // "restored durably" — the distinction the memory-only revert turned on.
+    restoreAnalysisPlots: vi.fn(),
     refreshAnalysis: vi.fn(),
   },
 }));
@@ -185,6 +189,12 @@ vi.mock("@/store/properties", () => ({
     fetchPropertyValues: vi.fn(),
     createProperty: vi.fn(),
     computeProperty: vi.fn(),
+    // The server-side property histogram, which is where an open gate bound
+    // gets the axis extent. Defaults to empty (a dataset whose extent cannot
+    // be measured) so a test that cares must say so.
+    propertiesAPI: {
+      getPropertyHistogram: vi.fn(async () => [] as any[]),
+    },
   },
 }));
 
@@ -306,38 +316,14 @@ describe("describeAgentToolCall", () => {
     { target: 7, tags: 0 },
     { target: { tags: "spot", ids: "abc" } },
     { query: { tags: 3 } },
+    // An axis whose propertyPath is a bare string rather than an array.
+    { xAxis: { propertyPath: "Area" }, yAxis: { propertyPath: 5 } },
   ];
-  const toolNames = [
-    "get_interface_state",
-    "capture_screenshot",
-    "list_annotations",
-    "set_location",
-    "set_camera",
-    "set_layer_mode",
-    "update_layer",
-    "set_layer_visibility",
-    "set_display_options",
-    "set_view_mode",
-    "set_scale",
-    "select_annotations",
-    "color_annotations",
-    "tag_annotations",
-    "set_annotation_filter",
-    "select_tool",
-    "create_tool",
-    "list_properties",
-    "create_property",
-    "compute_property",
-    "get_property_values",
-    "get_property_histogram",
-    "get_sample_values",
-    "create_scatter_plot",
-    "create_histogram_plot",
-    "create_box_plot",
-    "read_help_topic",
-    "run_worker",
-    "unknown_tool",
-  ];
+  // Derived from the registry rather than hand-listed. A hand-listed copy
+  // drifts silently the moment a tool is added — create_analysis_plot went in
+  // with a `.join` on an unvalidated field, exactly the bug this test exists
+  // to catch, and the test never saw it because the name was not in the list.
+  const toolNames = [...AGENT_TOOL_NAMES, "unknown_tool"];
 
   it("never throws on malformed input", () => {
     for (const name of toolNames) {
@@ -375,6 +361,15 @@ describe("isGatedTool", () => {
 
   it("gates set_scale (mutates the shared collection, not revertable)", () => {
     expect(isGatedTool("set_scale")).toBe(true);
+  });
+
+  it("gates clear_analysis_plots but not create_analysis_plot", () => {
+    // Same rationale as set_scale: the plots live in the shared
+    // annotationBrowserConfig, so this discards gating work anyone on the
+    // dataset drew, and a hand-drawn polygon cannot be reconstructed.
+    // Creating one is additive and revertable, so it stays ungated.
+    expect(isGatedTool("clear_analysis_plots")).toBe(true);
+    expect(isGatedTool("create_analysis_plot")).toBe(false);
   });
 });
 
@@ -2898,25 +2893,70 @@ describe("analysis tools: round 6 hardening", () => {
     expect(out.result.filteredCount).toBeNull();
   });
 
-  it("derives an open bound from the data, not a fixed sentinel", async () => {
+  const gateVertexRange = (axis: "x" | "y") => {
+    const gate = mockFilters.setAnalysisPlotGate.mock.calls[0][0].gate;
+    const values = gate.vertices.map((v: any) => v[axis]);
+    return { min: Math.min(...values), max: Math.max(...values) };
+  };
+
+  it("derives an open bound from the server's extent, not a fixed sentinel", async () => {
     // A property whose values exceed the old 1e12 constant: everything above
     // it was silently excluded from an otherwise unbounded gate.
-    mockProperties.propertyValues = {
-      a1: { p1: { Area: 5e12 } },
-      a2: { p1: { Area: 1 } },
-    };
-    mockAnnotations.annotations = [
-      makeAnnotation({ id: "a1" }),
-      makeAnnotation({ id: "a2" }),
-    ];
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => [
+      { count: 2, min: 1, max: 5e12 },
+    ]);
     await executeAgentTool(
       "create_analysis_plot",
       { ...axes, xRange: { min: 100 } },
       { ...context, waitForGateTimeoutMs: 0 } as any,
     );
-    const gate = mockFilters.setAnalysisPlotGate.mock.calls[0][0].gate;
-    const maxX = Math.max(...gate.vertices.map((v: any) => v.x));
-    expect(maxX).toBeGreaterThan(5e12);
+    expect(gateVertexRange("x").max).toBeGreaterThan(5e12);
+  });
+
+  it("does not read the extent from the annotation store", async () => {
+    // The regime this whole feature exists for: above the plotting cap the
+    // annotations are stubs, so annotationStore.annotations is EMPTY and
+    // propertyStore.propertyValues holds nothing to walk. Deriving the extent
+    // from those collapsed every open bound to the floor — a smaller silent
+    // sentinel than the constant it replaced — and quietly dropped every
+    // object past it from a gate the user was told was unbounded.
+    mockAnnotations.annotations = [];
+    mockProperties.propertyValues = {};
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => [
+      { count: 700000, min: 0, max: 4e9 },
+    ]);
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 100 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(4e9);
+  });
+
+  it("reaches past an explicit bound larger than the measured extent", async () => {
+    // The open side must clear the requested bound too, or the rectangle is
+    // inverted and a legitimate one-sided request is rejected as bad input.
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => [
+      { count: 10, min: 0, max: 5 },
+    ]);
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 9e9 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(9e9);
+  });
+
+  it("still reaches far out when the extent cannot be measured", async () => {
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => {
+      throw new Error("network");
+    });
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 100 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(1e24);
   });
 
   it("captures and restores analysis plots in the revert snapshot", async () => {
@@ -2933,19 +2973,26 @@ describe("analysis tools: round 6 hardening", () => {
 
     // A tool then adds a gate; reverting must put the saved plots back.
     mockFilters.analysisPlots = [plot, { ...plot, id: "p2" }];
+    mockFilters.restoreAnalysisPlots = vi.fn();
     mockFilters.hydrateAnalysisPlots = vi.fn();
     await restoreViewState(snap);
-    expect(mockFilters.hydrateAnalysisPlots).toHaveBeenCalledWith([plot]);
+    // restoreAnalysisPlots, NOT hydrateAnalysisPlots. Hydration deliberately
+    // does not schedule a configuration save, so reverting through it undid
+    // the agent's gates in memory while the shared configuration kept them:
+    // the next reload brought them back and any unrelated debounced save
+    // wrote the reverted state instead. Whichever happened first won.
+    expect(mockFilters.restoreAnalysisPlots).toHaveBeenCalledWith([plot]);
+    expect(mockFilters.hydrateAnalysisPlots).not.toHaveBeenCalled();
     expect(mockFilters.refreshAnalysis).toHaveBeenCalled();
   });
 
   it("does not re-resolve gates on a revert that did not touch them", async () => {
     mockFilters.analysisPlots = [];
     const snap = snapshotViewState();
-    mockFilters.hydrateAnalysisPlots = vi.fn();
+    mockFilters.restoreAnalysisPlots = vi.fn();
     mockFilters.refreshAnalysis.mockClear();
     await restoreViewState(snap);
-    expect(mockFilters.hydrateAnalysisPlots).not.toHaveBeenCalled();
+    expect(mockFilters.restoreAnalysisPlots).not.toHaveBeenCalled();
     expect(mockFilters.refreshAnalysis).not.toHaveBeenCalled();
   });
 });

@@ -1126,7 +1126,7 @@ const activeAnalysisGateCount = computed(
 const analysisTooltip = computed(() => {
   const base =
     "Analysis: plot object properties against each other and " +
-    "lasso-select objects to keep";
+    "select the objects to keep";
   const count = activeAnalysisGateCount.value;
   if (count === 0) {
     return base;

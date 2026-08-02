@@ -1221,7 +1221,7 @@
   },
   {
     "name": "clear_analysis_plots",
-    "description": "Remove every plot and gate from the Analysis panel, widening the object set back to whatever the ordinary filters allow. Use when the user wants to start a gating strategy over or asks why so few objects are showing. Visible immediately; reversible.",
+    "description": "Remove every plot and gate from the Analysis panel, widening the object set back to whatever the ordinary filters allow. Use when the user wants to start a gating strategy over. Destructive and shared: the plots live in the dataset's configuration, so this discards gating work anyone on the dataset drew, and the polygons cannot be reconstructed. Requires the user's approval. If they are only asking why few objects are showing, read the gates with get_interface_state and explain them instead.",
     "input_schema": {
       "type": "object",
       "properties": {},

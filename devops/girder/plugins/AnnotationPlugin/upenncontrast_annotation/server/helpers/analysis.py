@@ -132,19 +132,30 @@ def encode_category_key(raw):
 
 
 def categorical_raw_identity(doc, key):
-    """The raw category identity of one annotation doc for one axis key."""
+    """The raw category identity of one annotation doc for one axis key.
+
+    Every field is read defensively. `locationSchema` declares XY/Z/Time
+    without a `required` list, so `POST /upenn_annotation` with
+    `"location": {}` is a valid write — and indexing it raised KeyError, an
+    uncaught 500 on the three public endpoints that gate (including `/list`,
+    which breaks every page of the Objects tab, not just the panel).
+    Missing reads `None`, which encodes to `"v1:null"` and matches the
+    client's coercion in analysisGating.ts (the two must agree bit-exactly
+    or those annotations silently drop out of a server-resolved gate).
+    """
     if key == "tags":
         return sort_tags(doc.get("tags") or [])
     if key == "shape":
-        return doc["shape"]
+        return doc.get("shape")
     if key == "channel":
-        return doc["channel"]
+        return doc.get("channel")
+    location = doc.get("location") or {}
     if key == "xy":
-        return doc["location"]["XY"]
+        return location.get("XY")
     if key == "z":
-        return doc["location"]["Z"]
+        return location.get("Z")
     if key == "time":
-        return doc["location"]["Time"]
+        return location.get("Time")
     raise ValueError("unknown categorical key: %s" % key)
 
 
@@ -245,19 +256,41 @@ def points_in_polygon(xs, ys, vertices):
     return inside
 
 
-def derive_axis_categories(docs, key, pinned):
+def derive_axis_categories(docs, key, pinned, name):
     """The display category order for one categorical axis.
 
     Pinned order first (a gate's coordinate space), then categories present
     in `docs` but unknown to it, appended in deterministic UTF-16 key order.
     Appended categories are display-only — a gate never contains them.
+
+    The cap is enforced HERE, as the set accumulates, rather than by the
+    caller once the list is built: the count can come from the data (a
+    dataset where every annotation carries a distinct tag yields one
+    category per annotation), so checking afterwards meant materializing
+    hundreds of MB before returning the 400 that says it was too big.
     """
     known = list(pinned or [])
-    known_set = set(known)
-    present = set()
+    distinct = set(known)
+    if len(distinct) > MAX_HISTOGRAM_AXIS_CATEGORIES:
+        raise ValueError(
+            "%s axis has %d distinct categories, over the maximum of %d; it "
+            "cannot be plotted as a categorical axis"
+            % (name, len(distinct), MAX_HISTOGRAM_AXIS_CATEGORIES)
+        )
+    # Memoized by raw identity: a dataset has a handful of categories and
+    # hundreds of thousands of annotations, and encoding per document ran
+    # json.dumps once per annotation (~1s per axis per request) to produce a
+    # few distinct strings.
+    encode = _category_key_encoder(key)
     for doc in docs:
-        present.add(encode_category_key(categorical_raw_identity(doc, key)))
-    return known + sorted(present - known_set, key=utf16_sort_key)
+        distinct.add(encode(doc))
+        if len(distinct) > MAX_HISTOGRAM_AXIS_CATEGORIES:
+            raise ValueError(
+                "%s axis has more than the maximum of %d distinct "
+                "categories; it cannot be plotted as a categorical axis"
+                % (name, MAX_HISTOGRAM_AXIS_CATEGORIES)
+            )
+    return known + sorted(distinct - set(known), key=utf16_sort_key)
 
 
 def _numeric_bin_spec(paired_coords, requested_bins):
@@ -283,13 +316,20 @@ def histogram2d(docs, values_by_id, spec):
     count). Rows of `counts` are y bins, columns are x bins.
     """
     x_axis, y_axis = spec["xAxis"], spec["yAxis"]
+    # Each derivation enforces MAX_HISTOGRAM_AXIS_CATEGORIES as it goes, so
+    # an axis that is too wide raises before the other axis is walked and
+    # before any float64 coordinate array is allocated.
     x_categories = (
-        derive_axis_categories(docs, x_axis["key"], spec.get("xCategories"))
+        derive_axis_categories(
+            docs, x_axis["key"], spec.get("xCategories"), "x"
+        )
         if x_axis["type"] == "categorical"
         else None
     )
     y_categories = (
-        derive_axis_categories(docs, y_axis["key"], spec.get("yCategories"))
+        derive_axis_categories(
+            docs, y_axis["key"], spec.get("yCategories"), "y"
+        )
         if y_axis["type"] == "categorical"
         else None
     )
@@ -314,23 +354,10 @@ def histogram2d(docs, values_by_id, spec):
         y_bins, y_range = _numeric_bin_spec(paired_y, spec["bins"]["y"])
 
     # Checked AFTER deriving categories, not only at the API boundary: the
-    # count can come from the DATA (a dataset where every annotation carries
-    # a distinct tag yields one column per annotation), not just from a
-    # hostile request. ValueError, per the layering rule — the API maps it.
-    #
-    # Per-axis first: the product alone permits one enormous axis whenever
-    # the other collapses to a single bin, and every category becomes a
-    # Plotly tick on the client.
-    for categories, name in ((x_categories, "x"), (y_categories, "y")):
-        if (
-            categories is not None
-            and len(categories) > MAX_HISTOGRAM_AXIS_CATEGORIES
-        ):
-            raise ValueError(
-                "%s axis has %d distinct categories, over the maximum of "
-                "%d; it cannot be plotted as a categorical axis"
-                % (name, len(categories), MAX_HISTOGRAM_AXIS_CATEGORIES)
-            )
+    # The per-axis cap is enforced inside derive_axis_categories, as the
+    # distinct set accumulates. Only the product is left to check here: it
+    # bounds the grid two axes can form even when each is individually legal.
+    # ValueError, per the layering rule — the API maps it.
     if x_bins * y_bins > MAX_HISTOGRAM_CELLS:
         raise ValueError(
             "histogram grid of %d x %d cells exceeds the maximum of %d; "

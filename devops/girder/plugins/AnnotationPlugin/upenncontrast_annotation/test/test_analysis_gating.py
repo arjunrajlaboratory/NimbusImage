@@ -1037,3 +1037,128 @@ class TestAnalysisGatingReviewFindings:
             histogramBody(folder["_id"], filters={"analysisGates": [gate]}),
         )
         assertStatus(resp, 400)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestBranchReviewFindings:
+    """Regression tests for the self-review of the analysis-gating branch."""
+
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        makeAnnotation(folder["_id"], tags=["a"])
+        return folder
+
+    @pytest.mark.parametrize("clauses", [
+        "x",
+        5,
+        # Would match nothing if it reached the query, so the assertion below
+        # distinguishes "stripped" from "applied and happened to agree".
+        [{"tags": "no-annotation-has-this-tag"}],
+        [{"tags": {"$regex": "(zz+)+$"}}],
+    ])
+    def testListRejectsClientSuppliedGateMatchClauses(
+        self, admin, server, clauses
+    ):
+        """`gateMatchClauses` is INTERNAL: resolveListGateConstraints writes
+        it and _buildListMatchStages splices its contents straight into the
+        aggregation `$match.$and`. validateListInputs allowlisted the keys it
+        knew but never stripped unknown ones, and the resolver *appends* to
+        the key (setdefault) rather than replacing it — so a client-supplied
+        value survived into the query on three public endpoints. A string
+        produced `{"$and": ["x"]}` -> OperationFailure -> uncaught 500, and a
+        list of real clauses ANDed an arbitrary operator into the match (a
+        catastrophic-backtracking $regex burns up to AGGREGATION_MAX_TIME_MS
+        of Mongo CPU per unauthenticated request, and the result is a boolean
+        oracle over annotation fields).
+
+        Stripped, not rejected: it is not part of the client-facing filter
+        shape, so the request succeeds and simply ignores the key.
+        """
+        folder = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/list/ids",
+            {"datasetId": str(folder["_id"]),
+             "filters": {"gateMatchClauses": clauses}},
+        )
+        assertStatusOk(resp)
+        # Ignored entirely — the dataset's one annotation still comes back.
+        assert resp.json["total"] == 1
+
+    def testHistogramRejectsClientSuppliedGateMatchClauses(
+        self, admin, server
+    ):
+        """The same channel reaches histogram2d, whose validated filters are
+        handed to listIds."""
+        folder = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"], filters={"gateMatchClauses": "x"}
+            ),
+        )
+        assertStatusOk(resp)
+
+    def testCategoricalIdentityToleratesMissingLocation(self):
+        """`locationSchema` declares XY/Z/Time without a `required` list, so
+        `POST /upenn_annotation` with `"location": {}` is a valid write.
+        Indexing it raised KeyError — an uncaught 500 on /list, which breaks
+        every page of the Objects tab, not just the analysis panel.
+
+        The coerced value must be None, matching the client's `?? null`: the
+        two encoders have to agree bit-exactly or those annotations belong to
+        different categories on the two sides of the parity contract.
+        """
+        doc = {"id": "a1", "tags": [], "shape": "point", "channel": 0,
+               "location": {}}
+        for key in ("xy", "z", "time"):
+            assert analysis.categorical_raw_identity(doc, key) is None
+            assert analysis.encode_category_key(
+                analysis.categorical_raw_identity(doc, key)
+            ) == "v1:null"
+        # A document with no `location` key at all behaves the same way.
+        assert analysis.categorical_raw_identity(
+            {"id": "a1"}, "xy"
+        ) is None
+
+    def testAxisCategoryCapIsCheckedWhileAccumulating(self):
+        """The cap has to fire before the full distinct set (and the float64
+        coordinate arrays behind it) is materialized: the count can come from
+        the DATA — one distinct tag per annotation — not just from a hostile
+        request, so checking afterwards meant allocating hundreds of MB on
+        the way to returning the 400 that says it was too big.
+        """
+        docs = [
+            {"id": "a%d" % i, "tags": ["tag-%d" % i]}
+            for i in range(analysis.MAX_HISTOGRAM_AXIS_CATEGORIES + 50)
+        ]
+        with pytest.raises(ValueError, match="distinct categories"):
+            analysis.derive_axis_categories(docs, "tags", None, "x")
+        # Just under the cap is still fine.
+        ok = analysis.derive_axis_categories(
+            docs[: analysis.MAX_HISTOGRAM_AXIS_CATEGORIES], "tags", None, "x"
+        )
+        assert len(ok) == analysis.MAX_HISTOGRAM_AXIS_CATEGORIES
+
+    def testAxisCategoriesEncodeOncePerCategory(self, monkeypatch):
+        """derive_axis_categories called encode_category_key once per
+        DOCUMENT, which is the json.dumps cost _category_key_encoder's memo
+        was introduced to remove (~1s per axis per request at 700K).
+        """
+        calls = []
+        real = analysis.encode_category_key
+
+        def counting(raw):
+            calls.append(raw)
+            return real(raw)
+
+        monkeypatch.setattr(analysis, "encode_category_key", counting)
+        docs = [
+            {"id": "a%d" % i, "shape": "point" if i % 2 else "polygon"}
+            for i in range(500)
+        ]
+        analysis.derive_axis_categories(docs, "shape", None, "x")
+        # Two distinct categories over 500 documents.
+        assert len(calls) == 2

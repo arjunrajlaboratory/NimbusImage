@@ -742,9 +742,11 @@ describe("filters.refreshAnalysis", () => {
     await addPlot("p1", GATE);
     await filters.refreshAnalysis();
     expect(getValues).not.toHaveBeenCalled();
-    expect(fetchAnalysisGateIds).toHaveBeenCalledWith("ds1", [
-      { id: "p1", xAxis: AXIS, yAxis: AXIS, gate: GATE },
-    ]);
+    expect(fetchAnalysisGateIds).toHaveBeenCalledWith(
+      "ds1",
+      [{ id: "p1", xAxis: AXIS, yAxis: AXIS, gate: GATE }],
+      expect.any(Function), // the failure-message callback
+    );
     expect(filters.analysisGateIds).toEqual({ p1: ["id-3", "id-7"] });
     // Pure server ids compose client-side exactly like resolved gates.
     expect(filters.filteredAnnotations.map((a: any) => a.id)).toEqual([
@@ -1080,6 +1082,30 @@ describe("filters.refreshAnalysis above the cap (server resolution)", () => {
     expect(filters.analysisGateIds).toEqual({ p1: ["id-2"] });
   });
 
+  it("surfaces why the server refused to resolve the gates", async () => {
+    // The endpoint enforces id budgets (MAX_GATE_RESPONSE_IDS) that a few
+    // broad gates on a 700K dataset genuinely exceed, and the retry under
+    // identical inputs fails identically. Reported only to the console, that
+    // read as "gates silently stopped working": the changed-input path had
+    // already dropped every id, so the viewer and the Objects tab widened to
+    // the whole dataset with nothing on screen accounting for it.
+    fetchAnalysisGateIds.mockImplementationOnce(
+      async (_datasetId: string, _plots: any[], onError: any) => {
+        onError?.("gates resolve to more than the 2000000 ids...");
+        return null;
+      },
+    );
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateError).toContain("2000000");
+
+    // ...and it clears once a resolution succeeds.
+    annotationProxy.contentRevision++;
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-1"] });
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateError).toBeNull();
+  });
+
   it("discards a stale response that resolves after a newer request", async () => {
     await addGatedPlot("p1");
     const first = deferred<any>();
@@ -1112,6 +1138,65 @@ describe("filters.refreshAnalysis above the cap (server resolution)", () => {
     expect(filters.analysisGateIds).toEqual({ p1: [] });
     expect(filters.filteredAnnotations).toEqual([]);
     expect(filters.activeAnalysisGateIdLists).toEqual([[]]);
+  });
+
+  it("keeps other gates' pure ids when a plot is toggled, removed or re-axed", async () => {
+    // Above the cap each gate is resolved INDEPENDENTLY against the whole
+    // dataset, so there is no chain to invalidate. Dropping the downstream
+    // suffix anyway was not merely wasteful: the over-cap refresh identity
+    // projects only {id, xAxis, yAxis, gate}, so a mutation that changes none
+    // of those left the identity untouched. Nothing asked for a refresh, the
+    // dropped ids never came back, and both gates silently stopped filtering
+    // — one click on an enable toggle widened the viewer to the whole dataset
+    // and zeroed the badge, with no way back but reopening the panel.
+    filters.setAnalysisPanelOpen(true);
+    fetchAnalysisGateIds.mockResolvedValue({
+      p1: ["id-1", "id-2"],
+      p2: ["id-2", "id-3"],
+    });
+    await addGatedPlot("p1");
+    await addGatedPlot("p2");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({
+      p1: ["id-1", "id-2"],
+      p2: ["id-2", "id-3"],
+    });
+
+    const signature = filters.analysisInputSignature;
+    await filters.toggleAnalysisPlotGateEnabled("p1");
+    // p1 is disabled so it no longer constrains, but p2's ids must survive.
+    expect(filters.analysisGateIds.p2).toEqual(["id-2", "id-3"]);
+    expect(filters.activeAnalysisGateIdLists).toEqual([["id-2", "id-3"]]);
+    expect(filters.activeAnalysisGateCount).toBe(1);
+    // Nothing above changes what the server would be asked, so nothing
+    // requests a refresh — which is precisely why the ids had to survive.
+    expect(filters.analysisInputSignature).toBe(signature);
+
+    // Same for an UNGATED plot that precedes a gated one: it never appears in
+    // the request, so removing or re-axing it cannot move the identity.
+    await filters.addAnalysisPlot("p0");
+    await filters.setAnalysisPlotAxes({ id: "p0", xAxis: AXIS, yAxis: AXIS });
+    await filters.removeAnalysisPlot("p0");
+    expect(filters.analysisGateIds.p2).toEqual(["id-2", "id-3"]);
+  });
+
+  it("still drops a plot's own pure ids when its gate changes", async () => {
+    // The other half: purity removes the SUFFIX, never the plot's own entry.
+    // Its polygon moved, so its ids describe a shape that no longer exists.
+    filters.setAnalysisPanelOpen(true);
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"], p2: ["id-2"] });
+    await addGatedPlot("p1");
+    await addGatedPlot("p2");
+    await filters.refreshAnalysis();
+
+    await filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: { ...GATE, vertices: [...GATE.vertices, { x: 0, y: 10 }] },
+    });
+    expect(filters.analysisGateIds.p1).toBeUndefined();
+    expect(filters.analysisGateIds.p2).toEqual(["id-2"]);
+    // And the identity DID move, so the refresh that re-resolves p1 happens.
+    expect(filters.analysisInputSignature).not.toBe("");
   });
 
   it("clears the retained value cache when crossing above the cap", async () => {

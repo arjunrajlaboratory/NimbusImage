@@ -24,6 +24,12 @@
       is unaffected.
     </div>
 
+    <div v-if="gateError" class="analysis-overcap analysis-gate-error">
+      <v-icon size="16" class="mr-1">mdi-alert-circle-outline</v-icon>
+      Gates could not be applied: {{ gateError }} Until this resolves, the
+      viewer and the Objects tab show everything the other filters allow.
+    </div>
+
     <!-- Sticky: the palette body scrolls, so a notice in the content flow
          disappears as soon as the user scrolls to a plot — which is exactly
          when they are waiting on it. -->
@@ -97,6 +103,7 @@ import {
 } from "@/utils/analysisGating";
 import { createSequenceGuard, ISequenceGuard } from "@/utils/sequenceGuard";
 import { idListSignature } from "@/utils/signatures";
+import { logError } from "@/utils/log";
 
 // This panel's content stays MOUNTED while its palette is closed — the palette
 // hides it with display:none — so nothing here may run on mount: it would fetch
@@ -135,6 +142,7 @@ const values = computed(() => filterStore.analysisValues);
 // result is a real outcome (a property computed for only some objects), and
 // inferring left this spinning forever on it.
 const loadingValues = computed(() => filterStore.analysisLoading);
+const gateError = computed(() => filterStore.analysisGateError);
 
 // How many histogram requests are outstanding. Above the cap these are the
 // slow part (seconds on a 700K dataset) and previously showed nothing at
@@ -294,6 +302,12 @@ function requestSignature(request: IAnalysisHistogramRequest): string {
   const { filters, ...definition } = request;
   const { idConstraints, ...plainFilters } = filters;
   return [
+    // Plot ids come from the configuration, which is shared across datasets,
+    // so the same ids reappear on the next dataset. Without the dataset id
+    // (which its twin, serverGateInputSignature, does include) a switch whose
+    // clear and re-hydration land in the same tick left the previous
+    // dataset's heatmap and counts on screen under the new dataset's axes.
+    store.dataset?.id ?? "",
     JSON.stringify(definition),
     JSON.stringify(plainFilters),
     (idConstraints ?? []).map((ids) => idListSignature(ids)).join(","),
@@ -350,7 +364,10 @@ function toDisplay(
     categories: string[] | null,
     axis: IAnalysisHistogramRequest["xAxis"],
   ) =>
-    categories !== null && axis.type === "categorical"
+    // Array.isArray, not `!== null`: a response missing the field entirely
+    // gives `undefined`, which passes a null check and then throws on .map —
+    // a throw that used to poison the whole histogram queue.
+    Array.isArray(categories) && axis.type === "categorical"
       ? categories.map((key) => labelForCategoryKey(key, axis.key, channelName))
       : null;
   return {
@@ -392,7 +409,12 @@ function invalidatePendingHistograms(plotIds: Iterable<string>) {
     // Advancing supersedes EVERY generation queued for this plot at once.
     histogramGuards.get(plotId)?.next();
     histogramSignatures.delete(plotId);
-    pendingHistograms.delete(plotId);
+    // The count is NOT cleared here: it belongs to the outstanding callbacks,
+    // which each decrement it in their `finally` whether or not they were
+    // superseded. Deleting it made a superseded callback's decrement land on
+    // a LATER generation's entry and remove it, so that generation became
+    // invisible to the next invalidation — close, reopen, close again and a
+    // full-dataset histogram2d scan dispatched with the panel shut.
   }
 }
 
@@ -428,6 +450,16 @@ function enqueueHistogram(
         ...histogramsByPlot.value,
         [plotId]: toDisplay(response, request),
       };
+    } catch (error) {
+      // The chain must never settle rejected. `histogramQueue.then(cb)` on a
+      // rejected promise skips cb entirely, so ONE throw here would silently
+      // disable histogram fetching for the rest of the session — and because
+      // histogramsInFlight is incremented before the .then, every skipped
+      // generation would leak a count and pin the busy bar on. Treat a throw
+      // exactly like a failed response: forget the signature so the next
+      // input change (or panel reopen) retries.
+      histogramSignatures.delete(plotId);
+      logError(error);
     } finally {
       // Only this generation is done; a newer one may still be queued.
       const remaining = (pendingHistograms.get(plotId) ?? 1) - 1;
@@ -554,6 +586,11 @@ defineExpose({
 .analysis-skipped {
   background: rgba(var(--v-theme-warning), 0.08);
   border-color: rgba(var(--v-theme-warning), 0.35);
+}
+
+.analysis-gate-error {
+  background: rgba(var(--v-theme-error), 0.08);
+  border-color: rgba(var(--v-theme-error), 0.35);
 }
 
 .analysis-busy {

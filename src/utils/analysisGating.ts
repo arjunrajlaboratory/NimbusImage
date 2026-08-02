@@ -40,7 +40,9 @@ export interface IAnalysisSeries {
   skipped: number;
 }
 
-type TAnalysisCategoryRaw = string | string[] | number;
+// `null` is the identity of a document missing the field entirely — see
+// locationComponent. It is a real, encodable category, not an error value.
+type TAnalysisCategoryRaw = string | string[] | number | null;
 
 const ANALYSIS_CATEGORY_KEY_PREFIX = "v1:";
 
@@ -109,6 +111,19 @@ export function jitterFromId(id: string, salt: number): number {
 const X_JITTER_SALT = 17;
 const Y_JITTER_SALT = 31;
 
+/**
+ * A stored annotation can be missing a location component: the backend's
+ * `locationSchema` declares XY/Z/Time without a `required` list, so
+ * `"location": {}` is a valid write. Coerce the gap to `null` — that encodes
+ * to `"v1:null"`, exactly what the server's `categorical_raw_identity`
+ * produces for the same document. Leaving it `undefined` encoded to
+ * `"v1:undefined"`, a key the server can never emit, so those annotations
+ * belonged to different categories on the two sides of the parity contract.
+ */
+function locationComponent(value: number | undefined): number | null {
+  return value ?? null;
+}
+
 function categoricalRawIdentity(
   annotation: TAnnotationOrStub,
   key: TAnalysisCategoricalKey,
@@ -121,11 +136,11 @@ function categoricalRawIdentity(
     case "channel":
       return annotation.channel;
     case "xy":
-      return annotation.location.XY;
+      return locationComponent(annotation.location.XY);
     case "z":
-      return annotation.location.Z;
+      return locationComponent(annotation.location.Z);
     case "time":
-      return annotation.location.Time;
+      return locationComponent(annotation.location.Time);
   }
 }
 
@@ -134,6 +149,11 @@ function categoricalLabelFromRaw(
   key: TAnalysisCategoricalKey,
   channelName: (channel: number) => string,
 ): string {
+  if (raw === null) {
+    // A document missing the field. Named rather than rendered as "XY 1",
+    // which is what `null + 1` would have produced.
+    return "(none)";
+  }
   switch (key) {
     case "tags": {
       const tags = raw as string[];
@@ -254,13 +274,21 @@ export function buildPlotSeries(input: {
     // resolveGateIds), so their indices carry no gate semantics.
     const categories = order ? [...order] : [];
     const indexOf = new Map(categories.map((key, idx) => [key, idx]));
-    // Sort by readable label, then raw identity so duplicate display labels
-    // remain deterministic and separate. Applied to the whole axis when no
-    // ordering is pinned, and to the appended slice when one is — appended
-    // indices must not depend on population iteration order.
-    const byLabelThenKey = (left: string, right: string) =>
-      labelForKey(left).localeCompare(labelForKey(right)) ||
-      left.localeCompare(right);
+    // Sort by encoded key, in UTF-16 code-unit order — the same comparison
+    // `Array.prototype.sort` uses by default and the same one the server's
+    // `utf16_sort_key` implements. Applied to the whole axis when no ordering
+    // is pinned, and to the appended slice when one is; appended indices must
+    // not depend on population iteration order.
+    //
+    // NOT by display label, which is what this did. Two reasons: the server
+    // cannot reproduce it (labels for `channel` come from the dataset config,
+    // and `localeCompare` is locale-dependent), so crossing the plot cap
+    // silently reordered a categorical axis; and the same divergence made the
+    // over-cap heatmap and the below-cap scatter disagree about the same
+    // dataset. Gate membership was never affected — a gate pins its own
+    // category order — but the picture was.
+    const byKey = (left: string, right: string) =>
+      left < right ? -1 : left > right ? 1 : 0;
     const appended: string[] = [];
     for (const { key } of categoryValues) {
       if (!indexOf.has(key)) {
@@ -268,10 +296,10 @@ export function buildPlotSeries(input: {
         appended.push(key);
       }
     }
-    appended.sort(byLabelThenKey);
+    appended.sort(byKey);
     categories.push(...appended);
     if (!order) {
-      categories.sort(byLabelThenKey);
+      categories.sort(byKey);
     }
     indexOf.clear();
     categories.forEach((key, idx) => indexOf.set(key, idx));

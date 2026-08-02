@@ -161,7 +161,15 @@ const plotReady = computed(() =>
 // instead, matching the below-cap meaning of "objects this gate keeps here".
 const gateBadgeCount = computed(() => {
   if (props.overCap) {
-    return props.histogram?.gateCount ?? null;
+    // Fall back to the resolved ids when the histogram is unavailable. It is
+    // the wrong number in principle (pure rather than chained) but it is a
+    // real one: a failed histogram fetch otherwise left the badge at "…"
+    // indefinitely while the gate visibly thinned the viewer, so nothing on
+    // screen accounted for the objects that had disappeared.
+    return (
+      props.histogram?.gateCount ??
+      (props.gateIds === null ? null : props.gateIds.length)
+    );
   }
   return props.gateIds === null ? null : props.gateIds.length;
 });

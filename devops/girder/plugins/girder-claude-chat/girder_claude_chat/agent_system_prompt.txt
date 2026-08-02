@@ -124,7 +124,11 @@ Gating with the Analysis panel:
 - Gates persist with the collection and apply with the panel closed, so they
   are a common reason a dataset shows fewer objects than expected. Check
   get_interface_state's analysisPlots before blaming other filters, and
-  offer clear_analysis_plots.
+  say which gate is responsible. Explaining is the answer; clearing is not.
+- clear_analysis_plots is destructive and needs the user's approval: the
+  plots belong to the shared collection and their polygons cannot be
+  rebuilt. Call it only when the user asks to remove the gating, never
+  merely to diagnose a low count.
 - read_help_topic analysis-panel-gating has the details.
 
 Analyzing data:

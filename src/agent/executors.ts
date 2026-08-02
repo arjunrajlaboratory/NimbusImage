@@ -25,6 +25,7 @@ import {
   TAnalysisAxis,
   TAnalysisCategoricalKey,
   TLayerMode,
+  TPropertyHistogram,
   TUnitLength,
   TUnitTime,
 } from "@/store/model";
@@ -687,6 +688,48 @@ function resolveAgentAnalysisAxis(
 }
 
 /**
+ * How far out an "unbounded" side has to reach when the axis extent cannot be
+ * measured. Far past any physical measurement, and small enough that the
+ * polygon crossing test stays in comfortably finite arithmetic.
+ */
+const UNMEASURABLE_AXIS_EXTENT = 1e24;
+
+/**
+ * The largest |value| on one property axis, over the WHOLE dataset.
+ *
+ * Read from the server's property histogram rather than from
+ * propertyStore.propertyValues, because the values in the store are the wrong
+ * population twice over: above the plotting cap the annotations are stubs and
+ * the store holds none at all, and even below it the values are projected to
+ * the Annotation Browser's displayed columns, so an axis on an undisplayed
+ * property yields nothing. Both cases collapsed silently to the floor.
+ */
+async function propertyAxisExtent(
+  path: string[],
+  datasetId: string,
+): Promise<number> {
+  let histogram: TPropertyHistogram;
+  try {
+    histogram = await propertyStore.propertiesAPI.getPropertyHistogram(
+      datasetId,
+      path,
+      1,
+    );
+  } catch {
+    return UNMEASURABLE_AXIS_EXTENT;
+  }
+  let extreme = 0;
+  for (const bucket of histogram ?? []) {
+    for (const edge of [bucket.min, bucket.max]) {
+      if (typeof edge === "number" && isFinite(edge)) {
+        extreme = Math.max(extreme, Math.abs(edge));
+      }
+    }
+  }
+  return extreme > 0 ? extreme : UNMEASURABLE_AXIS_EXTENT;
+}
+
+/**
  * A rectangle as a gate polygon, sized to the DATA rather than to a fixed
  * sentinel.
  *
@@ -694,43 +737,60 @@ function resolveAgentAnalysisAxis(
  * one-sided gates ("area over 100"). A fixed stand-in silently broke that
  * promise: with a constant 1e12, a property holding larger values had those
  * objects excluded from an `x >= 100` gate, and a requested bound above the
- * constant was rejected as an inverted range. The open side is therefore
- * derived from the observed range of that axis and widened generously — the
- * polygon only has to reach past the furthest real point, not to infinity.
+ * constant was rejected as an inverted range. The open side therefore reaches
+ * past both the furthest real point on that axis and any bound the caller
+ * asked for — the second half matters because an explicit `min` larger than
+ * the derived `max` is an inverted rectangle, which this used to reject as
+ * bad input rather than recognise as a bound that was too small.
  */
 function openGateBound(
-  axis: TAnalysisAxis,
+  extent: number,
   explicit: number | undefined,
+  otherExplicit: number | undefined,
   direction: -1 | 1,
 ): number {
   if (explicit !== undefined) {
-    if (typeof explicit !== "number" || !isFinite(explicit)) {
-      throw new ToolExecutionError("Range bounds must be finite numbers.");
-    }
     return explicit;
   }
-  let extreme = 0;
-  if (axis.type === "property") {
-    for (const [, value] of collectPathValues(axis.path, null)) {
-      if (isFinite(value)) {
-        extreme = Math.max(extreme, Math.abs(value));
-      }
-    }
-  }
-  // Floor keeps an empty or all-zero property from collapsing the rectangle.
-  return direction * (Math.max(extreme, 1) * 1e3 + 1e6);
+  const reach = Math.max(
+    extent,
+    otherExplicit !== undefined ? Math.abs(otherExplicit) : 0,
+  );
+  return direction * (reach * 1e3 + 1e6);
 }
 
-function rectangularGate(
+function requireFiniteBound(value: number | undefined): number | undefined {
+  if (value !== undefined && (typeof value !== "number" || !isFinite(value))) {
+    throw new ToolExecutionError("Range bounds must be finite numbers.");
+  }
+  return value;
+}
+
+async function rectangularGate(
   xAxis: TAnalysisAxis,
   yAxis: TAnalysisAxis,
   xRange: { min?: number; max?: number } | undefined,
   yRange: { min?: number; max?: number } | undefined,
-): IAnalysisGate {
-  const x0 = openGateBound(xAxis, xRange?.min, -1);
-  const x1 = openGateBound(xAxis, xRange?.max, 1);
-  const y0 = openGateBound(yAxis, yRange?.min, -1);
-  const y1 = openGateBound(yAxis, yRange?.max, 1);
+  datasetId: string,
+): Promise<IAnalysisGate> {
+  // Validate before spending two round trips on the extents.
+  const xMin = requireFiniteBound(xRange?.min);
+  const xMax = requireFiniteBound(xRange?.max);
+  const yMin = requireFiniteBound(yRange?.min);
+  const yMax = requireFiniteBound(yRange?.max);
+  // Only fetch an extent for an axis that actually has an open side.
+  const extentFor = async (axis: TAnalysisAxis, needed: boolean) =>
+    needed && axis.type === "property"
+      ? propertyAxisExtent(axis.path, datasetId)
+      : 0;
+  const [xExtent, yExtent] = await Promise.all([
+    extentFor(xAxis, xMin === undefined || xMax === undefined),
+    extentFor(yAxis, yMin === undefined || yMax === undefined),
+  ]);
+  const x0 = openGateBound(xExtent, xMin, xMax, -1);
+  const x1 = openGateBound(xExtent, xMax, xMin, 1);
+  const y0 = openGateBound(yExtent, yMin, yMax, -1);
+  const y1 = openGateBound(yExtent, yMax, yMin, 1);
   if (x1 <= x0 || y1 <= y0) {
     throw new ToolExecutionError(
       "Each range needs max greater than min; an inverted or empty range " +
@@ -2609,7 +2669,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       },
       context: IAgentToolContext,
     ) => {
-      requireDataset();
+      const dataset = requireDataset();
       // Each call resolves EVERY gate accumulated so far, and above the cap
       // that is a server-side scan of the whole dataset. The sequential-
       // gating prompt actively encourages several calls per turn, so without
@@ -2653,8 +2713,17 @@ const registry: { [name: string]: IAgentToolEntry } = {
       // addAnalysisPlot left an orphan ungated plot behind on every failed
       // call — and a few corrected retries would exhaust the plot cap.
       const gate: IAnalysisGate | null = wantsGate
-        ? rectangularGate(xAxis, yAxis, input.xRange, input.yRange)
+        ? await rectangularGate(
+            xAxis,
+            yAxis,
+            input.xRange,
+            input.yRange,
+            dataset.id,
+          )
         : null;
+      // Sizing the open sides hits the backend, so the user may have switched
+      // datasets underneath us; the plot below would land on the wrong one.
+      assertDatasetUnchanged(context);
 
       const plotId = uuidv4();
       analysisPlotsCreatedThisTurn += 1;
@@ -2705,7 +2774,15 @@ const registry: { [name: string]: IAgentToolEntry } = {
   },
 
   clear_analysis_plots: {
+    // Gated for the same reason set_scale is: it writes the shared
+    // annotationBrowserConfig, and what it destroys — a colleague's
+    // hand-drawn sequential gating strategy — cannot be reconstructed from
+    // anything the model knows. The system prompt actively steers here
+    // ("gates are a common reason a dataset shows fewer objects than
+    // expected"), so an unprompted call is likely, not hypothetical.
+    gated: true,
     execute: async () => {
+      requireDataset();
       const removed = filterStore.analysisPlots.length;
       for (const plot of [...filterStore.analysisPlots]) {
         await filterStore.removeAnalysisPlot(plot.id);
@@ -2872,8 +2949,11 @@ export function describeAgentToolCall(name: string, input: any): string {
             input?.tags ? ` by tags ${joinList(input.tags)}` : ""
           }${input?.currentFrameOnly ? " (current frame)" : ""}`;
     case "create_analysis_plot": {
+      // joinList, not .join: this function must never throw on malformed
+      // input, and a propertyPath that is a bare string satisfies `?.` and
+      // then dies on .join.
       const axis = (a: any) =>
-        a?.categorical ?? (a?.propertyPath ? a.propertyPath.join(" / ") : "?");
+        a?.categorical ?? (joinList(a?.propertyPath, " / ") || "?");
       const gated = input?.xRange !== undefined || input?.yRange !== undefined;
       return `${gated ? "Gate" : "Plot"} ${axis(input?.yAxis)} vs ${axis(
         input?.xAxis,
@@ -3147,7 +3227,11 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   if (
     JSON.stringify(savedPlots) !== JSON.stringify(filterStore.analysisPlots)
   ) {
-    await filterStore.hydrateAnalysisPlots(savedPlots);
+    // restore, not hydrate: the forward path (create_analysis_plot /
+    // clear_analysis_plots) writes plots to the shared configuration, so the
+    // revert has to write them back or it is a memory-only lie that the next
+    // reload undoes.
+    await filterStore.restoreAnalysisPlots(savedPlots);
     await filterStore.refreshAnalysis();
   }
   annotationStore.setSelected(snapshot.selectedAnnotationIds);

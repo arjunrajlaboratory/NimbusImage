@@ -34,7 +34,8 @@ each badge counts only what its own panel can show.
 **This is the usual reason a dataset shows fewer objects than expected with
 no visible filter.** If someone asks why objects are missing, check
 `get_interface_state` for `analysisPlots` before blaming tag or property
-filters, and offer `clear_analysis_plots`.
+filters, and name the gate that is responsible. Do not reach for
+`clear_analysis_plots` to answer that question — see below.
 
 ## Gates vs. property filters
 
@@ -60,4 +61,10 @@ the shape tools in the plot's mode bar rather than a lasso.
 **rectangular** gate — which is what a value-range request amounts to. You
 cannot draw a freehand lasso; for an irregular population, or for a
 categorical axis, create the plot with the right axes and tell the user to
-draw the region themselves. `clear_analysis_plots` removes everything.
+draw the region themselves.
+
+`clear_analysis_plots` removes everything, and it is destructive: the plots
+live in the dataset's shared configuration, so it discards gating work that
+anyone on the dataset drew, and a hand-drawn polygon cannot be rebuilt from
+anything you know. It asks the user for approval before it runs. Call it
+only when they have asked to remove the gating.

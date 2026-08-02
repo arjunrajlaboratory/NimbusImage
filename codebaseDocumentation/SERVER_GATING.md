@@ -91,8 +91,8 @@ unreproducible server-side, and inexpressible as a per-annotation predicate.
 
 **New rule, applied in BOTH implementations: an annotation whose category key
 is not in the gate's pinned order is outside that gate.** Unknown categories
-still *plot* (appended after the pinned ones, sorted by label then key, so
-users see them); to gate them, redraw the lasso — redrawing re-pins the order
+still *plot* (appended after the pinned ones, in encoded-key order, so users
+see them); to gate them, redraw the lasso — redrawing re-pins the order
 including the new categories. This is the flow-cytometry meaning of a gate: a
 region in the coordinate space that existed when it was drawn.
 
@@ -655,8 +655,14 @@ Every invariant names the test that holds it (format enforced by
 - Unknown-to-gate categories are outside the gate, per axis — *"excludes
   categories the gate's pinned order does not know"*, *"applies the
   unknown-category rule per axis"*, *"testUnknownCategoryIsMissing"*
-- Appended categories plot deterministically — *"appends categories unknown
-  to a pinned order sorted by label, not encounter order"*
+- Appended categories plot deterministically, in the SAME order on both
+  sides: encoded-key (UTF-16 code unit) order, which is the only ordering
+  the server can reproduce — display labels for `channel` need the dataset
+  config, and `localeCompare` is locale-dependent. Sorting the client by
+  label made a categorical axis silently reorder when a dataset crossed the
+  plot cap — *"appends categories unknown to a pinned order in encoded-key
+  order, not encounter order"*, *"maps categories to sorted indices with
+  deterministic jitter"*
 - Plots resolve independently, never chained server-side —
   *"testPlotsResolveIndependentlyNotChained"*
 - Missing/non-finite/boolean values are outside every gate —
@@ -797,6 +803,73 @@ Every invariant names the test that holds it (format enforced by
   dispatched after the panel closed — *"still invalidates a requeued plot
   after an older generation finishes"*
 
+**Round-6 / self-review findings (PR #1302)**
+- `gateMatchClauses` is INTERNAL and is stripped from client input.
+  `resolveListGateConstraints` writes it and `_buildListMatchStages` splices
+  its contents into the aggregation `$match.$and`; `validateListInputs`
+  allowlisted the keys it knew but never removed unknown ones, and the
+  resolver *appends* to the key rather than replacing it. On three public
+  endpoints that made it an arbitrary-operator channel: a string became
+  `{"$and": ["x"]}` -> uncaught 500, and a real clause ANDed anything the
+  caller liked into the match (a catastrophic-backtracking `$regex` burns up
+  to `AGGREGATION_MAX_TIME_MS` per unauthenticated request) —
+  *"testListRejectsClientSuppliedGateMatchClauses"*,
+  *"testHistogramRejectsClientSuppliedGateMatchClauses"*
+- Every categorical field is read defensively. `locationSchema` declares
+  XY/Z/Time without `required`, so `"location": {}` is a valid write and
+  indexing it was a 500 on `/list` — every page of the Objects tab, not just
+  the panel. Missing reads `None`/`null` on BOTH sides, or the two encoders
+  disagree and those annotations silently leave the gate —
+  *"testCategoricalIdentityToleratesMissingLocation"*
+- The per-axis category cap fires while the distinct set accumulates, and
+  the encoder memo is used, so a distinct-tag dataset 400s before allocating
+  hundreds of MB and an ordinary categorical histogram does not pay
+  json.dumps once per annotation —
+  *"testAxisCategoryCapIsCheckedWhileAccumulating"*,
+  *"testAxisCategoriesEncodeOncePerCategory"*
+- PURE ids have no dependent suffix. Dropping one anyway was invisible to
+  the over-cap refresh identity (which projects only id/axes/gate), so
+  toggling `gateEnabled`, or removing/re-axing an UNGATED plot before a
+  gated one, dropped downstream ids that nothing then re-requested — both
+  gates stopped filtering for the session — *"keeps other gates' pure ids
+  when a plot is toggled, removed or re-axed"*, *"still drops a plot's own
+  pure ids when its gate changes"*
+- A refused resolution says why. The response/constraint id budgets are
+  reachable with a few broad gates on 700K and the retry fails identically,
+  so a console-only failure read as "gates silently stopped working" —
+  *"surfaces why the server refused to resolve the gates"*
+- Histogram invalidation survives close/reopen/close: the pending count
+  belongs to the outstanding callbacks, so the invalidator must not clear it
+  — clearing let a superseded callback's decrement consume a live
+  generation's entry — *"keeps invalidating after a close, reopen and
+  close"*
+- One throw never poisons the histogram queue. Without a catch the chain
+  settled rejected and every later `.then` skipped its callback, killing all
+  histogram fetching for the session and pinning the busy bar (the count is
+  incremented before the `.then`) — *"survives a throw while processing a
+  response"*
+- The histogram request identity includes the dataset id, like its twin
+  `serverGateInputSignature`; configurations are shared across datasets, so
+  plot ids recur — *"does not refetch an unchanged histogram on reopen"*
+- An agent revert of the analysis plots PERSISTS. `hydrateAnalysisPlots`
+  deliberately does not save (it runs store-catches-up-to-config), so
+  reverting through it undid the gates in memory while the shared
+  configuration kept them — *"captures and restores analysis plots in the
+  revert snapshot"*
+- `clear_analysis_plots` is gated: it writes the shared configuration and a
+  hand-drawn polygon cannot be rebuilt — *"gates clear_analysis_plots but
+  not create_analysis_plot"*
+- An open gate bound comes from the SERVER's property extent, never from the
+  annotation store, which is empty in exactly the stub-only regime this
+  feature exists for — and it reaches past an explicit bound too, so a
+  one-sided request larger than the data is not rejected as inverted —
+  *"does not read the extent from the annotation store"*, *"reaches past an
+  explicit bound larger than the measured extent"*, *"still reaches far out
+  when the extent cannot be measured"*
+- `describeAgentToolCall` never throws on the new tools' malformed input,
+  and its tool list is DERIVED from the registry so it cannot drift again —
+  *"never throws on malformed input"*
+
 **Busy feedback**
 - The busy bar covers property-value fetches AND histogram requests (the
   slow path above the cap, previously silent) and is sticky, so it stays
@@ -860,6 +933,19 @@ the per-id jitter:
 - Heatmap binned all 708,983; a box drawn over the left half of the jitter
   strip resolved to **352,994**, and the header went from "Showing 17,022 of
   708,983 in view" to "…of 352,994".
+
+  That observation is also a known display limitation. Above the cap the
+  heatmap bins each categorical value into ONE cell at its integer index —
+  jitter is irrelevant to binning — but the gate predicate still places each
+  point at `index ± jitter(id)`, exactly as the below-cap scatter draws it.
+  So the picture shows a solid column of zero width while the predicate sees
+  a strip 0.56 wide, and a shape drawn *inside* the column takes an
+  arbitrary fraction of it with no on-screen cue that the column has width.
+  The 352,994 above is that effect observed deliberately. Membership is
+  still exact and reproducible — the two resolvers agree bit-for-bit — but a
+  user gating a categorical axis above the cap cannot see where the edge is.
+  Fixing it means either binning the jittered coordinate (a wider grid) or
+  snapping a categorical gate to whole categories; neither is done here.
 - **Bit-exact TS↔Python jitter parity at full scale.** The JS reference
   jitter was recomputed in the browser over all 708,983 stubs and compared
   against the server's resolved set: **zero mismatches**. This is the case a
