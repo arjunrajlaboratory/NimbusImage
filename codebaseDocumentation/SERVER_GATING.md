@@ -199,13 +199,14 @@ contains nothing"), distinct from the plot being absent from the request.
 ### Validation (all 400s, `server/helpers/validation.py` style)
 
 - Body must be an object; `datasetId` via `requireObjectId`.
-- `plots` via `requireList`; length ≤ `MAX_ANALYSIS_PLOTS = 100`.
+- `plots` via `requireList`; length ≤ `MAX_ANALYSIS_PLOTS = 20`.
 - Each plot: object with string `id`; `xAxis`/`yAxis` each
   `{type: "property", path}` (path via `isValidPropertyPath` — non-empty
   string list, no `.`/`$`) or `{type: "categorical", key}` with key in the
   six known keys.
 - `gate`: object; `vertices` a list of `{x, y}` finite numbers, length ≤
-  `MAX_GATE_VERTICES = 10_000` (< 3 is **not** an error — it resolves to `[]`,
+  `MAX_GATE_VERTICES = 1_000`, and `MAX_TOTAL_GATE_VERTICES = 10_000`
+  across the whole request (< 3 is **not** an error — it resolves to `[]`,
   parity with the client); `categoryKeyVersion` must equal 1; per-axis
   categories: `null` for property axes, list of strings (≤
   `MAX_GATE_CATEGORIES = 10_000`) for categorical axes. A categorical axis
@@ -580,9 +581,8 @@ build any of them speculatively.
 
 | Constant | Value | Guards |
 |---|---|---|
-| `MAX_ANALYSIS_PLOTS` | 100 | plots per gate_ids request |
-| `MAX_GATE_VERTICES` | 10,000 | vertices per gate |
-| `MAX_GATE_CATEGORIES` | 10,000 | pinned categories per axis |
+| `MAX_ANALYSIS_PLOTS` | 20 | plots per request (client caps creation and hydration to match) |
+| `MAX_GATE_CATEGORIES` | 10,000 | pinned categories per axis in a gate |
 | `MAX_HISTOGRAM_BINS` | 512 | bins per numeric axis |
 | `MAX_HISTOGRAM_CELLS` | 512² | total histogram cells — a **categorical** axis gets one bin per category, so it bypasses the per-axis bin clamp entirely. Checked at the boundary AND after deriving categories, because the count can come from the data (a dataset where every annotation carries a distinct tag yields one column per annotation), not only from a hostile request |
 | `MAX_GATE_CONSTRAINT_IDS` | 400,000 | ids all gates may push into one list query (see the size bound above) |
@@ -771,6 +771,18 @@ Every invariant names the test that holds it (format enforced by
 - Histogram requests are serialized: each re-scans the whole dataset, so one
   per plot meant N concurrent full-dataset scans — *"serializes histogram
   requests instead of firing one per plot"*
+
+**Round-4 review findings (PR #1302)**
+- The aggregate vertex budget applies to EVERY endpoint that accepts gates,
+  not just `gate_ids` — histogram upstream gates and list-filter gates share
+  it — *"testHistogramUpstreamGatesShareTheVertexBudget"*,
+  *"testListFilterGatesShareTheVertexBudget"*
+- Queued histogram work is invalidated when its reason disappears: the queue
+  captures a guard OBJECT, so deleting the map entry (plot removed) or
+  skipping the prune (panel closed) left the captured token current and the
+  callback ran a full-dataset scan for nobody — *"drops queued histogram
+  work when the panel closes"*, *"drops queued histogram work for a removed
+  plot"*
 
 **Busy feedback**
 - The busy bar covers property-value fetches AND histogram requests (the

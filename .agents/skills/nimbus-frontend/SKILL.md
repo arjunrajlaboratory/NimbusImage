@@ -5,6 +5,28 @@ description: "Use when writing or modifying Vue 3 components, Vuex store modules
 
 # Nimbus Frontend Development
 
+## Test mocks must model the real store's REPLACEMENT semantics
+
+A mock that mutates state in place where the real store replaces it makes
+tests silently vacuous. `AnalysisPanel.test.ts`'s `setPlots` did
+`plots.length = 0; plots.push(...)` while the real `applyAnalysisPlots`
+builds a new array. Vue short-circuits a computed whose value is unchanged
+by identity, so `analysisPlots` never invalidated and **every watcher
+downstream of it silently never re-ran** — a new test for plot-removal
+behavior passed against code that did nothing.
+
+It hid because an existing test appeared to cover removal: its watcher
+happened to read `analysisPopulation`, which returns a fresh array each
+evaluation, so that one re-fired for an unrelated reason.
+
+Rules:
+- Mock setters replace (`mocks.plots = [...next]`), matching the store.
+- Booleans and other scalars are the same trap in reverse: an intermediate
+  computed returning an unchanged `true` stops propagation, so a test that
+  changes only downstream data may never re-run the watcher.
+- Before trusting a new watcher test, make it FAIL once (revert the fix, or
+  assert the opposite) — this one passed for the wrong reason first.
+
 ## Component Patterns
 
 ### Script Setup (Composition API)

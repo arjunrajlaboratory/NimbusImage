@@ -980,3 +980,39 @@ class TestAnalysisGatingReviewFindings:
             assertStatus(resp, 400)
         finally:
             mod.MAX_GATE_RESPONSE_IDS = original
+
+    def testHistogramUpstreamGatesShareTheVertexBudget(self, admin, server):
+        """Codex round 4: the aggregate vertex budget was applied only to
+        gate_ids. histogram2d validates each upstream gate individually but
+        never their total, so 20 upstream gates x 1,000 vertices was an
+        accepted request buying ~20s of polygon passes."""
+        folder = self._setup(admin)
+        many = [{"x": float(i), "y": float(i)} for i in range(600)]
+        upstream = [{
+            "xAxis": {"type": "property", "path": ["p", "Area"]},
+            "yAxis": {"type": "property", "path": ["p", "Mean"]},
+            "gate": {"categoryKeyVersion": 1, "vertices": many,
+                     "xCategories": None, "yCategories": None},
+        } for _ in range(20)]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], upstreamGates=upstream),
+        )
+        assertStatus(resp, 400)
+
+    def testListFilterGatesShareTheVertexBudget(self, admin, server):
+        """Same omission on the list path."""
+        folder = self._setup(admin)
+        many = [{"x": float(i), "y": float(i)} for i in range(600)]
+        gates = [{
+            "xAxis": {"type": "property", "path": ["p", "Area"]},
+            "yAxis": {"type": "property", "path": ["p", "Mean"]},
+            "gate": {"categoryKeyVersion": 1, "vertices": many,
+                     "xCategories": None, "yCategories": None},
+        } for _ in range(20)]
+        resp = postJson(
+            server, admin, "/upenn_annotation/list/ids",
+            {"datasetId": str(folder["_id"]),
+             "filters": {"analysisGates": gates}},
+        )
+        assertStatus(resp, 400)

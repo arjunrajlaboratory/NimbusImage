@@ -31,6 +31,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/store/filters", () => ({
   default: {
     get analysisPlots() {
+      // Subscribe to the reactivity signal: the real getter is reactive, and
+      // a plain array here meant plot add/remove never re-ran the watchers
+      // these tests exist to exercise.
+      mocks.signal.tick;
       return mocks.plots;
     },
     get analysisGateIds() {
@@ -92,8 +96,11 @@ vi.mock("@/store/annotation", () => ({
 import AnalysisPanel from "./AnalysisPanel.vue";
 
 function setPlots(next: any[]) {
-  mocks.plots.length = 0;
-  mocks.plots.push(...next);
+  // Replace the array wholesale, as the real store does
+  // (applyAnalysisPlots builds a new array). Mutating in place kept the
+  // same reference, so computeds downstream of `analysisPlots` never
+  // invalidated and watchers under test silently never re-ran.
+  mocks.plots = [...next];
 }
 
 function stub(id: string) {
@@ -423,5 +430,48 @@ describe("AnalysisPanel", () => {
     releases[1](null);
     await flushPromises();
     expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(3);
+  });
+  // Codex round 4: serializing the requests introduced a way for queued work
+  // to outlive its reason. The queue captures a guard OBJECT, so deleting the
+  // map entry (plot removed) or skipping the prune (panel closed) left the
+  // captured guard current — the queued callback passed its pre-dispatch
+  // check and ran a full-dataset scan for a plot nobody is looking at.
+  it("drops queued histogram work when the panel closes", async () => {
+    setPopulation(50001);
+    setPlots([makePlot("p1"), makePlot("p2")]);
+    const releases: ((v: any) => void)[] = [];
+    mocks.fetchAnalysisHistogram.mockImplementation(
+      () => new Promise((r) => releases.push(r)),
+    );
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
+
+    await wrapper.setProps({ visible: false });
+    await flushPromises();
+    // Let the in-flight one finish; the queued second must NOT dispatch.
+    releases[0](null);
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops queued histogram work for a removed plot", async () => {
+    setPopulation(50001);
+    setPlots([makePlot("p1"), makePlot("p2")]);
+    const releases: ((v: any) => void)[] = [];
+    mocks.fetchAnalysisHistogram.mockImplementation(
+      () => new Promise((r) => releases.push(r)),
+    );
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
+
+    setPlots([makePlot("p1")]); // p2 removed while its work is queued
+    mocks.signal.tick++;
+    await flushPromises();
+    releases[0](null);
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
+    expect(Object.keys(wrapper.vm.histogramsByPlot)).not.toContain("p2");
   });
 });

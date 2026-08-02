@@ -369,6 +369,25 @@ function toDisplay(
 // clarity.
 let histogramQueue: Promise<void> = Promise.resolve();
 
+// Plots whose request is queued or in flight. The queue captures a guard
+// OBJECT, so removing the plot's map entry does not stop its callback —
+// the guard has to be ADVANCED to supersede the captured token. Signatures
+// of invalidated work are forgotten too, so it refetches when relevant
+// again; completed signatures are untouched, which is what keeps a reopen
+// from refetching everything.
+const pendingHistograms = new Set<string>();
+
+function invalidatePendingHistograms(plotIds: Iterable<string>) {
+  for (const plotId of plotIds) {
+    if (!pendingHistograms.has(plotId)) {
+      continue;
+    }
+    histogramGuards.get(plotId)?.next();
+    histogramSignatures.delete(plotId);
+    pendingHistograms.delete(plotId);
+  }
+}
+
 function enqueueHistogram(
   plotId: string,
   request: IAnalysisHistogramRequest,
@@ -377,6 +396,7 @@ function enqueueHistogram(
   datasetId: string,
 ) {
   histogramsInFlight.value += 1;
+  pendingHistograms.add(plotId);
   histogramQueue = histogramQueue.then(async () => {
     try {
       // Superseded before it ever started: skip the round trip entirely.
@@ -401,6 +421,7 @@ function enqueueHistogram(
         [plotId]: toDisplay(response, request),
       };
     } finally {
+      pendingHistograms.delete(plotId);
       histogramsInFlight.value -= 1;
     }
   });
@@ -417,6 +438,10 @@ watch(
     // reopening with unchanged inputs refetches nothing.
     if (props.visible && overCap.value) {
       const live = new Set(work.map(({ plotId }) => plotId));
+      const gone = [...pendingHistograms].filter((id) => !live.has(id));
+      // Advance before forgetting the guard, or the queued callback still
+      // holds a current token and repopulates the entry just pruned.
+      invalidatePendingHistograms(gone);
       let pruned = false;
       const next = { ...histogramsByPlot.value };
       for (const plotId of Object.keys(next)) {
@@ -427,9 +452,16 @@ watch(
           pruned = true;
         }
       }
+      for (const plotId of gone) {
+        histogramGuards.delete(plotId);
+      }
       if (pruned) {
         histogramsByPlot.value = next;
       }
+    } else {
+      // Hidden, or back below the cap: nothing queued has a reason to run.
+      // Display work must not continue behind a closed palette.
+      invalidatePendingHistograms([...pendingHistograms]);
     }
     if (!datasetId) {
       return;

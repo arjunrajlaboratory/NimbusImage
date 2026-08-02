@@ -289,8 +289,15 @@ def _validateGateObject(gate, xAxis, yAxis):
     )
 
 
-def _requireTotalVertexBudget(plots):
-    total = sum(len(plot["gate"]["vertices"]) for plot in plots)
+def _requireTotalVertexBudget(gates):
+    """Aggregate vertex ceiling for ONE request.
+
+    Must be applied by every endpoint that accepts gates, not just
+    gate_ids: the cost is vertices x annotations of numpy work, and 20
+    modest gates reach the same burn as one enormous one. `gates` is any
+    iterable of dicts carrying a "gate".
+    """
+    total = sum(len(gate["gate"]["vertices"]) for gate in gates)
     requireCountWithin(total, MAX_TOTAL_GATE_VERTICES, "total gate vertices")
 
 
@@ -375,6 +382,12 @@ def validateAnalysisHistogramRequest(body):
         )
     if body.get("gate") is not None:
         _validateGateObject(body["gate"], xAxis, yAxis)
+    # Upstream gates AND this plot's own gate are all resolved server-side
+    # for one response, so they share the request budget.
+    _requireTotalVertexBudget(
+        list(upstream)
+        + ([{"gate": body["gate"]}] if body.get("gate") is not None else [])
+    )
     filters = body.get("filters") or {}
     validateListInputs(filters)
     dropNoOpPropertyFilters(filters)
@@ -408,6 +421,7 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
             _validateGateObject(
                 gatePlot.get("gate"), gatePlot["xAxis"], gatePlot["yAxis"]
             )
+        _requireTotalVertexBudget(analysisGates)
     propertyFilters = filters.get("propertyFilters")
     if propertyFilters is not None:
         if not isinstance(propertyFilters, list):
