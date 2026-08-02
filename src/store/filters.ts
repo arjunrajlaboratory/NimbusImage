@@ -1162,6 +1162,15 @@ export class Filters extends VuexModule {
         this.setAnalysisGateIdsArePure(true);
         this.setAnalysisPureGateSignatures(keptSignatures);
       }
+      if (this.analysisGateError !== null) {
+        // Nothing is unresolved, so nothing is failing. The banner is set per
+        // REQUEST but describes the plots that could not resolve, so once the
+        // user deletes or edits away the gate that was refused, every
+        // remaining gate is current and this early return is the only path
+        // left — it used to return without clearing, leaving "gates could not
+        // be applied" up while the retained gates were visibly filtering.
+        this.setAnalysisGateError(null);
+      }
       return;
     }
     this.setAnalysisGateIds(keptIds);

@@ -376,20 +376,13 @@ const isDownloading = ref(false);
 
 const annotationScope = ref<"all" | "filtered" | "selected">("all");
 
-// annotationCount, NOT annotations.length: in stub-only mode (datasets over
-// the stub threshold) `annotations` is EMPTY, so every scope decision here
-// silently collapsed. "All annotations (0)" was displayed, `hasActiveFilter`
-// compared against 0 and disabled the Filtered radio — leaving no way to
-// export a gated subset on exactly the large datasets server-side gating
-// exists for — and the Selected scope resolved to [] and then exported the
-// whole dataset (see annotationIdsToExport).
-const allAnnotationCount = computed(() => annotationStore.annotationCount);
+const allAnnotationCount = computed(() => annotationStore.annotations.length);
 const filteredAnnotationCount = computed(() => props.annotations.length);
 const selectedAnnotationCount = computed(
   () => annotationStore.selectedAnnotationIds.size,
 );
 const hasActiveFilter = computed(
-  () => props.annotations.length < annotationStore.annotationCount,
+  () => props.annotations.length < annotationStore.annotations.length,
 );
 
 const exportScope = ref<"current" | "all">("current");
@@ -406,28 +399,6 @@ const annotationsToExport = computed(() => {
     return props.annotations;
   }
   return annotationStore.annotations;
-});
-
-/**
- * The ids the export should be restricted to, or null for "the whole
- * dataset". Derived from the SCOPE rather than by comparing list lengths:
- * the old check inferred "this is a subset" from
- * `exportAnnotations.length < annotationStore.annotations.length`, which in
- * stub-only mode is `0 < 0` — false — so picking "Selected annotations
- * (22,478)" sent no id list at all and the server exported all 708,983 rows,
- * with nothing on screen saying the selection had been dropped.
- *
- * Selected ids are read from the id Set directly, since it is populated in
- * stub mode while `annotations` is not.
- */
-const annotationIdsToExport = computed<string[] | null>(() => {
-  if (annotationScope.value === "selected") {
-    return [...annotationStore.selectedAnnotationIds];
-  }
-  if (annotationScope.value === "filtered") {
-    return props.annotations.map((annotation) => annotation.id);
-  }
-  return null;
 });
 
 const { loadingDatasets, collectionDatasets, configuration, allDatasetsLabel } =
@@ -658,15 +629,18 @@ async function downloadSingleDataset() {
 
   isDownloading.value = true;
   try {
-    // Only send annotationIds when exporting a subset, to avoid exceeding
-    // MongoDB's 16MB BSON query size limit. "Subset" is the chosen SCOPE,
-    // not a length comparison — see annotationIdsToExport.
-    const exportIds = annotationIdsToExport.value;
+    // Only send annotationIds when exporting a subset, to avoid
+    // exceeding MongoDB's 16MB BSON query size limit.
+    const exportAnnotations = annotationsToExport.value;
+    const isSubset =
+      exportAnnotations.length < annotationStore.annotations.length;
 
     await store.exportAPI.exportCsv({
       datasetId: store.dataset.id,
       propertyPaths: getIncludedPropertyPaths(),
-      ...(exportIds !== null ? { annotationIds: exportIds } : {}),
+      ...(isSubset
+        ? { annotationIds: exportAnnotations.map((a) => a.id) }
+        : {}),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
       sanitizeColumnNames: sanitizeColumnNames.value,

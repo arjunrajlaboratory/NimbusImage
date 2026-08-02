@@ -1299,6 +1299,40 @@ describe("filters.refreshAnalysis above the cap (server resolution)", () => {
     expect(fetchAnalysisGateIds.mock.calls[0][1]).toHaveLength(2);
   });
 
+  it("clears the refusal banner once the refused gate is gone", async () => {
+    // The banner is set per REQUEST but describes the plots that could not
+    // resolve. With per-plot staleness, a refused batch leaves the current
+    // gates filtering normally — so when the user deletes the gate that was
+    // refused, every remaining plot is current and the no-stale early return
+    // is the only path left. It returned without clearing, leaving "gates
+    // could not be applied — the viewer shows everything the other filters
+    // allow" on screen while the retained gate was visibly filtering.
+    filters.setAnalysisPanelOpen(true);
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+
+    // A second, broad gate is refused; p1 keeps filtering.
+    fetchAnalysisGateIds.mockImplementationOnce(
+      async (_d: string, _p: any[], onError: any) => {
+        onError?.("gates resolve to more than the 2000000 ids...");
+        return null;
+      },
+    );
+    await addGatedPlot("p2");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateError).toContain("2000000");
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+
+    fetchAnalysisGateIds.mockClear();
+    await filters.removeAnalysisPlot("p2");
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds).not.toHaveBeenCalled(); // p1 is still current
+    expect(filters.analysisGateError).toBeNull();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+  });
+
   it("never leaves a pure signature without the ids it describes", async () => {
     // analysisPureGateSignatures is only meaningful as a description of
     // exactly the ids currently held. dropAnalysisGateIdsFromPlot is the one

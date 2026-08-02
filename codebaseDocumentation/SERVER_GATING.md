@@ -899,6 +899,12 @@ Every invariant names the test that holds it (format enforced by
   the palette adds a disabled gate to the request"*, *"re-resolves only the
   plot whose gate changed"*, *"re-resolves every plot when a revision
   counter moves"*
+- The refusal banner clears once nothing is unresolved, including on the
+  no-stale early return. Per-plot staleness means a refused batch leaves the
+  current gates filtering, so deleting the refused gate makes every
+  remaining plot current and that early return the only path left; it
+  returned without clearing — *"clears the refusal banner once the refused
+  gate is gone"*
 - `analysisPureGateSignatures` never outlives the ids it describes.
   `dropAnalysisGateIdsFromPlot` is the one writer that assigns
   `analysisGateIds` directly rather than through `setAnalysisGateIds` (which
@@ -938,13 +944,6 @@ Every invariant names the test that holds it (format enforced by
   "…" it replaced: the pure count over-states, so every panel open showed a
   plausible wrong number for a few seconds and then silently changed it —
   *"shows the chained badge count from the histogram, not pure ids"*
-- CSV export scope is derived from the chosen SCOPE and from
-  `annotationStore.annotationCount`, never from `annotations.length`, which
-  is EMPTY in stub-only mode. Every scope decision collapsed there: "All
-  annotations (0)", the Filtered radio disabled on exactly the datasets
-  gating exists for, and — worst — picking "Selected" sent no id list, so
-  the server exported the whole dataset with nothing on screen saying the
-  selection had been dropped.
 - `currentFilters` reads frame state only when `onlyCurrentFrame` is on, the
   untreated twin of the same fix in `analysisHistogramFilterSpec`.
 
