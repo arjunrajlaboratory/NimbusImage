@@ -295,6 +295,22 @@ The eyes-reaction transition is the most useful signal: while 👀 is on the tri
 
 ### 5. Gates before claiming done
 
+**Run the blast-radius sweep here, per fix, before the automated gates** — it
+is the one check that catches nothing on its own and everything on the next
+round. For each behavioural change in the diff, write the sentence *"X used to
+be true; now Y is"*, then grep for the five surfaces above (code paths and
+guards, tests, user-facing strings, doc prose, comments). Two greps that pay
+for themselves every time:
+
+```bash
+# Prose and strings that may still describe the old behaviour.
+git diff <base>...HEAD --stat -- '*.md'      # docs you changed behaviour under
+grep -rn "<phrase from the old invariant>" src/ codebaseDocumentation/
+```
+
+If the fix made anything `async`, additionally walk its call sites for a value
+read before the new await and acted on after it.
+
 - Frontend: `pnpm tsc`, `pnpm lint:ci`, `pnpm test` (ignore failures under `.tox/**` paths — vitest glob artifact, see nimbus-frontend skill).
 - Backend: `tox` (includes flake8) **and** `docker compose build girder && docker compose up -d girder` before any curl/browser verification — `restart` does NOT load plugin code changes; tox passes against source even when the live API is stale.
 - User-facing changes: verify in the browser (see in-browser-testing skill) — unit tests green ≠ working UI.
