@@ -488,6 +488,52 @@ key sent gate + property-filter queries down the PV path where an `_id`
 clause is never applied, so the gate silently stopped filtering. Held by
 *"testGateComposesWithPropertyFilter"*.
 
+### Measured query behavior
+
+Checked against the live stack rather than reasoned about (Mongo `explain`
+plus timed aggregations; 708,983-object dataset unless noted).
+
+**Index usage.** The projected scan behind `_analysisData` plans as
+`IXSCAN` on `datasetId_1__id_1` → `FETCH` → `PROJECTION_SIMPLE`, i.e. the
+dataset partition is index-selected rather than collection-scanned.
+
+**`$in` vs `$nin`** for the gate constraint — the numbers behind the 2×
+threshold in `resolveListGateConstraints`. `$nin` costs ~1.4× per element,
+so it only pays when its array is *materially* smaller:
+
+| gate keeps | `$in` | `$nin` | array ratio | winner |
+|---|---|---|---|---|
+| 51% | 566 ms | 746 ms | 0.96 | `$in` |
+| 60% | 648 ms | 617 ms | 0.67 | `$nin` |
+| 75% | 794 ms | 411 ms | 0.33 | `$nin` |
+| 95% | 1,228 ms | 172 ms | 0.05 | `$nin` (7×, 13.5 MB → 0.7 MB) |
+
+A naive "whichever array is shorter" rule would have *lost* time near the
+crossover; the implemented rule switches only at a 2× payload saving.
+
+**Filter-combination cost** (52,282-object HCR dataset, which has property
+values; median of 3 warm runs):
+
+| query | pipeline | median |
+|---|---|---|
+| property filter only | PV-driven | 0.07 s |
+| gate only | annotation-driven | 0.40 s |
+| gate + property filter | annotation-driven + `$lookup` | 0.94 s |
+
+Combining a gate with a property filter is **~13× the property-only path**,
+because a gate is an `_id` constraint on the annotation collection and so
+forces the annotation-driven pipeline with its join. This is correct but
+not necessary: gate clauses could be rewritten from `_id` to `annotationId`
+and applied on the PV-driven path directly, keeping the fast path. Not done
+here — it touches `listIds`, `listCount`, `listPage` and `listPosition`, and
+the last change of exactly that kind (moving clauses out of `idConstraints`)
+silently disabled gating on one of those paths until a test caught it. Worth
+doing deliberately, with its own review.
+
+End-to-end timings after the review fixes are unchanged from before them
+(gate resolution 4.4 s, histogram 7.5 s, gate-carrying list page 4.9 s at
+708K), so none of the hardening cost measurable latency.
+
 ### Cost note (decided: no server cache in v1)
 
 Sending definitions makes every list page fetch re-resolve the gates
@@ -686,6 +732,9 @@ Every invariant names the test that holds it (format enforced by
   *"testMinorityGateStillUsesIn"*, *"testComplementAndInAgreeThroughTheEndpoint"*
 - Past the id budget the request 400s instead of failing inside MongoDB —
   *"testOversizedGateConstraintIs400NotAMongoFailure"*
+- A barely-smaller complement keeps `$in`, since `$nin` costs ~1.4x per
+  element and only pays at a real size reduction —
+  *"testMarginalMajorityStaysWithIn"*
 - Gate clauses are honored on the property-filter path too (they are `_id`
   constraints in a different representation, so the PV/annotation pipeline
   choice must see them) — *"testGateComposesWithPropertyFilter"*

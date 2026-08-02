@@ -1312,3 +1312,26 @@ class TestServerListAnalysisGates:
             "filters": {"analysisGates": [self.gateFilter(5, 25)]},
         })
         assertStatus(resp, 400)
+
+    def testMarginalMajorityStaysWithIn(self, admin, server):
+        """`$nin` costs ~1.4x per element, so a barely-smaller complement is
+        a loss, not a win. Only switch when it at least halves the payload —
+        measured crossover is near 0.67 (see resolveListGateConstraints).
+        """
+        from upenncontrast_annotation.server.models.annotation import (
+            Annotation as AnnotationModel,
+        )
+        folder = utilities.createFolder(
+            admin, "marginal", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        # 3 inside the gate, 2 outside: a majority, but the complement is
+        # 0.67 of the matches — not worth the per-element penalty.
+        for val in (10, 10, 10, 90, 90):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": val}}, a["_id"], folder["_id"])
+        filters = {"analysisGates": [self.gateFilter(5, 25)]}
+        AnnotationModel().resolveListGateConstraints(folder["_id"], filters)
+        clause = filters["gateMatchClauses"][0]["_id"]
+        assert "$in" in clause, clause
+        assert len(clause["$in"]) == 3

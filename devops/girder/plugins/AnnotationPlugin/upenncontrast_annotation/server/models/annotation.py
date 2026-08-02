@@ -458,12 +458,26 @@ class Annotation(AccessControlMixin, ProxiedModel):
         for gate in gates:
             ids = analysis.resolve_gate_ids(docs, valuesById, gate)
             complementSize = len(allIds) - len(ids)
-            if complementSize < len(ids):
-                # More than half the dataset matches. Inside a pipeline
-                # already scoped to this dataset, excluding the complement is
-                # equivalent to including the matches and is strictly
-                # smaller — the difference between a 14 MB `$in` and a small
-                # `$nin` when a gate keeps almost everything.
+            if complementSize * 2 <= len(ids):
+                # The gate keeps at least twice what it drops. Inside a
+                # pipeline already scoped to this dataset, excluding the
+                # complement is equivalent to including the matches and is
+                # much smaller.
+                #
+                # The 2x threshold is measured, not merely "whichever array
+                # is shorter": per element `$nin` costs ~1.4x what `$in`
+                # does, so a marginally-smaller complement is a LOSS. On the
+                # 708,983-object dataset (count via aggregate, warm):
+                #
+                #   gate keeps   $in      $nin     ratio   winner
+                #   51%          566ms    746ms    0.96    $in
+                #   60%          648ms    617ms    0.67    $nin
+                #   75%          794ms    411ms    0.33    $nin
+                #   95%        1,228ms    172ms    0.05    $nin  (7x, and
+                #                                    13.5MB -> 0.7MB)
+                #
+                # Crossover sits near 0.67; 0.5 keeps us clear of it while
+                # still capturing the case this exists for.
                 matched = set(ids)
                 selected = [
                     ObjectId(i) for i in allIds if i not in matched
