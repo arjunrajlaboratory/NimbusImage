@@ -138,6 +138,13 @@ endpoint was needed — `annotation_property_values/batch` already projects by
 
 ## The point cap, and why there is no sampling
 
+> **Superseded above the cap by `SERVER_GATING.md`.** Gates now resolve
+> server-side as pure predicates and plots render as server-binned heatmaps,
+> so the cap bounds CLIENT work (scatter rendering, population hashing,
+> value fetches) rather than disabling gating. The reasoning below — why a
+> sample is not an acceptable answer — is exactly why that had to move
+> server-side rather than be approximated.
+
 `MAX_ANALYSIS_PLOT_POINTS = 50000` (`src/store/constants.ts`, matching
 `DEFAULT_VISIBILITY_CONFIG.maxVisible`). Above it the panel shows a "narrow the
 filters" notice and plots nothing, and gate resolution stops too.
@@ -374,9 +381,11 @@ Change any of this and re-check these. Each item names the test that holds it.
   its required path set is unchanged — *"reuses resolved values instead of
   refetching on palette toggles"*
 - A bail-out invalidates any in-flight request, so a stale one cannot reinstate a gate — *"invalidates an in-flight request before bailing out"*
-- Above the cap: no fetch and no gate, and the bounded walk stops before
-  collecting or hashing the tail — *"refuses to fetch or gate above the point
-  cap"*, *"stops collecting an over-cap population before hashing its tail"*
+- Above the cap: no value fetch — resolution goes server-side as a pure
+  predicate (SERVER_GATING.md) — and the bounded walk still stops before
+  collecting or hashing the tail — *"resolves via the server above the point
+  cap, without fetching values"*, *"stops collecting an over-cap population
+  before hashing its tail"*
 - The polygon resolves to ids and the values are published for the panel to reuse — *"resolves the polygon into ids and publishes the values it fetched"*
 - Derived state is cleared when the last gate goes — *"clears derived state when the last gate goes away"*
 - Re-lassoing drops the previous ids synchronously, then resolves the new polygon
@@ -389,7 +398,13 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Loading is tracked explicitly, so an empty result is not mistaken for pending — *"tracks loading explicitly so an empty result is not mistaken for pending"*, *"clears the loading flag when it bails out early"*
 
 **Gate composition (`src/store/filters.test.ts`)**
-- No drawn gate passes everything through and adds 0 to `activeFilterCount` — *"passes everything through while no gate is drawn"*
+- No drawn gate passes everything through and adds 0 to
+  `activeAnalysisGateCount` — *"passes everything through while no gate is
+  drawn"*
+- Gates count on the **Analysis** badge, never the Filters badge, so neither
+  button claims a filter its own panel cannot show — *"stays 0 for a
+  resolved, enabled gate"*, *"counts only the panel's own filters alongside a
+  gate"*, *"keeps the two badges independent"*
 - A drawn but unresolved gate constrains nothing, so drawing never flashes empty — *"does not constrain a drawn gate until its ids have been resolved"*
 - Multiple enabled gates AND (not union); disabling one drops its constraint but keeps its polygon; clearing restores — *"ANDs the enabled resolved gates into filteredAnnotations"*
 - An empty resolved gate filters everything out, and is not treated as "no gate" — *"treats an empty resolved gate as filtering everything out"*
@@ -440,7 +455,9 @@ Change any of this and re-check these. Each item names the test that holds it.
 **Panel (`src/components/AnalysisPanel.test.ts`)**
 - Visibility is reported to the store, including on unmount — *"reports its open state to the store, including on unmount"*
 - While hidden, no scatter child mounts, no series builds, and no memoised input population remains; reopening restores them — *"does no display work and retains no plot populations while hidden"*
-- Above the cap the panel refuses to plot — *"refuses to plot above the point cap"*; boundary held by *"plots at exactly the cap"*
+- Above the cap the panel switches to server-binned heatmaps and builds no
+  client series — *"switches to server-binned heatmaps above the point cap"*;
+  boundary held by *"plots at exactly the cap"*
 - Plot *n* receives gates *0..n-1* only — *"feeds each plot the population passing the PRECEDING gates only"*
 - Input arrays stay identity-stable when nothing changed, so a Z-scrub doesn't re-render every plot — *"keeps plot input arrays identity-stable when nothing changed"*
 - Memoised inputs for removed plots are dropped — *"drops memoised inputs for removed plots"*
@@ -458,8 +475,10 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Gated points are marked selected; unresolved gates leave it null — *"marks the gated points as selected in the trace"*, *"leaves selectedpoints null when no gate has been resolved"*
 
 **Server-mode list (`src/store/__tests__/annotationListServer.test.ts`)**
-- One `idConstraints` entry per gate, never a union — *"adds one AND constraint per analysis gate, not a union"*
-- An empty gate is recognised as match-none — *"is true when a gate resolved to no annotations"*, *"is false again once the gate matches something"*
+- Gates reach the list as AND-composed DEFINITIONS, never id lists
+  (SERVER_GATING.md, Phase 3) — *"sends gate DEFINITIONS, never gate id
+  lists (SERVER_GATING.md P3)"*
+- An empty gate is recognised as match-none — *"is true when a gate resolved to no annotations"*, *"is false again once the gate matches something"*, *"expresses a match-nothing gate as an empty id constraint"*
 
 **Match-none at the request boundary (`src/store/__tests__/annotationsAPI.test.ts`)**
 - No page request is issued for an impossible query — *"returns an empty page without issuing a request"*
@@ -829,7 +848,37 @@ The post-round-12 cold branch review found no additional actionable findings.
 Above the cap, the scalable design is server-side: a 2D density histogram for
 display plus polygon-to-ids resolution on the backend (the same shape as
 `refreshPropertyFilterPassingIds`). Now that a gate *is* a polygon, that is a
-backend endpoint rather than a data-model change. A cheaper intermediate step:
-**rectangular** gates, which are exactly two numeric range filters and therefore
-already expressible through the existing property-filter path — exact at any
-dataset size, with no new endpoint.
+backend endpoint rather than a data-model change. **Built** — see
+`SERVER_GATING.md`. A cheaper intermediate step that was considered and
+skipped: **rectangular** gates, which are exactly two numeric range filters
+and therefore already expressible through the existing property-filter path.
+
+### Known defect: the two jitter salts are not independent
+
+`jitterFromId` is `h = salt; for each char: h = h*31 + code`, which is
+**affine in the seed**: `h(salt, id) = salt·31ᴸ + f(id) (mod 2³²)`. For
+fixed-length ids — 24-char hex ObjectIds, i.e. always — the X and Y hashes
+therefore differ by a *constant*, not independently. Measured on the
+708,983-object dataset: `h(31,·) − h(17,·) = 983,840,270` for every id
+sampled, exactly the predicted `(31−17)·31²⁴`.
+
+Consequence: the Y jitter is the X jitter shifted, so after `% 1000` the
+pairs land on a lattice. A 10×10 grid over one categorical cell had **60
+empty cells** and a 5.6× density peak. Global Pearson r is only 0.037, so a
+correlation check alone does not reveal it — measure 2D occupancy instead.
+
+Impact is **display only**, and only on categorical × categorical plots,
+where points form stripes rather than filling the cell (much of the cell is
+unreachable, so it cannot be gated). Gating stays exact: drawing and
+resolution share the jitter, and TS↔Python parity over 708,983 ids is
+bit-exact with zero mismatches.
+
+**Why it was not fixed on discovery:** gate polygons are stored in jittered
+coordinate space, so changing the jitter function silently changes the
+membership of every persisted gate. This needs what `categoryKeyVersion`
+got — a version bump plus a hydration rule that refuses (or migrates) gates
+drawn under the old jitter. The fix itself is small: give each axis a
+genuinely different mixer (a distinct multiplier per salt, or a final
+avalanche step), not just a different seed. Regenerate
+`analysis_gating_parity.json` afterward; the Python port will fail until it
+matches, which is the intended behavior.

@@ -156,6 +156,20 @@ vi.mock("@/store/filters", () => ({
     setTagFilter: vi.fn(),
     setOnlyCurrentFrame: vi.fn(),
     updatePropertyFilter: vi.fn(),
+    // Analysis panel (scatter gating)
+    analysisPlots: [] as any[],
+    analysisGateIds: {} as Record<string, string[]>,
+    canAddAnalysisPlot: true,
+    addAnalysisPlot: vi.fn(),
+    removeAnalysisPlot: vi.fn(),
+    setAnalysisPlotAxes: vi.fn(),
+    setAnalysisPlotGate: vi.fn(),
+    hydrateAnalysisPlots: vi.fn(),
+    // Mirrors the real action: hydrate PLUS persist. Modelled as two separate
+    // recordable calls so a test can tell "restored in memory" apart from
+    // "restored durably" — the distinction the memory-only revert turned on.
+    restoreAnalysisPlots: vi.fn(),
+    refreshAnalysis: vi.fn(),
   },
 }));
 
@@ -175,6 +189,12 @@ vi.mock("@/store/properties", () => ({
     fetchPropertyValues: vi.fn(),
     createProperty: vi.fn(),
     computeProperty: vi.fn(),
+    // The server-side property histogram, which is where an open gate bound
+    // gets the axis extent. Defaults to empty (a dataset whose extent cannot
+    // be measured) so a test that cares must say so.
+    propertiesAPI: {
+      getPropertyHistogram: vi.fn(async () => [] as any[]),
+    },
   },
 }));
 
@@ -206,6 +226,8 @@ import {
   annotationsBoundingBox,
   clearTrackedAgentJobs,
   describeAgentToolCall,
+  buildInterfaceState,
+  clearAgentTurnLimits,
   executeAgentTool,
   isGatedTool,
   restoreViewState,
@@ -274,6 +296,9 @@ beforeEach(() => {
   mockJobs.fetchJobStatus = vi.fn(async () => null);
   mockJobs.addJob = vi.fn(() => new Promise<boolean>(() => {}));
   clearTrackedAgentJobs();
+  // Per-turn agent budgets are real module state; a leaked count made later
+  // tests hit the turn limit instead of the behaviour they assert.
+  clearAgentTurnLimits();
   clearPlots();
 });
 
@@ -291,38 +316,14 @@ describe("describeAgentToolCall", () => {
     { target: 7, tags: 0 },
     { target: { tags: "spot", ids: "abc" } },
     { query: { tags: 3 } },
+    // An axis whose propertyPath is a bare string rather than an array.
+    { xAxis: { propertyPath: "Area" }, yAxis: { propertyPath: 5 } },
   ];
-  const toolNames = [
-    "get_interface_state",
-    "capture_screenshot",
-    "list_annotations",
-    "set_location",
-    "set_camera",
-    "set_layer_mode",
-    "update_layer",
-    "set_layer_visibility",
-    "set_display_options",
-    "set_view_mode",
-    "set_scale",
-    "select_annotations",
-    "color_annotations",
-    "tag_annotations",
-    "set_annotation_filter",
-    "select_tool",
-    "create_tool",
-    "list_properties",
-    "create_property",
-    "compute_property",
-    "get_property_values",
-    "get_property_histogram",
-    "get_sample_values",
-    "create_scatter_plot",
-    "create_histogram_plot",
-    "create_box_plot",
-    "read_help_topic",
-    "run_worker",
-    "unknown_tool",
-  ];
+  // Derived from the registry rather than hand-listed. A hand-listed copy
+  // drifts silently the moment a tool is added — create_analysis_plot went in
+  // with a `.join` on an unvalidated field, exactly the bug this test exists
+  // to catch, and the test never saw it because the name was not in the list.
+  const toolNames = [...AGENT_TOOL_NAMES, "unknown_tool"];
 
   it("never throws on malformed input", () => {
     for (const name of toolNames) {
@@ -360,6 +361,15 @@ describe("isGatedTool", () => {
 
   it("gates set_scale (mutates the shared collection, not revertable)", () => {
     expect(isGatedTool("set_scale")).toBe(true);
+  });
+
+  it("gates clear_analysis_plots but not create_analysis_plot", () => {
+    // Same rationale as set_scale: the plots live in the shared
+    // annotationBrowserConfig, so this discards gating work anyone on the
+    // dataset drew, and a hand-drawn polygon cannot be reconstructed.
+    // Creating one is additive and revertable, so it stays ungated.
+    expect(isGatedTool("clear_analysis_plots")).toBe(true);
+    expect(isGatedTool("create_analysis_plot")).toBe(false);
   });
 });
 
@@ -2575,5 +2585,509 @@ describe("view identity binding (finding #1)", () => {
     const snapshot = snapshotViewState();
     await restoreViewState(snapshot);
     expect(mockMain.setViewContrastOverrides).toHaveBeenCalled();
+  });
+});
+
+// Analysis-panel gating tools. A gate narrows the same `filteredAnnotations`
+// the other filters do, so these must resolve before reporting counts —
+// gate ids are derived, not stored.
+// What the real addAnalysisPlot does: APPEND, and no-op at the cap rather
+// than throw. A bare vi.fn() left analysisPlots empty, so no test could
+// observe whether the executor's plot actually landed — which is precisely
+// the state the cap race produces, and precisely what the executor now
+// verifies. Exported as a helper so a test layering extra side effects on
+// top does not silently drop the append.
+function appendAnalysisPlot(id: string) {
+  if (!mockFilters.canAddAnalysisPlot) {
+    return;
+  }
+  mockFilters.analysisPlots = [
+    ...mockFilters.analysisPlots,
+    { id, xAxis: null, yAxis: null, gate: null, gateEnabled: true },
+  ];
+}
+
+describe("analysis panel tools", () => {
+  beforeEach(() => {
+    mockFilters.analysisPlots = [];
+    mockFilters.analysisGateIds = {};
+    mockFilters.canAddAnalysisPlot = true;
+    // mockReset, not mockClear: one test installs an implementation that
+    // reads addAnalysisPlot.mock.calls, which throws once those are cleared.
+    // Reset alongside the mock it gates: a test that fills the panel mid-await
+    // would otherwise leak both the cap and its histogram stub into every
+    // later describe.
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.analysisPlots = [];
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(
+      async () => [] as any[],
+    );
+    mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.addAnalysisPlot.mockImplementation(appendAnalysisPlot);
+    mockFilters.removeAnalysisPlot.mockReset();
+    mockFilters.setAnalysisPlotAxes.mockReset();
+    mockFilters.setAnalysisPlotGate.mockReset();
+    mockFilters.refreshAnalysis.mockReset();
+  });
+
+  it("creates a plot with property axes and no gate", async () => {
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+      },
+      context,
+    );
+    expect(mockFilters.addAnalysisPlot).toHaveBeenCalledTimes(1);
+    expect(mockFilters.setAnalysisPlotGate).not.toHaveBeenCalled();
+    // Still refreshes: the panel needs values for the new axes.
+    expect(mockFilters.refreshAnalysis).toHaveBeenCalled();
+    expect(out.result.gate).toBeNull();
+    expect(out.result.note).toMatch(/draw/i);
+  });
+
+  it("turns ranges into a rectangular gate", async () => {
+    await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 100, max: 500 },
+        yRange: { max: 40 },
+      },
+      // No ids will land from the mock; skip the resolution wait.
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    const gate = mockFilters.setAnalysisPlotGate.mock.calls[0][0].gate;
+    expect(gate.categoryKeyVersion).toBe(1);
+    expect(gate.xCategories).toBeNull();
+    const xs = gate.vertices.map((v: any) => v.x);
+    const ys = gate.vertices.map((v: any) => v.y);
+    expect(Math.min(...xs)).toBe(100);
+    expect(Math.max(...xs)).toBe(500);
+    // Omitted min is one-sided, not zero.
+    expect(Math.min(...ys)).toBeLessThan(-1e6);
+    expect(Math.max(...ys)).toBe(40);
+  });
+
+  it("reports the resolved gate count, not the request", async () => {
+    mockFilters.addAnalysisPlot.mockImplementation((id: string) => {
+      appendAnalysisPlot(id);
+      // The store resolves asynchronously; emulate ids appearing.
+      mockFilters.analysisGateIds = {};
+    });
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      const id = mockFilters.addAnalysisPlot.mock.calls[0][0];
+      mockFilters.analysisGateIds = { [id]: ["a", "b", "c"] };
+    });
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 1 },
+      },
+      context,
+    );
+    expect(out.result.gatedCount).toBe(3);
+  });
+
+  it("refuses to gate by range when an axis is categorical", async () => {
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { categorical: "tags" },
+          yAxis: { propertyPath: ["p1", "Area"] },
+          yRange: { min: 1 },
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockFilters.addAnalysisPlot).not.toHaveBeenCalled();
+  });
+
+  it("allows a categorical plot without ranges", async () => {
+    await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { categorical: "tags" },
+        yAxis: { propertyPath: ["p1", "Area"] },
+      },
+      context,
+    );
+    const axes = mockFilters.setAnalysisPlotAxes.mock.calls[0][0];
+    expect(axes.xAxis).toEqual({ type: "categorical", key: "tags" });
+  });
+
+  it("rejects an unknown categorical key and a bad property path", async () => {
+    for (const xAxis of [
+      { categorical: "nope" },
+      { propertyPath: [] },
+      { propertyPath: [123 as any] },
+    ]) {
+      await expect(
+        executeAgentTool(
+          "create_analysis_plot",
+          { xAxis, yAxis: { propertyPath: ["p1", "Area"] } },
+          context,
+        ),
+      ).rejects.toBeInstanceOf(ToolExecutionError);
+    }
+  });
+
+  it("rejects an inverted range rather than silently selecting nothing", async () => {
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { propertyPath: ["p1", "Area"] },
+          yAxis: { propertyPath: ["p1", "Perimeter"] },
+          xRange: { min: 500, max: 100 },
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("never reports a plot that was removed while its gate resolved", async () => {
+    // The twin of the cap race, reached from the other end. Insertion is
+    // confirmed before configuring the plot, but refreshAnalysis and the
+    // resolution wait take seconds on a large dataset, and the user can
+    // delete the plot in that window — after which this returned the removed
+    // plotId with a "still resolving" note.
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      mockFilters.analysisPlots = []; // the user deletes it mid-resolution
+    });
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 1 },
+      },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(out.result.plotId).toBeNull();
+    expect(out.result.removed).toBe(true);
+    expect(out.result.note).toMatch(/removed while its gate was resolving/i);
+  });
+
+  it("never reports a plot the store refused to create", async () => {
+    // Sizing an open bound awaits the backend, so the cap check at the top of
+    // the executor is stale by the time the plot is added — the user can fill
+    // the last slot during that wait. addAnalysisPlot no-ops at the cap
+    // instead of throwing, so the executor went on to apply axes and a gate
+    // to an id that does not exist, waited for it to resolve, and returned a
+    // plotId it had never created.
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => {
+      mockFilters.canAddAnalysisPlot = false; // the panel fills up mid-await
+      return [{ count: 1, min: 0, max: 10 }];
+    });
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { propertyPath: ["p1", "Area"] },
+          yAxis: { propertyPath: ["p1", "Perimeter"] },
+          xRange: { min: 1 },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/filled up/);
+    // ...and the failed call must not consume the per-turn budget or leave a
+    // half-configured plot behind.
+    expect(mockFilters.setAnalysisPlotAxes).not.toHaveBeenCalled();
+    expect(mockFilters.setAnalysisPlotGate).not.toHaveBeenCalled();
+  });
+
+  it("refuses past the plot cap with an actionable message", async () => {
+    mockFilters.canAddAnalysisPlot = false;
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { propertyPath: ["p1", "Area"] },
+          yAxis: { propertyPath: ["p1", "Perimeter"] },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/clear_analysis_plots/);
+  });
+
+  it("clears every plot and re-resolves", async () => {
+    mockFilters.analysisPlots = [{ id: "a" }, { id: "b" }];
+    const out = await executeAgentTool("clear_analysis_plots", {}, context);
+    expect(mockFilters.removeAnalysisPlot).toHaveBeenCalledTimes(2);
+    expect(mockFilters.refreshAnalysis).toHaveBeenCalled();
+    expect(out.result.removed).toBe(2);
+  });
+
+  it("reports gates in the interface state so the model can explain counts", () => {
+    mockFilters.analysisPlots = [
+      {
+        id: "plot-1",
+        xAxis: { type: "property", path: ["p1", "Area"] },
+        yAxis: { type: "categorical", key: "tags" },
+        gate: { vertices: [] },
+        gateEnabled: true,
+      },
+    ];
+    mockFilters.analysisGateIds = { "plot-1": ["a", "b"] };
+    const state = buildInterfaceState() as any;
+    expect(state.analysisPlots).toHaveLength(1);
+    expect(state.analysisPlots[0]).toMatchObject({
+      plotId: "plot-1",
+      hasGate: true,
+      gateEnabled: true,
+      gatedCount: 2,
+    });
+    expect(state.analysisPlots[0].yAxis).toEqual({
+      type: "categorical",
+      key: "tags",
+    });
+  });
+});
+
+// Live-found: awaiting refreshAnalysis is not enough. It claims a sequence
+// token first, so a concurrent refresh (the Viewer watches the same inputs)
+// supersedes ours and the await resolves before any commit. Observed in the
+// browser as a gate that resolved to 0 while the tool reported all 52,282
+// objects still passing.
+describe("create_analysis_plot waits for gate resolution", () => {
+  beforeEach(() => {
+    mockFilters.analysisPlots = [];
+    mockFilters.analysisGateIds = {};
+    mockFilters.canAddAnalysisPlot = true;
+    // Reset alongside the mock it gates: a test that fills the panel mid-await
+    // would otherwise leak both the cap and its histogram stub into every
+    // later describe.
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.analysisPlots = [];
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(
+      async () => [] as any[],
+    );
+    mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.addAnalysisPlot.mockImplementation(appendAnalysisPlot);
+    mockFilters.setAnalysisPlotAxes.mockReset();
+    mockFilters.setAnalysisPlotGate.mockReset();
+    mockFilters.refreshAnalysis.mockReset();
+  });
+
+  it("reports no counts when the gate never resolves", async () => {
+    mockFilters.filteredAnnotations = new Array(52282).fill({});
+    // refreshAnalysis resolves without committing — the superseded case.
+    mockFilters.refreshAnalysis.mockResolvedValue(undefined);
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 50, max: 90 },
+      },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    // The pre-gate count is the misleading answer; null is the honest one.
+    expect(out.result.filteredCount).toBeNull();
+    expect(out.result.note).toMatch(/still resolving/i);
+    mockFilters.filteredAnnotations = [];
+  });
+
+  it("reports counts once the ids land", async () => {
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      const id = mockFilters.addAnalysisPlot.mock.calls[0][0];
+      mockFilters.analysisGateIds = { [id]: [] };
+      mockFilters.filteredAnnotations = [];
+    });
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 50, max: 90 },
+      },
+      context,
+    );
+    expect(out.result.gatedCount).toBe(0);
+    expect(out.result.filteredCount).toBe(0);
+    expect(out.result.note).toBeUndefined();
+  });
+});
+
+// Codex round 6. These are all "the fix created the next bug" shapes, so each
+// asserts the specific failure rather than the happy path.
+describe("analysis tools: round 6 hardening", () => {
+  beforeEach(() => {
+    mockFilters.analysisPlots = [];
+    mockFilters.analysisGateIds = {};
+    mockFilters.canAddAnalysisPlot = true;
+    // Reset alongside the mock it gates: a test that fills the panel mid-await
+    // would otherwise leak both the cap and its histogram stub into every
+    // later describe.
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.analysisPlots = [];
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(
+      async () => [] as any[],
+    );
+    mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.addAnalysisPlot.mockImplementation(appendAnalysisPlot);
+    mockFilters.setAnalysisPlotAxes.mockReset();
+    mockFilters.setAnalysisPlotGate.mockReset();
+    mockFilters.refreshAnalysis.mockReset();
+  });
+
+  const axes = {
+    xAxis: { propertyPath: ["p1", "Area"] },
+    yAxis: { propertyPath: ["p1", "Perimeter"] },
+  };
+
+  it("leaves no orphan plot when the gate is invalid", async () => {
+    // The inverted range satisfies the JSON schema, so it can only be caught
+    // here — and throwing after addAnalysisPlot used to strand an ungated
+    // plot, letting a few corrected retries exhaust the plot cap.
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        { ...axes, xRange: { min: 500, max: 100 } },
+        { ...context, waitForGateTimeoutMs: 0 } as any,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockFilters.addAnalysisPlot).not.toHaveBeenCalled();
+    expect(mockFilters.setAnalysisPlotAxes).not.toHaveBeenCalled();
+  });
+
+  it("caps gate creations per turn, since each re-resolves everything", async () => {
+    const call = () =>
+      executeAgentTool("create_analysis_plot", axes, {
+        ...context,
+        waitForGateTimeoutMs: 0,
+      } as any);
+    for (let i = 0; i < 4; i++) {
+      await call();
+    }
+    await expect(call()).rejects.toThrow(/limit/i);
+    // ...and a new turn starts fresh.
+    clearAgentTurnLimits();
+    await expect(call()).resolves.toBeTruthy();
+  });
+
+  it("stops waiting for gate resolution when the turn is aborted", async () => {
+    const controller = new AbortController();
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      controller.abort(); // user pressed Stop while the refresh was superseded
+    });
+    const started = Date.now();
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 1 } },
+      { ...context, abortSignal: controller.signal } as any,
+    );
+    // Unwinds immediately rather than sitting out the 15s deadline.
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(out.result.filteredCount).toBeNull();
+  });
+
+  const gateVertexRange = (axis: "x" | "y") => {
+    const gate = mockFilters.setAnalysisPlotGate.mock.calls[0][0].gate;
+    const values = gate.vertices.map((v: any) => v[axis]);
+    return { min: Math.min(...values), max: Math.max(...values) };
+  };
+
+  it("derives an open bound from the server's extent, not a fixed sentinel", async () => {
+    // A property whose values exceed the old 1e12 constant: everything above
+    // it was silently excluded from an otherwise unbounded gate.
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => [
+      { count: 2, min: 1, max: 5e12 },
+    ]);
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 100 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(5e12);
+  });
+
+  it("does not read the extent from the annotation store", async () => {
+    // The regime this whole feature exists for: above the plotting cap the
+    // annotations are stubs, so annotationStore.annotations is EMPTY and
+    // propertyStore.propertyValues holds nothing to walk. Deriving the extent
+    // from those collapsed every open bound to the floor — a smaller silent
+    // sentinel than the constant it replaced — and quietly dropped every
+    // object past it from a gate the user was told was unbounded.
+    mockAnnotations.annotations = [];
+    mockProperties.propertyValues = {};
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => [
+      { count: 700000, min: 0, max: 4e9 },
+    ]);
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 100 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(4e9);
+  });
+
+  it("reaches past an explicit bound larger than the measured extent", async () => {
+    // The open side must clear the requested bound too, or the rectangle is
+    // inverted and a legitimate one-sided request is rejected as bad input.
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => [
+      { count: 10, min: 0, max: 5 },
+    ]);
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 9e9 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(9e9);
+  });
+
+  it("still reaches far out when the extent cannot be measured", async () => {
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => {
+      throw new Error("network");
+    });
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 100 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(1e24);
+  });
+
+  it("captures and restores analysis plots in the revert snapshot", async () => {
+    const plot = {
+      id: "p1",
+      xAxis: null,
+      yAxis: null,
+      gate: null,
+      gateEnabled: true,
+    };
+    mockFilters.analysisPlots = [plot];
+    const snap = snapshotViewState();
+    expect(snap.analysisPlots).toEqual([plot]);
+
+    // A tool then adds a gate; reverting must put the saved plots back.
+    mockFilters.analysisPlots = [plot, { ...plot, id: "p2" }];
+    mockFilters.restoreAnalysisPlots = vi.fn();
+    mockFilters.hydrateAnalysisPlots = vi.fn();
+    await restoreViewState(snap);
+    // restoreAnalysisPlots, NOT hydrateAnalysisPlots. Hydration deliberately
+    // does not schedule a configuration save, so reverting through it undid
+    // the agent's gates in memory while the shared configuration kept them:
+    // the next reload brought them back and any unrelated debounced save
+    // wrote the reverted state instead. Whichever happened first won.
+    expect(mockFilters.restoreAnalysisPlots).toHaveBeenCalledWith([plot]);
+    expect(mockFilters.hydrateAnalysisPlots).not.toHaveBeenCalled();
+    expect(mockFilters.refreshAnalysis).toHaveBeenCalled();
+  });
+
+  it("does not re-resolve gates on a revert that did not touch them", async () => {
+    mockFilters.analysisPlots = [];
+    const snap = snapshotViewState();
+    mockFilters.restoreAnalysisPlots = vi.fn();
+    mockFilters.refreshAnalysis.mockClear();
+    await restoreViewState(snap);
+    expect(mockFilters.restoreAnalysisPlots).not.toHaveBeenCalled();
+    expect(mockFilters.refreshAnalysis).not.toHaveBeenCalled();
   });
 });

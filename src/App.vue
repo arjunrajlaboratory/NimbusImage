@@ -225,19 +225,31 @@
               </button>
             </template>
           </v-tooltip>
-          <v-tooltip
-            text="Analysis: plot object properties against each other and lasso-select objects to keep"
-          >
+          <v-tooltip :text="analysisTooltip">
             <template v-slot:activator="{ props: activatorProps }">
               <button
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
                 :class="{ active: analysisPanel }"
-                aria-label="Analysis plots"
+                :aria-label="analysisAriaLabel"
                 @click.stop="togglePalette('analysisPanel')"
               >
                 <v-icon size="18">mdi-chart-scatter-plot</v-icon>
+                <!-- Count of gates narrowing the object set. Gates apply with
+                     the palette closed and are restored from the saved
+                     configuration, so without this a dataset could open
+                     already filtered with nothing on screen to say why. The
+                     Filters badge cannot cover it: each badge counts only what
+                     its own panel can show. -->
+                <span
+                  v-if="activeAnalysisGateCount > 0"
+                  class="palette-ibtn-badge"
+                >
+                  {{
+                    activeAnalysisGateCount > 9 ? "9+" : activeAnalysisGateCount
+                  }}
+                </span>
               </button>
             </template>
           </v-tooltip>
@@ -1104,6 +1116,35 @@ const filtersAriaLabel = computed(() =>
     : `Filters (${activeFilterCount.value} active)`,
 );
 
+// Gates are counted separately from activeFilterCount: each badge counts what
+// its own panel shows, so the Filters button never claims a filter its panel
+// cannot display (and vice versa).
+const activeAnalysisGateCount = computed(
+  () => filterStore.activeAnalysisGateCount,
+);
+
+const analysisTooltip = computed(() => {
+  const base =
+    "Analysis: plot object properties against each other and " +
+    "select the objects to keep";
+  const count = activeAnalysisGateCount.value;
+  if (count === 0) {
+    return base;
+  }
+  return `${base} (${count} gate${count === 1 ? "" : "s"} active)`;
+});
+
+// Terse like the sibling palette buttons, but carrying the count: aria-label
+// overrides the button's content, which would otherwise hide the badge from
+// assistive tech.
+const analysisAriaLabel = computed(() =>
+  activeAnalysisGateCount.value === 0
+    ? "Analysis plots"
+    : `Analysis plots (${activeAnalysisGateCount.value} gate${
+        activeAnalysisGateCount.value === 1 ? "" : "s"
+      } active)`,
+);
+
 const hasUncomputedProperties = computed(() => {
   const counts = propertyStore.uncomputedCountByProperty;
   for (const id in counts) {
@@ -1290,6 +1331,9 @@ defineExpose({
   appHotkeys,
   routeName,
   activeFilterCount,
+  activeAnalysisGateCount,
+  analysisTooltip,
+  analysisAriaLabel,
   filtersTooltip,
   filtersAriaLabel,
   hasUncomputedProperties,
@@ -1375,7 +1419,8 @@ $palette-cluster-tone: #0f1217;
 }
 
 /* Count badge pinned to the top-right of a palette-toggle button (used by
-   Filters to surface the number of active filters while the panel is closed).
+   Filters and Analysis to surface how much each panel is narrowing the object
+   set while it is closed; each badge counts only its own panel's rows).
    The ring reuses the cluster's own tone, opaque, so the count reads as
    separate from the icon glyph it overlaps. It stays within the cluster's 4px
    padding and its 2px inter-button gap, so it never covers a neighbour. */

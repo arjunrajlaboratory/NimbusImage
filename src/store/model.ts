@@ -1604,6 +1604,16 @@ export interface IAnnotationListPropertyFilter {
   values?: number[];
 }
 
+// One analysis gate as a query term: the DEFINITION (axes + polygon +
+// pinned categories), which the server resolves per request as a pure
+// predicate (SERVER_GATING.md, Phase 3). Shipping definitions instead of
+// resolved id lists keeps page fetches small at any gate size.
+export interface IAnalysisGateFilterTerm {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;
+}
+
 export interface IAnnotationListFilters {
   shape?: string;
   tags?: { values: string[]; exclusive: boolean };
@@ -1613,6 +1623,8 @@ export interface IAnnotationListFilters {
   // A list of id-sets; an annotation matches iff its _id is in EVERY set
   // (AND of $in's). Used to apply the selection and annotation-id filters.
   idConstraints?: string[][];
+  // Analysis gate definitions, ANDed with everything above.
+  analysisGates?: IAnalysisGateFilterTerm[];
 }
 
 export interface IAnnotationListQuery {
@@ -1826,6 +1838,50 @@ export interface IAnalysisPlot {
   yAxis: TAnalysisAxis | null;
   gate: IAnalysisGate | null;
   gateEnabled: boolean;
+}
+
+// One plot in a server-side gate-resolution request: a DRAWN plot's
+// definition (both axes chosen, gate present). The server resolves the gate
+// as a pure per-annotation predicate over the whole dataset; see
+// codebaseDocumentation/SERVER_GATING.md.
+export interface IAnalysisGatePlotRequest {
+  id: string;
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;
+}
+
+// Server-binned display data for one analysis plot above the cap
+// (SERVER_GATING.md, Phase 2). Rows of `counts` are y bins, columns x bins.
+export interface IAnalysisHistogramResponse {
+  counts: number[][];
+  xEdges: number[] | null;
+  yEdges: number[] | null;
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+  inputCount: number;
+  plottedCount: number;
+  // |own gate ∩ input| — the chained badge count — when a gate was sent.
+  gateCount: number | null;
+}
+
+// The histogram response plus display labels for categorical axes, resolved
+// by the panel (labels need the dataset's channel names, which the server
+// does not have).
+export interface IAnalysisHistogramDisplay extends IAnalysisHistogramResponse {
+  xCategoryLabels: string[] | null;
+  yCategoryLabels: string[] | null;
+}
+
+export interface IAnalysisHistogramRequest {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+  bins: { x: number; y: number };
+  upstreamGates: Omit<IAnalysisGatePlotRequest, "id">[];
+  filters: IAnnotationListFilters;
+  gate: IAnalysisGate | null;
 }
 
 export interface IAnnotationPropertyConfiguration {

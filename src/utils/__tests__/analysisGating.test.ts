@@ -16,10 +16,13 @@ import {
   buildPlotSeries,
   chainPlotInputs,
   encodeAnalysisCategoryKey,
+  isEncodedAnalysisCategoryKey,
   jitterFromId,
+  labelForCategoryKey,
   populationSignature,
   resolveGateIds,
   selectionEventToGate,
+  shapeToGate,
 } from "@/utils/analysisGating";
 import {
   AnnotationShape,
@@ -119,12 +122,18 @@ describe("buildPlotSeries", () => {
         channelName,
       });
     const first = build();
-    expect(first.xCategoryLabels).toEqual(["(untagged)", "alpha", "beta"]);
+    // Ordered by ENCODED KEY, not by display label: only key order is
+    // reproducible on the server (labels for `channel` need the dataset
+    // config, and localeCompare is locale-dependent), and an axis that
+    // reorders when a dataset crosses the plot cap is a picture that changes
+    // for no reason the user can see. `v1:["alpha"]` sorts before `v1:[]`
+    // because '"' (0x22) precedes ']' (0x5D).
     expect(first.xCategories).toEqual([
-      encodeAnalysisCategoryKey([]),
       encodeAnalysisCategoryKey(["alpha"]),
       encodeAnalysisCategoryKey(["beta"]),
+      encodeAnalysisCategoryKey([]),
     ]);
+    expect(first.xCategoryLabels).toEqual(["alpha", "beta", "(untagged)"]);
     // Each point sits within half a slot of its category index.
     first.ids.forEach((id, i) => {
       const category = first.xCategoryLabels!.indexOf(
@@ -332,6 +341,105 @@ describe("resolveGateIds", () => {
       skipped: 0,
     };
     expect(resolveGateIds(points, vShape)).toEqual(["leftArm", "rightArm"]);
+  });
+
+  it("excludes categories the gate's pinned order does not know", () => {
+    // SERVER_GATING.md "unknown categories are outside the gate": a category
+    // that did not exist when the gate was drawn plots (appended after the
+    // pinned ones) but never resolves into the gate, no matter how far the
+    // polygon reaches. Population-dependent appended indices are what made
+    // the old inclusion arbitrary — and inexpressible server-side.
+    const gate = {
+      categoryKeyVersion: 1 as const,
+      vertices: [
+        { x: -0.5, y: -1 },
+        { x: 5, y: -1 },
+        { x: 5, y: 2 },
+        { x: -0.5, y: 2 },
+      ],
+      xCategories: [encodeAnalysisCategoryKey(["known"])],
+      yCategories: null,
+    };
+    const series = buildPlotSeries({
+      annotations: [
+        annotation("a", { tags: ["known"] }),
+        annotation("b", { tags: ["appeared-later"] }),
+      ],
+      values: {
+        a: { prop: { Mean: 1 } },
+        b: { prop: { Mean: 1 } },
+      },
+      xAxis: TAGS,
+      yAxis: INTENSITY,
+      channelName,
+      xCategoryOrder: gate.xCategories,
+    });
+    // Both plot (the unknown category is appended at index 1, inside the
+    // polygon's x-range) but only the pinned category resolves.
+    expect(series.ids).toEqual(["a", "b"]);
+    expect(Math.round(series.x[1])).toBe(1);
+    expect(resolveGateIds(series, gate)).toEqual(["a"]);
+  });
+
+  it("applies the unknown-category rule per axis", () => {
+    const gate = {
+      categoryKeyVersion: 1 as const,
+      vertices: [
+        { x: -1, y: -1 },
+        { x: 9, y: -1 },
+        { x: 9, y: 9 },
+        { x: -1, y: 9 },
+      ],
+      xCategories: [encodeAnalysisCategoryKey(["known"])],
+      yCategories: [encodeAnalysisCategoryKey(0)],
+    };
+    const series = buildPlotSeries({
+      annotations: [
+        annotation("both-known", { tags: ["known"], channel: 0 }),
+        annotation("y-unknown", { tags: ["known"], channel: 3 }),
+      ],
+      values: {},
+      xAxis: TAGS,
+      yAxis: CHANNEL,
+      channelName,
+      xCategoryOrder: gate.xCategories,
+      yCategoryOrder: gate.yCategories,
+    });
+    expect(resolveGateIds(series, gate)).toEqual(["both-known"]);
+  });
+});
+
+describe("appended-category ordering", () => {
+  it("appends categories unknown to a pinned order in encoded-key order, not encounter order", () => {
+    // Deterministic display: the same population must plot appended
+    // categories at the same indices regardless of iteration order, AND in
+    // the order the server's derive_axis_categories produces — it sorts
+    // encoded keys by UTF-16 code unit and cannot do anything else (labels
+    // for `channel` need the dataset config; localeCompare is locale-
+    // dependent). "(untagged)" discriminates the two: by label it sorts
+    // FIRST ('(' is 0x28), by key `v1:[]` sorts LAST (']' 0x5D beats '"').
+    const build = (order: (string | null)[]) =>
+      buildPlotSeries({
+        annotations: order.map((tag, i) =>
+          annotation(`n${i}`, { tags: tag === null ? [] : [tag] }),
+        ),
+        values: Object.fromEntries(
+          order.map((_, i) => [`n${i}`, { prop: { Mean: 1 } }]),
+        ),
+        xAxis: TAGS,
+        yAxis: INTENSITY,
+        channelName,
+        xCategoryOrder: [encodeAnalysisCategoryKey(["pinned"])],
+      });
+    const forward = build(["pinned", "delta", null, "carol"]);
+    const reversed = build([null, "carol", "delta", "pinned"]);
+    expect(forward.xCategories).toEqual([
+      encodeAnalysisCategoryKey(["pinned"]),
+      encodeAnalysisCategoryKey(["carol"]),
+      encodeAnalysisCategoryKey(["delta"]),
+      encodeAnalysisCategoryKey([]),
+    ]);
+    expect(reversed.xCategories).toEqual(forward.xCategories);
   });
 });
 
@@ -573,5 +681,88 @@ describe("analysisCategoricalKeys", () => {
 
   it("returns nothing when every axis is a property", () => {
     expect(analysisCategoricalKeys([plot(AREA, INTENSITY)])).toEqual([]);
+  });
+});
+
+describe("shapeToGate", () => {
+  const CATS = {
+    xCategories: [encodeAnalysisCategoryKey(["a"])],
+    yCategories: null,
+  };
+
+  it("parses a closed plotly path into gate vertices", () => {
+    const gate = shapeToGate({ type: "path", path: "M1,2L3,4L5,0Z" }, CATS);
+    expect(gate).toEqual({
+      categoryKeyVersion: 1,
+      vertices: [
+        { x: 1, y: 2 },
+        { x: 3, y: 4 },
+        { x: 5, y: 0 },
+      ],
+      xCategories: CATS.xCategories,
+      yCategories: null,
+    });
+  });
+
+  it("parses decimals and negative coordinates", () => {
+    const gate = shapeToGate(
+      { type: "path", path: "M-1.5,2.25L3e2,-4L5,0Z" },
+      CATS,
+    );
+    expect(gate?.vertices).toEqual([
+      { x: -1.5, y: 2.25 },
+      { x: 300, y: -4 },
+      { x: 5, y: 0 },
+    ]);
+  });
+
+  it("converts a rect shape into four corners", () => {
+    const gate = shapeToGate(
+      { type: "rect", x0: 1, x1: 5, y0: 2, y1: 6 },
+      CATS,
+    );
+    expect(gate?.vertices).toEqual([
+      { x: 1, y: 2 },
+      { x: 5, y: 2 },
+      { x: 5, y: 6 },
+      { x: 1, y: 6 },
+    ]);
+  });
+
+  it("returns null for malformed or degenerate shapes", () => {
+    expect(shapeToGate({ type: "path", path: "M1,2Z" }, CATS)).toBeNull();
+    expect(shapeToGate({ type: "path", path: "garbage" }, CATS)).toBeNull();
+    expect(shapeToGate({ type: "rect", x0: 1 }, CATS)).toBeNull();
+    expect(shapeToGate({ type: "circle" } as any, CATS)).toBeNull();
+    expect(shapeToGate(null, CATS)).toBeNull();
+  });
+});
+
+describe("category keys for a document missing the field", () => {
+  // The backend's locationSchema declares XY/Z/Time without `required`, so
+  // `"location": {}` is a valid write; both sides coerce that to null, which
+  // encodes to "v1:null". That key then has to behave like any other.
+  const NULL_KEY = encodeAnalysisCategoryKey(null);
+
+  it("encodes to the key the server produces", () => {
+    expect(NULL_KEY).toBe("v1:null");
+  });
+
+  it("round-trips as a valid persisted category key", () => {
+    // isEncodedAnalysisCategoryKey guards a persisted gate's pinned order
+    // (resolveAnnotationBrowserConfig). While the decoder reused `null` as
+    // its "not a key" answer, a gate drawn on an axis containing a document
+    // with no location was silently discarded on the next page load — the
+    // gate vanished and its filtering stopped, with no message.
+    expect(isEncodedAnalysisCategoryKey(NULL_KEY)).toBe(true);
+    expect(isEncodedAnalysisCategoryKey("not-a-key")).toBe(false);
+    expect(isEncodedAnalysisCategoryKey("v1:{bad json")).toBe(false);
+  });
+
+  it("labels as (none) rather than as the raw key", () => {
+    // The same confusion made the over-cap heatmap tick read literally
+    // "v1:null" while the below-cap scatter read "(none)" — the cross-cap
+    // display divergence the key-order change exists to prevent.
+    expect(labelForCategoryKey(NULL_KEY, "z", channelName)).toBe("(none)");
   });
 });
