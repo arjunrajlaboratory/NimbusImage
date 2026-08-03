@@ -89,6 +89,12 @@ export class Properties extends VuexModule {
   // can't be walked for the full path set. Empty in wholesale mode.
   discoveredPropertyPaths: string[][] = markRaw([]);
 
+  // Bumped whenever the dataset's property values are (re)loaded — after a
+  // compute or an import, not on a viewport pan. Consumers that must re-derive
+  // from property values (the analysis gates) watch this: values live
+  // server-side, so there is nothing client-side for them to diff.
+  propertyValuesRevision = 0;
+
   // Lazy mode (stub-only) only: server-computed count of annotations still
   // awaiting each property's computation ({propertyId: count}). In wholesale
   // mode the count is derived client-side from the resident annotation set
@@ -244,6 +250,11 @@ export class Properties extends VuexModule {
     }
     // Associate the worker interface with the image
     this.setWorkerInterface({ image, workerInterface });
+  }
+
+  @Mutation
+  bumpPropertyValuesRevision() {
+    this.propertyValuesRevision++;
   }
 
   @Mutation
@@ -782,6 +793,14 @@ export class Properties extends VuexModule {
       this.setPropertiesImpl(previous);
       throw error;
     }
+    // The persisted plot resolver drops axes whose property is unknown, but a
+    // live deletion must do the same immediately. Reconcile only AFTER the
+    // propertyIds write succeeds so a failed backend sync leaves both the
+    // property list and every plot untouched. The plural action batches all
+    // affected plots into one annotation-browser configuration save.
+    await (
+      await import("./filters")
+    ).default.reconcileAnalysisPlotsForPropertyIds(propertyIds);
   }
 
   @Mutation
@@ -817,6 +836,7 @@ export class Properties extends VuexModule {
     if (!main.dataset?.id) {
       return;
     }
+    this.bumpPropertyValuesRevision();
     if (annotations.stubOnlyMode) {
       await this.fetchPropertyPathsSample();
       this.ensureVisiblePropertyValues();
@@ -926,14 +946,16 @@ export class Properties extends VuexModule {
     return newProperty;
   }
 
-  @Action
+  // Both deletion actions propagate configuration-sync failures to callers;
+  // rawError preserves the backend message across each decorator boundary.
+  @Action({ rawError: true })
   async deleteProperty(propertyId: string) {
     await this.deleteProperties([propertyId]);
   }
 
   // Batch variant: removes all the given properties with a single
   // configuration sync instead of one per property.
-  @Action
+  @Action({ rawError: true })
   async deleteProperties(propertyIds: string[]) {
     // TODO: temp another configuration could be using this property!
     // await this.propertiesAPI.deleteProperty(propertyId);

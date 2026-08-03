@@ -14,6 +14,9 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 // here instead of only showing up against a live backend.
 import main from "./index";
 import jobs from "./jobs";
+import rootStore from "./root";
+import "./filters";
+import "./properties";
 
 function mockSuccessfulUploadAndTiles() {
   vi.spyOn(main.api, "uploadJSONFile").mockResolvedValue({
@@ -103,5 +106,38 @@ describe("addMultiSourceMetadata error propagation", () => {
         transcode: true,
       }),
     ).resolves.toBe("item1");
+  });
+});
+
+describe("annotation-browser hydration", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("hydrates plots without directly dispatching a duplicate analysis refresh", async () => {
+    (main as any).setConfigurationImpl({
+      id: "config-1",
+      data: {
+        id: "config-1",
+        name: "config",
+        layers: [],
+        tools: [],
+        scales: {},
+        propertyIds: [],
+        annotationBrowserConfig: { analysisPlots: [] },
+      },
+    });
+    const actionNames: string[] = [];
+    const unsubscribe = rootStore.subscribeAction(({ type }) =>
+      actionNames.push(type),
+    );
+
+    await main.hydrateAnnotationBrowserState();
+    unsubscribe();
+
+    expect(actionNames).toContain("hydrateAnalysisPlots");
+    // Viewer owns the one refresh through its analysisInputSignature watcher;
+    // hydration only changes the state that drives that watcher.
+    expect(actionNames).not.toContain("refreshAnalysis");
   });
 });

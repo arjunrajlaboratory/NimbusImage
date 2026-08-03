@@ -305,6 +305,81 @@ Match each kind of request-data access to its helper:
 
 Rules: validation and `RestException` live in the API layer, never in models. Validate NESTED elements, not just the top-level container — each list entry (`[123]`) and nested map (`propertyValues: {"a1": 5}`) is caller-supplied; `.get()`/`.items()` on a non-dict entry → 500. Add a backend test per malformed-input case (malformed body → 400, not 500); `test/test_validation.py` unit-tests the helpers directly, and endpoint tests assert the 400. When you fix one endpoint, sweep the other endpoints in the same file for the identical gap — reviewers flag one instance per round.
 
+## Resource Bounds on Public Endpoints (validate the DIMENSIONS, not just the shape)
+
+Shape validation stops 500s. It does **not** stop one valid request from
+exhausting the process. PR #1302 took **three consecutive review rounds**
+finding instances of this one class, so check it deliberately.
+
+For every public endpoint, enumerate the dimensions that **multiply**, and
+bound each one — plus their product where the product is what costs:
+
+| dimension | why a per-item cap is not enough |
+|---|---|
+| items × per-item work | 100 plots × a full-dataset coordinate build = ~130 s of CPU from one request |
+| a product cap alone | a 512×512 cell budget still allows **one** axis with 262,144 categories when the other collapses to 1 bin |
+| inner-loop length × collection size | `points_in_polygon` does one full-length numpy pass PER VERTEX: 10,000 vertices × 708K points ≈ 10 s per gate, and **no DB timeout covers Python work** |
+| response size | an unbounded id response is ~380 MB of JSON that lands on Girder *and* the browser |
+| client concurrency | one request per plot = N concurrent full-dataset scans; serialize or pool them |
+
+Three rules that each came from a real finding:
+
+1. **Check budgets AS they accumulate, before converting/retaining.** A
+   guard that validates after building the thing it guards against has
+   already paid the cost — the id-budget check held ~7M ObjectIds on its way
+   to returning a 400.
+2. **Bound what the DATA can produce, not just what the request asks for.**
+   Categories derived from annotations explode on a dataset where every
+   object carries a distinct tag; the API-boundary check cannot see that, so
+   re-check after deriving (helper raises `ValueError` → API maps to 400).
+3. **A backend limit needs its client counterpart.** Lowering a server cap
+   without one meant a 21st plot 400'd every request, the client turned that
+   into `null`, and the changed-input path had already cleared state — every
+   gate stopped filtering with no path to recovery.
+
+**Pick limits from measurement, not intuition.** A "whichever is smaller"
+rule for `$in` vs `$nin` looked obviously right and *lost* time near the
+crossover, because `$nin` costs ~1.4× per element. Time both and put the
+table in the comment.
+
+## A dict that is both client input and an internal write target
+
+When a request dict is validated at the boundary and then *written to* by
+internal code, an allowlist is not enough — the validator must **remove**
+keys it does not own. Two things conspire:
+
+- validators check the fields they know about and pass everything else
+  through untouched;
+- internal writers commonly use `setdefault(...)` / `.get(...) or []`, which
+  **appends to** a client-supplied value instead of replacing it.
+
+On PR #1302 `filters["gateMatchClauses"]` was internal — the gate resolver
+wrote it and the pipeline builder spliced its contents straight into
+`$match.$and`. A client could set it on three `@access.public` endpoints:
+
+```python
+# Uncaught 500: andClauses += "x" -> {"$and": ["x"]} -> OperationFailure
+{"filters": {"gateMatchClauses": "x"}}
+# Arbitrary operator ANDed into the dataset match, on a public endpoint
+{"filters": {"gateMatchClauses": [{"tags": {"$regex": "(a+)+$"}}]}}
+```
+
+Rules:
+
+1. **Strip internal keys at the top of the validator**, before anything
+   reads the dict: `filters.pop("gateMatchClauses", None)`. Stripping (not
+   rejecting) is right for a key that is not part of the client-facing
+   shape — the request simply ignores it.
+2. **Grep the writers, not the readers.** The reader
+   (`_buildListMatchStages`) looks innocuous; the bug lives in the fact that
+   the same dict has two authors. Search for `setdefault`, `.get(x) or []`,
+   and `dict[...] =` against any name that also reaches a request body.
+3. **Test it from the client side.** Every existing test set the key through
+   the resolver, so none of them could see it. Assert the request *succeeds
+   and ignores it*, with a clause that would visibly narrow the result if it
+   were applied — otherwise "stripped" and "applied but harmless" look the
+   same.
+
 ## Loading Plugin Changes Into the Running Backend
 
 The `girder` container bakes the plugin into its image (no source mount). After editing backend plugin code:

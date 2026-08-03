@@ -19,6 +19,7 @@ import {
   IAnnotationListFilters,
 } from "./model";
 
+import { filtersMatchNothing } from "@/utils/annotationListFilters";
 import { logError } from "@/utils/log";
 import { fetchAllPages } from "@/utils/fetch";
 import { markRaw } from "vue";
@@ -124,6 +125,12 @@ export default class AnnotationsAPI {
   async fetchAnnotationListPage(
     query: IAnnotationListQuery,
   ): Promise<IAnnotationListPage> {
+    // An id constraint that is present but empty means "nothing matches", which
+    // the API rejects rather than answering (see filtersMatchNothing). The
+    // client already knows the answer, so it answers instead of asking.
+    if (filtersMatchNothing(query.filters)) {
+      return { total: 0, rows: [], offset: null };
+    }
     const response = await this.client.post("upenn_annotation/list", query);
     return {
       total: response.data.total,
@@ -136,6 +143,9 @@ export default class AnnotationsAPI {
     datasetId: string,
     filters: IAnnotationListFilters,
   ): Promise<string[]> {
+    if (filtersMatchNothing(filters)) {
+      return [];
+    }
     const response = await this.client.post("upenn_annotation/list/ids", {
       datasetId,
       filters,
