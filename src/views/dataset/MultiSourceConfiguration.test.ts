@@ -756,7 +756,7 @@ describe("MultiSourceConfiguration", () => {
       vm.tilesMetadata = [{ dtype: "uint16" }, { dtype: "uint8" }];
 
       expect(vm.submitError).toBe(
-        "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them.",
+        "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them. You will need to start over.",
       );
     });
 
@@ -1845,11 +1845,11 @@ describe("MultiSourceConfiguration", () => {
       expect(result).toBeNull();
       expect(mockAddMultiSourceMetadata).not.toHaveBeenCalled();
       expect(vm.generationErrorMessage).toBe(
-        "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them.",
+        "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them. You will need to start over.",
       );
       expect(wrapper.emitted("generationError")).toEqual([
         [
-          "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them.",
+          "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them. You will need to start over.",
         ],
       ]);
     });

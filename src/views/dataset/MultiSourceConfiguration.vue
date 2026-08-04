@@ -1,5 +1,14 @@
 <template>
   <v-container>
+    <v-alert
+      v-if="mixedSourceDtypeError"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="my-4"
+    >
+      {{ mixedSourceDtypeError }}
+    </v-alert>
     <v-card class="pa-4 my-4">
       <v-list-subheader
         :data-tour="TOUR_ANCHORS.variables"
@@ -149,6 +158,15 @@
         density="compact"
       />
     </v-card>
+    <v-alert
+      v-if="assignmentError && !initializing"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="my-4"
+    >
+      {{ assignmentError }}
+    </v-alert>
     <v-card v-if="initializing" class="my-4">
       <v-card-title class="d-flex align-center">
         <v-progress-circular
@@ -350,18 +368,6 @@
       </div>
     </v-card>
     <v-row>
-      <v-col class="d-flex">
-        <v-alert
-          v-if="submitError"
-          type="error"
-          variant="tonal"
-          density="compact"
-          class="mr-4"
-        >
-          {{ submitError }}
-        </v-alert>
-        <v-spacer />
-      </v-col>
       <v-col class="d-flex justify-end">
         <v-checkbox
           :data-tour="TOUR_ANCHORS.transcodeCheckbox"
@@ -918,13 +924,10 @@ const mixedSourceDtypeError = computed((): string | null => {
   }
   return `Source images use different pixel types (${sourceDtypes.value.join(
     ", ",
-  )}). Convert all source images to the same pixel type before combining them.`;
+  )}). Convert all source images to the same pixel type before combining them. You will need to start over.`;
 });
 
-const submitError = computed((): string | null => {
-  if (mixedSourceDtypeError.value) {
-    return mixedSourceDtypeError.value;
-  }
+const assignmentError = computed((): string | null => {
   if (!submitEnabled()) {
     return "Not all variables are assigned";
   }
@@ -933,6 +936,10 @@ const submitError = computed((): string | null => {
   }
   return null;
 });
+
+const submitError = computed(
+  (): string | null => mixedSourceDtypeError.value ?? assignmentError.value,
+);
 
 const isRGBAssignmentValid = computed(() => {
   if (isMultiBandRGBFile.value && splitRGBBands.value) {
