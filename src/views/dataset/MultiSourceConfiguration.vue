@@ -378,7 +378,7 @@
           color="success"
           size="small"
           @click="submit"
-          :disabled="!submitEnabled() || !isRGBAssignmentValid || isUploading"
+          :disabled="!!submitError || isUploading"
         >
           <v-progress-circular size="16" v-if="isUploading" indeterminate />
           Submit
@@ -898,7 +898,33 @@ const assignmentItems = computed(() => {
     .map(assignmentOptionToAssignmentItem);
 });
 
+const sourceDtypes = computed(() =>
+  Array.from(
+    new Set(
+      (tilesMetadata.value ?? [])
+        .map((tile) =>
+          typeof tile.dtype === "string"
+            ? tile.dtype.trim().toLowerCase()
+            : null,
+        )
+        .filter((dtype): dtype is string => !!dtype),
+    ),
+  ),
+);
+
+const mixedSourceDtypeError = computed((): string | null => {
+  if (sourceDtypes.value.length <= 1) {
+    return null;
+  }
+  return `Source images use different pixel types (${sourceDtypes.value.join(
+    ", ",
+  )}). Convert all source images to the same pixel type before combining them.`;
+});
+
 const submitError = computed((): string | null => {
+  if (mixedSourceDtypeError.value) {
+    return mixedSourceDtypeError.value;
+  }
   if (!submitEnabled()) {
     return "Not all variables are assigned";
   }
@@ -1546,6 +1572,12 @@ async function submit() {
 }
 
 async function generateJson(): Promise<string | null> {
+  if (mixedSourceDtypeError.value) {
+    generationErrorMessage.value = mixedSourceDtypeError.value;
+    emit("generationError", generationErrorMessage.value);
+    return null;
+  }
+
   let channels: string[] | null = null;
   const channelAssignment = assignments.C?.value;
   if (channelAssignment) {
