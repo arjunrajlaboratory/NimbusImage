@@ -79,6 +79,40 @@ export function collectLeafPaths(
   return Array.from(collected.values());
 }
 
+// Budget on resident property values (annotation count × leaf paths per
+// annotation) above which stub-only (lazy) mode activates even when the
+// annotation count alone is under stubThreshold. Without it, a wide dataset
+// (thousands of values per annotation) sails under the count-based threshold
+// and takes the wholesale value-load path. ~1M numeric leaves is on the order
+// of 100 MB as a nested JS object map — already generous.
+export const PROPERTY_VALUE_BUDGET = 1_000_000;
+
+// Value docs sampled to estimate the per-annotation property width for the
+// budget check. Structure is homogeneous across a dataset, so a handful of
+// docs suffices; kept > 1 so a stray sparse doc (partial compute) doesn't
+// under-estimate the width.
+export const PROPERTY_WIDTH_SAMPLE_SIZE = 16;
+
+/**
+ * Whether a dataset should load in stub-only (lazy) mode: either the
+ * annotation count alone exceeds the user-tunable stubThreshold, or the
+ * estimated resident value count (annotations × per-annotation leaf paths)
+ * exceeds PROPERTY_VALUE_BUDGET. Either input may be Infinity when its fetch
+ * failed — unknown size must route to the safe (lazy) path, never wholesale.
+ */
+export function shouldUseStubOnlyMode(
+  annotationCount: number,
+  propertyWidth: number,
+  stubThreshold: number,
+): boolean {
+  if (annotationCount > stubThreshold) {
+    return true;
+  }
+  // 0 × Infinity is NaN; NaN > budget is false, so an empty dataset with an
+  // unknown width still (correctly) loads wholesale.
+  return annotationCount * propertyWidth > PROPERTY_VALUE_BUDGET;
+}
+
 /**
  * Of `ids`, those that lack a cached value for at least one of `paths` (and so
  * must be fetched). An id absent from the cache always counts as missing.

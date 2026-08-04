@@ -50,6 +50,11 @@ import {
   materializeStubAnnotation,
 } from "@/utils/annotation";
 import { selectVisibleIds, clampVisibleBudget } from "@/utils/visibilityBudget";
+import {
+  collectLeafPaths,
+  shouldUseStubOnlyMode,
+  PROPERTY_WIDTH_SAMPLE_SIZE,
+} from "@/utils/propertyValues";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import {
   createDebouncedAbortableTask,
@@ -1797,6 +1802,26 @@ export class Annotations extends VuexModule {
         this.annotationsAPI.getConnectionsForDatasetId(datasetId);
 
       const { stubThreshold } = this.visibilityConfig;
+      // The per-annotation property width joins the mode decision: a wide
+      // dataset (thousands of values per annotation) must go lazy even when
+      // its annotation count alone is under stubThreshold, or the wholesale
+      // property-value load OOMs. Estimated from a bounded sample of value
+      // docs (structure is homogeneous across a dataset), in parallel with
+      // the count fetch. The fallback is folded into the chain (never rejects)
+      // so it can't surface an unhandled rejection during the count await
+      // below; an unknown width routes to the safe (lazy) path, same as an
+      // unknown count.
+      const widthPromise = main.propertiesAPI
+        .getPropertyValuesSample(datasetId, PROPERTY_WIDTH_SAMPLE_SIZE)
+        .then((sample) => collectLeafPaths(sample.map((e) => e.values)).length)
+        .catch((error) => {
+          logError(
+            `Property width sample failed; using stub-only mode: ${
+              (error as Error).message
+            }`,
+          );
+          return Number.POSITIVE_INFINITY;
+        });
       let count: number;
       try {
         count = await this.annotationsAPI.getAnnotationCount(datasetId);
@@ -1812,8 +1837,9 @@ export class Annotations extends VuexModule {
         );
         count = Number.POSITIVE_INFINITY;
       }
+      const propertyWidth = await widthPromise;
 
-      if (count <= stubThreshold) {
+      if (!shouldUseStubOnlyMode(count, propertyWidth, stubThreshold)) {
         // Under threshold: full fetch only. Full annotations are a superset of
         // the server stubs, and setAnnotations builds the centroids / stub map /
         // spatial index client-side — cheap at this size — so re-fetching stubs

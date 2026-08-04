@@ -7,7 +7,59 @@ import {
   uncomputedCountRequest,
   selectUncomputedCount,
   coerceUncomputedCounts,
+  shouldUseStubOnlyMode,
+  PROPERTY_VALUE_BUDGET,
 } from "@/utils/propertyValues";
+
+describe("shouldUseStubOnlyMode", () => {
+  const stubThreshold = 10000;
+
+  it("stays wholesale for a small, narrow dataset", () => {
+    expect(shouldUseStubOnlyMode(5000, 20, stubThreshold)).toBe(false);
+  });
+
+  it("goes lazy above the annotation-count threshold regardless of width", () => {
+    expect(shouldUseStubOnlyMode(10001, 0, stubThreshold)).toBe(true);
+  });
+
+  it("stays wholesale exactly at the count threshold with a narrow width", () => {
+    expect(shouldUseStubOnlyMode(10000, 1, stubThreshold)).toBe(false);
+  });
+
+  it("goes lazy when count × width exceeds the value budget under the count threshold", () => {
+    // 5000 annotations × 5000 values = 25M values, far over budget.
+    expect(shouldUseStubOnlyMode(5000, 5000, stubThreshold)).toBe(true);
+  });
+
+  it("stays wholesale exactly at the value budget", () => {
+    const width = PROPERTY_VALUE_BUDGET / 5000;
+    expect(shouldUseStubOnlyMode(5000, width, stubThreshold)).toBe(false);
+    expect(shouldUseStubOnlyMode(5000, width + 1, stubThreshold)).toBe(true);
+  });
+
+  it("goes lazy on an unknown (Infinity) count — the safe path", () => {
+    expect(
+      shouldUseStubOnlyMode(Number.POSITIVE_INFINITY, 0, stubThreshold),
+    ).toBe(true);
+  });
+
+  it("goes lazy on an unknown (Infinity) width when annotations exist", () => {
+    expect(
+      shouldUseStubOnlyMode(100, Number.POSITIVE_INFINITY, stubThreshold),
+    ).toBe(true);
+  });
+
+  it("stays wholesale for an empty dataset even with unknown width", () => {
+    // 0 × Infinity = NaN; the comparison must not spuriously go lazy.
+    expect(
+      shouldUseStubOnlyMode(0, Number.POSITIVE_INFINITY, stubThreshold),
+    ).toBe(false);
+  });
+
+  it("ignores width when there are no property values", () => {
+    expect(shouldUseStubOnlyMode(9999, 0, stubThreshold)).toBe(false);
+  });
+});
 
 describe("coerceUncomputedCounts", () => {
   it("returns a clean numeric map for a well-formed response", () => {

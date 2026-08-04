@@ -809,9 +809,10 @@ export class Properties extends VuexModule {
   // Smart entry used by callers (dataset mount, import, compute completion).
   // In lazy (stub-only) mode it avoids loading every value into memory: it
   // discovers paths from a sample and loads values only for the visible set.
-  // Otherwise it loads everything as before. The property-filter case (which
-  // still needs every value for client-side filtered drawing) is handled by
-  // AnnotationViewer, which calls fetchAllPropertyValues while a filter is on.
+  // Otherwise it loads everything as before. Property filters never force a
+  // wholesale load in lazy mode: filtering is applied server-side and the
+  // passing-id set drives filteredAnnotations (see
+  // filters.refreshPropertyFilterPassingIds).
   @Action
   async fetchPropertyValues() {
     if (!main.dataset?.id) {

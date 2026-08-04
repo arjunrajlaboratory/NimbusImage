@@ -122,7 +122,7 @@ const numericFields: INumericField[] = [
     key: "stubThreshold",
     label: "Stub mode threshold",
     description:
-      "Dataset annotation count above which stub-only (lazy) mode activates: stubs load first and coordinates/property values load on demand. Independent of the render budget below.",
+      "Dataset annotation count above which stub-only (lazy) mode activates: stubs load first and coordinates/property values load on demand. Independent of the render budget below. Datasets with many property values per annotation can activate lazy mode below this count.",
     step: 1000,
   },
   {

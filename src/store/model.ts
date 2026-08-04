@@ -1642,7 +1642,9 @@ export type THydrationMode = "shapes" | "dots";
 export interface IVisibilityConfig {
   // Dataset annotation count above which stub-only (lazy) mode activates: stubs
   // are fetched and coordinates/property values load on demand. Independent of
-  // the render budget (maxVisible).
+  // the render budget (maxVisible). Wide datasets (many property values per
+  // annotation) can activate lazy mode below this count via
+  // PROPERTY_VALUE_BUDGET (see utils/propertyValues.ts).
   stubThreshold: number;
   // Max annotations to render (stubs or shapes) — the cap when fully zoomed in.
   // Datasets at or below this render fully at every zoom (the size gate).
