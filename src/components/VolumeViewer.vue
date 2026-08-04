@@ -295,6 +295,7 @@ import {
   watch,
 } from "vue";
 import store from "@/store";
+import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 import volumeViewStore from "@/store/volumeView";
@@ -742,23 +743,50 @@ async function updateSegmentationActors() {
     return;
   }
 
+  // Stubs carry no coordinates and cannot be rendered as 3D geometry; only
+  // hydrated annotations have the polygon/point data annotationsTo3D needs.
+  const renderableAnnotations =
+    filterStore.filteredAnnotations.filter(isHydratedAnnotation);
+  const propertyPath = volumeViewStore.segmentationPropertyPath;
+
+  // Property coloring needs a value for *every* rendered annotation —
+  // annotationsTo3D falls back to a flat neutral color if even one is missing.
+  // In lazy mode propertyStore.propertyValues holds only the visible
+  // annotations, and only the displayed columns (which need not include this
+  // property), so read the values for exactly the set being rendered. That set
+  // is bounded by the hydration cap, so this is a bounded fetch. On failure,
+  // fall back to the resident cache: incomplete coloring beats no geometry.
+  let propertyValues = propertyStore.propertyValues;
+  if (
+    annotationStore.stubOnlyMode &&
+    segmentationColorMode.value === "property" &&
+    propertyPath.length > 0
+  ) {
+    try {
+      propertyValues = await propertyStore.fetchValuesForIds({
+        ids: renderableAnnotations.map((annotation) => annotation.id),
+        paths: [propertyPath],
+      });
+    } catch (error) {
+      logError(error);
+    }
+  }
+
   // Async: the loft chain matching runs in a web worker. The previous actors
   // stay on screen until the replacement is ready. Callers don't await this
   // function, so failures are logged here instead of rejecting.
   let result: IAnnotationsTo3DResult;
   try {
     result = await annotationsTo3D({
-      // Stubs carry no coordinates and cannot be rendered as 3D geometry; only
-      // hydrated annotations have the polygon/point data annotationsTo3D needs.
-      annotations: filterStore.filteredAnnotations.filter(isHydratedAnnotation),
+      annotations: renderableAnnotations,
       geometry: activeGeometry,
       currentXY: store.xy,
       currentTime: store.time,
       currentZ: store.z,
       axis: axisMode.value,
       colorMode: segmentationColorMode.value,
-      propertyPath: volumeViewStore.segmentationPropertyPath,
-      propertyValues: propertyStore.propertyValues,
+      propertyPath,
+      propertyValues,
       loftSurfaces: loftSurfaces.value,
       loftOverlapFraction: loftOverlapPercent.value / 100,
     });

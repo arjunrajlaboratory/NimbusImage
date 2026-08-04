@@ -130,9 +130,13 @@ vi.mock("@/tools/creation/toolFromCatalog", () => ({
   ),
 }));
 
-vi.mock("@/store/annotation", () => ({
-  default: {
-    annotations: [],
+vi.mock("@/store/annotation", () => {
+  const store: any = {
+    annotations: [] as any[],
+    // Lazy (stub-only) mode: annotations[] is empty and metadata lives in the
+    // stub map. Tests exercise lazy mode by setting stubOnlyMode + annotationStubs.
+    stubOnlyMode: false,
+    annotationStubs: new Map<string, any>(),
     selectedAnnotationIds: new Set<string>(),
     annotationTags: new Set<string>(),
     setSelected: vi.fn(),
@@ -144,8 +148,29 @@ vi.mock("@/store/annotation", () => ({
     replaceTagsByAnnotationIds: vi.fn(),
     undoOrRedo: vi.fn(),
     computeAnnotationsWithWorker: vi.fn(),
-  },
-}));
+  };
+  // Derived the way the real store derives them, so existing tests that only
+  // set `annotations` keep working and lazy-mode tests get stub behavior.
+  Object.defineProperty(store, "annotationsForIteration", {
+    get: () =>
+      store.stubOnlyMode
+        ? [...store.annotationStubs.values()]
+        : store.annotations,
+  });
+  Object.defineProperty(store, "allAnnotationIds", {
+    get: () =>
+      store.stubOnlyMode
+        ? [...store.annotationStubs.keys()]
+        : store.annotations.map((a: any) => a.id),
+  });
+  Object.defineProperty(store, "annotationCount", {
+    get: () =>
+      store.stubOnlyMode
+        ? store.annotationStubs.size
+        : store.annotations.length,
+  });
+  return { default: store };
+});
 
 vi.mock("@/store/filters", () => ({
   default: {
@@ -173,6 +198,9 @@ vi.mock("@/store/properties", () => ({
     // null here so propertyPathLabel falls back to the dotted path.
     getFullNameFromPath: () => null as string | null,
     fetchPropertyValues: vi.fn(),
+    // Default mirrors the real action's wholesale-mode behavior (the resident
+    // map already holds every value); lazy-mode tests override it.
+    fetchValuesForIds: vi.fn(),
     createProperty: vi.fn(),
     computeProperty: vi.fn(),
   },
@@ -208,6 +236,7 @@ import {
   describeAgentToolCall,
   executeAgentTool,
   isGatedTool,
+  MAX_ANALYSIS_IDS,
   restoreViewState,
   snapshotViewState,
   ToolExecutionError,
@@ -248,6 +277,8 @@ beforeEach(() => {
   mockMain.layers = [];
   mockMain.maps = [];
   mockAnnotations.annotations = [];
+  mockAnnotations.stubOnlyMode = false;
+  mockAnnotations.annotationStubs = new Map();
   mockAnnotations.selectedAnnotationIds = new Set();
   mockJobs.jobIdForToolId = {};
   mockJobs.jobIdForPropertyId = {};
@@ -257,6 +288,11 @@ beforeEach(() => {
   mockProperties.computedPropertyPaths = [];
   mockProperties.propertyStatuses = {};
   mockProperties.getWorkerInterface = vi.fn(() => ({}));
+  // Wholesale-mode default: the resident map is the answer (matches the real
+  // action, which short-circuits when not in lazy mode).
+  mockProperties.fetchValuesForIds = vi.fn(
+    async () => mockProperties.propertyValues,
+  );
   // Reassigned (not just cleared) by tests that make a persist reject, so
   // reset them here — clearAllMocks only resets call history.
   mockMain.syncConfiguration = vi.fn();
@@ -2071,7 +2107,10 @@ describe("data analysis tools", () => {
         { propertyPaths: [["prop1", "mean"]] },
         context,
       );
-      expect(result.totalMatching).toBe(3);
+      // totalCandidates counts the annotations the query matched. (Unlike the
+      // aggregate tools, sampling never reads values for the whole set, so it
+      // cannot report how many of them have a value document.)
+      expect(result.totalCandidates).toBe(3);
       expect(result.rows).toHaveLength(3);
       const byId = Object.fromEntries(
         result.rows.map((row: any) => [row.annotationId, row]),
@@ -2099,7 +2138,7 @@ describe("data analysis tools", () => {
         context,
       );
       expect(result.rows).toHaveLength(MAX_SAMPLE_ROWS);
-      expect(result.totalMatching).toBe(300);
+      expect(result.totalCandidates).toBe(300);
     });
 
     it("rejects an empty propertyPaths array", async () => {
@@ -2379,6 +2418,146 @@ describe("data analysis tools", () => {
       expect(names).toContain("nucleus");
       expect(names).toContain("spot");
     });
+  });
+});
+
+// Phase 2 (PROPERTY_VALUE_SCALING.md): in lazy (stub-only) mode annotations[]
+// is empty and property values are not resident. Before this, every analysis
+// tool silently matched nothing and reported an empty dataset — the failure
+// mode these tests exist to prevent.
+describe("data analysis tools in lazy (stub-only) mode", () => {
+  function makeStub(overrides: any = {}) {
+    return {
+      id: "s1",
+      centroid: { x: 5, y: 6 },
+      location: { XY: 0, Z: 0, Time: 0 },
+      shape: "polygon",
+      channel: 0,
+      tags: [],
+      color: null,
+      ...overrides,
+    };
+  }
+
+  // A lazy dataset of three stubs; annotations[] stays empty as it is in
+  // stub-only mode.
+  function seedLazy(values: { [id: string]: number }, tags: string[] = []) {
+    mockAnnotations.stubOnlyMode = true;
+    mockAnnotations.annotations = [];
+    mockAnnotations.annotationStubs = new Map(
+      Object.keys(values).map((id) => [id, makeStub({ id, tags })]),
+    );
+    const valueMap = Object.fromEntries(
+      Object.entries(values).map(([id, v]) => [id, { prop1: { mean: v } }]),
+    );
+    // Values are NOT resident in lazy mode: the store must fetch them.
+    mockProperties.propertyValues = {};
+    mockProperties.computedPropertyPaths = [["prop1", "mean"]];
+    mockProperties.fetchValuesForIds = vi.fn(async ({ ids }: any) =>
+      Object.fromEntries(
+        ids
+          .filter((id: string) => id in valueMap)
+          .map((id: string) => [id, valueMap[id]]),
+      ),
+    );
+  }
+
+  it("get_annotation_summary counts stubs instead of reporting an empty dataset", async () => {
+    seedLazy({ s1: 1, s2: 2, s3: 3 }, ["nucleus"]);
+
+    const { result } = await executeAgentTool(
+      "get_annotation_summary",
+      {},
+      context,
+    );
+
+    expect(result.total).toBe(3);
+    expect(result.byTag).toMatchObject({ nucleus: 3 });
+  });
+
+  it("list_annotations returns stub rows with the stub centroid", async () => {
+    seedLazy({ s1: 1 });
+
+    const { result } = await executeAgentTool("list_annotations", {}, context);
+
+    expect(result.totalMatching).toBe(1);
+    expect(result.annotations[0]).toMatchObject({
+      id: "s1",
+      name: null,
+      centroid: { x: 5, y: 6 },
+    });
+  });
+
+  it("get_property_histogram fetches values for the analyzed set", async () => {
+    seedLazy({ s1: 1, s2: 2, s3: 3 });
+
+    const { result } = await executeAgentTool(
+      "get_property_histogram",
+      { propertyPath: ["prop1", "mean"] },
+      context,
+    );
+
+    expect(mockProperties.fetchValuesForIds).toHaveBeenCalled();
+    const call = mockProperties.fetchValuesForIds.mock.calls[0][0];
+    expect([...call.ids].sort()).toEqual(["s1", "s2", "s3"]);
+    expect(call.paths).toEqual([["prop1", "mean"]]);
+    expect(result.totalCount).toBe(3);
+  });
+
+  it("get_property_values reports stats from fetched values", async () => {
+    seedLazy({ s1: 1, s2: 3 });
+
+    const { result } = await executeAgentTool(
+      "get_property_values",
+      {},
+      context,
+    );
+
+    expect(result.stats).toHaveLength(1);
+    expect(result.stats[0]).toMatchObject({ count: 2, min: 1, max: 3 });
+  });
+
+  it("get_sample_values reads only the sampled rows, not the whole set", async () => {
+    seedLazy(
+      Object.fromEntries(
+        Array.from({ length: 500 }, (_, i) => [`s${i}`, i]),
+      ) as any,
+    );
+
+    const { result } = await executeAgentTool(
+      "get_sample_values",
+      { propertyPaths: [["prop1", "mean"]], n: 5 },
+      context,
+    );
+
+    expect(result.rows).toHaveLength(5);
+    expect(result.totalCandidates).toBe(500);
+    // The bounded win: values were fetched for 5 ids, not 500.
+    expect(mockProperties.fetchValuesForIds.mock.calls[0][0].ids).toHaveLength(
+      5,
+    );
+  });
+
+  it("aggregate tools refuse an unbounded set and ask the model to narrow it", async () => {
+    mockAnnotations.stubOnlyMode = true;
+    mockAnnotations.annotations = [];
+    mockAnnotations.annotationStubs = new Map(
+      Array.from({ length: MAX_ANALYSIS_IDS + 1 }, (_, i) => [
+        `s${i}`,
+        makeStub({ id: `s${i}` }),
+      ]),
+    );
+    mockProperties.computedPropertyPaths = [["prop1", "mean"]];
+    mockProperties.fetchValuesForIds = vi.fn(async () => ({}));
+
+    await expect(
+      executeAgentTool(
+        "get_property_histogram",
+        { propertyPath: ["prop1", "mean"] },
+        context,
+      ),
+    ).rejects.toThrow(/Narrow the set with the `query` argument/);
+    expect(mockProperties.fetchValuesForIds).not.toHaveBeenCalled();
   });
 });
 

@@ -8,6 +8,7 @@ import volumeViewStore from "@/store/volumeView";
 import {
   AnnotationShape,
   IAnnotation,
+  IAnnotationPropertyValues,
   IChatImage,
   IContrast,
   IDisplayLayer,
@@ -19,9 +20,11 @@ import {
   IToolConfiguration,
   IWorkerInterfaceValues,
   PropertyFilterMode,
+  TAnnotationOrStub,
   TLayerMode,
   TUnitLength,
   TUnitTime,
+  isHydratedAnnotation,
 } from "@/store/model";
 import {
   captureInterfaceScreenshot,
@@ -171,8 +174,14 @@ function resolveLayer(ref: string): IDisplayLayer {
   return layer;
 }
 
-function queryAnnotations(query: IAnnotationQuery = {}): IAnnotation[] {
-  let annotations = annotationStore.annotations;
+// Every predicate below reads a field that IAnnotationStub also carries (id,
+// tags, shape, channel, location), so this iterates the stub-aware union:
+// annotationStore.annotations is EMPTY in stub-only (lazy) mode, which would
+// otherwise make every query — and so every analysis tool — silently match
+// nothing on exactly the large datasets they matter for. Callers that need
+// coordinates/name must narrow with isHydratedAnnotation.
+function queryAnnotations(query: IAnnotationQuery = {}): TAnnotationOrStub[] {
+  let annotations = annotationStore.annotationsForIteration;
   if (query.ids) {
     const ids = new Set(query.ids);
     annotations = annotations.filter((a) => ids.has(a.id));
@@ -272,15 +281,14 @@ function resolveQueryToIdSet(query: unknown): Set<string> | null {
   return new Set(queryAnnotations(query as IAnnotationQuery).map((a) => a.id));
 }
 
-// Ids of the annotations that currently exist for this dataset (the frontend
-// holds them all in memory). Property-value documents can outlive their
-// annotation — a backend cleanup gap leaves values orphaned after deletion
-// (see AI_PANEL_DATA_ANALYSIS_SPEC.md §9) — so analysis intersects with this
-// live set to keep stats and plots to real objects instead of ghost data.
+// Ids of the annotations that currently exist for this dataset. Property-value
+// documents can outlive their annotation — a backend cleanup gap leaves values
+// orphaned after deletion (see AI_PANEL_DATA_ANALYSIS_SPEC.md §9) — so analysis
+// intersects with this live set to keep stats and plots to real objects instead
+// of ghost data. Uses allAnnotationIds, which is stub-aware (the ids come from
+// the stub map in lazy mode, where annotations[] is empty).
 function liveAnnotationIdSet(): Set<string> {
-  return new Set(
-    annotationStore.annotations.map((annotation) => annotation.id),
-  );
+  return new Set(annotationStore.allAnnotationIds);
 }
 
 // Analysis executors await fetchPropertyValues before reading the global
@@ -297,21 +305,57 @@ function assertDatasetUnchanged(context: IAgentToolContext) {
   }
 }
 
-// Collect [annotationId, value] pairs for one property value path. Iterates the
-// query's matches when a query was given (queryAnnotations already restricts to
-// live annotations), else every live annotation — never the raw propertyValues
-// keys, which can include values orphaned by deleted annotations. Only
-// finite-numeric leaves are kept (resolvePathValue drops the rest).
+// Beyond this many annotations, an analysis tool asks the model to narrow with
+// a query instead of pulling a whole large dataset's property values into the
+// browser. Only reached in lazy mode, where values are not resident and must be
+// fetched for the analyzed set (see loadAnalysisValues). The real fix for
+// whole-dataset aggregates at this scale is a server-side aggregation endpoint
+// — see codebaseDocumentation/PROPERTY_VALUE_SCALING.md, Phase 3.
+export const MAX_ANALYSIS_IDS = 50000;
+
+/**
+ * The property values an analysis tool should read for `allowedIds`.
+ *
+ * In wholesale mode the resident map already holds every value. In lazy mode it
+ * holds only the visible annotations and only the *displayed* columns, so the
+ * values for the analyzed set are fetched explicitly — bounded, because a whole
+ * large dataset's values are exactly what lazy mode exists to avoid loading.
+ * Callers must have already awaited `fetchPropertyValues()` (which discovers
+ * the available property paths in both modes).
+ */
+async function loadAnalysisValues(
+  paths: string[][],
+  allowedIds: Set<string> | null,
+): Promise<IAnnotationPropertyValues> {
+  if (!annotationStore.stubOnlyMode) {
+    return propertyStore.propertyValues;
+  }
+  const ids = [...(allowedIds ?? liveAnnotationIdSet())];
+  if (ids.length > MAX_ANALYSIS_IDS) {
+    throw new ToolExecutionError(
+      `This dataset has ${ids.length} annotations, above the ` +
+        `${MAX_ANALYSIS_IDS} an analysis call can load values for. Narrow the ` +
+        "set with the `query` argument (by tag, shape, channel, or " +
+        "currentFrameOnly) and try again.",
+    );
+  }
+  return propertyStore.fetchValuesForIds({ ids, paths });
+}
+
+// Collect [annotationId, value] pairs for one property value path from a values
+// map. Iterates the query's matches when a query was given (queryAnnotations
+// already restricts to live annotations), else every live annotation — never the
+// raw values-map keys, which can include values orphaned by deleted
+// annotations. Only finite-numeric leaves are kept (resolvePathValue drops the
+// rest).
 function collectPathValues(
+  values: IAnnotationPropertyValues,
   path: string[],
   allowedIds: Set<string> | null,
 ): [string, number][] {
   const pairs: [string, number][] = [];
   for (const annotationId of allowedIds ?? liveAnnotationIdSet()) {
-    const value = resolvePathValue(
-      propertyStore.propertyValues[annotationId],
-      path,
-    );
+    const value = resolvePathValue(values[annotationId], path);
     if (value !== null) {
       pairs.push([annotationId, value]);
     }
@@ -359,18 +403,21 @@ function clampHistogramBuckets(value: unknown): number {
 
 // Map each annotation id to its first tag (or "untagged") for tag-grouped
 // plots. Built once per plot call rather than searching annotations per point.
+// Iterates the stub-aware union: tags live on stubs too, and annotations[] is
+// empty in lazy mode (which would leave every point "untagged").
 function buildFirstTagMap(): Map<string, string> {
   const firstTags = new Map<string, string>();
-  for (const annotation of annotationStore.annotations) {
+  for (const annotation of annotationStore.annotationsForIteration) {
     firstTags.set(annotation.id, annotation.tags?.[0] ?? "untagged");
   }
   return firstTags;
 }
 
-// Map each annotation id to its full tag list, for sample rows.
+// Map each annotation id to its full tag list, for sample rows. Stub-aware for
+// the same reason as buildFirstTagMap.
 function buildTagsMap(): Map<string, string[]> {
   const tags = new Map<string, string[]>();
-  for (const annotation of annotationStore.annotations) {
+  for (const annotation of annotationStore.annotationsForIteration) {
     tags.set(annotation.id, annotation.tags ?? []);
   }
   return tags;
@@ -565,7 +612,10 @@ export function buildInterfaceState() {
       currentFrameOnly: filterStore.onlyCurrentFrame,
     },
     annotations: {
-      total: annotationStore.annotations.length,
+      // annotationCount is stub-aware and allocation-free (annotations[] is
+      // empty in lazy mode, and materializing the stub map just to count it
+      // would be wasteful at 700K).
+      total: annotationStore.annotationCount,
       filtered: filterStore.filteredAnnotations.length,
       selected: annotationStore.selectedAnnotationIds.size,
       tags: [...annotationStore.annotationTags],
@@ -1023,10 +1073,12 @@ const registry: { [name: string]: IAgentToolEntry } = {
 
   get_annotation_summary: {
     execute: async () => {
-      const annotations = annotationStore.annotations;
+      // Stub-aware: tags/shape/channel all live on stubs, and annotations[] is
+      // empty in lazy mode (this summary would report an empty dataset).
+      const annotations = annotationStore.annotationsForIteration;
       return {
         result: {
-          total: annotations.length,
+          total: annotationStore.annotationCount,
           filtered: filterStore.filteredAnnotations.length,
           selected: annotationStore.selectedAnnotationIds.size,
           byTag: countBy(annotations, (a) => a.tags),
@@ -1061,14 +1113,21 @@ const registry: { [name: string]: IAgentToolEntry } = {
           : 50;
       const limit = Math.min(requestedLimit, MAX_LIST_ANNOTATIONS);
       const annotations = matching.slice(offset, offset + limit).map((a) => {
-        const n = a.coordinates.length || 1;
-        const centroid = a.coordinates.reduce(
-          (acc, p) => ({ x: acc.x + p.x / n, y: acc.y + p.y / n }),
-          { x: 0, y: 0 },
-        );
+        // Stubs carry a precomputed centroid but no coordinates (and no name),
+        // so derive the centroid from whichever the entry actually has.
+        let centroid: { x: number; y: number };
+        if (isHydratedAnnotation(a)) {
+          const n = a.coordinates.length || 1;
+          centroid = a.coordinates.reduce(
+            (acc, p) => ({ x: acc.x + p.x / n, y: acc.y + p.y / n }),
+            { x: 0, y: 0 },
+          );
+        } else {
+          centroid = a.centroid;
+        }
         return {
           id: a.id,
-          name: a.name,
+          name: isHydratedAnnotation(a) ? a.name : null,
           shape: a.shape,
           tags: a.tags,
           channel: a.channel,
@@ -2042,17 +2101,25 @@ const registry: { [name: string]: IAgentToolEntry } = {
       context: IAgentToolContext,
     ) => {
       await propertyStore.fetchPropertyValues();
-      assertDatasetUnchanged(context);
       const allowedIds = resolveQueryToIdSet(input.query);
+      // Every path this call will summarize, so lazy mode fetches their values
+      // for the analyzed set in one request rather than per path.
+      const reportedPaths = propertyStore.computedPropertyPaths.filter(
+        (path) => !input.propertyId || path[0] === input.propertyId,
+      );
+      const propertyValues = await loadAnalysisValues(
+        reportedPaths,
+        allowedIds,
+      );
+      assertDatasetUnchanged(context);
       const nameOf = (id: string) =>
         propertyStore.properties.find((p) => p.id === id)?.name ?? id;
       const stats = [];
-      for (const path of propertyStore.computedPropertyPaths) {
+      for (const path of reportedPaths) {
         const propertyId = path[0];
-        if (input.propertyId && propertyId !== input.propertyId) {
-          continue;
-        }
-        const values = collectPathValues(path, allowedIds).map(([, v]) => v);
+        const values = collectPathValues(propertyValues, path, allowedIds).map(
+          ([, v]) => v,
+        );
         if (values.length === 0) {
           continue;
         }
@@ -2092,10 +2159,13 @@ const registry: { [name: string]: IAgentToolEntry } = {
     ) => {
       requireDataset();
       await propertyStore.fetchPropertyValues();
-      assertDatasetUnchanged(context);
       const path = validatePropertyPath(input.propertyPath, "propertyPath");
       const allowedIds = resolveQueryToIdSet(input.query);
-      const values = collectPathValues(path, allowedIds).map(([, v]) => v);
+      const propertyValues = await loadAnalysisValues([path], allowedIds);
+      assertDatasetUnchanged(context);
+      const values = collectPathValues(propertyValues, path, allowedIds).map(
+        ([, v]) => v,
+      );
       if (values.length === 0) {
         throw new ToolExecutionError(
           `No numeric values for property value path "${path.join(".")}"; ` +
@@ -2125,7 +2195,6 @@ const registry: { [name: string]: IAgentToolEntry } = {
     ) => {
       requireDataset();
       await propertyStore.fetchPropertyValues();
-      assertDatasetUnchanged(context);
       if (
         !Array.isArray(input.propertyPaths) ||
         input.propertyPaths.length === 0
@@ -2138,32 +2207,41 @@ const registry: { [name: string]: IAgentToolEntry } = {
         validatePropertyPath(path, "propertyPaths[]"),
       );
       const allowedIds = resolveQueryToIdSet(input.query);
-      // Only live annotations that actually have a property-value document —
-      // skips values orphaned by deleted annotations, matching collectPathValues.
-      const matchingIds: string[] = [];
-      for (const annotationId of allowedIds ?? liveAnnotationIdSet()) {
-        if (propertyStore.propertyValues[annotationId] !== undefined) {
-          matchingIds.push(annotationId);
-        }
-      }
       const requestedN =
         typeof input.n === "number" && input.n > 0 ? Math.floor(input.n) : 20;
       const n = Math.min(Math.max(1, requestedN), MAX_SAMPLE_ROWS);
-      const [sampledIds] = downsample(matchingIds, n);
-      const tagsById = buildTagsMap();
-      const rows = sampledIds.map((annotationId) => {
-        const row: { [key: string]: unknown } = {
-          annotationId,
-          tags: tagsById.get(annotationId) ?? [],
-        };
-        for (const path of paths) {
-          row[path.join(".")] = roundSignificant(
-            resolvePathValue(propertyStore.propertyValues[annotationId], path),
-          );
-        }
-        return row;
+
+      // Sampling is bounded by construction: downsample the candidate ids
+      // FIRST, then read values only for the ≤n sampled rows. So this tool
+      // works at any dataset size without the MAX_ANALYSIS_IDS ceiling the
+      // aggregate tools need.
+      const candidateIds = [...(allowedIds ?? liveAnnotationIdSet())];
+      const [sampledIds] = downsample(candidateIds, n);
+      const sampledValues = await propertyStore.fetchValuesForIds({
+        ids: sampledIds,
+        paths,
       });
-      return { result: { rows, totalMatching: matchingIds.length } };
+      assertDatasetUnchanged(context);
+
+      // Only rows that actually have a property-value document — skips values
+      // orphaned by deleted annotations, matching collectPathValues. Counted
+      // over the sample, since the full matching set is not read here.
+      const tagsById = buildTagsMap();
+      const rows = sampledIds
+        .filter((annotationId) => sampledValues[annotationId] !== undefined)
+        .map((annotationId) => {
+          const row: { [key: string]: unknown } = {
+            annotationId,
+            tags: tagsById.get(annotationId) ?? [],
+          };
+          for (const path of paths) {
+            row[path.join(".")] = roundSignificant(
+              resolvePathValue(sampledValues[annotationId], path),
+            );
+          }
+          return row;
+        });
+      return { result: { rows, totalCandidates: candidateIds.length } };
     },
   },
 
@@ -2182,13 +2260,21 @@ const registry: { [name: string]: IAgentToolEntry } = {
     ) => {
       requireDataset();
       await propertyStore.fetchPropertyValues();
-      assertDatasetUnchanged(context);
       const xPath = validatePropertyPath(input.xPropertyPath, "xPropertyPath");
       const yPath = validatePropertyPath(input.yPropertyPath, "yPropertyPath");
       const title = requirePlotTitle(input.title);
       const allowedIds = resolveQueryToIdSet(input.query);
-      const xValues = new Map(collectPathValues(xPath, allowedIds));
-      const yValues = new Map(collectPathValues(yPath, allowedIds));
+      const propertyValues = await loadAnalysisValues(
+        [xPath, yPath],
+        allowedIds,
+      );
+      assertDatasetUnchanged(context);
+      const xValues = new Map(
+        collectPathValues(propertyValues, xPath, allowedIds),
+      );
+      const yValues = new Map(
+        collectPathValues(propertyValues, yPath, allowedIds),
+      );
       const sharedIds: string[] = [];
       for (const id of xValues.keys()) {
         if (yValues.has(id)) {
@@ -2265,11 +2351,14 @@ const registry: { [name: string]: IAgentToolEntry } = {
     ) => {
       requireDataset();
       await propertyStore.fetchPropertyValues();
-      assertDatasetUnchanged(context);
       const path = validatePropertyPath(input.propertyPath, "propertyPath");
       const title = requirePlotTitle(input.title);
       const allowedIds = resolveQueryToIdSet(input.query);
-      const values = collectPathValues(path, allowedIds).map(([, v]) => v);
+      const propertyValues = await loadAnalysisValues([path], allowedIds);
+      assertDatasetUnchanged(context);
+      const values = collectPathValues(propertyValues, path, allowedIds).map(
+        ([, v]) => v,
+      );
       if (values.length === 0) {
         throw new ToolExecutionError(
           `No numeric values for property value path "${path.join(".")}"; ` +
@@ -2321,7 +2410,6 @@ const registry: { [name: string]: IAgentToolEntry } = {
     ) => {
       requireDataset();
       await propertyStore.fetchPropertyValues();
-      assertDatasetUnchanged(context);
       if (
         !Array.isArray(input.propertyPaths) ||
         input.propertyPaths.length === 0
@@ -2335,6 +2423,8 @@ const registry: { [name: string]: IAgentToolEntry } = {
       );
       const title = requirePlotTitle(input.title);
       const allowedIds = resolveQueryToIdSet(input.query);
+      const propertyValues = await loadAnalysisValues(paths, allowedIds);
+      assertDatasetUnchanged(context);
       // At/below the cap: hand Plotly the raw points so it draws exact
       // quartiles and individual outliers. Above it: shipping every point is
       // wasteful and an every-kth downsample silently shifts the box's
@@ -2371,7 +2461,11 @@ const registry: { [name: string]: IAgentToolEntry } = {
         const path = paths[0];
         const firstTags = buildFirstTagMap();
         const groups = new Map<string, number[]>();
-        for (const [id, value] of collectPathValues(path, allowedIds)) {
+        for (const [id, value] of collectPathValues(
+          propertyValues,
+          path,
+          allowedIds,
+        )) {
           const tag = firstTags.get(id) ?? "untagged";
           const group = groups.get(tag);
           if (group) {
@@ -2392,7 +2486,11 @@ const registry: { [name: string]: IAgentToolEntry } = {
       } else {
         data = [];
         for (const path of paths) {
-          const values = collectPathValues(path, allowedIds).map(([, v]) => v);
+          const values = collectPathValues(
+            propertyValues,
+            path,
+            allowedIds,
+          ).map(([, v]) => v);
           if (values.length === 0) {
             continue;
           }

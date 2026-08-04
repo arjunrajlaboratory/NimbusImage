@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { nextTick } from "vue";
-import { shallowMount } from "@vue/test-utils";
+import { shallowMount, flushPromises } from "@vue/test-utils";
 
 vi.mock("@/store", () => ({
   default: {
@@ -20,8 +20,8 @@ vi.mock("@/store", () => ({
   },
 }));
 
-vi.mock("@/store/properties", () => ({
-  default: {
+vi.mock("@/store/properties", () => {
+  const store: any = {
     displayedPropertyPaths: [["propA", "sub1"]],
     getFullNameFromPath: vi.fn((path: string[]) => {
       const map: Record<string, string> = {
@@ -32,15 +32,35 @@ vi.mock("@/store/properties", () => ({
       return map[path.join(".")] || null;
     }),
     propertyValues: {} as Record<string, any>,
-  },
-}));
+  };
+  // Mirrors the real action's wholesale-mode behavior: the resident map is the
+  // answer. Lazy-mode cases override this.
+  store.fetchValuesForIds = vi.fn(async () => store.propertyValues);
+  return { default: store };
+});
 
-vi.mock("@/store/annotation", () => ({
-  default: {
+vi.mock("@/store/annotation", () => {
+  const store: any = {
     annotations: [] as any[],
+    // Lazy (stub-only) mode: annotations[] is empty, metadata lives in stubs.
+    stubOnlyMode: false,
+    annotationStubs: new Map<string, any>(),
     selectedAnnotationIds: new Set<string>(),
-  },
-}));
+  };
+  Object.defineProperty(store, "annotationsForIteration", {
+    get: () =>
+      store.stubOnlyMode
+        ? [...store.annotationStubs.values()]
+        : store.annotations,
+  });
+  Object.defineProperty(store, "annotationCount", {
+    get: () =>
+      store.stubOnlyMode
+        ? store.annotationStubs.size
+        : store.annotations.length,
+  });
+  return { default: store };
+});
 
 vi.mock("@/store/filters", () => ({
   default: {},
@@ -137,6 +157,11 @@ describe("AnnotationCSVDialog", () => {
       watchFolder: vi.fn().mockReturnValue({ name: "Folder" }),
     };
     (annotationStore as any).annotations = sampleAnnotations;
+    // Reset the lazy-mode fields too: the mock store is shared across tests, so
+    // without this the stub-only describe block below leaks into every test
+    // that runs after it.
+    (annotationStore as any).stubOnlyMode = false;
+    (annotationStore as any).annotationStubs = new Map();
     (annotationStore as any).selectedAnnotationIds = new Set<string>();
     (propertyStore as any).displayedPropertyPaths = [["propA", "sub1"]];
     (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
@@ -148,6 +173,10 @@ describe("AnnotationCSVDialog", () => {
       return map[path.join(".")] || null;
     });
     (propertyStore as any).propertyValues = {};
+    // Same leak risk: the lazy-mode block overrides this with its own values.
+    (propertyStore as any).fetchValuesForIds = vi.fn(
+      async () => (propertyStore as any).propertyValues,
+    );
   });
 
   it("isTooLargeForPreview is false for small annotation sets", () => {
@@ -282,6 +311,85 @@ describe("AnnotationCSVDialog", () => {
     expect(vm.text).toBe("");
   });
 
+  // Phase 2 (PROPERTY_VALUE_SCALING.md): in lazy (stub-only) mode annotations[]
+  // is empty, so the scope computeds and the preview's value read must both go
+  // through the stub-aware accessors.
+  describe("lazy (stub-only) mode", () => {
+    const stubs = [
+      {
+        id: "s1",
+        centroid: { x: 1, y: 2 },
+        location: { XY: 0, Z: 0, Time: 0 },
+        shape: "point",
+        channel: 0,
+        tags: ["t"],
+        color: null,
+      },
+      {
+        id: "s2",
+        centroid: { x: 3, y: 4 },
+        location: { XY: 0, Z: 0, Time: 0 },
+        shape: "point",
+        channel: 0,
+        tags: [],
+        color: null,
+      },
+    ];
+
+    beforeEach(() => {
+      (annotationStore as any).annotations = [];
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).annotationStubs = new Map(
+        stubs.map((s) => [s.id, s]),
+      );
+    });
+
+    it("counts stubs so the export scope is not an empty set", () => {
+      const wrapper = mountComponent({ annotations: [stubs[0]] });
+      const vm = wrapper.vm as any;
+      expect(vm.allAnnotationCount).toBe(2);
+      // A narrower filtered set than the dataset means a filter IS active.
+      expect(vm.hasActiveFilter).toBe(true);
+    });
+
+    it("exports only the selected stubs, not the whole dataset", async () => {
+      (annotationStore as any).selectedAnnotationIds = new Set(["s1"]);
+      const wrapper = mountComponent({ annotations: stubs });
+      const vm = wrapper.vm as any;
+      vm.annotationScope = "selected";
+      await nextTick();
+
+      await vm.download();
+
+      // isSubset must be true: 1 selected of 2 in the dataset. Before the fix
+      // annotationsToExport was empty, isSubset was false, and the server
+      // exported EVERY annotation.
+      const call = (store as any).exportAPI.exportCsv.mock.calls[0][0];
+      expect(call.annotationIds).toEqual(["s1"]);
+    });
+
+    it("reads preview values for the previewed rows rather than the visible cache", async () => {
+      const wrapper = mountComponent({ annotations: stubs });
+      const vm = wrapper.vm as any;
+      (propertyStore as any).fetchValuesForIds = vi.fn(async () => ({
+        s1: { propA: { sub1: 42 } },
+        s2: { propA: { sub1: 43 } },
+      }));
+      vm.dialog = true;
+      vm.propertyExportMode = "all";
+      vm.annotationScope = "filtered";
+      await nextTick();
+      await flushPromises();
+
+      expect((propertyStore as any).fetchValuesForIds).toHaveBeenCalled();
+      const call = (propertyStore as any).fetchValuesForIds.mock.calls.at(
+        -1,
+      )[0];
+      expect(call.ids).toEqual(["s1", "s2"]);
+      expect(vm.text).toContain("42");
+    });
+  });
+
   it("updateText clears text and sets progress when too large for preview", () => {
     const manyAnnotations = Array.from({ length: 1001 }, (_, i) => ({
       id: `ann${i}`,
@@ -294,10 +402,16 @@ describe("AnnotationCSVDialog", () => {
       datasetId: "ds1",
       color: null,
     }));
+    // The default scope is "all", which counts the STORE's annotations, not the
+    // `annotations` prop (that is the "filtered" scope). Seed both, or this
+    // never reaches the too-large branch and instead passes because a full
+    // synchronous preview generation happens to leave progress at 1.
+    (annotationStore as any).annotations = manyAnnotations;
     const wrapper = mountComponent({ annotations: manyAnnotations });
     const vm = wrapper.vm as any;
     vm.dialog = true;
     vm.updateText();
+    expect(vm.isTooLargeForPreview).toBe(true);
     expect(vm.text).toBe("");
     expect(vm.processingProgress).toBe(1);
   });

@@ -376,13 +376,18 @@ const isDownloading = ref(false);
 
 const annotationScope = ref<"all" | "filtered" | "selected">("all");
 
-const allAnnotationCount = computed(() => annotationStore.annotations.length);
+// annotationCount / annotationsForIteration rather than annotations[]: the
+// latter is EMPTY in lazy (stub-only) mode, which would report 0 annotations,
+// make "no active filter" always look true, and — worst — leave
+// annotationsToExport empty so an "export selected" silently fell through to
+// exporting the whole dataset (isSubset below compares against it).
+const allAnnotationCount = computed(() => annotationStore.annotationCount);
 const filteredAnnotationCount = computed(() => props.annotations.length);
 const selectedAnnotationCount = computed(
   () => annotationStore.selectedAnnotationIds.size,
 );
 const hasActiveFilter = computed(
-  () => props.annotations.length < annotationStore.annotations.length,
+  () => props.annotations.length < annotationStore.annotationCount,
 );
 
 const exportScope = ref<"current" | "all">("current");
@@ -390,15 +395,17 @@ const bulkExporting = ref(false);
 const bulkExportProgress = ref(0);
 const bulkExportError = ref("");
 
-const annotationsToExport = computed(() => {
+// Stub-aware (see allAnnotationCount): stubs carry every fixed CSV column
+// except `name`, and the row builder narrows with isHydratedAnnotation for that.
+const annotationsToExport = computed<TAnnotationOrStub[]>(() => {
   if (annotationScope.value === "selected") {
     const ids = annotationStore.selectedAnnotationIds;
-    return annotationStore.annotations.filter((a) => ids.has(a.id));
+    return annotationStore.annotationsForIteration.filter((a) => ids.has(a.id));
   }
   if (annotationScope.value === "filtered") {
     return props.annotations;
   }
-  return annotationStore.annotations;
+  return annotationStore.annotationsForIteration;
 });
 
 const { loadingDatasets, collectionDatasets, configuration, allDatasetsLabel } =
@@ -533,8 +540,18 @@ async function generateCSVStringForAnnotations() {
     // Process annotations in chunks
     const CHUNK_SIZE = 100;
     const data: (string | number)[][] = [];
-    const propValues = propertyStore.propertyValues;
     const annotations = annotationsToExport.value;
+    // In lazy mode the resident map holds only the visible annotations and only
+    // the *displayed* columns, so the preview would show blank/NA values for
+    // rows it can actually render. Read values for exactly the previewed set —
+    // bounded, because this path only runs at or below
+    // PREVIEW_ANNOTATION_LIMIT. (The real download is server-side and never
+    // touches this map.) This became reachable once lazy mode could trigger on
+    // property *width* at a low annotation count.
+    const propValues = await propertyStore.fetchValuesForIds({
+      ids: annotations.map((annotation) => annotation.id),
+      paths: usedPaths,
+    });
     const nAnnotations = annotations.length;
 
     for (let i = 0; i < nAnnotations; i += CHUNK_SIZE) {
@@ -632,8 +649,7 @@ async function downloadSingleDataset() {
     // Only send annotationIds when exporting a subset, to avoid
     // exceeding MongoDB's 16MB BSON query size limit.
     const exportAnnotations = annotationsToExport.value;
-    const isSubset =
-      exportAnnotations.length < annotationStore.annotations.length;
+    const isSubset = exportAnnotations.length < annotationStore.annotationCount;
 
     await store.exportAPI.exportCsv({
       datasetId: store.dataset.id,

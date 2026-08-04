@@ -53,6 +53,7 @@ const h = vi.hoisted(() => {
   return {
     buildVolume: vi.fn(),
     annotationsTo3D: vi.fn(),
+    fetchValuesForIds: vi.fn(),
     renderer,
     orientationWidget,
     cubeAxes,
@@ -199,8 +200,15 @@ vi.mock("@/store/properties", () => {
       computedPropertyPaths: [],
       getFullNameFromPath: () => "",
       propertyValues: {},
+      fetchValuesForIds: h.fetchValuesForIds,
     }),
   };
+});
+// VolumeViewer only reads stubOnlyMode from the annotation store (to decide
+// whether property values must be fetched for the rendered set).
+vi.mock("@/store/annotation", () => {
+  const { reactive } = require("vue");
+  return { default: reactive({ stubOnlyMode: false }) };
 });
 vi.mock("@/store/volumeView", () => {
   const { reactive } = require("vue");
@@ -253,6 +261,7 @@ vi.mock("@/utils/log", () => ({ logError: vi.fn(), logWarning: vi.fn() }));
 import volumeViewStore from "@/store/volumeView";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
+import annotationStore from "@/store/annotation";
 import VolumeViewer from "./VolumeViewer.vue";
 
 const fakeVolume = {
@@ -319,8 +328,12 @@ beforeEach(() => {
   h.cubeAxes.setVisibility.mockClear();
   h.buildVolume.mockReset().mockResolvedValue([fakeVolume]);
   h.annotationsTo3D.mockReset().mockImplementation(segResult);
+  h.fetchValuesForIds.mockReset().mockResolvedValue({});
   h.renderer.resetCamera.mockClear();
   h.orientationWidget.setEnabled.mockClear();
+  (annotationStore as any).stubOnlyMode = false;
+  (filterStore as any).filteredAnnotations = [];
+  (volumeViewStore as any).segmentationPropertyPath = [];
 });
 
 describe("VolumeViewer", () => {
@@ -464,5 +477,95 @@ describe("VolumeViewer", () => {
     expect(opacityCalls).toContain(0.8);
     expect(h.annotationsTo3D).not.toHaveBeenCalled();
     expect(h.buildVolume).not.toHaveBeenCalled();
+  });
+  // Phase 2 (PROPERTY_VALUE_SCALING.md): in lazy mode propertyStore.propertyValues
+  // holds only the visible annotations and only the *displayed* columns, so
+  // property coloring must read values for the set actually being rendered.
+  // annotationsTo3D falls back to a flat neutral color if even one rendered
+  // annotation lacks a value, so a silent partial read is a visible bug.
+  describe("property coloring in lazy (stub-only) mode", () => {
+    const hydrated = [
+      {
+        id: "a1",
+        shape: "polygon",
+        coordinates: [{ x: 0, y: 0, z: 0 }],
+        location: { XY: 0, Z: 0, Time: 0 },
+        tags: [],
+        channel: 0,
+        datasetId: "d1",
+        name: null,
+      },
+      {
+        id: "a2",
+        shape: "polygon",
+        coordinates: [{ x: 1, y: 1, z: 0 }],
+        location: { XY: 0, Z: 0, Time: 0 },
+        tags: [],
+        channel: 0,
+        datasetId: "d1",
+        name: null,
+      },
+    ];
+
+    it("fetches values for the rendered set and passes them to annotationsTo3D", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (filterStore as any).filteredAnnotations = hydrated;
+      (volumeViewStore as any).segmentationPropertyPath = ["propA"];
+      const fetched = { a1: { propA: 1 }, a2: { propA: 2 } };
+      h.fetchValuesForIds.mockResolvedValue(fetched);
+
+      await mountReady();
+      volumeViewStore.setSegmentationColorMode("property");
+      await nextTick();
+      await flushPromises();
+
+      expect(h.fetchValuesForIds).toHaveBeenCalledWith({
+        ids: ["a1", "a2"],
+        paths: [["propA"]],
+      });
+      expect(h.annotationsTo3D.mock.calls.at(-1)![0]).toMatchObject({
+        propertyValues: fetched,
+      });
+    });
+
+    it("does not fetch when coloring by tag", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (filterStore as any).filteredAnnotations = hydrated;
+      (volumeViewStore as any).segmentationPropertyPath = ["propA"];
+
+      await mountReady();
+      await flushPromises();
+
+      expect(h.fetchValuesForIds).not.toHaveBeenCalled();
+    });
+
+    it("does not fetch in wholesale mode (the resident map is complete)", async () => {
+      (annotationStore as any).stubOnlyMode = false;
+      (filterStore as any).filteredAnnotations = hydrated;
+      (volumeViewStore as any).segmentationPropertyPath = ["propA"];
+
+      await mountReady();
+      volumeViewStore.setSegmentationColorMode("property");
+      await nextTick();
+      await flushPromises();
+
+      expect(h.fetchValuesForIds).not.toHaveBeenCalled();
+    });
+
+    it("still renders geometry when the value fetch fails", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (filterStore as any).filteredAnnotations = hydrated;
+      (volumeViewStore as any).segmentationPropertyPath = ["propA"];
+      h.fetchValuesForIds.mockRejectedValue(new Error("network"));
+
+      await mountReady();
+      h.annotationsTo3D.mockClear();
+      volumeViewStore.setSegmentationColorMode("property");
+      await nextTick();
+      await flushPromises();
+
+      // Falls back to the resident cache rather than aborting the rebuild.
+      expect(h.annotationsTo3D).toHaveBeenCalled();
+    });
   });
 });

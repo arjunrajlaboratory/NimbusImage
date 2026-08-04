@@ -864,6 +864,61 @@ export class Properties extends VuexModule {
     this.updatePropertyValues(values);
   }
 
+  // Values for an explicit set of annotation ids and property paths, returned
+  // as a plain map without touching the visible-set cache.
+  //
+  // Lazy-mode consumers that read values for a bounded set *other than the
+  // viewport's* need this: `propertyValues` then holds only the visible
+  // annotations and only the *displayed* columns, so 3D segmentation coloring
+  // (which renders the hydrated set, and whose property may not be a displayed
+  // column) and agent analysis (which reads a queried set) would otherwise
+  // silently see missing values. Deliberately does not commit into
+  // `propertyValues`: that cache is pruned to the visible set on every pan, so
+  // merging a different set in would either be dropped immediately or fight
+  // the pruning.
+  //
+  // In wholesale mode the resident map already holds every value, so it is
+  // returned directly and no request is made. Callers must bound `ids`
+  // themselves — this will happily fetch as many as it is given.
+  @Action
+  async fetchValuesForIds({
+    ids,
+    paths,
+  }: {
+    ids: string[];
+    paths: string[][];
+  }): Promise<IAnnotationPropertyValues> {
+    if (!annotations.stubOnlyMode) {
+      return this.propertyValues;
+    }
+    const datasetId = main.dataset?.id;
+    if (!datasetId || ids.length === 0 || paths.length === 0) {
+      return {};
+    }
+    // Reuse anything the visible cache already holds for these paths, and
+    // request only the genuinely missing ids (the hydrated/queried set usually
+    // overlaps the viewport heavily).
+    const cached = this.propertyValues;
+    const idsToFetch = idsMissingPaths(ids, cached, paths);
+    const result: IAnnotationPropertyValues = {};
+    for (const id of ids) {
+      if (cached[id]) {
+        result[id] = cached[id];
+      }
+    }
+    if (idsToFetch.length > 0) {
+      const entries = await this.propertiesAPI.getPropertyValuesForIds(
+        datasetId,
+        idsToFetch,
+        paths,
+      );
+      for (const { annotationId, values } of entries) {
+        result[annotationId] = { ...result[annotationId], ...values };
+      }
+    }
+    return result;
+  }
+
   @Action
   async fetchPropertyPathsSample() {
     if (!main.dataset?.id) {
