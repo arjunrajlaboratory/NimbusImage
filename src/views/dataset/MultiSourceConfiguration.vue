@@ -1,5 +1,14 @@
 <template>
   <v-container>
+    <v-alert
+      v-if="mixedSourceDtypeError"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="my-4"
+    >
+      {{ mixedSourceDtypeError }}
+    </v-alert>
     <v-card class="pa-4 my-4">
       <v-list-subheader
         :data-tour="TOUR_ANCHORS.variables"
@@ -149,6 +158,15 @@
         density="compact"
       />
     </v-card>
+    <v-alert
+      v-if="assignmentError && !initializing"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="my-4"
+    >
+      {{ assignmentError }}
+    </v-alert>
     <v-card v-if="initializing" class="my-4">
       <v-card-title class="d-flex align-center">
         <v-progress-circular
@@ -350,18 +368,6 @@
       </div>
     </v-card>
     <v-row>
-      <v-col class="d-flex">
-        <v-alert
-          v-if="submitError"
-          type="error"
-          variant="tonal"
-          density="compact"
-          class="mr-4"
-        >
-          {{ submitError }}
-        </v-alert>
-        <v-spacer />
-      </v-col>
       <v-col class="d-flex justify-end">
         <v-checkbox
           :data-tour="TOUR_ANCHORS.transcodeCheckbox"
@@ -378,7 +384,7 @@
           color="success"
           size="small"
           @click="submit"
-          :disabled="!submitEnabled() || !isRGBAssignmentValid || isUploading"
+          :disabled="!!submitError || isUploading"
         >
           <v-progress-circular size="16" v-if="isUploading" indeterminate />
           Submit
@@ -898,7 +904,30 @@ const assignmentItems = computed(() => {
     .map(assignmentOptionToAssignmentItem);
 });
 
-const submitError = computed((): string | null => {
+const sourceDtypes = computed(() =>
+  Array.from(
+    new Set(
+      (tilesMetadata.value ?? [])
+        .map((tile) =>
+          typeof tile.dtype === "string"
+            ? tile.dtype.trim().toLowerCase()
+            : null,
+        )
+        .filter((dtype): dtype is string => !!dtype),
+    ),
+  ),
+);
+
+const mixedSourceDtypeError = computed((): string | null => {
+  if (sourceDtypes.value.length <= 1) {
+    return null;
+  }
+  return `Source images use different pixel types (${sourceDtypes.value.join(
+    ", ",
+  )}). Convert all source images to the same pixel type before combining them. You will need to start over.`;
+});
+
+const assignmentError = computed((): string | null => {
   if (!submitEnabled()) {
     return "Not all variables are assigned";
   }
@@ -907,6 +936,10 @@ const submitError = computed((): string | null => {
   }
   return null;
 });
+
+const submitError = computed(
+  (): string | null => mixedSourceDtypeError.value ?? assignmentError.value,
+);
 
 const isRGBAssignmentValid = computed(() => {
   if (isMultiBandRGBFile.value && splitRGBBands.value) {
@@ -1546,6 +1579,12 @@ async function submit() {
 }
 
 async function generateJson(): Promise<string | null> {
+  if (mixedSourceDtypeError.value) {
+    generationErrorMessage.value = mixedSourceDtypeError.value;
+    emit("generationError", generationErrorMessage.value);
+    return null;
+  }
+
   let channels: string[] | null = null;
   const channelAssignment = assignments.C?.value;
   if (channelAssignment) {
