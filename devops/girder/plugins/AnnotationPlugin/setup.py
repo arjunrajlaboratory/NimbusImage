@@ -35,7 +35,16 @@ setup(
         "cryptography",
         "requests",
     ],
-    extras_require={"girder": [], "worker": []},
+    extras_require={
+        "girder": [],
+        "worker": [],
+        # Columnar property-value store (Phase 3, see
+        # codebaseDocumentation/PROPERTY_VALUE_SCALING.md). Optional so the
+        # plugin installs without the numeric stack; the store's read/build
+        # paths raise a clear error until these are present. numpy is already
+        # available transitively (large_image), pinned here for clarity.
+        "columnar": ["numpy", "scipy", "zarr", "anndata"],
+    },
     include_package_data=True,
     entry_points={
         "girder.plugin": [

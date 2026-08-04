@@ -1,6 +1,7 @@
 # Property-Value Scaling: Lazy Loading and a Zarr Columnar Store
 
-**Status:** Phase 1 implemented; Phases 2–3 planned.
+**Status:** Phase 1 implemented; Phase 2 planned; Phase 3 backend foundation
+started (store + build job + state, unwired from live routes).
 **Branch:** `claude/property-value-lazy-load`
 
 ## Motivation
@@ -174,6 +175,38 @@ shippable and testable.
 ---
 
 ## Phase 3 — Zarr columnar property-value store
+
+### What is implemented so far
+
+The backend **foundation** is committed but **not wired into any live route**
+(routing dispatch stays behind the per-dataset flag, which is never set until a
+build runs), so it cannot affect current behavior. numpy/scipy/zarr/anndata are
+not installed in the dev/CI sandbox, so the numeric layer is written +
+flake8-clean + covered by a skipped-until-extras test — **validate with `tox`
+inside a rebuilt girder container.**
+
+| File | Role | Validated here? |
+|------|------|-----------------|
+| `server/helpers/valueMatrix.py` | pure flatten/unflatten/bucket/filter logic | yes (no deps) |
+| `server/helpers/valueStoreState.py` | per-dataset flag + generation on folder meta | inspection |
+| `server/helpers/zarrValueStore.py` | AnnData/Zarr build + batch/histogram/filter reads | inspection; skipped test |
+| `server/helpers/zarr_value_job.py` | local build job (Zenodo-job pattern) | inspection |
+| `test/test_value_matrix.py` | pure-logic unit tests | runs in any tox env |
+| `test/test_zarr_value_store.py` | build↔read roundtrip parity | skips without extras |
+| `setup.py` | `columnar` extra (numpy/scipy/zarr/anndata) | — |
+
+**Numeric-only first cut:** `X` holds numeric leaves; string/null/bool leaves
+are skipped (count recorded in `uns.nimbus_meta`) and stay served from Mongo.
+A real stored `0.0` is preserved via a `present` mask layer (so write-time
+zero-elimination can't turn it into an absent value).
+
+**Not yet done (next Phase 3 steps):** the read-routing dispatch in the
+endpoints (`/batch`, `/histogram`, `/list/ids`, `uncomputed_counts`) behind
+`valueStoreState.is_zarr_ready`; a build-trigger + status endpoint; the
+dirty-on-write hook (`model.upenn_annotation.removeStringIds` is the natural
+bind point); the scanpy-facing matrix download; and the direct-to-Zarr write
+path. Column reads currently read whole CSC column slices; a CSR mirror for the
+row-oriented `/batch` is deferred until measured.
 
 ### Why Zarr (and scanpy compatibility)
 
@@ -363,14 +396,18 @@ a review finds something this list missed.
 - Agent sampling tool pulls only the queried ID set in lazy mode — new test in
   the agent suite.
 
-### Columnar store (Phase 3 — to add)
-- Zarr reader returns byte-identical `/batch`, `/histogram`, `/list/ids`, and
-  `uncomputed_counts` results to the Mongo path for a fixture dataset — backend
-  parity test (tox).
-- Flag off → Mongo path; flag on → Zarr path — routing test.
-- Build job flips the flag and bumps generation only on success — job test.
-- A write after build marks the dataset dirty (or updates Zarr) — event-hook
-  test.
+### Columnar store (Phase 3)
+- Pure flatten/unflatten/bucket/filter logic — `test/test_value_matrix.py`
+  (runs in any tox env; a real stored `0.0` and absent-value semantics
+  covered).
+- Zarr build↔read roundtrip: `read_batch`/`histogram`/`filter_passing_ids`
+  match the Mongo shapes, stored `0.0` survives, non-numeric skipped —
+  `test/test_zarr_value_store.py` (skips without the columnar extras; run under
+  the rebuilt container).
+- *To add with the routing dispatch:* flag off → Mongo, flag on → Zarr
+  (routing test); build job flips the flag / bumps generation only on success
+  (job test); a write after build marks the dataset dirty (event-hook test);
+  Zarr vs Mongo parity on a real fixture dataset end to end.
 
 ### Process rules proved here
 - Verify from a fresh page load on a dataset that actually has many property
