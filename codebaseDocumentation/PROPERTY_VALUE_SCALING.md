@@ -1,7 +1,10 @@
 # Property-Value Scaling: Lazy Loading and a Zarr Columnar Store
 
-**Status:** Phases 1 and 2 implemented; Phase 3 backend foundation started
-(store + build job + state, unwired from live routes).
+**Status:** Phases 1 and 2 implemented. Phase 3 backend implemented and wired
+(store, build job, state machine, read routing, control endpoints) but **not yet
+run**: the numeric extras are absent from the dev sandbox, so it needs `tox` in a
+rebuilt container — see *Testing each phase independently*. No dataset routes to
+Zarr until a build is explicitly triggered for it.
 **Branch:** `claude/property-value-lazy-load`
 
 ## Motivation
@@ -253,12 +256,13 @@ Regression checklist.
 
 ### What is implemented so far
 
-The backend **foundation** is committed but **not wired into any live route**
-(routing dispatch stays behind the per-dataset flag, which is never set until a
-build runs), so it cannot affect current behavior. numpy/scipy/zarr/anndata are
-not installed in the dev/CI sandbox, so the numeric layer is written +
-flake8-clean + covered by a skipped-until-extras test — **validate with `tox`
-inside a rebuilt girder container.**
+The backend is **complete and wired**, but gated: a dataset serves reads from
+Zarr only after a build has been explicitly triggered for it and has succeeded,
+so an untouched dataset is byte-for-byte unaffected. numpy/scipy/zarr/anndata
+are not installed in the dev/CI sandbox, so **none of the numeric paths have
+executed** — they are written, `flake8`-clean, byte-compiled, and covered by
+tests that skip without the extras. **Validate with `tox` in a rebuilt girder
+container before trusting any of it.**
 
 | File | Role | Validated here? |
 |------|------|-----------------|
@@ -268,6 +272,10 @@ inside a rebuilt girder container.**
 | `server/helpers/zarr_value_job.py` | local build job (Zenodo-job pattern) | inspection |
 | `test/test_value_matrix.py` | pure-logic unit tests | runs in any tox env |
 | `test/test_zarr_value_store.py` | build↔read roundtrip parity | skips without extras |
+| `test/test_value_store_state.py` | state machine + id-routing predicate | needs Girder (tox) |
+| `api/propertyValues.py` | `/batch` + `/histogram` dispatch; columnar build/status/delete; dirty-on-write | needs Girder (tox) |
+| `api/annotation.py` | `/list/ids` dispatch when filters are property-only | needs Girder (tox) |
+| `models/annotation.py` | `canServeIdsFromValuesAlone` routing predicate | needs Girder (tox) |
 | `setup.py` | `columnar` extra (numpy/scipy/zarr/anndata) | — |
 
 **Numeric-only first cut:** `X` holds numeric leaves; string/null/bool leaves
@@ -275,13 +283,45 @@ are skipped (count recorded in `uns.nimbus_meta`) and stay served from Mongo.
 A real stored `0.0` is preserved via a `present` mask layer (so write-time
 zero-elimination can't turn it into an absent value).
 
-**Not yet done (next Phase 3 steps):** the read-routing dispatch in the
-endpoints (`/batch`, `/histogram`, `/list/ids`, `uncomputed_counts`) behind
-`valueStoreState.is_zarr_ready`; a build-trigger + status endpoint; the
-dirty-on-write hook (`model.upenn_annotation.removeStringIds` is the natural
-bind point); the scanpy-facing matrix download; and the direct-to-Zarr write
-path. Column reads currently read whole CSC column slices; a CSR mirror for the
-row-oriented `/batch` is deferred until measured.
+**Read routing.** `should_serve_from_zarr(dataset)` gates every dispatch and is
+stricter than the stored flag: it also requires the extras to be importable and
+the store to exist on disk, so a rolled-back image or a deleted directory falls
+back to MongoDB instead of failing. Wired into:
+
+- `POST /annotation_property_values/batch` — identical response shape.
+- `GET /annotation_property_values/histogram` — identical `{min,max,count}`
+  buckets.
+- `POST /upenn_annotation/list/ids` — **only** when the filters can be answered
+  from values alone (`canServeIdsFromValuesAlone`, the same condition as the
+  existing PV-driven MongoDB branch, and exactly what the lazy-mode property
+  filter sends). Anything constraining annotation fields still needs the
+  annotation collection.
+
+Input validation runs *before* dispatch, so a malformed id is a 400 on both
+backends.
+
+**Control endpoints** (`GET`/`POST build`/`DELETE` on
+`annotation_property_values/columnar`): status, schedule a build job, tear a
+store down. Build requires WRITE (it writes a derived artifact); status requires
+READ. A server without the extras returns **501** with an actionable message
+rather than a 500.
+
+**Staleness.** The value-write paths (`add`, `addMultiple`, `delete`) mark the
+dataset dirty, which immediately routes reads back to MongoDB until a rebuild.
+`mark_datasets_dirty` filters to store-carrying datasets in one query, so it
+costs nothing for ordinary datasets.
+
+**Not yet done:** `uncomputed_counts` still always reads MongoDB (counts only,
+but it does scan the value collection); the scanpy-facing matrix download
+endpoint (the store is directly `anndata.read_zarr`-able from disk today); the
+direct-to-Zarr write path; and any UI for building/deleting a store. Column
+reads take whole CSC column slices; a CSR mirror for the row-oriented `/batch`
+is deferred until measured.
+
+**Known staleness parity:** deleting annotations orphans value rows in a built
+store until the next rebuild. The existing MongoDB PV-driven `listIds` path has
+the same property (it does not verify the annotation still exists), so this is
+parity, not a regression.
 
 ### Why Zarr (and scanpy compatibility)
 
@@ -447,6 +487,252 @@ package and REST:
 
 ---
 
+## Testing each phase independently
+
+The three phases are deliberately separable. This section is the procedure for
+each one **on its own**, including how to force the conditions it needs so you
+are never relying on another phase being deployed or on having a particular
+dataset to hand.
+
+### The one thing to understand first: how to tell which mode you are in
+
+Every phase hinges on wholesale vs lazy (stub-only) mode, and you can read the
+mode straight off the network tab when you open a dataset. Filter requests by
+`annotation_property_values`:
+
+| What you see | What it means |
+|---|---|
+| `GET …/annotation_property_values?…&limit=16&sort=_id` | **Phase 1 is deployed.** This is the property-width probe, and it fires on every dataset open in both modes. |
+| Repeated `GET …/annotation_property_values?datasetId=…` paging through everything, and **no** `/batch` POSTs | **Wholesale mode.** Every value is being loaded. |
+| `GET …&limit=512&sort=_id` followed by `POST …/annotation_property_values/batch` | **Lazy mode.** A path sample, then values only for the visible annotations. |
+
+Two independent confirmations, no new tooling required:
+
+- `__nimbusMem.snapshot()` in the console (see `MEMORY_DEBUGGING.md`): in lazy
+  mode `annot` is **0** (the full array is empty by design) while the dataset
+  clearly has annotations, and `prop vals` stays viewport-sized instead of
+  dataset-sized.
+- The annotation-list tab switches to server-paginated mode (page numbers, plus
+  an inline notice that ROI filters cannot be applied server-side).
+
+### Phase 1 — the lazy-mode trigger
+
+**What it changes:** only the *decision* of which mode a dataset opens in.
+Nothing about how either mode then behaves.
+
+Automated:
+
+```bash
+pnpm vitest run src/utils/__tests__/propertyValues.test.ts   # the decision helper
+pnpm vitest run src/store/__tests__/properties.test.ts       # mode wiring
+```
+
+Manual — the point is to show that **width alone** now flips the mode:
+
+1. Open any ordinary dataset. Confirm the `limit=16` probe fires and the
+   dataset still opens in **wholesale** mode. This proves the probe is additive
+   and did not change existing behavior.
+2. On a dataset whose annotation count is comfortably **below** `stubThreshold`
+   but which has many values per annotation (thousands), confirm it now opens in
+   **lazy** mode. Before Phase 1 this dataset would have loaded every value.
+3. Confirm the boundary is width-driven, not count-driven, by opening a dataset
+   with the same annotation count but few properties — it must stay wholesale.
+
+To make a wide dataset if you do not have one, add many property values per
+annotation via the Python API (values are what the probe measures — the property
+*definitions* do not matter):
+
+```python
+import nimbusimage as ni
+
+client = ni.connect("http://localhost:8080/api/v1", api_key="…")
+ds = client.dataset(name="Wide test")
+ids = [a["_id"] for a in ds.annotations.list()]
+
+# 2,000 distinct property ids per annotation. Batch the POSTs — the endpoint
+# takes a list of {datasetId, annotationId, values} entries.
+BATCH = 500
+entries = [
+    {
+        "datasetId": ds.id,
+        "annotationId": aid,
+        "values": {f"prop{i}": float(i) for i in range(2000)},
+    }
+    for aid in ids
+]
+for i in range(0, len(entries), BATCH):
+    client.girder.post(
+        "/annotation_property_values/multiple", json=entries[i:i + BATCH]
+    )
+```
+
+With 2,000 values per annotation, the budget (1,000,000 values) is crossed at
+about 500 annotations — deliberately well under the 10,000 default
+`stubThreshold`, so the two triggers cannot be confused.
+
+**Independence:** needs nothing from Phases 2–3.
+**Rollback:** raising `PROPERTY_VALUE_BUDGET` effectively disables the new
+trigger; the count threshold behaves exactly as before.
+
+### Phase 2 — consumers read scoped values
+
+**What it changes:** how consumers read values *once already in lazy mode*.
+
+**Forcing lazy mode without a wide dataset (this is what makes Phase 2
+independently testable):** open the visibility settings and set **Stub mode
+threshold** to its minimum (1,000), then open any dataset with more than 1,000
+annotations. It will open in lazy mode regardless of property width, so you can
+exercise Phase 2 on ordinary data and without Phase 1 deployed.
+
+Automated:
+
+```bash
+pnpm vitest run src/store/__tests__/properties.test.ts                     # fetchValuesForIds + no wholesale load
+pnpm vitest run src/components/VolumeViewer.test.ts                        # 3D coloring
+pnpm vitest run src/agent/executors.test.ts                                # agent tools in lazy mode
+pnpm vitest run src/components/AnnotationBrowser/AnnotationCSVDialog.test.ts  # export scope + preview
+pnpm vitest run src/__tests__/regressionChecklist.test.ts                   # checklist citations resolve
+```
+
+Manual, in lazy mode — each of these was silently broken before, so all three
+are the difference between "blank/empty" and "correct":
+
+1. **3D property coloring.** Open the volume viewer, show segmentations, set
+   colour mode to **property**, pick a property. Expect a real colour ramp. A
+   flat uniform colour is the old bug. Worth doing with a property that is *not*
+   a displayed column in the annotation browser — that was the case most likely
+   to fail.
+2. **AI panel analysis.** Ask for property statistics or a histogram. Expect
+   real numbers. "No numeric values…" or a report of an empty dataset is the old
+   bug. Then ask for something over a large dataset without narrowing: expect
+   the explicit "narrow with `query`" message, not a hang or a wrong answer.
+3. **CSV export scope.** Select a handful of annotations, open the CSV dialog,
+   choose the **selected** scope, download. The file must contain only those
+   rows — previously it silently contained the entire dataset. Also check the
+   preview shows values rather than blanks (needs ≤1,000 rows in scope).
+
+Then confirm nothing regressed in **wholesale** mode by putting
+`stubThreshold` back and repeating 1–3 on a small dataset.
+
+**Independence:** needs lazy mode, which the threshold slider gives you.
+Independent of Phase 3 (that only changes where the backend reads from).
+**Rollback:** the commit is self-contained and frontend-only.
+
+### Phase 3 — the Zarr columnar store
+
+**What it changes:** backend storage only. Response shapes are identical, so
+the frontend cannot tell the difference — which is exactly what makes it
+testable by A/B comparison.
+
+Prerequisite (once): the numeric extras must be installed, and because the
+plugin is `pip install -e`'d at **image build** time, this is a rebuild, not a
+restart:
+
+```bash
+docker compose build girder && docker compose up -d girder
+```
+
+Automated, inside the container:
+
+```bash
+cd devops/girder/plugins/AnnotationPlugin
+tox                                   # whole backend suite
+tox -- -k value_matrix                # pure logic — also runs WITHOUT the extras
+tox -- -k zarr_value_store            # build↔read roundtrip — SKIPS without the extras
+tox -- -k value_store_state           # state machine + id-routing predicate
+```
+
+If `zarr_value_store` reports as skipped, the extras are not installed in the
+image you are running — that is the check, not a pass.
+
+**The decisive test is A/B parity.** Capture the current MongoDB answers, build
+the store, and confirm the answers are unchanged:
+
+```bash
+API=http://localhost:8080/api/v1
+DS=<datasetId>
+TOK=<girder-token>          # -H "Girder-Token: $TOK" on each call
+
+# 0. Confirm we are on MongoDB to begin with.
+curl -s "$API/annotation_property_values/columnar?datasetId=$DS" -H "Girder-Token: $TOK"
+#    -> {"available": true, "storeExists": false, "servingFromZarr": false, …}
+
+# 1. Record the MongoDB answers.
+curl -s "$API/annotation_property_values/histogram?datasetId=$DS&propertyPath=<propId>&buckets=32" \
+     -H "Girder-Token: $TOK" > /tmp/hist.mongo.json
+curl -s -X POST "$API/annotation_property_values/batch" -H "Girder-Token: $TOK" \
+     -H 'Content-Type: application/json' \
+     -d "{\"datasetId\":\"$DS\",\"annotationIds\":[\"<id1>\",\"<id2>\"]}" > /tmp/batch.mongo.json
+curl -s -X POST "$API/upenn_annotation/list/ids" -H "Girder-Token: $TOK" \
+     -H 'Content-Type: application/json' \
+     -d "{\"datasetId\":\"$DS\",\"filters\":{\"propertyFilters\":[{\"path\":[\"<propId>\"],\"mode\":\"range\",\"min\":0}]}}" > /tmp/ids.mongo.json
+
+# 2. Build the store and wait for the job to finish.
+curl -s -X POST "$API/annotation_property_values/columnar/build?datasetId=$DS" -H "Girder-Token: $TOK"
+#    -> {"jobId": "…"}   (watch it in the Girder jobs UI, or poll /job/<id>)
+curl -s "$API/annotation_property_values/columnar?datasetId=$DS" -H "Girder-Token: $TOK"
+#    -> status "ready", generation 1, and servingFromZarr true
+
+# 3. Re-run the three reads and diff. They must be identical.
+#    (Re-run the same three curls into /tmp/*.zarr.json, then:)
+diff /tmp/hist.mongo.json /tmp/hist.zarr.json
+diff /tmp/batch.mongo.json /tmp/batch.zarr.json
+diff /tmp/ids.mongo.json /tmp/ids.zarr.json
+```
+
+Caveats when diffing: `/batch` and `/list/ids` are unordered, so sort before
+comparing; and the Zarr store is numeric-only, so a dataset with **string**
+property values will legitimately differ on those columns (the status endpoint's
+build reports `skipped_non_numeric` for this reason). Use a numeric property for
+the comparison.
+
+Then verify the safety properties, each of which should send reads straight back
+to MongoDB:
+
+1. **Staleness.** Write a property value (recompute a property, or POST to
+   `/annotation_property_values`). The status must flip to `dirty` and
+   `servingFromZarr` to `false`. Reads keep working — from MongoDB.
+2. **Build in flight.** During a build on a large dataset, the status is
+   `building` and `servingFromZarr` is `false`. The app must stay fully usable.
+3. **Missing store.** `rm -rf` the store directory (default
+   `/assetstore/nimbus-value-store/<datasetId>.zarr`) without touching the
+   metadata. `servingFromZarr` must report `false` and reads must still work —
+   this is the `should_serve_from_zarr` disk check.
+4. **Teardown.** `DELETE …/columnar?datasetId=$DS` returns the dataset to
+   MongoDB, leaving the property values themselves untouched. Confirm the three
+   reads still match step 1.
+5. **Extras absent.** On an image without the extras, the status reports
+   `available: false` and a build attempt returns **501** with an actionable
+   message, rather than a 500.
+
+Finally, load the same store as a scientist would, which is the point of the
+AnnData layout:
+
+```python
+import anndata as ad
+adata = ad.read_zarr("/assetstore/nimbus-value-store/<datasetId>.zarr")
+adata            # obs = annotation ids, var = property paths, X = values
+adata.uns["nimbus_meta"]   # generation, schema, skipped_non_numeric
+```
+
+**Independence:** entirely backend, gated per dataset by a flag no other phase
+sets. A dataset with no store is byte-for-byte unaffected, so Phase 3 can be
+deployed while only ever building a store for one test dataset.
+**Rollback:** `DELETE …/columnar` per dataset, or redeploy without the extras —
+`should_serve_from_zarr` then returns false everywhere and every read is
+MongoDB again.
+
+### What is NOT yet covered by any of this
+
+- `uncomputed_counts` still always reads MongoDB (counts only, no value
+  transfer, but it does scan the value collection — a Phase 3 follow-up).
+- There is no UI for building or deleting a store; it is API-only by design
+  while it is being validated.
+- Whole-dataset aggregate analysis above `MAX_ANALYSIS_IDS` is refused rather
+  than computed server-side.
+
+---
+
 ## Regression checklist
 
 Grouped by concern; each item names the test that holds it. Add an item whenever
@@ -531,10 +817,24 @@ a review finds something this list missed.
 - A real stored `0.0` is not read as an absent value (the presence-mask
   invariant) — *"testStoredZeroSurvives"*.
 - Filters AND across columns — *"testMultipleFiltersAreAnded"*.
-- *To add with the routing dispatch:* flag off → Mongo, flag on → Zarr (routing
-  test); the build job flips the flag / bumps generation only on success (job
-  test); a write after build marks the dataset dirty (event-hook test); Zarr vs
-  Mongo parity on a real fixture dataset end to end.
+- A build in flight is never served (the whole point of the `building` state) —
+  *"testBuildingIsNotServed"*.
+- A successful build records its generation and shape —
+  *"testReadyRecordsGenerationAndShape"*.
+- A write after a build sends reads back to MongoDB, preserving the generation
+  so the next build increments — *"testDirtyStopsBeingServed"*.
+- Dirtying is free and harmless for a dataset with no store (write paths call it
+  unconditionally) — *"testDirtyIsANoOpWithoutAStore"* and
+  *"testMarkDatasetsDirtyOnlyTouchesStoreDatasets"*.
+- Teardown returns the dataset to MongoDB —
+  *"testClearStateReturnsToMongo"*.
+- Id routing is exactly as strict as the MongoDB PV-driven branch: property
+  filters alone can use the store, any annotation-field filter cannot —
+  *"testPropertyFilterOnlyCanUseValues"*,
+  *"testNoPropertyFilterCannot"*, *"testAnnotationFieldFiltersForceMongo"*.
+- *Still to add:* end-to-end A/B parity as an automated test (the manual
+  procedure is in *Testing each phase independently*), and a job-level test that
+  a failed build marks the dataset dirty rather than leaving it `building`.
 
 ### CSV export dialog (Phase 2) — `AnnotationCSVDialog.test.ts`
 - Scope counts come from stubs, so the export set is not empty in lazy mode —

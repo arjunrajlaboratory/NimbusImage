@@ -6,7 +6,10 @@ from girder.api.rest import Resource
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
+from girder_jobs.models.job import Job as JobModel
 
+from ..helpers import valueStoreState
+from ..helpers import zarrValueStore
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.validation import (
     requireList,
@@ -33,6 +36,9 @@ class PropertyValues(Resource):
         self.route("GET", (), self.find)
         self.route("GET", ("count",), self.count)
         self.route("GET", ("histogram",), self.histogram)
+        self.route("GET", ("columnar",), self.columnarStatus)
+        self.route("POST", ("columnar", "build"), self.columnarBuild)
+        self.route("DELETE", ("columnar",), self.columnarDelete)
 
     # TODO: anytime a dataset is mentioned, load the dataset and check for
     #   existence and that the user has access to it
@@ -57,17 +63,22 @@ class PropertyValues(Resource):
     def add(self, params):
         params = self._annotationPropertyValuesModel.convertIdsToObjectIds(
             params)
-        Folder().load(
+        dataset = Folder().load(
             params["datasetId"],
             user=self.getCurrentUser(),
             level=AccessType.WRITE,
             exc=True,
         )
-        return self._annotationPropertyValuesModel.appendValues(
+        result = self._annotationPropertyValuesModel.appendValues(
             self.getBodyJson(),
             params["annotationId"],
             params["datasetId"],
         )
+        # Values changed: any columnar store for this dataset is now stale, so
+        # reads must fall back to MongoDB until it is rebuilt. No-op for a
+        # dataset without a store.
+        valueStoreState.mark_dirty(dataset)
+        return result
 
     @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
@@ -90,9 +101,13 @@ class PropertyValues(Resource):
             if "datasetId" in entry
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
-        return self._annotationPropertyValuesModel.appendMultipleValues(
+        result = self._annotationPropertyValuesModel.appendMultipleValues(
             propertyValuesList
         )
+        # See add(): values changed, so any columnar store is stale. Batched
+        # into one query over the affected datasets.
+        valueStoreState.mark_datasets_dirty(datasetIds)
+        return result
 
     @describeRoute(
         Description(
@@ -119,7 +134,7 @@ class PropertyValues(Resource):
             )
         params = self._annotationPropertyValuesModel.convertIdsToObjectIds(
             params)
-        Folder().load(
+        dataset = Folder().load(
             params["datasetId"],
             user=self.getCurrentUser(),
             level=AccessType.WRITE,
@@ -128,6 +143,8 @@ class PropertyValues(Resource):
         self._annotationPropertyValuesModel.delete(
             params["propertyId"], params["datasetId"]
         )
+        # See add(): a removed property's values make any columnar store stale.
+        valueStoreState.mark_dirty(dataset)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -161,13 +178,22 @@ class PropertyValues(Resource):
         # be a clean 400 on this public endpoint, not a 500.
         rawIds = requireList(body.get("annotationIds", []), "annotationIds")
         validateAnnotationIdCount(len(rawIds))
-        Folder().load(
+        dataset = Folder().load(
             datasetId,
             user=self.getCurrentUser(),
             level=AccessType.READ,
             exc=True,
         )
+        # Validate before dispatching, so a malformed id is a 400 on both
+        # backends rather than only on the Mongo one.
         annotationIds = [requireObjectId(i, "annotationId") for i in rawIds]
+        # Columnar store, when this dataset has a current one. Same response
+        # shape either way (annotationId + projected values), so this is a pure
+        # backend swap. The Zarr obs index holds string ids.
+        if valueStoreState.should_serve_from_zarr(dataset):
+            return zarrValueStore.read_batch(
+                datasetId, [str(i) for i in annotationIds], propertyPaths
+            )
         return self._annotationPropertyValuesModel.findByAnnotationIds(
             datasetId, annotationIds, propertyPaths
         )
@@ -246,6 +272,102 @@ class PropertyValues(Resource):
             )
         }
 
+    @access.user(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Columnar (Zarr) property-value store state for a dataset")
+        .notes(
+            "Returns {backend, status, generation, rows, columns} when the "
+            "dataset has a columnar store, else {backend: 'mongo'}. "
+            "`available` reports whether the server has the numeric extras "
+            "installed at all."
+        )
+        .param("datasetId", "The dataset's id")
+        .errorResponse()
+        .errorResponse("Read access was denied for the dataset.", 403)
+    )
+    def columnarStatus(self, params):
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
+        dataset = Folder().load(
+            datasetId, user=self.getCurrentUser(), level=AccessType.READ,
+            exc=True,
+        )
+        state = valueStoreState.get_state(dataset)
+        return {
+            "available": zarrValueStore.backend_available(),
+            "storeExists": zarrValueStore.store_exists(datasetId),
+            "servingFromZarr": valueStoreState.should_serve_from_zarr(dataset),
+            "state": state or {"backend": "mongo"},
+        }
+
+    @access.user(scope=TokenScope.DATA_WRITE)
+    @describeRoute(
+        Description("Build (or rebuild) the columnar property-value store")
+        .notes(
+            "Schedules a background job. Reads keep using MongoDB until the "
+            "build completes, so this is safe to call on a live dataset. "
+            "Requires write access, since it writes a derived artifact for "
+            "the dataset."
+        )
+        .param("datasetId", "The dataset's id")
+        .errorResponse()
+        .errorResponse("Write access was denied for the dataset.", 403)
+    )
+    def columnarBuild(self, params):
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
+        user = self.getCurrentUser()
+        dataset = Folder().load(
+            datasetId, user=user, level=AccessType.WRITE, exc=True,
+        )
+        if not zarrValueStore.backend_available():
+            raise RestException(
+                code=501,
+                message=(
+                    "This server does not have the columnar-store extras "
+                    "installed (numpy, scipy, zarr, anndata). Rebuild the "
+                    "girder image with the plugin's 'columnar' extra."
+                ),
+            )
+        job = JobModel().createLocalJob(
+            module=(
+                "upenncontrast_annotation.server.helpers.zarr_value_job"
+            ),
+            title="Build columnar property store: %s" % dataset["name"],
+            type="nimbus_columnar_build",
+            user=user,
+            kwargs={
+                "datasetId": str(datasetId),
+                "userId": str(user["_id"]),
+            },
+            asynchronous=True,
+        )
+        JobModel().scheduleJob(job)
+        return {"jobId": str(job["_id"])}
+
+    @access.user(scope=TokenScope.DATA_WRITE)
+    @describeRoute(
+        Description("Delete a dataset's columnar property-value store")
+        .notes(
+            "Removes the Zarr data and the dataset's store state, so reads "
+            "return to MongoDB. The property values themselves (in MongoDB) "
+            "are untouched."
+        )
+        .param("datasetId", "The dataset's id")
+        .errorResponse()
+        .errorResponse("Write access was denied for the dataset.", 403)
+    )
+    def columnarDelete(self, params):
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
+        dataset = Folder().load(
+            datasetId, user=self.getCurrentUser(), level=AccessType.WRITE,
+            exc=True,
+        )
+        # Clear the state first: if the data removal fails partway, the dataset
+        # is already back on MongoDB rather than pointing at a half-deleted
+        # store.
+        valueStoreState.clear_state(dataset)
+        zarrValueStore.delete_store(datasetId)
+        return {"deleted": True}
+
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description(
@@ -264,19 +386,32 @@ class PropertyValues(Resource):
     def histogram(self, params):
         params = self._annotationPropertyValuesModel.convertIdsToObjectIds(
             params)
-        Folder().load(
+        dataset = Folder().load(
             params["datasetId"],
             user=self.getCurrentUser(),
             level=AccessType.READ,
             exc=True,
         )
-        if "buckets" in params:
+        buckets = int(params["buckets"]) if "buckets" in params else None
+        # Columnar store, when current: a per-column read instead of a
+        # collection-wide $bucketAuto. Same {min, max, count} bucket shape.
+        if valueStoreState.should_serve_from_zarr(dataset):
+            # The Mongo endpoint takes a dotted path; the Zarr reader takes
+            # path segments.
+            propertyPath = params["propertyPath"].split(".")
+            if buckets is None:
+                return zarrValueStore.histogram(
+                    params["datasetId"], propertyPath
+                )
+            return zarrValueStore.histogram(
+                params["datasetId"], propertyPath, buckets
+            )
+        if buckets is not None:
             return self._annotationPropertyValuesModel.histogram(
                 params["propertyPath"],
                 params["datasetId"],
-                int(params["buckets"]),
+                buckets,
             )
-        else:
-            return self._annotationPropertyValuesModel.histogram(
-                params["propertyPath"], params["datasetId"]
-            )
+        return self._annotationPropertyValuesModel.histogram(
+            params["propertyPath"], params["datasetId"]
+        )

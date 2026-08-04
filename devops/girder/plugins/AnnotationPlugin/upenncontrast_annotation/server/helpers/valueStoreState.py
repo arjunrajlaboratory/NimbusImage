@@ -27,6 +27,8 @@ Only "ready" routes reads to Zarr, so a half-built or stale store is never
 served silently.
 """
 
+from bson import ObjectId
+
 from girder.models.folder import Folder
 
 VALUE_STORE_META_KEY = "nimbusValueStore"
@@ -43,12 +45,32 @@ def get_state(dataset):
 
 
 def is_zarr_ready(dataset):
-    """Whether reads for this dataset should be served from the Zarr store."""
+    """Whether this dataset's recorded state says the Zarr store is current."""
     state = get_state(dataset)
     return bool(
         state
         and state.get("backend") == BACKEND_ZARR
         and state.get("status") == STATUS_READY
+    )
+
+
+def should_serve_from_zarr(dataset):
+    """Whether a read for this dataset may actually be served from Zarr.
+
+    Stricter than :func:`is_zarr_ready`: also requires the numeric extras to be
+    importable and the store to exist on disk. Either can be false while the
+    metadata says "ready" — a container rolled back to an image without the
+    extras, or a store directory removed underneath us — and in both cases the
+    correct behavior is to fall back to Mongo rather than fail the read.
+    """
+    if not is_zarr_ready(dataset):
+        return False
+    # Local import so the numeric stack is only touched when a dataset actually
+    # has a store, and never on the plugin-load path.
+    from . import zarrValueStore
+    return (
+        zarrValueStore.backend_available()
+        and zarrValueStore.store_exists(dataset["_id"])
     )
 
 
@@ -95,6 +117,26 @@ def mark_dirty(dataset):
         return dataset
     state["status"] = STATUS_DIRTY
     return _write_state(dataset, state)
+
+
+def mark_datasets_dirty(datasetIds):
+    """Mark every dataset in ``datasetIds`` that has a Zarr store as stale.
+
+    Called from the property-value write paths. Loads the folders in one query
+    (never one per id) and is a no-op for datasets without a store, so callers
+    can invoke it unconditionally.
+    """
+    datasetIds = list({ObjectId(str(i)) for i in datasetIds})
+    if not datasetIds:
+        return
+    # Only datasets that actually carry a store block can be dirtied; filter in
+    # the query so an ordinary dataset costs nothing.
+    metaKey = "meta.%s.backend" % VALUE_STORE_META_KEY
+    for dataset in Folder().find({
+        "_id": {"$in": datasetIds},
+        metaKey: BACKEND_ZARR,
+    }):
+        mark_dirty(dataset)
 
 
 def clear_state(dataset):

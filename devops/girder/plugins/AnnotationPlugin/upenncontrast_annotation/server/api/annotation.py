@@ -11,6 +11,8 @@ from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
 
+from ..helpers import valueStoreState
+from ..helpers import zarrValueStore
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.validation import (
@@ -578,14 +580,27 @@ class Annotation(Resource):
     def listAnnotationIds(self, params):
         bodyJson = requireObjectBody(self.getBodyJson())
         datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
-        Folder().load(
+        dataset = Folder().load(
             datasetId, user=self.getCurrentUser(),
             level=AccessType.READ, exc=True,
         )
         filters = bodyJson.get("filters") or {}
         validateListInputs(filters)
         dropNoOpPropertyFilters(filters)
-        ids = self._annotationModel.listIds(datasetId, filters)
+        # Columnar store, when this dataset has a current one AND the filters
+        # can be answered from property values alone (no annotation-field
+        # constraints) — the same condition as the PV-driven MongoDB branch,
+        # and exactly the shape the lazy-mode property filter sends. Anything
+        # else still needs the annotation collection, so it falls through.
+        if (
+            self._annotationModel.canServeIdsFromValuesAlone(filters)
+            and valueStoreState.should_serve_from_zarr(dataset)
+        ):
+            ids = zarrValueStore.filter_passing_ids(
+                datasetId, filters.get("propertyFilters")
+            )
+        else:
+            ids = self._annotationModel.listIds(datasetId, filters)
 
         prefix = b'{"total":' + str(len(ids)).encode() + b',"ids":['
         setResponseHeader("Content-Type", "application/json")

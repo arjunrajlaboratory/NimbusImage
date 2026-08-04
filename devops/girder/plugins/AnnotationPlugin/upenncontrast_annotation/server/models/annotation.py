@@ -354,10 +354,23 @@ class Annotation(AccessControlMixin, ProxiedModel):
             }}}})
         return stages
 
+    def canServeIdsFromValuesAlone(self, filters):
+        """Whether these filters can be answered from property values alone.
+
+        True when there is at least one property filter and nothing constrains
+        annotation-document fields — exactly the condition for the PV-driven
+        branch of :meth:`listIds`. Public so the API layer can decide whether a
+        columnar (Zarr) store may answer the request instead, without reaching
+        into the private field-filter check.
+        """
+        return bool(
+            filters.get("propertyFilters")
+            and not self._hasAnnotationFieldFilters(filters)
+        )
+
     def listIds(self, datasetId, filters):
         """All annotation _ids (as strings) matching the filters."""
-        if (filters.get("propertyFilters")
-                and not self._hasAnnotationFieldFilters(filters)):
+        if self.canServeIdsFromValuesAlone(filters):
             # PV-driven: matching property-value docs carry the annotationId.
             pipeline = [{"$match": {"datasetId": datasetId}}]
             pipeline += self._propertyFilterStages(
