@@ -1414,9 +1414,13 @@ export class Annotations extends VuexModule {
   }: {
     annotationIds: string[];
     editFunction: (annotation: IAnnotation) => void;
-  }) {
+  }): Promise<number> {
+    // Returns how many annotations were actually patched. Callers that own
+    // state derived from the edit (the color-by-property legend) must not act
+    // on an edit that wrote nothing — not logged in, an empty selection, or
+    // values that already matched.
     if (!main.isLoggedIn) {
-      return;
+      return 0;
     }
     if (this.stubOnlyMode) {
       // In stub-only mode annotations[] is empty, so the patch-from-full-
@@ -1425,7 +1429,7 @@ export class Annotations extends VuexModule {
       // from the stubs instead, persist them, and sync tags/color back onto
       // local stubs so the canvas stays consistent.
       if (!annotationIds.length) {
-        return;
+        return 0;
       }
       sync.setSaving(true);
       try {
@@ -1439,12 +1443,12 @@ export class Annotations extends VuexModule {
           this.applyStubFieldUpdates(stubFieldUpdates);
         }
         sync.setSaving(false);
+        return patches.length;
       } catch (error) {
         logError(`Failed to update annotations: ${(error as Error).message}`);
         sync.setSaving(error as Error);
         throw error;
       }
-      return;
     }
     sync.setSaving(true);
     const originalAnnotations: IndexedAnnotationUpdate[] = [];
@@ -1480,6 +1484,7 @@ export class Annotations extends VuexModule {
         await this.annotationsAPI.updateAnnotations(annotationUpdates);
       }
       sync.setSaving(false);
+      return annotationUpdates.length;
     } catch (error) {
       this.setAnnotationsAtIndices(originalAnnotations);
       logError(`Failed to update annotations: ${(error as Error).message}`);
@@ -1601,7 +1606,33 @@ export class Annotations extends VuexModule {
         annotation.color = color;
       }
     };
-    await this.updateAnnotationsPerId({ annotationIds, editFunction });
+    // Capture before the await: a large selection takes seconds to persist,
+    // and the legend below belongs to the dataset/configuration this recolor
+    // started from — not to whatever is open when it finishes.
+    const datasetId = main.dataset?.id;
+    const configurationId = main.configuration?.id;
+    const patched = await this.updateAnnotationsPerId({
+      annotationIds,
+      editFunction,
+    });
+    // Retire the persisted legend so it stops claiming the colors come from a
+    // property mapping. This action is the choke point for every manual color
+    // assignment (context menu, color-selected dialog, tag-cloud coloring, AI
+    // agent).
+    //
+    // Only when something was actually recolored: "Color Selected" with an
+    // empty selection, a color that every target already had, and a
+    // not-logged-in attempt all reach here having written nothing, and
+    // deleting the legend then would leave the canvas correctly colored by
+    // the property with no legend to explain it.
+    if (
+      patched > 0 &&
+      main.dataset?.id === datasetId &&
+      main.configuration?.id === configurationId &&
+      main.colorByPropertyForCurrentDataset
+    ) {
+      await main.saveColorByProperty(null);
+    }
   }
 
   @Action
@@ -1617,6 +1648,126 @@ export class Annotations extends VuexModule {
       color,
       randomize,
     });
+  }
+
+  // Apply server-side color-by-property and keep the three-step invariant in
+  // one place: colors written on the backend ⇒ legend persisted in the
+  // configuration ⇒ annotations refetched. rawError so callers (the dialog)
+  // can show the backend's real 400 message instead of the decorator's
+  // generic wrapper.
+  @Action({ rawError: true })
+  public async applyColorByProperty(params: {
+    propertyPath: string[];
+    propertyName: string;
+    mode?: "auto" | "continuous" | "categorical";
+    colormap?: string;
+    rangeMin?: number;
+    rangeMax?: number;
+    percentileLow?: number;
+    percentileHigh?: number;
+  }) {
+    const datasetId = main.dataset?.id;
+    const configurationId = main.configuration?.id;
+    if (!datasetId) {
+      return null;
+    }
+    const { propertyName, ...request } = params;
+    // The backend's write covers the dataset, so any failure past validation
+    // may have already changed colors — the canvas must not keep showing the
+    // old ones. A 400 is rejected before any write, so nothing changed and the
+    // (potentially large) refetch can be skipped.
+    let backendMayHaveChanged = true;
+    let applied = false;
+    try {
+      const result = await this.annotationsAPI.colorByProperty({
+        datasetId,
+        ...request,
+      });
+      // Coloring a large dataset takes seconds, and the user can switch
+      // datasets while it runs. Everything below applies THIS dataset's result
+      // to whatever is loaded now, so bail if that is no longer the same
+      // dataset: the assignment's ids would match none of the new dataset's
+      // annotations and null every one of their colors, and the legend would
+      // be written to the new dataset's configuration. The backend write
+      // stands and shows up when this dataset is next loaded.
+      if (main.dataset?.id !== datasetId) {
+        applied = true; // nothing local to do, and nothing to refetch either
+        return result;
+      }
+      // Apply locally BEFORE persisting the legend. This is a synchronous
+      // mutation, so nothing can interleave between the guard above and its
+      // effect. Persisting first would put an awaited configuration PUT in
+      // that gap — long enough to switch datasets, after which this
+      // assignment's ids match none of the newly loaded annotations and would
+      // null every one of their colors.
+      // The endpoint returns the id→color grouping it just wrote, so the new
+      // colors can be applied to the annotations already in memory instead of
+      // refetching the whole dataset.
+      if (result.assignment) {
+        this.applyColorAssignment(result.assignment);
+        applied = true;
+      }
+      // Same dataset reasoning for the configuration specifically: a dataset
+      // can be reopened under a different configuration, and the legend
+      // belongs to the one this coloring was started from.
+      if (result.legend && main.configuration?.id === configurationId) {
+        await main.saveColorByProperty({
+          ...result.legend,
+          propertyName,
+          showLegend: true,
+        });
+      }
+      return result;
+    } catch (error) {
+      backendMayHaveChanged = (error as any)?.response?.status !== 400;
+      throw error;
+    } finally {
+      // Only fall back to the full refetch when the local apply couldn't
+      // happen (a failure mid-write leaves colors we can't enumerate) AND the
+      // dataset is still the one we colored.
+      if (!applied && backendMayHaveChanged && main.dataset?.id === datasetId) {
+        await this.fetchAnnotations();
+      }
+    }
+  }
+
+  // Twin of applyColorByProperty: reset every color to null (layer color)
+  // and retire the persisted legend.
+  @Action({ rawError: true })
+  public async removeColorByProperty() {
+    const datasetId = main.dataset?.id;
+    if (!datasetId) {
+      return;
+    }
+    const configurationId = main.configuration?.id;
+    let backendMayHaveChanged = true;
+    let applied = false;
+    try {
+      await this.annotationsAPI.clearColorByProperty(datasetId);
+      // Same dataset-switch guard as applyColorByProperty: an empty assignment
+      // nulls EVERY loaded color, so applying it to a dataset we didn't clear
+      // would wipe that dataset's colors locally.
+      if (main.dataset?.id !== datasetId) {
+        applied = true;
+        return;
+      }
+      // Local apply first, for the same reason as applyColorByProperty: an
+      // awaited configuration write between the guard and this mutation is a
+      // window in which the dataset can change, and an empty assignment nulls
+      // EVERY loaded color.
+      this.applyColorAssignment([]);
+      applied = true;
+      if (main.configuration?.id === configurationId) {
+        await main.saveColorByProperty(null);
+      }
+    } catch (error) {
+      backendMayHaveChanged = (error as any)?.response?.status !== 400;
+      throw error;
+    } finally {
+      if (!applied && backendMayHaveChanged && main.dataset?.id === datasetId) {
+        await this.fetchAnnotations();
+      }
+    }
   }
 
   @Action
@@ -2362,7 +2513,22 @@ export class Annotations extends VuexModule {
     }
     for (const { id, annotation } of payload.newEntries) {
       newMap.delete(id);
-      newMap.set(id, annotation);
+      // Take `color` from the local stub when we have one. The stub map is the
+      // client's authoritative view of per-annotation color — every local
+      // color operation patches it — while hydration exists to supply
+      // geometry. Without this, a hydration issued BEFORE a bulk recolor
+      // (e.g. color-by-property, which takes seconds on a large dataset) can
+      // land AFTER it and reinstate the pre-recolor color on whichever
+      // annotations happened to be hydrating at the time. Preferring the stub
+      // is also self-consistent: a stub that has gone stale relative to the
+      // backend is already what the other ~99% of the canvas is drawn from.
+      const stub = this.annotationStubs.get(id);
+      newMap.set(
+        id,
+        stub === undefined || stub.color === annotation.color
+          ? annotation
+          : markRaw({ ...annotation, color: stub.color }),
+      );
     }
     const cap = this.visibilityConfig.hydrationCacheCap;
     if (cap > 0 && newMap.size > cap) {
@@ -2387,6 +2553,58 @@ export class Annotations extends VuexModule {
   @Mutation
   clearHydrationCache() {
     this.hydratedAnnotations = markRaw(new Map());
+  }
+
+  /**
+   * Apply a whole-dataset color assignment locally, mirroring exactly what the
+   * backend just wrote: every annotation listed takes its group's color, and
+   * every annotation NOT listed becomes null (the layer color) — because the
+   * backend's write covers the dataset, clearing whatever it doesn't assign.
+   * An empty assignment therefore means "all colors cleared".
+   *
+   * This replaces refetching every stub after a recolor: the geometry is
+   * unchanged, so the centroid index and spatial index stay valid and only the
+   * color field moves. Measured on a 708K-annotation dataset: ~0.5s here
+   * against 12.8s for fetchAnnotations.
+   */
+  @Mutation
+  applyColorAssignment(groups: { color: string; ids: string[] }[]) {
+    const colorById = new Map<string, string>();
+    for (const group of groups) {
+      for (const id of group.ids) {
+        colorById.set(id, group.color);
+      }
+    }
+    if (this.annotationStubs.size > 0) {
+      const newStubs = new Map(this.annotationStubs);
+      for (const [id, stub] of newStubs) {
+        const color = colorById.get(id) ?? null;
+        if (stub.color !== color) {
+          newStubs.set(id, { ...stub, color });
+        }
+      }
+      // markRaw like every other assignment to this map: without it Vue walks
+      // and proxies all ~700K entries, which dwarfs the patch itself.
+      this.annotationStubs = markRaw(newStubs);
+    }
+    if (this.hydratedAnnotations.size > 0) {
+      const newHydrated = new Map(this.hydratedAnnotations);
+      for (const [id, annotation] of newHydrated) {
+        const color = colorById.get(id) ?? null;
+        if (annotation.color !== color) {
+          newHydrated.set(id, markRaw({ ...annotation, color }));
+        }
+      }
+      this.hydratedAnnotations = markRaw(newHydrated);
+    }
+    if (this.annotations.length > 0) {
+      this.annotations = this.annotations.map((annotation) => {
+        const color = colorById.get(annotation.id) ?? null;
+        return annotation.color === color
+          ? annotation
+          : markRaw({ ...annotation, color });
+      });
+    }
   }
 
   @Action

@@ -1,0 +1,115 @@
+# Color-by-Property — Review Findings Tracker
+
+Branch review of the color-by-property feature (uncommitted working tree vs
+master, 2026-08-04). One entry per finding; update Status as each is resolved.
+
+Decision recorded during review: **legend visibility stays shared (per
+configuration)** — `showLegend` lives in `colorByProperty` in the collection
+metadata, deliberately not in the per-user DatasetView.
+
+| # | Severity | Location | Summary | Status |
+|---|----------|----------|---------|--------|
+| 1 | Medium | `AnnotationColorLegend.vue` | Legend ignores `.left-palettes-open` shift; z 1003 sits above the layer-info popup (z 1000) | fixed — z 999 (below layer-info popup), joins the `.left-palettes-open` shift + 0.2s slide like the rest of the bottom-left cluster |
+| 2 | Medium | `ColorByPropertyDialog.vue` | Apply overwrites all manual colors, non-undoably, without saying so | fixed — dialog copy states it replaces every annotation's color and cannot be undone; test asserts the copy |
+| 3 | Low | `models/annotation.py::_colorContinuous` | Single explicit bound can invert the range (rangeMin > data max) → all-mid-color + inverted legend instead of 400 | fixed — explicit-bound empty range raises ValueError → 400; `testEmptyExplicitRangeIsA400` covers both directions |
+| 4 | Low | spec / `annotation.ts` undo | Undo of a recorded color change bypasses the legend-clearing choke point | documented — added to the spec's accepted-staleness list with the rationale for not clearing on every undo |
+| 5 | Low | `ColorByPropertyDialog.vue::canApply` | Stale `selectedPathKey` across dataset switches → Apply enabled but silently no-ops | fixed — `canApply` requires a live `pathByKey` entry; test covers the stale-key case |
+| 6 | Low | apply/remove flows | Failed apply skips refetch though backend colors may already have changed | fixed — store actions refetch in `finally`, except on a 400 (rejected at validation, before any write) to avoid a pointless large refetch; tests cover 400 vs 500 |
+| 7 | Low | `ColorByPropertyDialog.vue` | Apply/clear orchestration in the component | fixed — `applyColorByProperty` / `removeColorByProperty` actions in the annotation store own the invariant, `rawError: true` verified by an identity-assert test (confirmed to fail with the flag removed) |
+| 8 | Nit | `api/annotation.py::colorByProperty` | 400 message says `propertyPaths` (plural) for the request field `propertyPath` | fixed — explicit `isValidPropertyPath` check with a singular, accurate message |
+| 9 | Nit | dialog + legend | Gradient-CSS builder and axios-error extraction duplicated | fixed — `utils/colors.ts::cssLinearGradient` and `utils/errors.ts::extractErrorMessage` (the latter matches a pattern hand-rolled in 4+ existing files; migrating those is out of this branch's scope) |
+| 10 | Nit | `models/annotation.py` | `setdefault(x, []).append` grouping → `collections.defaultdict(list)` | fixed — all three grouping sites |
+| 11 | Nit | `AnnotationColorLegend.vue` | `variant="tonal"` off the button taxonomy | fixed — `variant="outlined"` |
+| 12 | Nit | `models/annotation.py::_colorCategorical` | int 1 vs float 1.0 become distinct categories in forced-categorical mode | fixed — integral floats normalize to the int label; `testForcedCategoricalMergesIntAndIntegralFloat` |
+
+## Live backend testing (708K-annotation dataset `6a19784f…3206`)
+
+Tested against the running container on :8080 (rebuilt between cycles). All
+error paths, nested paths, auto-mode selection, the MAX_CATEGORIES guard and
+`clear` behaved correctly. Three problems only real data exposed, each fixed
+and re-verified live:
+
+| # | Problem | Evidence | Fix |
+|---|---------|----------|-----|
+| L1 | Full-extent default range is useless on skewed data | Area: 99% of values occupy 14.2% of min..max (19.5 vs 12792 with p99 = 1960). 131 distinct colors, one bucket holding 52,424 annotations, all near-identical dark purple | Default the ramp to the **1st..99th percentile** (`DEFAULT_PERCENTILE_LOW/HIGH`), overridable via `percentileLow/High`, with `rangeMin/rangeMax` still absolute overrides. Legend gained `dataMin`/`dataMax`/`clippedLow`/`clippedHigh`; the viewer labels clipped ends `≤`/`≥` with the true extent on hover. After: **254 distinct colors, largest bucket 1.1%** |
+| L2 | Categorical palette cycled, so distant categories rendered identically | A real 36-cluster graph clustering produced only **20 distinct colors** — clusters 1 and 21 both `#4e79a7` | `categoricalColor(index)` shifts lightness once the 20-color palette is exhausted (5 cycles → 100 distinguishable colors). After: **36 categories, 36 distinct colors** |
+| L3 | Cost before the guard (the pattern this repo's review skill flags) | Forcing categorical on continuous Area built a **555,479-entry** grouping dict before the 256 cap rejected it, ~12s | Bail inside the grouping loop the moment the cap is exceeded; message now reports the cap, not a total. After: **3.7s** (the residual is streaming values from Mongo, unavoidable before cardinality is known) |
+
+Live matrix confirmed: continuous (16.9s/708K), categorical (12.6s), nested
+path (`Centroid.x`), absolute range clipping, custom percentiles 25/75
+(matched Mongo's independent p25/p75 to 0.1), auto-mode picking continuous for
+integer gene counts, `clear` (4.1s), and 400s for empty range / bad colormap /
+bad mode / unknown property / inverted percentiles.
+
+Not exercised live: the `uncolored` count — every property in this dataset
+covers all 708,983 annotations, so partial coverage stays unit-test-only
+(`testContinuousAutoMapsExtremesAndSkipsMissing`).
+
+**Dataset left exactly as found**: all 708,983 colors back to `null` (verified
+post-`clear`).
+
+## Browser verification (708K dataset, stub mode)
+
+Verified in the live app at `#/datasetView/6a1978ad247013c97128321f/view`
+(708,983 stubs, `stubOnlyMode` true, 15,727 features drawn):
+
+- **Finding 1's fix confirmed**: with the left palette column open the legend
+  computes `transform: matrix(1,0,0,1,430,0)` — it joins the bottom-left
+  cluster's shift instead of hiding under the palettes — at `z-index: 999`,
+  and `elementFromPoint` at the panel's centre returns the legend itself.
+- **Apply → persist → refetch end to end** (via the store action the dialog
+  calls): continuous on `cell Blob metrics / Area` returned 708,983 coloured /
+  0 uncoloured, persisted the new-shape legend (ramp 150.01–1959.97, extent
+  19.50–12792.47, clipped both ends), and the refetched stubs carried
+  per-annotation colours (217 distinct in a 5,000 sample).
+- **Categorical** on `Clustering / graphclust`: 36 categories, **36 distinct
+  colours**, cluster 1 `#4e79a7` vs cluster 21 `#2b435c` — the palette
+  extension working on real data. Legend showed 30 rows + "+6 more",
+  scrollable at 240px.
+- **Collapse/reopen via real clicks**: persisted `showLegend` false/true, and
+  confirmed present in the collection metadata over REST.
+- **Legend honesty**: `colorAnnotationIds` on a single annotation retired the
+  legend (config → `null`, legend removed from the DOM).
+- **Backwards compatibility**: a legend saved before the percentile change
+  (no `dataMin`/`clippedLow`) still rendered, with no `≤`/`≥` markers.
+
+Two things fixed as a direct result of *looking* at it:
+
+1. The continuous bar was vertical in a panel whose width is set by the
+   property name, leaving ~180px of dead space (panel 220×196, bar 16×140).
+   Now a full-width horizontal ramp: panel 193×90, bar 171×12.
+2. `toPrecision(3)` rendered the range end 1959.97 as **"1.96e+3"**. Now
+   `Intl.NumberFormat` with 3 significant digits → "1,960" / "12,800".
+
+**Not verified**: the click path through the *More Actions → Color by
+Property…* menu into the dialog. The Chrome window was occluded
+(`visibilityState=hidden`, `framesPerSec=0`), which leaves every Vuetify
+overlay at `visibility: hidden; pointer-events: none` — the menu item is in
+the DOM and enabled, and clicks register (`v-overlay--active`, z-index 2000),
+but overlay content never becomes hittable. Environmental, not a defect; needs
+a foreground window to confirm.
+
+**Dataset left clean**: all 708,983 colours `null` and no legend in the
+configuration, so a fresh apply from the UI starts from nothing.
+
+## Post-apply refetch removed (`returnAssignment`)
+
+Follow-up after measuring the whole user-visible operation: writing colours was
+never the dominant cost — the `GET /stubs` refetch that followed it was (12.8s,
+178 MB, recomputing every centroid from full polygon coordinates for a change
+that touched only a colour string). The endpoint already holds the id→colour
+grouping it just wrote, so it now returns it on request and the client patches
+in place. **Whole apply on 708K annotations: ~22s → ~11s.** See
+`COLOR_BY_PROPERTY.md` § "The post-apply refetch" for the numbers and the
+invariants.
+
+Two defects found while building it, both by measuring rather than reasoning:
+
+| # | Problem | How it surfaced | Fix |
+|---|---------|-----------------|-----|
+| L4 | The new mutation assigned `annotationStubs` **without `markRaw`** — the only one of ten assignments to that map that didn't — so Vue walked and proxied all 708,983 entries | The clear path measured **16.9s** when the backend clear is ~5s and the patch ~0.5s; the gap didn't add up | `markRaw(newStubs)`, plus `src/store/__tests__/rawStateMaps.test.ts` asserting the invariant for every mutation replacing one of these maps. Verified by removing only the `markRaw` call: exactly one test fails. Patch is now **~0.5s** |
+| L5 | Hydration issued before a recolor could land after it and reinstate pre-recolor colours (the race raised in review) | Reasoned from the write window, then reproduced live by committing a stale-coloured hydration | `mergeHydratedAnnotations` takes `color` from the local stub when one exists; geometry still comes from the fetch. Verified live: `#STALE0` overridden, coordinates preserved |
+
+Verified live on the 708K dataset: **zero** stub refetches on both apply and
+clear, **zero** mismatches across all 708,983 stub colours against the returned
+assignment, and a direct 5/5 spot-check of client colours against MongoDB.

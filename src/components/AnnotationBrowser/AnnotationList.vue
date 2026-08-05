@@ -80,6 +80,13 @@
             :disabled="!isLoggedIn"
           />
 
+          <v-list-item
+            prepend-icon="mdi-gradient-horizontal"
+            title="Color by Property…"
+            @click="showColorByPropertyDialog = true"
+            :disabled="!isLoggedIn"
+          />
+
           <v-divider class="my-1" />
 
           <delete-connections>
@@ -106,6 +113,8 @@
       v-model:show="showColorDialog"
       @submit="handleColorSubmit"
     />
+
+    <color-by-property-dialog v-model:show="showColorByPropertyDialog" />
 
     <div
       :data-tour="TOUR_ANCHORS.annotationListContent"
@@ -337,6 +346,7 @@ import { listQueryingMessage } from "@/utils/loadingLabels";
 
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
+import ColorByPropertyDialog from "@/components/AnnotationBrowser/ColorByPropertyDialog.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
 import AnnotationListRow from "@/components/AnnotationBrowser/AnnotationListRow.vue";
@@ -464,6 +474,7 @@ const sortBy = ref<{ key: string; order: "asc" | "desc" }[]>([]);
 
 const showTagDialog = ref(false);
 const showColorDialog = ref(false);
+const showColorByPropertyDialog = ref(false);
 
 // Computeds
 const isLoggedIn = computed(() => store.isLoggedIn);
@@ -1160,6 +1171,7 @@ defineExpose({
   hover,
   showTagDialog,
   showColorDialog,
+  showColorByPropertyDialog,
   handleTagSubmit,
   handleColorSubmit,
   deleteSelected,

@@ -74,6 +74,7 @@ import {
   IDimensionStrategy,
   IVisibilityConfig,
   IAnnotationBrowserConfig,
+  IColorByPropertyState,
   IUserStorageQuota,
   TAnnotationBrowserTab,
 } from "./model";
@@ -2299,6 +2300,57 @@ export class Main extends VuexModule {
     if (this.configuration) {
       this.configuration.annotationBrowserConfig = config;
     }
+  }
+
+  // The color-by-property record for the dataset currently open, or null when
+  // its colors don't come from a property mapping. Keyed by dataset because a
+  // configuration is reusable across datasets while this state describes one
+  // dataset's values (see TColorByPropertyByDataset).
+  get colorByPropertyForCurrentDataset(): IColorByPropertyState | null {
+    const datasetId = this.dataset?.id;
+    if (!datasetId) {
+      return null;
+    }
+    return this.configuration?.colorByProperty?.[datasetId] ?? null;
+  }
+
+  @Mutation
+  private setConfigurationColorByProperty(payload: {
+    datasetId: string;
+    state: IColorByPropertyState | null;
+  }) {
+    if (!this.configuration) {
+      return;
+    }
+    // Replace the map rather than mutate it so dependents recompute, and drop
+    // the key when clearing so "absent" and "cleared" are one state.
+    const next = { ...(this.configuration.colorByProperty ?? {}) };
+    if (payload.state === null) {
+      delete next[payload.datasetId];
+    } else {
+      next[payload.datasetId] = payload.state;
+    }
+    this.configuration.colorByProperty = next;
+  }
+
+  // Persist (or clear, with null) the record of the last color-by-property
+  // apply for the dataset currently open. Non-null means that dataset's
+  // annotation colors reflect the property mapping; the annotation store
+  // clears it whenever colors are assigned by any other means, which is what
+  // keeps the viewer legend honest.
+  //
+  // Best-effort by design: the colors are already written on the backend, so a
+  // failed metadata write must not fail the operation that wrote them. The
+  // global sync indicator surfaces it; the worst case is a legend missing
+  // after a reload, never a wrong legend.
+  @Action
+  async saveColorByProperty(state: IColorByPropertyState | null) {
+    const datasetId = this.dataset?.id;
+    if (!this.configuration || !datasetId) {
+      return;
+    }
+    this.setConfigurationColorByProperty({ datasetId, state });
+    await this.syncConfiguration("colorByProperty");
   }
 
   // Push the configuration's persisted annotation-browser state into the
