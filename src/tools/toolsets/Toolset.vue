@@ -53,7 +53,7 @@
             :disabled="!isLoggedIn"
             @click="openPipelines"
           >
-            <v-icon size="small" start>mdi-sitemap-outline</v-icon>
+            <v-icon size="small" start>mdi-sitemap</v-icon>
             Pipelines
           </v-btn>
         </template>

@@ -292,9 +292,24 @@ Main store (`src/store/index.ts`): mutation
 
 ### Apply flow (dialog)
 
-Entry point: **"Color by Property…"** in the annotation list's *More Actions*
-menu (next to "Color Selected"). New component
-`src/components/AnnotationBrowser/ColorByPropertyDialog.vue`:
+Three entry points, all opening the same dialog:
+
+1. a palette icon button in the app bar, beside the Measure (ruler) button —
+   reachable without opening the Object Browser;
+2. a palette icon button in the Object Browser toolbar, also beside its ruler;
+3. **"Color by Property…"** in that toolbar's *More Actions* menu.
+
+`ColorByPropertyDialog` is mounted **once**, in `App.vue` along
+`analyze-dialog`, and its open state lives in `main.isColorByPropertyDialogOpen`
+— the same arrangement the Measure dialog already used for the same reason (two
+entry points, one of them in the app bar). Mounting it per entry point would
+give the app independent dialogs with independent colormap fetches.
+
+The palette icon is reserved for this feature, so *More Actions* moved "Color
+Selected" to a paint bucket (`mdi-format-color-fill`): entry points 1 and 2 are
+icon-only, so their icon has to carry the meaning on its own.
+
+New component `src/components/AnnotationBrowser/ColorByPropertyDialog.vue`:
 
 - property path: `v-autocomplete` over `propertyStore.computedPropertyPaths`
   (works in stub mode via `discoveredPropertyPaths`), labeled with
@@ -363,9 +378,9 @@ the GeoJS canvas, like `tool-suggestions`).
   (`ImportConfiguration` adds a dataset to existing collections) while a
   legend's range and category counts describe one dataset's values, so a single
   shared slot showed dataset A's legend over dataset B's colors.
-- Continuous: vertical CSS `linear-gradient` built from `stops`, max/min
-  labels (formatted with existing number formatting), property display name
-  as title.
+- Continuous: horizontal CSS `linear-gradient` built from `stops` (shared with
+  the dialog's colormap previews via `cssLinearGradient`), min/max labels
+  (formatted with existing number formatting), property display name as title.
 - Categorical: swatch rows (color chip + value + count), scrollable,
   displays up to 30 rows then "+N more".
 - Collapse control: a small icon button; collapsed state renders a compact
@@ -400,7 +415,7 @@ stub-mode dataset, verify colors appear after refetch and legend matches.
 
 ## Regression checklist
 
-Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.test.ts src/store/__tests__/rawStateMaps.test.ts src/components/AnnotationColorLegend.test.ts src/components/AnnotationBrowser/ColorByPropertyDialog.test.ts` and, from
+Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.test.ts src/store/__tests__/rawStateMaps.test.ts src/components/AnnotationColorLegend.test.ts src/components/AnnotationBrowser/ColorByPropertyDialog.test.ts src/__tests__/mdiIconNames.test.ts` and, from
 `devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annotation/test/test_color_by_property.py`.
 
 ### Mapping values to colors
@@ -507,6 +522,12 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
 - [ ] **The destructive warning stays in the dialog.** Applying overwrites every
       annotation's color, non-undoably. —
       *"warns that applying replaces all colors and cannot be undone"*
+- [ ] **Every `mdi-*` name resolves in the pinned `@mdi/font`.** This shipped
+      with `mdi-gradient-horizontal`, which does not exist in 5.9.55, so the
+      *More Actions* entry rendered with a blank icon slot — invisible to tsc,
+      lint and every component test. Two entry points are icon-only, so a blank
+      glyph leaves an unlabeled button. —
+      *"references only icons the installed font defines"*
 
 ### Process rules this feature proved
 

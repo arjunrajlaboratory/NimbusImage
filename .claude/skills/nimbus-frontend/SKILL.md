@@ -396,6 +396,33 @@ ignored).
 Extend that test rather than hand-grepping when auditing a new Vuetify
 deprecation.
 
+### Icon names: check `@mdi/font` 5.9.55, not the MDI website
+
+`@mdi/font` here is pinned at **5.9.55**, several major versions behind what
+mdi.dev documents. A name that doesn't exist in the installed font fails
+**silently and invisibly**: Vuetify sets the class, no `::before` rule matches,
+and the icon renders as blank space. `tsc`, lint and every component test stay
+green — the only symptom is a gap a human notices in a screenshot, which is
+exactly how `mdi-gradient-horizontal` shipped on a menu item. The sweep that
+followed found two more (`mdi-sitemap-outline`, added after 5.x, in two places;
+`mdi-save`, renamed to `mdi-content-save` in 5.x).
+
+Never write an icon name from memory or from current MDI docs — grep the
+installed font:
+
+```bash
+grep -c '^\.mdi-sitemap-outline::before' node_modules/@mdi/font/css/materialdesignicons.css   # 0 → blank icon
+```
+
+`src/__tests__/mdiIconNames.test.ts` enforces this across all of `src/`, so a
+bad name now fails the suite instead of shipping. Its one exclusion is itself
+(it quotes non-existent names in its own prose). In the browser, the direct
+evidence is `getComputedStyle(el, "::before").content` — a codepoint means the
+glyph resolved, `none`/`normal` means the class matched no rule.
+
+Common 5.9.55 gotchas: no `-outline` variant for many icons; `save` →
+`content-save`; `gradient` has no `-horizontal`/`-vertical` suffix.
+
 ### v-menu / v-dialog Initial State
 
 Vuetify 4's `v-menu` respects the initial `v-model` value immediately on mount. Vuetify 3 deferred it. If you set `v-model` to `true` before mount, the menu WILL open. Guard with conditions:

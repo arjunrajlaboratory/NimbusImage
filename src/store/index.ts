@@ -410,6 +410,7 @@ export class Main extends VuexModule {
   isHelpPanelOpen: boolean = false;
   isAnalyzeDialogOpen: boolean = false;
   isPipelineDialogOpen: boolean = false;
+  isColorByPropertyDialogOpen: boolean = false;
   // True while a layer is being dragged (reordered/grouped). Used to suppress
   // palette re-layout that would otherwise re-render the draggable mid-drag.
   isLayerDragging: boolean = false;
@@ -1348,6 +1349,11 @@ export class Main extends VuexModule {
   @Mutation
   public setIsPipelineDialogOpen(value: boolean) {
     this.isPipelineDialogOpen = value;
+  }
+
+  @Mutation
+  public setIsColorByPropertyDialogOpen(value: boolean) {
+    this.isColorByPropertyDialogOpen = value;
   }
 
   @Mutation

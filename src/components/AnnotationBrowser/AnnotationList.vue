@@ -20,6 +20,21 @@
           </v-btn>
         </template>
       </v-tooltip>
+      <v-tooltip text="Color objects by a property value">
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-btn
+            v-bind="activatorProps"
+            variant="text"
+            icon
+            size="small"
+            class="mr-1"
+            aria-label="Color objects by property"
+            @click="store.setIsColorByPropertyDialogOpen(true)"
+          >
+            <v-icon>mdi-palette</v-icon>
+          </v-btn>
+        </template>
+      </v-tooltip>
       <property-picker>
         <template v-slot:activator="{ props: pickerProps }">
           <v-btn
@@ -73,17 +88,21 @@
             :disabled="!isLoggedIn"
           />
 
+          <!-- Paint-bucket rather than a palette: "Color Selected" applies one
+               chosen color to the selection, while the palette icon is reserved
+               for Color by Property (its two other entry points are icon-only
+               buttons, so the icon has to carry the meaning). -->
           <v-list-item
-            prepend-icon="mdi-palette"
+            prepend-icon="mdi-format-color-fill"
             title="Color Selected"
             @click="showColorDialog = true"
             :disabled="!isLoggedIn"
           />
 
           <v-list-item
-            prepend-icon="mdi-gradient-horizontal"
+            prepend-icon="mdi-palette"
             title="Color by Property…"
-            @click="showColorByPropertyDialog = true"
+            @click="store.setIsColorByPropertyDialogOpen(true)"
             :disabled="!isLoggedIn"
           />
 
@@ -113,8 +132,6 @@
       v-model:show="showColorDialog"
       @submit="handleColorSubmit"
     />
-
-    <color-by-property-dialog v-model:show="showColorByPropertyDialog" />
 
     <div
       :data-tour="TOUR_ANCHORS.annotationListContent"
@@ -346,7 +363,6 @@ import { listQueryingMessage } from "@/utils/loadingLabels";
 
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
-import ColorByPropertyDialog from "@/components/AnnotationBrowser/ColorByPropertyDialog.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
 import AnnotationListRow from "@/components/AnnotationBrowser/AnnotationListRow.vue";
@@ -474,7 +490,6 @@ const sortBy = ref<{ key: string; order: "asc" | "desc" }[]>([]);
 
 const showTagDialog = ref(false);
 const showColorDialog = ref(false);
-const showColorByPropertyDialog = ref(false);
 
 // Computeds
 const isLoggedIn = computed(() => store.isLoggedIn);
@@ -1171,7 +1186,6 @@ defineExpose({
   hover,
   showTagDialog,
   showColorDialog,
-  showColorByPropertyDialog,
   handleTagSubmit,
   handleColorSubmit,
   deleteSelected,
