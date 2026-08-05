@@ -1,4 +1,5 @@
 import re
+import threading
 
 import fastjsonschema
 
@@ -14,6 +15,10 @@ from girder.utility.acl_mixin import AccessControlMixin
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
+from ..helpers.annotationRaster import (
+    bumpDatasetRasterVersion,
+    bumpGlobalRasterVersion,
+)
 from .propertyValues import AnnotationPropertyValues
 
 # Bound any single aggregation's DB runtime so one expensive query (e.g. over a
@@ -122,6 +127,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # The property-values model, for PV-driven list queries. Girder
         # model instances are cached singletons, so this is cheap.
         self._pvModel = AnnotationPropertyValues()
+        # saveMany replaces existing rows through removeWithQuery. Suppress
+        # that internal removal's broad invalidation in the current thread;
+        # saveMany bumps the precise source/destination datasets after success.
+        self._rasterMutationState = threading.local()
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)
@@ -189,6 +198,67 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def validate(self, document):
         return self.validateMultiple([document])[0]
+
+    def save(self, document, validate=True, triggerEvents=True):
+        sourceDatasetIds = set()
+        if document.get("_id") is not None:
+            sourceDatasetIds.update(
+                self.distinctDatasetIds([document["_id"]])
+            )
+        saved = super().save(document, validate, triggerEvents)
+        sourceDatasetIds.add(saved.get("datasetId"))
+        for datasetId in sourceDatasetIds:
+            bumpDatasetRasterVersion(datasetId)
+        return saved
+
+    def saveMany(self, documents, validate=True, triggerEvents=True):
+        existingIds = [
+            document["_id"]
+            for document in documents
+            if document.get("_id") is not None
+        ]
+        affectedDatasetIds = set(self.distinctDatasetIds(existingIds))
+        previous = getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        )
+        self._rasterMutationState.suppressRemoveBump = True
+        try:
+            saved = super().saveMany(documents, validate, triggerEvents)
+        finally:
+            self._rasterMutationState.suppressRemoveBump = previous
+        affectedDatasetIds.update(
+            document.get("datasetId") for document in saved
+        )
+        for datasetId in affectedDatasetIds:
+            bumpDatasetRasterVersion(datasetId)
+        return saved
+
+    def remove(self, document, **kwargs):
+        previous = getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        )
+        self._rasterMutationState.suppressRemoveBump = True
+        try:
+            result = super().remove(document, **kwargs)
+        finally:
+            self._rasterMutationState.suppressRemoveBump = previous
+        bumpDatasetRasterVersion(document.get("datasetId"))
+        return result
+
+    def removeWithQuery(self, query):
+        result = super().removeWithQuery(query)
+        if getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        ):
+            return result
+        datasetId = query.get("datasetId")
+        if isinstance(datasetId, ObjectId):
+            bumpDatasetRasterVersion(datasetId)
+        else:
+            # Bulk-id deletion does not carry dataset ids into the model.
+            # A global epoch is the safe no-query fallback.
+            bumpGlobalRasterVersion()
+        return result
 
     def validateMultiple(self, annotations):
         # Validate using the schema

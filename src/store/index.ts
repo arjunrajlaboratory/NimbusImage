@@ -73,6 +73,7 @@ import {
   NotificationType,
   IDimensionStrategy,
   IVisibilityConfig,
+  IAnnotationOverviewConfig,
   IAnnotationBrowserConfig,
   IUserStorageQuota,
   TAnnotationBrowserTab,
@@ -1227,6 +1228,7 @@ export class Main extends VuexModule {
   }) {
     this.setConfigurationImpl({ id, data });
     this.context.dispatch("loadVisibilityConfig", data?.visibilityConfig);
+    this.context.dispatch("loadOverviewConfig", data?.overviewConfig);
     this.hydrateAnnotationBrowserState();
     // Warm the SAM model cache in the background: encoder downloads are
     // large, this way they are usually cached before a SAM tool is selected
@@ -1262,6 +1264,13 @@ export class Main extends VuexModule {
   private setConfigurationVisibilityConfig(config: IVisibilityConfig) {
     if (this.configuration) {
       this.configuration.visibilityConfig = { ...config };
+    }
+  }
+
+  @Mutation
+  private setConfigurationOverviewConfig(config: IAnnotationOverviewConfig) {
+    if (this.configuration) {
+      this.configuration.overviewConfig = { ...config };
     }
   }
 
@@ -2243,6 +2252,15 @@ export class Main extends VuexModule {
     }
     this.setConfigurationVisibilityConfig(config);
     await this.syncConfiguration("visibilityConfig");
+  }
+
+  @Action
+  async saveOverviewConfig(config: IAnnotationOverviewConfig) {
+    if (!this.configuration) {
+      return;
+    }
+    this.setConfigurationOverviewConfig(config);
+    await this.syncConfiguration("overviewConfig");
   }
 
   // Debounced entry point called by the properties/filters stores whenever

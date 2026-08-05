@@ -1,9 +1,31 @@
 # Annotation Raster Overview — Implementation Specification
 
-**Status: specification only — not yet implemented.** This document is the
-work order for the implementing agent. It was produced after a codebase
-investigation and a performance benchmark (Appendix A); the numbers quoted
-in §6 are measured, not estimated.
+**Status: implemented on `claude/annotation-raster-overview-pgci93`.** This
+document began as the implementation work order. It now also records the
+review corrections and regression coverage for the implementation; the
+numbers quoted in §6 are measured, not estimated.
+
+Implementation review and live verification corrected eight details from the
+original draft:
+
+- the GeoJS layer is allocated lazily only after the feature is enabled;
+- point/line candidate lookup pads tile bounds by their tile-pixel width so
+  markers crossing a seam are not culled;
+- cached invalid annotation colors retain a validity bit so each request can
+  apply its own fallback color without rebuilding geometry;
+- authenticated tiles use `private, max-age=0, must-revalidate`, preventing a
+  browser from holding another client's edit for an hour;
+- history undo/redo explicitly invalidates because it restores annotations via
+  raw collection operations;
+- point annotations always use their configured screen-space radius rather
+  than being routed through the bbox-based sub-pixel polygon path; and
+- the server version also contains a 120-second wall-clock bucket; otherwise
+  an unchanged per-process ETag could return 304 forever after a write handled
+  by another Girder process, bypassing the geometry cache TTL entirely; and
+- the read-only tile route explicitly permits Girder cookie authentication.
+  GeoJS fetches OSM tiles as images and cannot attach the REST client's
+  `Girder-Token` header; without `cookie=True`, private-dataset tiles return
+  401 even while the application is logged in.
 
 ## 1. Motivation
 
@@ -92,12 +114,16 @@ no new resource registration in `__init__.py` needed):
 self.route("GET", ("raster", ":z", ":x", ":y"), self.rasterTile)
 ```
 
-→ `GET /api/v1/upenn_annotation/raster/{z}/{x}/{y}?datasetId=...&XY=0&Z=0&Time=0&sizeX=20000&sizeY=20000&...`
+→ `GET /api/v1/upenn_annotation/raster/{z}/{x}/{y}?datasetId=...&XY=0&Z=0&Time=0&sizeX=20000&sizeY=20000&maxLevel=8&...`
 
-Access control identical to `stubs` (`server/api/annotation.py:507-523`):
-`@access.public(scope=TokenScope.DATA_READ)` plus
+Access control mirrors `stubs` (`server/api/annotation.py:507-523`) but enables
+cookie authentication for GeoJS image requests:
+`@access.public(scope=TokenScope.DATA_READ, cookie=True)` plus
 `Folder().load(datasetId, user=..., level=AccessType.READ, exc=True)`.
-Anonymous users get tiles only for public datasets; private datasets 403.
+Anonymous users get tiles only for public datasets; private datasets return
+401. This is safe for the GET-only route and is required because `<img>`
+requests cannot attach a `Girder-Token` header. The GeoJS layer uses
+`crossDomain = "use-credentials"` so Girder's HttpOnly cookie is sent.
 
 **Query parameters** (validate at the API boundary, per the API/model
 separation rules — the model/helper layer receives clean typed values):
@@ -108,6 +134,7 @@ separation rules — the model/helper layer receives clean typed values):
 | `XY`, `Z`, `Time` | int | yes | `>= 0` | exact `location` match, same integers the frontend uses to filter annotations to the current frame (`src/store/annotation.ts:2437`) |
 | `sizeX`, `sizeY` | int | yes | 1 … 131072 | full-resolution image extent; the client already has this from `GET item/{id}/tiles` |
 | `tileSize` | int | no | one of 256 / 512 / 1024; default **512** | output tile edge |
+| `maxLevel` | int | yes | 0 … 30 | maximum level of the image map's coordinate pyramid; independent of the overview tile size |
 | `mode` | str | no | `shapes` (default) \| `discs` | true footprints vs. centroid discs |
 | `shape` | str | no | `point`\|`line`\|`polygon`\|`rectangle` | optional filter, same as `stubs` |
 | `tags` | JSON array | no | strings, `$all` semantics | optional filter, same as `stubs` |
@@ -122,8 +149,8 @@ Invalid values → `RestException` 400. Out-of-range `z`/`x`/`y` → 400.
 transparent background, transparent padding beyond image bounds (no edge
 cropping — padding is invisible and simpler). `ETag` header per §3.5;
 `If-None-Match` match → 304 with empty body. `Cache-Control: private,
-max-age=3600` (the client busts on its own edits via `v`, §4.6; ETag
-revalidation covers reloads).
+max-age=0, must-revalidate`; the client busts on its own edits via `v`
+(§4.6), while mandatory ETag revalidation observes edits from other clients.
 
 Note: `sizeX`/`sizeY` are client-supplied deliberately. The server could
 derive them from the dataset's large-image item, but that would couple the
@@ -135,13 +162,12 @@ cross-user poisoning. Clamps bound resource use.
 
 ### 3.2 Tile geometry
 
-Must match what `geojs.util.pixelCoordinateParams(el, sizeX, sizeY,
-tileSize, tileSize)` produces on the client — the same convention
-`large_image`'s `/tiles/zxy/` uses, which the existing image layers
-already consume:
+Must match the **image map's** pixel-coordinate pyramid, which is the
+coordinate system GeoJS uses to place every layer. `maxLevel` therefore
+comes from the image layer params rather than being inferred from the
+overview's (potentially different) `tileSize`:
 
 ```
-maxLevel   = max(0, ceil(log2(max(sizeX, sizeY) / tileSize)))
 scale(z)   = 2 ** (z - maxLevel)          # image px -> level px, z in [0, maxLevel]
 levelW     = ceil(sizeX * scale);  levelH = ceil(sizeY * scale)
 nTilesX    = ceil(levelW / tileSize);  nTilesY = ceil(levelH / tileSize)
@@ -151,6 +177,10 @@ tile (x,y) covers image-space
 ```
 
 At `z == maxLevel` one tile pixel is one image pixel: full resolution.
+For example, a map backed by 256 px image tiles can have `maxLevel = 8`
+while the overview uses 512 px tiles. Inferring `maxLevel = 7` from those
+overview tiles would rasterize coordinates at half the scale GeoJS uses to
+position the layer.
 Coordinate transform when drawing into tile `(z, x, y)`:
 
 ```
@@ -173,7 +203,9 @@ Per tile:
 
 1. Allocate `numpy.zeros((tileSize, tileSize, 4), dtype=uint8)`.
 2. Query the frame-geometry cache (§3.4) for candidate annotations whose
-   bbox intersects the tile's image-space bbox (via the grid index).
+   bbox intersects the tile's image-space bbox (via the grid index). Pad that
+   lookup by `max(pointRadius, lineWidth) / scale` image pixels so constant
+   tile-pixel markers that cross a tile seam are retained.
 3. Partition candidates by scaled footprint:
    - **Sub-pixel** (`max(bboxW, bboxH) * scale < 1.5` tile px): splat a
      single pixel into the numpy array at the scaled centroid
@@ -210,7 +242,7 @@ arrays from Mongo (§6). Tiles for the same frame must **not** each re-run
 the fetch. New helper module `server/helpers/annotationRaster.py`:
 
 - **Key**: `(datasetId, XY, Z, Time, shape, tuple(sorted(tags or [])),
-  mode)`. Note `sizeX/sizeY/tileSize/z/x/y` are *not* in the key —
+  mode)`. Note `sizeX/sizeY/tileSize/maxLevel/z/x/y` are *not* in the key —
   geometry is stored in image coordinates and scaled at draw time.
 - **Build** (on miss): one aggregation via the existing runtime-bounded
   `Annotation()._aggregate` (`server/models/annotation.py:130`, carries
@@ -236,6 +268,10 @@ the fetch. New helper module `server/helpers/annotationRaster.py`:
   the in-process invalidation below can't see another process's writes.
 - **Invalidation**: entries record the dataset raster-version (§3.5) at
   build time; a lookup whose stored version differs rebuilds.
+- **Request-specific fallback colors**: packed colors are cached together with
+  a validity bitmap. Invalid/null colors are replaced from the current
+  request only after candidate selection; fallback color is intentionally not
+  part of the geometry cache key.
 
 ### 3.5 Change detection: version registry and ETag
 
@@ -247,6 +283,8 @@ in-process registry in `server/helpers/annotationRaster.py`:
   safe cold start, never a stale 304).
 - `datasetCounter[datasetId]`: monotonic int.
 - `globalEpoch`: monotonic int, folded into every dataset's version.
+- `ttlEpoch`: `floor(wallClock / 120 s)`, which changes ETags and geometry
+  versions even when a mutation happened in a different server process.
 
 Bump points — override the mutating methods on the `Annotation` model
 (every plugin code path funnels through them: `create`/`createMultiple`
@@ -255,14 +293,19 @@ call `save`/`saveMany`, the update endpoints call `save`/`saveMany` via
 
 | Override | Bump |
 |---|---|
-| `save(document, ...)` | `datasetCounter[document["datasetId"]]` |
-| `saveMany(documents, ...)` | each distinct `datasetId` in `documents` |
+| `save(document, ...)` | source and destination dataset counters |
+| `saveMany(documents, ...)` | each distinct source and destination dataset counter (source ids loaded in one aggregate query) |
 | `remove(annotation, ...)` | `datasetCounter[annotation["datasetId"]]` |
 | `removeWithQuery(query)` | `datasetId` when present in the query (e.g. `cleanOrphaned`); otherwise `globalEpoch` (e.g. `deleteMultiple`'s `_id $in` query — though its API layer already knows the dataset ids via `distinctDatasetIds` and may bump precisely instead) |
 
-`ETag = W/"{processUuid}:{globalEpoch}:{datasetCounter}:{sha1 of the
-canonicalized query params}"`. Handle `If-None-Match` before touching the
-geometry cache.
+History undo/redo is the deliberate exception to model-hook coverage: it uses
+raw collection replace/delete operations, so `History._undoOrRedo` bumps the
+affected dataset explicitly after a successful restore.
+
+`ETag = W/"{processUuid}:{globalEpoch}:{datasetCounter}:{ttlEpoch}:{sha1 of
+the canonicalized query params}"`. Handle `If-None-Match` before touching the
+geometry cache. The TTL epoch is essential: without it a process-local ETag
+could keep returning 304 and prevent the cache's own TTL from ever running.
 
 ### 3.6 Security / abuse posture
 
@@ -336,6 +379,7 @@ annotationRasterTemplateUrl(options: {
   xy: number; z: number; time: number;
   sizeX: number; sizeY: number;
   tileSize: number;
+  maxLevel: number;              // image map's coordinate max level
   mode: "shapes" | "discs";
   color: string;
   version: number;              // client mutation counter, §4.6
@@ -352,10 +396,11 @@ convention as `tileTemplateUrl` (`src/store/GirderAPI.ts:333-361`).
 In `ImageViewer.vue`, one additional GeoJS `osm` layer per map entry
 (created alongside the existing layers around `:1111-1172`):
 
-- Params from `geojs.util.pixelCoordinateParams(el, sizeX, sizeY, 512,
-  512)` where `sizeX/sizeY` come from `dataset.anyImage()` — the same
-  values §3.2's math mirrors. This is independent of the image layers'
-  tile size.
+- Start with `geojs.util.pixelCoordinateParams(el, sizeX, sizeY, 512,
+  512)`, then override `maxLevel`, `tilesAtZoom`, and `tilesMaxBounds` to
+  use the existing image map's coordinate max level. The 512 px overview
+  tile size stays independent, but its scale and extent exactly match the
+  native image pyramid (§3.2).
 - `url` callback substitutes `{z}/{x}/{y}` in the template from §4.2 and
   returns `undefined` for out-of-range tile indices (GeoJS skips them),
   like the existing `blankUrl` handling (`ImageViewer.vue:1272-1291`).
@@ -472,8 +517,8 @@ Geometry & rendering (decode returned PNGs with PIL in the test):
    (constant apparent size); lines honor `lineWidth`; rectangles fill.
 
 Protocol & safety:
-7. Anonymous on a private dataset → 403; public dataset → 200 (mirror the
-   `stubs` access tests).
+7. Anonymous on a private dataset → 401 (Girder's normal anonymous access
+   response); public dataset → 200 (mirror the `stubs` access tests).
 8. 400s: out-of-range `z/x/y`, bad `tileSize`, `sizeX` above clamp,
    malformed `tags` JSON, negative `XY`.
 9. ETag: identical request returns the same ETag; `If-None-Match` → 304;
@@ -511,18 +556,29 @@ let shared fixtures return fixed values that defeat assertions.
 Per `CLAUDE.md`, every item names its test:
 
 - **Drawing/clearing symmetry**: raster→vector hides raster AND restores
-  vectors; vector→raster the reverse — hysteresis vitest + in-browser
-  step 2.
+  vectors; vector→raster the reverse — `AnnotationViewer.test.ts` “suppresses
+  vectors and hydration only while the raster is active” + in-browser step 2.
 - **Cost when disabled**: no raster layer created, no watchers firing
-  work, no hydration early-out taken — in-browser with feature off +
-  code-review assertion.
+  work, no hydration early-out taken — `ImageViewer.test.ts` “does not allocate
+  a GeoJS layer while the feature is disabled” + in-browser with feature off.
 - **Hydration suppression**: no hydrate requests scheduled while raster
-  active — vitest on the `updateVisibilityAndHydration` early-out.
+  active — the `AnnotationViewer.test.ts` raster-switch test plus store
+  early-out coverage.
 - **Invalidation on every mutation verb**: create, updateMultiple,
-  delete, deleteMultiple each change the ETag — backend tests 9–10.
+  delete, deleteMultiple each change the ETag —
+  `testEveryModelMutationPathInvalidatesEtag` and
+  `testAccessAndEtagInvalidation`.
 - **Sub-pixel fast path**: low-zoom dense tile stays within budget —
   backend perf-marked test with 100k synthetic annotations.
-- **Public-endpoint clamps**: all 400 cases — backend test 8.
+- **Public-endpoint clamps**: all 400 cases — `testInvalidInputsReturn400`.
+- **Private-dataset image authentication**: an anonymous tile request returns
+  401 while the same read-only request with Girder's auth cookie returns 200 —
+  `testAccessAndEtagInvalidation` plus the in-browser private-dataset pass.
+- **Coordinate-pyramid alignment**: a 512 px overview layer on a map backed
+  by 256 px image tiles uses the image map's max level for both server scale
+  and GeoJS tile bounds — `testImagePyramidLevelControlsCoordinateScale` and
+  `ImageViewer.test.ts` “lazily creates the layer and refreshes its URL on
+  mutations”.
 
 ## 9. Explicit non-goals / future extensions
 

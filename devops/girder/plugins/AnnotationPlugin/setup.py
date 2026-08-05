@@ -32,6 +32,8 @@ setup(
         "girder-import-tracker>5",
         "fastjsonschema",
         "orjson",
+        "numpy",
+        "Pillow",
         "cryptography",
         "requests",
     ],

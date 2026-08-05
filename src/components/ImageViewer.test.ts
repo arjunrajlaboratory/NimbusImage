@@ -154,6 +154,19 @@ vi.mock("@/store/annotation", () => {
   return {
     default: reactive({
       selectedAnnotationIds: new Set<string>(),
+      overviewConfig: {
+        enabled: false,
+        mode: "shapes",
+        opacity: 0.6,
+        vectorSwitchThreshold: 1,
+      },
+      mutationCounter: 0,
+      annotationsAPI: {
+        annotationRasterTemplateUrl: vi.fn(
+          ({ version }: { version: number }) =>
+            `http://localhost/raster/{z}/{x}/{y}?v=${version}`,
+        ),
+      },
       submitPendingAnnotation: null as Function | null,
       deleteSelectedAnnotations: vi.fn(),
       undoOrRedo: vi.fn(),
@@ -334,6 +347,13 @@ describe("ImageViewer", () => {
     mockedStore.showPixelScalebar = false;
     mockedStore.scalebarColor = "#ffffff";
     mockedAnnotationStore.submitPendingAnnotation = null;
+    mockedAnnotationStore.overviewConfig = {
+      enabled: false,
+      mode: "shapes",
+      opacity: 0.6,
+      vectorSwitchThreshold: 1,
+    } as any;
+    mockedAnnotationStore.mutationCounter = 0;
     (mockedStore as any).getLayerHistogram = vi.fn().mockResolvedValue(null);
     vi.clearAllMocks();
     // Make setMaps/setCameraInfo actually update the reactive store
@@ -1057,6 +1077,70 @@ describe("ImageViewer", () => {
         false,
       );
       // Should not throw
+    });
+  });
+
+  describe("annotation overview layer", () => {
+    it("does not allocate a GeoJS layer while the feature is disabled", () => {
+      const map = mockMap();
+      const mapentry = { map, imageLayers: [], params: {} } as any;
+      mockedStore.maps = [mapentry];
+      wrapper = mountComponent();
+
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+
+      expect(map.createLayer).not.toHaveBeenCalled();
+      expect(mapentry.annotationOverviewLayer).toBeUndefined();
+    });
+
+    it("lazily creates the layer and refreshes its URL on mutations", () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+      const image = createLayerStackImage().images[0];
+      const element = document.createElement("div");
+
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mapentry,
+        image,
+        element,
+      );
+
+      expect(map.createLayer).toHaveBeenCalledWith("osm", expect.any(Object));
+      const layerParams = map.createLayer.mock.calls[0][1];
+      expect(layerParams.maxLevel).toBe(9);
+      expect(layerParams.tilesAtZoom(9)).toEqual({ x: 2, y: 2 });
+      expect(layerParams.tilesAtZoom(8)).toEqual({ x: 1, y: 1 });
+      expect(layerParams.tilesMaxBounds(8)).toEqual({ x: 512, y: 512 });
+      expect(
+        mockedAnnotationStore.annotationsAPI.annotationRasterTemplateUrl,
+      ).toHaveBeenCalledWith(expect.objectContaining({ maxLevel: 9 }));
+      const firstUrl = overviewLayer.url.mock.calls[0][0];
+      expect(firstUrl(2, 3, 4)).toBe("http://localhost/raster/4/2/3?v=0");
+
+      mockedAnnotationStore.mutationCounter = 1;
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mapentry,
+        image,
+        element,
+      );
+      const secondUrl = overviewLayer.url.mock.calls[1][0];
+      expect(secondUrl(2, 3, 4)).toBe("http://localhost/raster/4/2/3?v=1");
     });
   });
 

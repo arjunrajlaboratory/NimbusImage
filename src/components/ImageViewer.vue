@@ -42,6 +42,7 @@
       :timelapseTextLayer="mapentry.timelapseTextLayer"
       :workerPreviewFeature="mapentry.workerPreviewFeature"
       :interactionLayer="mapentry.interactionLayer"
+      :annotationOverviewLayer="mapentry.annotationOverviewLayer"
       :maps="maps"
       :unrollH="unrollH"
       :unrollW="unrollW"
@@ -416,6 +417,8 @@ let synchronisationEnabled = true;
 
 const blankUrl =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQIHWNgYAAAAAMAAU9ICq8AAAAASUVORK5CYII=";
+const ANNOTATION_OVERVIEW_TILE_SIZE = 512;
+const ANNOTATION_OVERVIEW_FALLBACK_COLOR = "#FFD700";
 
 // ---- Computed Properties - Store Proxies ----
 
@@ -1201,6 +1204,7 @@ function _setupMap(
     mapentry.uiLayer = markRaw(mapentry.map.createLayer("ui"));
     mapentry.uiLayer.node().css({ "mix-blend-mode": "unset" });
   }
+  _syncAnnotationOverviewLayer(mapentry, someImage, mapElement);
 
   // only have a scale widget on the first map
   if (mllidx === 0) {
@@ -1218,6 +1222,92 @@ function _setupMap(
       fitOnDatasetChange.value++;
     }
   }
+}
+
+function _syncAnnotationOverviewLayer(
+  mapentry: IMapEntry,
+  someImage: IImage,
+  mapElement: HTMLElement,
+) {
+  const config = annotationStore.overviewConfig;
+  if (!config?.enabled) {
+    mapentry.annotationOverviewLayer?.visible(false);
+    return;
+  }
+  // The map's units-per-pixel scale comes from the native image pyramid.
+  // A 512 px overview tile would otherwise infer a pyramid one level shorter
+  // than a 256 px image tile and rasterize every coordinate at half scale.
+  const coordinateMaxLevel =
+    mapentry.params.layer.maxLevel ?? someImage.levels - 1;
+  if (!mapentry.annotationOverviewLayer) {
+    const params = geojs.util.pixelCoordinateParams(
+      mapElement,
+      someImage.sizeX,
+      someImage.sizeY,
+      ANNOTATION_OVERVIEW_TILE_SIZE,
+      ANNOTATION_OVERVIEW_TILE_SIZE,
+    );
+    params.layer.maxLevel = coordinateMaxLevel;
+    params.layer.tilesAtZoom = (level: number) => {
+      const scale = Math.pow(2, coordinateMaxLevel - level);
+      return {
+        x: Math.ceil(someImage.sizeX / ANNOTATION_OVERVIEW_TILE_SIZE / scale),
+        y: Math.ceil(someImage.sizeY / ANNOTATION_OVERVIEW_TILE_SIZE / scale),
+      };
+    };
+    params.layer.tilesMaxBounds = (level: number) => {
+      const scale = Math.pow(2, coordinateMaxLevel - level);
+      return {
+        x: Math.floor(someImage.sizeX / scale),
+        y: Math.floor(someImage.sizeY / scale),
+      };
+    };
+    params.layer.crossDomain = "use-credentials";
+    params.layer.autoshareRenderer = false;
+    params.layer.nearestPixel = params.layer.maxLevel;
+    params.layer.url = blankUrl;
+    mapentry.annotationOverviewLayer = markRaw(
+      mapentry.map.createLayer("osm", params.layer),
+    );
+    mapentry.annotationOverviewLayer.node().css({ "mix-blend-mode": "unset" });
+    const mapIndex = maps.value.indexOf(mapentry);
+    if (mapIndex >= 0) {
+      // IMapEntry is markRaw for GeoJS performance, so replace the reactive
+      // outer array after lazily adding the layer. This delivers the new prop
+      // to the already-mounted AnnotationViewer when overview is enabled later.
+      store.setMapAt({ index: mapIndex, mapEntry: mapentry });
+    }
+  }
+
+  const datasetId = dataset.value?.id;
+  if (!datasetId || unrolling.value) {
+    mapentry.annotationOverviewLayer.visible(false);
+    return;
+  }
+  const template = annotationStore.annotationsAPI.annotationRasterTemplateUrl({
+    datasetId,
+    xy: store.xy,
+    z: store.z,
+    time: store.time,
+    sizeX: someImage.sizeX,
+    sizeY: someImage.sizeY,
+    tileSize: ANNOTATION_OVERVIEW_TILE_SIZE,
+    maxLevel: coordinateMaxLevel,
+    mode: config.mode,
+    color: ANNOTATION_OVERVIEW_FALLBACK_COLOR,
+    version: annotationStore.mutationCounter,
+  });
+  const overviewLayer = mapentry.annotationOverviewLayer as any;
+  if (overviewLayer._annotationOverviewUrl === template) {
+    return;
+  }
+  overviewLayer._annotationOverviewUrl = template;
+  mapentry.annotationOverviewLayer.url((x: number, y: number, level: number) =>
+    template
+      .replace("{z}", level.toString())
+      .replace("{x}", x.toString())
+      .replace("{y}", y.toString()),
+  );
 }
 
 /**
@@ -1537,15 +1627,27 @@ function draw() {
       map.size({ width: nodeWidth, height: nodeHeight });
     }
     _setupTileLayers(mll, mllidx, someImage, baseLayerIndex);
+    const overviewOffset = mapentry.annotationOverviewLayer ? 1 : 0;
     if (
-      mapentry.workerPreviewLayer.zIndex() !== mll.length * 2 ||
-      mapentry.annotationLayer.zIndex() !== mll.length * 2 + 1 ||
-      mapentry.textLayer.zIndex() !== mll.length * 2 + 2 ||
-      mapentry.timelapseLayer.zIndex() !== mll.length * 2 + 3 ||
-      mapentry.timelapseTextLayer.zIndex() !== mll.length * 2 + 4 ||
-      mapentry.interactionLayer.zIndex() !== mll.length * 2 + 5 ||
-      (mapentry.uiLayer && mapentry.uiLayer.zIndex() !== mll.length * 2 + 6)
+      (mapentry.annotationOverviewLayer &&
+        mapentry.annotationOverviewLayer.zIndex() !== mll.length * 2) ||
+      mapentry.workerPreviewLayer.zIndex() !==
+        mll.length * 2 + overviewOffset ||
+      mapentry.annotationLayer.zIndex() !==
+        mll.length * 2 + 1 + overviewOffset ||
+      mapentry.textLayer.zIndex() !== mll.length * 2 + 2 + overviewOffset ||
+      mapentry.timelapseLayer.zIndex() !==
+        mll.length * 2 + 3 + overviewOffset ||
+      mapentry.timelapseTextLayer.zIndex() !==
+        mll.length * 2 + 4 + overviewOffset ||
+      mapentry.interactionLayer.zIndex() !==
+        mll.length * 2 + 5 + overviewOffset ||
+      (mapentry.uiLayer &&
+        mapentry.uiLayer.zIndex() !== mll.length * 2 + 6 + overviewOffset)
     ) {
+      if (mapentry.annotationOverviewLayer) {
+        mapentry.annotationOverviewLayer.moveToTop();
+      }
       mapentry.workerPreviewLayer.moveToTop();
       mapentry.annotationLayer.moveToTop();
       mapentry.textLayer.moveToTop();
@@ -1753,6 +1855,22 @@ watch(dataset, () => {
   datasetReset();
 });
 
+// Frame changes already redraw through mapLayerList. Overview-only settings
+// and client mutation versions do not, so explicitly refresh the lazy raster
+// layer for those two inputs.
+watch(
+  [() => annotationStore.overviewConfig, () => annotationStore.mutationCounter],
+  ([config], [previousConfig]) => {
+    // Annotation edits can be frequent. When overview has never been enabled,
+    // its cache-buster must remain truly zero-cost instead of redrawing every
+    // image layer for a raster layer that does not exist. The previous value
+    // keeps the disabling transition able to hide an existing layer.
+    if (config.enabled || previousConfig?.enabled) {
+      draw();
+    }
+  },
+);
+
 // Fit the image to the viewport on dataset load / transition so each dataset
 // opens at a sensible zoom (Phase 2.3 unclamped clampZoom, removing GeoJS's
 // auto-fit safety net). `_setupMap` bumps `fitOnDatasetChange` after it has
@@ -1895,6 +2013,7 @@ defineExpose({
   _setupMap,
   _setupTileLayers,
   _setTileUrls,
+  _syncAnnotationOverviewLayer,
 });
 </script>
 

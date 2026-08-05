@@ -229,6 +229,22 @@ const mockWorkerPreviewFeature = () => ({
   draw: vi.fn(),
 });
 
+const mockOverviewLayer = () => {
+  let isVisible = false;
+  let opacity = 1;
+  return {
+    visible: vi.fn((value?: boolean) => {
+      if (value !== undefined) isVisible = value;
+      return isVisible;
+    }),
+    opacity: vi.fn((value?: number) => {
+      if (value !== undefined) opacity = value;
+      return opacity;
+    }),
+    draw: vi.fn(),
+  };
+};
+
 vi.mock("geojs", () => ({
   default: {
     annotation: {
@@ -357,6 +373,12 @@ vi.mock("@/store/annotation", () => {
     hoveredAnnotationId: null as string | null,
     pendingAnnotation: null as any,
     stubOnlyMode: false,
+    overviewConfig: {
+      enabled: false,
+      mode: "shapes",
+      opacity: 0.6,
+      vectorSwitchThreshold: 1,
+    },
     getAnnotationFromId: vi.fn().mockReturnValue(undefined),
     getStub: vi.fn().mockReturnValue(undefined),
     // Truthy by default: combine's "is the first annotation still hydrated?"
@@ -384,6 +406,7 @@ vi.mock("@/store/annotation", () => {
     removeTagsFromSelectedAnnotations: vi.fn(),
     setHoveredAnnotationId: vi.fn(),
     ensureHydrated: vi.fn(),
+    setVisibilitySuppressed: vi.fn(),
   });
   Object.defineProperty(state, "annotationsForIteration", {
     get() {
@@ -628,6 +651,12 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.pendingAnnotation = null;
     mockedAnnotationStore.annotationIdToIdx = {};
     mockedAnnotationStore.stubOnlyMode = false;
+    mockedAnnotationStore.overviewConfig = {
+      enabled: false,
+      mode: "shapes",
+      opacity: 0.6,
+      vectorSwitchThreshold: 1,
+    } as any;
     (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
       undefined,
     );
@@ -674,6 +703,48 @@ describe("AnnotationViewer", () => {
   // =========================================================================
   // Category 1: Computed Property Store Proxies (~31 tests)
   // =========================================================================
+  describe("annotation overview raster", () => {
+    it("suppresses vectors and hydration only while the raster is active", async () => {
+      const map = mockAnnotationLayer().map();
+      map.unitsPerPixel.mockReturnValue(2);
+      const overviewLayer = mockOverviewLayer();
+      mockedAnnotationStore.overviewConfig = {
+        enabled: true,
+        mode: "shapes",
+        opacity: 0.6,
+        vectorSwitchThreshold: 1,
+      } as any;
+
+      wrapper = mountComponent({
+        map,
+        annotationOverviewLayer: overviewLayer,
+      });
+      await wrapper.vm.$nextTick();
+
+      expect((wrapper.vm as any).rasterActive).toBe(true);
+      expect((wrapper.vm as any).shouldDrawAnnotations).toBe(false);
+      expect(overviewLayer.visible()).toBe(true);
+      expect(overviewLayer.opacity()).toBe(0.6);
+      expect(
+        mockedAnnotationStore.updateVisibilityAndHydration,
+      ).toHaveBeenCalledWith(expect.objectContaining({ suppress: true }));
+
+      vi.clearAllMocks();
+      map.unitsPerPixel.mockReturnValue(0.5);
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+      } as any;
+      await wrapper.vm.$nextTick();
+
+      expect((wrapper.vm as any).rasterActive).toBe(false);
+      expect((wrapper.vm as any).shouldDrawAnnotations).toBe(true);
+      expect(overviewLayer.visible()).toBe(false);
+      expect(
+        mockedAnnotationStore.updateVisibilityAndHydration,
+      ).toHaveBeenCalledWith(expect.not.objectContaining({ suppress: true }));
+    });
+  });
+
   describe("computed property store proxies", () => {
     beforeEach(() => {
       wrapper = mountComponent();

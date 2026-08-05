@@ -106,6 +106,7 @@ import {
   IGeoJSFeatureLayer,
   IGeoJSLineFeatureStyle,
   IGeoJSMap,
+  IGeoJSOsmLayer,
   IGeoJSPosition,
   IGeoJSPointFeatureStyle,
   IGeoJSPolygonFeatureStyle,
@@ -172,6 +173,7 @@ import { editPolygonAnnotation as editPolygonAnnotationUtil } from "@/utils/poly
 import { stubPerf } from "@/utils/stubPerf";
 import { visibilityBudgetForZoom } from "@/utils/visibilityBudget";
 import { cameraRefreshNeeded } from "@/utils/camera";
+import { annotationOverviewRasterActive } from "@/utils/annotationOverview";
 import RBush from "rbush";
 
 // Module-level helpers
@@ -241,6 +243,7 @@ const props = withDefaults(
     timelapseLayer: IGeoJSAnnotationLayer;
     timelapseTextLayer: IGeoJSFeatureLayer;
     interactionLayer: IGeoJSAnnotationLayer;
+    annotationOverviewLayer?: IGeoJSOsmLayer;
     unrollH: number;
     unrollW: number;
     maps: IMapEntry[];
@@ -255,6 +258,7 @@ const props = withDefaults(
 // ---- Refs (data fields) ----
 
 const isDragging = ref(false);
+const rasterActive = ref(false);
 const dragStartPosition = ref<IGeoJSPosition | null>(null);
 const draggedAnnotation = ref<IAnnotation | null>(null);
 // IGeoJSAnnotation instances are heavy native objects whose internals must
@@ -350,11 +354,15 @@ const selectedConnectionIds = computed(
 const hoveredConnectionId = computed(
   () => connectionListStore.hoveredConnectionId,
 );
-const shouldDrawAnnotations = computed((): boolean => store.drawAnnotations);
-const shouldDrawConnections = computed(
-  (): boolean => store.drawAnnotationConnections,
+const shouldDrawAnnotations = computed(
+  (): boolean => store.drawAnnotations && !rasterActive.value,
 );
-const showTooltips = computed((): boolean => store.showTooltips);
+const shouldDrawConnections = computed(
+  (): boolean => store.drawAnnotationConnections && !rasterActive.value,
+);
+const showTooltips = computed(
+  (): boolean => store.showTooltips && !rasterActive.value,
+);
 const showTimelapseMode = computed((): boolean => timelapseStore.showMode);
 const timelapseModeWindow = computed((): number => timelapseStore.modeWindow);
 const showTimelapseLabels = computed((): boolean => timelapseStore.showLabels);
@@ -370,6 +378,38 @@ const propertyValues = computed(() => propertiesStore.propertyValues);
 const pendingStoreAnnotation = computed(
   () => annotationStore.pendingAnnotation,
 );
+
+function updateAnnotationOverviewMode() {
+  const layer = props.annotationOverviewLayer;
+  const nextActive = layer
+    ? annotationOverviewRasterActive({
+        config: annotationStore.overviewConfig,
+        unitsPerPixel: props.map.unitsPerPixel(props.map.zoom()),
+        wasActive: rasterActive.value,
+        unrolling: unrolling.value,
+      })
+    : false;
+  if (nextActive !== rasterActive.value) {
+    rasterActive.value = nextActive;
+  }
+  if (!layer) {
+    return;
+  }
+  const visible = nextActive && store.drawAnnotations;
+  const opacity = annotationStore.overviewConfig.opacity;
+  let changed = false;
+  if (layer.visible() !== visible) {
+    layer.visible(visible);
+    changed = true;
+  }
+  if (layer.opacity() !== opacity) {
+    layer.opacity(opacity);
+    changed = true;
+  }
+  if (changed) {
+    layer.draw();
+  }
+}
 
 const selectedToolConfiguration = computed(
   (): IToolConfiguration | null => store.selectedTool?.configuration ?? null,
@@ -4547,6 +4587,17 @@ let lastCameraEvent: { zoom: number; center: IGeoJSPosition } | null = null;
 
 // Visibility and hydration updates
 function updateVisibility() {
+  if (rasterActive.value) {
+    annotationStore.updateVisibilityAndHydration({
+      currentFrameLocation: { XY: xy.value, Z: z.value, Time: time.value },
+      suppress: true,
+    });
+    lastRefreshCamera = {
+      zoom: store.cameraInfo.zoom,
+      center: store.cameraInfo.center,
+    };
+    return;
+  }
   // Only materialize an id array when a client filter is active. Without one,
   // omit it and let the store derive ids from its own stub map, avoiding a
   // full-dataset id array allocation per frame change (Finding 15).
@@ -4596,6 +4647,20 @@ function updateVisibility() {
   }
 }
 const updateVisibilityDebounced = debounce(updateVisibility, 250);
+
+watch(rasterActive, updateVisibility);
+
+watch(
+  [
+    () => store.cameraInfo.zoom,
+    () => annotationStore.overviewConfig,
+    unrolling,
+    () => props.annotationOverviewLayer,
+    () => store.drawAnnotations,
+  ],
+  updateAnnotationOverviewMode,
+  { immediate: true },
+);
 
 // Frame changes (XY, Z, Time) and annotation list changes update immediately
 // to avoid flash of empty frame while debounce waits
@@ -4874,6 +4939,8 @@ onBeforeUnmount(() => {
     cancelIdleCallback(spatialIndexRequestId);
   }
   clearRetainedFeatureCache();
+  props.annotationOverviewLayer?.visible(false);
+  annotationStore.setVisibilitySuppressed?.(false);
 });
 
 // ---- Expose ----
@@ -4885,6 +4952,7 @@ defineExpose({
   filterStore,
   // Refs
   isDragging,
+  rasterActive,
   dragStartPosition,
   draggedAnnotation,
   dragGhostAnnotation,

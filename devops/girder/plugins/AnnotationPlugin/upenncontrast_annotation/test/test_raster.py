@@ -1,0 +1,326 @@
+import io
+import json
+
+import pytest
+from PIL import Image
+
+from girder.models.folder import Folder
+from girder.models.token import Token
+from pytest_girder.assertions import assertStatus, assertStatusOk
+
+from upenncontrast_annotation.server.helpers.annotationRaster import (
+    frameGeometryCache,
+)
+from upenncontrast_annotation.server.models.annotation import Annotation
+
+from . import girder_utilities as utilities
+from . import upenn_testing_utilities as upenn_utilities
+
+
+def createAnnotation(datasetId, coordinates, shape="polygon", **overrides):
+    annotation = upenn_utilities.getSampleAnnotation(datasetId)
+    annotation.update({
+        "coordinates": coordinates,
+        "shape": shape,
+        "location": {"XY": 0, "Z": 0, "Time": 0},
+        "tags": ["included"],
+        "color": None,
+    })
+    annotation.update(overrides)
+    return Annotation().create(annotation)
+
+
+def responseBytes(response):
+    if isinstance(response.body, list):
+        return b"".join(response.body)
+    return response.body
+
+
+def responseImage(response):
+    return Image.open(io.BytesIO(responseBytes(response))).convert("RGBA")
+
+
+def requestTile(server, dataset, user=None, **overrides):
+    params = {
+        "datasetId": str(dataset["_id"]),
+        "XY": 0,
+        "Z": 0,
+        "Time": 0,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileSize": 512,
+        "maxLevel": 1,
+        "mode": "shapes",
+    }
+    params.update(overrides.pop("params", {}))
+    return server.request(
+        path="/upenn_annotation/raster/{}/{}/{}".format(
+            overrides.pop("level", 1),
+            overrides.pop("x", 0),
+            overrides.pop("y", 0),
+        ),
+        method="GET",
+        user=user,
+        params=params,
+        isJson=False,
+        **overrides
+    )
+
+
+@pytest.fixture(autouse=True)
+def clearRasterCache():
+    frameGeometryCache.clear()
+    yield
+    frameGeometryCache.clear()
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestAnnotationRaster:
+    def testPolygonAndSubpixelRendering(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "raster_polygon", upenn_utilities.datasetMetadata
+        )
+        createAnnotation(folder["_id"], [
+            {"x": 10, "y": 10},
+            {"x": 30, "y": 10},
+            {"x": 30, "y": 30},
+            {"x": 10, "y": 30},
+        ])
+        createAnnotation(folder["_id"], [
+            {"x": 100, "y": 100},
+            {"x": 101, "y": 100},
+            {"x": 101, "y": 101},
+            {"x": 100, "y": 101},
+        ])
+
+        full = requestTile(server, folder, admin)
+        assertStatusOk(full)
+        assert full.headers["Content-Type"].startswith("image/png")
+        assert responseImage(full).getpixel((20, 20))[3] == 255
+
+        low = requestTile(server, folder, admin, level=0)
+        assertStatusOk(low)
+        assert responseImage(low).getpixel((50, 50))[3] == 255
+
+    def testTileBoundaryAndTransparentPadding(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "raster_boundary", upenn_utilities.datasetMetadata
+        )
+        createAnnotation(folder["_id"], [
+            {"x": 510, "y": 20},
+            {"x": 514, "y": 20},
+            {"x": 514, "y": 30},
+            {"x": 510, "y": 30},
+        ])
+
+        left = responseImage(requestTile(server, folder, admin))
+        right = responseImage(requestTile(server, folder, admin, x=1))
+        assert left.getpixel((511, 25))[3] == 255
+        assert right.getpixel((0, 25))[3] == 255
+
+        padded = responseImage(requestTile(
+            server,
+            folder,
+            admin,
+            x=1,
+            y=1,
+            params={"sizeX": 600, "sizeY": 600},
+        ))
+        assert padded.getpixel((400, 400)) == (0, 0, 0, 0)
+
+    def testFiltersFrameAndColors(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "raster_filters", upenn_utilities.datasetMetadata
+        )
+        createAnnotation(
+            folder["_id"],
+            [{"x": 20, "y": 20}],
+            shape="point",
+            color="#112233",
+        )
+        createAnnotation(
+            folder["_id"],
+            [{"x": 60, "y": 60}],
+            shape="point",
+            tags=["excluded"],
+        )
+        createAnnotation(
+            folder["_id"],
+            [{"x": 90, "y": 90}],
+            shape="point",
+            location={"XY": 0, "Z": 1, "Time": 0},
+        )
+
+        response = requestTile(
+            server,
+            folder,
+            admin,
+            params={
+                "shape": "point",
+                "tags": json.dumps(["included"]),
+                "color": "#AABBCC",
+            },
+        )
+        assertStatusOk(response)
+        image = responseImage(response)
+        assert image.getpixel((20, 20)) == (17, 34, 51, 255)
+        assert image.getpixel((60, 60)) == (0, 0, 0, 0)
+        assert image.getpixel((90, 90)) == (0, 0, 0, 0)
+
+    def testPointRadiusIsConstantAcrossLevels(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "raster_points", upenn_utilities.datasetMetadata
+        )
+        createAnnotation(
+            folder["_id"], [{"x": 100, "y": 100}], shape="point"
+        )
+
+        full = responseImage(requestTile(
+            server,
+            folder,
+            admin,
+            params={"pointRadius": 4},
+        ))
+        low = responseImage(requestTile(
+            server,
+            folder,
+            admin,
+            level=0,
+            params={"pointRadius": 4},
+        ))
+        assert full.getpixel((104, 100))[3] == 255
+        assert low.getpixel((54, 50))[3] == 255
+
+    def testImagePyramidLevelControlsCoordinateScale(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "raster_coordinate_scale", upenn_utilities.datasetMetadata
+        )
+        createAnnotation(
+            folder["_id"], [{"x": 100, "y": 100}], shape="point"
+        )
+
+        image = responseImage(requestTile(
+            server,
+            folder,
+            admin,
+            level=1,
+            params={"maxLevel": 2},
+        ))
+
+        assert image.getpixel((50, 50))[3] == 255
+        assert image.getpixel((100, 100))[3] == 0
+
+    def testDiscsMode(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "raster_discs", upenn_utilities.datasetMetadata
+        )
+        createAnnotation(folder["_id"], [
+            {"x": 90, "y": 90},
+            {"x": 110, "y": 90},
+            {"x": 110, "y": 110},
+            {"x": 90, "y": 110},
+        ])
+        response = requestTile(
+            server, folder, admin, params={"mode": "discs"}
+        )
+        assertStatusOk(response)
+        image = responseImage(response)
+        assert image.getpixel((100, 100))[3] == 255
+        assert image.getpixel((110, 100))[3] == 255
+        assert image.getpixel((111, 100))[3] == 0
+
+    @pytest.mark.parametrize(
+        "path,params",
+        [
+            ((2, 0, 0), {}),
+            ((1, 2, 0), {}),
+            ((1, 0, 0), {"tileSize": 300}),
+            ((1, 0, 0), {"sizeX": 200000}),
+            ((1, 0, 0), {"maxLevel": -1}),
+            ((1, 0, 0), {"XY": -1}),
+            ((1, 0, 0), {"color": "yellow"}),
+        ],
+    )
+    def testInvalidInputsReturn400(self, admin, server, path, params):
+        folder = utilities.createFolder(
+            admin, "raster_invalid_{}".format(path),
+            upenn_utilities.datasetMetadata,
+        )
+        response = requestTile(
+            server,
+            folder,
+            admin,
+            level=path[0],
+            x=path[1],
+            y=path[2],
+            params=params,
+        )
+        assertStatus(response, 400)
+
+    def testAccessAndEtagInvalidation(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "raster_access", upenn_utilities.datasetMetadata
+        )
+        Folder().setPublic(folder, False, save=True)
+        private = requestTile(server, folder)
+        assertStatus(private, 401)
+
+        token = Token().createToken(admin)
+        cookieAuthenticated = requestTile(
+            server,
+            folder,
+            cookie="girderToken={}".format(token["_id"]),
+        )
+        assertStatusOk(cookieAuthenticated)
+
+        Folder().setPublic(folder, True, save=True)
+        first = requestTile(server, folder)
+        assertStatusOk(first)
+        etag = first.headers["ETag"]
+        cached = requestTile(
+            server, folder, additionalHeaders=[("If-None-Match", etag)]
+        )
+        assertStatus(cached, 304)
+
+        createAnnotation(
+            folder["_id"], [{"x": 30, "y": 30}], shape="point"
+        )
+        changed = requestTile(server, folder)
+        assertStatusOk(changed)
+        assert changed.headers["ETag"] != etag
+        assert responseImage(changed).getpixel((30, 30))[3] == 255
+
+    def testEveryModelMutationPathInvalidatesEtag(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "raster_mutations", upenn_utilities.datasetMetadata
+        )
+        Folder().setPublic(folder, True, save=True)
+        annotationModel = Annotation()
+        annotation = createAnnotation(
+            folder["_id"], [{"x": 40, "y": 40}], shape="point"
+        )
+
+        etag = requestTile(server, folder).headers["ETag"]
+        annotation["color"] = "#123456"
+        annotationModel.save(annotation)
+        savedEtag = requestTile(server, folder).headers["ETag"]
+        assert savedEtag != etag
+
+        annotation["color"] = "#654321"
+        annotationModel.saveMany([annotation])
+        saveManyEtag = requestTile(server, folder).headers["ETag"]
+        assert saveManyEtag != savedEtag
+
+        annotationModel.remove(annotation)
+        removedEtag = requestTile(server, folder).headers["ETag"]
+        assert removedEtag != saveManyEtag
+
+        batch = [createAnnotation(
+            folder["_id"], [{"x": 50, "y": 50}], shape="point"
+        )]
+        batchEtag = requestTile(server, folder).headers["ETag"]
+        annotationModel.deleteMultiple([
+            str(document["_id"]) for document in batch
+        ])
+        assert requestTile(server, folder).headers["ETag"] != batchEtag

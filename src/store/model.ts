@@ -539,6 +539,9 @@ export interface IDatasetConfigurationBase {
   // compatibility with configurations created before these settings were
   // persisted.
   visibilityConfig?: IVisibilityConfig;
+  // Shared raster-overview settings. Optional for configurations created
+  // before the overview layer was introduced.
+  overviewConfig?: IAnnotationOverviewConfig;
   // Shared annotation-browser state (displayed property columns and property
   // filters). Optional for compatibility with configurations created before
   // this was persisted.
@@ -993,6 +996,7 @@ export interface IGeoJSLayerSpec {
 // https://opengeoscience.github.io/geojs/apidocs/geo.layer.html
 export interface IGeoJSLayer extends IGeoJsObject {
   visible: (value?: boolean) => boolean | IGeoJSLayer;
+  opacity: (value?: number) => number | IGeoJSLayer;
   draw: () => IGeoJSLayer;
   map: () => IGeoJSMap;
   modes: {
@@ -1678,6 +1682,33 @@ export interface IVisibilityConfig {
   viewportRefreshFraction: number;
 }
 
+export type TAnnotationOverviewMode = "shapes" | "discs";
+
+export interface IAnnotationOverviewConfig {
+  enabled: boolean;
+  mode: TAnnotationOverviewMode;
+  opacity: number;
+  // Raster is used above this many image pixels per screen pixel; vectors
+  // take over at or below it.
+  vectorSwitchThreshold: number;
+}
+
+export const DEFAULT_ANNOTATION_OVERVIEW_CONFIG: IAnnotationOverviewConfig = {
+  enabled: false,
+  mode: "shapes",
+  opacity: 0.6,
+  vectorSwitchThreshold: 1,
+};
+
+export function resolveAnnotationOverviewConfig(
+  config?: Partial<IAnnotationOverviewConfig>,
+): IAnnotationOverviewConfig {
+  return {
+    ...DEFAULT_ANNOTATION_OVERVIEW_CONFIG,
+    ...config,
+  };
+}
+
 // Annotation count above which the annotation browser list switches to the
 // backend-paginated (server) list, independently of stub-only mode. This is a
 // UI materialization limit (one v-data-table row per annotation, client-side
@@ -2133,6 +2164,7 @@ export interface IMapEntry {
   timelapseLayer: IGeoJSAnnotationLayer;
   timelapseTextLayer: IGeoJSFeatureLayer;
   interactionLayer: IGeoJSAnnotationLayer;
+  annotationOverviewLayer?: IGeoJSOsmLayer;
   uiLayer?: IGeoJSUiLayer;
   lowestLayer?: number;
 }
@@ -2394,6 +2426,7 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       tStep: { value: 1, unit: "s" },
     },
     visibilityConfig: resolveVisibilityConfig(),
+    overviewConfig: resolveAnnotationOverviewConfig(),
     annotationBrowserConfig: {
       displayedPropertyPaths: [],
       filterPaths: [],
