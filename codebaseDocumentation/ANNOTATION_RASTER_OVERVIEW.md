@@ -33,7 +33,8 @@ Design goals:
 
 ## 2. Architecture decision: tile pyramid, not a single PNG
 
-Three candidate designs were considered. **Only (c) works at 20K×20K.**
+Four candidate designs were considered. **Only (d) works at 20K×20K with
+dynamic annotations.**
 
 a. **Single full-frame PNG served once, displayed as one GeoJS quad**
    (like the worker preview). Rejected: a 20,000² RGBA canvas is 1.6 GB on
@@ -47,13 +48,35 @@ b. **Grid of region PNGs, one quad each** (e.g. 5×5 tiles of 4096²).
    and there is no level-of-detail — the viewer pays full cost even fully
    zoomed out.
 
-c. **Standard z/x/y tile pyramid endpoint consumed by a GeoJS `osm`
-   layer.** Chosen. The viewer already renders all image layers as `osm`
+c. **Materialized large_image item**: render the full-resolution raster
+   once, store it as a pyramidal TIFF item in the dataset, and let the
+   existing `large_image` plugin serve its tiles. Tempting because it
+   reuses the image-serving stack wholesale, but rejected: annotations
+   change constantly, and every create/edit/delete would require
+   re-rendering a 20K×20K image and re-encoding a pyramid file (tens of
+   seconds plus storage churn), whereas dynamic tiles invalidate with a
+   counter bump. The raster is also parameterized — frame (XY/Z/Time),
+   tag/shape filters, mode, colors — so each combination would need its
+   own baked file. (A custom dynamic large_image tile source is
+   technically possible, but its API is file/item-oriented; keying one on
+   frame + filters fights the framework.) Baking a static pyramid could
+   still return as a pre-warming optimization for read-only published
+   datasets (§9).
+
+d. **Standard z/x/y tile pyramid endpoint consumed by a GeoJS `osm`
+   layer.** Chosen. This deliberately mirrors large_image's tile
+   *protocol* — the same zxy pyramid semantics and the same client-side
+   consumption: the viewer already renders all image layers as `osm`
    tile layers configured via `geojs.util.pixelCoordinateParams`
    (`src/components/ImageViewer.vue:1056-1081`, layer creation at
    `:1264`), so GeoJS provides fetching, LOD, viewport culling, tile
-   caching and eviction for free. The backend renders one small PNG per
-   requested tile from an in-memory, per-frame geometry cache.
+   caching and eviction for free, exactly as it does for large_image
+   tiles. The downsampling that large_image performs by reading pyramid
+   levels from a file is replaced by rendering vector geometry at the
+   requested tile's scale — vectors downsample for free, so no image
+   pyramid ever needs to be built, stored, or invalidated. The backend
+   renders one small PNG per requested tile from an in-memory, per-frame
+   geometry cache.
 
 ## 3. Backend
 
