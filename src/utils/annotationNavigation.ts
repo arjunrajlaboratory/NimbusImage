@@ -1,3 +1,4 @@
+import { nextTick } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import timelapse from "@/store/timelapse";
@@ -6,7 +7,9 @@ import {
   frameCameraInfo,
   frameCameraInfoToExtent,
   recenterCameraInfo,
+  recenterCameraInfoAtZoom,
 } from "@/utils/camera";
+import { zoomForVectorAnnotations } from "@/utils/annotationOverview";
 import { IUnrollLayout, unrollLayoutFor, unrolledPoint } from "@/utils/unroll";
 
 /** Fraction of the viewport a framed connection should occupy. */
@@ -77,12 +80,30 @@ export function goToAnnotationLocation(annotationId: string) {
     // must be hydrated against the *new* viewport, not the stale pre-click one
     // (this path bypasses the GeoJS map, so nothing else re-syncs gcsBounds).
     // Resolved AFTER the frame is set so the grid is the one being navigated to.
+    const drawnCenter = unrolledPoint(center, location, currentUnrollLayout());
+    const map = store.maps?.[0]?.map;
+    const overviewConfig = annotationStore.overviewConfig;
+    const vectorZoom =
+      overviewConfig?.enabled && !store.unroll && map?.unitsPerPixel
+        ? zoomForVectorAnnotations({
+            currentZoom: store.cameraInfo.zoom,
+            unitsPerPixel: map.unitsPerPixel(store.cameraInfo.zoom),
+            vectorSwitchThreshold: overviewConfig.vectorSwitchThreshold,
+            maxZoom: map.zoomRange?.()?.max,
+          })
+        : null;
     store.setCameraInfo(
-      recenterCameraInfo(
-        store.cameraInfo,
-        unrolledPoint(center, location, currentUnrollLayout()),
-      ),
+      vectorZoom === null
+        ? recenterCameraInfo(store.cameraInfo, drawnCenter)
+        : recenterCameraInfoAtZoom(store.cameraInfo, drawnCenter, vectorZoom),
     );
+    if (vectorZoom !== null) {
+      // The immediate hydrate below can still see raster suppression because
+      // the map and AnnotationViewer react to the new camera asynchronously.
+      // Retry after Vue has applied that transition; the store deduplicates an
+      // already-cached or in-flight id.
+      void nextTick(() => annotationStore.ensureHydrated([annotationId]));
+    }
   }
   annotationStore.setHoveredAnnotationId(annotationId);
   // Guarantee the navigated-to annotation renders as a full shape, even if it

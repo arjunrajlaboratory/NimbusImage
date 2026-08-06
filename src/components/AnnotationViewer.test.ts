@@ -483,6 +483,7 @@ import { NoOutput } from "@/pipelines/computePipeline";
 import connectionListStore from "@/store/connectionList";
 import timelapseStore from "@/store/timelapse";
 import { TRACK_UNIFORM_COLOR, trackColor, trackKey } from "@/utils/connections";
+import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import AnnotationViewer from "./AnnotationViewer.vue";
 
 const mockedStore = vi.mocked(store);
@@ -593,6 +594,7 @@ describe("AnnotationViewer", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    annotationSpatialIndex.clear();
 
     // Reset store state
     mockedStore.configuration = { name: "Test Config" } as any;
@@ -692,6 +694,7 @@ describe("AnnotationViewer", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    annotationSpatialIndex.clear();
     // Unmount the mounted component so its watchers, GeoJS layer refs, and
     // reactive subscriptions are released. Without this the ~246 mounted
     // instances accumulate across the run and OOM the vitest worker. Also clear
@@ -744,6 +747,119 @@ describe("AnnotationViewer", () => {
       expect(
         mockedAnnotationStore.updateVisibilityAndHydration,
       ).toHaveBeenCalledWith(expect.not.objectContaining({ suppress: true }));
+    });
+
+    it("draws only selected stubs as feedback over the raster", () => {
+      const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+      mockedStore.layers = [layer];
+      (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+      const selectedStub = {
+        id: "selected",
+        centroid: { x: 10, y: 20 },
+        location: { XY: 0, Z: 0, Time: 0 },
+        shape: "polygon",
+        channel: 0,
+        tags: [],
+        color: null,
+        estimatedRadius: 5,
+      };
+      const unselectedStub = {
+        ...selectedStub,
+        id: "unselected",
+        centroid: { x: 30, y: 40 },
+      };
+      const selectedSecondStub = {
+        ...selectedStub,
+        id: "selected-second",
+        centroid: { x: 50, y: 60 },
+      };
+      const selectedThirdStub = {
+        ...selectedStub,
+        id: "selected-third",
+        centroid: { x: 70, y: 80 },
+      };
+      const selectedOtherFrameStub = {
+        ...selectedStub,
+        id: "selected-other-frame",
+        location: { XY: 0, Z: 0, Time: 1 },
+      };
+      mockedAnnotationStore.annotationStubs = new Map([
+        [selectedOtherFrameStub.id, selectedOtherFrameStub],
+        [selectedStub.id, selectedStub],
+        [selectedSecondStub.id, selectedSecondStub],
+        [selectedThirdStub.id, selectedThirdStub],
+        [unselectedStub.id, unselectedStub],
+      ]) as any;
+      mockedAnnotationStore.hydratedAnnotations = new Map([
+        [
+          selectedStub.id,
+          makeAnnotation({
+            id: selectedStub.id,
+            shape: "polygon",
+            coordinates: [
+              { x: 5, y: 15 },
+              { x: 15, y: 15 },
+              { x: 10, y: 25 },
+            ],
+          }),
+        ],
+      ]);
+      mockedAnnotationStore.selectedAnnotationIds = new Set([
+        selectedOtherFrameStub.id,
+        selectedStub.id,
+        selectedSecondStub.id,
+        selectedThirdStub.id,
+      ]);
+      mockedAnnotationStore.visibilityConfig = {
+        ...mockedAnnotationStore.visibilityConfig,
+        minimumVisible: 2,
+      };
+      (mockedAnnotationStore.isAnnotationSelected as any).mockImplementation(
+        (id: string) => mockedAnnotationStore.selectedAnnotationIds.has(id),
+      );
+      mockedAnnotationStore.overviewConfig = {
+        enabled: true,
+        mode: "shapes",
+        opacity: 0.6,
+        vectorSwitchThreshold: 1,
+      } as any;
+      const map = mockAnnotationLayer().map();
+      map.unitsPerPixel.mockReturnValue(2);
+
+      wrapper = mountComponent({
+        map,
+        annotationOverviewLayer: mockOverviewLayer(),
+        lowestLayer: 0,
+        layerCount: 1,
+      });
+
+      expect((wrapper.vm as any).rasterActive).toBe(true);
+      expect((wrapper.vm as any).shouldDrawAnnotations).toBe(true);
+      expect(
+        (wrapper.vm as any).displayedAnnotations.map(
+          (annotation: any) => annotation.id,
+        ),
+      ).toHaveLength(2);
+      expect(
+        (wrapper.vm as any).displayedAnnotations.every((annotation: any) =>
+          mockedAnnotationStore.selectedAnnotationIds.has(annotation.id),
+        ),
+      ).toBe(true);
+      expect(
+        (wrapper.vm as any).displayedAnnotations.every(
+          (annotation: any) => !("coordinates" in annotation),
+        ),
+      ).toBe(true);
+      expect(
+        (wrapper.vm as any).displayedAnnotations.map(
+          (annotation: any) => annotation.id,
+        ),
+      ).not.toContain(selectedOtherFrameStub.id);
+      expect(
+        (wrapper.vm as any).displayedAnnotations.map(
+          (annotation: any) => annotation.id,
+        ),
+      ).not.toContain(unselectedStub.id);
     });
   });
 
@@ -2507,6 +2623,68 @@ describe("AnnotationViewer", () => {
           selectAnn,
         );
         expect(result.map((a: any) => a.id)).toContain("stub-1");
+      });
+
+      it("drag-selects every matching stub while only the raster is visible", () => {
+        const stubs = new Map(
+          ["stub-1", "stub-2", "stub-3"].map((id, index) => [
+            id,
+            {
+              id,
+              centroid: { x: index + 1, y: index + 1 },
+              location: { XY: 0, Z: 0, Time: 0 },
+              shape: "polygon",
+              channel: 0,
+              tags: [],
+              color: null,
+              estimatedRadius: 5,
+            },
+          ]),
+        );
+        mockedAnnotationStore.annotationStubs = stubs as any;
+        mockedAnnotationStore.stubOnlyMode = true;
+        mockedAnnotationStore.visibilityConfig = {
+          ...mockedAnnotationStore.visibilityConfig,
+          minimumVisible: 2,
+        };
+        (mockedAnnotationStore.getStub as any).mockImplementation(
+          (id: string) => stubs.get(id),
+        );
+        annotationSpatialIndex.bulkLoad(
+          [...stubs.values()].map((stub: any) => ({
+            id: stub.id,
+            x: stub.centroid.x,
+            y: stub.centroid.y,
+          })),
+        );
+        (geojs.util.pointInPolygon as any).mockReturnValue(true);
+        mockedAnnotationStore.overviewConfig = {
+          enabled: true,
+          mode: "shapes",
+          opacity: 0.6,
+          vectorSwitchThreshold: 1,
+        } as any;
+        const map = mockAnnotationLayer().map();
+        map.unitsPerPixel.mockReturnValue(2);
+        wrapper = mountComponent({
+          map,
+          annotationOverviewLayer: mockOverviewLayer(),
+        });
+
+        const selectAnn = mockGeoJSAnnotation("polygon");
+        selectAnn.coordinates = vi.fn().mockReturnValue([
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 },
+        ]);
+
+        expect((wrapper.vm as any).shouldDrawAnnotations).toBe(false);
+        const result = (wrapper.vm as any).getSelectedAnnotationsFromAnnotation(
+          selectAnn,
+        );
+        expect(result).toHaveLength(3);
+        expect(result.every((stub: any) => stubs.has(stub.id))).toBe(true);
       });
     });
 

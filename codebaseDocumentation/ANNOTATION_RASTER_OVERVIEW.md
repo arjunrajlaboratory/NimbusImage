@@ -49,9 +49,10 @@ Design goals:
   which point the existing vector annotation rendering takes over.
 - **Cheap to serve**: bounded memory per request, cached geometry, ~ms
   per-tile render after a one-time per-frame fetch.
-- **Non-interactive by design**: hover/selection below the switch
-  threshold is out of scope for v1 (the stub data still exists and a
-  future version can hit-test against it).
+- **Coarsely interactive**: drag/lasso selection below the switch
+  threshold uses the client-side stub centroid index, selects every match,
+  and renders a bounded sample of selected stub indicators. Pixel-perfect
+  click/hover still requires vectors.
 
 ## 2. Architecture decision: tile pyramid, not a single PNG
 
@@ -444,9 +445,15 @@ existing zoom/camera watchers (`:4549-4608`):
   directions** (raster→vector and vector→raster) — retention/clearing is
   the twin path of drawing.
 
-Selection, hover, and tool interactions below the threshold are
-explicitly out of scope for v1; stubs remain loaded, so a later version
-can hit-test against them.
+While the raster is active, drag/lasso selection queries the global stub
+centroid spatial index even though normal vectors are suppressed. The result is
+the complete set of annotations in the selected region. Only the visual
+feedback is capped at `visibilityConfig.minimumVisible` (5,000 by default): a
+stable pseudo-random subset is drawn as highlighted centroid stubs over the
+raster so redraws do not reshuffle the indicators. This preserves coarse
+interaction without hydrating geometry or restoring the noisy all-stub layer.
+Pixel-perfect click, hover, and geometry-dependent tools still require the
+vector-visible range.
 
 ### 4.5 Settings UI
 
@@ -467,6 +474,17 @@ own edits immediately invalidate browser-cached tiles and force refetch
 (which the server answers freshly thanks to §3.5). Other users' edits
 surface on the next natural refetch (frame change, reload, toggle) — v1
 accepts that; live invalidation is future work (§9).
+
+### 4.7 Navigation from the annotation table
+
+Annotation table rows already route through the shared stub-aware
+`goToAnnotationLocation` helper. When the overview is enabled and the current
+map scale is still in raster mode, row navigation now recenters and zooms just
+past `vectorSwitchThreshold` (clamped to the map's maximum zoom) instead of
+performing only a pan. The camera helper scales `gcsBounds` together with zoom,
+so viewport hydration is computed against the destination actually shown. A
+next-tick hydration retry covers the brief transition in which raster-mode
+suppression may still be active; hydration requests remain deduplicated.
 
 ## 5. What was measured (basis for budgets)
 
@@ -611,11 +629,24 @@ Per `CLAUDE.md`, every item names its test:
   load never creates one — `ImageViewer.test.ts` “shows delayed progress while
   overview tiles load and completes on idle” and “does not show progress when
   overview tiles are already cached”.
+- **Raster-mode coarse selection**: drag/lasso queries the global centroid
+  index, selects every match, and draws a stable pseudo-random subset capped at
+  the zoomed-out visibility floor without restoring unselected stubs or
+  hydrated geometry — `AnnotationViewer.test.ts` “drag-selects every matching
+  stub while only the raster is visible” and “draws only selected stubs as
+  feedback over the raster”, plus `annotationOverview.test.ts` “returns a
+  stable pseudo-random subset at the requested limit”.
+- **Table-row vector navigation**: clicking an object row from raster mode
+  recenters and zooms just inside the vector threshold, keeps `gcsBounds`
+  consistent, and retries hydration after suppression lifts —
+  `annotationNavigation.test.ts` “zooms a table-row destination into the
+  vector-visible range”, `camera.test.ts` “recenters and scales bounds
+  consistently with the requested zoom”, plus the in-browser row-click pass.
 
 ## 9. Explicit non-goals / future extensions
 
-- **Interactivity under the raster** (hover/click via stub hit-testing,
-  or a server-rendered ID map for pixel-perfect picking).
+- **Pixel-perfect hover/click under the raster** (stub proximity hit-testing or
+  a server-rendered ID map). Coarse drag/lasso selection is implemented.
 - **Unroll-mode support** (per-cell tile remapping like
   `ImageViewer.vue:1272-1319`).
 - **Anti-aliasing** (2× supersample + downscale; ~4× tile draw cost).

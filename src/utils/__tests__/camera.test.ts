@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   recenterCameraInfo,
+  recenterCameraInfoAtZoom,
   frameCameraInfo,
   frameCameraInfoToExtent,
   cameraRefreshNeeded,
@@ -63,6 +64,27 @@ describe("recenterCameraInfo", () => {
     info.gcsBounds[0] = { x: 90, y: 95, z: 7 };
     const result = recenterCameraInfo(info, { x: 300, y: 250 });
     expect(result.gcsBounds[0]).toEqual({ x: 290, y: 245, z: 7 });
+  });
+});
+
+describe("recenterCameraInfoAtZoom", () => {
+  it("recenters and scales bounds consistently with the requested zoom", () => {
+    const result = recenterCameraInfoAtZoom(
+      makeCameraInfo(),
+      { x: 300, y: 250 },
+      4,
+    );
+
+    expect(result.center).toEqual({ x: 300, y: 250 });
+    expect(result.zoom).toBe(4);
+    // One zoom level in halves both viewport dimensions around the new center.
+    expect(result.gcsBounds).toEqual([
+      { x: 295, y: 247.5 },
+      { x: 305, y: 247.5 },
+      { x: 305, y: 252.5 },
+      { x: 295, y: 252.5 },
+    ]);
+    expect(result.rotate).toBe(0.5);
   });
 });
 

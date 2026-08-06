@@ -81,6 +81,32 @@ export function recenterCameraInfo(
 }
 
 /**
+ * Recenter the camera and set an explicit zoom while keeping gcsBounds in sync.
+ *
+ * Programmatic navigation bypasses GeoJS's usual camera synchronization. A
+ * plain `{ ...cameraInfo, center, zoom }` would therefore leave gcsBounds at
+ * the old location and scale, causing viewport hydration to query a viewport
+ * that is not actually displayed.
+ */
+export function recenterCameraInfoAtZoom(
+  info: ICameraInfo,
+  center: IGeoJSPosition,
+  zoom: number,
+): ICameraInfo {
+  const recentered = recenterCameraInfo(info, center);
+  const scale = Math.pow(2, info.zoom - zoom);
+  return {
+    ...recentered,
+    zoom,
+    gcsBounds: recentered.gcsBounds.map((point) => ({
+      ...point,
+      x: center.x + (point.x - center.x) * scale,
+      y: center.y + (point.y - center.y) * scale,
+    })),
+  };
+}
+
+/**
  * Recenter and zoom — in OR out — so an axis-aligned box of `width`×`height`
  * around the new center occupies `fraction` of the viewport.
  *

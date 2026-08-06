@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { AnnotationShape, IAnnotation, IImage } from "@/store/model";
 
 /** One tile of the unroll fixture below. Square, to keep the grid predictable. */
@@ -14,6 +15,7 @@ const h = vi.hoisted(() => ({
   frameCameraInfo: vi.fn(() => ({ framed: true })),
   frameCameraInfoToExtent: vi.fn(() => ({ extentFramed: true })),
   recenterCameraInfo: vi.fn(() => ({ recentered: true })),
+  recenterCameraInfoAtZoom: vi.fn(() => ({ recenteredAndZoomed: true })),
   annotations: new Map<string, IAnnotation>(),
   cameraInfo: { center: { x: 0, y: 0 }, zoom: 3, rotate: 0, gcsBounds: [] },
   unrollXY: false,
@@ -24,6 +26,13 @@ const h = vi.hoisted(() => ({
   frames: [] as any[],
   time: 0,
   zoomRange: { min: 0, max: 12 } as { min: number; max: number } | undefined,
+  unitsPerPixel: 1,
+  overviewConfig: {
+    enabled: false,
+    mode: "shapes",
+    opacity: 0.6,
+    vectorSwitchThreshold: 1,
+  },
   showTimelapseMode: true,
   timelapseModeWindow: 10,
 }));
@@ -68,7 +77,14 @@ vi.mock("@/store", () => ({
     },
     // goToTrack clamps the requested zoom to what the live map can show.
     get maps() {
-      return [{ map: { zoomRange: () => h.zoomRange } }];
+      return [
+        {
+          map: {
+            zoomRange: () => h.zoomRange,
+            unitsPerPixel: () => h.unitsPerPixel,
+          },
+        },
+      ];
     },
   },
 }));
@@ -78,6 +94,9 @@ vi.mock("@/store/annotation", () => ({
     getAnnotationFromId: (id: string) => h.annotations.get(id),
     getStub: () => undefined,
     annotationCentroids: {},
+    get overviewConfig() {
+      return h.overviewConfig;
+    },
     setHoveredAnnotationId: h.setHoveredAnnotationId,
     ensureHydrated: h.ensureHydrated,
   },
@@ -100,6 +119,7 @@ vi.mock("@/utils/camera", () => ({
   frameCameraInfo: h.frameCameraInfo,
   frameCameraInfoToExtent: h.frameCameraInfoToExtent,
   recenterCameraInfo: h.recenterCameraInfo,
+  recenterCameraInfoAtZoom: h.recenterCameraInfoAtZoom,
 }));
 
 // Only `simpleCentroid` is stubbed, and with its real behavior (the average).
@@ -165,6 +185,13 @@ beforeEach(() => {
   h.frames = [];
   h.time = 0;
   h.zoomRange = { min: 0, max: 12 };
+  h.unitsPerPixel = 1;
+  h.overviewConfig = {
+    enabled: false,
+    mode: "shapes",
+    opacity: 0.6,
+    vectorSwitchThreshold: 1,
+  };
   h.showTimelapseMode = true;
   h.timelapseModeWindow = 10;
 });
@@ -306,6 +333,48 @@ describe("navigation on the unrolled grid", () => {
 
     expect(h.frameCameraInfo).not.toHaveBeenCalled();
     expect(h.recenterCameraInfo).toHaveBeenCalled();
+  });
+});
+
+describe("annotation overview navigation", () => {
+  it("zooms a table-row destination into the vector-visible range", async () => {
+    h.overviewConfig = {
+      ...h.overviewConfig,
+      enabled: true,
+      vectorSwitchThreshold: 1,
+    };
+    h.unitsPerPixel = 4;
+    addAnnotation("obj", 260, 100);
+
+    goToAnnotationLocation("obj");
+
+    expect(h.recenterCameraInfo).not.toHaveBeenCalled();
+    expect(h.recenterCameraInfoAtZoom).toHaveBeenCalledTimes(1);
+    const [, center, zoom] = h.recenterCameraInfoAtZoom.mock.calls[0] as any[];
+    expect(center).toEqual({ x: 260, y: 100 });
+    expect(zoom).toBeGreaterThan(5);
+    expect(zoom).toBeLessThan(5.1);
+    expect(h.setCameraInfo).toHaveBeenCalledWith({
+      recenteredAndZoomed: true,
+    });
+
+    // One immediate request plus a retry after raster suppression reacts to
+    // the camera transition.
+    expect(h.ensureHydrated).toHaveBeenCalledTimes(1);
+    await nextTick();
+    expect(h.ensureHydrated).toHaveBeenCalledTimes(2);
+    expect(h.ensureHydrated).toHaveBeenLastCalledWith(["obj"]);
+  });
+
+  it("keeps pure-pan navigation when vectors are already visible", () => {
+    h.overviewConfig = { ...h.overviewConfig, enabled: true };
+    h.unitsPerPixel = 0.5;
+    addAnnotation("obj", 260, 100);
+
+    goToAnnotationLocation("obj");
+
+    expect(h.recenterCameraInfo).toHaveBeenCalledTimes(1);
+    expect(h.recenterCameraInfoAtZoom).not.toHaveBeenCalled();
   });
 });
 

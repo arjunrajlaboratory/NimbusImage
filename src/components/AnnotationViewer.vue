@@ -173,7 +173,10 @@ import { editPolygonAnnotation as editPolygonAnnotationUtil } from "@/utils/poly
 import { stubPerf } from "@/utils/stubPerf";
 import { visibilityBudgetForZoom } from "@/utils/visibilityBudget";
 import { cameraRefreshNeeded } from "@/utils/camera";
-import { annotationOverviewRasterActive } from "@/utils/annotationOverview";
+import {
+  annotationOverviewRasterActive,
+  stableRandomSampleById,
+} from "@/utils/annotationOverview";
 import RBush from "rbush";
 
 // Module-level helpers
@@ -355,7 +358,9 @@ const hoveredConnectionId = computed(
   () => connectionListStore.hoveredConnectionId,
 );
 const shouldDrawAnnotations = computed(
-  (): boolean => store.drawAnnotations && !rasterActive.value,
+  (): boolean =>
+    store.drawAnnotations &&
+    (!rasterActive.value || selectedAnnotationIds.value.size > 0),
 );
 const shouldDrawConnections = computed(
   (): boolean => store.drawAnnotationConnections && !rasterActive.value,
@@ -552,6 +557,76 @@ const layerAnnotations = computed(() => {
     string,
     Map<string, TAnnotationOrStub>
   > = new Map();
+  for (const layer of validLayers.value) {
+    layerIdToAnnotationIds.set(layer.id, new Map());
+  }
+
+  // While the raster represents the complete frame, draw only a bounded,
+  // stable pseudo-random sample of selected stubs as interaction feedback.
+  // Iterating selected ids instead of annotationsForIteration is important
+  // here: the latter can contain hundreds of thousands of unselected stubs.
+  // Prefer the stub even when geometry is hydrated so this overlay remains a
+  // cheap centroid indicator rather than duplicating shapes already
+  // represented by the raster.
+  if (rasterActive.value) {
+    const limit = Math.max(1, annotationStore.visibilityConfig.minimumVisible);
+    type RasterSelectionCandidate = {
+      annotationId: string;
+      annotation: TAnnotationOrStub;
+      layerIds: string[];
+    };
+    function* rasterSelectionCandidates(): Iterable<RasterSelectionCandidate> {
+      for (const annotationId of selectedAnnotationIds.value) {
+        const annotation =
+          annotationStore.annotationStubs?.get(annotationId) ??
+          annotationStore.getStub(annotationId) ??
+          getAnnotationFromId.value(annotationId);
+        if (!annotation) {
+          continue;
+        }
+        const layerIds: string[] = [];
+        for (const layer of validLayers.value) {
+          if (
+            annotation.channel !== layer.channel ||
+            (!layer.visible && !showAnnotationsFromHiddenLayers.value)
+          ) {
+            continue;
+          }
+          const sliceIndexes = store.layerSliceIndexes(layer);
+          const matchesXY =
+            store.unrollXY ||
+            layer.xy.type === "max-merge" ||
+            annotation.location.XY === sliceIndexes?.xyIndex;
+          const matchesZ =
+            store.unrollZ ||
+            layer.z.type === "max-merge" ||
+            annotation.location.Z === sliceIndexes?.zIndex;
+          const matchesTime =
+            store.unrollT ||
+            layer.time.type === "max-merge" ||
+            annotation.location.Time === sliceIndexes?.tIndex;
+          if (matchesXY && matchesZ && matchesTime) {
+            layerIds.push(layer.id);
+          }
+        }
+        if (layerIds.length > 0) {
+          yield { annotationId, annotation, layerIds };
+        }
+      }
+    }
+
+    for (const { annotationId, annotation, layerIds } of stableRandomSampleById(
+      rasterSelectionCandidates(),
+      limit,
+      (candidate) => candidate.annotationId,
+    )) {
+      for (const layerId of layerIds) {
+        layerIdToAnnotationIds.get(layerId)!.set(annotationId, annotation);
+      }
+    }
+    return layerIdToAnnotationIds;
+  }
+
   const stubsSize = annotationStore.annotationStubs?.size ?? 0;
   const { maxVisible, globalThreshold } = annotationStore.visibilityConfig;
   // Direct reads create reactive dependencies so layerAnnotations
@@ -565,7 +640,6 @@ const layerAnnotations = computed(() => {
   const layerFrameAnnotations: Map<string, TAnnotationOrStub[]> = new Map();
   let totalFrameCount = 0;
   for (const layer of validLayers.value) {
-    layerIdToAnnotationIds.set(layer.id, new Map());
     if (layer.visible || showAnnotationsFromHiddenLayers.value) {
       const layerChannelAnnotations =
         displayableAnnotationsByChannel.value.get(layer.channel) || [];
@@ -2316,7 +2390,7 @@ function shouldSelectStub(
 function getSelectedAnnotationsFromAnnotation(
   selectAnnotation: IGeoJSAnnotation,
 ) {
-  if (!shouldDrawAnnotations.value) {
+  if (!store.drawAnnotations) {
     return [];
   }
   const coordinates = selectAnnotation.coordinates();
