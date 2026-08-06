@@ -435,8 +435,12 @@ existing zoom/camera watchers (`:4549-4608`):
   `updateVisibilityAndHydration` (`src/store/annotation.ts:2393`) so no
   hydration requests are scheduled for suppressed frames — hydrating
   20k geometries the user can't see is pure waste.
-- While not `rasterActive`: hide the raster layer; everything behaves
-  exactly as today. **Both visibility flips must be verified in both
+- While not `rasterActive`: hide the raster layer. While the overview feature
+  remains enabled and unroll is inactive, the vector layer draws only hydrated
+  annotations; visible unhydrated stubs still drive viewport selection and
+  hydration but are not rendered as temporary dots. Disabling the overview or
+  entering unroll restores the normal stub rendering behavior. **Both
+  visibility flips must be verified in both
   directions** (raster→vector and vector→raster) — retention/clearing is
   the twin path of drawing.
 
@@ -564,6 +568,12 @@ Per `CLAUDE.md`, every item names its test:
 - **Hydration suppression**: no hydrate requests scheduled while raster
   active — the `AnnotationViewer.test.ts` raster-switch test plus store
   early-out coverage.
+- **Stub-free vector handoff**: with the overview enabled, zoomed-in vectors
+  contain only hydrated geometry while unhydrated stubs remain available to
+  visibility and hydration; disabling the overview or entering unroll restores
+  stub dots —
+  `AnnotationViewer.test.ts` “omits unhydrated stubs while raster overview is
+  enabled”.
 - **Invalidation on every mutation verb**: create, updateMultiple,
   delete, deleteMultiple each change the ETag —
   `testEveryModelMutationPathInvalidatesEtag` and

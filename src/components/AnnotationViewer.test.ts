@@ -662,6 +662,8 @@ describe("AnnotationViewer", () => {
     );
     (mockedAnnotationStore.getStub as any).mockReturnValue(undefined);
     mockedAnnotationStore.annotationStubs = new Map();
+    mockedAnnotationStore.hydratedAnnotations = new Map();
+    mockedAnnotationStore.visibleAnnotationIds = new Set();
     mockedAnnotationStore.visibilityConfig = {
       stubThreshold: 10000,
       maxVisible: 10000,
@@ -1596,6 +1598,99 @@ describe("AnnotationViewer", () => {
         const result = (wrapper.vm as any).displayedAnnotations;
         expect(result).toHaveLength(1);
         expect(result[0].id).toBe("a1");
+      });
+
+      it("omits unhydrated stubs while raster overview is enabled", async () => {
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        const unhydratedStub = {
+          id: "stub-only",
+          centroid: { x: 10, y: 20 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "polygon",
+          channel: 0,
+          tags: [],
+          color: null,
+          estimatedRadius: 5,
+        };
+        const hydratedStub = {
+          ...unhydratedStub,
+          id: "hydrated",
+          centroid: { x: 30, y: 40 },
+        };
+        const hydratedAnnotation = makeAnnotation({
+          id: "hydrated",
+          shape: "polygon",
+          coordinates: [
+            { x: 25, y: 35 },
+            { x: 35, y: 35 },
+            { x: 30, y: 45 },
+          ],
+        });
+        mockedAnnotationStore.stubOnlyMode = true;
+        mockedAnnotationStore.annotations = [
+          unhydratedStub,
+          hydratedStub,
+        ] as any;
+        mockedAnnotationStore.annotationStubs = new Map([
+          [unhydratedStub.id, unhydratedStub],
+          [hydratedStub.id, hydratedStub],
+        ]) as any;
+        mockedAnnotationStore.hydratedAnnotations = new Map([
+          [hydratedAnnotation.id, hydratedAnnotation],
+        ]);
+        mockedAnnotationStore.visibleAnnotationIds = new Set([
+          unhydratedStub.id,
+          hydratedStub.id,
+        ]);
+        mockedAnnotationStore.overviewConfig = {
+          enabled: true,
+          mode: "shapes",
+          opacity: 0.6,
+          vectorSwitchThreshold: 1,
+        } as any;
+        const map = mockAnnotationLayer().map();
+        map.unitsPerPixel.mockReturnValue(0.5);
+
+        wrapper = mountComponent({
+          map,
+          annotationOverviewLayer: mockOverviewLayer(),
+          lowestLayer: 0,
+          layerCount: 1,
+        });
+
+        expect(
+          (wrapper.vm as any).displayedAnnotations.map(
+            (annotation: any) => annotation.id,
+          ),
+        ).toEqual(["hydrated"]);
+
+        mockedStore.unroll = true;
+        await wrapper.vm.$nextTick();
+
+        expect(
+          (wrapper.vm as any).displayedAnnotations.map(
+            (annotation: any) => annotation.id,
+          ),
+        ).toEqual(["stub-only", "hydrated"]);
+
+        mockedStore.unroll = false;
+        mockedAnnotationStore.overviewConfig = {
+          ...mockedAnnotationStore.overviewConfig,
+          enabled: false,
+        } as any;
+        await wrapper.vm.$nextTick();
+
+        expect(
+          (wrapper.vm as any).displayedAnnotations.map(
+            (annotation: any) => annotation.id,
+          ),
+        ).toEqual(["stub-only", "hydrated"]);
       });
     });
 

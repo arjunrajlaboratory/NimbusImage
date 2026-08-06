@@ -610,6 +610,18 @@ const layerAnnotations = computed(() => {
           annotationStore.annotationStubs?.get(annotation.id) ??
           annotation
         : annotation;
+      // The raster overview already represents every annotation while zoomed
+      // out. During its vector handoff, keep stubs as the source of visibility
+      // and hydration decisions but do not flash their approximate dots before
+      // the full geometry arrives. Disabling the overview or entering unroll
+      // mode (where no raster is available) preserves normal stub rendering.
+      if (
+        annotationStore.overviewConfig.enabled &&
+        !unrolling.value &&
+        !isHydratedAnnotation(renderData)
+      ) {
+        continue;
+      }
       annotationIdsSet.set(annotation.id, renderData);
     }
   }
