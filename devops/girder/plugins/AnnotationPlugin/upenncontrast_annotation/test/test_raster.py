@@ -9,6 +9,8 @@ from girder.models.token import Token
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.helpers.annotationRaster import (
+    RasterGeometryKey,
+    _buildFrameGeometry,
     frameGeometryCache,
 )
 from upenncontrast_annotation.server.models.annotation import Annotation
@@ -77,6 +79,66 @@ def clearRasterCache():
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
 class TestAnnotationRaster:
+    def testGeometryConstructionTraversesCoordinatesOnce(self):
+        class CountingCoordinates(list):
+            def __init__(self, values):
+                super().__init__(values)
+                self.iterations = 0
+
+            def __iter__(self):
+                self.iterations += 1
+                return super().__iter__()
+
+        polygon = CountingCoordinates([
+            {"x": 0, "y": 0},
+            {"x": 10, "y": 0},
+            {"x": 10, "y": 10},
+            {"x": 0, "y": 10},
+        ])
+        point = CountingCoordinates([{"x": 100, "y": 100}])
+
+        class AnnotationModel:
+            collection = object()
+
+            def _aggregate(self, collection, pipeline):
+                assert collection is self.collection
+                assert pipeline[-1]["$project"]["coordinates"] == 1
+                return iter([
+                    {
+                        "color": "#112233",
+                        "coordinates": polygon,
+                        "shape": "polygon",
+                    },
+                    {
+                        "color": None,
+                        "coordinates": point,
+                        "shape": "point",
+                    },
+                ])
+
+        geometry = _buildFrameGeometry(
+            AnnotationModel(),
+            RasterGeometryKey("dataset", 0, 0, 0, None, (), "shapes"),
+        )
+
+        assert polygon.iterations == 1
+        assert point.iterations == 1
+        assert geometry.offsets.tolist() == [0, 4, 5]
+        assert geometry.coordinates(0).tolist() == [
+            [0, 0],
+            [10, 0],
+            [10, 10],
+            [0, 10],
+        ]
+        assert geometry.bboxes.tolist() == [
+            [0, 0, 10, 10],
+            [100, 100, 100, 100],
+        ]
+        assert geometry.centroids.tolist() == [[5, 5], [100, 100]]
+        assert geometry.radii.tolist() == [5, 0]
+        assert geometry.candidates((-1, -1, 11, 11)).tolist() == [0]
+        assert geometry.candidates((99, 99, 101, 101)).tolist() == [1]
+
     def testPolygonAndSubpixelRendering(self, admin, server):
         folder = utilities.createFolder(
             admin, "raster_polygon", upenn_utilities.datasetMetadata

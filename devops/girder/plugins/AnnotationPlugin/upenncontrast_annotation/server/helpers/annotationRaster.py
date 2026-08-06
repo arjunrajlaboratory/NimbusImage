@@ -292,31 +292,67 @@ def _buildGrid(bboxes):
     )
     width = max(union[2] - union[0], 1.0)
     height = max(union[3] - union[1], 1.0)
-    cells = [array("I") for _ in range(RASTER_GRID_SIZE ** 2)]
-    for index, bbox in enumerate(bboxes):
-        minX = max(0, min(
-            RASTER_GRID_SIZE - 1,
-            int((bbox[0] - union[0]) / width * RASTER_GRID_SIZE),
-        ))
-        maxX = max(0, min(
-            RASTER_GRID_SIZE - 1,
-            int((bbox[2] - union[0]) / width * RASTER_GRID_SIZE),
-        ))
-        minY = max(0, min(
-            RASTER_GRID_SIZE - 1,
-            int((bbox[1] - union[1]) / height * RASTER_GRID_SIZE),
-        ))
-        maxY = max(0, min(
-            RASTER_GRID_SIZE - 1,
-            int((bbox[3] - union[1]) / height * RASTER_GRID_SIZE),
-        ))
-        for y in range(minY, maxY + 1):
-            for x in range(minX, maxX + 1):
-                cells[y * RASTER_GRID_SIZE + x].append(index)
-    return (
-        tuple(np.frombuffer(cell, dtype=np.uint32) for cell in cells),
-        union,
+    minXs = np.clip(
+        ((bboxes[:, 0] - union[0]) / width * RASTER_GRID_SIZE).astype(
+            np.int64
+        ),
+        0,
+        RASTER_GRID_SIZE - 1,
     )
+    maxXs = np.clip(
+        ((bboxes[:, 2] - union[0]) / width * RASTER_GRID_SIZE).astype(
+            np.int64
+        ),
+        0,
+        RASTER_GRID_SIZE - 1,
+    )
+    minYs = np.clip(
+        ((bboxes[:, 1] - union[1]) / height * RASTER_GRID_SIZE).astype(
+            np.int64
+        ),
+        0,
+        RASTER_GRID_SIZE - 1,
+    )
+    maxYs = np.clip(
+        ((bboxes[:, 3] - union[1]) / height * RASTER_GRID_SIZE).astype(
+            np.int64
+        ),
+        0,
+        RASTER_GRID_SIZE - 1,
+    )
+
+    # Most annotations fit in one grid cell. Group those indices with a
+    # vectorized stable sort, then retain the small Python loop only for
+    # annotations that cross a cell boundary.
+    singleCell = (minXs == maxXs) & (minYs == maxYs)
+    singleIndices = np.flatnonzero(singleCell).astype(np.uint32)
+    singleCellIds = (
+        minYs[singleCell] * RASTER_GRID_SIZE + minXs[singleCell]
+    )
+    order = np.argsort(singleCellIds, kind="stable")
+    orderedCellIds = singleCellIds[order]
+    orderedIndices = singleIndices[order]
+    boundaries = np.searchsorted(
+        orderedCellIds,
+        np.arange(RASTER_GRID_SIZE ** 2 + 1),
+    )
+    cells = [
+        orderedIndices[boundaries[cellId]:boundaries[cellId + 1]]
+        for cellId in range(RASTER_GRID_SIZE ** 2)
+    ]
+
+    crossingCells = [array("I") for _ in range(RASTER_GRID_SIZE ** 2)]
+    for index in np.flatnonzero(~singleCell):
+        for y in range(minYs[index], maxYs[index] + 1):
+            for x in range(minXs[index], maxXs[index] + 1):
+                crossingCells[y * RASTER_GRID_SIZE + x].append(index)
+    for cellId, crossing in enumerate(crossingCells):
+        if crossing:
+            cells[cellId] = np.concatenate((
+                cells[cellId],
+                np.frombuffer(crossing, dtype=np.uint32),
+            ))
+    return tuple(cells), union
 
 
 def _buildFrameGeometry(annotationModel, key):
@@ -359,11 +395,15 @@ def _buildFrameGeometry(annotationModel, key):
             colors[-4:] = array("B")
             validColors.pop()
             continue
-        xs = [float(point["x"]) for point in coordinates]
-        ys = [float(point["y"]) for point in coordinates]
-        for x, y in zip(xs, ys):
-            vertices.extend((x, y))
-        offsets.append(len(vertices) // 2)
+        flatCoordinates = [
+            value
+            for point in coordinates
+            for value in (point["x"], point["y"])
+        ]
+        vertices.fromlist(flatCoordinates)
+        offsets.append(offsets[-1] + len(coordinates))
+        xs = flatCoordinates[::2]
+        ys = flatCoordinates[1::2]
         minX, maxX = min(xs), max(xs)
         minY, maxY = min(ys), max(ys)
         bboxes.extend((minX, minY, maxX, maxY))

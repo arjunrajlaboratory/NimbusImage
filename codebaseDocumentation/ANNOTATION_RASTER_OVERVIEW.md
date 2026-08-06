@@ -484,6 +484,16 @@ Appendix A.
 | Full-canvas render 700k polygons at 4096 px | ~4 s |
 | PNG encode, 512² RGBA tile | ~5–20 ms |
 
+Live validation on dataset `6a19784f247013c971283206` (708,983
+annotations, 17,700,404 vertices) after the single-pass packing change:
+
+| Cost | Before | After |
+|---|---:|---:|
+| Direct cold frame geometry build | 16.396 s | 13.340 s (-18.6%) |
+| Cached geometry memory | 163.77 MB | 163.77 MB |
+| Authenticated cold HTTP tile | — | 13.052 s |
+| Warm HTTP tile / ETag 304 | — | 38.9 ms / 4.0 ms |
+
 ## 6. Performance budgets (acceptance criteria)
 
 - **Cold frame (geometry build)**: ≤ 3 s for frames with ≤ 100k
@@ -534,6 +544,9 @@ Protocol & safety:
     the rest.
 11. Concurrency: two threads requesting a cold frame trigger exactly one
     aggregation (assert via monkeypatched fetch counter).
+12. Geometry construction traverses each annotation's coordinates once,
+    bulk-packs the vertex buffer, and indexes both single-cell and
+    boundary-crossing bboxes (`testGeometryConstructionTraversesCoordinatesOnce`).
 
 Watch the known test-harness traps from `CLAUDE.md`: verify each test
 fails without its fix (use `git stash`, not `cp` round-trips), and don't
@@ -580,6 +593,9 @@ Per `CLAUDE.md`, every item names its test:
   `testAccessAndEtagInvalidation`.
 - **Sub-pixel fast path**: low-zoom dense tile stays within budget —
   backend perf-marked test with 100k synthetic annotations.
+- **Single-pass cold geometry build**: coordinates are traversed once and
+  both vectorized single-cell and boundary-crossing grid entries remain
+  queryable — `testGeometryConstructionTraversesCoordinatesOnce`.
 - **Public-endpoint clamps**: all 400 cases — `testInvalidInputsReturn400`.
 - **Private-dataset image authentication**: an anonymous tile request returns
   401 while the same read-only request with Girder's auth cookie returns 200 —
