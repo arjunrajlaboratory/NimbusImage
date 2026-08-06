@@ -605,6 +605,12 @@ Per `CLAUDE.md`, every item names its test:
   and GeoJS tile bounds — `testImagePyramidLevelControlsCoordinateScale` and
   `ImageViewer.test.ts` “lazily creates the layer and refreshes its URL on
   mutations”.
+- **Cold-build feedback without cache-hit flicker**: a raster tile load that
+  remains active for 300 ms creates a global indeterminate progress item and
+  completes it when GeoJS reports the layer idle, while an already-idle cached
+  load never creates one — `ImageViewer.test.ts` “shows delayed progress while
+  overview tiles load and completes on idle” and “does not show progress when
+  overview tiles are already cached”.
 
 ## 9. Explicit non-goals / future extensions
 

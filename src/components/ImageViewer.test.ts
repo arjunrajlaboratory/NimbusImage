@@ -244,6 +244,7 @@ vi.mock("@/pipelines/computePipeline", () => ({
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import progressStore from "@/store/progress";
+import { ProgressType } from "@/store/model";
 import { logWarning } from "@/utils/log";
 import ImageViewer from "./ImageViewer.vue";
 
@@ -1141,6 +1142,79 @@ describe("ImageViewer", () => {
       );
       const secondUrl = overviewLayer.url.mock.calls[1][0];
       expect(secondUrl(2, 3, 4)).toBe("http://localhost/raster/4/2/3?v=1");
+    });
+
+    it("shows delayed progress while overview tiles load and completes on idle", async () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      let isIdle = false;
+      let idleHandler: (() => void) | undefined;
+      Object.defineProperty(overviewLayer, "idle", {
+        get: () => isIdle,
+      });
+      overviewLayer.onIdle.mockImplementation((handler: Function) => {
+        if (isIdle) {
+          handler();
+        } else {
+          idleHandler = handler as () => void;
+        }
+      });
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+
+      await vi.advanceTimersByTimeAsync(299);
+      expect(mockedProgressStore.create).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mockedProgressStore.create).toHaveBeenCalledWith({
+        type: ProgressType.ANNOTATION_RASTER,
+      });
+      expect(mockedProgressStore.complete).not.toHaveBeenCalled();
+
+      isIdle = true;
+      idleHandler?.();
+      expect(mockedProgressStore.complete).toHaveBeenCalledWith("progress1");
+    });
+
+    it("does not show progress when overview tiles are already cached", async () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+
+      await vi.advanceTimersByTimeAsync(300);
+      expect(mockedProgressStore.create).not.toHaveBeenCalled();
     });
   });
 

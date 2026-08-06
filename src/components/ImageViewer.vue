@@ -419,6 +419,91 @@ const blankUrl =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQIHWNgYAAAAAMAAU9ICq8AAAAASUVORK5CYII=";
 const ANNOTATION_OVERVIEW_TILE_SIZE = 512;
 const ANNOTATION_OVERVIEW_FALLBACK_COLOR = "#FFD700";
+const ANNOTATION_OVERVIEW_PROGRESS_DELAY_MS = 300;
+
+type AnnotationOverviewLayer = NonNullable<
+  IMapEntry["annotationOverviewLayer"]
+>;
+
+interface IAnnotationOverviewLoadState {
+  timer: ReturnType<typeof setTimeout> | null;
+  progressId: string | null;
+  finished: boolean;
+}
+
+const annotationOverviewLoadStates = new WeakMap<
+  AnnotationOverviewLayer,
+  IAnnotationOverviewLoadState
+>();
+const trackedAnnotationOverviewLayers = new Set<AnnotationOverviewLayer>();
+
+function finishAnnotationOverviewLoad(
+  layer: AnnotationOverviewLayer,
+  state: IAnnotationOverviewLoadState,
+) {
+  if (state.finished) {
+    return;
+  }
+  state.finished = true;
+  if (state.timer != null) {
+    clearTimeout(state.timer);
+    state.timer = null;
+  }
+  if (state.progressId) {
+    void progressStore.complete(state.progressId);
+    state.progressId = null;
+  }
+  if (annotationOverviewLoadStates.get(layer) === state) {
+    annotationOverviewLoadStates.delete(layer);
+  }
+  trackedAnnotationOverviewLayers.delete(layer);
+}
+
+function cancelAnnotationOverviewLoad(layer?: AnnotationOverviewLayer) {
+  if (!layer) {
+    return;
+  }
+  const state = annotationOverviewLoadStates.get(layer);
+  if (state) {
+    finishAnnotationOverviewLoad(layer, state);
+  }
+}
+
+function trackAnnotationOverviewLoad(layer: AnnotationOverviewLayer) {
+  cancelAnnotationOverviewLoad(layer);
+  const state: IAnnotationOverviewLoadState = {
+    timer: null,
+    progressId: null,
+    finished: false,
+  };
+  annotationOverviewLoadStates.set(layer, state);
+  trackedAnnotationOverviewLayers.add(layer);
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    if (state.finished || annotationOverviewLoadStates.get(layer) !== state) {
+      return;
+    }
+    if (layer.idle) {
+      finishAnnotationOverviewLoad(layer, state);
+      return;
+    }
+
+    layer.onIdle(() => finishAnnotationOverviewLoad(layer, state));
+    void (async () => {
+      const progressId = await progressStore.create({
+        type: ProgressType.ANNOTATION_RASTER,
+      });
+      if (state.finished || annotationOverviewLoadStates.get(layer) !== state) {
+        void progressStore.complete(progressId);
+        return;
+      }
+      state.progressId = progressId;
+      if (layer.idle) {
+        finishAnnotationOverviewLoad(layer, state);
+      }
+    })();
+  }, ANNOTATION_OVERVIEW_PROGRESS_DELAY_MS);
+}
 
 // ---- Computed Properties - Store Proxies ----
 
@@ -1231,6 +1316,7 @@ function _syncAnnotationOverviewLayer(
 ) {
   const config = annotationStore.overviewConfig;
   if (!config?.enabled) {
+    cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
     mapentry.annotationOverviewLayer?.visible(false);
     return;
   }
@@ -1281,6 +1367,7 @@ function _syncAnnotationOverviewLayer(
 
   const datasetId = dataset.value?.id;
   if (!datasetId || unrolling.value) {
+    cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
     mapentry.annotationOverviewLayer.visible(false);
     return;
   }
@@ -1308,6 +1395,7 @@ function _syncAnnotationOverviewLayer(
       .replace("{x}", x.toString())
       .replace("{y}", y.toString()),
   );
+  trackAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
 }
 
 /**
@@ -1920,6 +2008,9 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  for (const layer of trackedAnnotationOverviewLayers) {
+    cancelAnnotationOverviewLoad(layer);
+  }
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
