@@ -18,6 +18,41 @@ There are two kinds of workers:
 - **Annotation workers** — create annotations (points, polygons) on image data
 - **Property workers** — compute measurement values for existing annotations
 
+## RULE: worker accessors are NOT interchangeable
+
+Each worker kind has its own accessor, and they submit to **different endpoints with different payload formats**:
+
+- **Annotation workers** → `ds.annotations.compute(...)` → `POST /upenn_annotation/compute`
+- **Property workers** → create/get a `Property`, then `ds.properties.compute(prop, ...)` → `POST /annotation_property/{id}/compute`
+
+**Never** pass a property-worker image to `ds.annotations.compute`, and **never** pass an annotation-worker image to `ds.properties.compute`. Both accessors now cross-check the image's role labels against `/worker_interface/available` before submitting and raise `ValueError` naming the correct accessor on a known mismatch — but the check is best-effort (an image missing from the listing, carrying no role labels, or an inaccessible discovery endpoint passes through unvalidated), so a mismatch can still submit and then crash inside the worker with a confusing error.
+
+The wire formats differ in a way that makes the crash recognizable:
+
+- Annotation compute sends a **list-valued** top-level `tags` field — the tags to put on *created* annotations — plus `assignment`, `tile`, `connectTo`, `type="worker"`, and `id=""`.
+- Property compute sends `tags` as a **dict**: `{"tags": [...], "exclusive": bool}` — an annotation *filter* selecting which existing annotations to measure.
+
+So if a property worker crashes with `AttributeError: 'list' object has no attribute 'get'` while reading `tags`, and its payload contains `assignment`/`tile`/`connectTo`, list-valued `tags`, `type="worker"`, and `id=""` — that is an **accessor/endpoint mismatch**: the job was submitted through `ds.annotations.compute`. It is *not* malformed tag serialization to be normalized inside the worker; fix the caller, not the worker.
+
+```python
+# WRONG — blob_intensity_worker is a PROPERTY worker; this submits an
+# annotation-compute payload (list-valued tags, assignment, tile, connectTo)
+# and the worker crashes: AttributeError: 'list' object has no attribute 'get'
+job = ds.annotations.compute(
+    image="properties/blob_intensity_worker:latest",
+    channel=0,
+    tags=["blobs"],
+    worker_interface={"Channel": 0},
+)
+
+# RIGHT — go through the property accessor
+prop = ds.properties.get_or_create("Blob Intensity", shape="polygon")
+ds.properties.register(prop.id)
+job = ds.properties.compute(prop, worker_interface={"Channel": 0})
+```
+
+To tell which kind a worker is, check its Docker labels by **key presence** (see "Discovering workers" below).
+
 ## Discovering workers
 
 ```python
@@ -28,10 +63,13 @@ client = ni.connect()
 # List all available worker images on the server
 workers = client.list_workers()
 for image, labels in workers.items():
-    is_ann = labels.get("isAnnotationWorker") == "true"
-    is_prop = labels.get("isPropertyWorker") == "true"
+    # Role labels are MARKER labels: they are commonly set with an
+    # empty-string value (docker build --label isPropertyWorker), so
+    # detect the role by KEY PRESENCE, never by comparing the value.
+    is_annotation = "isAnnotationWorker" in labels
+    is_property = "isPropertyWorker" in labels
     print(f"{image}: {labels.get('interfaceName', '')} "
-          f"[ann={is_ann}, prop={is_prop}]")
+          f"[ann={is_annotation}, prop={is_property}]")
 
 # Get the parameter interface for a specific worker
 interface = client.get_worker_interface("annotations/random_squares:latest")
@@ -40,10 +78,12 @@ for param_name, spec in interface.items():
 ```
 
 Worker labels include:
-- `isAnnotationWorker` / `isPropertyWorker` — what kind of worker it is
+- `isAnnotationWorker` / `isPropertyWorker` — role markers; check with `"isAnnotationWorker" in labels`, not `== "true"` (the value is usually the empty string). A worker may carry both roles.
 - `interfaceName` — display name
 - `description` — what it does
 - `annotationShape` — shape it produces (point, polygon, etc.)
+
+Do **not** infer the role from the image path prefix (`annotations/...`, `properties/...`): registry-qualified images may have arbitrary prefixes (e.g. `ghcr.io/lab/blob_intensity_worker:latest`). The labels are the only reliable signal.
 
 ## Running annotation workers
 
@@ -229,6 +269,7 @@ values = ds.properties.get_values()
 
 ## Important notes
 
+- Match the accessor to the worker's role: annotation workers via `ds.annotations.compute`, property workers via `ds.properties.compute`. See the rule at the top of this skill.
 - Worker parameter keys must match the interface exactly (e.g., `"Square size"` not `"square_size"`). Check with `client.get_worker_interface()`.
 - The `connect_to` dict must always include `"tags"` — use `{"tags": []}` for no connections.
 - Property workers require the property to be created and registered before running.
