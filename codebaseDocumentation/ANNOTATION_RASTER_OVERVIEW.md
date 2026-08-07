@@ -674,6 +674,15 @@ Per `CLAUDE.md`, every item names its test:
   visibility transition — _"lazily creates the layer and refreshes its URL on
   mutations"_ and _"shows delayed progress while overview tiles load and
   completes on idle"_.
+- **Mixed layer-unroll fallback**: shared vector visibility is suppressed only
+  when every mounted map viewer is raster-active, so a group above the raster
+  selector limit keeps its vectors even when a sibling group uses the raster —
+  _"coordinates shared raster suppression across mounted map viewers"_ and
+  _"waits for every map viewer before suppressing shared visibility"_.
+- **Layer-unroll teardown safety**: removing an unrolled map updates aggregate
+  raster activity without accessing its already-exited GeoJS overview layer —
+  _"ignores raster visibility events from removed map viewers"_ plus the live
+  Multiple → Unroll → Multiple pass.
 - **Transparent edge padding**: geometry outside `sizeX`/`sizeY` cannot paint
   into the rightmost or bottommost tile padding —
   _"testTileBoundaryAndTransparentPadding"_.

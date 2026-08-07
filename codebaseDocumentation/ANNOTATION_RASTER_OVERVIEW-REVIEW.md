@@ -108,3 +108,32 @@ Review base: `master` (`da7a9e4e`)
   visible. Covered by _"does not request or activate a raster above the
   selector limit"_, _"retains vector mode above the raster selector limit"_,
   and _"accepts the backend selector limit and rejects larger requests"_.
+
+## R11 — One unrolled map can suppress vectors for every map
+
+- **Severity:** Medium
+- **Location:** `src/components/ImageViewer.vue`,
+  `src/components/AnnotationViewer.vue:updateVisibility`
+- **Summary:** Each map independently decides whether its raster is active, but
+  every `AnnotationViewer` writes the same global visibility-suppression state.
+  In layer-unroll mode, a raster-capable map can therefore hide the vectors of
+  a sibling map whose selector set is not raster-capable.
+- **Status:** fixed — `ImageViewer` aggregates raster activity by
+  map and grants shared suppression only when every mounted annotation viewer
+  is active. Covered by _"coordinates shared raster suppression across mounted
+  map viewers"_ and _"waits for every map viewer before suppressing shared
+  visibility"_.
+
+## R12 — Removed map mutates an exited raster layer
+
+- **Severity:** Medium
+- **Location:** `src/components/ImageViewer.vue:_setAnnotationOverviewVisibility`
+- **Summary:** Switching out of layer-unroll mode exits surplus GeoJS maps
+  before their `AnnotationViewer` children unmount. The child's final raster
+  visibility event then calls `visible()` on an overview layer whose renderer
+  has already been destroyed.
+- **Status:** fixed — removed viewers still update aggregate
+  activity, but their final event skips GeoJS layer operations once their map
+  leaves the parent's mounted map list. Covered by _"ignores raster visibility
+  events from removed map viewers"_ and a clean live Multiple → Unroll →
+  Multiple pass.

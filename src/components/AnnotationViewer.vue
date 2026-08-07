@@ -259,8 +259,9 @@ const props = withDefaults(
     tileHeight: number;
     lowestLayer: number;
     layerCount: number;
+    allowSharedVisibilitySuppression?: boolean;
   }>(),
-  { maps: () => [] },
+  { maps: () => [], allowSharedVisibilitySuppression: true },
 );
 const emit = defineEmits<{
   (
@@ -4667,7 +4668,7 @@ let lastCameraEvent: { zoom: number; center: IGeoJSPosition } | null = null;
 
 // Visibility and hydration updates
 function updateVisibility() {
-  if (rasterActive.value) {
+  if (rasterActive.value && props.allowSharedVisibilitySuppression) {
     annotationStore.updateVisibilityAndHydration({
       currentFrameLocation: { XY: xy.value, Z: z.value, Time: time.value },
       suppress: true,
@@ -4729,6 +4730,7 @@ function updateVisibility() {
 const updateVisibilityDebounced = debounce(updateVisibility, 250);
 
 watch(rasterActive, updateVisibility);
+watch(() => props.allowSharedVisibilitySuppression, updateVisibility);
 
 watch(
   [
@@ -5026,7 +5028,6 @@ onBeforeUnmount(() => {
       opacity: annotationStore.overviewConfig.opacity,
     });
   }
-  annotationStore.setVisibilitySuppressed?.(false);
 });
 
 // ---- Expose ----

@@ -25,13 +25,7 @@
       </v-card>
     </v-dialog>
     <annotation-viewer
-      v-for="(mapentry, index) in maps.filter(
-        (mapentry) =>
-          mapentry.annotationLayer &&
-          mapentry.lowestLayer !== undefined &&
-          mapentry.imageLayers &&
-          mapentry.imageLayers.length,
-      )"
+      v-for="(mapentry, index) in annotationViewerMaps"
       :map="mapentry.map"
       :capturedMouseState="
         mouseState && mouseState.mapEntry === mapentry ? mouseState : null
@@ -50,6 +44,9 @@
       :tileHeight="tileHeight"
       :lowestLayer="mapentry.lowestLayer || 0"
       :layerCount="(mapentry.imageLayers || []).length / 2"
+      :allowSharedVisibilitySuppression="
+        allAnnotationOverviewViewersRasterActive
+      "
       :key="'annotation-viewer-' + index"
       @annotation-overview-visibility-change="
         _setAnnotationOverviewVisibility(mapentry, $event)
@@ -226,6 +223,8 @@ import {
   onBeforeUnmount,
   nextTick,
   markRaw,
+  triggerRef,
+  toRaw,
 } from "vue";
 import annotationStore from "@/store/annotation";
 import connectionListStore from "@/store/connectionList";
@@ -451,6 +450,24 @@ const appliedAnnotationOverviewTemplates = new WeakMap<
   string
 >();
 const trackedAnnotationOverviewLayers = new Set<AnnotationOverviewLayer>();
+// Raster visibility is local to each GeoJS map, while annotation visibility is
+// shared store state. Keep per-map activity weakly so layer-unroll maps can be
+// added and removed without retaining exited GeoJS maps.
+const annotationOverviewViewerActivity = shallowRef(
+  new WeakMap<IGeoJSMap, boolean>(),
+);
+
+function setAnnotationOverviewViewerActivity(
+  mapentry: IMapEntry,
+  active: boolean,
+) {
+  const map = toRaw(mapentry.map);
+  if (annotationOverviewViewerActivity.value.get(map) === active) {
+    return;
+  }
+  annotationOverviewViewerActivity.value.set(map, active);
+  triggerRef(annotationOverviewViewerActivity);
+}
 
 function finishAnnotationOverviewLoad(
   layer: AnnotationOverviewLayer,
@@ -539,6 +556,17 @@ function _setAnnotationOverviewVisibility(
   mapentry: IMapEntry,
   state: { visible: boolean; opacity: number },
 ) {
+  setAnnotationOverviewViewerActivity(mapentry, state.visible);
+  // Surplus layer-unroll maps are exited before Vue unmounts their child
+  // AnnotationViewer. Its final inactive event must still update the aggregate
+  // activity above, but the removed GeoJS layer no longer has a renderer.
+  if (
+    !maps.value.some(
+      (mountedMapentry) => toRaw(mountedMapentry.map) === toRaw(mapentry.map),
+    )
+  ) {
+    return;
+  }
   const layer = mapentry.annotationOverviewLayer;
   if (!layer) {
     return;
@@ -575,6 +603,32 @@ function _setAnnotationOverviewVisibility(
 const maps = computed({
   get: () => store.maps,
   set: (value: IMapEntry[]) => store.setMaps(value),
+});
+
+const annotationViewerMaps = computed(() =>
+  maps.value.filter(
+    (mapentry) =>
+      mapentry.annotationLayer &&
+      mapentry.lowestLayer !== undefined &&
+      mapentry.imageLayers &&
+      mapentry.imageLayers.length,
+  ),
+);
+
+const allAnnotationOverviewViewersRasterActive = computed(() => {
+  // An empty viewer set must never suppress shared visibility.
+  return (
+    annotationViewerMaps.value.length > 0 &&
+    annotationViewerMaps.value.every((mapentry) =>
+      annotationOverviewViewerActivity.value.get(toRaw(mapentry.map)),
+    )
+  );
+});
+
+watch(allAnnotationOverviewViewersRasterActive, (allActive) => {
+  if (!allActive) {
+    annotationStore.setVisibilitySuppressed(false);
+  }
 });
 
 const cameraInfo = computed({
@@ -2083,6 +2137,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  annotationStore.setVisibilitySuppressed(false);
   for (const layer of trackedAnnotationOverviewLayers) {
     cancelAnnotationOverviewLoad(layer);
   }
@@ -2105,6 +2160,8 @@ defineExpose({
   sync,
   hasGeoJSMapInput,
   maps,
+  annotationViewerMaps,
+  allAnnotationOverviewViewersRasterActive,
   cameraInfo,
   overview,
   dataset,

@@ -189,6 +189,7 @@ vi.mock("@/store/annotation", () => {
       undoOrRedo: vi.fn(),
       copySelectedAnnotations: vi.fn(),
       pasteAnnotations: vi.fn(),
+      setVisibilitySuppressed: vi.fn(),
     }),
   };
 });
@@ -1109,6 +1110,73 @@ describe("ImageViewer", () => {
   });
 
   describe("annotation overview layer", () => {
+    it("coordinates shared raster suppression across mounted map viewers", () => {
+      const firstEntry = {
+        map: mockMap(),
+        annotationLayer: {},
+        annotationOverviewLayer: mockLayer(),
+        imageLayers: [{}, {}],
+        lowestLayer: 0,
+        params: {},
+      } as any;
+      const secondEntry = {
+        map: mockMap(),
+        annotationLayer: {},
+        annotationOverviewLayer: mockLayer(),
+        imageLayers: [{}, {}],
+        lowestLayer: 1,
+        params: {},
+      } as any;
+      mockedStore.maps = [firstEntry, secondEntry];
+      wrapper = mountComponent();
+      const [mountedFirstEntry, mountedSecondEntry] = (wrapper.vm as any)
+        .annotationViewerMaps;
+
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedFirstEntry, {
+        visible: true,
+        opacity: 0.6,
+      });
+      expect((wrapper.vm as any).allAnnotationOverviewViewersRasterActive).toBe(
+        false,
+      );
+
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedSecondEntry, {
+        visible: true,
+        opacity: 0.6,
+      });
+      expect((wrapper.vm as any).allAnnotationOverviewViewersRasterActive).toBe(
+        true,
+      );
+
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedFirstEntry, {
+        visible: false,
+        opacity: 0.6,
+      });
+      expect((wrapper.vm as any).allAnnotationOverviewViewersRasterActive).toBe(
+        false,
+      );
+    });
+
+    it("ignores raster visibility events from removed map viewers", () => {
+      const overviewLayer = mockLayer();
+      const removedEntry = {
+        map: mockMap(),
+        annotationOverviewLayer: overviewLayer,
+        imageLayers: [{}, {}],
+        lowestLayer: 0,
+        params: {},
+      } as any;
+      wrapper = mountComponent();
+
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(removedEntry, {
+        visible: false,
+        opacity: 0.6,
+      });
+
+      expect(overviewLayer.visible).not.toHaveBeenCalled();
+      expect(overviewLayer.opacity).not.toHaveBeenCalled();
+    });
+
     it("does not allocate a GeoJS layer while the feature is disabled", () => {
       const map = mockMap();
       const mapentry = { map, imageLayers: [], params: {} } as any;
@@ -1125,10 +1193,9 @@ describe("ImageViewer", () => {
       expect(mapentry.annotationOverviewLayer).toBeUndefined();
     });
 
-    it("lazily creates the layer and refreshes its URL on mutations", () => {
+    it("lazily creates the layer and refreshes its URL on mutations", async () => {
       const map = mockMap();
       const overviewLayer = mockLayer();
-      map.createLayer.mockReturnValue(overviewLayer);
       const mapentry = {
         map,
         imageLayers: [],
@@ -1141,17 +1208,24 @@ describe("ImageViewer", () => {
       } as any;
       wrapper = mountComponent();
       mockedStore.layerStackImages = [createLayerStackImage()];
+      await nextTick();
+      const mountedMapentry = (wrapper.vm as any).maps[0];
+      mountedMapentry.annotationOverviewLayer = undefined;
+      mountedMapentry.map.createLayer.mockReturnValue(overviewLayer);
       const image = createLayerStackImage().images[0];
       const element = document.createElement("div");
 
       (wrapper.vm as any)._syncAnnotationOverviewLayer(
-        mapentry,
+        mountedMapentry,
         image,
         element,
       );
 
-      expect(map.createLayer).toHaveBeenCalledWith("osm", expect.any(Object));
-      const layerParams = map.createLayer.mock.calls[0][1];
+      expect(mountedMapentry.map.createLayer).toHaveBeenCalledWith(
+        "osm",
+        expect.any(Object),
+      );
+      const layerParams = mountedMapentry.map.createLayer.mock.calls[0][1];
       expect(layerParams.maxLevel).toBe(9);
       expect(layerParams.tilesAtZoom(9)).toEqual({ x: 2, y: 2 });
       expect(layerParams.tilesAtZoom(8)).toEqual({ x: 1, y: 1 });
@@ -1166,7 +1240,7 @@ describe("ImageViewer", () => {
         }),
       );
       expect(overviewLayer.url).not.toHaveBeenCalled();
-      (wrapper.vm as any)._setAnnotationOverviewVisibility(mapentry, {
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
         visible: true,
         opacity: 0.6,
       });
@@ -1176,7 +1250,7 @@ describe("ImageViewer", () => {
 
       mockedAnnotationStore.mutationCounter = 1;
       (wrapper.vm as any)._syncAnnotationOverviewLayer(
-        mapentry,
+        mountedMapentry,
         image,
         element,
       );
@@ -1250,19 +1324,23 @@ describe("ImageViewer", () => {
       } as any;
       wrapper = mountComponent();
       mockedStore.layerStackImages = [createLayerStackImage()];
-
+      await nextTick();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(mockedProgressStore.create).not.toHaveBeenCalled();
+      const mountedMapentry = (wrapper.vm as any).maps[0];
+      mountedMapentry.annotationOverviewLayer = undefined;
+      mountedMapentry.map.createLayer.mockReturnValue(overviewLayer);
       (wrapper.vm as any)._syncAnnotationOverviewLayer(
-        mapentry,
+        mountedMapentry,
         createLayerStackImage().images[0],
         document.createElement("div"),
       );
-
-      await vi.advanceTimersByTimeAsync(300);
-      expect(mockedProgressStore.create).not.toHaveBeenCalled();
-      (wrapper.vm as any)._setAnnotationOverviewVisibility(mapentry, {
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
         visible: true,
         opacity: 0.6,
       });
+      expect(overviewLayer.visible()).toBe(true);
+      expect(overviewLayer.url).toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(299);
       expect(mockedProgressStore.create).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);

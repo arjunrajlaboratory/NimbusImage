@@ -757,6 +757,39 @@ describe("AnnotationViewer", () => {
       ).toHaveBeenCalledWith(expect.not.objectContaining({ suppress: true }));
     });
 
+    it("waits for every map viewer before suppressing shared visibility", async () => {
+      mockedStore.layers = [makeLayer()];
+      const map = mockAnnotationLayer().map();
+      map.unitsPerPixel.mockReturnValue(2);
+      mockedAnnotationStore.overviewConfig = {
+        enabled: true,
+        mode: "shapes",
+        opacity: 0.6,
+        vectorSwitchThreshold: 1,
+      } as any;
+
+      wrapper = mountComponent({
+        map,
+        annotationOverviewLayer: mockOverviewLayer(),
+        allowSharedVisibilitySuppression: false,
+      });
+      await wrapper.vm.$nextTick();
+
+      expect((wrapper.vm as any).rasterActive).toBe(true);
+      expect(
+        mockedAnnotationStore.updateVisibilityAndHydration.mock.calls.some(
+          ([options]: any[]) => options.suppress === true,
+        ),
+      ).toBe(false);
+
+      vi.clearAllMocks();
+      await wrapper.setProps({ allowSharedVisibilitySuppression: true });
+
+      expect(
+        mockedAnnotationStore.updateVisibilityAndHydration,
+      ).toHaveBeenCalledWith(expect.objectContaining({ suppress: true }));
+    });
+
     it("retains vector mode above the raster selector limit", async () => {
       mockedStore.layers = Array.from({ length: 65 }, (_, channel) =>
         makeLayer({ id: `layer-${channel}`, channel, visible: true }),
