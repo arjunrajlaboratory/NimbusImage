@@ -191,6 +191,27 @@ class TestAnnotationRaster:
         assert len(results) == 2
         assert results[0] is results[1]
 
+    def testNewerCachedVersionSatisfiesStaleRequest(self, monkeypatch):
+        builtGeometries = []
+
+        def build(_annotationModel, _key):
+            geometry = object()
+            builtGeometries.append(geometry)
+            return geometry
+
+        monkeypatch.setattr(annotationRaster, "_buildFrameGeometry", build)
+        cache = FrameGeometryCache()
+        key = rasterKey()
+        oldVersion = ("process", 0, 0, 0)
+        newVersion = ("process", 0, 1, 0)
+
+        cache.get(object(), key, oldVersion)
+        newest = cache.get(object(), key, newVersion)
+        staleResult = cache.get(object(), key, oldVersion)
+
+        assert len(builtGeometries) == 2
+        assert staleResult is newest
+
     def testAnonymousColdBuildsAreRateLimitedButCacheHitsAreNot(
         self, monkeypatch
     ):

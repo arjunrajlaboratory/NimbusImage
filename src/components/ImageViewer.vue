@@ -274,7 +274,10 @@ import { IHotkey } from "@/utils/v-mousetrap";
 import { NoOutput } from "@/pipelines/computePipeline";
 import { logWarning } from "@/utils/log";
 import { getUnrollCells, IUnrollCell, unrollGridSize } from "@/utils/unroll";
-import { annotationRasterSelectorsForLayers } from "@/utils/annotationOverview";
+import {
+  annotationRasterSelectorsForLayers,
+  annotationRasterSelectorsSupported,
+} from "@/utils/annotationOverview";
 
 function generateFilterURL(
   index: number,
@@ -1444,7 +1447,7 @@ function _syncAnnotationOverviewLayer(
     showHiddenLayers: store.showAnnotationsFromHiddenLayers,
     layerSliceIndexes: store.layerSliceIndexes,
   });
-  if (selectors.length === 0) {
+  if (!annotationRasterSelectorsSupported(selectors)) {
     cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
     mapentry.annotationOverviewLayer.visible(false);
     annotationOverviewTemplates.delete(mapentry.annotationOverviewLayer);

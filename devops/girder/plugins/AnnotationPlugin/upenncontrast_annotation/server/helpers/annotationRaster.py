@@ -531,6 +531,21 @@ class FrameGeometryCache:
         )
         self._timeFn = timeFn
 
+    def _getFreshGeometryLocked(self, key, version, now):
+        """Return a compatible cached geometry while ``self._lock`` is held."""
+        entry = self._entries.get(key)
+        if (
+            entry is not None
+            and entry.version[0] == version[0]
+            and entry.version[1:] >= version[1:]
+            and now - entry.created < RASTER_CACHE_TTL_SECONDS
+        ):
+            # Versions are monotonic within one process. A newer entry is safe
+            # for an older queued request and must not be replaced by it.
+            self._entries.move_to_end(key)
+            return entry.geometry
+        return None
+
     def get(
         self,
         annotationModel,
@@ -540,27 +555,17 @@ class FrameGeometryCache:
     ):
         now = self._timeFn()
         with self._lock:
-            entry = self._entries.get(key)
-            if (
-                entry is not None
-                and entry.version == version
-                and now - entry.created < RASTER_CACHE_TTL_SECONDS
-            ):
-                self._entries.move_to_end(key)
-                return entry.geometry
+            geometry = self._getFreshGeometryLocked(key, version, now)
+            if geometry is not None:
+                return geometry
             keyLock = self._locks.setdefault(key, threading.Lock())
 
         with keyLock:
             now = self._timeFn()
             with self._lock:
-                entry = self._entries.get(key)
-                if (
-                    entry is not None
-                    and entry.version == version
-                    and now - entry.created < RASTER_CACHE_TTL_SECONDS
-                ):
-                    self._entries.move_to_end(key)
-                    return entry.geometry
+                geometry = self._getFreshGeometryLocked(key, version, now)
+                if geometry is not None:
+                    return geometry
             buildSlotAcquired = self._buildSlots.acquire(blocking=False)
             if not buildSlotAcquired:
                 with self._lock:

@@ -58,3 +58,53 @@ Review base: `master` (`da7a9e4e`)
   undocumented `_annotationOverviewUrl` property.
 - **Status:** fixed (uncommitted) — desired and applied URLs live in typed
   `WeakMap`s instead of the GeoJS layer object.
+
+## R7 — Stale requests can roll the geometry cache backward
+
+- **Severity:** Medium
+- **Location:** `server/helpers/annotationRaster.py:FrameGeometryCache.get`
+- **Summary:** A queued request carrying an older raster version treats a
+  newer cached entry as a miss, rebuilds the same geometry, and replaces the
+  newer cache generation.
+- **Status:** fixed (uncommitted) — fresh cache entries from the same process
+  satisfy requests for the same or any older monotonic generation, so a queued
+  stale request cannot rebuild and replace newer geometry. Covered by
+  _"testNewerCachedVersionSatisfiesStaleRequest"_.
+
+## R8 — Raster drag selection does not use raster layer selectors
+
+- **Severity:** Medium
+- **Location:** `src/components/AnnotationViewer.vue:chooseAnnotations`
+- **Summary:** Global raster-mode selection checks only the raw current
+  XY/Z/Time frame and ignores channel, offset, max-merge, and hidden-layer
+  predicates used to construct the displayed raster.
+- **Status:** fixed (uncommitted) — tile generation, selected-stub feedback,
+  and global drag selection now share canonical per-layer selector construction
+  and matching. Covered by _"drag-selects exactly the annotations represented
+  by raster selectors"_ and _"matches fixed axes and treats omitted max-merge
+  axes as wildcards"_.
+
+## R9 — Changed raster templates retain stale GeoJS tiles
+
+- **Severity:** High
+- **Location:** `src/components/ImageViewer.vue:_syncAnnotationOverviewLayer`
+- **Summary:** Replacing only the raster URL callback allows GeoJS to reuse
+  cached z/x/y tiles after selectors, mode, or mutation version changes.
+- **Status:** by-design — GeoJS 1.19.1's `tileLayer.url(newCallback)` setter
+  calls `reset()` and `map().draw()` itself (`geojs/src/tileLayer.js`), so the
+  new callback already drops cached z/x/y tiles. Calling `reset()` again in
+  NimbusImage would duplicate the cache reset and draw.
+
+## R10 — Client can activate raster mode above the selector limit
+
+- **Severity:** Medium
+- **Location:** `src/components/ImageViewer.vue`,
+  `src/components/AnnotationViewer.vue`
+- **Summary:** More than 64 unique selectors are sent to a backend endpoint
+  that rejects them while the frontend still suppresses vector annotations.
+- **Status:** fixed (uncommitted) — a shared frontend wire-contract guard
+  rejects empty or >64-selector rasters in both `ImageViewer` and
+  `AnnotationViewer`, so the template is not requested and vectors remain
+  visible. Covered by _"does not request or activate a raster above the
+  selector limit"_, _"retains vector mode above the raster selector limit"_,
+  and _"accepts the backend selector limit and rejects larger requests"_.

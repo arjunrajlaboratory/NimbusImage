@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { resolveAnnotationOverviewConfig } from "@/store/model";
 import {
+  annotationMatchesRasterSelector,
   annotationRasterSelectorsForLayers,
+  annotationRasterSelectorsSupported,
   ANNOTATION_OVERVIEW_HYSTERESIS,
+  MAX_ANNOTATION_RASTER_SELECTORS,
   annotationOverviewRasterActive,
   stableRandomSampleById,
   zoomForVectorAnnotations,
@@ -170,6 +173,48 @@ describe("annotationRasterSelectorsForLayers", () => {
         }),
       }),
     ).toEqual([{ channel: 4, XY: 1, Z: 2, Time: 3 }]);
+  });
+
+  it("accepts the backend selector limit and rejects larger requests", () => {
+    const selectors = Array.from(
+      { length: MAX_ANNOTATION_RASTER_SELECTORS },
+      (_, channel) => ({ channel }),
+    );
+
+    expect(annotationRasterSelectorsSupported(selectors)).toBe(true);
+    expect(
+      annotationRasterSelectorsSupported([...selectors, { channel: 64 }]),
+    ).toBe(false);
+  });
+
+  it("matches fixed axes and treats omitted max-merge axes as wildcards", () => {
+    const annotation = {
+      channel: 2,
+      location: { XY: 1, Z: 99, Time: 3 },
+    };
+
+    expect(
+      annotationMatchesRasterSelector(annotation, {
+        channel: 2,
+        XY: 1,
+        Time: 3,
+      }),
+    ).toBe(true);
+    expect(
+      annotationMatchesRasterSelector(annotation, {
+        channel: 2,
+        XY: 1,
+        Z: 0,
+        Time: 3,
+      }),
+    ).toBe(false);
+    expect(
+      annotationMatchesRasterSelector(annotation, {
+        channel: 1,
+        XY: 1,
+        Time: 3,
+      }),
+    ).toBe(false);
   });
 });
 

@@ -712,6 +712,7 @@ describe("AnnotationViewer", () => {
   // =========================================================================
   describe("annotation overview raster", () => {
     it("suppresses vectors and hydration only while the raster is active", async () => {
+      mockedStore.layers = [makeLayer()];
       const map = mockAnnotationLayer().map();
       map.unitsPerPixel.mockReturnValue(2);
       const overviewLayer = mockOverviewLayer();
@@ -754,6 +755,34 @@ describe("AnnotationViewer", () => {
       expect(
         mockedAnnotationStore.updateVisibilityAndHydration,
       ).toHaveBeenCalledWith(expect.not.objectContaining({ suppress: true }));
+    });
+
+    it("retains vector mode above the raster selector limit", async () => {
+      mockedStore.layers = Array.from({ length: 65 }, (_, channel) =>
+        makeLayer({ id: `layer-${channel}`, channel, visible: true }),
+      );
+      mockedAnnotationStore.overviewConfig = {
+        enabled: true,
+        mode: "shapes",
+        opacity: 0.6,
+        vectorSwitchThreshold: 1,
+      } as any;
+      const map = mockAnnotationLayer().map();
+      map.unitsPerPixel.mockReturnValue(2);
+
+      wrapper = mountComponent({
+        map,
+        annotationOverviewLayer: mockOverviewLayer(),
+        lowestLayer: 0,
+        layerCount: 65,
+      });
+      await wrapper.vm.$nextTick();
+
+      expect((wrapper.vm as any).rasterActive).toBe(false);
+      expect((wrapper.vm as any).shouldDrawAnnotations).toBe(true);
+      expect(
+        wrapper.emitted("annotation-overview-visibility-change")?.at(-1),
+      ).toEqual([{ visible: false, opacity: 0.6 }]);
     });
 
     it("draws only selected stubs as feedback over the raster", () => {
@@ -2633,6 +2662,7 @@ describe("AnnotationViewer", () => {
       });
 
       it("drag-selects every matching stub while only the raster is visible", () => {
+        mockedStore.layers = [makeLayer()];
         const stubs = new Map(
           ["stub-1", "stub-2", "stub-3"].map((id, index) => [
             id,
@@ -2692,6 +2722,93 @@ describe("AnnotationViewer", () => {
         );
         expect(result).toHaveLength(3);
         expect(result.every((stub: any) => stubs.has(stub.id))).toBe(true);
+      });
+
+      it("drag-selects exactly the annotations represented by raster selectors", () => {
+        mockedStore.layers = [
+          makeLayer({ id: "current", channel: 0 }),
+          makeLayer({
+            id: "offset",
+            channel: 1,
+            z: { type: "offset", value: 2 },
+          }),
+          makeLayer({
+            id: "max-merge",
+            channel: 2,
+            z: { type: "max-merge", value: null },
+          }),
+          makeLayer({ id: "hidden", channel: 3, visible: false }),
+        ];
+        (mockedStore.layerSliceIndexes as any).mockImplementation(
+          (layer: any) => ({
+            xyIndex: 0,
+            zIndex: layer.id === "offset" ? 2 : 0,
+            tIndex: 0,
+          }),
+        );
+        const stubs = new Map(
+          [
+            ["current", 0, 0],
+            ["offset", 1, 2],
+            ["wrong-offset", 1, 0],
+            ["max-merge", 2, 99],
+            ["hidden", 3, 0],
+            ["unconfigured", 4, 0],
+          ].map(([id, channel, z]) => [
+            id,
+            {
+              id,
+              centroid: { x: 5, y: 5 },
+              location: { XY: 0, Z: z, Time: 0 },
+              shape: "polygon",
+              channel,
+              tags: [],
+              color: null,
+              estimatedRadius: 5,
+            },
+          ]),
+        );
+        mockedAnnotationStore.annotationStubs = stubs as any;
+        mockedAnnotationStore.stubOnlyMode = true;
+        (mockedAnnotationStore.getStub as any).mockImplementation(
+          (id: string) => stubs.get(id),
+        );
+        annotationSpatialIndex.bulkLoad(
+          [...stubs.values()].map((stub: any) => ({
+            id: stub.id,
+            x: stub.centroid.x,
+            y: stub.centroid.y,
+          })),
+        );
+        (geojs.util.pointInPolygon as any).mockReturnValue(true);
+        mockedAnnotationStore.overviewConfig = {
+          enabled: true,
+          mode: "shapes",
+          opacity: 0.6,
+          vectorSwitchThreshold: 1,
+        } as any;
+        const map = mockAnnotationLayer().map();
+        map.unitsPerPixel.mockReturnValue(2);
+        wrapper = mountComponent({
+          map,
+          annotationOverviewLayer: mockOverviewLayer(),
+          layerCount: mockedStore.layers.length,
+        });
+        const selectAnn = mockGeoJSAnnotation("polygon");
+        selectAnn.coordinates = vi.fn().mockReturnValue([
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 },
+        ]);
+
+        const selectedIds = (wrapper.vm as any)
+          .getSelectedAnnotationsFromAnnotation(selectAnn)
+          .map((annotation: any) => annotation.id);
+        expect(selectedIds).toEqual(
+          expect.arrayContaining(["current", "offset", "max-merge"]),
+        );
+        expect(selectedIds).toHaveLength(3);
       });
     });
 

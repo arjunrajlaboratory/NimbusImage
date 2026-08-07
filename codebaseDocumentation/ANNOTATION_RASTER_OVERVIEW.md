@@ -633,6 +633,11 @@ Per `CLAUDE.md`, every item names its test:
   hydrated geometry — _"drag-selects every matching stub while only the raster
   is visible"_ and _"draws only selected stubs as feedback over the raster"_,
   plus _"returns a stable pseudo-random subset at the requested limit"_.
+- **Raster-mode selection predicate parity**: global drag selection and
+  selected-stub feedback use the same channel/current/offset/max-merge/hidden
+  selectors as the raster tiles — _"drag-selects exactly the annotations
+  represented by raster selectors"_ and _"matches fixed axes and treats
+  omitted max-merge axes as wildcards"_.
 - **Table-row vector navigation**: clicking an object row from raster mode
   recenters and zooms just inside the vector threshold, keeps `gcsBounds`
   consistent, and retries hydration after suppression lifts —
@@ -650,12 +655,20 @@ Per `CLAUDE.md`, every item names its test:
   spatial-grid allocations and evicts least-recently-used entries until it is
   within 300 MB — _"testGeometryCacheEvictsByRetainedBytes"_ and
   _"testGeometryConstructionTraversesCoordinatesOnce"_.
+- **Monotonic cache generations**: a queued stale request reuses a fresh newer
+  geometry entry and cannot roll the cache backward or repeat the cold build —
+  _"testNewerCachedVersionSatisfiesStaleRequest"_.
 - **Raster/vector layer predicate parity**: current, constant/offset,
   max-merge, channel visibility, invalid slices, and duplicate layers produce
   canonical backend selectors — _"matches visible current, offset, and
   max-merge layer predicates"_, _"preserves z/x/y placeholders and serializes
   render inputs"_, _"testGeometryPipelineUsesCanonicalLayerSelectors"_, and
   _"testLayerSelectorsFilterFrameChannelAndColors"_.
+- **Client/server selector-limit parity**: exactly 64 canonical selectors are
+  accepted, while larger configurations skip the raster request and retain
+  vector rendering — _"accepts the backend selector limit and rejects larger
+  requests"_, _"does not request or activate a raster above the selector
+  limit"_, and _"retains vector mode above the raster selector limit"_.
 - **No hidden raster work**: the GeoJS layer is created hidden, has no tile URL
   or progress item while vectors are active, and applies both only on a raster
   visibility transition — _"lazily creates the layer and refreshes its URL on

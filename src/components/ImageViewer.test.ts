@@ -1184,6 +1184,44 @@ describe("ImageViewer", () => {
       expect(secondUrl(2, 3, 4)).toBe("http://localhost/raster/4/2/3?v=1");
     });
 
+    it("does not request or activate a raster above the selector limit", () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedStore.layerStackImages = Array.from({ length: 65 }, (_, channel) =>
+        createLayerStackImage({
+          layer: { id: `layer-${channel}`, channel },
+        }),
+      );
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
+
+      expect(
+        mockedAnnotationStore.annotationsAPI.annotationRasterTemplateUrl,
+      ).not.toHaveBeenCalled();
+      expect(overviewLayer.url).not.toHaveBeenCalled();
+      expect(overviewLayer.visible()).toBe(false);
+    });
+
     it("shows delayed progress while overview tiles load and completes on idle", async () => {
       const map = mockMap();
       const overviewLayer = mockLayer();

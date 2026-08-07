@@ -129,6 +129,17 @@ selects nothing; clicking the same spot on the first tile selects it. Verified l
 
 `_update` (the WebGL feature-data rebuild) only runs when the layer's `modified()` timestamp advanced. `clearOldAnnotations` marks modified only when it *removes* something; a pure add pass with `update=false` marks nothing → invisible features. Debugging tell: run `layer.modified(); layer.draw()` in the console — if features appear instantly, it's this, not missing data. Guard the `modified()` call on "count actually grew" so pure pans keep the incremental-draw optimization.
 
+## Tile URL changes already reset the GeoJS cache
+
+`tileLayer.url(newUrlOrCallback)` is not a plain option setter. GeoJS updates
+the URL, calls `reset()` to drop cached z/x/y tiles, and calls
+`map().draw()` (`geojs/src/tileLayer.js`). A freshly constructed callback has
+new identity, so changing a template through `layer.url(() => newTemplate)`
+already refetches tiles. Do not add a second explicit `layer.reset()` or draw at
+that call site; it duplicates work. A component mock whose `url` method is only
+a spy does not model this GeoJS side effect, so verify the library contract
+before accepting a review finding based on the mock.
+
 ## Hydration-coupled draw paths (stub-only datasets)
 
 `getAnnotationFromId` returns `undefined` for every unhydrated non-point annotation once

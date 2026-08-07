@@ -174,7 +174,12 @@ import { stubPerf } from "@/utils/stubPerf";
 import { visibilityBudgetForZoom } from "@/utils/visibilityBudget";
 import { cameraRefreshNeeded } from "@/utils/camera";
 import {
+  annotationMatchesRasterSelector,
+  annotationMatchesRasterSelectors,
   annotationOverviewRasterActive,
+  annotationRasterSelectorForLayer,
+  annotationRasterSelectorsForLayers,
+  annotationRasterSelectorsSupported,
   stableRandomSampleById,
 } from "@/utils/annotationOverview";
 import RBush from "rbush";
@@ -392,14 +397,15 @@ const pendingStoreAnnotation = computed(
 
 function updateAnnotationOverviewMode() {
   const layer = props.annotationOverviewLayer;
-  const nextActive = layer
-    ? annotationOverviewRasterActive({
-        config: annotationStore.overviewConfig,
-        unitsPerPixel: props.map.unitsPerPixel(props.map.zoom()),
-        wasActive: rasterActive.value,
-        unrolling: unrolling.value,
-      })
-    : false;
+  const nextActive =
+    layer && annotationRasterSelectorsSupported(rasterSelectors.value)
+      ? annotationOverviewRasterActive({
+          config: annotationStore.overviewConfig,
+          unitsPerPixel: props.map.unitsPerPixel(props.map.zoom()),
+          wasActive: rasterActive.value,
+          unrolling: unrolling.value,
+        })
+      : false;
   if (nextActive !== rasterActive.value) {
     rasterActive.value = nextActive;
   }
@@ -539,6 +545,14 @@ const validLayers = computed(() =>
   layers.value.slice(props.lowestLayer, props.lowestLayer + props.layerCount),
 );
 
+const rasterSelectors = computed(() =>
+  annotationRasterSelectorsForLayers({
+    layers: validLayers.value,
+    showHiddenLayers: showAnnotationsFromHiddenLayers.value,
+    layerSliceIndexes: store.layerSliceIndexes,
+  }),
+);
+
 const isLayerIdValid = computed(() => {
   const validLayerIds: Set<string> = new Set();
   for (const layer of validLayers.value) {
@@ -582,26 +596,15 @@ const layerAnnotations = computed(() => {
         }
         const layerIds: string[] = [];
         for (const layer of validLayers.value) {
+          const selector = annotationRasterSelectorForLayer({
+            layer,
+            showHiddenLayers: showAnnotationsFromHiddenLayers.value,
+            layerSliceIndexes: store.layerSliceIndexes,
+          });
           if (
-            annotation.channel !== layer.channel ||
-            (!layer.visible && !showAnnotationsFromHiddenLayers.value)
+            selector &&
+            annotationMatchesRasterSelector(annotation, selector)
           ) {
-            continue;
-          }
-          const sliceIndexes = store.layerSliceIndexes(layer);
-          const matchesXY =
-            store.unrollXY ||
-            layer.xy.type === "max-merge" ||
-            annotation.location.XY === sliceIndexes?.xyIndex;
-          const matchesZ =
-            store.unrollZ ||
-            layer.z.type === "max-merge" ||
-            annotation.location.Z === sliceIndexes?.zIndex;
-          const matchesTime =
-            store.unrollT ||
-            layer.time.type === "max-merge" ||
-            annotation.location.Time === sliceIndexes?.tIndex;
-          if (matchesXY && matchesZ && matchesTime) {
             layerIds.push(layer.id);
           }
         }
@@ -2472,12 +2475,7 @@ function getSelectedAnnotationsFromAnnotation(
       if (!candidate) {
         continue;
       }
-      // Check if annotation is on the current frame
-      if (
-        candidate.location.XY !== xy.value ||
-        candidate.location.Z !== z.value ||
-        candidate.location.Time !== time.value
-      ) {
+      if (!annotationMatchesRasterSelectors(candidate, rasterSelectors.value)) {
         continue;
       }
       if (!selectionCandidateInPolygon(candidate, coordinates)) {
@@ -4739,6 +4737,7 @@ watch(
     unrolling,
     () => props.annotationOverviewLayer,
     () => store.drawAnnotations,
+    rasterSelectors,
   ],
   updateAnnotationOverviewMode,
   { immediate: true },

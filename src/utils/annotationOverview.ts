@@ -4,6 +4,8 @@ import { clamp } from "@/utils/math";
 export const ANNOTATION_OVERVIEW_HYSTERESIS = 0.15;
 export const ANNOTATION_OVERVIEW_OPACITY_BOUNDS = { min: 0, max: 1 };
 export const ANNOTATION_OVERVIEW_THRESHOLD_BOUNDS = { min: 0.1, max: 16 };
+// Keep this wire-contract limit in sync with annotation.py::MAX_RASTER_SELECTORS.
+export const MAX_ANNOTATION_RASTER_SELECTORS = 64;
 const ANNOTATION_OVERVIEW_NAVIGATION_SCALE = 0.95;
 
 export interface IAnnotationRasterSelector {
@@ -19,6 +21,58 @@ interface ILayerSliceIndexes {
   tIndex: number;
 }
 
+interface IAnnotationRasterCandidate {
+  channel: number;
+  location: { XY: number; Z: number; Time: number };
+}
+
+export function annotationRasterSelectorForLayer(options: {
+  layer: IDisplayLayer;
+  showHiddenLayers: boolean;
+  layerSliceIndexes: (layer: IDisplayLayer) => ILayerSliceIndexes | null;
+}): IAnnotationRasterSelector | null {
+  const { layer, showHiddenLayers, layerSliceIndexes } = options;
+  if (!layer.visible && !showHiddenLayers) {
+    return null;
+  }
+  const indexes = layerSliceIndexes(layer);
+  if (!indexes) {
+    return null;
+  }
+  const selector: IAnnotationRasterSelector = { channel: layer.channel };
+  if (layer.xy.type !== "max-merge") {
+    selector.XY = indexes.xyIndex;
+  }
+  if (layer.z.type !== "max-merge") {
+    selector.Z = indexes.zIndex;
+  }
+  if (layer.time.type !== "max-merge") {
+    selector.Time = indexes.tIndex;
+  }
+  return selector;
+}
+
+export function annotationMatchesRasterSelector(
+  annotation: IAnnotationRasterCandidate,
+  selector: IAnnotationRasterSelector,
+): boolean {
+  return (
+    annotation.channel === selector.channel &&
+    (selector.XY === undefined || annotation.location.XY === selector.XY) &&
+    (selector.Z === undefined || annotation.location.Z === selector.Z) &&
+    (selector.Time === undefined || annotation.location.Time === selector.Time)
+  );
+}
+
+export function annotationMatchesRasterSelectors(
+  annotation: IAnnotationRasterCandidate,
+  selectors: IAnnotationRasterSelector[],
+): boolean {
+  return selectors.some((selector) =>
+    annotationMatchesRasterSelector(annotation, selector),
+  );
+}
+
 export function annotationRasterSelectorsForLayers(options: {
   layers: IDisplayLayer[];
   showHiddenLayers: boolean;
@@ -28,24 +82,13 @@ export function annotationRasterSelectorsForLayers(options: {
   const selectors: IAnnotationRasterSelector[] = [];
   const selectorKeys = new Set<string>();
   for (const layer of layers) {
-    if (!layer.visible && !showHiddenLayers) {
+    const selector = annotationRasterSelectorForLayer({
+      layer,
+      showHiddenLayers,
+      layerSliceIndexes,
+    });
+    if (!selector) {
       continue;
-    }
-    const indexes = layerSliceIndexes(layer);
-    if (!indexes) {
-      continue;
-    }
-    const selector: IAnnotationRasterSelector = {
-      channel: layer.channel,
-    };
-    if (layer.xy.type !== "max-merge") {
-      selector.XY = indexes.xyIndex;
-    }
-    if (layer.z.type !== "max-merge") {
-      selector.Z = indexes.zIndex;
-    }
-    if (layer.time.type !== "max-merge") {
-      selector.Time = indexes.tIndex;
     }
     const key = JSON.stringify(selector);
     if (!selectorKeys.has(key)) {
@@ -54,6 +97,14 @@ export function annotationRasterSelectorsForLayers(options: {
     }
   }
   return selectors;
+}
+
+export function annotationRasterSelectorsSupported(
+  selectors: IAnnotationRasterSelector[],
+): boolean {
+  return (
+    selectors.length > 0 && selectors.length <= MAX_ANNOTATION_RASTER_SELECTORS
+  );
 }
 
 function stableStringHash(value: string): number {
