@@ -4,6 +4,7 @@ Things that will trip you up if you don't know about them.
 
 ## Contents
 
+- [Do not cross worker accessors](#do-not-cross-worker-accessors)
 - [connect_to must have tags key](#connect_to-must-have-tags-key)
 - [Worker parameter keys are exact strings](#worker-parameter-keys-are-exact-strings)
 - [id vs _id](#id-vs-_id)
@@ -19,6 +20,14 @@ Things that will trip you up if you don't know about them.
 - [Collections and configurations](#collections--configurations)
 - [Safe sharing](#never-call-raw-put-folderidaccess--use-dssharing)
 - [Avoid raw girder-client](#generally-avoid-dropping-to-client_gc-raw-girder-client)
+
+## Do not cross worker accessors
+
+Annotation workers run through `ds.annotations.compute(...)` (`POST /upenn_annotation/compute`); property workers run through `ds.properties.compute(prop, ...)` (`POST /annotation_property/{id}/compute`). Neither accessor validates the worker's role, and the payloads differ: annotation compute sends **list-valued** top-level `tags` (output tags) plus `assignment`, `tile`, `connectTo`, `type="worker"`, `id=""`; property compute sends `tags` as a dict `{"tags": [...], "exclusive": bool}` (an annotation filter).
+
+Diagnostic signature: a property worker (e.g. `properties/blob_intensity_worker`) crashing with `AttributeError: 'list' object has no attribute 'get'`, with a payload containing list-valued `tags`, `assignment`/`tile`/`connectTo`, `type="worker"`, and `id=""` — it was submitted through `ds.annotations.compute`. Fix the caller to use `ds.properties.compute`; do not "normalize" tags inside the worker.
+
+Determine a worker's role from its Docker labels by key presence — `"isAnnotationWorker" in labels` / `"isPropertyWorker" in labels` — not by comparing values (they're marker labels, usually empty strings) and not from the image path prefix.
 
 ## connect_to must have tags key
 
