@@ -34,7 +34,16 @@ export default mergeConfig(
       // files that appear under .tox/ after a backend `tox` run (they import
       // @playwright/test and aren't ours). Harmless on CI (no .tox dir), but
       // they cause spurious failures when running `pnpm test` locally.
-      exclude: [...configDefaults.exclude, "e2e/*", "db/**", "**/.tox/**"],
+      // "**/.claude/**" likewise excludes agent worktrees under
+      // .claude/worktrees/ — a leftover worktree duplicates the entire test
+      // tree, which both double-reports every failure and OOMs the run.
+      exclude: [
+        ...configDefaults.exclude,
+        "e2e/*",
+        "db/**",
+        "**/.tox/**",
+        "**/.claude/**",
+      ],
       root: fileURLToPath(new URL("./", import.meta.url)),
       setupFiles: [
         fileURLToPath(new URL("./test/setup.ts", import.meta.url)),

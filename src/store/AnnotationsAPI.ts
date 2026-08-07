@@ -17,6 +17,8 @@ import {
   IAnnotationListPage,
   IAnnotationListRow,
   IAnnotationListFilters,
+  IColorByPropertyOptions,
+  IColorByPropertyResult,
 } from "./model";
 
 import { logError } from "@/utils/log";
@@ -376,6 +378,44 @@ export default class AnnotationsAPI {
   ): Promise<IAnnotationImportResult> {
     return this.client
       .post("annotation_import", payload)
+      .then((response) => response.data);
+  }
+
+  // Color by property
+
+  async colorByProperty(params: {
+    datasetId: string;
+    propertyPath: string[];
+    mode?: "auto" | "continuous" | "categorical";
+    colormap?: string;
+    // Absolute bounds; each overrides the corresponding percentile.
+    rangeMin?: number;
+    rangeMax?: number;
+    // Percentile bounds (server defaults: 1 and 99).
+    percentileLow?: number;
+    percentileHigh?: number;
+  }): Promise<IColorByPropertyResult> {
+    return this.client
+      .post("upenn_annotation/color_by_property", {
+        ...params,
+        // Ask for the assignment so the caller can repaint in place rather
+        // than refetching every annotation.
+        returnAssignment: true,
+      })
+      .then((response) => response.data);
+  }
+
+  async clearColorByProperty(
+    datasetId: string,
+  ): Promise<IColorByPropertyResult> {
+    return this.client
+      .post("upenn_annotation/color_by_property", { datasetId, clear: true })
+      .then((response) => response.data);
+  }
+
+  async getColorByPropertyOptions(): Promise<IColorByPropertyOptions> {
+    return this.client
+      .get("upenn_annotation/color_by_property/options")
       .then((response) => response.data);
   }
 

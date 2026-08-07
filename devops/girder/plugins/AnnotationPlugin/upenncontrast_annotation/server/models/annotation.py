@@ -1,8 +1,11 @@
+import math
 import re
+from collections import defaultdict
 
 import fastjsonschema
 
 from bson.objectid import ObjectId
+from pymongo import UpdateMany
 
 from girder import events
 from girder.constants import AccessType, SortDir
@@ -11,16 +14,19 @@ from girder.models.folder import Folder
 
 from girder.utility.acl_mixin import AccessControlMixin
 
+from ..helpers.aggregation import AGGREGATION_MAX_TIME_MS
+from ..helpers.colormaps import (
+    CONTINUOUS_COLORMAPS,
+    DEFAULT_COLORMAP,
+    DISTINCT_CATEGORICAL_COLORS,
+    categoricalColor,
+    colormapTable,
+)
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
 from .propertyValues import AnnotationPropertyValues
 
-# Bound any single aggregation's DB runtime so one expensive query (e.g. over a
-# 700K-annotation public dataset) can't run unbounded and pin a Mongo
-# connection. 5 minutes: comfortably above the slowest legitimate query, but a
-# hard ceiling against a runaway one.
-AGGREGATION_MAX_TIME_MS = 300000
 DEFAULT_AGGREGATE_HINT = {"datasetId": 1, "_id": 1}
 
 
@@ -103,6 +109,26 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     # Collection joined by the property-value $lookup stages.
     PROPERTY_VALUES_COLLECTION = "annotation_property_values"
+
+    # color-by-property tuning. Quantizing continuous values to 256 levels
+    # bounds the number of distinct colors — and therefore the number of
+    # Mongo update_many calls — regardless of dataset size.
+    CONTINUOUS_COLOR_LEVELS = 256
+    # Derived, not chosen: past this many categories the palette would repeat
+    # itself, so two categories would render identically with nothing in the
+    # legend to distinguish them. A value beyond it is not really categorical
+    # (e.g. an id or a continuous measurement).
+    MAX_CATEGORIES = DISTINCT_CATEGORICAL_COLORS
+    COLOR_WRITE_CHUNK = 50000
+
+    # Default continuous range: the 1st..99th percentile rather than the full
+    # extent. Real property distributions are long-tailed — on a 708K-cell
+    # dataset, 99% of Area values occupied 14.2% of min..max, so a full-extent
+    # ramp put nearly every annotation in the same dark bucket. Values outside
+    # the range clamp to the end colors, and the legend carries the true
+    # extent (dataMin/dataMax) so it can show that it clipped.
+    DEFAULT_PERCENTILE_LOW = 1.0
+    DEFAULT_PERCENTILE_HIGH = 99.0
 
     def __init__(self):
         super().__init__()
@@ -930,6 +956,316 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 "Write access was denied for one or more annotations."
             )
         return self.saveMany(updatedAnnotations)
+
+    def clearColors(self, datasetId):
+        """Reset every annotation color in the dataset to null (layer color).
+        Returns the number of annotations in the dataset."""
+        result = self.update(
+            {"datasetId": datasetId}, {"$set": {"color": None}}
+        )
+        return result.matched_count
+
+    @staticmethod
+    def assignmentFromIdsByColor(idsByColor):
+        """The {color: [ObjectId]} grouping as JSON-ready
+        [{color, ids: [str]}].
+
+        Lets a caller apply the same colors it just wrote without re-reading
+        the dataset: the client patches the annotations it already holds
+        instead of refetching every stub (measured 12.8s of refetch replaced
+        by ~0.9s of serialize + patch on a 708K dataset)."""
+        return [
+            {"color": color, "ids": [str(i) for i in annotationIds]}
+            for color, annotationIds in idsByColor.items()
+        ]
+
+    def colorByProperty(self, datasetId, propertyPath, mode="auto",
+                        colormap=DEFAULT_COLORMAP,
+                        rangeMin=None, rangeMax=None,
+                        percentileLow=None, percentileHigh=None,
+                        returnAssignment=False):
+        """Assign each annotation's color from its value at propertyPath.
+
+        Continuous mode maps numeric values through a colormap over
+        [rangeMin, rangeMax] (defaulting to the data extent); categorical
+        mode assigns palette colors per distinct value. Annotations without
+        a usable value get color null (layer color). Returns
+        {colored, uncolored, legend}, plus `assignment` (see
+        assignmentFromIdsByColor) when returnAssignment is set.
+
+        Deliberately not history-recorded: recording would snapshot every
+        annotation document twice into a single history entry, which
+        overruns the BSON document limit on large datasets. Re-coloring is
+        the undo.
+        """
+        # Keyed by annotation, not a list of pairs: an annotation with two
+        # property-value documents would otherwise appear in two color groups,
+        # which (a) makes the winning color depend on unordered write order and
+        # (b) inflates the covered-id count that _writeColors uses to decide
+        # the clearing pass can be skipped, hiding an uncovered annotation's
+        # stale color. Last value wins, deterministically by cursor order.
+        valueByAnnotation = {}
+        for annotationId, value in self._pvModel.valuesForPath(
+            datasetId, propertyPath
+        ):
+            valueByAnnotation[annotationId] = value
+
+        if not valueByAnnotation:
+            raise ValueError(
+                "No values found for this property in this dataset"
+            )
+
+        # bool is an int subclass but "true/false" is a category, not a
+        # quantity; non-finite floats (NaN/inf) can't be range-mapped.
+        numericPairs = [
+            (annotationId, float(value))
+            for annotationId, value in valueByAnnotation.items()
+            if not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+        ]
+
+        if mode == "auto":
+            # Mostly-numeric values are a quantity with stray labels;
+            # anything else is treated as categories.
+            numericFraction = len(numericPairs) / len(valueByAnnotation)
+            mode = "continuous" if numericFraction >= 0.9 else "categorical"
+
+        # The private colorers return (result, idsByColor) so the assignment
+        # can be surfaced without threading a flag through both of them.
+        if mode == "continuous":
+            result, idsByColor = self._colorContinuous(
+                datasetId, propertyPath, numericPairs, colormap,
+                rangeMin, rangeMax, percentileLow, percentileHigh
+            )
+        else:
+            result, idsByColor = self._colorCategorical(
+                datasetId, propertyPath, valueByAnnotation.items()
+            )
+        if returnAssignment:
+            result["assignment"] = self.assignmentFromIdsByColor(idsByColor)
+        return result
+
+    @staticmethod
+    def _percentileOf(sortedValues, percentile):
+        """Linear-interpolated percentile of an ascending-sorted list."""
+        if percentile <= 0:
+            return sortedValues[0]
+        if percentile >= 100:
+            return sortedValues[-1]
+        position = (len(sortedValues) - 1) * percentile / 100.0
+        lowIndex = int(position)
+        highIndex = min(lowIndex + 1, len(sortedValues) - 1)
+        fraction = position - lowIndex
+        low = sortedValues[lowIndex]
+        return low + (sortedValues[highIndex] - low) * fraction
+
+    def _colorContinuous(self, datasetId, propertyPath, numericPairs,
+                         colormap, rangeMin, rangeMax,
+                         percentileLow=None, percentileHigh=None):
+        """Returns (result, idsByColor) -- see colorByProperty."""
+        if not numericPairs:
+            raise ValueError(
+                "No numeric values found for this property; "
+                "try categorical mode"
+            )
+        # Sorted once: feeds both the extent and the percentile bounds.
+        values = sorted(value for _, value in numericPairs)
+        dataMin, dataMax = values[0], values[-1]
+        # An explicit absolute bound means the caller is choosing the range, so
+        # resolve its partner from the data extent rather than a percentile.
+        # Mixing the two produced bafflement: rangeMax=1.5 on right-skewed data
+        # was rejected against an unrequested p1 of 1.99.
+        explicitBound = rangeMin is not None or rangeMax is not None
+        if percentileLow is None:
+            percentileLow = 0.0 if explicitBound else (
+                self.DEFAULT_PERCENTILE_LOW
+            )
+        if percentileHigh is None:
+            percentileHigh = 100.0 if explicitBound else (
+                self.DEFAULT_PERCENTILE_HIGH
+            )
+        low = (
+            self._percentileOf(values, percentileLow)
+            if rangeMin is None
+            else float(rangeMin)
+        )
+        high = (
+            self._percentileOf(values, percentileHigh)
+            if rangeMax is None
+            else float(rangeMax)
+        )
+        # Test the RESOLVED range, not "was a bound explicit": a single
+        # percentile can invert it just as a single absolute bound can
+        # (percentileLow=99.5 against the default high of 99), which otherwise
+        # painted every annotation the middle color under a legend whose min
+        # exceeded its max. Only a strict inversion is an error -- bounds that
+        # coincide are the span <= 0 branch's job (every value identical, or an
+        # explicit min equal to the data's single value).
+        if low > high:
+            raise ValueError(
+                "The requested range [%g, %g] is empty for this "
+                "property's values" % (low, high)
+            )
+        span = high - low
+
+        # Sample the colormap once per quantized level, not once per
+        # annotation: table[level] == sampleColormap(colormap,
+        # level / maxLevel), so the colors are identical and the hot loop is
+        # a list index instead of a parse-and-interpolate.
+        maxLevel = self.CONTINUOUS_COLOR_LEVELS - 1
+        table = colormapTable(colormap, self.CONTINUOUS_COLOR_LEVELS)
+        idsByColor = defaultdict(list)
+        for annotationId, value in numericPairs:
+            if span > 0:
+                t = (value - low) / span
+            elif value < low:
+                # A zero-width range still has an inside and an outside: p1 ==
+                # p99 happens on sparse data (199 zeros and one 1000), and
+                # painting the outliers the middle colour contradicted the
+                # legend, which reports clippedHigh in exactly that case.
+                t = 0.0
+            elif value > high:
+                t = 1.0
+            else:
+                # Every value identical, or exactly on the collapsed bound.
+                t = 0.5
+            level = int(round(min(max(t, 0.0), 1.0) * maxLevel))
+            idsByColor[table[level]].append(annotationId)
+
+        counts = self._writeColors(datasetId, idsByColor)
+        counts["legend"] = {
+            "type": "continuous",
+            "propertyPath": propertyPath,
+            "colormap": colormap,
+            "stops": CONTINUOUS_COLORMAPS[colormap],
+            "min": low,
+            "max": high,
+            # True extent + whether the ramp clipped it, so the legend can
+            # label its ends "≤ low" / "≥ high" instead of implying the range
+            # is all the data there is.
+            "dataMin": dataMin,
+            "dataMax": dataMax,
+            "clippedLow": low > dataMin,
+            "clippedHigh": high < dataMax,
+        }
+        return counts, idsByColor
+
+    def _colorCategorical(self, datasetId, propertyPath, pairs):
+        """Returns (result, idsByColor) -- see colorByProperty."""
+        idsByLabel = defaultdict(list)
+        for annotationId, value in pairs:
+            if isinstance(value, str):
+                label = value
+            elif isinstance(value, float) and value.is_integer():
+                # Workers disagree on numeric types (one writes 1, another
+                # 1.0); don't let the representation split a category.
+                label = str(int(value))
+            else:
+                label = str(value)
+            idsByLabel[label].append(annotationId)
+            # Bail the moment the cap is exceeded rather than grouping every
+            # distinct value first: forcing categorical on a continuous
+            # property would otherwise build one entry per value (observed
+            # live: 555,479 groups before a 256 cap rejected the request).
+            if len(idsByLabel) > self.MAX_CATEGORIES:
+                raise ValueError(
+                    "Too many distinct values (more than %d) for categorical "
+                    "coloring; use continuous mode or another property"
+                    % self.MAX_CATEGORIES
+                )
+
+        # Largest categories get the leading (strongest) palette colors;
+        # ties break alphabetically so re-running is stable.
+        ordered = sorted(
+            idsByLabel.items(), key=lambda item: (-len(item[1]), item[0])
+        )
+        categories = []
+        idsByColor = defaultdict(list)
+        for index, (label, annotationIds) in enumerate(ordered):
+            color = categoricalColor(index)
+            categories.append(
+                {"value": label, "color": color, "count": len(annotationIds)}
+            )
+            idsByColor[color].extend(annotationIds)
+
+        counts = self._writeColors(datasetId, idsByColor)
+        counts["legend"] = {
+            "type": "categorical",
+            "propertyPath": propertyPath,
+            "categories": categories,
+        }
+        return counts, idsByColor
+
+    def _buildColorOperations(self, datasetId, idsByColor):
+        """One bulk $set per distinct color, chunked so a single $in stays
+        reasonable."""
+        operations = []
+        for color, annotationIds in idsByColor.items():
+            for start in range(0, len(annotationIds), self.COLOR_WRITE_CHUNK):
+                chunk = annotationIds[start:start + self.COLOR_WRITE_CHUNK]
+                # datasetId keeps the write scoped to the access-checked
+                # dataset even if a foreign annotation id slipped into the
+                # property values, and lets Mongo use the compound index.
+                operations.append(UpdateMany(
+                    {"datasetId": datasetId, "_id": {"$in": chunk}},
+                    {"$set": {"color": color}},
+                ))
+        return operations
+
+    def _applyColorOperations(self, operations):
+        """Run the color assignment as one batched write, returning how many
+        annotations matched.
+
+        bulk_write, not a loop of Model.update(): one round trip instead of up
+        to 256. Girder exposes no batched-write API, which makes this the same
+        kind of sanctioned `collection` use as aggregate() -- and unlike
+        find()/load(), update paths add no security behavior to bypass.
+        Unordered so Mongo may parallelize; every operation targets a disjoint
+        id set, so order cannot matter between them."""
+        if not operations:
+            return 0
+        return self.collection.bulk_write(
+            operations, ordered=False
+        ).matched_count
+
+    def _writeColors(self, datasetId, idsByColor):
+        """Apply the color assignment, clearing first only when it doesn't
+        cover every annotation. Returns {colored, uncolored}.
+
+        The clearing pass exists so annotations WITHOUT a value fall back to
+        their layer color instead of keeping a stale one. When the assignment
+        covers the whole dataset it is pure waste: the $sets overwrite every
+        document anyway, and on a 708K-annotation dataset the clear cost 4.8s
+        directly plus ~4.5s indirectly (708K dirty pages left for the
+        following writes to contend with) -- 80% of the request.
+
+        When a clear IS needed it must complete BEFORE the assignment, as its
+        own round trip: batched writes are unordered, so a clear sharing their
+        batch could land after a $set and wipe it."""
+        total = self.collection.count_documents({"datasetId": datasetId})
+        operations = self._buildColorOperations(datasetId, idsByColor)
+        # No empty-operations branch: both colorers raise before producing an
+        # empty assignment, and if one ever did, the code below is already
+        # correct for it (clear, then apply nothing).
+        # Ids are unique across groups (colorByProperty keys by annotation), so
+        # this total is a distinct-annotation count and the matched_count
+        # cross-check below is sound.
+        coveredIds = sum(len(ids) for ids in idsByColor.values())
+        skipClear = coveredIds >= total
+        if not skipClear:
+            self.clearColors(datasetId)
+        colored = self._applyColorOperations(operations)
+
+        if skipClear and colored < total:
+            # The id count implied full coverage but the writes disagree —
+            # e.g. a property value referencing an annotation outside this
+            # dataset inflated the count. Some annotations may still hold a
+            # stale color, so fall back to the clear-then-reapply order.
+            self.clearColors(datasetId)
+            colored = self._applyColorOperations(operations)
+
+        return {"colored": colored, "uncolored": max(total - colored, 0)}
 
     def compute(self, datasetId, tool, user=None):
         dataset = Folder().load(

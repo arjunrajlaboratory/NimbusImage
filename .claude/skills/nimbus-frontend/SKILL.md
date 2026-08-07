@@ -71,6 +71,37 @@ store.dispatch('sendUserMessage', 'Find the nuclei in this image.'); // fire, do
 
 Agent tool executors live in `src/agent/executors.ts` (`executeAgentTool(name, input, ctx)`), importable in the Vite dev page for isolated testing: `await import('/src/agent/executors.ts?t=' + Date.now())` (the query-bust avoids a stale module cache). Worker tools save parameters under `tool.values.workerInterfaceValues`; `channelCheckboxes` values are `{channelIndex: true}` maps (a `true` value selects — key-presence alone does not).
 
+### Never assign a big per-annotation map to state without `markRaw`
+
+`annotationStubs`, `hydratedAnnotations`, and `annotationCentroids` hold one
+entry per annotation — up to ~700K. Every existing assignment wraps them in
+`markRaw(...)`; a new mutation that forgets it hands Vue a raw Map to walk and
+proxy entry by entry, and that cost dwarfs whatever the mutation was doing. A
+whole-dataset recolor measured **16.9s** with the `markRaw` missing against
+~5.5s with it — and the mutation itself was only ~0.5s of that.
+
+Nothing static catches this: `tsc` and lint are happy, and any test with a
+handful of fixture annotations is far too small to feel it. The tell is a
+measured time that doesn't add up from its parts.
+
+```typescript
+// BAD: Vue proxies ~700K entries on assignment
+this.annotationStubs = newStubs;
+
+// GOOD: matches the nine other assignments to this map
+this.annotationStubs = markRaw(newStubs);
+```
+
+`src/store/__tests__/rawStateMaps.test.ts` asserts `isReactive(...) === false`
+after every mutation that replaces one of these maps — extend it when you add
+another, rather than hand-checking. Verify a new row can fail by deleting only
+the `markRaw` call (not the whole mutation — stashing the file reverts it
+entirely and the test then fails for the wrong reason).
+
+Note the *array* convention differs: `annotations` is a plain reactive array of
+`markRaw`ed items (`setAnnotations` does `annotations.map(markRaw)`), so
+`markRaw` goes on the items there, not the array.
+
 ### Store Edits Break HMR — Hard-Reload
 
 Editing any `src/store/*.ts` while `pnpm run dev` runs corrupts the store: vuex-module-decorators registers getters at import time with no HMR accept handler, so a hot re-import double-registers → `[vuex] duplicate getter key` cascade and broken state (e.g. annotations stuck at 0). **Hard-reload the page after every store-module edit** before trusting any in-browser behavior. Component `.vue` edits HMR fine — prefer putting temporary instrumentation in `.vue` files.
@@ -364,6 +395,33 @@ ignored).
 `dense` on any tag and fails the build, so this can't silently come back.
 Extend that test rather than hand-grepping when auditing a new Vuetify
 deprecation.
+
+### Icon names: check `@mdi/font` 5.9.55, not the MDI website
+
+`@mdi/font` here is pinned at **5.9.55**, several major versions behind what
+mdi.dev documents. A name that doesn't exist in the installed font fails
+**silently and invisibly**: Vuetify sets the class, no `::before` rule matches,
+and the icon renders as blank space. `tsc`, lint and every component test stay
+green — the only symptom is a gap a human notices in a screenshot, which is
+exactly how `mdi-gradient-horizontal` shipped on a menu item. The sweep that
+followed found two more (`mdi-sitemap-outline`, added after 5.x, in two places;
+`mdi-save`, renamed to `mdi-content-save` in 5.x).
+
+Never write an icon name from memory or from current MDI docs — grep the
+installed font:
+
+```bash
+grep -c '^\.mdi-sitemap-outline::before' node_modules/@mdi/font/css/materialdesignicons.css   # 0 → blank icon
+```
+
+`src/__tests__/mdiIconNames.test.ts` enforces this across all of `src/`, so a
+bad name now fails the suite instead of shipping. Its one exclusion is itself
+(it quotes non-existent names in its own prose). In the browser, the direct
+evidence is `getComputedStyle(el, "::before").content` — a codepoint means the
+glyph resolved, `none`/`normal` means the class matched no rule.
+
+Common 5.9.55 gotchas: no `-outline` variant for many icons; `save` →
+`content-save`; `gradient` has no `-horizontal`/`-vertical` suffix.
 
 ### v-menu / v-dialog Initial State
 

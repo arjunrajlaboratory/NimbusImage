@@ -104,6 +104,9 @@ const NOT_OURS = new Set([
   ".venv",
   "__pycache__",
   ".pnpm-store",
+  // Agent worktrees are full copies of the repo; walking into one
+  // double-counts every owned test tree.
+  ".claude",
 ]);
 
 /**
