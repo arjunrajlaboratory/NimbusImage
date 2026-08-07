@@ -5,15 +5,18 @@
   >
     <!-- Notifications section -->
     <div v-if="hasNotifications" class="notifications-group">
-      <v-alert
+      <div
         v-for="notification in activeNotifications"
         :key="notification.id"
-        :type="notification.type"
-        density="compact"
-        closable
-        class="mb-2 notification"
-        @click:close="dismissNotification(notification.id)"
+        class="notification"
+        role="alert"
       >
+        <v-icon
+          :color="notification.type"
+          size="18"
+          class="notification-icon"
+          :icon="notificationIcon(notification.type)"
+        />
         <div class="notification-content">
           <div class="notification-title">{{ notification.title }}</div>
           <div class="notification-message">{{ notification.message }}</div>
@@ -21,7 +24,17 @@
             {{ notification.info }}
           </div>
         </div>
-      </v-alert>
+        <v-btn
+          icon
+          variant="text"
+          size="x-small"
+          class="notification-close"
+          aria-label="Dismiss notification"
+          @click="dismissNotification(notification.id)"
+        >
+          <v-icon size="16">mdi-close</v-icon>
+        </v-btn>
+      </div>
     </div>
 
     <!-- Progress bars section -->
@@ -83,7 +96,12 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import progressStore from "@/store/progress";
-import { ProgressType, IProgress, IProgressGroup } from "@/store/model";
+import {
+  ProgressType,
+  IProgress,
+  IProgressGroup,
+  NotificationType,
+} from "@/store/model";
 
 const activeProgresses = computed(() => progressStore.activeProgresses);
 const activeNotifications = computed(() => progressStore.activeNotifications);
@@ -92,6 +110,16 @@ const hasNotifications = computed(() => activeNotifications.value.length > 0);
 
 function dismissNotification(id: string) {
   progressStore.dismissNotification(id);
+}
+
+const notificationIcons: Record<NotificationType, string> = {
+  [NotificationType.INFO]: "mdi-information",
+  [NotificationType.WARNING]: "mdi-alert",
+  [NotificationType.ERROR]: "mdi-alert-circle",
+};
+
+function notificationIcon(type: NotificationType): string {
+  return notificationIcons[type] ?? "mdi-information";
 }
 
 const progressGroups = computed<IProgressGroup[]>(() => {
@@ -182,7 +210,7 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
   transform: translateX(calc(var(--nimbus-left-palette-clear-x) - 10px));
 }
 
-.progress-group {
+%floating-card {
   background: rgba(var(--v-theme-surface), 0.85);
   backdrop-filter: blur(12px);
   border: 1px solid rgba(var(--v-theme-on-surface), 0.1);
@@ -190,6 +218,10 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
   border-radius: 10px;
   color: rgb(var(--v-theme-on-surface));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.progress-group {
+  @extend %floating-card;
 }
 
 .progress-item {
@@ -225,34 +257,51 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 .notifications-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
 .notification {
-  margin-bottom: 0;
+  @extend %floating-card;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
 
-  :deep(.v-alert__content) {
-    display: flex;
-    flex: 1;
-  }
+.notification-icon {
+  // Optically align the icon with the title's first line.
+  margin-top: 1px;
 }
 
 .notification-content {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 
 .notification-title {
-  font-weight: bold;
+  font-weight: 500;
 }
 
 .notification-message {
   margin-top: 2px;
+  color: rgb(var(--v-theme-on-surface-variant));
+  overflow-wrap: break-word;
 }
 
 .notification-info {
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   margin-top: 2px;
+  color: rgb(var(--v-theme-on-surface-variant));
   opacity: 0.85;
+  overflow-wrap: break-word;
+}
+
+.notification-close {
+  // Pull the button back toward the card edge so its tap target doesn't
+  // inflate the padding visually.
+  margin: -4px -6px 0 0;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 
 .stacked-progress {

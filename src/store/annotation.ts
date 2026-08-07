@@ -173,6 +173,27 @@ export class Annotations extends VuexModule {
     };
   }
 
+  /**
+   * Resolve an id to whatever representation is loaded — hydrated, full, or
+   * raw stub — without materializing the whole stub map. Unlike
+   * `getAnnotationFromId`, this returns non-point stubs as-is (typed as the
+   * honest union), so callers that only need stub fields can look ids up in
+   * O(1) instead of scanning `annotationsForIteration`.
+   */
+  get getAnnotationOrStubFromId() {
+    return (annotationId: string): TAnnotationOrStub | undefined => {
+      const hydrated = this.hydratedAnnotations.get(annotationId);
+      if (hydrated) {
+        return hydrated;
+      }
+      const idx = this.annotationIdToIdx[annotationId];
+      if (idx !== undefined) {
+        return this.annotations[idx];
+      }
+      return this.annotationStubs.get(annotationId);
+    };
+  }
+
   get annotationTags() {
     const tagSet: Set<string> = new Set();
     if (this.stubOnlyMode) {
@@ -1413,6 +1434,17 @@ export class Annotations extends VuexModule {
             (annotation: IAnnotation) => !idsSet.has(annotation.id),
           ),
         );
+      }
+      // Prune id-holding UI state so nothing keeps referencing the deleted
+      // annotations (a stale selection id can widen a subset CSV export to
+      // the whole dataset; a stale hover id dangles like the connection-list
+      // case did).
+      this.unselectAnnotations(ids);
+      if (
+        this.hoveredAnnotationId !== null &&
+        ids.includes(this.hoveredAnnotationId)
+      ) {
+        this.setHoveredAnnotationId(null);
       }
     } finally {
       // Always set the state back to false, even if there's an error

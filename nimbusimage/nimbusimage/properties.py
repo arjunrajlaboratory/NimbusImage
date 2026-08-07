@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from nimbusimage._workers import PROPERTY_ROLE_LABEL, check_worker_role
 from nimbusimage.jobs import Job
 from nimbusimage.models import Property
 
@@ -181,7 +182,12 @@ class PropertyAccessor:
             A Job object. Call ``job.wait()`` to block until completion.
 
         Raises:
-            ValueError: If the property has no ``id`` or ``image``.
+            ValueError: If the property has no ``id`` or ``image``, or
+                if its ``image`` is an annotation worker (its role
+                labels from ``/worker_interface/available`` have
+                ``isAnnotationWorker`` but not ``isPropertyWorker``) —
+                annotation workers must run through
+                ``ds.annotations.compute`` instead.
         """
         if not property.id:
             raise ValueError(
@@ -190,6 +196,10 @@ class PropertyAccessor:
             )
         if not property.image:
             raise ValueError("Property must have a Docker image set")
+
+        # Reject annotation workers before submitting: they cannot
+        # handle the property-compute payload (dict-valued tags filter).
+        check_worker_role(self._gc, property.image, PROPERTY_ROLE_LABEL)
 
         body = property.to_dict()
         # The worker reads params.get("id") to identify which property
