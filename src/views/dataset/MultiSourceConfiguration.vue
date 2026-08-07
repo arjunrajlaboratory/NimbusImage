@@ -1,5 +1,14 @@
 <template>
   <v-container>
+    <v-alert
+      v-if="mixedSourceDtypeError"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="my-4"
+    >
+      {{ mixedSourceDtypeError }}
+    </v-alert>
     <v-card class="pa-4 my-4">
       <v-list-subheader
         :data-tour="TOUR_ANCHORS.variables"
@@ -149,6 +158,15 @@
         density="compact"
       />
     </v-card>
+    <v-alert
+      v-if="assignmentError && !initializing"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="my-4"
+    >
+      {{ assignmentError }}
+    </v-alert>
     <v-card v-if="initializing" class="my-4">
       <v-card-title class="d-flex align-center">
         <v-progress-circular
@@ -350,18 +368,6 @@
       </div>
     </v-card>
     <v-row>
-      <v-col class="d-flex">
-        <v-alert
-          v-if="submitError"
-          type="error"
-          variant="tonal"
-          density="compact"
-          class="mr-4"
-        >
-          {{ submitError }}
-        </v-alert>
-        <v-spacer />
-      </v-col>
       <v-col class="d-flex justify-end">
         <v-checkbox
           :data-tour="TOUR_ANCHORS.transcodeCheckbox"
@@ -378,7 +384,7 @@
           color="success"
           size="small"
           @click="submit"
-          :disabled="!submitEnabled() || !isRGBAssignmentValid || isUploading"
+          :disabled="!!submitError || isUploading"
         >
           <v-progress-circular size="16" v-if="isUploading" indeterminate />
           Submit
@@ -387,12 +393,24 @@
     </v-row>
 
     <!-- Progress bar and status for transcoding -->
-    <v-card class="mt-4" v-if="isUploading">
+    <v-card class="mt-4" v-if="isUploading || generationErrorMessage">
       <v-card-text>
         <div class="d-flex align-center mb-2">
-          <div class="text-body-2 text-medium-emphasis mr-3">
+          <div
+            v-if="!generationErrorMessage"
+            class="text-body-2 text-medium-emphasis mr-3"
+          >
             {{ progressStatusText }}
           </div>
+          <v-alert
+            v-else
+            type="error"
+            variant="tonal"
+            density="compact"
+            class="mr-3"
+          >
+            {{ generationErrorMessage }}
+          </v-alert>
           <v-spacer></v-spacer>
           <v-btn
             size="small"
@@ -406,7 +424,7 @@
           </v-btn>
         </div>
         <v-progress-linear
-          v-if="transcodeProgress !== undefined"
+          v-if="transcodeProgress !== undefined && !generationErrorMessage"
           :model-value="transcodeProgress"
           height="20"
           striped
@@ -607,6 +625,7 @@ const emit = defineEmits<{
   (e: "generatedJson", jsonId: string | null, config: any): void;
   (e: "configData", data: any): void;
   (e: "log", logs: string): void;
+  (e: "generationError", message: string): void;
 }>();
 
 const router = useRouter();
@@ -621,6 +640,7 @@ const transcode = ref(false);
 
 const isUploading = ref(false);
 const logs = ref("");
+const generationErrorMessage = ref<string | null>(null);
 
 const showLogDialog = ref(false);
 const showCopySnackbar = ref(false);
@@ -884,7 +904,30 @@ const assignmentItems = computed(() => {
     .map(assignmentOptionToAssignmentItem);
 });
 
-const submitError = computed((): string | null => {
+const sourceDtypes = computed(() =>
+  Array.from(
+    new Set(
+      (tilesMetadata.value ?? [])
+        .map((tile) =>
+          typeof tile.dtype === "string"
+            ? tile.dtype.trim().toLowerCase()
+            : null,
+        )
+        .filter((dtype): dtype is string => !!dtype),
+    ),
+  ),
+);
+
+const mixedSourceDtypeError = computed((): string | null => {
+  if (sourceDtypes.value.length <= 1) {
+    return null;
+  }
+  return `Source images use different pixel types (${sourceDtypes.value.join(
+    ", ",
+  )}). Convert all source images to the same pixel type before combining them. You will need to start over.`;
+});
+
+const assignmentError = computed((): string | null => {
   if (!submitEnabled()) {
     return "Not all variables are assigned";
   }
@@ -893,6 +936,10 @@ const submitError = computed((): string | null => {
   }
   return null;
 });
+
+const submitError = computed(
+  (): string | null => mixedSourceDtypeError.value ?? assignmentError.value,
+);
 
 const isRGBAssignmentValid = computed(() => {
   if (isMultiBandRGBFile.value && splitRGBBands.value) {
@@ -1532,6 +1579,12 @@ async function submit() {
 }
 
 async function generateJson(): Promise<string | null> {
+  if (mixedSourceDtypeError.value) {
+    generationErrorMessage.value = mixedSourceDtypeError.value;
+    emit("generationError", generationErrorMessage.value);
+    return null;
+  }
+
   let channels: string[] | null = null;
   const channelAssignment = assignments.C?.value;
   if (channelAssignment) {
@@ -1800,6 +1853,7 @@ async function generateJson(): Promise<string | null> {
 
   logs.value = "";
   isUploading.value = true;
+  generationErrorMessage.value = null;
   transcodeProgress.value = undefined;
   if (transcode.value) {
     progressStatusText.value = "Preparing transcoding";
@@ -1856,7 +1910,14 @@ async function generateJson(): Promise<string | null> {
     return itemId;
   } catch (error) {
     logError("Failed to create multi source:", error);
+    generationErrorMessage.value =
+      error instanceof Error && error.message
+        ? error.message
+        : "Failed to configure the dataset. See the log for details.";
+    emit("generationError", generationErrorMessage.value);
     return null;
+  } finally {
+    isUploading.value = false;
   }
 }
 
@@ -2015,6 +2076,7 @@ defineExpose({
   assignmentItems,
   submitError,
   isRGBAssignmentValid,
+  generationErrorMessage,
   // Methods
   detectColorVsChannels,
   sliceAndJoin,

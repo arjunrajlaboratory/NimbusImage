@@ -34,6 +34,7 @@ import {
   type THydrationMode,
   type IVisibilityConfig,
   resolveVisibilityConfig,
+  ANNOTATION_LIST_SERVER_THRESHOLD,
 } from "./model";
 import type AnnotationsAPI from "./AnnotationsAPI";
 
@@ -61,6 +62,7 @@ import {
   type IStubFieldUpdate,
 } from "@/utils/annotationUpdate";
 import { logError } from "@/utils/log";
+import { TIMELAPSE_CONNECTION_TAG } from "./constants";
 import { stubPerf } from "@/utils/stubPerf";
 import { annotationLoadingTitle } from "@/utils/loadingLabels";
 import progress from "./progress";
@@ -109,6 +111,20 @@ export class Annotations extends VuexModule {
   // When true, annotations[] is empty and all metadata lives in annotationStubs.
   stubOnlyMode: boolean = false;
 
+  // Whether the annotation browser list should use the backend-paginated
+  // (server) list instead of materializing a client-side v-data-table. True in
+  // stub-only mode (the client has no full annotations to list) and for
+  // fully-fetched datasets too large to sort/render as client table rows —
+  // possible because stubThreshold (a data-loading knob) can sit well above
+  // the table's materialization limit. Note: the server list cannot apply ROI
+  // filters (a client-side polygon test); the list UI surfaces a warning.
+  get isListServerMode() {
+    return (
+      this.stubOnlyMode ||
+      this.annotations.length > ANNOTATION_LIST_SERVER_THRESHOLD
+    );
+  }
+
   get allAnnotationIds() {
     if (this.stubOnlyMode) {
       return Array.from(this.annotationStubs.keys());
@@ -155,6 +171,27 @@ export class Annotations extends VuexModule {
     };
   }
 
+  /**
+   * Resolve an id to whatever representation is loaded — hydrated, full, or
+   * raw stub — without materializing the whole stub map. Unlike
+   * `getAnnotationFromId`, this returns non-point stubs as-is (typed as the
+   * honest union), so callers that only need stub fields can look ids up in
+   * O(1) instead of scanning `annotationsForIteration`.
+   */
+  get getAnnotationOrStubFromId() {
+    return (annotationId: string): TAnnotationOrStub | undefined => {
+      const hydrated = this.hydratedAnnotations.get(annotationId);
+      if (hydrated) {
+        return hydrated;
+      }
+      const idx = this.annotationIdToIdx[annotationId];
+      if (idx !== undefined) {
+        return this.annotations[idx];
+      }
+      return this.annotationStubs.get(annotationId);
+    };
+  }
+
   get annotationTags() {
     const tagSet: Set<string> = new Set();
     if (this.stubOnlyMode) {
@@ -171,6 +208,18 @@ export class Annotations extends VuexModule {
       }
     }
     return tagSet;
+  }
+
+  /**
+   * How many objects the dataset has, without allocating. Deliberately not
+   * `annotationsForIteration.length`: that materializes an array from the stub
+   * map, which is 700K+ entries on a large dataset — far too expensive for a
+   * count rendered in a tab badge.
+   */
+  get annotationCount(): number {
+    return this.stubOnlyMode
+      ? this.annotationStubs.size
+      : this.annotations.length;
   }
 
   get annotationsForIteration(): TAnnotationOrStub[] {
@@ -1045,6 +1094,35 @@ export class Annotations extends VuexModule {
     return connections || [];
   }
 
+  // Create connections from explicit parent/child pairs. Unlike
+  // createAllConnections (which builds the full cross product of two id lists),
+  // this persists exactly the pairs it is given — used by the connection list's
+  // "Connect selected", which chains annotations in time order.
+  // rawError: errors are re-wrapped at every @Action boundary they cross, so
+  // connectionList's rawError alone would not preserve the message.
+  @Action({ rawError: true })
+  public async createConnectionsFromBases(
+    connectionBases: IAnnotationConnectionBase[],
+  ): Promise<IAnnotationConnection[]> {
+    if (!main.isLoggedIn || connectionBases.length === 0) {
+      return [];
+    }
+    sync.setSaving(true);
+    // try/finally, because this action is rawError: a rejection propagates to
+    // the caller, and without the finally the app-wide saving indicator would
+    // stay on forever.
+    try {
+      const connections =
+        await this.annotationsAPI.createMultipleConnections(connectionBases);
+      if (connections) {
+        this.addMultipleConnections(connections);
+      }
+      return connections || [];
+    } finally {
+      sync.setSaving(false);
+    }
+  }
+
   @Action
   public async deleteAllConnections({
     parentIds,
@@ -1085,7 +1163,7 @@ export class Annotations extends VuexModule {
       return;
     }
     const connectionsToDelete = this.annotationConnections.filter(
-      (connection) => connection.tags.includes("Time lapse connection"),
+      (connection) => connection.tags.includes(TIMELAPSE_CONNECTION_TAG),
     );
     await this.deleteConnections(connectionsToDelete.map(({ id }) => id));
   }
@@ -1308,6 +1386,17 @@ export class Annotations extends VuexModule {
           ),
         );
       }
+      // Prune id-holding UI state so nothing keeps referencing the deleted
+      // annotations (a stale selection id can widen a subset CSV export to
+      // the whole dataset; a stale hover id dangles like the connection-list
+      // case did).
+      this.unselectAnnotations(ids);
+      if (
+        this.hoveredAnnotationId !== null &&
+        ids.includes(this.hoveredAnnotationId)
+      ) {
+        this.setHoveredAnnotationId(null);
+      }
     } finally {
       // Always set the state back to false, even if there's an error
       sync.setSaving(false);
@@ -1344,7 +1433,13 @@ export class Annotations extends VuexModule {
    * would corrupt the stored annotation, defeat patch diffing in
    * getAnnotationUpdatePatch, and prevent rollback on error.
    */
-  @Action
+  // rawError: true because both paths below rethrow after rolling back, so the
+  // real reason reaches the caller (and the console/Sentry) instead of
+  // vuex-module-decorators' generic ERR_ACTION_ACCESS_UNDEFINED text. The
+  // sync indicator is unaffected either way: setSaving receives the error
+  // caught inside this action, before any wrapping. See index.ts
+  // syncConfiguration.
+  @Action({ rawError: true })
   public async updateAnnotationsPerId({
     annotationIds,
     editFunction,
@@ -1867,7 +1962,11 @@ export class Annotations extends VuexModule {
     };
 
     jobs.addJob(computeJob).then(async (success: boolean) => {
-      this.fetchAnnotations();
+      // Awaited: `callback` consumers (the AI panel's wait_for_job among them)
+      // read annotation state as soon as they are told the worker finished, so
+      // the refresh must complete before the callback fires. fetchAnnotations
+      // handles its own errors and never rejects.
+      await this.fetchAnnotations();
       // If this was a worker that makes a new large_image, this line will load it
       // I'm pretty sure this function won't reload the large image if it's already loaded
       const newLargeImage = await main.loadLargeImages(true); // true means switch to the new large image

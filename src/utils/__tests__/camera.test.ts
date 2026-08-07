@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { recenterCameraInfo, cameraRefreshNeeded } from "@/utils/camera";
+import {
+  recenterCameraInfo,
+  frameCameraInfo,
+  frameCameraInfoToExtent,
+  cameraRefreshNeeded,
+} from "@/utils/camera";
 import type { ICameraInfo } from "@/store/model";
 
 function makeCameraInfo(): ICameraInfo {
@@ -166,5 +171,256 @@ describe("cameraRefreshNeeded", () => {
         0.2,
       ),
     ).toBe(false);
+  });
+});
+
+describe("frameCameraInfo", () => {
+  // A connection is only drawn when BOTH endpoints are displayed, so
+  // navigating to one at high zoom must widen the view to include the other.
+  it("zooms out to fit a span wider than the viewport", () => {
+    const info = makeCameraInfo(); // 20 wide x 10 tall, zoom 3
+    const framed = frameCameraInfo(info, { x: 100, y: 100 }, 40, 10);
+    // Needs 2x the width => one zoom level out.
+    expect(framed.zoom).toBeCloseTo(2);
+    const xs = framed.gcsBounds.map((p) => p.x);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(40);
+  });
+
+  it("uses whichever axis needs the most room", () => {
+    const info = makeCameraInfo(); // 20 x 10
+    // Height needs 4x; width needs only 1x.
+    const framed = frameCameraInfo(info, { x: 100, y: 100 }, 5, 40);
+    expect(framed.zoom).toBeCloseTo(1);
+    const ys = framed.gcsBounds.map((p) => p.y);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(40);
+  });
+
+  it("never zooms IN when the span already fits", () => {
+    const info = makeCameraInfo();
+    const framed = frameCameraInfo(info, { x: 150, y: 150 }, 2, 2);
+    expect(framed.zoom).toBe(info.zoom);
+    expect(framed.center).toEqual({ x: 150, y: 150 });
+  });
+
+  it("recenters on the given point while scaling", () => {
+    const info = makeCameraInfo();
+    const framed = frameCameraInfo(info, { x: 300, y: 400 }, 40, 10);
+    expect(framed.center).toEqual({ x: 300, y: 400 });
+    const xs = framed.gcsBounds.map((p) => p.x);
+    const ys = framed.gcsBounds.map((p) => p.y);
+    expect((Math.min(...xs) + Math.max(...xs)) / 2).toBeCloseTo(300);
+    expect((Math.min(...ys) + Math.max(...ys)) / 2).toBeCloseTo(400);
+  });
+
+  // Under rotation the axis-aligned bounding box of gcsBounds is larger than
+  // the real viewport, so comparing against it under-scales and leaves an
+  // endpoint outside the view.
+  it("scales in the camera basis when the viewport is rotated", () => {
+    // A 45-degree-rotated square viewport: edges of length ~14.1 along the
+    // diagonals, but an axis-aligned bounding box of 20x20.
+    const rotated: ICameraInfo = {
+      center: { x: 0, y: 0 },
+      zoom: 3,
+      rotate: Math.PI / 4,
+      gcsBounds: [
+        { x: 0, y: -10 },
+        { x: 10, y: 0 },
+        { x: 0, y: 10 },
+        { x: -10, y: 0 },
+      ],
+    };
+    // A span along the diamond's EDGE direction (14, 14). Its endpoints
+    // (-7,-7) and (7,7) satisfy |x|+|y| = 14 > 10, so they sit outside the
+    // viewport and it must zoom out. The old axis-aligned test compared 14
+    // against the 20x20 bounding box and wrongly concluded it fit.
+    const framed = frameCameraInfo(rotated, { x: 0, y: 0 }, 14, 14);
+    expect(framed.zoom).toBeLessThan(rotated.zoom);
+
+    // A horizontal span of 20 reaches exactly the left/right vertices, so it
+    // genuinely fits and must NOT zoom out.
+    expect(frameCameraInfo(rotated, { x: 0, y: 0 }, 20, 0).zoom).toBe(
+      rotated.zoom,
+    );
+  });
+
+  // The span is a signed VECTOR, not absolute extents. On a rotated
+  // non-square viewport the two diagonals project very differently, so taking
+  // |dx|,|dy| collapses two different cases into one and under-scales.
+  it("distinguishes opposite-signed spans on a rotated non-square viewport", () => {
+    // A 20x10 viewport rotated 45 degrees: long axis along (1,1), short along
+    // (-1,1). Corners are listed in order, so the edge vectors come out as
+    // u = (14.14, 14.14) with |u| = 20 and v = (-7.07, 7.07) with |v| = 10.
+    const h = 10 / Math.SQRT2;
+    const w = 20 / Math.SQRT2;
+    const rotated: ICameraInfo = {
+      center: { x: 0, y: 0 },
+      zoom: 5,
+      rotate: Math.PI / 4,
+      gcsBounds: [
+        { x: (-w + h) / 2, y: (-w - h) / 2 },
+        { x: (w + h) / 2, y: (w - h) / 2 },
+        { x: (w - h) / 2, y: (w + h) / 2 },
+        { x: (-w - h) / 2, y: (-w + h) / 2 },
+      ],
+    };
+
+    // (23, 11) lies mostly along the LONG axis: needs ~1.20x.
+    const alongLong = frameCameraInfo(rotated, { x: 0, y: 0 }, 23, 11);
+    // (-23, 11) lies mostly along the SHORT axis: needs ~2.40x — twice as
+    // much. With absolute values both would compute as the first case.
+    const alongShort = frameCameraInfo(rotated, { x: 0, y: 0 }, -23, 11);
+
+    expect(rotated.zoom - alongLong.zoom).toBeCloseTo(Math.log2(1.2), 1);
+    expect(rotated.zoom - alongShort.zoom).toBeCloseTo(Math.log2(2.4), 1);
+    expect(alongShort.zoom).toBeLessThan(alongLong.zoom);
+  });
+
+  it("preserves rotation rather than rebuilding an axis-aligned box", () => {
+    const info = makeCameraInfo();
+    expect(frameCameraInfo(info, { x: 100, y: 100 }, 40, 10).rotate).toBe(
+      info.rotate,
+    );
+  });
+});
+
+describe("frameCameraInfoToExtent", () => {
+  // Viewport is 20 wide (u) x 10 tall (v), centered on (100, 100).
+  it("zooms OUT when the box needs more than its share of the viewport", () => {
+    // fraction 0.5 of a 20-wide viewport = 10 usable; a 20-wide box needs 2x.
+    const result = frameCameraInfoToExtent(
+      makeCameraInfo(),
+      { x: 100, y: 100 },
+      20,
+      0,
+      0.5,
+    );
+    expect(result.zoom).toBeCloseTo(3 - Math.log2(2));
+  });
+
+  // The difference from frameCameraInfo, which never zooms in: the caller's
+  // intent here is "show me this at a usable size", not "don't crop it".
+  it("zooms IN when the box is smaller than its share", () => {
+    // A 2-wide box asked to occupy half of a 20-wide viewport wants a 4-wide
+    // viewport, i.e. scale 0.2 -> zoom in by log2(5).
+    const result = frameCameraInfoToExtent(
+      makeCameraInfo(),
+      { x: 100, y: 100 },
+      2,
+      0,
+      0.5,
+    );
+    expect(result.zoom).toBeCloseTo(3 + Math.log2(5));
+  });
+
+  it("recenters as well as scales", () => {
+    const result = frameCameraInfoToExtent(
+      makeCameraInfo(),
+      { x: 300, y: 250 },
+      20,
+      0,
+      0.5,
+    );
+    expect(result.center).toEqual({ x: 300, y: 250 });
+  });
+
+  /**
+   * The reason this can't reuse frameCameraInfo. That helper projects ONE signed
+   * vector, which fits only one of a box's two diagonals; a box needs the
+   * support function `w·|û.x| + h·|û.y|`, which is sign-free and bounds both.
+   * Here the axis-aligned viewport makes the vertical extent the binding
+   * constraint even though the width alone would need no zoom at all.
+   */
+  it("accounts for BOTH box dimensions, not just one diagonal", () => {
+    // Width 10 into a 20-wide viewport at fraction 1 => scale 0.5, zoom 4.
+    const widthOnly = frameCameraInfoToExtent(
+      makeCameraInfo(),
+      { x: 100, y: 100 },
+      10,
+      0,
+      1,
+    );
+    expect(widthOnly.zoom).toBeCloseTo(4);
+
+    // Adding height 40 into a 10-tall viewport binds at scale 4 => zoom 1. If
+    // only the width were projected this would still report 4.
+    const withHeight = frameCameraInfoToExtent(
+      makeCameraInfo(),
+      { x: 100, y: 100 },
+      10,
+      40,
+      1,
+    );
+    expect(withHeight.zoom).toBeCloseTo(1);
+    expect(withHeight.zoom).toBeLessThan(widthOnly.zoom);
+  });
+
+  // A track whose members share a centroid has a zero-size box; without the
+  // guard the scale is 0 and the zoom becomes +Infinity.
+  it("recenters without zooming for a degenerate box", () => {
+    const result = frameCameraInfoToExtent(
+      makeCameraInfo(),
+      { x: 300, y: 250 },
+      0,
+      0,
+      0.2,
+    );
+    expect(result.zoom).toBe(3);
+    expect(result.center).toEqual({ x: 300, y: 250 });
+    expect(Number.isFinite(result.zoom)).toBe(true);
+  });
+
+  it("clamps to maxZoom and keeps gcsBounds consistent with it", () => {
+    const info = makeCameraInfo();
+    // Wants zoom 3 + log2(5) ≈ 5.32; capped at 4.
+    const result = frameCameraInfoToExtent(
+      info,
+      { x: 100, y: 100 },
+      2,
+      0,
+      0.5,
+      { maxZoom: 4 },
+    );
+    expect(result.zoom).toBe(4);
+    // Bounds must describe the CLAMPED viewport, not the requested one —
+    // hydration reads gcsBounds, so a disagreement hydrates a viewport that
+    // never existed. One zoom level in => half the span => scale 0.5.
+    const width = result.gcsBounds[1].x - result.gcsBounds[0].x;
+    expect(width).toBeCloseTo(20 * 0.5);
+  });
+
+  it("clamps to minZoom", () => {
+    const result = frameCameraInfoToExtent(
+      makeCameraInfo(),
+      { x: 100, y: 100 },
+      200,
+      0,
+      0.5,
+      { minZoom: 2 },
+    );
+    expect(result.zoom).toBe(2);
+  });
+
+  it("preserves rotation", () => {
+    const result = frameCameraInfoToExtent(
+      makeCameraInfo(),
+      { x: 100, y: 100 },
+      20,
+      0,
+      0.5,
+    );
+    expect(result.rotate).toBe(0.5);
+  });
+
+  it("returns a plain recenter for a degenerate viewport", () => {
+    const info = makeCameraInfo();
+    info.gcsBounds = [
+      { x: 100, y: 100 },
+      { x: 100, y: 100 },
+      { x: 100, y: 100 },
+      { x: 100, y: 100 },
+    ];
+    const result = frameCameraInfoToExtent(info, { x: 5, y: 5 }, 10, 10, 0.2);
+    expect(result.zoom).toBe(3);
+    expect(result.center).toEqual({ x: 5, y: 5 });
   });
 });

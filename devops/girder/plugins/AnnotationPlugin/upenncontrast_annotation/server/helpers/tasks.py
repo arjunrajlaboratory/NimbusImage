@@ -3,6 +3,8 @@ from girder_worker.docker.tasks import docker_run
 from girder.api.rest import getCurrentToken
 from girder.models.setting import Setting
 
+from .workerQueues import getQueueForRequest
+
 import datetime
 import json
 import re
@@ -16,10 +18,28 @@ import re
 # )
 
 
-def runJobRequest(image, datasetId, params, request):
-    name = params.get("name", "unknown")
-    # Make sure name is a valid name for a docker container
-    name = "".join(re.findall("[a-zA-Z0-9_.-]", name))
+def runJobRequest(image, datasetId, params, requestType, jobTitle=None):
+    # The container name and the job title are derived separately: the
+    # container name is constrained by docker (see below), while the title is
+    # shown to users in Jobs & Logs and can keep spaces, "/" and ":".
+    # Requests with no name of their own (interface requests) pass an explicit
+    # jobTitle, and fall back to the request type rather than a bare
+    # "unknown".
+    name = params.get("name")
+    if not isinstance(name, str) or not name.strip():
+        name = requestType
+    # Docker container names must match [a-zA-Z0-9][a-zA-Z0-9_.-]*, so a
+    # leading "_", "-" or "." survives the character filter but still makes
+    # the name invalid — strip it rather than let docker reject the run.
+    containerName = "_".join(
+        str(part)
+        for part in (
+            re.sub("[^a-zA-Z0-9_.-]", "", name).lstrip("_.-") or requestType,
+            datasetId,
+            datetime.datetime.now().timestamp(),
+        )
+        if part
+    )
     params = json.dumps(params)
 
     containerArgs = [
@@ -28,7 +48,7 @@ def runJobRequest(image, datasetId, params, request):
         "--token",
         getCurrentToken()["_id"],
         "--request",
-        request,
+        requestType,
         "--parameters",
         params,
     ]
@@ -43,12 +63,13 @@ def runJobRequest(image, datasetId, params, request):
                 "pull_image": False,
                 "container_args": containerArgs,
                 "remove_container": True,
-                "name": "{}_{}_{}".format(
-                    name, datasetId, datetime.datetime.now().timestamp()
-                ),
-                "girder_job_title": name,
+                "name": containerName,
+                "girder_job_title": jobTitle or name,
                 # 'girder_result_hooks': [testHook]
             },
+            # Route to the "cpu" or "gpu" queue by worker class; interface
+            # requests always go to "cpu" (see helpers/workerQueues.py).
+            queue=getQueueForRequest(image, requestType),
             # Limit tasks execution to 24h to avoid blocking tasks that
             # monopolize a worker
             time_limit=24 * 60 * 60

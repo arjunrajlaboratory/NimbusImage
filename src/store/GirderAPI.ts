@@ -34,6 +34,7 @@ import {
   TJobType,
   IDatasetConfigurationCompatibility,
   IJob,
+  IUserStorageQuota,
   resolveVisibilityConfig,
 } from "@/store/model";
 import {
@@ -1121,6 +1122,23 @@ export default class GirderAPI {
     }
   }
 
+  // Fetch the user's storage usage and quota from the girder-user-quota
+  // plugin. `quota` is null when the user has no quota (unlimited storage).
+  // Returns null if the quota information cannot be fetched (e.g. the
+  // user-quota plugin is not enabled on the backend).
+  async getUserStorageQuota(userId: string): Promise<IUserStorageQuota | null> {
+    try {
+      const response = await this.client.get(`user/${userId}/quota`);
+      return {
+        used: response.data.size ?? 0,
+        quota: response.data.quota?._currentFileSizeQuota ?? null,
+      };
+    } catch (error) {
+      logError("Failed to fetch user storage quota");
+      return null;
+    }
+  }
+
   async getUserColors(): Promise<{ [key: string]: string }> {
     const response = await this.client.get("user_colors");
     if (response.status !== 200) {
@@ -1328,6 +1346,7 @@ export interface IHistogramOptions {
 
 export interface ITileMeta {
   [x: string]: any;
+  dtype?: string;
   IndexRange: any;
   levels: number;
   magnification: number;

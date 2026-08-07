@@ -117,8 +117,9 @@ Use this workflow when the user has a visually recognizable object class but can
 
 **Cell Tracking and Analysis**:
 1. **Enable Time Lapse Mode**:
-   - Check "Time lapse mode" in navigation panel
-   - Adjust track window to control visualization span
+   - Check "Time lapse mode" in the Navigator palette. This opens the Time Lapse palette next to it, which holds all the track controls
+   - Adjust "Window" to control how many time points of track are drawn on either side of the current frame
+   - Optionally switch coloring between per-track hues and a single color, and shuffle the hues if two nearby tracks look alike
    
 2. **Segment Cells Across Time**:
    - Create Cellpose tool with appropriate tag
@@ -134,6 +135,7 @@ Use this workflow when the user has a visually recognizable object class but can
    - Create Lasso connect tool to repair broken tracks
    - Circle sequential objects in time to connect them
    - Use Lasso disconnect to remove incorrect connections
+   - To work through tracks systematically, use "Show tracks" in the Time Lapse palette (or the Object list's Connections tab grouped by track). Clicking a track expands it and frames it in the viewport; the "Select ▾" menu selects its objects, its links, or both; "Delete track" removes a whole bad track at once. A link count higher than (objects − 1) flags a track that branches or has duplicate links
    
 5. **Measure Through Time**:
    - Create desired property workers (intensity, area)

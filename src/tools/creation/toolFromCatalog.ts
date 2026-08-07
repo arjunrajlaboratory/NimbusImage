@@ -6,6 +6,7 @@ import {
   IToolConfiguration,
   IToolSuggestionCatalogEntry,
   IToolTemplate,
+  IWorkerInterfaceValues,
 } from "@/store/model";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
 
@@ -118,6 +119,9 @@ export interface IBuildToolOptions {
   name?: string;
   // Tags applied to annotations the tool creates.
   tags?: string[];
+  // Worker parameter values saved with the tool (worker entries only); read
+  // back by run_worker and submitAnnotationWorkerJob as the saved values.
+  workerInterfaceValues?: IWorkerInterfaceValues;
 }
 
 // Build a concrete IToolConfiguration from a catalog entry.
@@ -156,6 +160,9 @@ export function buildToolConfiguration(
         image: { image: entry.image },
         annotation: annotationSetup,
         jobDateTag: false,
+        ...(options.workerInterfaceValues
+          ? { workerInterfaceValues: options.workerInterfaceValues }
+          : {}),
       },
     };
   }

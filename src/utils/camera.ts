@@ -79,3 +79,131 @@ export function recenterCameraInfo(
     })),
   };
 }
+
+/**
+ * Recenter and zoom — in OR out — so an axis-aligned box of `width`×`height`
+ * around the new center occupies `fraction` of the viewport.
+ *
+ * Distinct from `frameCameraInfo`, which fits a single SIGNED delta (the segment
+ * between a connection's two endpoints) and only ever zooms out. Two differences
+ * matter:
+ *
+ * 1. A box needs the support function `w·|û.x| + h·|û.y|`, not the projection of
+ *    one signed vector. Projecting `(w, h)` alone fits only one of the box's two
+ *    diagonals; under rotation the other one is longer and would fall outside
+ *    the viewport. The support function is sign-free and covers both.
+ * 2. It zooms IN when the box is small, because the caller's intent is "show me
+ *    this thing at a usable size", not merely "don't crop it".
+ *
+ * `maxZoom`/`minZoom` clamp the result — a track whose members share a centroid
+ * has a degenerate box that would otherwise demand infinite zoom. When the zoom
+ * is clamped the scale is recomputed from the clamped value, so `gcsBounds`
+ * stays consistent with `zoom`; viewport-driven hydration reads those bounds, so
+ * letting them disagree would hydrate against a viewport that never existed.
+ */
+export function frameCameraInfoToExtent(
+  info: ICameraInfo,
+  center: IGeoJSPosition,
+  width: number,
+  height: number,
+  fraction: number,
+  options: { maxZoom?: number; minZoom?: number } = {},
+): ICameraInfo {
+  const recentered = recenterCameraInfo(info, center);
+  const [c0, c1, , c3] = info.gcsBounds;
+  const u = { x: c1.x - c0.x, y: c1.y - c0.y };
+  const v = { x: c3.x - c0.x, y: c3.y - c0.y };
+  const uLen = Math.hypot(u.x, u.y);
+  const vLen = Math.hypot(v.x, v.y);
+  if (uLen <= 0 || vLen <= 0 || fraction <= 0) {
+    return recentered;
+  }
+  // Support function of the box along each viewport edge direction.
+  const alongU = (width * Math.abs(u.x) + height * Math.abs(u.y)) / uLen;
+  const alongV = (width * Math.abs(v.x) + height * Math.abs(v.y)) / vLen;
+  if (alongU <= 0 && alongV <= 0) {
+    // Degenerate box (every member at one point) — nothing to size to.
+    return recentered;
+  }
+  const rawScale = Math.max(
+    alongU / (fraction * uLen),
+    alongV / (fraction * vLen),
+  );
+  let zoom = info.zoom - Math.log2(rawScale);
+  if (options.maxZoom !== undefined) {
+    zoom = Math.min(zoom, options.maxZoom);
+  }
+  if (options.minZoom !== undefined) {
+    zoom = Math.max(zoom, options.minZoom);
+  }
+  // Recover the scale actually applied, so bounds and zoom cannot disagree.
+  const scale = Math.pow(2, info.zoom - zoom);
+  if (scale === 1) {
+    return recentered;
+  }
+  return {
+    ...recentered,
+    zoom,
+    gcsBounds: recentered.gcsBounds.map((pt) => ({
+      ...pt,
+      x: center.x + (pt.x - center.x) * scale,
+      y: center.y + (pt.y - center.y) * scale,
+    })),
+  };
+}
+
+/**
+ * Recenter, and zoom OUT if needed so a span of `spanX`×`spanY` around the new
+ * center fits in the viewport. Never zooms in.
+ *
+ * `spanX`/`spanY` are a **signed vector**, not absolute extents. Under rotation
+ * the projection onto the camera axes depends on the sign: for a 45-degree
+ * viewport a delta of `(-23, 11)` needs ~2.4x while `(23, 11)` needs only
+ * ~1.2x, so passing absolute values would under-scale and leave an endpoint
+ * off screen. At zero rotation the sign cancels and it makes no difference.
+ *
+ * Needed when navigating to something that occupies two points rather than one —
+ * a connection between annotations. Recentering alone leaves the far endpoint
+ * off-screen at high zoom, and an endpoint that isn't displayed isn't drawn, so
+ * the connection the user asked to see renders as nothing at all.
+ *
+ * Corners are scaled about the new center rather than recomputed from a
+ * width/height, so any camera rotation is preserved.
+ */
+export function frameCameraInfo(
+  info: ICameraInfo,
+  center: IGeoJSPosition,
+  spanX: number,
+  spanY: number,
+): ICameraInfo {
+  const recentered = recenterCameraInfo(info, center);
+  // Work in the camera's OWN basis, not axis-aligned min/max. Under rotation
+  // gcsBounds is a rotated quadrilateral whose bounding box is larger than the
+  // usable viewport, so an axis-aligned comparison under-scales — a span along
+  // the diamond's diagonal would still fall outside the real viewport.
+  const [c0, c1, , c3] = info.gcsBounds;
+  const u = { x: c1.x - c0.x, y: c1.y - c0.y };
+  const v = { x: c3.x - c0.x, y: c3.y - c0.y };
+  const uLen = Math.hypot(u.x, u.y);
+  const vLen = Math.hypot(v.x, v.y);
+  if (uLen <= 0 || vLen <= 0) {
+    return recentered;
+  }
+  // Project the required span onto each viewport edge direction.
+  const alongU = Math.abs((spanX * u.x + spanY * u.y) / uLen);
+  const alongV = Math.abs((spanX * v.x + spanY * v.y) / vLen);
+  const scale = Math.max(alongU / uLen, alongV / vLen, 1);
+  if (scale === 1) {
+    return recentered;
+  }
+  return {
+    ...recentered,
+    // Each zoom level halves the visible span.
+    zoom: info.zoom - Math.log2(scale),
+    gcsBounds: recentered.gcsBounds.map((pt) => ({
+      ...pt,
+      x: center.x + (pt.x - center.x) * scale,
+      y: center.y + (pt.y - center.y) * scale,
+    })),
+  };
+}

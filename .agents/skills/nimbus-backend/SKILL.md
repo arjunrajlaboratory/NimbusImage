@@ -275,29 +275,41 @@ Convert ids once at the API boundary and pass ObjectIds down — don't convert d
 
 ## Public Endpoint Input Validation
 
-This is the single most-recurring review finding in this plugin: an `@access.public` endpoint calls `.get()` / `len()` / `int()` / indexes request data **without first checking its type**, so a malformed payload (JSON-array body, `filters.tags: "bad"`, scalar `annotationIds`, oversized `limit`) raises an uncaught `AttributeError`/`TypeError` → 500 instead of a clean 400 — and unbounded limits let unauthenticated callers force huge DB/serialization work.
+This is the single most-recurring review finding in this plugin: an endpoint calls `.get()` / `len()` / `int()` / indexes request data **without first checking its type**, so a malformed payload (JSON-array body, `filters.tags: "bad"`, scalar `annotationIds`, non-string `datasetId`, oversized `limit`) raises an uncaught `AttributeError`/`TypeError` → 500 instead of a clean 400 — and unbounded limits let callers force huge DB/serialization work. Applies to `@access.user` endpoints too, not only `@access.public`: 400-not-500 is the house style regardless of auth.
 
-There is **no shared validation helper module** in this plugin — validate inline at the API boundary with `isinstance` checks that raise `RestException(code=400, ...)` *before* you touch the data. Real example, `server/api/annotation.py::updateMultiple`:
+**Use the shared validators in `server/helpers/validation.py`** (added by PR #1203). Do NOT hand-roll inline `isinstance` guards for new/edited endpoints — call the helpers, which raise `RestException(code=400)` at the boundary. Real example, `server/api/dataImport.py::importData`:
 
 ```python
-if not isinstance(bodyJson, list):
-    raise RestException("Request body must be a JSON array.", code=400)
-for update in bodyJson:
-    if not isinstance(update, dict):
-        raise RestException("Each item must be a JSON object.", code=400)
+from ..helpers.validation import (
+    requireObjectBody, requireList, requireObjectId,
+)
+
+body = requireObjectBody(kwargs["memoizedBodyJson"])
+datasetId = requireObjectId(body.get("datasetId"), "datasetId")
+annotations = requireList(body.get("annotations", []), "annotations")
+propertyValues = requireObjectBody(body.get("propertyValues", {}), "propertyValues")
 ```
 
-Guard each kind of request-data access before performing it:
+Match each kind of request-data access to its helper:
 
-| Access to guard | Guard before it |
+| Access to guard | Helper |
 |---|---|
-| `.get()` on a body/object | `isinstance(body, dict)` → 400 |
-| `len()` / iteration on a field | `isinstance(value, list)` → 400 |
-| `ObjectId(id)` on caller-supplied ids | `try / except InvalidId` → 400 (see the bson section above) |
-| `int(param)` on a query param | `try / except (TypeError, ValueError)` → 400 |
-| unbounded counts / `limit` | clamp against a module-level `MAX_*` constant (pattern: `MAX_ZENODO_FILES` / `MAX_ZENODO_SIZE` in `server/api/zenodo.py`) |
+| `.get()` on a body / nested object | `requireObjectBody(value, name)` → dict-or-400 |
+| `len()` / iteration on a field | `requireList(value, field)` → list-or-400 |
+| `ObjectId(id)` on caller-supplied ids | `requireObjectId(value, field)` → ObjectId-or-400 (handles None, `InvalidId`, AND non-string `TypeError`) |
+| `int(param)` on a query param | `requireInt(value, field)` → int-or-400 |
+| unbounded counts | `requireCountWithin(count, limit, name)` / module-level `MAX_*` consts (`MAX_ANNOTATION_IDS`, `MAX_LIST_LIMIT`, ...) read at call time (monkeypatchable in tests) |
+| filter / sort / propertyPaths shape | `validateListInputs(...)`, `validatePropertyPaths(...)`, `validateUncomputedCountsProperties(...)` |
 
-Rules: validation and `RestException` live in the API layer, never in models. Add a backend test per malformed-input case (malformed body → 400, not 500). When you fix one endpoint, sweep the other public endpoints in the same file for the identical gap — reviewers flag one instance per round.
+`requireObjectId` catches `TypeError` as well as `InvalidId` — a non-string id like `{"datasetId": 123}` is a clean 400, not a 500 (see the bson section above).
+
+Rules: validation and `RestException` live in the API layer, never in models. Validate NESTED elements, not just the top-level container — each list entry (`[123]`) and nested map (`propertyValues: {"a1": 5}`) is caller-supplied; `.get()`/`.items()` on a non-dict entry → 500. Add a backend test per malformed-input case (malformed body → 400, not 500); `test/test_validation.py` unit-tests the helpers directly, and endpoint tests assert the 400. When you fix one endpoint, sweep the other endpoints in the same file for the identical gap — reviewers flag one instance per round.
+
+**`assertStatus(resp, 400)` alone is not a regression test for input validation.** These endpoints have *other* 400 paths — a missing `datasetId`, an unknown dataset id, a failed schema validation — so a malformed-body test can pass while the body is never validated at all. Observed for real: a `/upenn_annotation/compute` test using a syntactically valid but nonexistent `datasetId` passed **before** its fix, because the model's dataset lookup rejected the request first.
+
+Two habits close it:
+- **Assert the message, not just the status** (`assert "must be a JSON object" in resp.json["message"]`), and set up the request so the code actually reaches the validation — use a real `utilities.createFolder(...)` dataset when the handler looks one up before touching the body.
+- **`git stash push <source files>` and confirm the test fails**, leaving the new test file in place (untracked files aren't stashed). A malformed-input test that passes both ways is worse than none.
 
 ## Loading Plugin Changes Into the Running Backend
 
@@ -356,6 +368,18 @@ job = JobModel().createLocalJob(
 )
 JobModel().scheduleJob(job)
 ```
+
+### Every Job Title Reaches Users — Never Ship a Placeholder
+
+Job titles are user-visible: they are listed in Settings → **Jobs & Logs** and quoted in the frontend's job notifications (`src/store/jobs.ts`). A title that doesn't identify the work is a support burden — issue #1294 was a `girder_job_title` defaulting to the literal `"unknown"` for worker *interface* requests (containers named `unknown_None_<ts>`), which users saw appear right before their segmentation run with no way to tell the two apart.
+
+Rules when adding a job, or a helper that creates jobs:
+
+- **Default to something meaningful, not a placeholder.** If the title comes from caller-supplied data (`params.get("name")`), fall back to the request/job type, never to `"unknown"`. Check *every* caller — one caller omitting the field is how the placeholder reaches production.
+- **Derive the container name and the title separately.** Docker names allow only `[a-zA-Z0-9_.-]`, so sanitizing shared text costs the title its spaces, `/` and `:`. `runJobRequest` takes an explicit `jobTitle` for this reason (`server/helpers/tasks.py`).
+- **Don't interpolate `None` into a name.** Join only the parts that exist — `datasetId` is absent for interface requests.
+- **A caller-supplied name may not be a string.** `re.findall` on an int is a 500; guard with `isinstance(name, str)`.
+- **If users didn't start the job, document it** in `girder-claude-chat/girder_claude_chat/help/troubleshooting.md`, so the assistant can answer "what is this job?" instead of guessing.
 
 ### Progress Reporting via SSE
 

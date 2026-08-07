@@ -128,6 +128,7 @@ export default class AnnotationsAPI {
     return {
       total: response.data.total,
       rows: (response.data.rows as any[]).map(this.toListRow),
+      offset: response.data.offset,
     };
   }
 

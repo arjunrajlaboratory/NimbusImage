@@ -3,6 +3,7 @@ import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
+import { jobStates } from "@/store/jobConstants";
 import volumeViewStore from "@/store/volumeView";
 import {
   AnnotationShape,
@@ -14,6 +15,7 @@ import {
   IProgressInfo,
   IPropertyAnnotationFilter,
   IScaleInformation,
+  IScales,
   IToolConfiguration,
   IWorkerInterfaceValues,
   PropertyFilterMode,
@@ -25,7 +27,12 @@ import {
   captureInterfaceScreenshot,
   captureViewportScreenshot,
 } from "@/utils/interfaceCapture";
-import { getDefault } from "@/utils/workerInterface";
+import {
+  getDefault,
+  normalizeWorkerInterfaceValue,
+  WORKER_INTERFACE_VALUE_FORMATS,
+  type IChannelContext,
+} from "@/utils/workerInterface";
 import { registerPlot, type IAgentPlot } from "./plotRegistry";
 import {
   MAX_BOX_POINTS,
@@ -64,6 +71,10 @@ export interface IAgentToolContext {
   // worker interface, then submits a job) calls this immediately before the
   // mutation so it never acts on a dataset the request didn't target.
   hasViewIdentityChanged?: () => boolean;
+  // Aborted when the user presses Stop (or the conversation is cleared) so a
+  // tool that blocks for minutes (wait_for_job) unwinds immediately instead of
+  // keeping the panel busy until its own budget expires.
+  abortSignal?: AbortSignal;
 }
 
 export interface IToolExecutionResult {
@@ -95,6 +106,29 @@ const MAX_LIST_ANNOTATIONS = LARGE_ANNOTATION_RESULT;
 // dataset). The message is sent to the model as an error tool result so it
 // can correct its call.
 export class ToolExecutionError extends Error {}
+
+// Configuration/view mutations persist to the backend and can be rejected
+// (e.g. a read-only collection, a network failure). syncConfiguration swallows
+// those failures app-wide and only surfaces them via the global saving-state
+// indicator (issue #1239) — but the AI panel asserts success in prose, so a
+// swallowed failure would have the model tell the user a change was saved when
+// it only persisted locally. These mutators opt into throwOnError; this wraps
+// them so a backend rejection becomes a ToolExecutionError the model reports as
+// a failure instead of success.
+async function persistOrThrow<T>(
+  what: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error: any) {
+    throw new ToolExecutionError(
+      `${what} could not be saved: ${
+        error?.message ?? "the backend rejected the change"
+      }`,
+    );
+  }
+}
 
 interface IAnnotationQuery {
   tags?: string[];
@@ -364,10 +398,26 @@ async function resolveWorkerInterfaceValues(
         `Valid parameters: ${Object.keys(workerInterface).join(", ")}`,
     );
   }
+  const channelContext = buildChannelContext();
   const values: IWorkerInterfaceValues = {};
   for (const id in workerInterface) {
     if (id in overrides) {
-      values[id] = overrides[id];
+      // Normalize the agent-supplied value into the canonical shape (channel
+      // names/indices -> the {index: boolean} map the worker expects, etc.).
+      // A bad value throws here as a ToolExecutionError so the agent gets
+      // actionable feedback instead of saving a tool that fails at run time.
+      try {
+        values[id] = normalizeWorkerInterfaceValue(
+          workerInterface[id],
+          overrides[id],
+          channelContext,
+          id,
+        );
+      } catch (error: any) {
+        throw new ToolExecutionError(
+          error?.message ?? `Invalid value for worker parameter "${id}"`,
+        );
+      }
     } else if (id in saved) {
       values[id] = saved[id];
     } else {
@@ -378,6 +428,24 @@ async function resolveWorkerInterfaceValues(
     }
   }
   return values;
+}
+
+// Channel index<->name context for resolving agent-supplied channel references
+// against the open dataset. Empty when no dataset is open: index references
+// then pass through unvalidated, and name references can't resolve at all
+// (create_tool does not require a dataset, so this path is reachable).
+function buildChannelContext(): IChannelContext {
+  const dataset = main.dataset;
+  const nameToIndex = new Map<string, number>();
+  if (dataset) {
+    for (const channel of dataset.channels) {
+      const name = dataset.channelNames.get(channel);
+      if (name) {
+        nameToIndex.set(name.toLowerCase(), channel);
+      }
+    }
+  }
+  return { channels: dataset ? dataset.channels.slice() : [], nameToIndex };
 }
 
 // The viewer display options the agent can toggle (all local view state,
@@ -509,6 +577,299 @@ function clamp(value: number, max: number) {
   return Math.max(0, Math.min(value, Math.max(0, max - 1)));
 }
 
+// --- Background jobs -------------------------------------------------------
+//
+// run_worker and compute_property start jobs that take minutes. The model
+// cannot see the transcript notes their completion callbacks write, so without
+// a way to *wait* it can only re-read state on each turn to guess whether the
+// job is done — which burns the turn budget on polling (issue: an agent spent
+// every turn polling a Cellpose run). wait_for_job blocks on the same
+// completion signal the transcript note uses, so one tool call covers the whole
+// run: no polling, and the job's outcome (including its errors) reaches the
+// model as a tool result.
+
+// Jobs started by the agent in this session, keyed by job id. Holds the live
+// progress/error objects the jobs store writes into, so a wait can report
+// progress on timeout and the failure reason on completion.
+interface IAgentJobRecord {
+  label: string;
+  progress: IProgressInfo;
+  errors: IErrorInfoList;
+  // Resolves when the job's completion callback fires (i.e. after the store
+  // has refreshed annotations / property values), never rejects.
+  completion: Promise<boolean>;
+  finished: boolean;
+  success: boolean | null;
+}
+
+const agentJobs = new Map<string, IAgentJobRecord>();
+
+// Records are tiny but must not grow without bound across a long session.
+const MAX_TRACKED_AGENT_JOBS = 20;
+
+// Wait budget for a single wait_for_job call. The floor matters: a wait that
+// comes back "still running" has by construction blocked for at least
+// MIN_WAIT_SECONDS, so a model that re-waits in a loop cannot spin through its
+// turns the way bare polling did.
+const DEFAULT_WAIT_SECONDS = 600;
+const MIN_WAIT_SECONDS = 30;
+const MAX_WAIT_SECONDS = 1800;
+
+// How often the fallback path asks the server for a job's status. Used only for
+// jobs this session never registered (e.g. started before a page reload), where
+// no completion event will arrive. These are plain REST calls inside a single
+// tool call — they cost no agent turns and never reach the model.
+const JOB_STATUS_POLL_SECONDS = 10;
+
+const TERMINAL_JOB_STATES = new Set([
+  jobStates.success,
+  jobStates.error,
+  jobStates.cancelled,
+]);
+
+function pruneAgentJobs() {
+  if (agentJobs.size <= MAX_TRACKED_AGENT_JOBS) {
+    return;
+  }
+  // Map iterates in insertion order: drop the oldest finished records first,
+  // then (only if many jobs are running at once) the oldest records regardless.
+  // A waiter already holds its record, so dropping one only forgets the
+  // outcome — it never breaks an in-flight wait.
+  for (const [jobId, record] of agentJobs) {
+    if (agentJobs.size <= MAX_TRACKED_AGENT_JOBS) {
+      return;
+    }
+    if (record.finished) {
+      agentJobs.delete(jobId);
+    }
+  }
+  for (const jobId of [...agentJobs.keys()]) {
+    if (agentJobs.size <= MAX_TRACKED_AGENT_JOBS) {
+      return;
+    }
+    agentJobs.delete(jobId);
+  }
+}
+
+function jobErrorMessages(errors: IErrorInfoList): string[] {
+  return (
+    errors.errors
+      .map((e) => e.error || e.warning || e.info)
+      .filter((message): message is string => Boolean(message))
+      // Worker logs can emit many messages; the model only needs the gist.
+      .slice(0, 5)
+  );
+}
+
+// Start tracking a job the agent submitted and return the completion handler to
+// wire to the store's callback. The handler both records the outcome (for
+// wait_for_job) and writes the transcript note the user sees.
+function trackAgentJob(params: {
+  jobId: string;
+  label: string;
+  progress: IProgressInfo;
+  errors: IErrorInfoList;
+  notify: (text: string) => void;
+}): (success: boolean) => void {
+  let resolve!: (success: boolean) => void;
+  const record: IAgentJobRecord = {
+    label: params.label,
+    progress: params.progress,
+    errors: params.errors,
+    completion: new Promise<boolean>((r) => (resolve = r)),
+    finished: false,
+    success: null,
+  };
+  agentJobs.set(params.jobId, record);
+  pruneAgentJobs();
+  return (success: boolean) => {
+    if (record.finished) {
+      return;
+    }
+    record.finished = true;
+    record.success = success;
+    const errors = jobErrorMessages(record.errors);
+    params.notify(
+      success
+        ? `${params.label} finished successfully.`
+        : `${params.label} failed${errors.length ? `: ${errors.join("; ")}` : "."}`,
+    );
+    resolve(success);
+  };
+}
+
+// Drop every tracked job. Called from aiPanel.clearConversation — like the plot
+// registry, this is module state that would otherwise outlive the conversation
+// it belongs to. That matters on an authenticated-user change (login/logout is
+// client-side, no page reload): a record holds the previous user's job label and
+// worker error text, and the tracked path returns it without the access-checked
+// job/{id} request, so the next user must not be able to read it by job id.
+export function clearTrackedAgentJobs() {
+  agentJobs.clear();
+}
+
+type TWaitOutcome = "timeout" | "aborted";
+
+// Wait for `completion` to settle, for `timeoutMs` to elapse, or for the user
+// to press Stop — whichever comes first. With no `completion` it is an
+// abortable sleep (used between status checks on the fallback path).
+function raceWait(
+  timeoutMs: number,
+  signal?: AbortSignal,
+  completion?: Promise<boolean>,
+): Promise<boolean | TWaitOutcome> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: boolean | TWaitOutcome) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(value);
+    };
+    const onAbort = () => finish("aborted");
+    // `finish` closes over `timer`, but is only ever called after this line.
+    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    if (signal?.aborted) {
+      finish("aborted");
+      return;
+    }
+    signal?.addEventListener("abort", onAbort);
+    completion?.then((success) => finish(success));
+  });
+}
+
+async function waitForJobTool(
+  input: { jobId?: unknown; timeoutSeconds?: unknown },
+  context: IAgentToolContext,
+): Promise<IToolExecutionResult> {
+  const jobId = typeof input?.jobId === "string" ? input.jobId.trim() : "";
+  if (!jobId) {
+    throw new ToolExecutionError(
+      "wait_for_job needs the jobId returned by run_worker or compute_property",
+    );
+  }
+  const timeoutSeconds =
+    typeof input?.timeoutSeconds === "number" &&
+    Number.isFinite(input.timeoutSeconds)
+      ? Math.min(
+          Math.max(input.timeoutSeconds, MIN_WAIT_SECONDS),
+          MAX_WAIT_SECONDS,
+        )
+      : DEFAULT_WAIT_SECONDS;
+  const startedAt = Date.now();
+  const waitedSeconds = () => Math.round((Date.now() - startedAt) / 1000);
+
+  const record = agentJobs.get(jobId);
+  const label = record?.label ?? "The job";
+  const finishedResult = (success: boolean) => {
+    const errors = record ? jobErrorMessages(record.errors) : [];
+    return {
+      result: {
+        jobId,
+        finished: true,
+        success,
+        waitedSeconds: waitedSeconds(),
+        ...(errors.length ? { errors } : {}),
+        note: success
+          ? `${label} finished successfully. Read the results ` +
+            "(get_annotation_summary, get_property_values) before reporting " +
+            "to the user."
+          : `${label} did not succeed. Tell the user what failed; its log is ` +
+            "in Settings > Jobs & Logs.",
+      },
+    };
+  };
+  const abortedResult = () => ({
+    result: {
+      jobId,
+      finished: false,
+      aborted: true,
+      waitedSeconds: waitedSeconds(),
+      note:
+        "The user stopped this turn while waiting; the job keeps running in " +
+        "the background. Do not start another run.",
+    },
+  });
+  const stillRunningResult = () => ({
+    result: {
+      jobId,
+      finished: false,
+      stillRunning: true,
+      waitedSeconds: waitedSeconds(),
+      ...(record?.progress?.progress != null
+        ? { progress: record.progress.progress, step: record.progress.title }
+        : {}),
+      note:
+        `Still running after ${waitedSeconds()}s. Call wait_for_job again ` +
+        "with the same jobId to keep waiting (this costs one turn per wait, " +
+        "polling other tools costs many). If it has been a very long time, " +
+        "tell the user it is still running instead of waiting again.",
+    },
+  });
+
+  if (record) {
+    if (record.finished) {
+      return finishedResult(record.success === true);
+    }
+    const outcome = await raceWait(
+      timeoutSeconds * 1000,
+      context.abortSignal,
+      record.completion,
+    );
+    if (outcome === "aborted") {
+      return abortedResult();
+    }
+    if (typeof outcome === "boolean") {
+      return finishedResult(outcome);
+    }
+    // Budget spent without a completion event. Almost always means the job is
+    // genuinely still running, but a dropped notification WebSocket looks the
+    // same, so confirm against the server before reporting.
+    const status = await jobsStore.fetchJobStatus(jobId);
+    if (status != null && TERMINAL_JOB_STATES.has(status)) {
+      return finishedResult(status === jobStates.success);
+    }
+    return stillRunningResult();
+  }
+
+  // Not started by the agent in this session (or already forgotten): there may
+  // still be a live completion promise in the jobs store; otherwise fall back
+  // to server status checks.
+  const completion = jobsStore.getPromiseForJobId(jobId);
+  const initialStatus = await jobsStore.fetchJobStatus(jobId);
+  if (initialStatus == null && !completion) {
+    throw new ToolExecutionError(
+      `Could not read the status of job "${jobId}" — check the id returned by ` +
+        "run_worker or compute_property.",
+    );
+  }
+  if (initialStatus != null && TERMINAL_JOB_STATES.has(initialStatus)) {
+    return finishedResult(initialStatus === jobStates.success);
+  }
+  const deadline = startedAt + timeoutSeconds * 1000;
+  while (Date.now() < deadline) {
+    const outcome = await raceWait(
+      Math.min(JOB_STATUS_POLL_SECONDS * 1000, deadline - Date.now()),
+      context.abortSignal,
+      completion,
+    );
+    if (outcome === "aborted") {
+      return abortedResult();
+    }
+    if (typeof outcome === "boolean") {
+      return finishedResult(outcome);
+    }
+    const status = await jobsStore.fetchJobStatus(jobId);
+    if (status != null && TERMINAL_JOB_STATES.has(status)) {
+      return finishedResult(status === jobStates.success);
+    }
+  }
+  return stillRunningResult();
+}
+
 async function runWorkerTool(
   input: { toolId: string; workerInterfaceValues?: IWorkerInterfaceValues },
   context: IAgentToolContext,
@@ -526,8 +887,8 @@ async function runWorkerTool(
         alreadyRunning: true,
         jobId: runningJobId,
         note:
-          `A job for tool "${tool.name}" is already running. Wait for its ` +
-          "completion note in the transcript before starting another run.",
+          `A job for tool "${tool.name}" is already running. Call wait_for_job ` +
+          "with this jobId instead of starting another run.",
       },
     };
   }
@@ -568,28 +929,40 @@ async function runWorkerTool(
 
   const progressInfo: IProgressInfo = {};
   const errorInfo: IErrorInfoList = { errors: [] };
+  // The completion handler needs the job id, which only exists after the
+  // submission below, so route the store's callback through this indirection and
+  // replay an outcome that arrived first (a job that fails immediately).
+  const completion: {
+    handler?: (success: boolean) => void;
+    early?: boolean;
+  } = {};
   const computeJob = await annotationStore.computeAnnotationsWithWorker({
     tool,
     workerInterface: values,
     progress: progressInfo,
     error: errorInfo,
     callback: (success: boolean) => {
-      const errors = errorInfo.errors
-        .map((e) => e.error || e.warning || e.info)
-        .filter(Boolean);
-      context.notify(
-        success
-          ? `Worker "${tool.name}" finished successfully.`
-          : `Worker "${tool.name}" failed${
-              errors.length ? `: ${errors.join("; ")}` : "."
-            }`,
-      );
+      if (completion.handler) {
+        completion.handler(success);
+      } else {
+        completion.early = success;
+      }
     },
   });
   if (!computeJob) {
     throw new ToolExecutionError(
       "Failed to start the worker job (are you logged in and is a dataset open?)",
     );
+  }
+  completion.handler = trackAgentJob({
+    jobId: computeJob.jobId,
+    label: `Worker "${tool.name}"`,
+    progress: progressInfo,
+    errors: errorInfo,
+    notify: context.notify,
+  });
+  if (completion.early !== undefined) {
+    completion.handler(completion.early);
   }
   return {
     result: {
@@ -598,8 +971,9 @@ async function runWorkerTool(
       tool: { id: tool.id, name: tool.name, image },
       parameters: values,
       note:
-        "The job runs in the background; its progress is shown to the user. " +
-        "You will get a transcript note when it completes.",
+        "The job runs in the background and can take minutes. Call " +
+        "wait_for_job with this jobId to wait for it — one tool call covers " +
+        "the whole run. Never re-read state in a loop to check on it.",
     },
   };
 }
@@ -784,7 +1158,32 @@ const registry: { [name: string]: IAgentToolEntry } = {
           `Could not fetch the interface for worker "${input.image}"`,
         );
       }
-      return { result: { image: input.image, interface: workerInterface } };
+      // The interface only carries a `type` per parameter, not the shape its
+      // value must take — so the agent gets a per-type format guide (limited to
+      // the types actually present) plus the dataset's channel index↔name list,
+      // which it needs to fill channel parameters correctly.
+      const typesPresent = new Set(
+        Object.values(workerInterface).map((element) => element.type),
+      );
+      const valueFormats: { [type: string]: string } = {};
+      for (const type of typesPresent) {
+        valueFormats[type] = WORKER_INTERFACE_VALUE_FORMATS[type];
+      }
+      const dataset = main.dataset;
+      const channels = dataset
+        ? dataset.channels.map((channel) => ({
+            index: channel,
+            name: dataset.channelNames.get(channel) ?? `Channel ${channel}`,
+          }))
+        : [];
+      return {
+        result: {
+          image: input.image,
+          interface: workerInterface,
+          valueFormats,
+          channels,
+        },
+      };
     },
   },
 
@@ -968,8 +1367,13 @@ const registry: { [name: string]: IAgentToolEntry } = {
       }
       const LENGTH_UNITS = ["nm", "µm", "mm", "m"];
       const TIME_UNITS = ["ms", "s", "m", "h", "d"];
-      const apply = (
-        itemId: "pixelSize" | "zStep" | "tStep",
+      // Validate every requested field BEFORE writing any of them, then
+      // persist the whole scales object in one backend write. Validating and
+      // saving field-by-field issued a write per field and left the shared
+      // collection partially updated when a later field was rejected - by the
+      // backend, or by this validation (Codex P2 on PR #1262).
+      const validate = (
+        itemId: keyof IScales,
         scale: { value: number; unit: string },
         units: string[],
       ) => {
@@ -985,32 +1389,31 @@ const registry: { [name: string]: IAgentToolEntry } = {
         }
         // scale.unit was just validated against the allowed unit list, so the
         // narrowing cast to the branded unit type is sound here.
-        main.saveScaleInConfiguration({
-          itemId,
-          scale: {
-            value: scale.value,
-            unit: scale.unit as TUnitLength | TUnitTime,
-          } as IScaleInformation<TUnitLength | TUnitTime>,
-        });
+        return {
+          value: scale.value,
+          unit: scale.unit as TUnitLength | TUnitTime,
+        } as IScaleInformation<TUnitLength | TUnitTime>;
       };
-      let changed = false;
+      const scales: Partial<
+        Record<keyof IScales, IScaleInformation<TUnitLength | TUnitTime>>
+      > = {};
       if (input.pixelSize) {
-        apply("pixelSize", input.pixelSize, LENGTH_UNITS);
-        changed = true;
+        scales.pixelSize = validate("pixelSize", input.pixelSize, LENGTH_UNITS);
       }
       if (input.zStep) {
-        apply("zStep", input.zStep, LENGTH_UNITS);
-        changed = true;
+        scales.zStep = validate("zStep", input.zStep, LENGTH_UNITS);
       }
       if (input.tStep) {
-        apply("tStep", input.tStep, TIME_UNITS);
-        changed = true;
+        scales.tStep = validate("tStep", input.tStep, TIME_UNITS);
       }
-      if (!changed) {
+      if (Object.keys(scales).length === 0) {
         throw new ToolExecutionError(
           "Provide at least one of pixelSize, zStep, tStep",
         );
       }
+      await persistOrThrow("scales", () =>
+        main.saveScalesInConfiguration({ scales, throwOnError: true }),
+      );
       return { result: { scales: main.scales } };
     },
   },
@@ -1023,7 +1426,9 @@ const registry: { [name: string]: IAgentToolEntry } = {
       unrollT?: boolean;
     }) => {
       requireLogin();
-      await main.setLayerMode(input.mode);
+      await persistOrThrow("layer mode", () =>
+        main.setLayerMode({ mode: input.mode, throwOnError: true }),
+      );
       if (input.unrollXY != null) {
         await main.setUnrollXY(input.unrollXY);
       }
@@ -1063,23 +1468,43 @@ const registry: { [name: string]: IAgentToolEntry } = {
           "Provide at least one of color, visible, contrast, name",
         );
       }
-      if (Object.keys(delta).length > 0) {
-        await main.changeLayer({ layerId: layer.id, delta });
-      }
-      if (input.contrast != null) {
-        // Default matches the UI slider: a personal view override. Pass
-        // contrastScope "configuration" to change the shared collection
-        // instead (persisted for everyone using the collection).
-        if (input.contrastScope === "configuration") {
-          await main.saveContrastInConfiguration({
-            layerId: layer.id,
-            contrast: input.contrast,
-          });
-        } else {
-          await main.saveContrastInView({
-            layerId: layer.id,
-            contrast: input.contrast,
-          });
+      const contrast = input.contrast;
+      // Default matches the UI slider: a personal view override. Pass
+      // contrastScope "configuration" to change the shared collection
+      // instead (persisted for everyone using the collection).
+      if (contrast != null && input.contrastScope === "configuration") {
+        // Both target the configuration's "layers" key, so write them
+        // together: two separate writes could leave the shared collection
+        // partially updated if the second failed (Codex P2 on PR #1262).
+        // Label by what actually changed: this one call may carry only the
+        // contrast, and the message becomes the model's failure reason.
+        await persistOrThrow(
+          Object.keys(delta).length > 0 ? "layer update" : "contrast",
+          () =>
+            main.saveContrastInConfiguration({
+              layerId: layer.id,
+              contrast,
+              delta,
+              throwOnError: true,
+            }),
+        );
+      } else {
+        if (Object.keys(delta).length > 0) {
+          await persistOrThrow("layer update", () =>
+            main.changeLayer({ layerId: layer.id, delta, throwOnError: true }),
+          );
+        }
+        // A view-scoped contrast lands in the dataset view, a different
+        // resource from the configuration, so it is necessarily a second
+        // write - there is no single call that covers both.
+        if (contrast != null) {
+          await persistOrThrow("contrast", () =>
+            main.saveContrastInView({
+              layerId: layer.id,
+              contrast,
+              throwOnError: true,
+            }),
+          );
         }
       }
       const updated = main.getLayerFromId(layer.id)!;
@@ -1119,7 +1544,9 @@ const registry: { [name: string]: IAgentToolEntry } = {
           });
         }
       }
-      await main.syncConfiguration("layers");
+      await persistOrThrow("layer visibility", () =>
+        main.syncConfiguration({ key: "layers", throwOnError: true }),
+      );
       return {
         result: {
           layers: main.layers.map((l) => ({
@@ -1329,6 +1756,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       channelName?: string;
       name?: string;
       tags?: string[];
+      workerInterfaceValues?: IWorkerInterfaceValues;
     }) => {
       requireLogin();
       if (!main.configuration) {
@@ -1339,6 +1767,11 @@ const registry: { [name: string]: IAgentToolEntry } = {
       if (hasManual === hasWorker) {
         throw new ToolExecutionError(
           "Provide exactly one of manualShape or workerImage",
+        );
+      }
+      if (hasManual && input.workerInterfaceValues != null) {
+        throw new ToolExecutionError(
+          "workerInterfaceValues only applies to worker tools",
         );
       }
       let entry;
@@ -1384,17 +1817,30 @@ const registry: { [name: string]: IAgentToolEntry } = {
           }`,
         );
       }
+      // Worker tools are saved with fully-resolved parameter values (model
+      // overrides on top of interface defaults), so the tool is runnable from
+      // the UI and pipelines with the intended parameters, not blank slots.
+      let workerInterfaceValues: IWorkerInterfaceValues | undefined;
+      if (input.workerImage != null) {
+        workerInterfaceValues = await resolveWorkerInterfaceValues(
+          input.workerImage,
+          input.workerInterfaceValues ?? {},
+        );
+      }
       const tool = buildToolConfiguration(entry, {
         channelName: input.channelName,
         name: input.name,
         tags: input.tags,
+        workerInterfaceValues,
       });
       if (!tool) {
         throw new ToolExecutionError(
           "Could not build the requested tool (missing tool template)",
         );
       }
-      await main.addToolToConfiguration(tool);
+      await persistOrThrow("tool", () =>
+        main.addToolToConfiguration({ tool, throwOnError: true }),
+      );
       return {
         result: {
           toolId: tool.id,
@@ -1402,6 +1848,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
           type: tool.type,
           channelName: input.channelName ?? null,
           tags: input.tags ?? [],
+          parameters: workerInterfaceValues ?? null,
         },
       };
     },
@@ -1473,16 +1920,24 @@ const registry: { [name: string]: IAgentToolEntry } = {
         image,
         input.workerInterfaceValues ?? {},
       );
-      const property = await propertyStore.createProperty({
-        name:
-          input.name ??
-          propertyStore.workerImageList[image]?.interfaceName ??
-          "Property",
-        image,
-        tags: { tags: input.tags ?? [], exclusive: input.exclusive ?? false },
-        shape: input.shape as AnnotationShape,
-        workerInterface,
-      });
+      // createProperty hits the backend directly (PropertiesAPI rejects on
+      // failure rather than swallowing), so wrap it to report a clean failure
+      // instead of leaking a raw error (issue #1239).
+      const property = await persistOrThrow("property", () =>
+        propertyStore.createProperty({
+          name:
+            input.name ??
+            propertyStore.workerImageList[image]?.interfaceName ??
+            "Property",
+          image,
+          tags: {
+            tags: input.tags ?? [],
+            exclusive: input.exclusive ?? false,
+          },
+          shape: input.shape as AnnotationShape,
+          workerInterface,
+        }),
+      );
       if (!property) {
         throw new ToolExecutionError("Failed to create the property");
       }
@@ -1500,7 +1955,10 @@ const registry: { [name: string]: IAgentToolEntry } = {
   compute_property: {
     // Starts a compute job, so it is gated like run_worker.
     gated: true,
-    execute: async (input: { propertyId?: string }) => {
+    execute: async (
+      input: { propertyId?: string },
+      context: IAgentToolContext,
+    ) => {
       requireLogin();
       requireDataset();
       const property = propertyStore.properties.find(
@@ -1522,7 +1980,8 @@ const registry: { [name: string]: IAgentToolEntry } = {
             propertyId: property.id,
             note:
               `Property "${property.name}" is already computing (job ` +
-              `${runningJobId}). Wait for it before starting another run.`,
+              `${runningJobId}). Call wait_for_job with this jobId instead of ` +
+              "starting another run.",
           },
         };
       }
@@ -1543,6 +2002,25 @@ const registry: { [name: string]: IAgentToolEntry } = {
           }`,
         );
       }
+      // Same completion tracking as run_worker (the transcript note and
+      // wait_for_job): addJob is idempotent for an already-tracked job — it
+      // adds a listener and hands back the promise that settles when the job
+      // does — so this works whether or not computeProperty's own registration
+      // has landed yet.
+      const onCompletion = trackAgentJob({
+        jobId: computeJob.jobId,
+        label: `Property "${property.name}"`,
+        progress:
+          propertyStore.propertyStatuses[property.id]?.progressInfo ?? {},
+        errors: errorInfo,
+        notify: context.notify,
+      });
+      jobsStore
+        .addJob({
+          jobId: computeJob.jobId,
+          datasetId: main.dataset?.id ?? null,
+        })
+        .then(onCompletion);
       return {
         result: {
           propertyId: property.id,
@@ -1550,8 +2028,9 @@ const registry: { [name: string]: IAgentToolEntry } = {
           started: true,
           jobId: computeJob.jobId,
           note:
-            "Computation started; values populate as the job runs. Use " +
-            "get_property_values to read the results.",
+            "Computation runs in the background. Call wait_for_job with this " +
+            "jobId to wait for it, then get_property_values to read the " +
+            "results. Never re-read state in a loop to check on it.",
         },
       };
     },
@@ -1955,7 +2434,19 @@ const registry: { [name: string]: IAgentToolEntry } = {
     gated: true,
     execute: runWorkerTool,
   },
+
+  // Read-only: it starts nothing, it only blocks until a job it is told about
+  // finishes, so it is not gated.
+  wait_for_job: {
+    execute: waitForJobTool,
+  },
 };
+
+// Every tool the frontend can execute. Exported for the parity check against
+// the backend's agent_tools.json (see executors.test.ts): a name in only one of
+// the two is either dead code (the model is never told the tool exists) or a
+// guaranteed "Unknown tool" error at runtime.
+export const AGENT_TOOL_NAMES = Object.keys(registry);
 
 export function isGatedTool(name: string): boolean {
   return registry[name]?.gated === true;
@@ -2094,7 +2585,14 @@ export function describeAgentToolCall(name: string, input: any): string {
         Array.isArray(input?.tags) && input.tags.length
           ? ` tagging ${joinList(input.tags)}`
           : "";
-      return `Set up a ${kind} tool${channel}${tags}`;
+      const parameterNames =
+        typeof input?.workerInterfaceValues === "object"
+          ? Object.keys(input.workerInterfaceValues ?? {})
+          : [];
+      const parameters = parameterNames.length
+        ? ` (setting ${joinList(parameterNames)})`
+        : "";
+      return `Set up a ${kind} tool${channel}${tags}${parameters}`;
     }
     case "set_display_options":
       return "Change viewer display options";
@@ -2148,6 +2646,12 @@ export function describeAgentToolCall(name: string, input: any): string {
     case "run_worker": {
       const tool = main.tools.find((t) => t.id === input?.toolId);
       return `Run worker "${tool?.name ?? input?.toolId}" — starts a compute job that may create many annotations`;
+    }
+    case "wait_for_job": {
+      const label = agentJobs.get(
+        typeof input?.jobId === "string" ? input.jobId : "",
+      )?.label;
+      return `Wait for ${label ?? "the background job"} to finish`;
     }
     default:
       return name;
@@ -2251,7 +2755,12 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   await main.setZ(snapshot.location.z);
   await main.setTime(snapshot.location.time);
   if (main.layerMode !== snapshot.layerMode) {
-    await main.setLayerMode(snapshot.layerMode);
+    // throwOnError like the forward-direction tools: revertViewChanges tells
+    // the user "Reverted the view changes", so a revert that only applied
+    // locally must not be reported as a success either (issue #1239).
+    await persistOrThrow("layer mode", () =>
+      main.setLayerMode({ mode: snapshot.layerMode, throwOnError: true }),
+    );
   }
   await main.setUnrollXY(snapshot.unroll.xy);
   await main.setUnrollZ(snapshot.unroll.z);
@@ -2284,9 +2793,15 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
     }
   }
   if (layersChanged) {
-    await main.syncConfiguration("layers");
+    await persistOrThrow("layer changes", () =>
+      main.syncConfiguration({ key: "layers", throwOnError: true }),
+    );
   }
-  await main.setViewContrastOverrides(snapshot.viewContrasts);
+  // setViewContrastOverrides already rejects on a failed persist (it awaits
+  // updateDatasetView without catching); wrap it for a consistent message.
+  await persistOrThrow("view contrast overrides", () =>
+    main.setViewContrastOverrides(snapshot.viewContrasts),
+  );
   filterStore.setTagFilter(snapshot.tagFilter);
   filterStore.setOnlyCurrentFrame(snapshot.onlyCurrentFrame);
   // Restore property filters: disable any added since the snapshot (matching
