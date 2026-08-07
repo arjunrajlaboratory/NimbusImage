@@ -33,7 +33,9 @@ import {
   type TAnnotationOrStub,
   type THydrationMode,
   type IVisibilityConfig,
+  type IAnnotationOverviewConfig,
   resolveVisibilityConfig,
+  resolveAnnotationOverviewConfig,
   ANNOTATION_LIST_SERVER_THRESHOLD,
 } from "./model";
 import type AnnotationsAPI from "./AnnotationsAPI";
@@ -239,6 +241,9 @@ export class Annotations extends VuexModule {
   visibleAnnotationIds: Set<string> = markRaw(new Set());
   hydrationMode: THydrationMode = "dots";
   visibilityConfig: IVisibilityConfig = resolveVisibilityConfig();
+  overviewConfig: IAnnotationOverviewConfig = resolveAnnotationOverviewConfig();
+  mutationCounter = 0;
+  visibilitySuppressed = false;
 
   // Average annotation radius (world units) over the loaded stubs, computed once
   // when stubs are set. Feeds the density-derived zoomed-out render budget.
@@ -279,6 +284,43 @@ export class Annotations extends VuexModule {
   async resetVisibilityConfig() {
     this.replaceVisibilityConfig();
     await main.saveVisibilityConfig(this.visibilityConfig);
+  }
+
+  @Mutation
+  setOverviewConfig(config: Partial<IAnnotationOverviewConfig>) {
+    this.overviewConfig = { ...this.overviewConfig, ...config };
+  }
+
+  @Mutation
+  replaceOverviewConfig(config?: Partial<IAnnotationOverviewConfig>) {
+    this.overviewConfig = resolveAnnotationOverviewConfig(config);
+  }
+
+  @Action
+  loadOverviewConfig(config?: Partial<IAnnotationOverviewConfig>) {
+    this.replaceOverviewConfig(config);
+  }
+
+  @Action
+  async updateOverviewConfig(config: Partial<IAnnotationOverviewConfig>) {
+    this.setOverviewConfig(config);
+    await main.saveOverviewConfig(this.overviewConfig);
+  }
+
+  @Action
+  async resetOverviewConfig() {
+    this.replaceOverviewConfig();
+    await main.saveOverviewConfig(this.overviewConfig);
+  }
+
+  @Mutation
+  bumpMutationCounter() {
+    this.mutationCounter += 1;
+  }
+
+  @Mutation
+  setVisibilitySuppressed(value: boolean) {
+    this.visibilitySuppressed = value;
   }
 
   @Mutation
@@ -360,6 +402,7 @@ export class Annotations extends VuexModule {
       // Add the new annotations to the store
       if (newAnnotations && newAnnotations.length > 0) {
         this.addAnnotationsImpl(newAnnotations);
+        this.bumpMutationCounter();
       }
 
       return newAnnotations || [];
@@ -437,6 +480,7 @@ export class Annotations extends VuexModule {
         });
         await this.annotationsAPI.redo(datasetId);
       }
+      this.bumpMutationCounter();
       this.context.dispatch("fetchAnnotations");
       progress.complete(progressId);
       sync.setSaving(false);
@@ -479,6 +523,7 @@ export class Annotations extends VuexModule {
     this.viewportRenderedCount = 0;
     this.averageStubRadius = 0;
     this.stubOnlyMode = false;
+    this.visibilitySuppressed = false;
     annotationSpatialIndex.clear();
     viewportHydrationTask.cancel();
   }
@@ -661,6 +706,9 @@ export class Annotations extends VuexModule {
     sync.setSaving(true);
     const newAnnotation =
       await this.annotationsAPI.createAnnotation(annotationBase);
+    if (newAnnotation) {
+      this.bumpMutationCounter();
+    }
     sync.setSaving(false);
     return newAnnotation;
   }
@@ -1375,6 +1423,7 @@ export class Annotations extends VuexModule {
 
     try {
       await this.annotationsAPI.deleteMultipleAnnotations(ids);
+      this.bumpMutationCounter();
 
       if (this.stubOnlyMode) {
         this.removeAnnotationStubs(ids);
@@ -1469,6 +1518,7 @@ export class Annotations extends VuexModule {
         if (patches.length) {
           await this.annotationsAPI.updateAnnotations(patches);
           this.applyStubFieldUpdates(stubFieldUpdates);
+          this.bumpMutationCounter();
         }
         sync.setSaving(false);
       } catch (error) {
@@ -1510,6 +1560,7 @@ export class Annotations extends VuexModule {
       this.setAnnotationsAtIndices(localUpdates);
       if (annotationUpdates.length) {
         await this.annotationsAPI.updateAnnotations(annotationUpdates);
+        this.bumpMutationCounter();
       }
       sync.setSaving(false);
     } catch (error) {
@@ -1883,6 +1934,7 @@ export class Annotations extends VuexModule {
           progress.complete(stubProgressId);
         }
       }
+      this.bumpMutationCounter();
     } catch (error) {
       this.setAnnotations([]);
       this.setConnections([]);
@@ -2433,7 +2485,17 @@ export class Annotations extends VuexModule {
     // component). Fall back to the static config caps when not supplied.
     maxVisible?: number;
     maxHydrated?: number;
+    suppress?: boolean;
   }) {
+    if (params.suppress) {
+      this.setVisibilitySuppressed(true);
+      this.setVisibleAnnotationIds([]);
+      this.setViewportCounts({ total: 0, rendered: 0 });
+      this.setHydrationMode("dots");
+      viewportHydrationTask.cancel();
+      return;
+    }
+    this.setVisibilitySuppressed(false);
     const { filteredIds, gcsBounds, currentFrameLocation } = params;
     const zoomVisibleBudget =
       params.maxVisible ?? this.visibilityConfig.maxVisible;
@@ -2626,7 +2688,7 @@ export class Annotations extends VuexModule {
     // have to spread a large selection into a throwaway array on every change
     // (Finding 14). idsNeedingHydration iterates it directly and returns []
     // for an empty input, which the idsToFetch guard below already handles.
-    if (!this.stubOnlyMode) {
+    if (!this.stubOnlyMode || this.visibilitySuppressed) {
       return;
     }
     const stubs = this.annotationStubs;

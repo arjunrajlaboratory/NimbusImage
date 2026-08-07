@@ -17,11 +17,25 @@ import {
   IAnnotationListPage,
   IAnnotationListRow,
   IAnnotationListFilters,
+  TAnnotationOverviewMode,
 } from "./model";
+import type { IAnnotationRasterSelector } from "@/utils/annotationOverview";
 
 import { logError } from "@/utils/log";
 import { fetchAllPages } from "@/utils/fetch";
 import { markRaw } from "vue";
+
+export interface IAnnotationRasterUrlOptions {
+  datasetId: string;
+  selectors: IAnnotationRasterSelector[];
+  sizeX: number;
+  sizeY: number;
+  tileSize: number;
+  maxLevel: number;
+  mode: TAnnotationOverviewMode;
+  color: string;
+  version: number;
+}
 
 export default class AnnotationsAPI {
   private readonly client: RestClientInstance;
@@ -110,6 +124,23 @@ export default class AnnotationsAPI {
       params: { datasetId },
     });
     return (response.data as any[]).map(this.toStub);
+  }
+
+  annotationRasterTemplateUrl(options: IAnnotationRasterUrlOptions): string {
+    const url = new URL(`${this.client.apiRoot}/upenn_annotation/raster/0/0/0`);
+    url.searchParams.set("datasetId", options.datasetId);
+    url.searchParams.set("selectors", JSON.stringify(options.selectors));
+    url.searchParams.set("sizeX", options.sizeX.toString());
+    url.searchParams.set("sizeY", options.sizeY.toString());
+    url.searchParams.set("tileSize", options.tileSize.toString());
+    url.searchParams.set("maxLevel", options.maxLevel.toString());
+    url.searchParams.set("mode", options.mode);
+    url.searchParams.set("color", options.color);
+    url.searchParams.set("v", options.version.toString());
+    return url.href.replace(
+      "/upenn_annotation/raster/0/0/0",
+      "/upenn_annotation/raster/{z}/{x}/{y}",
+    );
   }
 
   toListRow = (item: any): IAnnotationListRow => {

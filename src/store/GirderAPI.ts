@@ -36,6 +36,7 @@ import {
   IJob,
   IUserStorageQuota,
   resolveVisibilityConfig,
+  resolveAnnotationOverviewConfig,
 } from "@/store/model";
 import {
   toStyle,
@@ -1305,6 +1306,12 @@ export function setBaseCollectionValues(
     if (key === "visibilityConfig") {
       config.visibilityConfig = resolveVisibilityConfig(
         item.meta.visibilityConfig,
+      );
+      continue;
+    }
+    if (key === "overviewConfig") {
+      config.overviewConfig = resolveAnnotationOverviewConfig(
+        item.meta.overviewConfig,
       );
       continue;
     }

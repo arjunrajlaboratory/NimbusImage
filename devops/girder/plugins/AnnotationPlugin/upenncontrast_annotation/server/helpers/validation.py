@@ -7,6 +7,8 @@ Kept here so annotation.py and propertyValues.py share one implementation
 rather than importing validators across API modules.
 """
 
+import math
+
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
 
@@ -88,6 +90,17 @@ def requireInt(value, field):
         return int(value)
     except (TypeError, ValueError):
         raise RestException("%s must be an integer" % field, code=400)
+
+
+def requireFloat(value, field):
+    """Parse a finite float query parameter or raise a clean 400."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise RestException("%s must be a number" % field, code=400)
+    if not math.isfinite(parsed):
+        raise RestException("%s must be a finite number" % field, code=400)
+    return parsed
 
 
 def isValidPropertyPath(path):
