@@ -427,6 +427,7 @@ vi.mock("@/store/properties", () => {
       properties: [] as any[],
       propertyValues: {} as Record<string, any>,
       getSubIdsNameFromPath: vi.fn().mockReturnValue(null),
+      ensureVisiblePropertyValues: vi.fn(),
     }),
   };
 });
@@ -702,6 +703,7 @@ describe("AnnotationViewer", () => {
     if (wrapper) {
       wrapper.unmount();
     }
+    createdThrottles.length = 0;
     document.body.innerHTML = "";
   });
 
