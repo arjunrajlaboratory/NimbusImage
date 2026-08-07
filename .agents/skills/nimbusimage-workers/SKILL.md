@@ -25,7 +25,7 @@ Each worker kind has its own accessor, and they submit to **different endpoints 
 - **Annotation workers** → `ds.annotations.compute(...)` → `POST /upenn_annotation/compute`
 - **Property workers** → create/get a `Property`, then `ds.properties.compute(prop, ...)` → `POST /annotation_property/{id}/compute`
 
-**Never** pass a property-worker image to `ds.annotations.compute`, and **never** pass an annotation-worker image to `ds.properties.compute`. Neither accessor validates the worker's role, so the job submits fine and then crashes inside the worker with a confusing error.
+**Never** pass a property-worker image to `ds.annotations.compute`, and **never** pass an annotation-worker image to `ds.properties.compute`. Both accessors now cross-check the image's role labels against `/worker_interface/available` before submitting and raise `ValueError` naming the correct accessor on a known mismatch — but the check is best-effort (an image missing from the listing, carrying no role labels, or an inaccessible discovery endpoint passes through unvalidated), so a mismatch can still submit and then crash inside the worker with a confusing error.
 
 The wire formats differ in a way that makes the crash recognizable:
 
