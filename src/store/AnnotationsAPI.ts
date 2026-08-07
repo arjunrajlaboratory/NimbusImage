@@ -17,9 +17,9 @@ import {
   IAnnotationListPage,
   IAnnotationListRow,
   IAnnotationListFilters,
-  AnnotationShape,
   TAnnotationOverviewMode,
 } from "./model";
+import type { IAnnotationRasterSelector } from "@/utils/annotationOverview";
 
 import { logError } from "@/utils/log";
 import { fetchAllPages } from "@/utils/fetch";
@@ -27,9 +27,7 @@ import { markRaw } from "vue";
 
 export interface IAnnotationRasterUrlOptions {
   datasetId: string;
-  xy: number;
-  z: number;
-  time: number;
+  selectors: IAnnotationRasterSelector[];
   sizeX: number;
   sizeY: number;
   tileSize: number;
@@ -37,8 +35,6 @@ export interface IAnnotationRasterUrlOptions {
   mode: TAnnotationOverviewMode;
   color: string;
   version: number;
-  tags?: string[];
-  shape?: AnnotationShape;
 }
 
 export default class AnnotationsAPI {
@@ -133,9 +129,7 @@ export default class AnnotationsAPI {
   annotationRasterTemplateUrl(options: IAnnotationRasterUrlOptions): string {
     const url = new URL(`${this.client.apiRoot}/upenn_annotation/raster/0/0/0`);
     url.searchParams.set("datasetId", options.datasetId);
-    url.searchParams.set("XY", options.xy.toString());
-    url.searchParams.set("Z", options.z.toString());
-    url.searchParams.set("Time", options.time.toString());
+    url.searchParams.set("selectors", JSON.stringify(options.selectors));
     url.searchParams.set("sizeX", options.sizeX.toString());
     url.searchParams.set("sizeY", options.sizeY.toString());
     url.searchParams.set("tileSize", options.tileSize.toString());
@@ -143,12 +137,6 @@ export default class AnnotationsAPI {
     url.searchParams.set("mode", options.mode);
     url.searchParams.set("color", options.color);
     url.searchParams.set("v", options.version.toString());
-    if (options.tags !== undefined) {
-      url.searchParams.set("tags", JSON.stringify(options.tags));
-    }
-    if (options.shape !== undefined) {
-      url.searchParams.set("shape", options.shape);
-    }
     return url.href.replace(
       "/upenn_annotation/raster/0/0/0",
       "/upenn_annotation/raster/{z}/{x}/{y}",

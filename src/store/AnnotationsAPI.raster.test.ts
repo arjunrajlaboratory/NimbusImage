@@ -5,7 +5,6 @@ vi.mock("@/utils/fetch", () => ({
 }));
 
 import AnnotationsAPI from "./AnnotationsAPI";
-import { AnnotationShape } from "./model";
 
 describe("annotationRasterTemplateUrl", () => {
   it("preserves z/x/y placeholders and serializes render inputs", () => {
@@ -14,9 +13,10 @@ describe("annotationRasterTemplateUrl", () => {
     } as any);
     const result = api.annotationRasterTemplateUrl({
       datasetId: "dataset-id",
-      xy: 2,
-      z: 3,
-      time: 4,
+      selectors: [
+        { channel: 0, XY: 2, Z: 3, Time: 4 },
+        { channel: 2, XY: 2 },
+      ],
       sizeX: 20000,
       sizeY: 18000,
       tileSize: 512,
@@ -24,8 +24,6 @@ describe("annotationRasterTemplateUrl", () => {
       mode: "shapes",
       color: "#FFD700",
       version: 7,
-      tags: ["cell", "positive"],
-      shape: AnnotationShape.Polygon,
     });
 
     const [path, query] = result.split("?");
@@ -34,15 +32,18 @@ describe("annotationRasterTemplateUrl", () => {
     );
     const params = new URLSearchParams(query);
     expect(params.get("datasetId")).toBe("dataset-id");
-    expect(params.get("XY")).toBe("2");
-    expect(params.get("Z")).toBe("3");
-    expect(params.get("Time")).toBe("4");
+    expect(params.get("selectors")).toBe(
+      '[{"channel":0,"XY":2,"Z":3,"Time":4},{"channel":2,"XY":2}]',
+    );
     expect(params.get("sizeX")).toBe("20000");
     expect(params.get("sizeY")).toBe("18000");
     expect(params.get("maxLevel")).toBe("8");
     expect(params.get("mode")).toBe("shapes");
     expect(params.get("v")).toBe("7");
-    expect(params.get("tags")).toBe('["cell","positive"]');
-    expect(params.get("shape")).toBe("polygon");
+    expect(params.has("XY")).toBe(false);
+    expect(params.has("Z")).toBe(false);
+    expect(params.has("Time")).toBe(false);
+    expect(params.has("tags")).toBe(false);
+    expect(params.has("shape")).toBe(false);
   });
 });

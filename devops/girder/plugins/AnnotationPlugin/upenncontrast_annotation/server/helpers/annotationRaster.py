@@ -1,11 +1,12 @@
 """Cached server-side raster rendering for annotation overview tiles."""
 
 from array import array
-from collections import OrderedDict
+from collections import deque, OrderedDict
 from dataclasses import dataclass
 import hashlib
 import io
 import json
+import math
 import re
 import threading
 import time
@@ -17,8 +18,12 @@ from PIL import Image, ImageDraw
 
 RASTER_TILE_SIZE = 512
 RASTER_CACHE_ENTRIES = 3
+RASTER_CACHE_MAX_BYTES = 300 * 1024 * 1024
 RASTER_CACHE_TTL_SECONDS = 120
 RASTER_GRID_SIZE = 64
+RASTER_MAX_CONCURRENT_BUILDS = 1
+RASTER_ANONYMOUS_BUILD_LIMIT = 6
+RASTER_ANONYMOUS_BUILD_WINDOW_SECONDS = 60
 
 COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 SHAPE_CODES = {
@@ -29,14 +34,36 @@ SHAPE_CODES = {
 }
 
 
+class RasterBuildBusy(Exception):
+    """Raised when another geometry key is already building."""
+
+
+class RasterBuildRateLimited(Exception):
+    """Raised when an anonymous caller exceeds the cold-build budget."""
+
+
+@dataclass(frozen=True)
+class RasterLayerSelector:
+    channel: int
+    xy: int | None
+    z: int | None
+    time: int | None
+
+    def canonicalQuery(self):
+        query = {"channel": self.channel}
+        if self.xy is not None:
+            query["XY"] = self.xy
+        if self.z is not None:
+            query["Z"] = self.z
+        if self.time is not None:
+            query["Time"] = self.time
+        return query
+
+
 @dataclass(frozen=True)
 class RasterGeometryKey:
     datasetId: object
-    xy: int
-    z: int
-    time: int
-    shape: str | None
-    tags: tuple[str, ...]
+    selectors: tuple[RasterLayerSelector, ...]
     mode: str
 
 
@@ -62,18 +89,16 @@ class RasterTileParams:
     def canonicalQuery(self):
         key = self.geometryKey
         return {
-            "XY": key.xy,
-            "Z": key.z,
-            "Time": key.time,
             "color": "#%02X%02X%02X" % self.fallbackColor[:3],
             "datasetId": str(key.datasetId),
             "lineWidth": self.lineWidth,
             "mode": key.mode,
             "pointRadius": self.pointRadius,
-            "shape": key.shape,
+            "selectors": [
+                selector.canonicalQuery() for selector in key.selectors
+            ],
             "sizeX": self.sizeX,
             "sizeY": self.sizeY,
-            "tags": list(key.tags),
             "tileSize": self.tileSize,
             "maxLevel": self.maxLevel,
             "v": self.clientVersion,
@@ -99,6 +124,33 @@ class FrameGeometry:
     @property
     def count(self):
         return len(self.shapes)
+
+    @property
+    def nbytes(self):
+        arrays = (
+            self.vertices,
+            self.offsets,
+            self.bboxes,
+            self.centroids,
+            self.radii,
+            self.colors,
+            self.validColors,
+            self.shapes,
+            *self.grid,
+        )
+        allocationBytes = 0
+        allocations = set()
+        for data in arrays:
+            if data.nbytes == 0:
+                continue
+            allocation = data
+            while isinstance(allocation.base, np.ndarray):
+                allocation = allocation.base
+            allocationId = id(allocation)
+            if allocationId not in allocations:
+                allocations.add(allocationId)
+                allocationBytes += allocation.nbytes
+        return allocationBytes
 
     def coordinates(self, index):
         start = int(self.offsets[index]) * 2
@@ -166,6 +218,30 @@ class _CacheEntry:
     geometry: FrameGeometry
     version: tuple[str, int, int, int]
     created: float
+    sizeBytes: int
+
+
+class _AnonymousBuildRateLimiter:
+    def __init__(self, limit, windowSeconds, timeFn):
+        self._limit = limit
+        self._windowSeconds = windowSeconds
+        self._timeFn = timeFn
+        self._attempts = {}
+
+    def check(self, identity):
+        if self._limit <= 0:
+            raise RasterBuildRateLimited()
+        now = self._timeFn()
+        attempts = self._attempts.setdefault(identity, deque())
+        cutoff = now - self._windowSeconds
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        if len(attempts) >= self._limit:
+            raise RasterBuildRateLimited()
+        attempts.append(now)
+
+    def clear(self):
+        self._attempts.clear()
 
 
 _PROCESS_UUID = str(uuid.uuid4())
@@ -222,16 +298,17 @@ def parseHexColor(value):
 
 
 def _geometryPipeline(key):
-    match = {
-        "datasetId": key.datasetId,
-        "location.XY": key.xy,
-        "location.Z": key.z,
-        "location.Time": key.time,
-    }
-    if key.shape:
-        match["shape"] = key.shape
-    if key.tags:
-        match["tags"] = {"$all": list(key.tags)}
+    selectors = []
+    for selector in key.selectors:
+        selectorMatch = {"channel": selector.channel}
+        if selector.xy is not None:
+            selectorMatch["location.XY"] = selector.xy
+        if selector.z is not None:
+            selectorMatch["location.Z"] = selector.z
+        if selector.time is not None:
+            selectorMatch["location.Time"] = selector.time
+        selectors.append(selectorMatch)
+    match = {"datasetId": key.datasetId, "$or": selectors}
 
     pipeline = [{"$match": match}, {"$sort": {"_id": 1}}]
     if key.mode == "discs":
@@ -429,13 +506,39 @@ def _buildFrameGeometry(annotationModel, key):
 
 
 class FrameGeometryCache:
-    def __init__(self):
+    def __init__(
+        self,
+        maxBytes=RASTER_CACHE_MAX_BYTES,
+        maxEntries=RASTER_CACHE_ENTRIES,
+        maxConcurrentBuilds=RASTER_MAX_CONCURRENT_BUILDS,
+        anonymousBuildLimit=RASTER_ANONYMOUS_BUILD_LIMIT,
+        anonymousBuildWindowSeconds=(
+            RASTER_ANONYMOUS_BUILD_WINDOW_SECONDS
+        ),
+        timeFn=time.monotonic,
+    ):
         self._entries = OrderedDict()
+        self._maxBytes = maxBytes
+        self._maxEntries = maxEntries
+        self._retainedBytes = 0
         self._locks = {}
         self._lock = threading.RLock()
+        self._buildSlots = threading.BoundedSemaphore(maxConcurrentBuilds)
+        self._anonymousBuildLimiter = _AnonymousBuildRateLimiter(
+            anonymousBuildLimit,
+            anonymousBuildWindowSeconds,
+            timeFn,
+        )
+        self._timeFn = timeFn
 
-    def get(self, annotationModel, key, version):
-        now = time.monotonic()
+    def get(
+        self,
+        annotationModel,
+        key,
+        version,
+        anonymousIdentity=None,
+    ):
+        now = self._timeFn()
         with self._lock:
             entry = self._entries.get(key)
             if (
@@ -448,7 +551,7 @@ class FrameGeometryCache:
             keyLock = self._locks.setdefault(key, threading.Lock())
 
         with keyLock:
-            now = time.monotonic()
+            now = self._timeFn()
             with self._lock:
                 entry = self._entries.get(key)
                 if (
@@ -458,14 +561,39 @@ class FrameGeometryCache:
                 ):
                     self._entries.move_to_end(key)
                     return entry.geometry
+            buildSlotAcquired = self._buildSlots.acquire(blocking=False)
+            if not buildSlotAcquired:
+                with self._lock:
+                    self._locks.pop(key, None)
+                raise RasterBuildBusy()
             try:
+                if anonymousIdentity is not None:
+                    with self._lock:
+                        self._anonymousBuildLimiter.check(
+                            anonymousIdentity
+                        )
                 geometry = _buildFrameGeometry(annotationModel, key)
                 with self._lock:
-                    self._entries[key] = _CacheEntry(geometry, version, now)
-                    self._entries.move_to_end(key)
-                    while len(self._entries) > RASTER_CACHE_ENTRIES:
-                        self._entries.popitem(last=False)
+                    previous = self._entries.pop(key, None)
+                    if previous is not None:
+                        self._retainedBytes -= previous.sizeBytes
+                    sizeBytes = int(getattr(geometry, "nbytes", 0))
+                    if sizeBytes <= self._maxBytes:
+                        self._entries[key] = _CacheEntry(
+                            geometry,
+                            version,
+                            now,
+                            sizeBytes,
+                        )
+                        self._retainedBytes += sizeBytes
+                        while (
+                            len(self._entries) > self._maxEntries
+                            or self._retainedBytes > self._maxBytes
+                        ):
+                            _, removed = self._entries.popitem(last=False)
+                            self._retainedBytes -= removed.sizeBytes
             finally:
+                self._buildSlots.release()
                 with self._lock:
                     self._locks.pop(key, None)
             return geometry
@@ -473,15 +601,25 @@ class FrameGeometryCache:
     def clear(self):
         with self._lock:
             self._entries.clear()
+            self._retainedBytes = 0
             self._locks.clear()
+            self._anonymousBuildLimiter.clear()
 
 
 frameGeometryCache = FrameGeometryCache()
 
 
-def getFrameGeometry(annotationModel, params, version):
+def getFrameGeometry(
+    annotationModel,
+    params,
+    version,
+    anonymousIdentity=None,
+):
     return frameGeometryCache.get(
-        annotationModel, params.geometryKey, version
+        annotationModel,
+        params.geometryKey,
+        version,
+        anonymousIdentity=anonymousIdentity,
     )
 
 
@@ -605,6 +743,31 @@ def renderRasterTile(geometry, params):
                 )
             else:
                 draw.polygon(points, fill=color)
+
+    validWidth = max(
+        0,
+        min(
+            params.tileSize,
+            math.ceil(params.sizeX * scale) - params.x * params.tileSize,
+        ),
+    )
+    validHeight = max(
+        0,
+        min(
+            params.tileSize,
+            math.ceil(params.sizeY * scale) - params.y * params.tileSize,
+        ),
+    )
+    if validWidth < params.tileSize:
+        image.paste(
+            (0, 0, 0, 0),
+            (validWidth, 0, params.tileSize, params.tileSize),
+        )
+    if validHeight < params.tileSize:
+        image.paste(
+            (0, 0, 0, 0),
+            (0, validHeight, params.tileSize, params.tileSize),
+        )
 
     output = io.BytesIO()
     image.save(output, format="PNG")

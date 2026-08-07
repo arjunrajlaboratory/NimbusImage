@@ -51,6 +51,9 @@
       :lowestLayer="mapentry.lowestLayer || 0"
       :layerCount="(mapentry.imageLayers || []).length / 2"
       :key="'annotation-viewer-' + index"
+      @annotation-overview-visibility-change="
+        _setAnnotationOverviewVisibility(mapentry, $event)
+      "
     />
     <!-- Mounted ONCE, outside the per-map v-for above. In unroll layer mode
          ImageViewer renders one AnnotationViewer per layer group, so a panel
@@ -271,6 +274,7 @@ import { IHotkey } from "@/utils/v-mousetrap";
 import { NoOutput } from "@/pipelines/computePipeline";
 import { logWarning } from "@/utils/log";
 import { getUnrollCells, IUnrollCell, unrollGridSize } from "@/utils/unroll";
+import { annotationRasterSelectorsForLayers } from "@/utils/annotationOverview";
 
 function generateFilterURL(
   index: number,
@@ -435,6 +439,14 @@ const annotationOverviewLoadStates = new WeakMap<
   AnnotationOverviewLayer,
   IAnnotationOverviewLoadState
 >();
+const annotationOverviewTemplates = new WeakMap<
+  AnnotationOverviewLayer,
+  string
+>();
+const appliedAnnotationOverviewTemplates = new WeakMap<
+  AnnotationOverviewLayer,
+  string
+>();
 const trackedAnnotationOverviewLayers = new Set<AnnotationOverviewLayer>();
 
 function finishAnnotationOverviewLoad(
@@ -503,6 +515,56 @@ function trackAnnotationOverviewLoad(layer: AnnotationOverviewLayer) {
       }
     })();
   }, ANNOTATION_OVERVIEW_PROGRESS_DELAY_MS);
+}
+
+function applyAnnotationOverviewTemplate(layer: AnnotationOverviewLayer) {
+  const template = annotationOverviewTemplates.get(layer);
+  if (!template || appliedAnnotationOverviewTemplates.get(layer) === template) {
+    return false;
+  }
+  layer.url((x: number, y: number, level: number) =>
+    template
+      .replace("{z}", level.toString())
+      .replace("{x}", x.toString())
+      .replace("{y}", y.toString()),
+  );
+  appliedAnnotationOverviewTemplates.set(layer, template);
+  return true;
+}
+
+function _setAnnotationOverviewVisibility(
+  mapentry: IMapEntry,
+  state: { visible: boolean; opacity: number },
+) {
+  const layer = mapentry.annotationOverviewLayer;
+  if (!layer) {
+    return;
+  }
+  const wasVisible = layer.visible();
+  const shouldShow = state.visible && annotationOverviewTemplates.has(layer);
+  const opacityChanged = layer.opacity() !== state.opacity;
+  if (opacityChanged) {
+    layer.opacity(state.opacity);
+  }
+  if (!shouldShow) {
+    cancelAnnotationOverviewLoad(layer);
+    if (wasVisible) {
+      layer.visible(false);
+      layer.draw();
+    }
+    return;
+  }
+
+  const templateChanged = applyAnnotationOverviewTemplate(layer);
+  if (!wasVisible) {
+    layer.visible(true);
+  }
+  if (!wasVisible || opacityChanged || templateChanged) {
+    layer.draw();
+  }
+  if (!wasVisible || templateChanged) {
+    trackAnnotationOverviewLoad(layer);
+  }
 }
 
 // ---- Computed Properties - Store Proxies ----
@@ -1318,6 +1380,9 @@ function _syncAnnotationOverviewLayer(
   if (!config?.enabled) {
     cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
     mapentry.annotationOverviewLayer?.visible(false);
+    if (mapentry.annotationOverviewLayer) {
+      annotationOverviewTemplates.delete(mapentry.annotationOverviewLayer);
+    }
     return;
   }
   // The map's units-per-pixel scale comes from the native image pyramid.
@@ -1352,6 +1417,7 @@ function _syncAnnotationOverviewLayer(
     params.layer.autoshareRenderer = false;
     params.layer.nearestPixel = params.layer.maxLevel;
     params.layer.url = blankUrl;
+    params.layer.visible = false;
     mapentry.annotationOverviewLayer = markRaw(
       mapentry.map.createLayer("osm", params.layer),
     );
@@ -1369,13 +1435,24 @@ function _syncAnnotationOverviewLayer(
   if (!datasetId || unrolling.value) {
     cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
     mapentry.annotationOverviewLayer.visible(false);
+    annotationOverviewTemplates.delete(mapentry.annotationOverviewLayer);
+    return;
+  }
+  const mapIndex = maps.value.indexOf(mapentry);
+  const selectors = annotationRasterSelectorsForLayers({
+    layers: (mapLayerList.value[mapIndex] ?? []).map(({ layer }) => layer),
+    showHiddenLayers: store.showAnnotationsFromHiddenLayers,
+    layerSliceIndexes: store.layerSliceIndexes,
+  });
+  if (selectors.length === 0) {
+    cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
+    mapentry.annotationOverviewLayer.visible(false);
+    annotationOverviewTemplates.delete(mapentry.annotationOverviewLayer);
     return;
   }
   const template = annotationStore.annotationsAPI.annotationRasterTemplateUrl({
     datasetId,
-    xy: store.xy,
-    z: store.z,
-    time: store.time,
+    selectors,
     sizeX: someImage.sizeX,
     sizeY: someImage.sizeY,
     tileSize: ANNOTATION_OVERVIEW_TILE_SIZE,
@@ -1384,18 +1461,13 @@ function _syncAnnotationOverviewLayer(
     color: ANNOTATION_OVERVIEW_FALLBACK_COLOR,
     version: annotationStore.mutationCounter,
   });
-  const overviewLayer = mapentry.annotationOverviewLayer as any;
-  if (overviewLayer._annotationOverviewUrl === template) {
-    return;
+  annotationOverviewTemplates.set(mapentry.annotationOverviewLayer, template);
+  if (
+    mapentry.annotationOverviewLayer.visible() &&
+    applyAnnotationOverviewTemplate(mapentry.annotationOverviewLayer)
+  ) {
+    trackAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
   }
-  overviewLayer._annotationOverviewUrl = template;
-  mapentry.annotationOverviewLayer.url((x: number, y: number, level: number) =>
-    template
-      .replace("{z}", level.toString())
-      .replace("{x}", x.toString())
-      .replace("{y}", y.toString()),
-  );
-  trackAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
 }
 
 /**
@@ -2105,6 +2177,7 @@ defineExpose({
   _setupTileLayers,
   _setTileUrls,
   _syncAnnotationOverviewLayer,
+  _setAnnotationOverviewVisibility,
 });
 </script>
 

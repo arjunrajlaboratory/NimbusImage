@@ -41,13 +41,13 @@ function normalize(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-/** Every `*"..."*` citation at or below the checklist heading. */
+/** Every italicized `"..."` citation at or below the checklist heading. */
 function citedTestNames(body: string): string[] {
   const start = body.indexOf(CHECKLIST_HEADING);
   expect(start).toBeGreaterThan(-1);
   return [
     ...new Set(
-      (body.slice(start).match(/\*"[^"]+"\*/g) ?? []).map((m) =>
+      (body.slice(start).match(/([*_])"[^"]+"\1/g) ?? []).map((m) =>
         normalize(m.slice(2, -2)),
       ),
     ),
@@ -120,12 +120,17 @@ const NOT_OURS = new Set([
  */
 function ownedPytestDirs(): string[] {
   const repoRoot = resolve(__dirname, "../..");
+  const nestedWorktrees = join(repoRoot, ".claude", "worktrees");
   const found: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) {
-        if (!NOT_OURS.has(entry) && entry !== ".git") {
+        if (
+          !NOT_OURS.has(entry) &&
+          entry !== ".git" &&
+          full !== nestedWorktrees
+        ) {
           walk(full);
         }
       } else if (PYTEST(entry) && !found.includes(dir)) {

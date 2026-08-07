@@ -1,10 +1,60 @@
-import type { IAnnotationOverviewConfig } from "@/store/model";
+import type { IAnnotationOverviewConfig, IDisplayLayer } from "@/store/model";
 import { clamp } from "@/utils/math";
 
 export const ANNOTATION_OVERVIEW_HYSTERESIS = 0.15;
 export const ANNOTATION_OVERVIEW_OPACITY_BOUNDS = { min: 0, max: 1 };
 export const ANNOTATION_OVERVIEW_THRESHOLD_BOUNDS = { min: 0.1, max: 16 };
 const ANNOTATION_OVERVIEW_NAVIGATION_SCALE = 0.95;
+
+export interface IAnnotationRasterSelector {
+  channel: number;
+  XY?: number;
+  Z?: number;
+  Time?: number;
+}
+
+interface ILayerSliceIndexes {
+  xyIndex: number;
+  zIndex: number;
+  tIndex: number;
+}
+
+export function annotationRasterSelectorsForLayers(options: {
+  layers: IDisplayLayer[];
+  showHiddenLayers: boolean;
+  layerSliceIndexes: (layer: IDisplayLayer) => ILayerSliceIndexes | null;
+}): IAnnotationRasterSelector[] {
+  const { layers, showHiddenLayers, layerSliceIndexes } = options;
+  const selectors: IAnnotationRasterSelector[] = [];
+  const selectorKeys = new Set<string>();
+  for (const layer of layers) {
+    if (!layer.visible && !showHiddenLayers) {
+      continue;
+    }
+    const indexes = layerSliceIndexes(layer);
+    if (!indexes) {
+      continue;
+    }
+    const selector: IAnnotationRasterSelector = {
+      channel: layer.channel,
+    };
+    if (layer.xy.type !== "max-merge") {
+      selector.XY = indexes.xyIndex;
+    }
+    if (layer.z.type !== "max-merge") {
+      selector.Z = indexes.zIndex;
+    }
+    if (layer.time.type !== "max-merge") {
+      selector.Time = indexes.tIndex;
+    }
+    const key = JSON.stringify(selector);
+    if (!selectorKeys.has(key)) {
+      selectorKeys.add(key);
+      selectors.push(selector);
+    }
+  }
+  return selectors;
+}
 
 function stableStringHash(value: string): number {
   let hash = 2166136261;

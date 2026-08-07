@@ -32,7 +32,7 @@ original draft:
 For datasets with very large annotation counts the frontend already
 subsamples what it draws (stub/hydration architecture, see
 `codebaseDocumentation/ANNOTATION-STUBS.md`). That keeps the viewer
-responsive but means the user never sees *all* annotations at once. This
+responsive but means the user never sees _all_ annotations at once. This
 feature adds a server-rendered **raster overview**: a tile layer in which
 every annotation for the current frame is rasterized (filled shapes, no
 strokes) into transparent PNG tiles at up to full image resolution, so the
@@ -60,46 +60,47 @@ Four candidate designs were considered. **Only (d) works at 20K×20K with
 dynamic annotations.**
 
 a. **Single full-frame PNG served once, displayed as one GeoJS quad**
-   (like the worker preview). Rejected: a 20,000² RGBA canvas is 1.6 GB on
-   the server; WebGL `MAX_TEXTURE_SIZE` is typically 8192–16384 (the
-   codebase itself assumes 4096 in `baseQuadOptions.maxTextureSize`,
-   `src/store/index.ts:2934`); browsers cap canvas/ImageBitmap area below
-   400 MP (Safari ~268 MP). A single image cannot be full resolution.
+(like the worker preview). Rejected: a 20,000² RGBA canvas is 1.6 GB on
+the server; WebGL `MAX_TEXTURE_SIZE` is typically 8192–16384 (the
+codebase itself assumes 4096 in `baseQuadOptions.maxTextureSize`,
+`src/store/index.ts:2934`); browsers cap canvas/ImageBitmap area below
+400 MP (Safari ~268 MP). A single image cannot be full resolution.
 
 b. **Grid of region PNGs, one quad each** (e.g. 5×5 tiles of 4096²).
-   Rejected: keeping the full grid resident is ~1.6 GB of GPU textures,
-   and there is no level-of-detail — the viewer pays full cost even fully
-   zoomed out.
+Rejected: keeping the full grid resident is ~1.6 GB of GPU textures,
+and there is no level-of-detail — the viewer pays full cost even fully
+zoomed out.
 
 c. **Materialized large_image item**: render the full-resolution raster
-   once, store it as a pyramidal TIFF item in the dataset, and let the
-   existing `large_image` plugin serve its tiles. Tempting because it
-   reuses the image-serving stack wholesale, but rejected: annotations
-   change constantly, and every create/edit/delete would require
-   re-rendering a 20K×20K image and re-encoding a pyramid file (tens of
-   seconds plus storage churn), whereas dynamic tiles invalidate with a
-   counter bump. The raster is also parameterized — frame (XY/Z/Time),
-   tag/shape filters, mode, colors — so each combination would need its
-   own baked file. (A custom dynamic large_image tile source is
-   technically possible, but its API is file/item-oriented; keying one on
-   frame + filters fights the framework.) Baking a static pyramid could
-   still return as a pre-warming optimization for read-only published
-   datasets (§9).
+once, store it as a pyramidal TIFF item in the dataset, and let the
+existing `large_image` plugin serve its tiles. Tempting because it
+reuses the image-serving stack wholesale, but rejected: annotations
+change constantly, and every create/edit/delete would require
+re-rendering a 20K×20K image and re-encoding a pyramid file (tens of
+seconds plus storage churn), whereas dynamic tiles invalidate with a
+counter bump. The raster is also parameterized by the visible display-layer
+selectors (channel plus the axes each layer fixes), mode, and colors, so
+each combination would need its own baked file. (A custom dynamic
+large_image tile source is
+technically possible, but its API is file/item-oriented; keying one on
+frame + filters fights the framework.) Baking a static pyramid could
+still return as a pre-warming optimization for read-only published
+datasets (§9).
 
 d. **Standard z/x/y tile pyramid endpoint consumed by a GeoJS `osm`
-   layer.** Chosen. This deliberately mirrors large_image's tile
-   *protocol* — the same zxy pyramid semantics and the same client-side
-   consumption: the viewer already renders all image layers as `osm`
-   tile layers configured via `geojs.util.pixelCoordinateParams`
-   (`src/components/ImageViewer.vue:1056-1081`, layer creation at
-   `:1264`), so GeoJS provides fetching, LOD, viewport culling, tile
-   caching and eviction for free, exactly as it does for large_image
-   tiles. The downsampling that large_image performs by reading pyramid
-   levels from a file is replaced by rendering vector geometry at the
-   requested tile's scale — vectors downsample for free, so no image
-   pyramid ever needs to be built, stored, or invalidated. The backend
-   renders one small PNG per requested tile from an in-memory, per-frame
-   geometry cache.
+layer.** Chosen. This deliberately mirrors large*image's tile
+\_protocol* — the same zxy pyramid semantics and the same client-side
+consumption: the viewer already renders all image layers as `osm`
+tile layers configured via `geojs.util.pixelCoordinateParams`
+(`src/components/ImageViewer.vue:1056-1081`, layer creation at
+`:1264`), so GeoJS provides fetching, LOD, viewport culling, tile
+caching and eviction for free, exactly as it does for large_image
+tiles. The downsampling that large_image performs by reading pyramid
+levels from a file is replaced by rendering vector geometry at the
+requested tile's scale — vectors downsample for free, so no image
+pyramid ever needs to be built, stored, or invalidated. The backend
+renders one small PNG per requested tile from an in-memory, per-frame
+geometry cache.
 
 ## 3. Backend
 
@@ -115,34 +116,31 @@ no new resource registration in `__init__.py` needed):
 self.route("GET", ("raster", ":z", ":x", ":y"), self.rasterTile)
 ```
 
-→ `GET /api/v1/upenn_annotation/raster/{z}/{x}/{y}?datasetId=...&XY=0&Z=0&Time=0&sizeX=20000&sizeY=20000&maxLevel=8&...`
+→ `GET /api/v1/upenn_annotation/raster/{z}/{x}/{y}?datasetId=...&selectors=[{"channel":0,"XY":0,"Z":0,"Time":0}]&sizeX=20000&sizeY=20000&maxLevel=8&...`
 
 Access control mirrors `stubs` (`server/api/annotation.py:507-523`) but enables
 cookie authentication for GeoJS image requests:
 `@access.public(scope=TokenScope.DATA_READ, cookie=True)` plus
 `Folder().load(datasetId, user=..., level=AccessType.READ, exc=True)`.
-Anonymous users get tiles only for public datasets; private datasets return
-401. This is safe for the GET-only route and is required because `<img>`
+Anonymous users get tiles only for public datasets; private datasets return 401. This is safe for the GET-only route and is required because `<img>`
 requests cannot attach a `Girder-Token` header. The GeoJS layer uses
 `crossDomain = "use-credentials"` so Girder's HttpOnly cookie is sent.
 
 **Query parameters** (validate at the API boundary, per the API/model
 separation rules — the model/helper layer receives clean typed values):
 
-| Param | Type | Required | Constraint | Meaning |
-|---|---|---|---|---|
-| `datasetId` | ObjectId | yes | `requireObjectId` | dataset folder |
-| `XY`, `Z`, `Time` | int | yes | `>= 0` | exact `location` match, same integers the frontend uses to filter annotations to the current frame (`src/store/annotation.ts:2437`) |
-| `sizeX`, `sizeY` | int | yes | 1 … 131072 | full-resolution image extent; the client already has this from `GET item/{id}/tiles` |
-| `tileSize` | int | no | one of 256 / 512 / 1024; default **512** | output tile edge |
-| `maxLevel` | int | yes | 0 … 30 | maximum level of the image map's coordinate pyramid; independent of the overview tile size |
-| `mode` | str | no | `shapes` (default) \| `discs` | true footprints vs. centroid discs |
-| `shape` | str | no | `point`\|`line`\|`polygon`\|`rectangle` | optional filter, same as `stubs` |
-| `tags` | JSON array | no | strings, `$all` semantics | optional filter, same as `stubs` |
-| `color` | str | no | `^#[0-9a-fA-F]{6}$`, default `#FFD700` | fill for annotations whose own `color` is null/invalid |
-| `pointRadius` | float | no | 0.5 … 20, default 3 | point-annotation disc radius in **tile pixels** (constant apparent size across levels) |
-| `lineWidth` | int | no | 1 … 10, default 1 | line-annotation stroke width in tile pixels |
-| `v` | str | no | opaque, ≤ 64 chars | client cache-buster; not interpreted server-side |
+| Param            | Type       | Required | Constraint                                                                                                                   | Meaning                                                                                                                                                                                                                                                           |
+| ---------------- | ---------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `datasetId`      | ObjectId   | yes      | `requireObjectId`                                                                                                            | dataset folder                                                                                                                                                                                                                                                    |
+| `selectors`      | JSON array | yes      | 1 … 64 unique objects; each requires nonnegative integer `channel` and may contain nonnegative integer `XY`, `Z`, and `Time` | union of the annotation predicates for the display layers rendered on this map. Omitted axes match every value, which gives max-merge layers the same annotation projection as their image projection. Selectors are deduplicated and sorted at the API boundary. |
+| `sizeX`, `sizeY` | int        | yes      | 1 … 131072                                                                                                                   | full-resolution image extent; the client already has this from `GET item/{id}/tiles`                                                                                                                                                                              |
+| `tileSize`       | int        | no       | one of 256 / 512 / 1024; default **512**                                                                                     | output tile edge                                                                                                                                                                                                                                                  |
+| `maxLevel`       | int        | yes      | 0 … 30                                                                                                                       | maximum level of the image map's coordinate pyramid; independent of the overview tile size                                                                                                                                                                        |
+| `mode`           | str        | no       | `shapes` (default) \| `discs`                                                                                                | true footprints vs. centroid discs                                                                                                                                                                                                                                |
+| `color`          | str        | no       | `^#[0-9a-fA-F]{6}$`, default `#FFD700`                                                                                       | fill for annotations whose own `color` is null/invalid                                                                                                                                                                                                            |
+| `pointRadius`    | float      | no       | 0.5 … 20, default 3                                                                                                          | point-annotation disc radius in **tile pixels** (constant apparent size across levels)                                                                                                                                                                            |
+| `lineWidth`      | int        | no       | 1 … 10, default 1                                                                                                            | line-annotation stroke width in tile pixels                                                                                                                                                                                                                       |
+| `v`              | str        | no       | opaque, ≤ 64 chars                                                                                                           | client cache-buster; not interpreted server-side                                                                                                                                                                                                                  |
 
 Invalid values → `RestException` 400. Out-of-range `z`/`x`/`y` → 400.
 
@@ -156,7 +154,7 @@ max-age=0, must-revalidate`; the client busts on its own edits via `v`
 Note: `sizeX`/`sizeY` are client-supplied deliberately. The server could
 derive them from the dataset's large-image item, but that would couple the
 plugin to `girder_large_image` (the test suite unbinds it — see
-`unbindLargeImage` fixture) for a value that only affects *that client's*
+`unbindLargeImage` fixture) for a value that only affects _that client's_
 rendering scale. Wrong values misrender only the caller's own tiles; the
 geometry cache key does not include them (§3.4), so there is no
 cross-user poisoning. Clamps bound resource use.
@@ -211,7 +209,7 @@ Per tile:
    - **Sub-pixel** (`max(bboxW, bboxH) * scale < 1.5` tile px): splat a
      single pixel into the numpy array at the scaled centroid
      (`arr[iy, ix] = rgba`). This is the critical fast path: at low zoom
-     levels *every* annotation of a dense frame lands here, and 700k
+     levels _every_ annotation of a dense frame lands here, and 700k
      splats take ~11 ms (measured). Never route sub-pixel shapes through
      `ImageDraw` — 700k `polygon()` calls take ~2.5–3 s.
    - **Visible footprint**: draw with `PIL.ImageDraw` on
@@ -242,13 +240,14 @@ The dominant cost is not drawing — it is fetching/decoding coordinate
 arrays from Mongo (§6). Tiles for the same frame must **not** each re-run
 the fetch. New helper module `server/helpers/annotationRaster.py`:
 
-- **Key**: `(datasetId, XY, Z, Time, shape, tuple(sorted(tags or [])),
-  mode)`. Note `sizeX/sizeY/tileSize/maxLevel/z/x/y` are *not* in the key —
-  geometry is stored in image coordinates and scaled at draw time.
+- **Key**: `(datasetId, canonical layer selectors, mode)`. Note
+  `sizeX/sizeY/tileSize/maxLevel/z/x/y` are _not_ in the key — geometry is
+  stored in image coordinates and scaled at draw time.
 - **Build** (on miss): one aggregation via the existing runtime-bounded
   `Annotation()._aggregate` (`server/models/annotation.py:130`, carries
-  `maxTimeMS`): `$match {datasetId, location.XY, location.Z,
-  location.Time [, shape, tags $all]}`, then
+  `maxTimeMS`): `$match {datasetId, $or: [one channel/location predicate per
+selector]}`, then
+
   - `mode=shapes`: `$project {coordinates: 1, shape: 1, color: 1}`,
   - `mode=discs`: the `stubs`-style `$addFields` centroid /
     `estimatedRadius` + `$project {coordinates: 0}`.
@@ -257,16 +256,22 @@ the fetch. New helper module `server/helpers/annotationRaster.py`:
   offsets, an `(N, 4)` float32 bbox array, a per-annotation RGBA uint32
   array (pre-parsed colors), and a shape-kind array. Expected footprint:
   ~90–110 MB for a 700k-polygon frame (float32, 16 vertices avg).
+
 - **Grid index**: uniform grid (e.g. 64 × 64 cells spanning the union of
   bboxes); each cell holds the indices of annotations whose bbox overlaps
   it. Tile lookup: gather cells overlapping the tile bbox, dedupe, exact
   bbox test. O(candidates) per tile.
-- **Concurrency**: per-key `threading.Lock` so concurrent tile requests
-  for a cold frame (GeoJS fires a burst of them) trigger exactly one
-  fetch and the rest wait — no thundering herd.
-- **Bounds**: LRU, max 3 entries (≈300 MB worst case), plus a TTL of
-  120 s. The TTL also bounds staleness in multi-process deployments where
-  the in-process invalidation below can't see another process's writes.
+- **Concurrency**: a per-key `threading.Lock` makes concurrent requests for
+  the same cold selector set trigger exactly one fetch. A process-wide,
+  nonblocking build semaphore caps distinct cold builds at one; saturation
+  returns retryable 503 instead of accumulating a Mongo/Python work queue.
+  Anonymous cold builds are additionally limited per remote IP + dataset;
+  cache hits are free.
+- **Bounds**: LRU, max 3 entries and max 300 MiB of retained NumPy/spatial-grid
+  allocations, plus a TTL of 120 s. Entries are evicted until both limits are
+  met; a single over-budget geometry serves its request but is not retained.
+  The TTL also bounds staleness in multi-process deployments where the
+  in-process invalidation below can't see another process's writes.
 - **Invalidation**: entries record the dataset raster-version (§3.5) at
   build time; a lookup whose stored version differs rebuilds.
 - **Request-specific fallback colors**: packed colors are cached together with
@@ -292,12 +297,12 @@ Bump points — override the mutating methods on the `Annotation` model
 call `save`/`saveMany`, the update endpoints call `save`/`saveMany` via
 `updateMultiple`, deletes go through `remove`/`removeWithQuery`):
 
-| Override | Bump |
-|---|---|
-| `save(document, ...)` | source and destination dataset counters |
-| `saveMany(documents, ...)` | each distinct source and destination dataset counter (source ids loaded in one aggregate query) |
-| `remove(annotation, ...)` | `datasetCounter[annotation["datasetId"]]` |
-| `removeWithQuery(query)` | `datasetId` when present in the query (e.g. `cleanOrphaned`); otherwise `globalEpoch` (e.g. `deleteMultiple`'s `_id $in` query — though its API layer already knows the dataset ids via `distinctDatasetIds` and may bump precisely instead) |
+| Override                   | Bump                                                                                                                                                                                                                                         |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `save(document, ...)`      | source and destination dataset counters                                                                                                                                                                                                      |
+| `saveMany(documents, ...)` | each distinct source and destination dataset counter (source ids loaded in one aggregate query)                                                                                                                                              |
+| `remove(annotation, ...)`  | `datasetCounter[annotation["datasetId"]]`                                                                                                                                                                                                    |
+| `removeWithQuery(query)`   | `datasetId` when present in the query (e.g. `cleanOrphaned`); otherwise `globalEpoch` (e.g. `deleteMultiple`'s `_id $in` query — though its API layer already knows the dataset ids via `distinctDatasetIds` and may bump precisely instead) |
 
 History undo/redo is the deliberate exception to model-hook coverage: it uses
 raw collection replace/delete operations, so `History._undoOrRedo` bumps the
@@ -354,9 +359,9 @@ loaded at `src/store/index.ts:1229`, synced via
 
 ```typescript
 interface IAnnotationOverviewConfig {
-  enabled: boolean;             // default false
-  mode: "shapes" | "discs";     // default "shapes"
-  opacity: number;              // 0..1, default 0.6
+  enabled: boolean; // default false
+  mode: "shapes" | "discs"; // default "shapes"
+  opacity: number; // 0..1, default 0.6
   // Raster shows while imagePixelsPerScreenPixel > threshold;
   // vector annotations take over below it. Default 1.
   vectorSwitchThreshold: number;
@@ -377,16 +382,15 @@ components, per repo rules):
 ```typescript
 annotationRasterTemplateUrl(options: {
   datasetId: string;
-  xy: number; z: number; time: number;
+  selectors: Array<{ channel: number; XY?: number; Z?: number; Time?: number }>;
   sizeX: number; sizeY: number;
   tileSize: number;
   maxLevel: number;              // image map's coordinate max level
   mode: "shapes" | "discs";
   color: string;
   version: number;              // client mutation counter, §4.6
-  tags?: string[]; shape?: AnnotationShape;
 }): string
-// -> `${apiRoot}/upenn_annotation/raster/{z}/{x}/{y}?datasetId=...&XY=...&v=...`
+// -> `${apiRoot}/upenn_annotation/raster/{z}/{x}/{y}?datasetId=...&selectors=...&v=...`
 ```
 
 Returns a template with literal `{z}/{x}/{y}` placeholders, the same
@@ -398,7 +402,7 @@ In `ImageViewer.vue`, one additional GeoJS `osm` layer per map entry
 (created alongside the existing layers around `:1111-1172`):
 
 - Start with `geojs.util.pixelCoordinateParams(el, sizeX, sizeY, 512,
-  512)`, then override `maxLevel`, `tilesAtZoom`, and `tilesMaxBounds` to
+512)`, then override `maxLevel`, `tilesAtZoom`, and `tilesMaxBounds` to
   use the existing image map's coordinate max level. The 512 px overview
   tile size stays independent, but its scale and extent exactly match the
   native image pyramid (§3.2).
@@ -426,7 +430,7 @@ existing zoom/camera watchers (`:4549-4608`):
 - Compute `imagePixelsPerScreenPixel = map.unitsPerPixel(map.zoom())`
   (map units are image pixels).
 - `rasterActive = enabled && imagePixelsPerScreenPixel >
-  vectorSwitchThreshold`, with **15% hysteresis** (switch to vectors at
+vectorSwitchThreshold`, with **15% hysteresis** (switch to vectors at
   `threshold`, back to raster at `threshold * 1.15`) so panning at the
   boundary doesn't flap.
 - While `rasterActive`: show the raster layer, and suppress vector
@@ -492,25 +496,25 @@ Benchmark: synthetic 16-vertex cell-like polygons over a 20,000² image,
 Pillow + numpy + pymongo BSON (C extension), single core. Methodology in
 Appendix A.
 
-| Cost | Measured |
-|---|---|
-| BSON decode, 100k coordinate-projected polygon docs | 1.4 s (52 MB) |
-| BSON decode, 700k coordinate-projected polygon docs | ~10 s (~360 MB) |
-| BSON decode, 700k stub-style docs (discs mode) | ~5 s (64 MB) |
-| PIL polygon fill throughput (small filled polys, no AA) | ~200–250k/s |
-| numpy sub-pixel splat, 700k points | ~11 ms |
-| Full-canvas render 700k polygons at 4096 px | ~4 s |
-| PNG encode, 512² RGBA tile | ~5–20 ms |
+| Cost                                                    | Measured        |
+| ------------------------------------------------------- | --------------- |
+| BSON decode, 100k coordinate-projected polygon docs     | 1.4 s (52 MB)   |
+| BSON decode, 700k coordinate-projected polygon docs     | ~10 s (~360 MB) |
+| BSON decode, 700k stub-style docs (discs mode)          | ~5 s (64 MB)    |
+| PIL polygon fill throughput (small filled polys, no AA) | ~200–250k/s     |
+| numpy sub-pixel splat, 700k points                      | ~11 ms          |
+| Full-canvas render 700k polygons at 4096 px             | ~4 s            |
+| PNG encode, 512² RGBA tile                              | ~5–20 ms        |
 
 Live validation on dataset `6a19784f247013c971283206` (708,983
 annotations, 17,700,404 vertices) after the single-pass packing change:
 
-| Cost | Before | After |
-|---|---:|---:|
-| Direct cold frame geometry build | 16.396 s | 13.340 s (-18.6%) |
-| Cached geometry memory | 163.77 MB | 163.77 MB |
-| Authenticated cold HTTP tile | — | 13.052 s |
-| Warm HTTP tile / ETag 304 | — | 38.9 ms / 4.0 ms |
+| Cost                             |    Before |             After |
+| -------------------------------- | --------: | ----------------: |
+| Direct cold frame geometry build |  16.396 s | 13.340 s (-18.6%) |
+| Cached geometry memory           | 163.77 MB |         163.77 MB |
+| Authenticated cold HTTP tile     |         — |          13.052 s |
+| Warm HTTP tile / ETag 304        |         — |  38.9 ms / 4.0 ms |
 
 ## 6. Performance budgets (acceptance criteria)
 
@@ -533,6 +537,7 @@ annotations, 17,700,404 vertices) after the single-pass packing change:
 ### Backend (`test/test_raster.py`, pytest via tox)
 
 Geometry & rendering (decode returned PNGs with PIL in the test):
+
 1. A polygon with known coordinates renders filled at the expected pixels
    at `z = maxLevel`, and as a single splatted pixel at `z = 0`
    (min-footprint rule).
@@ -541,30 +546,27 @@ Geometry & rendering (decode returned PNGs with PIL in the test):
    transparent.
 3. `mode=discs` renders a disc whose radius matches
    `estimatedRadius * scale`.
-4. `shape`/`tags` filters exclude non-matching annotations; `XY/Z/Time`
-   match is exact (annotation on another frame does not render).
+4. Layer selectors include only matching channels/locations; omitted axes
+   project across every value for max-merge layers; duplicate selectors do not
+   duplicate geometry.
 5. `color`: annotation `color` honored; null/invalid falls back to the
    `color` param; invalid `color` param → 400.
 6. Points render at `pointRadius` tile px at two different levels
    (constant apparent size); lines honor `lineWidth`; rectangles fill.
 
-Protocol & safety:
-7. Anonymous on a private dataset → 401 (Girder's normal anonymous access
-   response); public dataset → 200 (mirror the `stubs` access tests).
-8. 400s: out-of-range `z/x/y`, bad `tileSize`, `sizeX` above clamp,
-   malformed `tags` JSON, negative `XY`.
-9. ETag: identical request returns the same ETag; `If-None-Match` → 304;
-   creating/deleting an annotation in the dataset changes the ETag and a
-   fresh tile shows/loses the annotation (cache invalidation observable
-   end-to-end, not just counter-was-bumped).
-10. `updateMultiple` (save path) also bumps the version — the twin of the
-    create/delete paths in (9); don't test one mutation verb and assume
-    the rest.
-11. Concurrency: two threads requesting a cold frame trigger exactly one
-    aggregation (assert via monkeypatched fetch counter).
-12. Geometry construction traverses each annotation's coordinates once,
-    bulk-packs the vertex buffer, and indexes both single-cell and
-    boundary-crossing bboxes (`testGeometryConstructionTraversesCoordinatesOnce`).
+Protocol & safety: 7. Anonymous on a private dataset → 401 (Girder's normal anonymous access
+response); public dataset → 200 (mirror the `stubs` access tests). 8. 400s: out-of-range `z/x/y`, bad `tileSize`, `sizeX` above clamp, malformed,
+empty, oversized, or structurally invalid selectors, and negative selector
+values. 9. ETag: identical request returns the same ETag; `If-None-Match` → 304;
+creating/deleting an annotation in the dataset changes the ETag and a
+fresh tile shows/loses the annotation (cache invalidation observable
+end-to-end, not just counter-was-bumped). 10. `updateMultiple` (save path) also bumps the version — the twin of the
+create/delete paths in (9); don't test one mutation verb and assume
+the rest. 11. Concurrency: two threads requesting the same cold selector set trigger
+exactly one aggregation; a distinct cold build is rejected while the slot
+is occupied; anonymous cold-build limits do not charge cache hits. 12. Geometry construction traverses each annotation's coordinates once,
+bulk-packs the vertex buffer, and indexes both single-cell and
+boundary-crossing bboxes (`testGeometryConstructionTraversesCoordinatesOnce`).
 
 Watch the known test-harness traps from `CLAUDE.md`: verify each test
 fails without its fix (use `git stash`, not `cp` round-trips), and don't
@@ -586,62 +588,82 @@ let shared fixtures return fixed values that defeat assertions.
   hides the raster; disabling the feature restores today's behavior
   exactly.
 
-## 8. Regression checklist (seed — extend as reviews find more)
+## Regression checklist
 
 Per `CLAUDE.md`, every item names its test:
 
 - **Drawing/clearing symmetry**: raster→vector hides raster AND restores
-  vectors; vector→raster the reverse — `AnnotationViewer.test.ts` “suppresses
-  vectors and hydration only while the raster is active” + in-browser step 2.
+  vectors; vector→raster the reverse — _"suppresses vectors and hydration only
+  while the raster is active"_ + in-browser step 2.
 - **Cost when disabled**: no raster layer created, no watchers firing
-  work, no hydration early-out taken — `ImageViewer.test.ts` “does not allocate
-  a GeoJS layer while the feature is disabled” + in-browser with feature off.
+  work, no hydration early-out taken — _"does not allocate a GeoJS layer while
+  the feature is disabled"_ + in-browser with feature off.
 - **Hydration suppression**: no hydrate requests scheduled while raster
-  active — the `AnnotationViewer.test.ts` raster-switch test plus store
-  early-out coverage.
+  active — _"suppresses vectors and hydration only while the raster is active"_.
 - **Stub-free vector handoff**: with the overview enabled, zoomed-in vectors
   contain only hydrated geometry while unhydrated stubs remain available to
   visibility and hydration; disabling the overview or entering unroll restores
-  stub dots —
-  `AnnotationViewer.test.ts` “omits unhydrated stubs while raster overview is
-  enabled”.
+  stub dots — _"omits unhydrated stubs while raster overview is enabled"_.
 - **Invalidation on every mutation verb**: create, updateMultiple,
   delete, deleteMultiple each change the ETag —
-  `testEveryModelMutationPathInvalidatesEtag` and
-  `testAccessAndEtagInvalidation`.
-- **Sub-pixel fast path**: low-zoom dense tile stays within budget —
-  backend perf-marked test with 100k synthetic annotations.
+  _"testEveryModelMutationPathInvalidatesEtag"_ and
+  _"testAccessAndEtagInvalidation"_.
+- **Sub-pixel fast path**: low-zoom footprints collapse to the splat path rather
+  than drawing full polygons — _"testPolygonAndSubpixelRendering"_.
 - **Single-pass cold geometry build**: coordinates are traversed once and
   both vectorized single-cell and boundary-crossing grid entries remain
-  queryable — `testGeometryConstructionTraversesCoordinatesOnce`.
-- **Public-endpoint clamps**: all 400 cases — `testInvalidInputsReturn400`.
+  queryable — _"testGeometryConstructionTraversesCoordinatesOnce"_.
+- **Public-endpoint clamps**: all 400 cases — _"testInvalidInputsReturn400"_.
 - **Private-dataset image authentication**: an anonymous tile request returns
   401 while the same read-only request with Girder's auth cookie returns 200 —
-  `testAccessAndEtagInvalidation` plus the in-browser private-dataset pass.
+  _"testAccessAndEtagInvalidation"_ plus the in-browser private-dataset pass.
 - **Coordinate-pyramid alignment**: a 512 px overview layer on a map backed
   by 256 px image tiles uses the image map's max level for both server scale
-  and GeoJS tile bounds — `testImagePyramidLevelControlsCoordinateScale` and
-  `ImageViewer.test.ts` “lazily creates the layer and refreshes its URL on
-  mutations”.
+  and GeoJS tile bounds — _"testImagePyramidLevelControlsCoordinateScale"_ and
+  _"lazily creates the layer and refreshes its URL on mutations"_.
 - **Cold-build feedback without cache-hit flicker**: a raster tile load that
   remains active for 300 ms creates a global indeterminate progress item and
   completes it when GeoJS reports the layer idle, while an already-idle cached
-  load never creates one — `ImageViewer.test.ts` “shows delayed progress while
-  overview tiles load and completes on idle” and “does not show progress when
-  overview tiles are already cached”.
+  load never creates one — _"shows delayed progress while overview tiles load
+  and completes on idle"_ and _"does not show progress when overview tiles are
+  already cached"_.
 - **Raster-mode coarse selection**: drag/lasso queries the global centroid
   index, selects every match, and draws a stable pseudo-random subset capped at
   the zoomed-out visibility floor without restoring unselected stubs or
-  hydrated geometry — `AnnotationViewer.test.ts` “drag-selects every matching
-  stub while only the raster is visible” and “draws only selected stubs as
-  feedback over the raster”, plus `annotationOverview.test.ts` “returns a
-  stable pseudo-random subset at the requested limit”.
+  hydrated geometry — _"drag-selects every matching stub while only the raster
+  is visible"_ and _"draws only selected stubs as feedback over the raster"_,
+  plus _"returns a stable pseudo-random subset at the requested limit"_.
 - **Table-row vector navigation**: clicking an object row from raster mode
   recenters and zooms just inside the vector threshold, keeps `gcsBounds`
   consistent, and retries hydration after suppression lifts —
-  `annotationNavigation.test.ts` “zooms a table-row destination into the
-  vector-visible range”, `camera.test.ts` “recenters and scales bounds
-  consistently with the requested zoom”, plus the in-browser row-click pass.
+  _"zooms a table-row destination into the vector-visible range"_, _"recenters
+  and scales bounds consistently with the requested zoom"_, plus the
+  in-browser row-click pass.
+- **Cold-build availability controls**: identical keys coalesce, distinct keys
+  cannot exceed the process-wide build cap, anonymous cache misses are
+  rate-limited without charging hits, and saturation returns retryable HTTP
+  responses — _"testConcurrentRequestsForSameKeyBuildOnce"_,
+  _"testDistinctColdBuildsRespectGlobalConcurrencyLimit"_,
+  _"testAnonymousColdBuildsAreRateLimitedButCacheHitsAreNot"_, and
+  _"testColdBuildCapacityErrorsReturnRetryableResponses"_.
+- **Byte-budgeted geometry retention**: the cache counts the unique NumPy and
+  spatial-grid allocations and evicts least-recently-used entries until it is
+  within 300 MB — _"testGeometryCacheEvictsByRetainedBytes"_ and
+  _"testGeometryConstructionTraversesCoordinatesOnce"_.
+- **Raster/vector layer predicate parity**: current, constant/offset,
+  max-merge, channel visibility, invalid slices, and duplicate layers produce
+  canonical backend selectors — _"matches visible current, offset, and
+  max-merge layer predicates"_, _"preserves z/x/y placeholders and serializes
+  render inputs"_, _"testGeometryPipelineUsesCanonicalLayerSelectors"_, and
+  _"testLayerSelectorsFilterFrameChannelAndColors"_.
+- **No hidden raster work**: the GeoJS layer is created hidden, has no tile URL
+  or progress item while vectors are active, and applies both only on a raster
+  visibility transition — _"lazily creates the layer and refreshes its URL on
+  mutations"_ and _"shows delayed progress while overview tiles load and
+  completes on idle"_.
+- **Transparent edge padding**: geometry outside `sizeX`/`sizeY` cannot paint
+  into the rightmost or bottommost tile padding —
+  _"testTileBoundaryAndTransparentPadding"_.
 
 ## 9. Explicit non-goals / future extensions
 
@@ -654,8 +676,9 @@ Per `CLAUDE.md`, every item names its test:
   set; needs filter serialization into the tile URL / cache key).
 - **Cross-process/live invalidation** (shared cache or pub/sub; today:
   TTL 120 s + per-process ETag uuid).
-- **Z-projection ranges** (render annotations from a Z window, matching
-  max-merge viewing).
+- **Partial-axis projection ranges** (max-merge currently omits the axis and
+  therefore projects every value; bounded windows would require range-valued
+  selectors).
 - **Tile pre-warming** (background job rendering the pyramid after bulk
   imports).
 

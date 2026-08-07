@@ -67,30 +67,41 @@ const mockDomWidget = (el?: string) => {
   return { canvas: vi.fn(() => element) };
 };
 
-const mockLayer = () => ({
-  node: vi.fn().mockReturnValue({ css: vi.fn() }),
-  createFeature: vi.fn().mockReturnValue({}),
-  createWidget: vi.fn((_widgetName: string, arg?: any) =>
-    mockDomWidget(arg?.el),
-  ),
-  deleteWidget: vi.fn(),
-  moveToTop: vi.fn(),
-  zIndex: vi.fn().mockReturnValue(0),
-  visible: vi.fn(),
-  idle: true,
-  onIdle: vi.fn((cb: Function) => cb()),
-  reset: vi.fn(),
-  url: vi.fn(),
-  draw: vi.fn(),
-  map: vi.fn().mockReturnValue({ draw: vi.fn() }),
-  queue: {},
-  _imageUrls: null as string[] | null,
-  _tileBounds: null as Function | null,
-  tileAtPoint: null as Function | null,
-  setFrameQuad: vi.fn(),
-  baseQuad: null,
-  displayToLevel: vi.fn((pt: any) => pt),
-});
+const mockLayer = () => {
+  let isVisible = false;
+  let layerOpacity = 1;
+  return {
+    node: vi.fn().mockReturnValue({ css: vi.fn() }),
+    createFeature: vi.fn().mockReturnValue({}),
+    createWidget: vi.fn((_widgetName: string, arg?: any) =>
+      mockDomWidget(arg?.el),
+    ),
+    deleteWidget: vi.fn(),
+    moveToTop: vi.fn(),
+    zIndex: vi.fn().mockReturnValue(0),
+    visible: vi.fn((value?: boolean) => {
+      if (value !== undefined) isVisible = value;
+      return isVisible;
+    }),
+    opacity: vi.fn((value?: number) => {
+      if (value !== undefined) layerOpacity = value;
+      return layerOpacity;
+    }),
+    idle: true,
+    onIdle: vi.fn((cb: Function) => cb()),
+    reset: vi.fn(),
+    url: vi.fn(),
+    draw: vi.fn(),
+    map: vi.fn().mockReturnValue({ draw: vi.fn() }),
+    queue: {},
+    _imageUrls: null as string[] | null,
+    _tileBounds: null as Function | null,
+    tileAtPoint: null as Function | null,
+    setFrameQuad: vi.fn(),
+    baseQuad: null,
+    displayToLevel: vi.fn((pt: any) => pt),
+  };
+};
 
 // Use reactive() so the computed properties are reactive
 vi.mock("@/store", () => {
@@ -130,6 +141,7 @@ vi.mock("@/store", () => {
       showPixelScalebar: false,
       scalebarColor: "#ffffff",
       drawAnnotations: true,
+      showAnnotationsFromHiddenLayers: false,
       showTooltips: false,
       setMaps: vi.fn(),
       setMapAt: vi.fn(),
@@ -145,6 +157,11 @@ vi.mock("@/store", () => {
       setUnrollZ: vi.fn(),
       setUnrollT: vi.fn(),
       getLayerHistogram: vi.fn().mockResolvedValue(null),
+      layerSliceIndexes: vi.fn().mockReturnValue({
+        xyIndex: 0,
+        zIndex: 0,
+        tIndex: 0,
+      }),
     }),
   };
 });
@@ -257,10 +274,14 @@ function createLayerStackImage(overrides: any = {}): any {
   return {
     layer: {
       id: "layer1",
+      channel: 0,
       visible: true,
       color: "#ff0000",
       contrast: { whitePoint: 100, blackPoint: 0, mode: "percentile" },
       layerGroup: null,
+      xy: { type: "current", value: null },
+      z: { type: "current", value: null },
+      time: { type: "current", value: null },
       ...layerOverride,
     },
     images: [
@@ -341,6 +362,7 @@ describe("ImageViewer", () => {
     mockedStore.showXYLabels = true;
     mockedStore.showZLabels = true;
     mockedStore.showTimeLabels = true;
+    mockedStore.showAnnotationsFromHiddenLayers = false;
     mockedStore.selectedTool = null;
     mockedStore.layerStackImages = [];
     mockedStore.layerMode = "multiple" as any;
@@ -356,6 +378,11 @@ describe("ImageViewer", () => {
     } as any;
     mockedAnnotationStore.mutationCounter = 0;
     (mockedStore as any).getLayerHistogram = vi.fn().mockResolvedValue(null);
+    (mockedStore.layerSliceIndexes as any).mockReturnValue({
+      xyIndex: 0,
+      zIndex: 0,
+      tIndex: 0,
+    });
     vi.clearAllMocks();
     // Make setMaps/setCameraInfo actually update the reactive store
     (mockedStore.setMaps as any).mockImplementation((v: any) => {
@@ -1113,6 +1140,7 @@ describe("ImageViewer", () => {
         enabled: true,
       } as any;
       wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
       const image = createLayerStackImage().images[0];
       const element = document.createElement("div");
 
@@ -1128,11 +1156,23 @@ describe("ImageViewer", () => {
       expect(layerParams.tilesAtZoom(9)).toEqual({ x: 2, y: 2 });
       expect(layerParams.tilesAtZoom(8)).toEqual({ x: 1, y: 1 });
       expect(layerParams.tilesMaxBounds(8)).toEqual({ x: 512, y: 512 });
+      expect(layerParams.visible).toBe(false);
       expect(
         mockedAnnotationStore.annotationsAPI.annotationRasterTemplateUrl,
-      ).toHaveBeenCalledWith(expect.objectContaining({ maxLevel: 9 }));
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          maxLevel: 9,
+          selectors: [{ channel: 0, XY: 0, Z: 0, Time: 0 }],
+        }),
+      );
+      expect(overviewLayer.url).not.toHaveBeenCalled();
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
       const firstUrl = overviewLayer.url.mock.calls[0][0];
       expect(firstUrl(2, 3, 4)).toBe("http://localhost/raster/4/2/3?v=0");
+      expect("_annotationOverviewUrl" in overviewLayer).toBe(false);
 
       mockedAnnotationStore.mutationCounter = 1;
       (wrapper.vm as any)._syncAnnotationOverviewLayer(
@@ -1171,6 +1211,7 @@ describe("ImageViewer", () => {
         enabled: true,
       } as any;
       wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
 
       (wrapper.vm as any)._syncAnnotationOverviewLayer(
         mapentry,
@@ -1178,6 +1219,12 @@ describe("ImageViewer", () => {
         document.createElement("div"),
       );
 
+      await vi.advanceTimersByTimeAsync(300);
+      expect(mockedProgressStore.create).not.toHaveBeenCalled();
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
       await vi.advanceTimersByTimeAsync(299);
       expect(mockedProgressStore.create).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
@@ -1206,12 +1253,17 @@ describe("ImageViewer", () => {
         enabled: true,
       } as any;
       wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
 
       (wrapper.vm as any)._syncAnnotationOverviewLayer(
         mapentry,
         createLayerStackImage().images[0],
         document.createElement("div"),
       );
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
 
       await vi.advanceTimersByTimeAsync(300);
       expect(mockedProgressStore.create).not.toHaveBeenCalled();

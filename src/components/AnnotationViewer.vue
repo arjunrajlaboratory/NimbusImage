@@ -257,6 +257,12 @@ const props = withDefaults(
   }>(),
   { maps: () => [] },
 );
+const emit = defineEmits<{
+  (
+    event: "annotation-overview-visibility-change",
+    state: { visible: boolean; opacity: number },
+  ): void;
+}>();
 
 // ---- Refs (data fields) ----
 
@@ -400,20 +406,10 @@ function updateAnnotationOverviewMode() {
   if (!layer) {
     return;
   }
-  const visible = nextActive && store.drawAnnotations;
-  const opacity = annotationStore.overviewConfig.opacity;
-  let changed = false;
-  if (layer.visible() !== visible) {
-    layer.visible(visible);
-    changed = true;
-  }
-  if (layer.opacity() !== opacity) {
-    layer.opacity(opacity);
-    changed = true;
-  }
-  if (changed) {
-    layer.draw();
-  }
+  emit("annotation-overview-visibility-change", {
+    visible: nextActive && store.drawAnnotations,
+    opacity: annotationStore.overviewConfig.opacity,
+  });
 }
 
 const selectedToolConfiguration = computed(
@@ -5025,7 +5021,12 @@ onBeforeUnmount(() => {
     cancelIdleCallback(spatialIndexRequestId);
   }
   clearRetainedFeatureCache();
-  props.annotationOverviewLayer?.visible(false);
+  if (props.annotationOverviewLayer) {
+    emit("annotation-overview-visibility-change", {
+      visible: false,
+      opacity: annotationStore.overviewConfig.opacity,
+    });
+  }
   annotationStore.setVisibilitySuppressed?.(false);
 });
 

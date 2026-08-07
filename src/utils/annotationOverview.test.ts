@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { resolveAnnotationOverviewConfig } from "@/store/model";
 import {
+  annotationRasterSelectorsForLayers,
   ANNOTATION_OVERVIEW_HYSTERESIS,
   annotationOverviewRasterActive,
   stableRandomSampleById,
   zoomForVectorAnnotations,
 } from "./annotationOverview";
+
+const slice = (type: string, value: number | null = null) => ({
+  type,
+  value,
+});
+
+const layer = (overrides: Record<string, unknown> = {}) =>
+  ({
+    id: "layer",
+    channel: 0,
+    visible: true,
+    xy: slice("current"),
+    z: slice("current"),
+    time: slice("current"),
+    ...overrides,
+  }) as any;
 
 describe("stableRandomSampleById", () => {
   it("returns every item when the input is within the limit", () => {
@@ -99,6 +116,60 @@ describe("annotationOverviewRasterActive", () => {
         unrolling: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("annotationRasterSelectorsForLayers", () => {
+  it("matches visible current, offset, and max-merge layer predicates", () => {
+    const layers = [
+      layer({ id: "current", channel: 0 }),
+      layer({
+        id: "offset",
+        channel: 2,
+        z: slice("offset", 1),
+      }),
+      layer({
+        id: "max-merge",
+        channel: 3,
+        z: slice("max-merge"),
+        time: slice("max-merge"),
+      }),
+      layer({ id: "hidden", channel: 4, visible: false }),
+      layer({ id: "invalid", channel: 5 }),
+      layer({ id: "duplicate", channel: 0 }),
+    ];
+
+    expect(
+      annotationRasterSelectorsForLayers({
+        layers,
+        showHiddenLayers: false,
+        layerSliceIndexes: (candidate) => {
+          if (candidate.id === "invalid") return null;
+          if (candidate.id === "offset") {
+            return { xyIndex: 2, zIndex: 4, tIndex: 6 };
+          }
+          return { xyIndex: 2, zIndex: 3, tIndex: 6 };
+        },
+      }),
+    ).toEqual([
+      { channel: 0, XY: 2, Z: 3, Time: 6 },
+      { channel: 2, XY: 2, Z: 4, Time: 6 },
+      { channel: 3, XY: 2 },
+    ]);
+  });
+
+  it("includes hidden layers only when vector rendering does", () => {
+    expect(
+      annotationRasterSelectorsForLayers({
+        layers: [layer({ channel: 4, visible: false })],
+        showHiddenLayers: true,
+        layerSliceIndexes: () => ({
+          xyIndex: 1,
+          zIndex: 2,
+          tIndex: 3,
+        }),
+      }),
+    ).toEqual([{ channel: 4, XY: 1, Z: 2, Time: 3 }]);
   });
 });
 

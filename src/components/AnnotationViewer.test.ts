@@ -728,8 +728,11 @@ describe("AnnotationViewer", () => {
 
       expect((wrapper.vm as any).rasterActive).toBe(true);
       expect((wrapper.vm as any).shouldDrawAnnotations).toBe(false);
-      expect(overviewLayer.visible()).toBe(true);
-      expect(overviewLayer.opacity()).toBe(0.6);
+      expect(overviewLayer.visible).not.toHaveBeenCalled();
+      expect(overviewLayer.opacity).not.toHaveBeenCalled();
+      expect(
+        wrapper.emitted("annotation-overview-visibility-change")?.at(-1),
+      ).toEqual([{ visible: true, opacity: 0.6 }]);
       expect(
         mockedAnnotationStore.updateVisibilityAndHydration,
       ).toHaveBeenCalledWith(expect.objectContaining({ suppress: true }));
@@ -743,7 +746,9 @@ describe("AnnotationViewer", () => {
 
       expect((wrapper.vm as any).rasterActive).toBe(false);
       expect((wrapper.vm as any).shouldDrawAnnotations).toBe(true);
-      expect(overviewLayer.visible()).toBe(false);
+      expect(
+        wrapper.emitted("annotation-overview-visibility-change")?.at(-1),
+      ).toEqual([{ visible: false, opacity: 0.6 }]);
       expect(
         mockedAnnotationStore.updateVisibilityAndHydration,
       ).toHaveBeenCalledWith(expect.not.objectContaining({ suppress: true }));

@@ -23,8 +23,10 @@ from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.validation import (
     MAX_LIST_LIMIT,
     dropNoOpPropertyFilters,
+    requireCountWithin,
     requireFloat,
     requireInt,
+    requireList,
     requireObjectBody,
     requireObjectId,
     validateAnnotationIdCount,
@@ -35,7 +37,10 @@ from ..models.annotation import Annotation as AnnotationModel
 from ..helpers.serialization import orJsonDefaults
 from ..helpers.annotationRaster import (
     COLOR_PATTERN,
+    RasterBuildBusy,
+    RasterBuildRateLimited,
     RasterGeometryKey,
+    RasterLayerSelector,
     RasterTileParams,
     buildRasterEtag,
     getFrameGeometry,
@@ -46,6 +51,67 @@ from ..helpers.annotationRaster import (
 
 
 # Helper functions to get dataset ID for recordable endpoints
+
+MAX_RASTER_SELECTORS = 64
+
+
+def _parseRasterSelectors(value):
+    if isinstance(value, str):
+        try:
+            value = orjson.loads(value)
+        except orjson.JSONDecodeError:
+            raise RestException("selectors must be valid JSON", 400)
+    selectors = requireList(value, "selectors")
+    if not selectors:
+        raise RestException(
+            "selectors must contain at least one layer", 400
+        )
+    requireCountWithin(
+        len(selectors), MAX_RASTER_SELECTORS, "selectors"
+    )
+    allowedFields = {"channel", "XY", "Z", "Time"}
+    parsed = set()
+    for index, selector in enumerate(selectors):
+        name = "selectors[%d]" % index
+        selector = requireObjectBody(selector, name)
+        if not set(selector).issubset(allowedFields):
+            raise RestException(
+                "%s contains unsupported fields" % name, 400
+            )
+        fields = {}
+        for field in ("channel", "XY", "Z", "Time"):
+            fieldValue = selector.get(field)
+            if field == "channel" and fieldValue is None:
+                raise RestException("%s.channel is required" % name, 400)
+            if fieldValue is None:
+                fields[field] = None
+                continue
+            if not isinstance(fieldValue, int) or isinstance(
+                fieldValue, bool
+            ):
+                raise RestException(
+                    "%s.%s must be an integer" % (name, field), 400
+                )
+            if fieldValue < 0:
+                raise RestException(
+                    "%s.%s must be non-negative" % (name, field), 400
+                )
+            fields[field] = fieldValue
+        parsed.add(RasterLayerSelector(
+            channel=fields["channel"],
+            xy=fields["XY"],
+            z=fields["Z"],
+            time=fields["Time"],
+        ))
+    return tuple(sorted(
+        parsed,
+        key=lambda selector: (
+            selector.channel,
+            -1 if selector.xy is None else selector.xy,
+            -1 if selector.z is None else selector.z,
+            -1 if selector.time is None else selector.time,
+        ),
+    ))
 
 
 def _streamJsonArray(items, prefix=b"[", suffix=b"]", default=None):
@@ -413,9 +479,10 @@ class Annotation(Resource):
     )
     def count(self, params):
         datasetId = ObjectId(params["datasetId"])
+        user = self.getCurrentUser()
         Folder().load(
             datasetId,
-            user=self.getCurrentUser(),
+            user=user,
             level=AccessType.READ,
             exc=True,
         )
@@ -554,9 +621,12 @@ class Annotation(Resource):
         .param("x", "Tile x index", paramType="path")
         .param("y", "Tile y index", paramType="path")
         .param("datasetId", "Dataset folder id", required=True)
-        .param("XY", "Exact annotation XY location", required=True)
-        .param("Z", "Exact annotation Z location", required=True)
-        .param("Time", "Exact annotation time location", required=True)
+        .jsonParam(
+            "selectors",
+            "Visible layer channel and optional XY/Z/Time selectors",
+            required=True,
+            requireArray=True,
+        )
         .param("sizeX", "Full-resolution image width", required=True)
         .param("sizeY", "Full-resolution image height", required=True)
         .param("tileSize", "Output tile edge", required=False)
@@ -566,13 +636,6 @@ class Annotation(Resource):
             required=True,
         )
         .param("mode", "shapes or discs", required=False)
-        .param("shape", "Optional annotation shape filter", required=False)
-        .jsonParam(
-            "tags",
-            "Optional annotation tag filter",
-            required=False,
-            requireArray=True,
-        )
         .param("color", "Fallback #RRGGBB fill", required=False)
         .param("pointRadius", "Point radius in tile pixels", required=False)
         .param("lineWidth", "Line width in tile pixels", required=False)
@@ -586,9 +649,7 @@ class Annotation(Resource):
         level = requireInt(z, "z")
         tileX = requireInt(x, "x")
         tileY = requireInt(y, "y")
-        xy = requireInt(params.get("XY"), "XY")
-        annotationZ = requireInt(params.get("Z"), "Z")
-        annotationTime = requireInt(params.get("Time"), "Time")
+        selectors = _parseRasterSelectors(params.get("selectors"))
         sizeX = requireInt(params.get("sizeX"), "sizeX")
         sizeY = requireInt(params.get("sizeY"), "sizeY")
         tileSize = requireInt(params.get("tileSize", 512), "tileSize")
@@ -598,13 +659,6 @@ class Annotation(Resource):
             params.get("pointRadius", 3), "pointRadius"
         )
 
-        for field, value in (
-            ("XY", xy),
-            ("Z", annotationZ),
-            ("Time", annotationTime),
-        ):
-            if value < 0:
-                raise RestException("%s must be non-negative" % field, 400)
         for field, value in (("sizeX", sizeX), ("sizeY", sizeY)):
             if value < 1 or value > 131072:
                 raise RestException(
@@ -624,24 +678,6 @@ class Annotation(Resource):
         mode = params.get("mode", "shapes")
         if mode not in ("shapes", "discs"):
             raise RestException("mode must be shapes or discs", 400)
-        shape = params.get("shape")
-        if shape is not None and shape not in (
-            "point",
-            "line",
-            "polygon",
-            "rectangle",
-        ):
-            raise RestException("shape is not supported", 400)
-        tags = params.get("tags") or []
-        if isinstance(tags, str):
-            try:
-                tags = orjson.loads(tags)
-            except orjson.JSONDecodeError:
-                raise RestException("tags must be valid JSON", 400)
-        if not isinstance(tags, list) or not all(
-            isinstance(tag, str) for tag in tags
-        ):
-            raise RestException("tags must be a list of strings", 400)
         fallbackColorValue = params.get("color", "#FFD700")
         if (
             not isinstance(fallbackColorValue, str)
@@ -654,11 +690,7 @@ class Annotation(Resource):
 
         key = RasterGeometryKey(
             datasetId=datasetId,
-            xy=xy,
-            z=annotationZ,
-            time=annotationTime,
-            shape=shape,
-            tags=tuple(sorted(tags)),
+            selectors=selectors,
             mode=mode,
         )
         tileParams = RasterTileParams(
@@ -683,9 +715,10 @@ class Annotation(Resource):
         if tileX < 0 or tileX >= tilesX or tileY < 0 or tileY >= tilesY:
             raise RestException("x or y is outside the tile pyramid", 400)
 
+        user = self.getCurrentUser()
         Folder().load(
             datasetId,
-            user=self.getCurrentUser(),
+            user=user,
             level=AccessType.READ,
             exc=True,
         )
@@ -701,9 +734,29 @@ class Annotation(Resource):
             cherrypy.response.status = 304
             return b""
 
-        geometry = getFrameGeometry(
-            self._annotationModel, tileParams, version
-        )
+        anonymousIdentity = None
+        if user is None:
+            anonymousIdentity = (
+                cherrypy.request.remote.ip,
+                str(datasetId),
+            )
+        try:
+            geometry = getFrameGeometry(
+                self._annotationModel,
+                tileParams,
+                version,
+                anonymousIdentity=anonymousIdentity,
+            )
+        except RasterBuildBusy:
+            setResponseHeader("Retry-After", "1")
+            raise RestException(
+                "Annotation raster geometry is busy; retry shortly", 503
+            )
+        except RasterBuildRateLimited:
+            setResponseHeader("Retry-After", "1")
+            raise RestException(
+                "Too many annotation raster geometry builds", 429
+            )
         setResponseHeader("Content-Type", "image/png")
         setRawResponse()
         return renderRasterTile(geometry, tileParams)
