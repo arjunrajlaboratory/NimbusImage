@@ -51,6 +51,9 @@ overrides:
   "brace-expansion@2": "^2.1.2"
   "braces": "^3.0.3"
   "cross-spawn": "^7.0.5"
+  # GHSA-7p8r-x3mc-p8w7: URL parsing confusion. Reached via ajv@8, which
+  # floats on ^3.0.6 and so needs an override to move off the pinned 3.1.4.
+  "fast-uri": "^3.1.5"
   "flatted": "^3.4.2"
   "form-data": "^4.0.6"
   "immutable": "^5.1.8"
