@@ -1838,7 +1838,10 @@ async function downloadImagesForCurrentState() {
       boundingBox,
       datasetId,
       newName.value,
-      configuration.layers,
+      // Use store.layers (configuration.layers merged with the per-user
+      // datasetView contrast overrides) so the downloaded contrast matches
+      // what's on screen — consistent with snapshot and movie downloads.
+      store.layers,
       configuration.name,
     );
     if (!urls) {
