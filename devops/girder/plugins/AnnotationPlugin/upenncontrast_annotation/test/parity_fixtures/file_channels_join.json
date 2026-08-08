@@ -1,0 +1,149 @@
+{
+  "name": "file_channels_join",
+  "description": "Two OME-TIFF files each with IndexC 2 but different channel-name casing (DAPI/GFP vs dapi/GFP). File C dimension merges; channels join per index to ['DAPI/dapi','GFP'].",
+  "input": {
+    "itemNames": [
+      "sample_a.ome.tif",
+      "sample_b.ome.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "DAPI",
+          "GFP"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      },
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "dapi",
+          "GFP"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      }
+    ],
+    "tilesInternalMetadata": [
+      {},
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "sample_a.ome.tif": 0,
+          "sample_b.ome.tif": 1
+        },
+        "values": [
+          "a",
+          "b"
+        ]
+      }
+    ],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": null,
+      "T": null,
+      "C": {
+        "source": "file",
+        "guess": "C"
+      }
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "DAPI/dapi",
+        "GFP"
+      ],
+      "sources": [
+        {
+          "path": "sample_a.ome.tif",
+          "framesAsAxes": {
+            "c": 1
+          },
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "sample_b.ome.tif",
+          "framesAsAxes": {
+            "c": 1
+          },
+          "cValues": [
+            0
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": null,
+      "z": null,
+      "t": null
+    }
+  }
+}

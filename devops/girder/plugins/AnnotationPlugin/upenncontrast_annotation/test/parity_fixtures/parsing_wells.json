@@ -1,0 +1,31 @@
+{
+  "name": "parsing_wells",
+  "description": "Well-plate coordinates (A1..B2) matching the single-letter+digits XY pattern.",
+  "input": {
+    "filenames": [
+      "s_A1.tif",
+      "s_A2.tif",
+      "s_B1.tif",
+      "s_B2.tif"
+    ]
+  },
+  "expected": {
+    "variables": [
+      {
+        "guess": "XY",
+        "valueIdxPerFilename": {
+          "s_A1.tif": 0,
+          "s_A2.tif": 1,
+          "s_B1.tif": 2,
+          "s_B2.tif": 3
+        },
+        "values": [
+          "A1",
+          "A2",
+          "B1",
+          "B2"
+        ]
+      }
+    ]
+  }
+}

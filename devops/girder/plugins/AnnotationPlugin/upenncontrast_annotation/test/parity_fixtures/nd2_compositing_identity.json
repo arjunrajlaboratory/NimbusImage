@@ -1,0 +1,354 @@
+{
+  "name": "nd2_compositing_identity",
+  "description": "Single ND2 (XY4 x C2) with per-frame stage positions and an identity camera transform. enableCompositing true; exercises the compositing source layout and coordinate transform.",
+  "input": {
+    "itemNames": [
+      "composite.nd2"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 1
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 1
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 2
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 2
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 3
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 3
+          }
+        ],
+        "channels": [
+          "DAPI",
+          "GFP"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2,
+          "IndexXY": 4
+        },
+        "IndexStride": {
+          "IndexC": 1,
+          "IndexXY": 2
+        }
+      }
+    ],
+    "tilesInternalMetadata": [
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                0,
+                0,
+                0
+              ]
+            }
+          },
+          {
+            "position": {
+              "stagePositionUm": [
+                0,
+                0,
+                0
+              ]
+            }
+          },
+          {
+            "position": {
+              "stagePositionUm": [
+                512,
+                0,
+                0
+              ]
+            }
+          },
+          {
+            "position": {
+              "stagePositionUm": [
+                512,
+                0,
+                0
+              ]
+            }
+          },
+          {
+            "position": {
+              "stagePositionUm": [
+                0,
+                512,
+                0
+              ]
+            }
+          },
+          {
+            "position": {
+              "stagePositionUm": [
+                0,
+                512,
+                0
+              ]
+            }
+          },
+          {
+            "position": {
+              "stagePositionUm": [
+                512,
+                512,
+                0
+              ]
+            }
+          },
+          {
+            "position": {
+              "stagePositionUm": [
+                512,
+                512,
+                0
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": {
+            "volume": {
+              "cameraTransformationMatrix": [
+                1,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": true,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [],
+    "defaultAssignments": {
+      "XY": {
+        "source": "file",
+        "guess": "XY"
+      },
+      "Z": null,
+      "T": null,
+      "C": {
+        "source": "file",
+        "guess": "C"
+      }
+    },
+    "transcodeDefault": false,
+    "config": {
+      "channels": [
+        "DAPI",
+        "GFP"
+      ],
+      "sources": [
+        {
+          "path": "composite.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 0,
+          "frames": [
+            0
+          ],
+          "position": {
+            "x": 0,
+            "y": 1024,
+            "s11": 1,
+            "s12": 0,
+            "s21": 0,
+            "s22": 1
+          }
+        },
+        {
+          "path": "composite.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 1,
+          "frames": [
+            1
+          ],
+          "position": {
+            "x": 0,
+            "y": 1024,
+            "s11": 1,
+            "s12": 0,
+            "s21": 0,
+            "s22": 1
+          }
+        },
+        {
+          "path": "composite.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 0,
+          "frames": [
+            2
+          ],
+          "position": {
+            "x": 0,
+            "y": 1024,
+            "s11": 1,
+            "s12": 0,
+            "s21": 0,
+            "s22": 1
+          }
+        },
+        {
+          "path": "composite.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 1,
+          "frames": [
+            3
+          ],
+          "position": {
+            "x": 0,
+            "y": 1024,
+            "s11": 1,
+            "s12": 0,
+            "s21": 0,
+            "s22": 1
+          }
+        },
+        {
+          "path": "composite.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 0,
+          "frames": [
+            4
+          ],
+          "position": {
+            "x": 1024,
+            "y": 1024,
+            "s11": 1,
+            "s12": 0,
+            "s21": 0,
+            "s22": 1
+          }
+        },
+        {
+          "path": "composite.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 1,
+          "frames": [
+            5
+          ],
+          "position": {
+            "x": 1024,
+            "y": 1024,
+            "s11": 1,
+            "s12": 0,
+            "s21": 0,
+            "s22": 1
+          }
+        },
+        {
+          "path": "composite.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 0,
+          "frames": [
+            6
+          ],
+          "position": {
+            "x": 1024,
+            "y": 1024,
+            "s11": 1,
+            "s12": 0,
+            "s21": 0,
+            "s22": 1
+          }
+        },
+        {
+          "path": "composite.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 1,
+          "frames": [
+            7
+          ],
+          "position": {
+            "x": 1024,
+            "y": 1024,
+            "s11": 1,
+            "s12": 0,
+            "s21": 0,
+            "s22": 1
+          }
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": [],
+      "z": null,
+      "t": null
+    }
+  }
+}
