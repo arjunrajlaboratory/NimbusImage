@@ -10,12 +10,11 @@
       <v-container class="pa-2">
         <v-row align="center" class="mb-1" density="comfortable">
           <v-col cols="4">
-            <v-list-subheader dense>Measure by tag:</v-list-subheader>
+            <v-list-subheader>Measure by tag:</v-list-subheader>
           </v-col>
           <v-col cols="5">
             <tag-picker
               v-model="filteringTags"
-              dense
               :data-tour="TOUR_ANCHORS.propertyTagPicker"
               v-tour-trigger="TOUR_TRIGGERS.propertyTagPicker"
             />
@@ -31,9 +30,7 @@
         </v-row>
         <v-row align="center" density="comfortable">
           <v-col cols="4">
-            <v-list-subheader dense>{{
-              shapeSelectionString
-            }}</v-list-subheader>
+            <v-list-subheader>{{ shapeSelectionString }}</v-list-subheader>
           </v-col>
           <v-col cols="8">
             <v-select
@@ -55,7 +52,6 @@
         <v-row density="comfortable">
           <v-col>
             <docker-image-select
-              dense
               v-model="dockerImage"
               :imageFilter="propertyImageFilter"
               :data-tour="TOUR_ANCHORS.propertyAlgorithmSelect"
@@ -69,7 +65,6 @@
               <property-worker-menu
                 v-model="interfaceValues"
                 :image="dockerImage"
-                dense
               />
             </v-col>
           </v-row>

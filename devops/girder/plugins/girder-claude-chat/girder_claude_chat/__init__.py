@@ -1,5 +1,5 @@
-import os
 import json
+import os
 import logging
 
 from anthropic import Anthropic, APIError
@@ -8,6 +8,8 @@ from girder import plugin
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import Resource, RestException
+
+from .rate_limit import SlidingWindowRateLimiter
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -19,13 +21,24 @@ CLAUDE_MODEL = 'claude-sonnet-5'
 MAX_TOOL_SUGGESTION_IMAGES = 2
 MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS = 12 * 1024 * 1024
 
-# The system prompt ships as package data alongside this module. Resolving
-# it relative to __file__ works for every install layout -- the Docker image
-# (editable install), a non-editable/packaged install (the plugin's own
-# tox/pytest suite), and a local non-Docker Girder.
-SYSTEM_PROMPT_PATH = os.path.join(
-    os.path.dirname(__file__), 'system_prompt_2.txt'
-)
+PACKAGE_DIR = os.path.dirname(__file__)
+
+# The AI-panel agent's system prompt and tool schema ship as package data.
+# Resolving them relative to __file__ works for every install layout -- the
+# Docker image (editable install), a non-editable/packaged install (the
+# plugin's own tox/pytest suite), and a local non-Docker Girder. They must
+# live inside the package, not at the plugin root: a non-editable install
+# (tox sdist, PyPI) does not ship root-level files, which would leave the
+# toolset empty and 503 the claude_agent endpoint.
+AGENT_PROMPT_PATH = os.path.join(PACKAGE_DIR, 'agent_system_prompt.txt')
+AGENT_TOOLS_PATH = os.path.join(PACKAGE_DIR, 'agent_tools.json')
+
+# NimbusImage domain knowledge for the agent: a compact "core concepts"
+# primer that is always in context, plus a directory of deeper per-topic
+# help articles the model can fetch on demand via read_help_topic /
+# GET claude_agent/help?topic=<slug>. Same PACKAGE_DIR reasoning as above.
+CONCEPTS_CORE_PATH = os.path.join(PACKAGE_DIR, 'concepts_core.md')
+HELP_DIR = os.path.join(PACKAGE_DIR, 'help')
 
 # System prompt for the tool-suggestion endpoint. It is deliberately terse:
 # the real work is describing the image (which the vision model does well) and
@@ -123,66 +136,251 @@ def _list_param(data, name):
     return value
 
 
-class ClaudeChatResource(Resource):
+class ClaudeAgentResource(Resource):
+    """One round trip of the AI-panel agent loop.
+
+    The browser owns the loop (see codebaseDocumentation/AI_PANEL_SPEC.md,
+    Option A): it sends the full conversation in Anthropic wire format,
+    this endpoint attaches the API key, the system prompt and the
+    server-held tool definitions, and returns the raw content blocks. Tool
+    calls are executed by the frontend against the user's own session.
+    """
+
+    # Output-token cap per round trip. Sized so the model can finish a
+    # normal answer without truncation (stop_reason 'max_tokens'); the
+    # frontend surfaces a "response was cut short" notice when it is hit.
+    AGENT_MAX_TOKENS = 32000
+    # Backstop against runaway conversations; the frontend caps the loop
+    # much earlier.
+    AGENT_MAX_MESSAGES = 400
+
+    # Abuse/cost protection (see AI_PANEL_SPEC.md §6.1 and
+    # API_RATE_LIMITING_AUDIT.md); limiter semantics and the
+    # single-process caveat are documented in rate_limit.py.
+    RATE_LIMIT_WINDOW_SECONDS = 60
+    # Must stay above the frontend's per-message loop cap
+    # (MAX_TOOL_ITERATIONS in src/store/aiPanel.ts, currently 30): a single
+    # legitimate multi-step turn spends one request per iteration, and it must
+    # not be able to 429 itself partway through.
+    RATE_LIMIT_MAX_REQUESTS = 45
+    # Reject conversations whose JSON-serialized messages exceed this size
+    # (base64 screenshots dominate; the frontend prunes old ones).
+    MAX_BODY_BYTES = 25 * 1024 * 1024
+
     def __init__(self):
         super().__init__()
-        self.resourceName = 'claude_chat'
-        self.route('POST', (), self.query_claude)
+        self.resourceName = 'claude_agent'
+        self.route('POST', (), self.agent_message)
+        self.route('GET', ('help',), self.get_help_topic)
 
-        # Load system prompt
+        self._rate_limiter = SlidingWindowRateLimiter(
+            self.RATE_LIMIT_MAX_REQUESTS, self.RATE_LIMIT_WINDOW_SECONDS
+        )
+
+        self.help_topics = self._load_help_topics()
+        self.system_prompt = self._assemble_system_prompt()
+
         try:
-            with open(SYSTEM_PROMPT_PATH, 'r') as f:
-                self.system_prompt = f.read().strip()
-            logger.info('Successfully loaded system prompt')
-        except IOError:
-            logger.error(
-                'Failed to load system prompt from %s', SYSTEM_PROMPT_PATH
-            )
-            self.system_prompt = ''
+            with open(AGENT_TOOLS_PATH, 'r') as f:
+                self.tools = json.load(f)
+            logger.info('Loaded %d agent tool definitions', len(self.tools))
+        except (IOError, ValueError):
+            logger.error('Failed to load agent tool definitions')
+            self.tools = []
+        if self.tools:
+            # Tools and system prompt are stable across requests; caching
+            # the prefix makes each loop iteration cheap.
+            self.tools[-1]['cache_control'] = {'type': 'ephemeral'}
 
-        self.client = _make_anthropic_client('claude_chat')
+        self.client = _make_anthropic_client('claude_agent')
+
+    def _read_text(self, path):
+        try:
+            with open(path, 'r') as f:
+                return f.read().strip()
+        except IOError:
+            logger.error('Failed to read %s', path)
+            return ''
+
+    def _load_help_topics(self):
+        """Load help/<slug>.md into a {slug: markdown} dict."""
+        topics = {}
+        if not os.path.isdir(HELP_DIR):
+            logger.error('Help topic directory missing: %s', HELP_DIR)
+            return topics
+        for name in sorted(os.listdir(HELP_DIR)):
+            if name.endswith('.md'):
+                topics[name[:-3]] = self._read_text(
+                    os.path.join(HELP_DIR, name)
+                )
+        logger.info('Loaded %d help topics', len(topics))
+        return topics
+
+    def _assemble_system_prompt(self):
+        """Combine the base prompt, concepts core, and topic index."""
+        base = self._read_text(AGENT_PROMPT_PATH)
+        concepts = self._read_text(CONCEPTS_CORE_PATH)
+        index = ''
+        if self.help_topics:
+            slugs = '\n'.join(
+                '- ' + slug for slug in sorted(self.help_topics)
+            )
+            index = (
+                'When you need deeper detail on how a NimbusImage feature '
+                'works, or how the user can do something themselves in the '
+                'UI, call read_help_topic with one of these topics:\n'
+                + slugs
+            )
+        return '\n\n'.join(part for part in [base, concepts, index] if part)
+
+    def get_help_topic_markdown(self, topic):
+        """Return a topic's markdown, or raise RestException(400)."""
+        if not isinstance(topic, str) or topic not in self.help_topics:
+            raise RestException(
+                'Unknown help topic. Available: '
+                + ', '.join(sorted(self.help_topics)),
+                code=400,
+            )
+        return self.help_topics[topic]
+
+    def _check_rate_limit(self, user_id):
+        """Raise RestException(429) when the user exceeds the rate limit."""
+        if not self._rate_limiter.check(user_id):
+            raise RestException(
+                'Rate limit exceeded: too many AI-panel requests. '
+                'Please wait a moment and try again.',
+                code=429,
+            )
+
+    @staticmethod
+    def _parse_agent_messages(data):
+        """Validate the request body and return its messages list.
+
+        The body must be a JSON object with a non-empty ``messages`` list of
+        objects (Anthropic wire format). Malformed input (``null``, a bare
+        string, or a list of non-objects) raises a 400 rather than crashing
+        later with an AttributeError.
+        """
+        if not isinstance(data, dict):
+            raise RestException('Request body must be a JSON object')
+        messages = data.get('messages')
+        if not isinstance(messages, list) or not messages:
+            raise RestException('messages must be a non-empty list')
+        if not all(isinstance(m, dict) for m in messages):
+            raise RestException('messages entries must be objects')
+        return messages
+
+    @staticmethod
+    def _add_message_cache_breakpoint(messages):
+        """Mark the end of the conversation as a prompt-cache breakpoint.
+
+        System prompt and tools carry the first two breakpoints; without a
+        third one on the messages, every loop iteration would reprocess
+        the whole conversation (including in-turn screenshots) uncached.
+        Marking the last content block lets each iteration read the prefix
+        written by the previous one. Mutates this request's parsed body
+        only — the client's own copy of the conversation is never touched.
+        (Caveat: a single turn adding more than ~20 content blocks falls
+        outside the cache lookback window; rare with this tool surface.)
+        """
+        content = messages[-1].get('content')
+        if (
+            isinstance(content, list)
+            and content
+            and isinstance(content[-1], dict)
+        ):
+            content[-1]['cache_control'] = {'type': 'ephemeral'}
 
     @access.user
     @autoDescribeRoute(
-        Description('Send a full chat structure to Claude and get a response')
-        .jsonParam('data', 'Chat structure', paramType='body', required=True)
+        Description(
+            'Run one round trip of the AI-panel agent loop: send the '
+            'conversation in Anthropic wire format and get the raw '
+            'response content blocks.'
+        )
+        .jsonParam(
+            'data',
+            'Object with a "messages" list in Anthropic wire format',
+            paramType='body',
+            required=True,
+        )
     )
-    def query_claude(self, data):
-        return self.query_claude_imp(data)
-
-    def query_claude_imp(self, data):
-        if self.client is None:
+    def agent_message(self, data):
+        if self.client is None or not self.tools:
             raise RestException(
-                'Claude chat is not configured (no ANTHROPIC_API_KEY)',
-                code=503
+                'The claude_agent endpoint is not configured', code=503
             )
-        messages = data.get('messages', [])
-        logger.debug(f'Processing {len(messages)} messages')
+        self._check_rate_limit(self.getCurrentUser()['_id'])
+        messages = self._parse_agent_messages(data)
+        if len(messages) > self.AGENT_MAX_MESSAGES:
+            raise RestException('Conversation too long')
+        body_size = len(json.dumps(messages).encode('utf-8'))
+        if body_size > self.MAX_BODY_BYTES:
+            raise RestException(
+                'Conversation payload too large; clear the conversation '
+                'and start a new one.',
+                code=413,
+            )
+        self._add_message_cache_breakpoint(messages)
         try:
-            response = self.client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=8192,
-                system=[
-                    {
-                        'type': 'text',
-                        'text': self.system_prompt,
-                        'cache_control': {'type': 'ephemeral'}
-                    }
-                ],
-                messages=messages
-            )
-            # Sonnet 5 may include non-text content blocks before the answer.
-            text = ''.join(
-                block.text
-                for block in response.content
-                if block.type == 'text'
-            )
-            return {'response': text}
+            return self._stream_agent_response(messages)
         except APIError as e:
-            logger.error(
-                f'Anthropic API error: {str(e)}', exc_info=True
-            )
+            logger.error(f'Error in agent endpoint: {str(e)}', exc_info=True)
             return {'error': str(e)}
+
+    @access.user
+    @autoDescribeRoute(
+        Description('Fetch a NimbusImage help topic as markdown.')
+        .param('topic', 'Help topic slug', required=True)
+    )
+    def get_help_topic(self, topic):
+        return {
+            'topic': topic,
+            'markdown': self.get_help_topic_markdown(topic),
+        }
+
+    def _stream_agent_response(self, messages):
+        """Call the model and shape the response for the frontend.
+
+        Uses the streaming API because AGENT_MAX_TOKENS exceeds the SDK's
+        non-streaming ceiling (~21k tokens, above which client.messages.create
+        raises "Streaming is required for operations that may take longer than
+        10 minutes"). We still aggregate the whole message server-side and
+        return it in one response, so the wire contract is unchanged: the
+        browser owns the tool loop and never sees a token stream.
+        """
+        with self.client.messages.stream(
+            model=CLAUDE_MODEL,
+            max_tokens=self.AGENT_MAX_TOKENS,
+            system=[
+                {
+                    'type': 'text',
+                    'text': self.system_prompt,
+                    'cache_control': {'type': 'ephemeral'},
+                }
+            ],
+            tools=self.tools,
+            messages=messages,
+        ) as stream:
+            response = stream.get_final_message()
+        return {
+            # Streaming returns ParsedTextBlocks with an output-only
+            # `parsed_output` field (marked __api_exclude__). These blocks are
+            # sent back verbatim as the next turn's assistant message, so drop
+            # the API-excluded fields or the request 400s ("Extra inputs are
+            # not permitted"). Mirrors the SDK's own request serialization.
+            'content': [
+                block.model_dump(
+                    exclude=getattr(block, '__api_exclude__', None)
+                )
+                for block in response.content
+            ],
+            'stop_reason': response.stop_reason,
+            'usage': {
+                'input_tokens': response.usage.input_tokens,
+                'output_tokens': response.usage.output_tokens,
+            },
+        }
 
 
 class ClaudeSuggestToolsResource(Resource):
@@ -317,5 +515,5 @@ class GirderClaudeChatPlugin(plugin.GirderPlugin):
     DISPLAY_NAME = 'Claude Chat'
 
     def load(self, info):
-        info['apiRoot'].claude_chat = ClaudeChatResource()
+        info['apiRoot'].claude_agent = ClaudeAgentResource()
         info['apiRoot'].claude_suggest_tools = ClaudeSuggestToolsResource()

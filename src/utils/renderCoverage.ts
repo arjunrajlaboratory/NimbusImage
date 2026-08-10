@@ -23,19 +23,28 @@ export interface IRenderCoverage {
 }
 
 export function computeRenderCoverage(input: {
-  stubOnlyMode: boolean;
+  // Whether the dataset is being treated as a large ("stub mode") dataset:
+  // either it was loaded stub-only, OR its count now exceeds the stub-mode
+  // threshold. The caller derives this reactively so lowering the threshold
+  // below the count surfaces the indicator without a reload (it is NOT the
+  // load-time stubOnlyMode data flag, which stays load-time only).
+  stubMode: boolean;
   viewportShown: number; // rendered annotations within the actual viewport
   viewportTotal: number; // all annotations within the actual viewport (current frame)
   loaded: number; // total stubs held in memory
 }): IRenderCoverage {
-  const { stubOnlyMode, viewportShown, viewportTotal, loaded } = input;
-  // Always visible in stub-only mode — it stays a stable, useful readout (and a
-  // home for the settings gear) whether the budget is downsampling the view or
-  // showing everything in it. When fully zoomed in, fraction is 1 and the bar
-  // reads full ("everything here is drawn"); an empty region reads "No
-  // annotations in view".
-  const show = stubOnlyMode;
+  const { stubMode, viewportShown, viewportTotal, loaded } = input;
   const hasAnnotations = viewportTotal > 0;
+  // Show whenever the dataset is in stub mode, OR the render is actively
+  // downsampling (not everything in the current view is drawn):
+  //   - Stub mode: a stable, persistent readout (and the home for the settings
+  //     gear) so the user knows a large dataset is being handled specially —
+  //     even when fully zoomed in and the bar reads full ("Showing X of X").
+  //   - Downsampling outside stub mode (e.g. maxVisible tightened below the
+  //     dataset size so the budget clips the view): surfaces it rather than
+  //     letting it happen silently.
+  // An empty region (no annotations in view) reads "No annotations in view".
+  const show = stubMode || viewportShown < viewportTotal;
   const fraction = hasAnnotations
     ? clamp(viewportShown / viewportTotal, 0, 1)
     : 0;

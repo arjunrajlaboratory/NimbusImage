@@ -21,6 +21,7 @@ import { createSequenceGuard } from "@/utils/sequenceGuard";
 
 import {
   TAnnotationOrStub,
+  IAnnotationFilter,
   ITagAnnotationFilter,
   IPropertyAnnotationFilter,
   IROIAnnotationFilter,
@@ -97,14 +98,6 @@ export class Filters extends VuexModule {
     // they render as broken, uneditable filter chips in the next dataset (the
     // paths no longer resolve to any property). onlyCurrentFrame is a generic
     // view toggle rather than stale data, so it is intentionally preserved.
-    //
-    // Known limitation: clearing filterPaths unmounts the old dataset's
-    // PropertyFilterHistogram components, and their onBeforeUnmount re-adds a
-    // single *disabled* propertyFilter after this reset runs. That orphan is
-    // inert — it is excluded from filteredAnnotations (enabled === false) and
-    // never rendered (the panel iterates filterPaths, now empty) — and the
-    // next dataset switch clears it. See PropertyFilterHistogram.vue's
-    // onBeforeUnmount for why that disable step must stay.
     this.tagFilter = {
       id: "tagFilter",
       exclusive: false,
@@ -134,13 +127,41 @@ export class Filters extends VuexModule {
   }
 
   @Mutation
-  togglePropertyPathFiltering(path: string[]) {
+  private togglePropertyPathFilteringImpl(path: string[]) {
     const pathIdx = findIndexOfPath(path, this.filterPaths);
     if (pathIdx < 0) {
       this.filterPaths.push(path);
     } else {
       this.filterPaths.splice(pathIdx, 1);
+      this.propertyFilters = this.propertyFilters.filter(
+        (filter) => !arePathEquals(filter.propertyPath, path),
+      );
     }
+  }
+
+  @Action
+  togglePropertyPathFiltering(path: string[]) {
+    this.togglePropertyPathFilteringImpl(path);
+    main.scheduleAnnotationBrowserSave();
+  }
+
+  @Mutation
+  private setAnnotationBrowserFilterState(payload: {
+    filterPaths: string[][];
+    propertyFilters: IPropertyAnnotationFilter[];
+  }) {
+    this.filterPaths = payload.filterPaths;
+    this.propertyFilters = payload.propertyFilters;
+  }
+
+  // Restore filter rows and their ranges persisted in the configuration.
+  // Uses the raw mutation so hydration never schedules a save of its own.
+  @Action
+  hydrateAnnotationBrowserFilters(payload: {
+    filterPaths: string[][];
+    propertyFilters: IPropertyAnnotationFilter[];
+  }) {
+    this.setAnnotationBrowserFilterState(payload);
   }
 
   @Mutation
@@ -260,6 +281,27 @@ export class Filters extends VuexModule {
   get hasActivePropertyFilter() {
     return this.propertyFilters.some(
       (filter: IPropertyAnnotationFilter) => filter.enabled,
+    );
+  }
+
+  // How many filters are currently narrowing the set of visible objects.
+  // Drives the count badge on the app-bar Filters button, so active filters
+  // stay discoverable while the panel is closed. Each enabled filter row
+  // counts once; the boolean toggles count once when set away from their
+  // permissive default (showAnnotationsFromHiddenLayers defaults to true, so
+  // it only counts when off). `emptyROIFilter` is a region still being drawn
+  // and filters nothing yet, so it is excluded.
+  get activeFilterCount() {
+    const countEnabled = (filterList: IAnnotationFilter[]) =>
+      filterList.filter((filter: IAnnotationFilter) => filter.enabled).length;
+    return (
+      (this.tagFilter.enabled ? 1 : 0) +
+      (this.onlyCurrentFrame ? 1 : 0) +
+      (this.selectionFilter.enabled ? 1 : 0) +
+      (main.showAnnotationsFromHiddenLayers ? 0 : 1) +
+      countEnabled(this.propertyFilters) +
+      countEnabled(this.roiFilters) +
+      countEnabled(this.annotationIdFilters)
     );
   }
 
@@ -441,7 +483,7 @@ export class Filters extends VuexModule {
   }
 
   @Mutation
-  public updatePropertyFilter(value: IPropertyAnnotationFilter) {
+  private updatePropertyFilterImpl(value: IPropertyAnnotationFilter) {
     this.propertyFilters = [
       ...this.propertyFilters.filter(
         (filter: IPropertyAnnotationFilter) =>
@@ -449,6 +491,16 @@ export class Filters extends VuexModule {
       ),
       value,
     ];
+  }
+
+  @Action
+  public updatePropertyFilter(value: IPropertyAnnotationFilter) {
+    this.updatePropertyFilterImpl(value);
+    // Chat-created filters have no Annotation Browser row and remain
+    // session-only. Once a row exists, its edits belong to the configuration.
+    if (findIndexOfPath(value.propertyPath, this.filterPaths) >= 0) {
+      main.scheduleAnnotationBrowserSave();
+    }
   }
 
   @Mutation

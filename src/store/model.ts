@@ -431,6 +431,16 @@ export interface IViewConfiguration {
 
 export type TLayerMode = "single" | "multiple" | "unroll";
 
+/**
+ * How timelapse track segments are coloured. "track" gives every connected
+ * component its own hue; "uniform" draws them all in `TRACK_UNIFORM_COLOR`,
+ * which is easier to read when many tracks overlap.
+ */
+export type TTimelapseTrackColoring = "track" | "uniform";
+
+/** Which tab the Object Browser is showing. */
+export type TAnnotationBrowserTab = "objects" | "connections";
+
 export type TVolumeViewMode = "2d" | "3d";
 
 export type TVolumeBlendMode = "composite" | "mip";
@@ -508,6 +518,15 @@ export interface IDatasetConfigurationCompatibility {
   channels: { [key: number]: string };
 }
 
+export interface IAnnotationBrowserConfig {
+  // Property columns shown in the annotation list
+  displayedPropertyPaths: string[][];
+  // Properties with a filter row in the annotation browser
+  filterPaths: string[][];
+  // Range/values and enabled state of those filter rows
+  propertyFilters: IPropertyAnnotationFilter[];
+}
+
 export interface IDatasetConfigurationBase {
   compatibility: IDatasetConfigurationCompatibility;
   layers: IDisplayLayer[];
@@ -516,6 +535,14 @@ export interface IDatasetConfigurationBase {
   propertyIds: string[];
   pipelines: IPipeline[];
   scales: IScales;
+  // Shared annotation-rendering tuning for this configuration. Optional for
+  // compatibility with configurations created before these settings were
+  // persisted.
+  visibilityConfig?: IVisibilityConfig;
+  // Shared annotation-browser state (displayed property columns and property
+  // filters). Optional for compatibility with configurations created before
+  // this was persisted.
+  annotationBrowserConfig?: IAnnotationBrowserConfig;
 }
 
 export interface IDatasetConfiguration extends IDatasetConfigurationBase {
@@ -1151,12 +1178,24 @@ interface IGeoJSScaleWidgetSpec {
 
 type IGeoJSScaleWidgetOptions = keyof IGeoJSScaleWidgetSpec;
 
+// https://opengeoscience.github.io/geojs/apidocs/geo.gui.domWidget.html
+// Created with a `position` of map coordinates ({ x, y }), the widget's element
+// tracks that point as the map is panned and zoomed.
+export interface IGeoJSDomWidget extends IGeoJSWidget {
+  canvas: (() => HTMLElement) & ((val: HTMLElement) => IGeoJSDomWidget);
+  layer: () => IGeoJSUiLayer;
+}
+
 // https://opengeoscience.github.io/geojs/apidocs/geo.gui.uiLayer.html
 export interface IGeoJSUiLayer extends IGeoJSLayer {
   createWidget: <WidgetName extends string, ParentType extends IGeoJsObject>(
     widgetName: WidgetName,
     arg: { parent?: ParentType; [k: string]: any },
-  ) => WidgetName extends "scale" ? IGeoJSScaleWidget : IGeoJSWidget;
+  ) => WidgetName extends "scale"
+    ? IGeoJSScaleWidget
+    : WidgetName extends "dom"
+      ? IGeoJSDomWidget
+      : IGeoJSWidget;
   deleteWidget: (widget: IGeoJSWidget) => IGeoJSUiLayer;
 }
 
@@ -1580,6 +1619,10 @@ export interface IAnnotationListQuery {
   propertyPaths: string[][];
   offset: number;
   limit: number;
+  // When supplied, the server ignores `offset` and returns the page containing
+  // this annotation under the same filters and sort. `offset` in the response
+  // is null when the annotation is not part of the filtered result.
+  anchorId?: string;
 }
 
 // A server list row: stub fields + the requested property values.
@@ -1591,6 +1634,7 @@ export interface IAnnotationListRow extends IAnnotationStub {
 export interface IAnnotationListPage {
   total: number;
   rows: IAnnotationListRow[];
+  offset?: number | null;
 }
 
 export type THydrationMode = "shapes" | "dots";
@@ -1603,6 +1647,11 @@ export interface IVisibilityConfig {
   // Max annotations to render (stubs or shapes) — the cap when fully zoomed in.
   // Datasets at or below this render fully at every zoom (the size gate).
   maxVisible: number;
+  // Floor on the zoom-adaptive render budget: at least this many are drawn at
+  // any zoom (clamped to maxVisible). So a view holding fewer than this shows
+  // everything; a busier view shows at least this many (or the zoom-rule count,
+  // whichever is higher). Set to 0 to defer entirely to the zoom rule.
+  minimumVisible: number;
   // Max annotations to keep hydrated per visibility update — the cap when fully
   // zoomed in.
   maxHydrated: number;
@@ -1611,14 +1660,50 @@ export interface IVisibilityConfig {
   hydrationCacheCap: number;
   // If true, threshold applies to total frame annotations across all layers.
   globalThreshold: boolean;
-  // Fraction of the screen the rendered dots may cover when fully zoomed out.
-  // Sets the zoomed-out floor from annotation size + screen; the budget doubles
-  // per zoom level up to maxVisible.
+  // Fraction of the screen the rendered dots may cover. See revealMoreOnZoom for
+  // how this interacts with zoom.
   coverageTarget: number;
-  // Camera hysteresis: skip the camera-driven refresh until EITHER the zoom
-  // magnification OR the center (as a fraction of the viewport) changes by this
-  // fraction (e.g. 0.2 = 20%).
+  // Controls how the render budget responds to zoom:
+  //   false (default): enforce coverageTarget at EVERY zoom — the budget is the
+  //     number of dots that cover coverageTarget of the screen at the current
+  //     zoom, so the view stays at ~that density (uncrowded) and reveals
+  //     everything only when you zoom into a genuinely sparse region.
+  //   true: "reveal more as you zoom in" — coverageTarget sets the zoomed-out
+  //     floor and the budget doubles per zoom level up to maxVisible, so working
+  //     zooms progressively reveal (and can crowd) more.
+  revealMoreOnZoom: boolean;
+  // Zoom hysteresis: skip the camera-driven refresh until the zoom magnification
+  // changes by this fraction (e.g. 0.2 = 20%). Panning has no threshold — any
+  // pan refreshes — so this governs zoom only.
   viewportRefreshFraction: number;
+}
+
+// Annotation count above which the annotation browser list switches to the
+// backend-paginated (server) list, independently of stub-only mode. This is a
+// UI materialization limit (one v-data-table row per annotation, client-side
+// sort), NOT a data-loading concern like stubThreshold — a fully-fetched
+// dataset can still be too large to sort/render as a client-side table.
+export const ANNOTATION_LIST_SERVER_THRESHOLD = 20000;
+
+export const DEFAULT_VISIBILITY_CONFIG: IVisibilityConfig = {
+  stubThreshold: 100000,
+  maxVisible: 50000,
+  minimumVisible: 5000,
+  maxHydrated: 20000,
+  hydrationCacheCap: 40000,
+  globalThreshold: true,
+  coverageTarget: 0.3,
+  revealMoreOnZoom: false,
+  viewportRefreshFraction: 0.2,
+};
+
+export function resolveVisibilityConfig(
+  config?: Partial<IVisibilityConfig>,
+): IVisibilityConfig {
+  return {
+    ...DEFAULT_VISIBILITY_CONFIG,
+    ...config,
+  };
 }
 
 export function isHydratedAnnotation(
@@ -1816,11 +1901,52 @@ export type TPropertyHistogram = {
   max: number;
 }[];
 
+// Annotation export files are raw Mongo documents produced by
+// `GET /export/json`: the identifier lives under `_id`, and `id` isn't
+// present. These types describe that on-disk/import shape, as opposed to
+// the normalized `IAnnotation`/`IAnnotationConnection`/`IAnnotationProperty`
+// used everywhere else once the frontend has parsed a server response.
+export type ISerializedAnnotation = Omit<IAnnotation, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
+export type ISerializedConnection = Omit<IAnnotationConnection, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
+export type ISerializedProperty = Omit<IAnnotationProperty, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
 export interface ISerializedData {
-  annotations: IAnnotation[];
-  annotationConnections: IAnnotationConnection[];
-  annotationProperties: IAnnotationProperty[];
+  annotations: ISerializedAnnotation[];
+  annotationConnections: ISerializedConnection[];
+  annotationProperties: ISerializedProperty[];
   annotationPropertyValues: IAnnotationPropertyValues;
+}
+
+export interface IAnnotationImportPayload {
+  datasetId: string;
+  annotations?: ISerializedAnnotation[];
+  connections?: ISerializedConnection[];
+  propertyValues?: IAnnotationPropertyValues;
+  propertyIdMap?: { [oldPropertyId: string]: string };
+}
+
+export interface IAnnotationImportResult {
+  annotationCount: number;
+  connectionCount: number;
+  propertyValueCount: number;
+}
+
+// Storage usage and quota for a user, as reported by the girder-user-quota
+// plugin. Sizes are in bytes; quota is null when unlimited.
+export interface IUserStorageQuota {
+  used: number;
+  quota: number | null;
 }
 
 export interface IJobEventData {
@@ -2267,6 +2393,12 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       zStep: { value: 1, unit: "m" },
       tStep: { value: 1, unit: "s" },
     },
+    visibilityConfig: resolveVisibilityConfig(),
+    annotationBrowserConfig: {
+      displayedPropertyPaths: [],
+      filterPaths: [],
+      propertyFilters: [],
+    },
   };
 }
 
@@ -2307,13 +2439,6 @@ export const AnnotationSelectionTypesTooltips = {
 export interface IChatImage {
   data: string;
   type: string;
-  visible?: boolean;
-}
-
-export interface IChatMessage {
-  type: "user" | "assistant" | "system" | "error";
-  content: string;
-  images?: IChatImage[];
   visible?: boolean;
 }
 

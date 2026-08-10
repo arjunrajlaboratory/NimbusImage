@@ -28,6 +28,7 @@ vi.mock("@/store/index", () => ({
     annotationsAPI: {
       fetchAnnotationListIds: (...a: any[]) => fetchAnnotationListIds(...a),
     },
+    scheduleAnnotationBrowserSave: () => {},
   },
 }));
 

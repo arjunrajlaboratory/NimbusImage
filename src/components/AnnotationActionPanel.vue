@@ -175,4 +175,26 @@ async function copyAnnotationIds() {
 .any-left-palette-open .action-panel {
   transform: translateX(calc(var(--nimbus-left-palette-clear-x) - 16px));
 }
+
+/* Timelapse mode: the Timelapse palette is anchored at left 444, which is where
+   the rule above slides this panel to (446) — they landed on top of each other,
+   with the palette winning. Move to the right edge instead and cancel the left
+   shift. Ordered after that rule so it wins without !important.
+
+   `--nimbus-right-edge-clear-x` is resolved in App.vue from every right-edge
+   overlay that is open, not just one. An earlier version keyed only off the
+   Object Browser and left this panel under the AI panel (`z-index` 2001 vs 1000,
+   and it is not mutually exclusive with either timelapse mode or the Browser),
+   which made 4 of its 6 buttons unhittable — including Deselect All, the only
+   non-destructive way out. Verified with elementFromPoint, not by eye. */
+.timelapse-palette-open .action-panel {
+  left: auto;
+  right: var(--nimbus-right-edge-clear-x);
+  transform: none;
+  /* Usually still 72px. Below roughly 1500px wide there is no horizontal
+     placement that clears both the Timelapse palette and the right-edge
+     overlays, so App.vue drops this below the palette using its measured
+     height. */
+  top: var(--nimbus-action-panel-top, 72px);
+}
 </style>

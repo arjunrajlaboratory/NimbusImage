@@ -12,7 +12,6 @@ export const TOUR_ANCHORS = {
   settingsButton: "settings-button",
   analyzeButton: "analyze-button",
   helpButton: "help-button",
-  chatButton: "chat-button",
   // ToolCreation.vue
   toolName: "tool-name",
   toolCreationAddToolButton: "tool-creation-add-tool-button",
@@ -76,7 +75,6 @@ export const TOUR_TRIGGERS = {
   settingsButton: "settings-button",
   analyzeButton: "analyze-button",
   helpButton: "help-button",
-  chatButton: "chat-button",
   addTool: "add-tool",
   toolCreationAddToolButton: "tool-creation-add-tool-button",
   timelapseMode: "timelapse-mode",

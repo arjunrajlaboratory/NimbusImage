@@ -20,6 +20,7 @@ import VolumeViewer from "@/components/VolumeViewer.vue";
 import ToolSuggestions from "@/components/ToolSuggestions.vue";
 
 import store from "@/store";
+import timelapseStore from "@/store/timelapse";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import volumeViewStore from "@/store/volumeView";
@@ -47,7 +48,7 @@ const suggestPrerequisitesReady = computed(
 
 function datasetChanged() {
   if (dataset.value && dataset.value.time.length <= 1) {
-    store.setShowTimelapseMode(false);
+    timelapseStore.setShowMode(false);
   }
 }
 

@@ -70,6 +70,56 @@ export class AnnotationSpatialIndex {
     return { inViewportIds, outOfViewportIds };
   }
 
+  /**
+   * Classify `currentFrameIds` against TWO nested boxes in a single pass:
+   *   - `inViewport`: inside the inner (unexpanded) box — the region the user sees
+   *   - `ring`: inside the outer (expanded) box but NOT the inner — the pan-preload margin
+   *   - `outside`: outside the outer box
+   * The inner box must be contained in the outer box (it always is here: the outer
+   * is the inner expanded by 50% each side). This replaces two `splitByViewport`
+   * calls plus a caller-side set-difference with one iteration over
+   * `currentFrameIds`, using the already-indexed point coordinates directly
+   * instead of running two tree searches and building two full result sets.
+   * That matters on the hot visibility-update path at ~700K.
+   */
+  partitionByViewports(
+    currentFrameIds: string[],
+    innerBox: { minX: number; minY: number; maxX: number; maxY: number },
+    outerBox: { minX: number; minY: number; maxX: number; maxY: number },
+  ): { inViewport: string[]; ring: string[]; outside: string[] } {
+    const inViewport: string[] = [];
+    const ring: string[] = [];
+    const outside: string[] = [];
+    for (const id of currentFrameIds) {
+      const item = this.itemById.get(id);
+      if (!item) {
+        outside.push(id);
+        continue;
+      }
+      // SpatialItem entries are points: bulkLoad and insert always set
+      // minX === maxX and minY === maxY.
+      const { minX, minY } = item;
+      if (
+        minX >= innerBox.minX &&
+        minX <= innerBox.maxX &&
+        minY >= innerBox.minY &&
+        minY <= innerBox.maxY
+      ) {
+        inViewport.push(id);
+      } else if (
+        minX >= outerBox.minX &&
+        minX <= outerBox.maxX &&
+        minY >= outerBox.minY &&
+        minY <= outerBox.maxY
+      ) {
+        ring.push(id);
+      } else {
+        outside.push(id);
+      }
+    }
+    return { inViewport, ring, outside };
+  }
+
   queryBox(
     minX: number,
     minY: number,

@@ -49,6 +49,14 @@ PATHS = {
     ),
 }
 
+# Cursor-paginated "fetch all" for the dataset-scoped GET endpoints. A dataset
+# can hold tens of millions of annotations / property values, so a single
+# bounded request would silently truncate the result. Page through with an
+# _id cursor instead, up to a generous safety ceiling that a real dataset
+# won't reach but a runaway query can't exceed.
+FETCH_ALL_PAGE_SIZE = 100_000
+MAX_FETCH_ALL = 100_000_000
+
 
 class UPennContrastAnnotationClient:
     """
@@ -71,25 +79,59 @@ class UPennContrastAnnotationClient:
 
     # Annotations
 
+    def _getAllPages(self, baseUrl):
+        """Fetch every page of a dataset-scoped listing using _id cursor
+        pagination, returning the concatenated list.
+
+        `baseUrl` must already carry its query string (it starts with
+        "?datasetId=..."); this appends limit/sort/afterId. Paging stops when
+        a short page is returned (the last one) or the MAX_FETCH_ALL runaway
+        guard is hit.
+        """
+        results = []
+        afterId = None
+        while len(results) < MAX_FETCH_ALL:
+            url = f"{baseUrl}&limit={FETCH_ALL_PAGE_SIZE}&sort=_id"
+            if afterId:
+                url = f"{url}&afterId={afterId}"
+            page = self.client.get(url)
+            if not page:
+                break
+            results.extend(page)
+            if len(page) < FETCH_ALL_PAGE_SIZE:
+                break
+            afterId = page[-1]["_id"]
+        return results
+
     def getAnnotationsByDatasetId(
-        self, datasetId, shape=None, tags=None, limit=1_000_000, offset=0
+        self, datasetId, shape=None, tags=None, limit=None, offset=0
     ):
         """
-        Get the list of all annotations in the specified dataset
+        Get annotations in the specified dataset.
+
+        By default (``limit=None``) this pages through the whole dataset with
+        an _id cursor and returns every annotation, so large datasets are no
+        longer silently truncated at a fixed limit. Pass an explicit ``limit``
+        to fetch a single bounded page (honoring ``offset``).
 
         :param str datasetId: The dataset's id
         :param str shape: optional filter by shape
+        :param str tags: optional filter by tags
+        :param int limit: max annotations for a single-page fetch; ``None``
+            pages through the entire dataset
+        :param int offset: starting offset for a single-page fetch
         :return: A list of annotations
         """
         url = PATHS["annotation_by_dataset"].format(datasetId=datasetId)
-
-        url = f"{url}&limit={limit}&offset{offset}"
         if shape:
             url = f"{url}&shape={shape}"
         if tags:
             url = f"{url}&tags={tags}"
 
-        return self.client.get(url)
+        if limit is not None:
+            return self.client.get(f"{url}&limit={limit}&offset={offset}")
+
+        return self._getAllPages(url)
 
     def getAnnotationById(self, annotationId):
         """
@@ -392,14 +434,20 @@ class UPennContrastAnnotationClient:
 
     def getPropertyValuesForDataset(self, datasetId):
         """
-        Get property values for all annotations in the specified dataset
+        Get property values for all annotations in the specified dataset.
+
+        Pages through the whole dataset with an _id cursor so datasets with
+        more values than a single page are returned in full (previously this
+        returned only the endpoint's default first page).
+
         :param str datasetId:
         :return: All property values
         :rtype: list
         """
-        return self.client.get(
-            PATHS["get_dataset_properties_values"].format(datasetId=datasetId)
+        url = PATHS["get_dataset_properties_values"].format(
+            datasetId=datasetId
         )
+        return self._getAllPages(url)
 
     def getPropertyValuesForAnnotation(self, datasetId, annotationId):
         """

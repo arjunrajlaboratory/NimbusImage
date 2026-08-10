@@ -336,22 +336,60 @@ export function hashString(str: string): number {
  * set stays stable across pans instead of reshuffling each frame.
  */
 export function selectStableSubset(ids: string[], maxCount: number): string[] {
+  if (maxCount <= 0) return [];
   if (ids.length <= maxCount) return ids;
   // Pick the `maxCount` lowest-hash ids (a deterministic, order-independent
-  // pseudo-random subset). Compute each id's hash exactly once into a parallel
-  // typed array and sort an index array — the previous `sort((a, b) =>
-  // hashString(a) - hashString(b))` recomputed the hash twice per comparison
-  // (~2·N·log₂N hashes), which dominated the per-pan cost at 700K (~1.1 s).
+  // pseudo-random subset). Quickselect partitions the candidates in O(N), then
+  // only the retained subset is sorted. Full-sorting every candidate made the
+  // 708K-annotation zoomed-out case pay O(N log N) even when it kept only 5K.
   const n = ids.length;
   const hashes = new Uint32Array(n);
+  const order = new Uint32Array(n);
   for (let i = 0; i < n; i++) {
     hashes[i] = hashString(ids[i]);
+    order[i] = i;
   }
-  const order = Array.from({ length: n }, (_, i) => i);
-  order.sort((a, b) => hashes[a] - hashes[b]);
+
+  // The id tie-break makes the result independent of input order even in the
+  // rare event of a 32-bit hash collision.
+  const compareIndices = (a: number, b: number): number => {
+    const hashDifference = hashes[a] - hashes[b];
+    if (hashDifference !== 0) return hashDifference;
+    return ids[a] < ids[b] ? -1 : ids[a] > ids[b] ? 1 : 0;
+  };
+
+  let left = 0;
+  let right = n - 1;
+  const target = maxCount - 1;
+  while (left < right) {
+    let low = left;
+    let high = right;
+    const pivot = order[left + ((right - left) >> 1)];
+    while (low <= high) {
+      while (compareIndices(order[low], pivot) < 0) low += 1;
+      while (compareIndices(order[high], pivot) > 0) high -= 1;
+      if (low <= high) {
+        const swap = order[low];
+        order[low] = order[high];
+        order[high] = swap;
+        low += 1;
+        high -= 1;
+      }
+    }
+    if (target <= high) {
+      right = high;
+    } else if (target >= low) {
+      left = low;
+    } else {
+      break;
+    }
+  }
+
+  const selected = order.slice(0, maxCount);
+  selected.sort(compareIndices);
   const result: string[] = new Array(maxCount);
   for (let i = 0; i < maxCount; i++) {
-    result[i] = ids[order[i]];
+    result[i] = ids[selected[i]];
   }
   return result;
 }
@@ -386,10 +424,13 @@ export function selectLargestBySize(
   // root is the worst kept element, so a new candidate replaces it iff it beats
   // it. O(n log count) — ~4× faster than sorting all n at 700K — and avoids the
   // O(n log n) full sort the old object-sort paid. `worse(a, b)` ⇒ a is more
-  // evictable than b: smaller size, or (size tie) larger hash — so the smaller
-  // hash survives ties, matching the deterministic tie-break above.
-  const worse = (a: number, b: number) =>
-    sizes[a] !== sizes[b] ? sizes[a] < sizes[b] : hashes[a] > hashes[b];
+  // evictable than b: smaller size, or (size tie) larger hash/id — so the
+  // smaller hash/id survives ties, matching the deterministic tie-break above.
+  const worse = (a: number, b: number) => {
+    if (sizes[a] !== sizes[b]) return sizes[a] < sizes[b];
+    if (hashes[a] !== hashes[b]) return hashes[a] > hashes[b];
+    return ids[a] > ids[b];
+  };
   const heap = new Int32Array(count);
   let size = 0;
   for (let i = 0; i < n; i++) {

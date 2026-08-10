@@ -298,7 +298,7 @@ export class Properties extends VuexModule {
   }
 
   @Mutation
-  togglePropertyPathVisibility(path: string[]) {
+  private togglePropertyPathVisibilityImpl(path: string[]) {
     const pathIdx = findIndexOfPath(path, this.displayedPropertyPaths);
     if (pathIdx < 0) {
       this.displayedPropertyPaths = [...this.displayedPropertyPaths, path];
@@ -307,6 +307,19 @@ export class Properties extends VuexModule {
         (_, i) => i !== pathIdx,
       );
     }
+  }
+
+  @Action
+  togglePropertyPathVisibility(path: string[]) {
+    this.togglePropertyPathVisibilityImpl(path);
+    main.scheduleAnnotationBrowserSave();
+  }
+
+  // Restore displayed columns persisted in the configuration. Uses the raw
+  // mutation so hydration never schedules a save of its own.
+  @Action
+  hydrateDisplayedPropertyPaths(paths: string[][]) {
+    this.setDisplayedPropertyPaths(paths);
   }
 
   get getFullNameFromPath() {
@@ -417,6 +430,12 @@ export class Properties extends VuexModule {
     const availablePaths = new Set(
       this.computedPropertyPaths.map((path) => serializePropertyPath(path)),
     );
+    // While properties or values haven't been fetched yet for the current
+    // dataset, computedPropertyPaths is empty; pruning against it would wipe
+    // the paths just hydrated from the configuration. Skip until data arrives.
+    if (availablePaths.size === 0) {
+      return;
+    }
     const newPaths = this.displayedPropertyPaths.filter((displayedPath) =>
       availablePaths.has(serializePropertyPath(displayedPath)),
     );
@@ -748,7 +767,11 @@ export class Properties extends VuexModule {
     this.properties = [...properties];
   }
 
-  @Action
+  // rawError: true because this rolls back and rethrows so the caller can
+  // report the real reason; a bare @Action would replace the message with
+  // vuex-module-decorators' generic ERR_ACTION_ACCESS_UNDEFINED text. Part of
+  // the create_property chain the AI panel reports on (#1239).
+  @Action({ rawError: true })
   protected async setProperties(properties: IAnnotationProperty[]) {
     const previous = this.properties;
     this.setPropertiesImpl(properties);
@@ -891,7 +914,10 @@ export class Properties extends VuexModule {
     );
   }
 
-  @Action
+  // rawError: true because both awaits here propagate on failure (the
+  // annotation_property POST, and the propertyIds sync inside setProperties)
+  // and the AI panel reports that reason to the user. See setProperties.
+  @Action({ rawError: true })
   async createProperty(property: IAnnotationPropertyConfiguration) {
     const newProperty = await this.propertiesAPI.createProperty(property);
     if (newProperty) {

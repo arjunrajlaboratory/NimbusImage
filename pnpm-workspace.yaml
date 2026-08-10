@@ -1,8 +1,80 @@
 overrides:
   "@girder/components>js-cookie": "^3.0.7"
   "@protobufjs/utf8": "^1.1.1"
-  "@girder/components>markdown-it": "^14.0.0"
+  # Raised from ^14.0.0 for GHSA advisories against markdown-it <14.1.2.
+  "@girder/components>markdown-it": "^14.1.2"
   "uc.micro": "2.0.0"
+  # GHSA-52cp-r559-cp3m (high), GHSA-h67p-54hq-rp68, GHSA-mh29-5h37-fv8m:
+  # merge-key DoS and prototype pollution, all patched in the 3.x line at
+  # 3.15.0. Two consumers are stuck on js-yaml 3: yaml-front-matter (^3.14.1)
+  # and xmlbuilder2@3.0.2, which pins 3.14.0 exactly and so cannot float on
+  # its own. Scoped to the 3.x range so the direct js-yaml 4 dep is untouched.
+  #
+  # This clears `pnpm audit`, but note what it does NOT reach: the copy that
+  # actually ships to the browser is inlined inside vtk.js@29.4.2's prebuilt
+  # vtk.js (pulled in by geojs > geo.lean.js), so no js-yaml version override
+  # can touch it. Confirmed via a --sourcemap build: the bundled YAML reader
+  # maps to vtk.js@29.4.2/vtk.js, and the output is byte-identical with and
+  # without this override. That code is only exploitable by parsing untrusted
+  # YAML through xmlbuilder2's reader, which this app never does.
+  "js-yaml@3": "3.15.0"
+
+  # --- Transitive security advisories (pnpm audit) -------------------------
+  # Every entry below is a same-major bump of a package we do not depend on
+  # directly, so nothing here changes an API we call. Caret ranges rather than
+  # pins: several advisories name a "patched" floor that was never published
+  # (@babel/core >=7.29.1 does not exist), and a pin can also land inside
+  # pnpm's minimumReleaseAge window and fail CI. Ranges let pnpm pick the
+  # newest release that satisfies both.
+  #
+  # Deliberately NOT covered, because no override can fix them:
+  #   tar            12 advisories (1 critical) demand 7.x; the tree has 6.2.1
+  #                  under itk-wasm / jsdom / vitest. tar 7 is a breaking API
+  #                  change, so it needs a real upgrade, not an override.
+  #   decompress     1 critical with NO published fix — latest is 4.2.1, the
+  #                  advisory wants 4.2.2. Blocked upstream. Reached only via
+  #                  itk-wasm > @itk-wasm/dam, the CLI data fetcher.
+  #   brace-expansion  one advisory wants 5.x; the tree has 1.x/2.x under
+  #                  @kitware/vtk.js > shelljs > glob > minimatch.
+  #   webpack, @babel/core  overrides measurably do not take effect — both are
+  #                  peer-resolved under vtk.js / worker-loader and stay at
+  #                  5.89.0 / 7.23.7. Omitted rather than left as no-ops.
+  #
+  # Caveat worth keeping in mind (see the js-yaml note above): a clean
+  # `pnpm audit` means the dependency graph moved, not necessarily that the
+  # shipped bundle did. Packages reached through geojs/vtk.js prebuilt files
+  # may still carry inlined copies.
+  # @babel/runtime takes effect (geojs > vtk.js); @babel/core does not — see above.
+  "@babel/runtime": "^7.26.10"
+  "ajv@6": "^6.14.0"
+  "brace-expansion@1": "^1.1.16"
+  "brace-expansion@2": "^2.1.2"
+  "braces": "^3.0.3"
+  "cross-spawn": "^7.0.5"
+  # GHSA-7p8r-x3mc-p8w7: URL parsing confusion. Reached via ajv@8, which
+  # floats on ^3.0.6 and so needs an override to move off the pinned 3.1.4.
+  "fast-uri": "^3.1.5"
+  "flatted": "^3.4.2"
+  "form-data": "^4.0.6"
+  "immutable": "^5.1.8"
+  "js-cookie": "^3.0.6"
+  "linkify-it": "^5.0.2"
+  "micromatch": "^4.0.8"
+  "minimatch@3": "^3.1.4"
+  "minimatch@5": "^5.1.8"
+  "minimatch@9": "^9.0.7"
+  "picomatch@2": "^2.3.2"
+  "picomatch@4": "^4.0.4"
+  "postcss": "^8.5.18"
+  # protobufjs is the one entry here that ships to the browser (onnxruntime-web
+  # uses it to parse ONNX models for the SAM tools). Same-major 7.2.5 -> 7.6.x.
+  "protobufjs": "^7.6.3"
+  "svgo": "^3.3.4"
+  # Clears only the `tar <6.2.1` advisory; the 7.x ones are out of reach above.
+  "tar": "^6.2.1"
+  "tar-fs": "^2.1.4"
+  "ws": "^8.21.0"
+  "yaml": "^2.8.3"
 patchedDependencies:
   "@girder/components@4.0.0": patches/@girder__components.patch
   "d3@3.5.17": patches/d3@3.5.17.patch

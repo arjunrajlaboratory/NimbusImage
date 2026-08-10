@@ -1,52 +1,50 @@
 import type { ICameraInfo, IGeoJSPosition } from "@/store/model";
 
 /**
- * Unified pan + zoom hysteresis for the camera-driven visibility refresh.
+ * Camera-driven visibility refresh gate: PAN refreshes on any amount, ZOOM keeps
+ * a hysteresis.
  *
- * Recomputing the render budget + re-hydrating on every tiny camera change causes
- * constant loading churn. This gates the refresh on a single sensitivity
- * `fraction` (e.g. 0.2 = 20%): refresh once EITHER
- *   - the zoom magnification changed by >= the fraction (zoom is logarithmic, so
- *     a 20% change is `log2(1.2)` ≈ 0.263 zoom levels), OR
- *   - the center moved by >= the fraction of the viewport extent (world units).
- * Skip only when BOTH are below threshold. Covering pan too is what actually
- * suppresses scroll-wheel zoom (which shifts the center toward the cursor) — a
- * zoom-only gate would still refresh on its center drift.
+ * Recomputing the render budget + re-hydrating on every tiny zoom nudge causes
+ * loading churn, so a zoom change refreshes only past a magnification threshold
+ * measured against the LAST REFRESH (`zoomFraction`, e.g. 0.2 = 20% →
+ * `log2(1.2)` ≈ 0.263 zoom levels). Panning reveals a genuinely new region, so
+ * ANY center movement refreshes — there is no pan threshold.
  *
- * `viewportExtent` is a world-unit scale for the pan threshold (the viewport
- * diagonal); when it is unknown (<= 0) any pan refreshes, which is the safe
- * default.
+ * The trick that keeps the two apart (and keeps zoom hysteresis intact for
+ * scroll-wheel zoom, which drifts the center toward the cursor): a center move
+ * counts as a pan only when THIS EVENT didn't change the zoom (`lastEvent` is
+ * the previous camera event). A center drift accompanying a zoom stays gated by
+ * the zoom threshold. Comparing the pan against the last EVENT rather than the
+ * last REFRESH is essential: a sub-threshold zoom leaves the refresh baseline
+ * frozen at the old zoom, so a "zoom unchanged vs last refresh" test would treat
+ * every following pan as a zoom and never refresh.
  */
 export function cameraRefreshNeeded(
   current: { zoom: number; center: IGeoJSPosition },
-  last: { zoom: number; center: IGeoJSPosition } | null,
-  fraction: number,
-  viewportExtent: number,
+  lastRefresh: { zoom: number; center: IGeoJSPosition } | null,
+  lastEvent: { zoom: number; center: IGeoJSPosition } | null,
+  zoomFraction: number,
 ): boolean {
-  if (!last || !current.center || !last.center) {
+  if (!lastRefresh || !current.center || !lastRefresh.center) {
     return true;
   }
-  // Pan: refresh if the center moved by >= fraction of the viewport extent.
+  // Zoom: refresh past the magnification threshold since the last refresh.
   if (
-    current.center.x !== last.center.x ||
-    current.center.y !== last.center.y
+    Math.abs(current.zoom - lastRefresh.zoom) >= Math.log2(1 + zoomFraction)
   ) {
-    // Written as `!(x > 0)` rather than `x <= 0` so it also catches NaN (an
-    // unknown/uninitialized extent): NaN comparisons are always false, so
-    // `!(NaN > 0)` is true → refresh on any pan, the safe default.
-    if (!(viewportExtent > 0)) {
-      return true; // can't scale the move → refresh on any pan (safe)
-    }
-    const panDistance = Math.hypot(
-      current.center.x - last.center.x,
-      current.center.y - last.center.y,
-    );
-    if (panDistance >= fraction * viewportExtent) {
-      return true;
-    }
+    return true;
   }
-  // Zoom: refresh only past the magnification threshold.
-  return Math.abs(current.zoom - last.zoom) >= Math.log2(1 + fraction);
+  // Pan: the center moved since the last refresh AND this event isn't a zoom
+  // (zoom unchanged vs the previous event → it's a pure pan). Fall back to the
+  // last-refresh zoom when there's no prior event, so the very first camera
+  // event after a non-camera refresh (e.g. a frame change) doesn't misread a
+  // sub-threshold cursor-centered zoom — which drifts the center — as a pan.
+  const centerMoved =
+    current.center.x !== lastRefresh.center.x ||
+    current.center.y !== lastRefresh.center.y;
+  const previousZoom = lastEvent?.zoom ?? lastRefresh.zoom;
+  const zoomUnchangedThisEvent = current.zoom === previousZoom;
+  return centerMoved && zoomUnchangedThisEvent;
 }
 
 /**
@@ -78,6 +76,134 @@ export function recenterCameraInfo(
       ...pt,
       x: pt.x + dx,
       y: pt.y + dy,
+    })),
+  };
+}
+
+/**
+ * Recenter and zoom — in OR out — so an axis-aligned box of `width`×`height`
+ * around the new center occupies `fraction` of the viewport.
+ *
+ * Distinct from `frameCameraInfo`, which fits a single SIGNED delta (the segment
+ * between a connection's two endpoints) and only ever zooms out. Two differences
+ * matter:
+ *
+ * 1. A box needs the support function `w·|û.x| + h·|û.y|`, not the projection of
+ *    one signed vector. Projecting `(w, h)` alone fits only one of the box's two
+ *    diagonals; under rotation the other one is longer and would fall outside
+ *    the viewport. The support function is sign-free and covers both.
+ * 2. It zooms IN when the box is small, because the caller's intent is "show me
+ *    this thing at a usable size", not merely "don't crop it".
+ *
+ * `maxZoom`/`minZoom` clamp the result — a track whose members share a centroid
+ * has a degenerate box that would otherwise demand infinite zoom. When the zoom
+ * is clamped the scale is recomputed from the clamped value, so `gcsBounds`
+ * stays consistent with `zoom`; viewport-driven hydration reads those bounds, so
+ * letting them disagree would hydrate against a viewport that never existed.
+ */
+export function frameCameraInfoToExtent(
+  info: ICameraInfo,
+  center: IGeoJSPosition,
+  width: number,
+  height: number,
+  fraction: number,
+  options: { maxZoom?: number; minZoom?: number } = {},
+): ICameraInfo {
+  const recentered = recenterCameraInfo(info, center);
+  const [c0, c1, , c3] = info.gcsBounds;
+  const u = { x: c1.x - c0.x, y: c1.y - c0.y };
+  const v = { x: c3.x - c0.x, y: c3.y - c0.y };
+  const uLen = Math.hypot(u.x, u.y);
+  const vLen = Math.hypot(v.x, v.y);
+  if (uLen <= 0 || vLen <= 0 || fraction <= 0) {
+    return recentered;
+  }
+  // Support function of the box along each viewport edge direction.
+  const alongU = (width * Math.abs(u.x) + height * Math.abs(u.y)) / uLen;
+  const alongV = (width * Math.abs(v.x) + height * Math.abs(v.y)) / vLen;
+  if (alongU <= 0 && alongV <= 0) {
+    // Degenerate box (every member at one point) — nothing to size to.
+    return recentered;
+  }
+  const rawScale = Math.max(
+    alongU / (fraction * uLen),
+    alongV / (fraction * vLen),
+  );
+  let zoom = info.zoom - Math.log2(rawScale);
+  if (options.maxZoom !== undefined) {
+    zoom = Math.min(zoom, options.maxZoom);
+  }
+  if (options.minZoom !== undefined) {
+    zoom = Math.max(zoom, options.minZoom);
+  }
+  // Recover the scale actually applied, so bounds and zoom cannot disagree.
+  const scale = Math.pow(2, info.zoom - zoom);
+  if (scale === 1) {
+    return recentered;
+  }
+  return {
+    ...recentered,
+    zoom,
+    gcsBounds: recentered.gcsBounds.map((pt) => ({
+      ...pt,
+      x: center.x + (pt.x - center.x) * scale,
+      y: center.y + (pt.y - center.y) * scale,
+    })),
+  };
+}
+
+/**
+ * Recenter, and zoom OUT if needed so a span of `spanX`×`spanY` around the new
+ * center fits in the viewport. Never zooms in.
+ *
+ * `spanX`/`spanY` are a **signed vector**, not absolute extents. Under rotation
+ * the projection onto the camera axes depends on the sign: for a 45-degree
+ * viewport a delta of `(-23, 11)` needs ~2.4x while `(23, 11)` needs only
+ * ~1.2x, so passing absolute values would under-scale and leave an endpoint
+ * off screen. At zero rotation the sign cancels and it makes no difference.
+ *
+ * Needed when navigating to something that occupies two points rather than one —
+ * a connection between annotations. Recentering alone leaves the far endpoint
+ * off-screen at high zoom, and an endpoint that isn't displayed isn't drawn, so
+ * the connection the user asked to see renders as nothing at all.
+ *
+ * Corners are scaled about the new center rather than recomputed from a
+ * width/height, so any camera rotation is preserved.
+ */
+export function frameCameraInfo(
+  info: ICameraInfo,
+  center: IGeoJSPosition,
+  spanX: number,
+  spanY: number,
+): ICameraInfo {
+  const recentered = recenterCameraInfo(info, center);
+  // Work in the camera's OWN basis, not axis-aligned min/max. Under rotation
+  // gcsBounds is a rotated quadrilateral whose bounding box is larger than the
+  // usable viewport, so an axis-aligned comparison under-scales — a span along
+  // the diamond's diagonal would still fall outside the real viewport.
+  const [c0, c1, , c3] = info.gcsBounds;
+  const u = { x: c1.x - c0.x, y: c1.y - c0.y };
+  const v = { x: c3.x - c0.x, y: c3.y - c0.y };
+  const uLen = Math.hypot(u.x, u.y);
+  const vLen = Math.hypot(v.x, v.y);
+  if (uLen <= 0 || vLen <= 0) {
+    return recentered;
+  }
+  // Project the required span onto each viewport edge direction.
+  const alongU = Math.abs((spanX * u.x + spanY * u.y) / uLen);
+  const alongV = Math.abs((spanX * v.x + spanY * v.y) / vLen);
+  const scale = Math.max(alongU / uLen, alongV / vLen, 1);
+  if (scale === 1) {
+    return recentered;
+  }
+  return {
+    ...recentered,
+    // Each zoom level halves the visible span.
+    zoom: info.zoom - Math.log2(scale),
+    gcsBounds: recentered.gcsBounds.map((pt) => ({
+      ...pt,
+      x: center.x + (pt.x - center.x) * scale,
+      y: center.y + (pt.y - center.y) * scale,
     })),
   };
 }

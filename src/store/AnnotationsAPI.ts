@@ -11,6 +11,8 @@ import {
   IDisplayLayer,
   IScales,
   IDataset,
+  IAnnotationImportPayload,
+  IAnnotationImportResult,
   IAnnotationListQuery,
   IAnnotationListPage,
   IAnnotationListRow,
@@ -126,6 +128,7 @@ export default class AnnotationsAPI {
     return {
       total: response.data.total,
       rows: (response.data.rows as any[]).map(this.toListRow),
+      offset: response.data.offset,
     };
   }
 
@@ -364,6 +367,17 @@ export default class AnnotationsAPI {
       datasetId,
     });
   };
+
+  // Import annotations, connections and property values exported as JSON.
+  // The backend sanitizes the raw documents and remaps old ids to the newly
+  // created annotations, rolling back everything it created on failure.
+  async importAnnotationData(
+    payload: IAnnotationImportPayload,
+  ): Promise<IAnnotationImportResult> {
+    return this.client
+      .post("annotation_import", payload)
+      .then((response) => response.data);
+  }
 
   // Count endpoints
 

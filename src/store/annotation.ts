@@ -33,6 +33,8 @@ import {
   type TAnnotationOrStub,
   type THydrationMode,
   type IVisibilityConfig,
+  resolveVisibilityConfig,
+  ANNOTATION_LIST_SERVER_THRESHOLD,
 } from "./model";
 import type AnnotationsAPI from "./AnnotationsAPI";
 
@@ -47,6 +49,7 @@ import {
   idHasHydratableShape,
   materializeStubAnnotation,
 } from "@/utils/annotation";
+import { selectVisibleIds, clampVisibleBudget } from "@/utils/visibilityBudget";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
 import {
   createDebouncedAbortableTask,
@@ -59,6 +62,7 @@ import {
   type IStubFieldUpdate,
 } from "@/utils/annotationUpdate";
 import { logError } from "@/utils/log";
+import { TIMELAPSE_CONNECTION_TAG } from "./constants";
 import { stubPerf } from "@/utils/stubPerf";
 import { annotationLoadingTitle } from "@/utils/loadingLabels";
 import progress from "./progress";
@@ -107,6 +111,20 @@ export class Annotations extends VuexModule {
   // When true, annotations[] is empty and all metadata lives in annotationStubs.
   stubOnlyMode: boolean = false;
 
+  // Whether the annotation browser list should use the backend-paginated
+  // (server) list instead of materializing a client-side v-data-table. True in
+  // stub-only mode (the client has no full annotations to list) and for
+  // fully-fetched datasets too large to sort/render as client table rows —
+  // possible because stubThreshold (a data-loading knob) can sit well above
+  // the table's materialization limit. Note: the server list cannot apply ROI
+  // filters (a client-side polygon test); the list UI surfaces a warning.
+  get isListServerMode() {
+    return (
+      this.stubOnlyMode ||
+      this.annotations.length > ANNOTATION_LIST_SERVER_THRESHOLD
+    );
+  }
+
   get allAnnotationIds() {
     if (this.stubOnlyMode) {
       return Array.from(this.annotationStubs.keys());
@@ -153,6 +171,27 @@ export class Annotations extends VuexModule {
     };
   }
 
+  /**
+   * Resolve an id to whatever representation is loaded — hydrated, full, or
+   * raw stub — without materializing the whole stub map. Unlike
+   * `getAnnotationFromId`, this returns non-point stubs as-is (typed as the
+   * honest union), so callers that only need stub fields can look ids up in
+   * O(1) instead of scanning `annotationsForIteration`.
+   */
+  get getAnnotationOrStubFromId() {
+    return (annotationId: string): TAnnotationOrStub | undefined => {
+      const hydrated = this.hydratedAnnotations.get(annotationId);
+      if (hydrated) {
+        return hydrated;
+      }
+      const idx = this.annotationIdToIdx[annotationId];
+      if (idx !== undefined) {
+        return this.annotations[idx];
+      }
+      return this.annotationStubs.get(annotationId);
+    };
+  }
+
   get annotationTags() {
     const tagSet: Set<string> = new Set();
     if (this.stubOnlyMode) {
@@ -171,6 +210,18 @@ export class Annotations extends VuexModule {
     return tagSet;
   }
 
+  /**
+   * How many objects the dataset has, without allocating. Deliberately not
+   * `annotationsForIteration.length`: that materializes an array from the stub
+   * map, which is 700K+ entries on a large dataset — far too expensive for a
+   * count rendered in a tab badge.
+   */
+  get annotationCount(): number {
+    return this.stubOnlyMode
+      ? this.annotationStubs.size
+      : this.annotations.length;
+  }
+
   get annotationsForIteration(): TAnnotationOrStub[] {
     if (!this.stubOnlyMode) {
       return this.annotations;
@@ -187,15 +238,7 @@ export class Annotations extends VuexModule {
   hydratedAnnotations: Map<string, IAnnotation> = markRaw(new Map());
   visibleAnnotationIds: Set<string> = markRaw(new Set());
   hydrationMode: THydrationMode = "dots";
-  visibilityConfig: IVisibilityConfig = {
-    stubThreshold: 100000,
-    maxVisible: 50000,
-    maxHydrated: 20000,
-    hydrationCacheCap: 40000,
-    globalThreshold: true,
-    coverageTarget: 0.3,
-    viewportRefreshFraction: 0.2,
-  };
+  visibilityConfig: IVisibilityConfig = resolveVisibilityConfig();
 
   // Average annotation radius (world units) over the loaded stubs, computed once
   // when stubs are set. Feeds the density-derived zoomed-out render budget.
@@ -210,6 +253,32 @@ export class Annotations extends VuexModule {
   @Mutation
   setVisibilityConfig(config: Partial<IVisibilityConfig>) {
     this.visibilityConfig = { ...this.visibilityConfig, ...config };
+  }
+
+  @Mutation
+  replaceVisibilityConfig(config?: Partial<IVisibilityConfig>) {
+    this.visibilityConfig = resolveVisibilityConfig(config);
+  }
+
+  // Load configuration metadata over the shipped defaults so configurations
+  // created before persistence (and partial metadata from future migrations)
+  // always get a complete, independent settings object.
+  @Action
+  loadVisibilityConfig(config?: Partial<IVisibilityConfig>) {
+    this.replaceVisibilityConfig(config);
+  }
+
+  @Action
+  async updateVisibilityConfig(config: Partial<IVisibilityConfig>) {
+    this.setVisibilityConfig(config);
+    await main.saveVisibilityConfig(this.visibilityConfig);
+  }
+
+  // Reset the shared configuration metadata as well as the live renderer.
+  @Action
+  async resetVisibilityConfig() {
+    this.replaceVisibilityConfig();
+    await main.saveVisibilityConfig(this.visibilityConfig);
   }
 
   @Mutation
@@ -1025,6 +1094,35 @@ export class Annotations extends VuexModule {
     return connections || [];
   }
 
+  // Create connections from explicit parent/child pairs. Unlike
+  // createAllConnections (which builds the full cross product of two id lists),
+  // this persists exactly the pairs it is given — used by the connection list's
+  // "Connect selected", which chains annotations in time order.
+  // rawError: errors are re-wrapped at every @Action boundary they cross, so
+  // connectionList's rawError alone would not preserve the message.
+  @Action({ rawError: true })
+  public async createConnectionsFromBases(
+    connectionBases: IAnnotationConnectionBase[],
+  ): Promise<IAnnotationConnection[]> {
+    if (!main.isLoggedIn || connectionBases.length === 0) {
+      return [];
+    }
+    sync.setSaving(true);
+    // try/finally, because this action is rawError: a rejection propagates to
+    // the caller, and without the finally the app-wide saving indicator would
+    // stay on forever.
+    try {
+      const connections =
+        await this.annotationsAPI.createMultipleConnections(connectionBases);
+      if (connections) {
+        this.addMultipleConnections(connections);
+      }
+      return connections || [];
+    } finally {
+      sync.setSaving(false);
+    }
+  }
+
   @Action
   public async deleteAllConnections({
     parentIds,
@@ -1065,7 +1163,7 @@ export class Annotations extends VuexModule {
       return;
     }
     const connectionsToDelete = this.annotationConnections.filter(
-      (connection) => connection.tags.includes("Time lapse connection"),
+      (connection) => connection.tags.includes(TIMELAPSE_CONNECTION_TAG),
     );
     await this.deleteConnections(connectionsToDelete.map(({ id }) => id));
   }
@@ -1288,6 +1386,17 @@ export class Annotations extends VuexModule {
           ),
         );
       }
+      // Prune id-holding UI state so nothing keeps referencing the deleted
+      // annotations (a stale selection id can widen a subset CSV export to
+      // the whole dataset; a stale hover id dangles like the connection-list
+      // case did).
+      this.unselectAnnotations(ids);
+      if (
+        this.hoveredAnnotationId !== null &&
+        ids.includes(this.hoveredAnnotationId)
+      ) {
+        this.setHoveredAnnotationId(null);
+      }
     } finally {
       // Always set the state back to false, even if there's an error
       sync.setSaving(false);
@@ -1324,7 +1433,13 @@ export class Annotations extends VuexModule {
    * would corrupt the stored annotation, defeat patch diffing in
    * getAnnotationUpdatePatch, and prevent rollback on error.
    */
-  @Action
+  // rawError: true because both paths below rethrow after rolling back, so the
+  // real reason reaches the caller (and the console/Sentry) instead of
+  // vuex-module-decorators' generic ERR_ACTION_ACCESS_UNDEFINED text. The
+  // sync indicator is unaffected either way: setSaving receives the error
+  // caught inside this action, before any wrapping. See index.ts
+  // syncConfiguration.
+  @Action({ rawError: true })
   public async updateAnnotationsPerId({
     annotationIds,
     editFunction,
@@ -1847,7 +1962,11 @@ export class Annotations extends VuexModule {
     };
 
     jobs.addJob(computeJob).then(async (success: boolean) => {
-      this.fetchAnnotations();
+      // Awaited: `callback` consumers (the AI panel's wait_for_job among them)
+      // read annotation state as soon as they are told the worker finished, so
+      // the refresh must complete before the callback fires. fetchAnnotations
+      // handles its own errors and never rejects.
+      await this.fetchAnnotations();
       // If this was a worker that makes a new large_image, this line will load it
       // I'm pretty sure this function won't reload the large image if it's already loaded
       const newLargeImage = await main.loadLargeImages(true); // true means switch to the new large image
@@ -2316,8 +2435,24 @@ export class Annotations extends VuexModule {
     maxHydrated?: number;
   }) {
     const { filteredIds, gcsBounds, currentFrameLocation } = params;
-    const maxVisible = params.maxVisible ?? this.visibilityConfig.maxVisible;
-    const maxHydrated = params.maxHydrated ?? this.visibilityConfig.maxHydrated;
+    const zoomVisibleBudget =
+      params.maxVisible ?? this.visibilityConfig.maxVisible;
+    const zoomHydrated =
+      params.maxHydrated ?? this.visibilityConfig.maxHydrated;
+    // Floor the VISIBLE budget at minimumVisible so at least that many are drawn
+    // in the actual viewport (capped at the configured max).
+    const { minimumVisible, maxVisible: configMaxVisible } =
+      this.visibilityConfig;
+    const visibleBudget = clampVisibleBudget(
+      zoomVisibleBudget,
+      minimumVisible,
+      configMaxVisible,
+    );
+    // Never hydrate more than the drawn (visible) set — fetching coordinates for
+    // annotations that aren't drawn is wasted work. The zoom-progress scaling
+    // lives in the zoom budget; this just prevents over-hydration (notably in
+    // coverage mode, where the visible budget can be well below maxHydrated).
+    const hydrationBudget = Math.min(zoomHydrated, visibleBudget);
 
     // Capture the stub map once. `this.annotationStubs` resolves through the
     // vuex-module-decorators action proxy on every access; reading it inside the
@@ -2348,18 +2483,16 @@ export class Annotations extends VuexModule {
       }
     }
 
-    // Step 2: Split current-frame IDs by viewport into two boxes (C2).
-    // Visibility uses an EXPANDED box so panning reveals pre-loaded annotations.
-    // Hydration AND the render-coverage counts use the UNEXPANDED box — the
-    // region the user actually sees — so zooming in re-prioritizes the
-    // newly-visible annotations. (When zoomed out, the expanded box covers the
-    // whole frame, so ranking hydration against it never tracks zoom.)
-    const noSplit = {
-      inViewportIds: currentFrameIds,
-      outOfViewportIds: [] as string[],
-    };
-    let visibilitySplit = noSplit;
-    let hydrationSplit = noSplit;
+    // Step 2: Classify current-frame IDs against two nested boxes in ONE pass
+    // (C2): the UNEXPANDED viewport (what the user sees — drives hydration, the
+    // render-coverage counts, and visibility tier 1), a RING out to the box
+    // expanded 50% each side (the pan-preload margin — visibility tier 2), and
+    // everything else OUTSIDE (visibility tier 3). Zooming in re-prioritizes the
+    // newly-visible annotations. (When zoomed out, the box covers the whole
+    // frame, so ranking hydration against it never tracks zoom.)
+    let inViewport = currentFrameIds;
+    let ring: string[] = [];
+    let outside: string[] = [];
 
     if (gcsBounds && gcsBounds.length === 4) {
       let minX = Infinity,
@@ -2372,65 +2505,70 @@ export class Annotations extends VuexModule {
         maxX = Math.max(maxX, pt.x);
         maxY = Math.max(maxY, pt.y);
       }
-      // Unexpanded (raw) split — the actual viewport — drives hydration + the
-      // render-coverage indicator counts.
-      hydrationSplit = annotationSpatialIndex.splitByViewport(
-        currentFrameIds,
-        minX,
-        minY,
-        maxX,
-        maxY,
-      );
-      // Expanded by 50% on each side — drives visibility (pan pre-load).
       const width = maxX - minX;
       const height = maxY - minY;
-      visibilitySplit = annotationSpatialIndex.splitByViewport(
-        currentFrameIds,
-        minX - width * 0.5,
-        minY - height * 0.5,
-        maxX + width * 0.5,
-        maxY + height * 0.5,
-      );
+      ({ inViewport, ring, outside } =
+        annotationSpatialIndex.partitionByViewports(
+          currentFrameIds,
+          { minX, minY, maxX, maxY },
+          {
+            minX: minX - width * 0.5,
+            minY: minY - height * 0.5,
+            maxX: maxX + width * 0.5,
+            maxY: maxY + height * 0.5,
+          },
+        ));
     }
 
-    // Step 3: Fill visibility budget (two-tier, EXPANDED box).
-    const visInViewport = visibilitySplit.inViewportIds;
-    let visibleIds: string[];
-    if (visInViewport.length >= maxVisible) {
-      visibleIds = selectStableSubset(visInViewport, maxVisible);
-    } else {
-      const remaining = maxVisible - visInViewport.length;
-      const offViewport = selectStableSubset(
-        visibilitySplit.outOfViewportIds,
-        remaining,
-      );
-      visibleIds = [...visInViewport, ...offViewport];
-    }
+    // Step 3: Fill the visible budget in priority tiers — the actual
+    // (unexpanded) viewport first, then the pan-preload ring, then off-screen.
+    // Prioritizing the actual viewport is what makes the minimumVisible floor
+    // (folded into visibleBudget) hold IN THE VISIBLE AREA rather than being
+    // diluted across the larger pan-preload box.
+    const visibleIds = selectVisibleIds({
+      inViewportIds: inViewport,
+      marginIds: ring,
+      offViewportIds: outside,
+      budget: visibleBudget,
+      selectSubset: selectStableSubset,
+    });
+    const visibleSet = new Set(visibleIds);
 
     // Step 4: Fill hydration budget (two-tier, largest first, UNEXPANDED box).
-    // Points are self-complete (centroid IS the only coordinate), so they never
-    // hydrate — drop them from both tiers BEFORE budget allocation so the budget
-    // goes entirely to shapes that actually need coordinates. For an all-points
-    // dataset this filters the candidate lists to empty, so the size-selection
-    // is skipped entirely. selectLargestBySize then picks the largest by
-    // estimatedRadius via a bounded min-heap (not a full O(N log N) sort) — see
-    // its definition.
+    // Candidates are restricted to the DRAWN (visible) set: only visible
+    // annotations are rendered, so hydrating anything else fetches coordinates
+    // that never appear — and because visibility picks a stable-hash subset while
+    // hydration picks the largest, an unrestricted candidate list could hydrate
+    // mostly-undrawn annotations and leave drawn ones as dots. Points are
+    // self-complete (centroid IS the only coordinate) so they never hydrate —
+    // dropped here too. selectLargestBySize then picks the largest by
+    // estimatedRadius via a bounded min-heap (not a full O(N log N) sort).
     const needsHydration = (id: string): boolean =>
-      idHasHydratableShape(id, stubsMap);
+      visibleSet.has(id) && idHasHydratableShape(id, stubsMap);
     const sizeOf = (id: string) => stubsMap.get(id)?.estimatedRadius ?? 0;
-    const hydInViewport = hydrationSplit.inViewportIds.filter(needsHydration);
+    const hydInViewport = inViewport.filter(needsHydration);
     let idsToHydrate: string[];
-    if (hydInViewport.length >= maxHydrated) {
-      idsToHydrate = selectLargestBySize(hydInViewport, sizeOf, maxHydrated);
+    if (hydInViewport.length >= hydrationBudget) {
+      idsToHydrate = selectLargestBySize(
+        hydInViewport,
+        sizeOf,
+        hydrationBudget,
+      );
     } else {
-      const remainingBudget = maxHydrated - hydInViewport.length;
+      // Fill the rest from off the actual viewport (ring + outside) — still only
+      // drawn ones. Built in a single filtered pass (no intermediate concat) and
+      // only in this branch, where the in-viewport shapes don't fill the budget.
+      const offHydratable: string[] = [];
+      for (const id of ring) {
+        if (needsHydration(id)) offHydratable.push(id);
+      }
+      for (const id of outside) {
+        if (needsHydration(id)) offHydratable.push(id);
+      }
+      const remainingBudget = hydrationBudget - hydInViewport.length;
       idsToHydrate = [
         ...hydInViewport,
-        ...selectLargestBySize(
-          hydrationSplit.outOfViewportIds.filter(needsHydration),
-          sizeOf,
-          remainingBudget,
-        ),
+        ...selectLargestBySize(offHydratable, sizeOf, remainingBudget),
       ];
     }
 
@@ -2439,18 +2577,15 @@ export class Annotations extends VuexModule {
 
     // Step 5b: Render-coverage counts for the ACTUAL (unexpanded) viewport — how
     // many annotations are in view vs how many of those are drawn. Reuses the
-    // hydration split (same unexpanded box) — one fewer splitByViewport than
-    // recomputing it here. Drives the render-coverage indicator.
-    const actualInView = hydrationSplit.inViewportIds;
-    const visibleSet = new Set(visibleIds);
+    // partition's inViewport bucket. Drives the render-coverage indicator.
     let viewportRendered = 0;
-    for (const id of actualInView) {
+    for (const id of inViewport) {
       if (visibleSet.has(id)) {
         viewportRendered += 1;
       }
     }
     this.setViewportCounts({
-      total: actualInView.length,
+      total: inViewport.length,
       rendered: viewportRendered,
     });
 

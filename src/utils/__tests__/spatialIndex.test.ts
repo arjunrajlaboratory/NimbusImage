@@ -87,6 +87,40 @@ describe("AnnotationSpatialIndex", () => {
     });
   });
 
+  describe("partitionByViewports", () => {
+    it("classifies IDs into viewport / ring / outside in one pass", () => {
+      index.bulkLoad([
+        { id: "in", x: 50, y: 50 }, // inside inner (0..60)
+        { id: "ring", x: 80, y: 80 }, // outside inner, inside outer (0..120)
+        { id: "out", x: 200, y: 200 }, // outside outer
+      ]);
+      const { inViewport, ring, outside } = index.partitionByViewports(
+        ["in", "ring", "out"],
+        { minX: 0, minY: 0, maxX: 60, maxY: 60 },
+        { minX: 0, minY: 0, maxX: 120, maxY: 120 },
+      );
+      expect(inViewport).toEqual(["in"]);
+      expect(ring).toEqual(["ring"]);
+      expect(outside).toEqual(["out"]);
+    });
+
+    it("only returns IDs from the provided list and preserves order", () => {
+      index.bulkLoad([
+        { id: "a", x: 10, y: 10 },
+        { id: "b", x: 90, y: 90 },
+        { id: "unlisted", x: 15, y: 15 },
+      ]);
+      const { inViewport, ring, outside } = index.partitionByViewports(
+        ["b", "a"], // "unlisted" omitted; order preserved
+        { minX: 0, minY: 0, maxX: 50, maxY: 50 },
+        { minX: 0, minY: 0, maxX: 100, maxY: 100 },
+      );
+      expect(inViewport).toEqual(["a"]);
+      expect(ring).toEqual(["b"]);
+      expect(outside).toEqual([]);
+    });
+  });
+
   describe("queryBox", () => {
     it("returns empty set for empty tree", () => {
       expect(index.queryBox(0, 0, 100, 100).size).toBe(0);

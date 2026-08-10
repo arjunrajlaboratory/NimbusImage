@@ -1,0 +1,20 @@
+{
+  "name": "NimbusImage",
+  "interface": {
+    "displayName": "NimbusImage"
+  },
+  "plugins": [
+    {
+      "name": "nimbusimage",
+      "source": {
+        "source": "local",
+        "path": "./plugins/nimbusimage"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

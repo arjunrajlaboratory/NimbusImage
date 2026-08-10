@@ -6,7 +6,13 @@
       'datasetview-mode': isDatasetView,
       'left-palettes-open': isDatasetView && allLeftPalettesOpen,
       'any-left-palette-open': isDatasetView && anyLeftPaletteOpen,
+      // The Timelapse palette sits exactly where the selection action panels
+      // slide to when a left palette is open, so they move to the top-right
+      // while it is up. How far in they sit is `--nimbus-right-edge-clear-x`
+      // below, not a second class.
+      'timelapse-palette-open': isDatasetView && timelapsePanel,
     }"
+    :style="paletteGeometryVars"
   >
     <v-dialog
       v-model="helpPanelIsOpen"
@@ -99,7 +105,9 @@
       <bread-crumbs />
       <template v-if="store.dataset && routeName === 'datasetview'">
         <div class="palette-cluster">
-          <v-tooltip text="Navigator: XY / Z / Time and timelapse controls">
+          <v-tooltip
+            text="Navigator: XY / Z / Time and the timelapse mode toggle"
+          >
             <template v-slot:activator="{ props: activatorProps }">
               <button
                 v-bind="activatorProps"
@@ -196,9 +204,7 @@
               </button>
             </template>
           </v-tooltip>
-          <v-tooltip
-            text="Filter objects by tags, scope, properties, ID and region"
-          >
+          <v-tooltip :text="filtersTooltip">
             <template v-slot:activator="{ props: activatorProps }">
               <button
                 v-bind="activatorProps"
@@ -207,10 +213,15 @@
                 type="button"
                 class="palette-ibtn"
                 :class="{ active: filtersPanel }"
-                aria-label="Filters"
+                :aria-label="filtersAriaLabel"
                 @click.stop="togglePalette('filtersPanel')"
               >
                 <v-icon size="18">mdi-filter-variant</v-icon>
+                <!-- Count of active filters, so the user can tell filters are
+                     narrowing the object set even with the panel closed. -->
+                <span v-if="activeFilterCount > 0" class="palette-ibtn-badge">
+                  {{ activeFilterCount > 9 ? "9+" : activeFilterCount }}
+                </span>
               </button>
             </template>
           </v-tooltip>
@@ -346,26 +357,28 @@
         <server-status />
         <user-menu />
         <v-tooltip
-          text="Open NimbusImage chat for help with solving your particular image analysis problems"
+          v-if="canUseAiPanel"
+          text="Open the Nimbus AI panel: an assistant that can drive the interface for you"
         >
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
-              :data-tour="TOUR_ANCHORS.chatButton"
-              v-tour-trigger="TOUR_TRIGGERS.chatButton"
               variant="text"
               icon
               size="small"
-              @click="chatbotOpen = !chatbotOpen"
+              @click="toggleAiPanel"
             >
-              <v-icon>mdi-chat</v-icon>
+              <v-icon>mdi-robot-outline</v-icon>
             </v-btn>
           </template>
         </v-tooltip>
       </div>
     </v-app-bar>
 
-    <chat-component v-if="chatbotOpen" @close="chatbotOpen = false" />
+    <ai-panel
+      v-if="aiPanelOpen && canUseAiPanel"
+      @close="aiPanelOpen = false"
+    />
 
     <v-main>
       <router-view />
@@ -375,24 +388,32 @@
       v-model="analyzePanel"
       location="right"
       :scrim="false"
-      :width="480"
+      :width="RIGHT_PALETTE_WIDTHS.analyze"
       :mobile="false"
     >
       <analyze-annotations />
     </v-navigation-drawer>
 
-    <floating-palette v-model="settingsPanel" title="Settings" :width="480">
+    <floating-palette
+      v-model="settingsPanel"
+      title="Settings"
+      :width="RIGHT_PALETTE_WIDTHS.settings"
+    >
       <annotations-settings />
     </floating-palette>
 
-    <floating-palette v-model="snapshotPanel" title="Snapshots" :width="480">
+    <floating-palette
+      v-model="snapshotPanel"
+      title="Snapshots"
+      :width="RIGHT_PALETTE_WIDTHS.snapshots"
+    >
       <snapshots :snapshotVisible="snapshotPanel" />
     </floating-palette>
 
     <floating-palette
       v-model="annotationPanel"
       title="Object Browser"
-      :width="512"
+      :width="RIGHT_PALETTE_WIDTHS.objectBrowser"
       :top="annotationBrowserTop"
       :max-height="annotationBrowserMaxHeight"
     >
@@ -403,7 +424,7 @@
       ref="filtersPaletteRef"
       v-model="filtersPanel"
       title="Filters"
-      :width="480"
+      :width="RIGHT_PALETTE_WIDTHS.filters"
       :max-height="filtersMaxHeight"
     >
       <filters-panel />
@@ -414,18 +435,32 @@
         ref="navigatorPaletteRef"
         v-model="navigatorPanel"
         title="Navigator"
-        :left="16"
-        :width="380"
+        :left="PALETTE_INSET"
+        :width="LEFT_COLUMN_PALETTE_WIDTHS.navigator"
       >
         <navigator-panel />
+      </floating-palette>
+
+      <!-- Sits immediately right of the Navigator rather than in the left
+           stack, so turning the mode on doesn't push Layers and Tools down.
+           Visibility IS the mode: closing the palette turns timelapse off, so
+           there is no "mode on, panel hidden" state to reason about. -->
+      <floating-palette
+        ref="timelapsePaletteRef"
+        v-model="timelapsePanel"
+        title="Time Lapse"
+        :left="RIGHT_OF_LEFT_COLUMN"
+        :width="TIMELAPSE_PALETTE_WIDTH"
+      >
+        <timelapse-panel />
       </floating-palette>
 
       <floating-palette
         ref="layersPaletteRef"
         v-model="layersPanel"
         title="Layers"
-        :left="16"
-        :width="420"
+        :left="PALETTE_INSET"
+        :width="LEFT_COLUMN_PALETTE_WIDTHS.layers"
         :top="layersPanelTop"
         :max-height="layersPanelMaxHeight"
       >
@@ -435,8 +470,8 @@
       <floating-palette
         v-model="toolsPanel"
         title="Tools"
-        :left="16"
-        :width="380"
+        :left="PALETTE_INSET"
+        :width="LEFT_COLUMN_PALETTE_WIDTHS.tools"
         :top="toolsPanelTop"
         :max-height="toolsPanelMaxHeight"
       >
@@ -474,16 +509,35 @@ import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
 import PipelineDialog from "@/components/PipelineDialog.vue";
 import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
 import NavigatorPanel from "@/components/NavigatorPanel.vue";
+import TimelapsePanel from "@/components/TimelapsePanel.vue";
 import LayersPanel from "@/components/LayersPanel.vue";
 import Toolset from "@/tools/toolsets/Toolset.vue";
 import HelpPanel from "./components/HelpPanel.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
+import filterStore from "@/store/filters";
 import volumeViewStore from "@/store/volumeView";
+import aiPanelStore from "@/store/aiPanel";
+import timelapseStore from "@/store/timelapse";
 import { logError } from "@/utils/log";
 import { IHotkey } from "@/utils/v-mousetrap";
-import ChatComponent from "@/components/ChatComponent.vue";
+import {
+  ACTION_PANEL_TOP,
+  AI_PANEL_WIDTH,
+  LEFT_COLUMN_PALETTE_WIDTHS,
+  LEFT_PALETTE_CLEAR_X,
+  PALETTE_GAP,
+  PALETTE_INSET,
+  RIGHT_EDGE_OVERLAY_INSETS,
+  RIGHT_OF_LEFT_COLUMN,
+  RIGHT_PALETTE_WIDTHS,
+  STACKED_ACTION_PANEL_OFFSET,
+  TIMELAPSE_PALETTE_WIDTH,
+  actionPanelClearsTimelapsePalette,
+  rightEdgeClearX,
+} from "@/utils/paletteGeometry";
+import AiPanel from "@/components/AiPanel.vue";
 import FloatingPalette from "@/components/FloatingPalette.vue";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
@@ -502,11 +556,12 @@ void AnalyzeDialog;
 void PipelineDialog;
 void UndoRedoButtons;
 void NavigatorPanel;
+void TimelapsePanel;
 void LayersPanel;
 void Toolset;
 void HelpPanel;
 void BreadCrumbs;
-void ChatComponent;
+void AiPanel;
 
 const route = useRoute();
 const router = useRouter();
@@ -521,7 +576,130 @@ const annotationPanel = ref(false);
 const settingsPanel = ref(false);
 const filtersPanel = ref(false);
 const analyzePanel = ref(false);
-const chatbotOpen = ref(false);
+const aiPanelOpen = ref(false);
+
+// Not a plain ref and not in the palette registry: the Timelapse palette has no
+// independent open state, it mirrors the mode. Registering it would also let
+// the left-zone stacking treat it as part of the Navigator/Layers/Tools column,
+// which is exactly what it is positioned to avoid.
+const timelapsePanel = computed({
+  get: () => timelapseStore.showMode,
+  set: (value: boolean) => timelapseStore.setShowMode(value),
+});
+
+/**
+ * Palette geometry, projected onto `<v-app>` so the stylesheets read the same
+ * numbers `@/utils/paletteGeometry` computes instead of transcribing them.
+ *
+ * `--nimbus-right-edge-clear-x` is a single resolved offset rather than a class
+ * per overlay. The class-per-overlay version only knew about the Object Browser,
+ * which left the selection panels drawn underneath the AI panel (z-index 2001 vs
+ * their 1000) with 6 of their 8 buttons unhittable; and each new right-edge
+ * overlay would have doubled the number of CSS rules. Resolving the max here
+ * makes adding one a single term in `rightEdgeClearX`.
+ */
+// The AI panel is gated behind a build-time flag (enabled unless explicitly
+// set to "false") and requires a logged-in user: the claude_agent endpoint is
+// @access.user, so anonymous users would only hit 401s. Deployments without
+// the plugin/API key can disable it entirely with the flag. See
+// AI_PANEL_SPEC.md §7 and AI_PANEL_REVIEW.md finding #6.
+const aiPanelFeatureEnabled = import.meta.env.VITE_AI_PANEL_ENABLED !== "false";
+const canUseAiPanel = computed(
+  () => aiPanelFeatureEnabled && store.isLoggedIn && !!store.girderUser,
+);
+
+// EVERY right-edge overlay that OVERLAYS the canvas. All the palettes below omit
+// `:left`, so FloatingPalette anchors them right at z-index 1006; the AI panel is
+// fixed at 2001. The selection action panels are 1000, so any of them covers the
+// panels' buttons, and none is mutually exclusive with timelapse mode.
+//
+// The Analyze drawer is deliberately NOT here. It is a `v-navigation-drawer
+// location="right"`, which SHIFTS the layout instead of floating over it: the
+// action panels are `position: absolute` inside `.image`, and the drawer narrows
+// that container, so its strip is already excluded from the box `right:` is
+// measured against. Adding a clearance for it double-counts and pushes the panels
+// left — measured with the drawer open, container 0–1204 and the panel at
+// 533–708 (= 1204 − 496 − 175), which puts them back under the Timelapse palette
+// at 444–744, i.e. straight back into the bug this whole mechanism fixes.
+const rightEdgeClearance = computed(() =>
+  rightEdgeClearX([
+    { open: annotationPanel.value, width: RIGHT_PALETTE_WIDTHS.objectBrowser },
+    { open: filtersPanel.value, width: RIGHT_PALETTE_WIDTHS.filters },
+    { open: settingsPanel.value, width: RIGHT_PALETTE_WIDTHS.settings },
+    { open: snapshotPanel.value, width: RIGHT_PALETTE_WIDTHS.snapshots },
+    {
+      open: aiPanelOpen.value && canUseAiPanel.value,
+      width: AI_PANEL_WIDTH,
+      inset: RIGHT_EDGE_OVERLAY_INSETS.aiPanel,
+    },
+  ]),
+);
+
+/**
+ * Where the selection action panels sit vertically.
+ *
+ * Normally the top of the canvas. In timelapse mode they move to the right edge
+ * to clear the Timelapse palette — but on a narrow viewport the right edge and
+ * that palette meet in the middle, and no horizontal placement clears both. At
+ * 1280px with the Object Browser open (what "Show tracks" produces) a panel
+ * anchored 544px from the right lands at x 526–736, inside the palette's 444–744,
+ * and loses on z-index. Below roughly 1500px they therefore drop BELOW the
+ * palette, using its measured height so the offset tracks its real content.
+ */
+const actionPanelTop = computed(() => {
+  if (!timelapsePanel.value || !isDatasetView.value) {
+    return ACTION_PANEL_TOP;
+  }
+  if (
+    actionPanelClearsTimelapsePalette(
+      windowWidth.value,
+      rightEdgeClearance.value,
+    )
+  ) {
+    return ACTION_PANEL_TOP;
+  }
+  return (
+    PALETTE_TOP +
+    (timelapsePaletteHeight.value
+      ? timelapsePaletteHeight.value + STACK_GAP
+      : 0)
+  );
+});
+
+const paletteGeometryVars = computed(() => ({
+  "--nimbus-left-palette-clear-x": `${LEFT_PALETTE_CLEAR_X}px`,
+  "--nimbus-right-edge-clear-x": `${rightEdgeClearance.value}px`,
+  "--nimbus-action-panel-top": `${actionPanelTop.value}px`,
+  // The connection panel stacks a fixed distance below the object panel, so it
+  // has to follow whenever that one moves.
+  "--nimbus-stacked-action-panel-top": `${
+    actionPanelTop.value + STACKED_ACTION_PANEL_OFFSET
+  }px`,
+}));
+
+function toggleAiPanel() {
+  if (!canUseAiPanel.value) {
+    return;
+  }
+  aiPanelOpen.value = !aiPanelOpen.value;
+}
+
+// Clear the AI-panel conversation whenever the authenticated user changes.
+// Login/logout is client-side (no page reload), so the module-level wire
+// history would otherwise carry one user's prompts and results into the next
+// user's session. See codebaseDocumentation/AI_PANEL_REVIEW.md finding #4.
+watch(
+  () => store.girderUser?._id ?? null,
+  (userId) => aiPanelStore.handleAuthenticatedUserChange(userId),
+  { immediate: true },
+);
+
+// Close the panel if the gate closes under it (e.g. the user logs out).
+watch(canUseAiPanel, (usable) => {
+  if (!usable) {
+    aiPanelOpen.value = false;
+  }
+});
 
 // Left-zone palettes (dissolved left sidebar). Open by default.
 const navigatorPanel = ref(true);
@@ -665,9 +843,9 @@ function closeAllPalettes() {
 // height of the palette(s) above it (via ResizeObserver) so the next one sits
 // flush beneath with no dead gap. Used by both the right-zone Filters/Browser
 // pair and the left-zone Navigator/Layers/Tools stack.
-const PALETTE_TOP = 72; // clears the floating app bar
+const PALETTE_TOP = ACTION_PANEL_TOP; // clears the floating app bar
 const COLUMN_BOTTOM_INSET = 16;
-const STACK_GAP = 8;
+const STACK_GAP = PALETTE_GAP;
 const MIN_BROWSER_HEIGHT = 260; // keep the Browser usable when stacked
 
 type PaletteRefEl = ComponentPublicInstance & { rootEl?: HTMLElement };
@@ -732,8 +910,20 @@ const navigatorPaletteRef = ref<PaletteRefEl>();
 const layersPaletteRef = ref<PaletteRefEl>();
 const navigatorHeight = ref(0);
 const layersHeight = ref(0);
+// The Timelapse palette is not in the left stack, but its height is needed to
+// drop the selection action panels below it on a narrow viewport.
+const timelapsePaletteRef = ref<PaletteRefEl>();
+const timelapsePaletteHeight = ref(0);
+
+// Viewport width, for the one placement decision that depends on it (see
+// `actionPanelTop`). Guarded for non-DOM test environments.
+const windowWidth = ref(typeof window === "undefined" ? 0 : window.innerWidth);
+function updateWindowWidth() {
+  windowWidth.value = window.innerWidth;
+}
 let navigatorResizeObserver: ResizeObserver | null = null;
 let layersResizeObserver: ResizeObserver | null = null;
+let timelapseResizeObserver: ResizeObserver | null = null;
 
 const layersPanelTop = computed(
   () =>
@@ -773,13 +963,20 @@ function setupLeftPaletteObservers() {
     navigatorHeight,
   );
   layersResizeObserver = observePaletteHeight(layersPaletteRef, layersHeight);
+  timelapseResizeObserver = observePaletteHeight(
+    timelapsePaletteRef,
+    timelapsePaletteHeight,
+  );
 }
 
 function teardownLeftPaletteObservers() {
   navigatorResizeObserver?.disconnect();
   layersResizeObserver?.disconnect();
+  timelapseResizeObserver?.disconnect();
   navigatorResizeObserver = null;
   layersResizeObserver = null;
+  timelapseResizeObserver = null;
+  timelapsePaletteHeight.value = 0;
   navigatorHeight.value = 0;
   layersHeight.value = 0;
 }
@@ -825,6 +1022,27 @@ function onShowInList() {
 
 const routeName = computed(() => route.name);
 const isDatasetView = computed(() => routeName.value === "datasetview");
+
+const activeFilterCount = computed(() => filterStore.activeFilterCount);
+
+const filtersTooltip = computed(() => {
+  const base = "Filter objects by tags, scope, properties, ID and region";
+  const count = activeFilterCount.value;
+  if (count === 0) {
+    return base;
+  }
+  return `${base} (${count} active filter${count === 1 ? "" : "s"})`;
+});
+
+// The aria-label stays terse to match the sibling palette buttons ("Object
+// list", "Snapshots", "Settings"); the descriptive sentence belongs in the
+// hover tooltip. It carries the count because aria-label overrides the
+// button's content, which would otherwise hide the badge from assistive tech.
+const filtersAriaLabel = computed(() =>
+  activeFilterCount.value === 0
+    ? "Filters"
+    : `Filters (${activeFilterCount.value} active)`,
+);
 
 const hasUncomputedProperties = computed(() => {
   const counts = propertyStore.uncomputedCountByProperty;
@@ -918,6 +1136,25 @@ function datasetChanged() {
 }
 
 watch(annotationPanel, () => annotationPanelChanged());
+
+// The reverse direction, so `store.openAnnotationBrowserTab` can reach the
+// palette registry from a component that has no access to it (the Timelapse
+// panel's "Show tracks"). Both watchers only ever write a value that differs
+// from what they read, so the pair settles rather than ping-pongs.
+watch(
+  () => store.isAnnotationPanelOpen,
+  (open) => {
+    if (open === annotationPanel.value) {
+      return;
+    }
+    if (open) {
+      openPalette("annotationPanel");
+    } else {
+      annotationPanel.value = false;
+    }
+  },
+);
+
 watch(routeName, () => datasetChanged());
 
 // Left palettes mount/unmount with the dataset view, so (re)attach their
@@ -958,6 +1195,8 @@ watch(
 onMounted(() => {
   fetchConfig();
   loadAllTours();
+  window.addEventListener("resize", updateWindowWidth);
+  updateWindowWidth();
 
   // The Filters palette is always mounted, so observe it directly.
   filtersResizeObserver = observePaletteHeight(
@@ -967,6 +1206,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("resize", updateWindowWidth);
   filtersResizeObserver?.disconnect();
   teardownLeftPaletteObservers();
 });
@@ -983,11 +1223,15 @@ defineExpose({
   toolsPanel,
   layersPanel,
   analyzePanel,
-  chatbotOpen,
+  aiPanelOpen,
+  canUseAiPanel,
   isUploadLoading,
   helpPanelIsOpen,
   appHotkeys,
   routeName,
+  activeFilterCount,
+  filtersTooltip,
+  filtersAriaLabel,
   hasUncomputedProperties,
   filteredToursByCategory,
   filtersStacked,
@@ -1011,6 +1255,10 @@ defineExpose({
   flex: 0 0 auto;
 }
 
+/* Base tone of the palette cluster, deliberately theme-independent. The badge
+   below reuses it opaque as a separating ring, so the two must stay in sync. */
+$palette-cluster-tone: #0f1217;
+
 /* Cluster of palette-toggle icon buttons in the app bar.
    Pill-shaped group with hairline border; each button is a 32px circle. */
 .palette-cluster {
@@ -1020,7 +1268,7 @@ defineExpose({
   padding: 4px;
   margin-left: 12px;
   border-radius: 100px;
-  background: rgba(15, 18, 23, 0.55);
+  background: rgba($palette-cluster-tone, 0.55);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
@@ -1064,6 +1312,33 @@ defineExpose({
     background: rgb(var(--v-theme-primary));
     box-shadow: 0 0 6px rgba(var(--v-theme-primary), 0.6);
   }
+}
+
+/* Count badge pinned to the top-right of a palette-toggle button (used by
+   Filters to surface the number of active filters while the panel is closed).
+   The ring reuses the cluster's own tone, opaque, so the count reads as
+   separate from the icon glyph it overlaps. It stays within the cluster's 4px
+   padding and its 2px inter-button gap, so it never covers a neighbour. */
+.palette-ibtn-badge {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  box-sizing: border-box;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border: 1.5px solid $palette-cluster-tone;
+  border-radius: 8px;
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--nimbus-font);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
 }
 </style>
 <style lang="scss">

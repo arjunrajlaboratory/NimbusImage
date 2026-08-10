@@ -3,6 +3,25 @@ import { shallowMount } from "@vue/test-utils";
 
 // ---- Hoisted mocks ----
 
+// Records every throttle/debounce wrapper the component creates, so the
+// teardown test can find them without a hand-maintained list. Delegates to the
+// real lodash so timing behaviour (and every test that advances fake timers
+// through a throttle) is unchanged.
+const createdThrottles = vi.hoisted(() => [] as any[]);
+
+vi.mock("lodash", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lodash")>();
+  const record = (wrapper: any) => {
+    createdThrottles.push(wrapper);
+    return wrapper;
+  };
+  return {
+    ...actual,
+    throttle: (...args: any[]) => record((actual.throttle as any)(...args)),
+    debounce: (...args: any[]) => record((actual.debounce as any)(...args)),
+  };
+});
+
 vi.mock("onnxruntime-web/webgpu", () => ({
   InferenceSession: { create: vi.fn() },
   Tensor: vi.fn(),
@@ -75,6 +94,17 @@ vi.mock("@/utils/annotation", () => ({
       !options.specialAnnotation
     ),
 }));
+
+// Real geometry throughout — only `unrollLayoutFor` is wrapped, so a test can
+// count how many layouts a draw builds. It must be ONE per draw: building one
+// inside the per-annotation transform allocates two objects per annotation,
+// including on the un-unrolled path that is supposed to allocate nothing.
+const unrollSpy = vi.hoisted(() => ({ unrollLayoutFor: vi.fn() }));
+vi.mock("@/utils/unroll", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/unroll")>();
+  unrollSpy.unrollLayoutFor.mockImplementation(actual.unrollLayoutFor);
+  return { ...actual, unrollLayoutFor: unrollSpy.unrollLayoutFor };
+});
 
 vi.mock("@/utils/polygonSlice", () => ({
   editPolygonAnnotation: vi.fn().mockReturnValue([]),
@@ -254,18 +284,25 @@ vi.mock("@/store", () => {
       xy: 0,
       z: 0,
       time: 0,
-      unroll: false,
       unrollXY: false,
       unrollZ: false,
       unrollT: false,
+      // DERIVED, exactly as in the real store, where `unroll` is a getter over
+      // the three flags. It used to be an independent field here, so a test that
+      // set `unrollXY` alone left `unroll` false — the component's filtering saw
+      // an unrolled axis while its coordinate transform did not, a state the app
+      // can never actually be in. Writing `unroll` unrolls time, which is what
+      // the tests that set it are reaching for.
+      get unroll() {
+        return this.unrollXY || this.unrollZ || this.unrollT;
+      },
+      set unroll(value: boolean) {
+        this.unrollT = value;
+      },
       selectedTool: null as any,
       drawAnnotations: true,
       drawAnnotationConnections: true,
       showTooltips: false,
-      showTimelapseMode: false,
-      timelapseModeWindow: 5,
-      timelapseTags: [] as string[],
-      showTimelapseLabels: false,
       filteredDraw: false,
       filteredAnnotationTooltips: false,
       scaleAnnotationsWithZoom: false,
@@ -288,6 +325,24 @@ vi.mock("@/store", () => {
       api: {
         getPixelValuesForAllLayers: vi.fn().mockResolvedValue([]),
       },
+    }),
+  };
+});
+
+// Timelapse view state moved out of the main store into its own module. Also
+// `reactive()`, and for the same reason: the draw path is driven by watchers on
+// these fields, so a plain object would let every timelapse test assert against
+// a layer that was never rebuilt.
+vi.mock("@/store/timelapse", () => {
+  const { reactive } = require("vue");
+  return {
+    default: reactive({
+      showMode: false,
+      modeWindow: 5,
+      tags: [] as string[],
+      showLabels: false,
+      trackColoring: "track" as "track" | "uniform",
+      colorSeed: 0,
     }),
   };
 });
@@ -402,9 +457,13 @@ import {
 } from "@/store/model";
 import { samPromptToAnnotation } from "@/pipelines/samPipeline";
 import { NoOutput } from "@/pipelines/computePipeline";
+import connectionListStore from "@/store/connectionList";
+import timelapseStore from "@/store/timelapse";
+import { TRACK_UNIFORM_COLOR, trackColor, trackKey } from "@/utils/connections";
 import AnnotationViewer from "./AnnotationViewer.vue";
 
 const mockedStore = vi.mocked(store);
+const mockedTimelapseStore = vi.mocked(timelapseStore);
 const mockedAnnotationStore = vi.mocked(annotationStore);
 const mockedPropertiesStore = vi.mocked(propertiesStore);
 const mockedFilterStore = vi.mocked(filterStore);
@@ -541,10 +600,12 @@ describe("AnnotationViewer", () => {
     mockedStore.drawAnnotations = true;
     mockedStore.drawAnnotationConnections = true;
     mockedStore.showTooltips = false;
-    mockedStore.showTimelapseMode = false;
-    mockedStore.timelapseModeWindow = 5;
-    mockedStore.timelapseTags = [];
-    mockedStore.showTimelapseLabels = false;
+    mockedTimelapseStore.showMode = false;
+    mockedTimelapseStore.modeWindow = 5;
+    mockedTimelapseStore.tags = [];
+    mockedTimelapseStore.showLabels = false;
+    mockedTimelapseStore.trackColoring = "track";
+    mockedTimelapseStore.colorSeed = 0;
     mockedStore.filteredDraw = false;
     mockedStore.filteredAnnotationTooltips = false;
     mockedStore.scaleAnnotationsWithZoom = false;
@@ -559,6 +620,10 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.annotationConnections = [];
     mockedAnnotationStore.annotationCentroids = {};
     mockedAnnotationStore.selectedAnnotationIds = new Set<string>();
+    // Explicit, because tests that install a real implementation would
+    // otherwise leak it into every later test — vi.clearAllMocks() clears calls
+    // but leaves implementations in place.
+    (mockedAnnotationStore.isAnnotationSelected as any).mockReturnValue(false);
     mockedAnnotationStore.hoveredAnnotationId = null;
     mockedAnnotationStore.pendingAnnotation = null;
     mockedAnnotationStore.annotationIdToIdx = {};
@@ -571,10 +636,12 @@ describe("AnnotationViewer", () => {
     mockedAnnotationStore.visibilityConfig = {
       stubThreshold: 10000,
       maxVisible: 10000,
+      minimumVisible: 5000,
       maxHydrated: 5000,
       hydrationCacheCap: 10000,
       globalThreshold: true,
       coverageTarget: 0.15,
+      revealMoreOnZoom: true,
       viewportRefreshFraction: 0.2,
     };
     mockedAnnotationStore.averageStubRadius = 0;
@@ -723,17 +790,17 @@ describe("AnnotationViewer", () => {
     });
 
     it("showTimelapseMode returns store.showTimelapseMode", () => {
-      mockedStore.showTimelapseMode = true;
+      mockedTimelapseStore.showMode = true;
       expect((wrapper.vm as any).showTimelapseMode).toBe(true);
     });
 
     it("timelapseModeWindow returns store.timelapseModeWindow", () => {
-      mockedStore.timelapseModeWindow = 10;
+      mockedTimelapseStore.modeWindow = 10;
       expect((wrapper.vm as any).timelapseModeWindow).toBe(10);
     });
 
     it("showTimelapseLabels returns store.showTimelapseLabels", () => {
-      mockedStore.showTimelapseLabels = true;
+      mockedTimelapseStore.showLabels = true;
       expect((wrapper.vm as any).showTimelapseLabels).toBe(true);
     });
 
@@ -905,6 +972,13 @@ describe("AnnotationViewer", () => {
           location: { XY: 5, Z: 0, Time: 0 },
         });
         mockedAnnotationStore.annotations = [ann1, ann2];
+        // Unrolling is on, so the drawn-centroid transform runs. The real store
+        // writes a centroid for every annotation it holds, so leaving these out
+        // would test a state that cannot occur.
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 1, y: 2 },
+          a2: { x: 3, y: 4 },
+        };
 
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         const result = (wrapper.vm as any).layerAnnotations;
@@ -1004,6 +1078,7 @@ describe("AnnotationViewer", () => {
           location: { XY: 0, Z: 99, Time: 0 },
         });
         mockedAnnotationStore.annotations = [ann];
+        mockedAnnotationStore.annotationCentroids = { a1: { x: 1, y: 2 } };
 
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         const result = (wrapper.vm as any).layerAnnotations;
@@ -1043,6 +1118,394 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 2 });
         const ids = (wrapper.vm as any).displayedAnnotationIds;
         expect(ids.has("a1")).toBe(true);
+      });
+    });
+
+    // --- drawNewConnections ---
+    describe("drawNewConnections", () => {
+      function setupTwoDisplayedAnnotations() {
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.getLayerFromId as any).mockReturnValue(layer);
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({ id: "a1", channel: 0 }),
+          makeAnnotation({ id: "a2", channel: 0 }),
+        ];
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ];
+        (geojsAnnotationFactory as any).mockImplementation((shape: string) =>
+          mockGeoJSAnnotation(shape),
+        );
+      }
+
+      it("draws a line for a connection between two displayed annotations", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const added = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(added).toHaveLength(1);
+        expect(added[0].options().girderId).toBe("c1");
+      });
+
+      // Regression: in stub-only mode getAnnotationFromId returns undefined for
+      // unhydrated annotations. Gating the draw on it silently dropped nearly
+      // every connection on a lazily-loaded dataset (1 of 11 drawn on the 709K
+      // Xenium dataset) even though every centroid was present.
+      it("still draws when the endpoints are unhydrated stubs", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const added = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(added).toHaveLength(1);
+        expect(added[0].options().girderId).toBe("c1");
+        expect(added[0].options().style.stroke).toBe(true);
+      });
+
+      // Retention must use the same criteria as the draw path, or every draw
+      // removes the lines it just created and rebuilds them next pass.
+      it("retains stub-backed connection lines through clearOldAnnotations", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        const countLines = () =>
+          aLayer.annotations().filter((f: any) => f.options().isConnection)
+            .length;
+        const before = countLines();
+        expect(before).toBeGreaterThan(0);
+
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+        expect(countLines()).toBe(before);
+      });
+
+      it("styles a selected connection at construction, not only on restyle", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        connectionListStore.setSelectedConnectionIds(["c1"]);
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const line = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .find((f: any) => f?.options?.().isConnection);
+        expect(line.options().style.strokeColor).toBe("#00e5ff");
+        // Asserting colour alone is not enough: options("style", …) REPLACES
+        // the style, so dropping `stroke` yields a correctly-positioned,
+        // correctly-coloured, completely invisible line.
+        expect(line.options().style.stroke).toBe(true);
+      });
+
+      // Regression: connection lines carry a girderId, so they land in
+      // drawnGeoJSAnnotations. They never set isHovered/isSelected, and
+      // `undefined != false` is true, so the retained-restyle loop used to
+      // overwrite a selected connection's cyan on the very next redraw.
+      it("keeps a selected connection cyan through a redraw", async () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        connectionListStore.setSelectedConnectionIds(["c1"]);
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+
+        const lineOf = () =>
+          aLayer.annotations().find((f: any) => f.options().isConnection);
+        expect(lineOf().options().style.strokeColor).toBe("#00e5ff");
+        expect(lineOf().options().style.stroke).toBe(true);
+
+        // A plain redraw must not clobber it.
+        (wrapper.vm as any).drawAnnotationsNoThrottle();
+        vi.advanceTimersByTime(101);
+        await wrapper.vm.$nextTick();
+        expect(lineOf().options().style.strokeColor).toBe("#00e5ff");
+        expect(lineOf().options().style.stroke).toBe(true);
+      });
+
+      // A plain click highlights an object but used to do nothing at all on a
+      // connection line — the hover handler skipped isConnection features —
+      // which reads as the feature being broken.
+      it("hovers a connection on a plain click that hits no object", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        (wrapper.vm as any).drawNewConnections(new Map());
+        connectionListStore.setHoveredConnectionId(null);
+
+        // The GeoJS mock does not derive coordinates() from the vertices
+        // option, so the hit test would see no geometry. Give the drawn line
+        // the segment it represents.
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        const drawnLine = aLayer
+          .annotations()
+          .find((f: any) => f.options().isConnection);
+        drawnLine.coordinates = () => [
+          { x: 0, y: 0 },
+          { x: 1000, y: 1000 },
+        ];
+        // The shared geojs mock returns 100 from distance2dToLineSquared, which
+        // never clears the 6px tolerance; 1 means "the click is on the line".
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(1);
+
+        // Midpoint of the drawn line: on the connection, away from any object.
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 500,
+          y: 500,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBe("c1");
+      });
+
+      it("clears connection hover when the click lands on an object", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        (wrapper.vm as any).drawNewConnections(new Map());
+        connectionListStore.setHoveredConnectionId("c1");
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(100);
+
+        // Far from the line, so no connection is hit either way.
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 9999,
+          y: 9999,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBeNull();
+      });
+
+      // Regression: the hit test returned the FIRST line within tolerance, so
+      // with parallel or dense tracks a click could select a far segment over
+      // a near one and leave some links unreachable from the canvas.
+      it("selects the closest connection when several are within tolerance", () => {
+        setupTwoDisplayedAnnotations();
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "far", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "near", parentId: "a2", childId: "a1" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        (wrapper.vm as any).drawNewConnections(new Map());
+
+        const lines = aLayer
+          .annotations()
+          .filter((f: any) => f.options().isConnection);
+        // Give each line distinguishable geometry, then make the SECOND one
+        // measurably nearer while both stay inside the 6px tolerance (36).
+        lines.forEach((l: any, i: number) => {
+          l.coordinates = () => [
+            { x: i, y: 0 },
+            { x: i, y: 100 },
+          ];
+        });
+        (geojs.util.distance2dToLineSquared as any).mockImplementation(
+          (_p: any, a: any) => (a.x === 0 ? 25 : 1),
+        );
+
+        const first = lines[0].options().girderId;
+        const nearest = lines[1].options().girderId;
+        expect(
+          (wrapper.vm as any).findConnectionIdAtPoint({ x: 0, y: 50 }),
+        ).toBe(nearest);
+        expect(nearest).not.toBe(first);
+      });
+
+      // ConnectionActionPanel must live in ImageViewer, mounted once: in unroll
+      // mode ImageViewer renders one AnnotationViewer per layer group, and a
+      // per-viewer panel registered N global keydown listeners, so one Delete
+      // press sent N duplicate batch DELETEs.
+      it("does not mount the connection action panel per viewer", () => {
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        expect(
+          wrapper.findComponent({ name: "ConnectionActionPanel" }).exists(),
+        ).toBe(false);
+        expect(wrapper.html()).not.toContain("connection-action-panel");
+      });
+
+      // In timelapse mode the track segments ARE the visual; the annotation
+      // layer's dots sit under them. Clicking a segment that crosses a dot must
+      // select the link, not the dot — otherwise clicking a track does nothing
+      // for the connection, which is what users hit.
+      // Puts a drawn OBJECT feature and a connection line on the layer at the
+      // same spot, so the hover handler genuinely has to choose between them.
+      // Building them explicitly beats driving the whole draw pipeline: the
+      // point of the test is the precedence rule, not the drawing.
+      function mountWithOverlappingObjectAndConnection() {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        (geojs.util.distance2dToLineSquared as any).mockReturnValue(1);
+        // pointDistance is a bare vi.fn() returning undefined, so the object
+        // hit-test can never succeed until the test says otherwise — 0 means
+        // "the click is dead on the object".
+        (pointDistance as any).mockReturnValue(0);
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.removeAllAnnotations();
+
+        // Object a1 renders at (10, 20) with radius 5 — a click there hits it.
+        const objectFeature = mockGeoJSAnnotation("point");
+        objectFeature.options({ girderId: "a1", layerId: "l1" });
+        (objectFeature.style as any).mockReturnValue({
+          radius: 5,
+          strokeWidth: 2,
+        });
+        aLayer.addAnnotation(objectFeature);
+
+        // A connection line passing straight through the same point.
+        const lineFeature = mockGeoJSAnnotation("line");
+        lineFeature.options({ girderId: "c1", isConnection: true });
+        (lineFeature.coordinates as any).mockReturnValue([
+          { x: 0, y: 0 },
+          { x: 100, y: 100 },
+        ]);
+        aLayer.addAnnotation(lineFeature);
+
+        connectionListStore.setHoveredConnectionId(null);
+        mockedAnnotationStore.hoveredAnnotationId = null;
+      }
+
+      it("prefers the connection over an object in timelapse mode", () => {
+        mockedTimelapseStore.showMode = true;
+        mountWithOverlappingObjectAndConnection();
+
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 10,
+          y: 20,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBe("c1");
+      });
+
+      it("still prefers the object outside timelapse mode", () => {
+        mockedTimelapseStore.showMode = false;
+        mountWithOverlappingObjectAndConnection();
+
+        (wrapper.vm as any).setHoveredAnnotationFromCoordinates({
+          x: 10,
+          y: 20,
+        });
+        expect(connectionListStore.hoveredConnectionId).toBeNull();
+      });
+
+      // Hovering must not rebuild the timelapse layer. It is one line feature
+      // per connection — ~2,500 on a real dataset — and hovering rows in the
+      // list changes hoveredConnectionId continuously, so rebuilding per hover
+      // made the list feel sluggish. Selection still rebuilds.
+      it("does not rebuild the timelapse layer on hover", async () => {
+        mockedTimelapseStore.showMode = true;
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        await wrapper.vm.$nextTick();
+
+        tLayer.removeAllAnnotations.mockClear();
+        connectionListStore.setHoveredConnectionId("c1");
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const rebuildsOnHover = tLayer.removeAllAnnotations.mock.calls.length;
+
+        tLayer.removeAllAnnotations.mockClear();
+        connectionListStore.setSelectedConnectionIds(["c1"]);
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const rebuildsOnSelect = tLayer.removeAllAnnotations.mock.calls.length;
+
+        expect(rebuildsOnHover).toBe(0);
+        expect(rebuildsOnSelect).toBeGreaterThan(0);
+      });
+
+      // The timelapse precedence inversion must apply to SELECTION too, not
+      // only to plain-click highlighting: shift+click and the select tool go
+      // through selectAnnotations, and a track segment almost always overlaps
+      // a dot, so without this most timelapse connections cannot be selected.
+      it("selects the connection over an object in timelapse mode", () => {
+        mockedTimelapseStore.showMode = true;
+        mountWithOverlappingObjectAndConnection();
+        connectionListStore.setSelectedConnectionIds([]);
+
+        (wrapper.vm as any).selectAnnotations({
+          type: () => "point",
+          coordinates: () => [{ x: 10, y: 20 }],
+        });
+
+        expect([...connectionListStore.selectedConnectionIds]).toEqual(["c1"]);
+        // The object must NOT also be selected — the mocked store uses the ADD
+        // selection type, so that path calls selectAnnotations.
+        expect(mockedAnnotationStore.selectAnnotations).not.toHaveBeenCalled();
+      });
+
+      it("still selects the object outside timelapse mode", () => {
+        mockedTimelapseStore.showMode = false;
+        mountWithOverlappingObjectAndConnection();
+        connectionListStore.setSelectedConnectionIds([]);
+
+        (wrapper.vm as any).selectAnnotations({
+          type: () => "point",
+          coordinates: () => [{ x: 10, y: 20 }],
+        });
+
+        expect(connectionListStore.selectedConnectionIds.size).toBe(0);
+        expect(mockedAnnotationStore.selectAnnotations).toHaveBeenCalled();
+      });
+
+      it("skips a connection whose centroid is missing rather than drawing NaN", () => {
+        setupTwoDisplayedAnnotations();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        mockedAnnotationStore.annotationCentroids = { a1: { x: 10, y: 20 } };
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const added = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(added).toHaveLength(0);
       });
     });
 
@@ -1643,6 +2106,81 @@ describe("AnnotationViewer", () => {
           1,
         );
         expect(result).toBe(true);
+      });
+    });
+
+    // --- shouldSelectStub ---
+    describe("shouldSelectStub", () => {
+      beforeEach(() => {
+        wrapper = mountComponent();
+        // Real Euclidean distance so the hit-test math is actually exercised.
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+      });
+
+      function makeStub(overrides: any = {}) {
+        return {
+          id: "stub1",
+          centroid: { x: 0, y: 0 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "polygon",
+          channel: 0,
+          tags: [],
+          color: null,
+          estimatedRadius: 10,
+          ...overrides,
+        };
+      }
+
+      it("hit-tests the stub radius in world units (no unitsPerPixel scaling)", () => {
+        // The stub dot's style.radius is estimatedRadius in WORLD units. A click
+        // 8 world units away is inside the rendered radius (10), so it must hit
+        // regardless of the zoom-dependent unitsPerPixel.
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 0 };
+        const unitsPerPixel = 0.25; // zoomed in — the regression trigger
+        const result = (wrapper.vm as any).shouldSelectStub(
+          { x: 8, y: 0 },
+          stub,
+          style,
+          unitsPerPixel,
+        );
+        // Old (buggy) math: radius * unitsPerPixel = 2.5 → 8 > 2.5 → missed.
+        // Fixed math: radius = 10 → 8 < 10 → hit.
+        expect(result).toBe(true);
+      });
+
+      it("misses when the click is outside the world-unit radius", () => {
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 0 };
+        const result = (wrapper.vm as any).shouldSelectStub(
+          { x: 12, y: 0 },
+          stub,
+          style,
+          4, // zoomed out — old math would falsely hit (10*4=40)
+        );
+        expect(result).toBe(false);
+      });
+
+      it("converts only the stroke width by unitsPerPixel", () => {
+        // radius 10 (world) + strokeWidth 4 * unitsPerPixel 0.5 = 12 world units.
+        const stub = makeStub();
+        const style = { radius: 10, strokeWidth: 4 };
+        const inside = (wrapper.vm as any).shouldSelectStub(
+          { x: 11.5, y: 0 },
+          stub,
+          style,
+          0.5,
+        );
+        const outside = (wrapper.vm as any).shouldSelectStub(
+          { x: 12.5, y: 0 },
+          stub,
+          style,
+          0.5,
+        );
+        expect(inside).toBe(true);
+        expect(outside).toBe(false);
       });
     });
 
@@ -3043,112 +3581,106 @@ describe("AnnotationViewer", () => {
   // Category 5: Coordinate Transformation (~7 tests)
   // =========================================================================
   describe("coordinate transformation", () => {
-    // --- unrollIndex ---
-    describe("unrollIndex", () => {
-      it("returns 0 when no images", () => {
-        mockedStore.dataset = {
-          ...mockedStore.dataset,
-          images: () => null,
-        } as any;
-        wrapper = mountComponent();
-        const result = (wrapper.vm as any).unrollIndex(
-          0,
-          0,
-          0,
-          false,
-          false,
-          false,
-        );
-        expect(result).toBe(0);
+    // `unrollIndex` became `unrollCellIndex` and the offset math became
+    // `unrolledCoordinates`, both in @/utils/unroll (issue #1280), where the
+    // navigation path shares them. Their unit tests moved with them to
+    // src/utils/unroll.test.ts.
+    //
+    // What belongs HERE is the wiring the util cannot see: the draw path must key
+    // its grid to the `unrollW` PROP — the grid ImageViewer actually laid the
+    // tiles out on — and the centroid map the canvas draws from must carry the
+    // offset. `unrollIndexFromImages` stays stubbed to pick the cell; resolving a
+    // location to its cell for real is unroll.test.ts's job.
+    describe("unrollLayout", () => {
+      it("takes its grid from the unrollW prop", () => {
+        mockedStore.unroll = true;
+        wrapper = mountComponent({ unrollW: 3 });
+        const layout = (wrapper.vm as any).unrollLayout;
+        expect(layout.unrollW).toBe(3);
+        expect(layout.unroll).toBe(true);
+        // Cell size comes from the dataset's frames, not from the caller.
+        expect(layout.sizeX).toBe(1024);
+        expect(layout.sizeY).toBe(1024);
       });
 
-      it("calls unrollIndexFromImages", () => {
-        (unrollIndexFromImages as any).mockReturnValue(3);
-        wrapper = mountComponent();
-        const result = (wrapper.vm as any).unrollIndex(
-          1,
-          2,
-          3,
-          false,
-          false,
-          false,
-        );
-        expect(unrollIndexFromImages).toHaveBeenCalled();
-        expect(result).toBe(3);
-      });
-
-      it("passes -1 for unrolled dimensions", () => {
-        wrapper = mountComponent();
-        const datasetImages = vi.fn().mockReturnValue([]);
-        mockedStore.dataset = {
-          ...mockedStore.dataset,
-          images: datasetImages,
-        } as any;
-        (wrapper.vm as any).unrollIndex(1, 2, 3, true, true, true);
-        expect(datasetImages).toHaveBeenCalledWith(-1, -1, -1, 0);
-      });
-
-      it("passes actual index for non-unrolled dimensions", () => {
-        wrapper = mountComponent();
-        const datasetImages = vi.fn().mockReturnValue([]);
-        mockedStore.dataset = {
-          ...mockedStore.dataset,
-          images: datasetImages,
-        } as any;
-        (wrapper.vm as any).unrollIndex(1, 2, 3, false, false, false);
-        expect(datasetImages).toHaveBeenCalledWith(2, 3, 1, 0);
+      it("is not unrolled when no axis is unrolled", () => {
+        wrapper = mountComponent({ unrollW: 3 });
+        expect((wrapper.vm as any).unrollLayout.unroll).toBe(false);
       });
     });
 
-    // --- unrolledCoordinates ---
-    describe("unrolledCoordinates", () => {
-      it("returns coordinates unchanged when not unrolling", () => {
-        mockedStore.unroll = false;
-        wrapper = mountComponent();
-        const coords = [{ x: 10, y: 20 }];
-        const image = { sizeX: 1024, sizeY: 1024 };
-        const result = (wrapper.vm as any).unrolledCoordinates(
-          coords,
-          { XY: 0, Z: 0, Time: 0 },
-          image,
-        );
-        expect(result).toBe(coords);
+    // The map every drawn centroid, connection line and label is positioned
+    // from — the reason the offset has to be applied at all.
+    describe("unrolledCentroidCoordinates", () => {
+      function mountWithOneAnnotation(tile: number, unrollW: number) {
+        mockedStore.dataset = {
+          ...mockedStore.dataset,
+          anyImage: () => ({ sizeX: tile, sizeY: tile }),
+          images: () => [],
+        } as any;
+        mockedAnnotationStore.annotations = [makeAnnotation({ id: "a1" })];
+        mockedAnnotationStore.annotationCentroids = { a1: { x: 10, y: 20 } };
+        wrapper = mountComponent({ unrollW });
+        return (wrapper.vm as any).unrolledCentroidCoordinates.a1;
+      }
+
+      it("leaves centroids alone when not unrolling", () => {
+        (unrollIndexFromImages as any).mockReturnValue(3);
+        expect(mountWithOneAnnotation(100, 2)).toEqual({ x: 10, y: 20 });
       });
 
-      it("offsets coordinates when unrolling", () => {
+      it("offsets a centroid by its frame's grid cell", () => {
         mockedStore.unroll = true;
-
-        (unrollIndexFromImages as any).mockReturnValue(1); // tileIndex=1, tileX=0, tileY=1 (with unrollW=1)
-        wrapper = mountComponent({ unrollW: 1 });
-        const coords = [{ x: 10, y: 20 }];
-        const image = { sizeX: 100, sizeY: 200 };
-        const result = (wrapper.vm as any).unrolledCoordinates(
-          coords,
-          { XY: 0, Z: 0, Time: 0 },
-          image,
-        );
-        // tileX = 1 % 1 = 0, tileY = floor(1 / 1) = 1
-        // x = 100*0 + 10 = 10, y = 200*1 + 20 = 220
-        expect(result[0].x).toBe(10);
-        expect(result[0].y).toBe(220);
+        // cell 1 in a 2-wide grid ⇒ column 1, row 0
+        (unrollIndexFromImages as any).mockReturnValue(1);
+        expect(mountWithOneAnnotation(100, 2)).toEqual({
+          x: 110,
+          y: 20,
+          z: undefined,
+        });
       });
 
-      it("calculates tileX/Y from unrollW", () => {
+      it("wraps onto the next grid row past the last column", () => {
         mockedStore.unroll = true;
+        // cell 3 in a 2-wide grid ⇒ column 1, row 1: offset in BOTH axes
+        (unrollIndexFromImages as any).mockReturnValue(3);
+        expect(mountWithOneAnnotation(100, 2)).toEqual({
+          x: 110,
+          y: 120,
+          z: undefined,
+        });
+      });
 
-        (unrollIndexFromImages as any).mockReturnValue(3); // tileIndex=3, with unrollW=2: tileX=1, tileY=1
-        wrapper = mountComponent({ unrollW: 2 });
-        const coords = [{ x: 5, y: 10 }];
-        const image = { sizeX: 50, sizeY: 50 };
-        const result = (wrapper.vm as any).unrolledCoordinates(
-          coords,
-          { XY: 0, Z: 0, Time: 0 },
-          image,
-        );
-        // tileX = 3 % 2 = 1, tileY = floor(3 / 2) = 1
-        // x = 50*1 + 5 = 55, y = 50*1 + 10 = 60
-        expect(result[0].x).toBe(55);
-        expect(result[0].y).toBe(60);
+      // Cost, with no visible behaviour: the transform runs once per annotation
+      // per draw, so the layout must be hoisted out of that loop. Asserted as
+      // "does not scale with annotation count" rather than an absolute count —
+      // the layout is a computed, so how many times mount happens to evaluate it
+      // is incidental, while scaling with the annotation count is the defect.
+      it("builds a layout per draw, not per annotation", () => {
+        mockedStore.unroll = true;
+        const layoutsBuiltFor = (annotationCount: number) => {
+          const ids = Array.from(
+            { length: annotationCount },
+            (_, i) => `a${i}`,
+          );
+          mockedAnnotationStore.annotations = ids.map((id) =>
+            makeAnnotation({ id }),
+          );
+          mockedAnnotationStore.annotationCentroids = Object.fromEntries(
+            ids.map((id, i) => [id, { x: i, y: i }]),
+          );
+          unrollSpy.unrollLayoutFor.mockClear();
+          wrapper = mountComponent({ unrollW: 2 });
+          // Reading the map is what runs the transform over every annotation.
+          expect(
+            Object.keys((wrapper.vm as any).unrolledCentroidCoordinates),
+          ).toHaveLength(annotationCount);
+          const built = unrollSpy.unrollLayoutFor.mock.calls.length;
+          wrapper.unmount();
+          return built;
+        };
+
+        expect(layoutsBuiltFor(40)).toBe(layoutsBuiltFor(2));
       });
     });
   });
@@ -3309,7 +3841,7 @@ describe("AnnotationViewer", () => {
       });
 
       it("exits early when showTimelapseMode is false", () => {
-        mockedStore.showTimelapseMode = false;
+        mockedTimelapseStore.showMode = false;
         wrapper = mountComponent();
         const tLayer = (wrapper.vm as any).timelapseLayer;
         vi.clearAllMocks();
@@ -3318,8 +3850,559 @@ describe("AnnotationViewer", () => {
         expect(tLayer.draw).toHaveBeenCalled();
       });
 
+      // Track segments must carry their connection id, or clicking a segment
+      // cannot resolve to the link it represents and tracks stay uncuttable.
+      it("tags each track segment with its connection id", () => {
+        mockedTimelapseStore.showMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        const ann1 = makeAnnotation({
+          id: "a1",
+          channel: 0,
+          location: { XY: 0, Z: 0, Time: 0 },
+        });
+        const ann2 = makeAnnotation({
+          id: "a2",
+          channel: 0,
+          location: { XY: 0, Z: 0, Time: 1 },
+        });
+        mockedAnnotationStore.annotations = [ann1, ann2];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        // The factory mock ignores its args by default, so give each created
+        // feature a real options bag to read back.
+        (geojsAnnotationFactory as any).mockImplementation((shape: string) =>
+          mockGeoJSAnnotation(shape),
+        );
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const lineBatches = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((lines: any[]) =>
+            lines?.some((line: any) => line.options()?.isConnection),
+          );
+        expect(lineBatches.length).toBeGreaterThan(0);
+        const tagged = lineBatches
+          .flat()
+          .filter((line: any) => line.options().isConnection);
+        expect(tagged).toHaveLength(1);
+        expect(tagged[0].options().girderId).toBe("c1");
+      });
+
+      // Regression: drawTimelapseTrack skipped a segment whenever the other
+      // endpoint's time was >= this one's, so an equal-time link was skipped
+      // from BOTH endpoints and never drawn — while Connect selected
+      // deliberately creates exactly those for same-frame pairs. One real
+      // dataset here has 54 links, every one of them equal-time.
+      it("draws an equal-time link exactly once", () => {
+        mockedTimelapseStore.showMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        // Both endpoints on the SAME timepoint.
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 3 },
+          }),
+          makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 3 },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "sameT", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        (geojsAnnotationFactory as any).mockImplementation((shape: string) =>
+          mockGeoJSAnnotation(shape),
+        );
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const drawn = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(drawn).toHaveLength(1);
+        expect(drawn[0].options().girderId).toBe("sameT");
+      });
+
+      // A self-connection is a zero-length segment; the id tie-break must
+      // exclude it rather than emitting a degenerate line.
+      it("does not draw a self-connection as a track segment", () => {
+        mockedTimelapseStore.showMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "loop", parentId: "a1", childId: "a1" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = { a1: { x: 10, y: 20 } };
+        (geojsAnnotationFactory as any).mockImplementation((shape: string) =>
+          mockGeoJSAnnotation(shape),
+        );
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const drawn = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(drawn).toHaveLength(0);
+      });
+
+      // The schema allows several connection documents for one endpoint pair
+      // (this repo's own datasets have them), but only one segment is drawn per
+      // pair. Whichever record it carries is the only one that can be
+      // highlighted or resolved by a click, so a selected duplicate must win.
+      it("renders the selected duplicate as the pair's representative", () => {
+        mockedTimelapseStore.showMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        const ann1 = makeAnnotation({
+          id: "a1",
+          channel: 0,
+          location: { XY: 0, Z: 0, Time: 0 },
+        });
+        const ann2 = makeAnnotation({
+          id: "a2",
+          channel: 0,
+          location: { XY: 0, Z: 0, Time: 1 },
+        });
+        mockedAnnotationStore.annotations = [ann1, ann2];
+        // Two documents for the very same pair.
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "dup1", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "dup2", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        // Forward the options bag: the default factory mock drops it, so the
+        // style passed at construction would never reach the feature.
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _coords: any, options: any) => {
+            const f = mockGeoJSAnnotation(shape);
+            if (options) f.options(options);
+            return f;
+          },
+        );
+        // Select the SECOND duplicate.
+        connectionListStore.setSelectedConnectionIds(["dup2"]);
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const drawn = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(drawn).toHaveLength(1);
+        expect(drawn[0].options().girderId).toBe("dup2");
+        expect(drawn[0].options().style.strokeColor).toBe("#00e5ff");
+      });
+
+      // The representative must prefer a HOVERED duplicate too, not only a
+      // selected one — otherwise hovering a later duplicate's row rebuilt the
+      // layer without widening or retagging the segment.
+      it("renders the hovered duplicate as the representative", () => {
+        mockedTimelapseStore.showMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+          }),
+          makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 1 },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "dup1", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "dup2", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _c: any, options: any) => {
+            const f = mockGeoJSAnnotation(shape);
+            if (options) f.options(options);
+            return f;
+          },
+        );
+        connectionListStore.setSelectedConnectionIds([]);
+        connectionListStore.setHoveredConnectionId("dup2");
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const drawn = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(drawn).toHaveLength(1);
+        expect(drawn[0].options().girderId).toBe("dup2");
+        // Hover must also change the rendered width, or the redraw the hover
+        // watcher pays for produces no visible difference.
+        const hoveredWidth = drawn[0].options().style.strokeWidth;
+        connectionListStore.setHoveredConnectionId(null);
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const plain = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat()
+          .filter((f: any) => f?.options?.().isConnection)[0];
+        expect(hoveredWidth).toBeGreaterThan(plain.options().style.strokeWidth);
+      });
+
+      // --- hover highlighting on the timelapse layer ---
+      //
+      // Clicking a row in the connection list HIGHLIGHTS (sets hover) rather
+      // than selecting, so hover is the primary highlight channel, not just an
+      // incidental mouse-over effect. Hover deliberately does not rebuild the
+      // timelapse layer, so it has to restyle the drawn segments in place —
+      // otherwise clicking a connection row does nothing visible in timelapse
+      // mode while it highlights fine everywhere else.
+      function setupOneSegmentTimelapseTrack(
+        connections: any[] = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ],
+        times: [number, number] = [0, 1],
+      ) {
+        mockedTimelapseStore.showMode = true;
+        mockedStore.layers = [
+          makeLayer({ id: "l1", channel: 0, visible: true }),
+        ];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: times[0] },
+          }),
+          makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: times[1] },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = connections;
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        // The default factory mock DROPS its options bag, so the style handed
+        // to it at construction would never reach the feature and every style
+        // assertion below would pass vacuously.
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _c: any, opts: any) => {
+            const f = mockGeoJSAnnotation(shape);
+            if (opts) f.options(opts);
+            return f;
+          },
+        );
+        connectionListStore.setSelectedConnectionIds([]);
+        connectionListStore.setHoveredConnectionId(null);
+      }
+
+      // Draws the track from a clean slate and returns the layer plus its only
+      // segment. Flushes the mount-time draw first: a trailing throttled draw
+      // landing mid-test would rebuild the layer and strand the captured
+      // feature, which reads as "the restyle did nothing".
+      async function drawTrackAndGetSegment() {
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const segments = tLayer
+          .annotations()
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(segments).toHaveLength(1);
+        tLayer.removeAllAnnotations.mockClear();
+        tLayer.draw.mockClear();
+        return { tLayer, segment: segments[0] };
+      }
+
+      async function setHoverAndFlush(id: string | null) {
+        connectionListStore.setHoveredConnectionId(id);
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+      }
+
+      // Returns the layer plus the centroid dot for `id`, from a clean slate.
+      async function drawTrackAndGetPoint(id: string) {
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const point = tLayer
+          .annotations()
+          .find(
+            (f: any) =>
+              f?.options?.().isTimelapsePoint && f.options().girderId === id,
+          );
+        expect(point).toBeDefined();
+        tLayer.removeAllAnnotations.mockClear();
+        tLayer.draw.mockClear();
+        return { tLayer, point };
+      }
+
+      async function setObjectSelectionAndFlush(ids: string[]) {
+        // mockImplementation, not reassignment: the viewer's computed returns
+        // the function REFERENCE, so replacing it would leave the component
+        // holding the old one. The watcher fires off selectedAnnotationIds,
+        // which is reassigned here.
+        mockedAnnotationStore.selectedAnnotationIds = new Set(ids);
+        (mockedAnnotationStore.isAnnotationSelected as any).mockImplementation(
+          (id: string) => mockedAnnotationStore.selectedAnnotationIds.has(id),
+        );
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+      }
+
+      /**
+       * The OBJECT half of the highlight pair, and the bug that motivated it:
+       * `restyleAnnotations` only touches `annotationLayer`, so the timelapse
+       * centroid dots had no selection branch and no restyle route at all.
+       * Selecting a whole track's objects from the Connections tab changed
+       * nothing on screen while its links did light up — which reads as "it
+       * selected the connections instead of the objects".
+       */
+      it("highlights a selected object's centroid dot in place", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer, point } = await drawTrackAndGetPoint("a1");
+        const before = { ...point.options().style };
+
+        await setObjectSelectionAndFlush(["a1"]);
+
+        const after = point.options().style;
+        expect(after.strokeColor).not.toBe(before.strokeColor);
+        expect(after.strokeWidth).toBeGreaterThan(before.strokeWidth);
+        // Both must survive the replace, or the dot renders unpainted/invisible.
+        expect(after.stroke).toBe(true);
+        expect(after.fill).toBe(true);
+        expect(tLayer.draw).toHaveBeenCalled();
+        // In place: a selection can be hundreds of objects and the dots'
+        // identity is not a draw-time choice.
+        expect(tLayer.removeAllAnnotations).not.toHaveBeenCalled();
+      });
+
+      // The other half: whatever selection paints, deselection must undo,
+      // without clobbering the base styling baked in at draw time.
+      it("restores a dot's base styling when it is deselected", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { point } = await drawTrackAndGetPoint("a1");
+        const before = { ...point.options().style };
+
+        await setObjectSelectionAndFlush(["a1"]);
+        expect(point.options().style.strokeWidth).toBeGreaterThan(
+          before.strokeWidth,
+        );
+
+        await setObjectSelectionAndFlush([]);
+        const after = point.options().style;
+        expect(after.strokeColor).toBe(before.strokeColor);
+        expect(after.strokeWidth).toBe(before.strokeWidth);
+        expect(after.fillOpacity).toBe(before.fillOpacity);
+        expect(after.radius).toBe(before.radius);
+      });
+
+      // Selecting an object must not restyle a different object's dot.
+      it("leaves unselected dots alone", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer } = await drawTrackAndGetPoint("a1");
+        const other = tLayer
+          .annotations()
+          .find(
+            (f: any) =>
+              f?.options?.().isTimelapsePoint && f.options().girderId === "a2",
+          );
+        const before = { ...other.options().style };
+
+        await setObjectSelectionAndFlush(["a1"]);
+
+        expect(other.options().style.strokeColor).toBe(before.strokeColor);
+        expect(other.options().style.strokeWidth).toBe(before.strokeWidth);
+      });
+
+      it("widens a hovered track segment in place, without rebuilding", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer, segment } = await drawTrackAndGetSegment();
+        const baseWidth = segment.options().style.strokeWidth;
+
+        await setHoverAndFlush("c1");
+
+        expect(segment.options().style.strokeWidth).toBeGreaterThan(baseWidth);
+        // `stroke` must survive: options("style", …) REPLACES the style object,
+        // so a restyle that omits it leaves the segment present, correctly
+        // positioned and completely unpainted.
+        expect(segment.options().style.stroke).toBe(true);
+        expect(tLayer.draw).toHaveBeenCalled();
+        expect(tLayer.removeAllAnnotations).not.toHaveBeenCalled();
+      });
+
+      // The other half of the pair: whatever hover paints, un-hover must undo,
+      // and it must not clobber the base styling baked in at draw time.
+      it("restores a time-jump segment's base styling when hover moves off", async () => {
+        // Times 0 → 3 skip a frame: dashed, 0.7 opacity (and the TRACK colour).
+        setupOneSegmentTimelapseTrack(undefined, [0, 3]);
+        const { segment } = await drawTrackAndGetSegment();
+        const before = { ...segment.options().style };
+        expect(before.lineDash).toEqual([5, 5]);
+        expect(before.strokeOpacity).toBe(0.7);
+
+        await setHoverAndFlush("c1");
+        expect(segment.options().style.strokeWidth).toBeGreaterThan(
+          before.strokeWidth,
+        );
+
+        await setHoverAndFlush(null);
+        const after = segment.options().style;
+        expect(after.strokeWidth).toBe(before.strokeWidth);
+        expect(after.strokeColor).toBe(before.strokeColor);
+        expect(after.strokeOpacity).toBe(before.strokeOpacity);
+        expect(after.lineDash).toEqual(before.lineDash);
+      });
+
+      // One segment is drawn per endpoint PAIR, but several connection
+      // documents can share that pair. Since hover no longer rebuilds, the
+      // segment keeps the representative it was built with — so matching the
+      // hover on that id alone would leave hovering the other duplicate's row
+      // with no visible effect.
+      it("widens the segment when a non-representative duplicate is hovered", async () => {
+        setupOneSegmentTimelapseTrack([
+          makeConnection({ id: "dup1", parentId: "a1", childId: "a2" }),
+          makeConnection({ id: "dup2", parentId: "a1", childId: "a2" }),
+        ]);
+        const { segment } = await drawTrackAndGetSegment();
+        expect(segment.options().girderId).toBe("dup1");
+        const baseWidth = segment.options().style.strokeWidth;
+
+        await setHoverAndFlush("dup2");
+
+        expect(segment.options().style.strokeWidth).toBeGreaterThan(baseWidth);
+      });
+
+      // Hovering a row whose connection is outside the timelapse window must
+      // not force a redraw of the whole layer for a style that did not change.
+      it("does not redraw when the hovered connection is not on the layer", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer } = await drawTrackAndGetSegment();
+
+        await setHoverAndFlush("not-drawn");
+
+        expect(tLayer.draw).not.toHaveBeenCalled();
+      });
+
+      it("leaves the timelapse layer alone on hover outside timelapse mode", async () => {
+        setupOneSegmentTimelapseTrack();
+        const { tLayer } = await drawTrackAndGetSegment();
+        // Leaving the mode clears the layer and draws once on its own; the
+        // assertion is about the hover that follows.
+        mockedTimelapseStore.showMode = false;
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        tLayer.draw.mockClear();
+
+        await setHoverAndFlush("c1");
+
+        expect(tLayer.draw).not.toHaveBeenCalled();
+      });
+
       it("filters connections by displayed annotations", () => {
-        mockedStore.showTimelapseMode = true;
+        mockedTimelapseStore.showMode = true;
         const layer = makeLayer({ id: "l1", channel: 0, visible: true });
         mockedStore.layers = [layer];
         (mockedStore.layerSliceIndexes as any).mockReturnValue({
@@ -3358,8 +4441,8 @@ describe("AnnotationViewer", () => {
       });
 
       it("respects time window filtering", () => {
-        mockedStore.showTimelapseMode = true;
-        mockedStore.timelapseModeWindow = 1;
+        mockedTimelapseStore.showMode = true;
+        mockedTimelapseStore.modeWindow = 1;
         mockedStore.time = 5;
         const layer = makeLayer({ id: "l1", channel: 0, visible: true });
         mockedStore.layers = [layer];
@@ -3398,8 +4481,8 @@ describe("AnnotationViewer", () => {
       });
 
       it("filters by timelapseTags when specified", () => {
-        mockedStore.showTimelapseMode = true;
-        mockedStore.timelapseTags = ["trackable"];
+        mockedTimelapseStore.showMode = true;
+        mockedTimelapseStore.tags = ["trackable"];
         const layer = makeLayer({ id: "l1", channel: 0, visible: true });
         mockedStore.layers = [layer];
         (mockedStore.layerSliceIndexes as any).mockReturnValue({
@@ -3436,6 +4519,209 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
         expect((wrapper.vm as any).timelapseLayer.draw).toHaveBeenCalled();
+      });
+
+      // --- Track colouring ---
+      //
+      // Track colour is baked into each line feature at draw time; unlike
+      // hover, there is no restyle-in-place path for it. So a colouring
+      // control that is not in the timelapse watch list changes nothing until
+      // some unrelated redraw happens, and every check below fails silently:
+      // tsc, lint and the draw-path tests all stay green.
+      describe("track colouring", () => {
+        function setupOneTrack() {
+          mockedTimelapseStore.showMode = true;
+          const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+          mockedStore.layers = [layer];
+          (mockedStore.layerSliceIndexes as any).mockReturnValue({
+            xyIndex: 0,
+            zIndex: 0,
+            tIndex: 0,
+          });
+          // Ids chosen so INSERTION order (z1 first, as the connection's
+          // parent) differs from SORT order (a2 first). With a1/a2 the two
+          // keyings coincide and the trackKey assertion below passes against
+          // `Array.from(set)[0]` too — i.e. it proves nothing.
+          const earlier = makeAnnotation({
+            id: "z1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+          });
+          const later = makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 1 },
+          });
+          mockedAnnotationStore.annotations = [earlier, later];
+          mockedAnnotationStore.annotationConnections = [
+            makeConnection({ id: "c1", parentId: "z1", childId: "a2" }),
+          ];
+          (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+            (id: string) =>
+              mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+          );
+          mockedAnnotationStore.annotationCentroids = {
+            z1: { x: 10, y: 20 },
+            a2: { x: 30, y: 40 },
+          };
+          // MUST be set here, not inherited. The shared geojsAnnotationFactory
+          // mock discards its options by default, so a feature it returns has
+          // no `timelapseBaseStyle` to read and segmentColors comes back empty
+          // — these assertions would pass only when an earlier test in the file
+          // had installed this implementation, and fail when run alone.
+          (geojsAnnotationFactory as any).mockImplementation(
+            (_shape: any, _coords: any, options: any) => {
+              const feature = mockGeoJSAnnotation("line");
+              if (options) feature.options(options);
+              return feature;
+            },
+          );
+        }
+
+        function segmentColors(vm: any): string[] {
+          return vm.timelapseLayer
+            .annotations()
+            .map((f: any) => f.options("timelapseBaseStyle"))
+            .filter(Boolean)
+            .map((s: any) => s.strokeColor);
+        }
+
+        it.each(["timelapseTrackColoring", "timelapseColorSeed"] as const)(
+          "rebuilds the timelapse layer when %s changes",
+          async (field) => {
+            setupOneTrack();
+            wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+            const tlLayer = (wrapper.vm as any).timelapseLayer;
+
+            tlLayer.draw.mockClear();
+            if (field === "timelapseTrackColoring") {
+              mockedTimelapseStore.trackColoring = "uniform";
+            } else {
+              mockedTimelapseStore.colorSeed = 1;
+            }
+            await wrapper.vm.$nextTick();
+
+            expect(tlLayer.draw).toHaveBeenCalled();
+          },
+        );
+
+        it("paints every segment uniformly when per-track colouring is off", async () => {
+          setupOneTrack();
+          mockedTimelapseStore.trackColoring = "uniform";
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+          const colors = segmentColors(wrapper.vm);
+          expect(colors.length).toBeGreaterThan(0);
+          expect(new Set(colors)).toEqual(new Set([TRACK_UNIFORM_COLOR]));
+        });
+
+        /**
+         * A connection skipping a timepoint used to be forced to `#ff6b6b`,
+         * which broke BOTH colouring controls: "uniform" left those segments red
+         * among the white ones, and per-track showed a hue swatch against a red
+         * line for any track whose drawn segments are all jumps. The jump is
+         * still marked by two cues no other segment has — `lineDash` and reduced
+         * opacity — which is why the colour was the redundant one to drop.
+         */
+        it.each([
+          ["uniform" as const, (): string => TRACK_UNIFORM_COLOR],
+          [
+            "track" as const,
+            (): string => trackColor(trackKey(["z1", "a2"]), 0),
+          ],
+        ])("keeps a time-jump segment on the %s track colour", (mode, want) => {
+          setupOneTrack();
+          mockedTimelapseStore.trackColoring = mode;
+          // Times 0 -> 4 skip frames, so this segment is a time jump.
+          mockedAnnotationStore.annotations[1].location.Time = 4;
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+          const styles = (wrapper.vm as any).timelapseLayer
+            .annotations()
+            .map((f: any) => f.options("timelapseBaseStyle"))
+            .filter(Boolean);
+          expect(styles.length).toBeGreaterThan(0);
+          for (const style of styles) {
+            // Still unmistakably a jump...
+            expect(style.lineDash).toEqual([5, 5]);
+            expect(style.strokeOpacity).toBe(0.7);
+            // ...but on the track's colour, not a hardcoded red.
+            expect(style.strokeColor).toBe(want());
+          }
+        });
+
+        // The swatch in the Connections tab is computed from `trackKey`, so
+        // the viewer must colour from the same key or the two drift apart.
+        it("colours a track by trackKey, matching the connection list swatch", () => {
+          setupOneTrack();
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+          expect(segmentColors(wrapper.vm)).toEqual([
+            trackColor(trackKey(["z1", "a2"]), 0),
+          ]);
+          // Explicitly NOT the first-inserted member's colour.
+          expect(segmentColors(wrapper.vm)).not.toEqual([trackColor("z1", 0)]);
+        });
+
+        it("keeps a displayed track fragment on its dataset-wide color", () => {
+          mockedTimelapseStore.showMode = true;
+          mockedStore.layers = [
+            makeLayer({ id: "visible", channel: 0, visible: true }),
+          ];
+          (mockedStore.layerSliceIndexes as any).mockReturnValue({
+            xyIndex: 0,
+            zIndex: 0,
+            tIndex: 0,
+          });
+          mockedAnnotationStore.annotations = [
+            // `a` belongs to the full track but its channel is not displayed,
+            // so the viewer builds only the b-c fragment.
+            makeAnnotation({
+              id: "a",
+              channel: 1,
+              location: { XY: 0, Z: 0, Time: 0 },
+            }),
+            makeAnnotation({
+              id: "b",
+              channel: 0,
+              location: { XY: 0, Z: 0, Time: 1 },
+            }),
+            makeAnnotation({
+              id: "c",
+              channel: 0,
+              location: { XY: 0, Z: 0, Time: 2 },
+            }),
+          ];
+          mockedAnnotationStore.annotationConnections = [
+            makeConnection({ id: "c1", parentId: "a", childId: "b" }),
+            makeConnection({ id: "c2", parentId: "b", childId: "c" }),
+          ];
+          (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+            (id: string) =>
+              mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+          );
+          mockedAnnotationStore.annotationCentroids = {
+            a: { x: 10, y: 20 },
+            b: { x: 30, y: 40 },
+            c: { x: 50, y: 60 },
+          };
+          (geojsAnnotationFactory as any).mockImplementation(
+            (_shape: any, _coords: any, options: any) => {
+              const feature = mockGeoJSAnnotation("line");
+              if (options) feature.options(options);
+              return feature;
+            },
+          );
+
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+          expect(segmentColors(wrapper.vm)).toEqual([trackColor("a", 0)]);
+          expect(segmentColors(wrapper.vm)).not.toEqual([trackColor("b", 0)]);
+        });
       });
     });
   });
@@ -4057,6 +5343,134 @@ describe("AnnotationViewer", () => {
           (call: any[]) => call[0] === "geojs.mouseclick",
         );
         expect(mouseclickCalls.length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    // Regression: clicking an annotation in the viewer (no tool selected)
+    // must set hoveredAnnotationId so the annotation list can page-jump,
+    // scroll to, and highlight the row.
+    describe("click-to-hover navigation", () => {
+      function fireAnnotationLayerMouseclicks(evt: any) {
+        const geoOnCalls = ((wrapper.vm as any).annotationLayer.geoOn as any)
+          .mock.calls;
+        const handlers = geoOnCalls
+          .filter((call: any[]) => call[0] === "geojs.mouseclick")
+          .map((call: any[]) => call[1]);
+        handlers.forEach((handler: any) => handler(evt));
+      }
+
+      it("clicking a point annotation sets hoveredAnnotationId", () => {
+        const ann = makeAnnotation(); // point at (10, 20)
+        mockedAnnotationStore.annotations = [ann];
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith("ann1");
+      });
+
+      it("clicking a stub-rendered (unhydrated) annotation sets hoveredAnnotationId", () => {
+        // Non-point stubs resolve to undefined via getAnnotationFromId; the
+        // hover hit-test must fall back to the stub and its rendered dot.
+        const stub = {
+          id: "stub1",
+          centroid: { x: 10, y: 20 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "polygon",
+          channel: 0,
+          tags: [],
+          color: null,
+          estimatedRadius: 5,
+        };
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          undefined,
+        );
+        (mockedAnnotationStore.getStub as any).mockImplementation(
+          (id: string) => (id === "stub1" ? stub : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "stub1");
+        geoAnn.options("isStub", true);
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith("stub1");
+      });
+
+      it("clicking empty space clears hoveredAnnotationId", () => {
+        const ann = makeAnnotation();
+        mockedAnnotationStore.annotations = [ann];
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 500, y: 500 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).toHaveBeenCalledWith(null);
+      });
+
+      it("does not set hover when a tool is selected", () => {
+        const ann = makeAnnotation();
+        mockedAnnotationStore.annotations = [ann];
+        mockedStore.selectedTool = {
+          configuration: { type: "create", values: {} },
+          state: null,
+        } as any;
+        wrapper = mountComponent();
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) => (id === "ann1" ? ann : undefined),
+        );
+        (pointDistance as any).mockImplementation((a: any, b: any) =>
+          Math.hypot(a.x - b.x, a.y - b.y),
+        );
+        const geoAnn = mockGeoJSAnnotation("point");
+        geoAnn.options("girderId", "ann1");
+        (wrapper.vm as any).annotationLayer.addAnnotation(geoAnn);
+
+        fireAnnotationLayerMouseclicks({
+          geo: { x: 10, y: 20 },
+          buttonsDown: {},
+        });
+
+        expect(
+          mockedAnnotationStore.setHoveredAnnotationId,
+        ).not.toHaveBeenCalled();
       });
     });
 
@@ -4852,22 +6266,41 @@ describe("AnnotationViewer", () => {
     // onBeforeUnmount cleanup (Finding 4)
     // =======================================================================
     describe("onBeforeUnmount cleanup", () => {
-      it("cancels all pending debounced/throttled callbacks so none fire after teardown", () => {
+      // A trailing fire after teardown runs against a dead GeoJS view. This
+      // test twice failed to catch that, each time because it looked at a
+      // hand-maintained list:
+      //   1. it named the five throttles that existed when it was written, so
+      //      two later ones shipped uncancelled with the suite green;
+      //   2. scanning `wrapper.vm` instead moved the dependency to
+      //      defineExpose — an unexposed throttle is invisible there, and the
+      //      already-exposed ones keep any count floor satisfied.
+      // So record the wrappers where they are actually made: the lodash mock
+      // above captures every throttle/debounce this component constructs.
+      // (Wrappers built lazily inside a handler are still missed until that
+      // handler runs; all seven today are created in setup.)
+      it("cancels every pending debounced/throttled callback so none fire after teardown", () => {
+        createdThrottles.length = 0;
         wrapper = mountComponent();
         const vm = wrapper.vm as any;
-        const spies = [
-          vi.spyOn(vm.updateVisibilityDebounced, "cancel"),
-          vi.spyOn(vm.restyleAnnotationsThrottled, "cancel"),
-          vi.spyOn(vm.drawAnnotations, "cancel"),
-          vi.spyOn(vm.drawTooltips, "cancel"),
-          vi.spyOn(vm.handleValueOnMouseMoveDebounce, "cancel"),
-        ];
+        // Floor guards against the recording itself breaking (a lodash import
+        // that bypasses the mock would silently record nothing).
+        expect(createdThrottles.length).toBeGreaterThanOrEqual(7);
+        // Names purely for the failure message; unexposed wrappers still count.
+        const named = createdThrottles.map(
+          (fn, i) =>
+            [
+              Object.keys(vm).find((key) => vm[key] === fn) ?? `unexposed#${i}`,
+              vi.spyOn(fn, "cancel"),
+            ] as const,
+        );
 
         wrapper.unmount();
 
-        for (const spy of spies) {
-          expect(spy).toHaveBeenCalled();
-        }
+        expect(
+          named
+            .filter(([, spy]) => spy.mock.calls.length === 0)
+            .map(([n]) => n),
+        ).toEqual([]);
       });
     });
 

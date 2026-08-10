@@ -15,10 +15,11 @@ from girder.exceptions import RestException
 # Request-size sanity ceilings: reject only degenerate/garbage payloads that
 # would build a pathological pipeline, while never affecting real use (a
 # dataset has well under 1K properties; the frontend hydration budget is ~40K
-# ids and even "select all" on a 700K dataset is < 1M). These are guards, not
-# tuning knobs — runtime is bounded by AGGREGATION_MAX_TIME_MS, not by these.
-MAX_UNCOMPUTED_PROPERTIES = 10_000_000
-MAX_ANNOTATION_IDS = 10_000_000
+# ids and even "select all" on a multi-million-annotation dataset is < 100M).
+# These are guards, not tuning knobs — runtime is bounded by
+# AGGREGATION_MAX_TIME_MS, not by these.
+MAX_UNCOMPUTED_PROPERTIES = 100_000_000
+MAX_ANNOTATION_IDS = 100_000_000
 
 # Upper clamp on the page size accepted by the public /list endpoint. This is
 # an abuse guard, not a tuning knob: it caps how many full annotation rows an
@@ -69,13 +70,14 @@ def validateAnnotationIdCount(count):
 
 def requireObjectId(value, field="id"):
     """Parse `value` into an ObjectId, raising RestException(400) if it is
-    missing or malformed (bson.InvalidId is a BSONError, NOT a ValueError, so
-    it must be caught explicitly)."""
+    missing or malformed. A malformed hex string raises bson.InvalidId (a
+    BSONError, NOT a ValueError); a non-string value such as a JSON number
+    or bool raises TypeError. Both must map to a clean 400, not a 500."""
     if value is None:
         raise RestException("%s is required" % field, code=400)
     try:
         return ObjectId(value)
-    except InvalidId:
+    except (InvalidId, TypeError):
         raise RestException("%s is not a valid id" % field, code=400)
 
 

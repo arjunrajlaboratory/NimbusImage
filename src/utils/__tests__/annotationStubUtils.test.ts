@@ -78,7 +78,11 @@ describe("selectStableSubset", () => {
     const expected = [...ids]
       .sort((a, b) => hashString(a) - hashString(b))
       .slice(0, k);
-    expect(new Set(selectStableSubset(ids, k))).toEqual(new Set(expected));
+    expect(selectStableSubset(ids, k)).toEqual(expected);
+  });
+
+  it("returns an empty subset for a zero budget", () => {
+    expect(selectStableSubset(["a", "b", "c"], 0)).toEqual([]);
   });
 
   it("selects the same set regardless of input order", () => {
@@ -87,6 +91,14 @@ describe("selectStableSubset", () => {
     expect(new Set(selectStableSubset(ids, 10))).toEqual(
       new Set(selectStableSubset(shuffled, 10)),
     );
+  });
+
+  it("breaks hash collisions by id regardless of input order", () => {
+    const largerId = "d63cf0eeecc40375b230be50";
+    const smallerId = "38817f7125d2721c2651e6cb";
+    expect(hashString(largerId)).toBe(hashString(smallerId));
+    expect(selectStableSubset([largerId, smallerId], 1)).toEqual([smallerId]);
+    expect(selectStableSubset([smallerId, largerId], 1)).toEqual([smallerId]);
   });
 });
 
@@ -127,6 +139,18 @@ describe("selectLargestBySize", () => {
     ]);
     expect(selectLargestBySize(["e", "d", "c", "b", "a"], sizeOf, 1)).toEqual([
       lowerHash,
+    ]);
+  });
+
+  it("breaks size and hash collisions by id regardless of input order", () => {
+    const largerId = "d63cf0eeecc40375b230be50";
+    const smallerId = "38817f7125d2721c2651e6cb";
+    expect(hashString(largerId)).toBe(hashString(smallerId));
+    expect(selectLargestBySize([largerId, smallerId], () => 1, 1)).toEqual([
+      smallerId,
+    ]);
+    expect(selectLargestBySize([smallerId, largerId], () => 1, 1)).toEqual([
+      smallerId,
     ]);
   });
 
