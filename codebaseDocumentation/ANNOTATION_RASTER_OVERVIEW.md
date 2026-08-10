@@ -299,8 +299,8 @@ call `save`/`saveMany`, the update endpoints call `save`/`saveMany` via
 
 | Override                   | Bump                                                                                                                                                                                                                                         |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `save(document, ...)`      | source and destination dataset counters                                                                                                                                                                                                      |
-| `saveMany(documents, ...)` | each distinct source and destination dataset counter (source ids loaded in one aggregate query)                                                                                                                                              |
+| `save(document, ...)`      | `datasetCounter[saved["datasetId"]]`                                                                                                                                                                                                         |
+| `saveMany(documents, ...)` | each distinct saved `datasetId`; `updateMultiple` — the only path that changes an annotation's `datasetId` — additionally bumps each moved-from dataset using the documents it already loaded                                                |
 | `remove(annotation, ...)`  | `datasetCounter[annotation["datasetId"]]`                                                                                                                                                                                                    |
 | `removeWithQuery(query)`   | `datasetId` when present in the query (e.g. `cleanOrphaned`); otherwise `globalEpoch` (e.g. `deleteMultiple`'s `_id $in` query — though its API layer already knows the dataset ids via `distinctDatasetIds` and may bump precisely instead) |
 
@@ -608,6 +608,10 @@ Per `CLAUDE.md`, every item names its test:
   delete, deleteMultiple each change the ETag —
   _"testEveryModelMutationPathInvalidatesEtag"_ and
   _"testAccessAndEtagInvalidation"_.
+- **Bulk move invalidates both datasets**: an updateMultiple that changes an
+  annotation's datasetId bumps the source and destination rasters (saves
+  themselves bump only the saved documents' datasets; the move path bumps
+  the source) — _"testBulkMoveInvalidatesSourceAndDestinationRasters"_.
 - **Sub-pixel fast path**: low-zoom footprints collapse to the splat path rather
   than drawing full polygons — _"testPolygonAndSubpixelRendering"_.
 - **Single-pass cold geometry build**: coordinates are traversed once and

@@ -318,6 +318,11 @@ class Annotation(Resource):
         filtered = self._annotationModel.filterUpdateFields(
             self.getBodyJson()
         )
+        # datasetId is immutable here: only the bulk update endpoint moves
+        # annotations between datasets (with destination access checks and
+        # source raster invalidation), and this endpoint never converts the
+        # body's string ids to ObjectIds.
+        filtered.pop("datasetId", None)
         upenn_annotation.update(filtered)
         self._annotationModel.save(upenn_annotation)
 

@@ -492,6 +492,39 @@ class TestUpdateMultiple:
         assert "_internalField" not in loaded
         assert "accessLevel" not in loaded
 
+    def testSingleUpdateCannotChangeDatasetId(self, admin, server):
+        """PUT /upenn_annotation/:id keeps datasetId immutable.
+
+        Only the bulk update endpoint supports moving annotations between
+        datasets (with destination access checks and raster invalidation).
+        The single-update endpoint never converts body ids to ObjectIds, so
+        letting datasetId through would store a string and orphan the
+        annotation from every ObjectId-keyed query.
+        """
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        otherFolder = utilities.createFolder(
+            admin, "ds-other", upenn_utilities.datasetMetadata
+        )
+        ann = self._createAnnotation(folder, admin)
+        update_body = {
+            "tags": ["dataset-immutable"],
+            "datasetId": str(otherFolder["_id"]),
+        }
+        resp = server.request(
+            path="/upenn_annotation/%s" % ann["_id"],
+            method="PUT",
+            user=admin,
+            body=json.dumps(update_body),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        loaded = Annotation().load(ann["_id"], user=admin)
+        assert "dataset-immutable" in loaded["tags"]
+        assert loaded["datasetId"] == folder["_id"]
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")

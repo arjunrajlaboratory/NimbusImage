@@ -137,3 +137,45 @@ Review base: `master` (`da7a9e4e`)
   leaves the parent's mounted map list. Covered by _"ignores raster visibility
   events from removed map viewers"_ and a clean live Multiple → Unroll →
   Multiple pass.
+
+## R13 — Pre-save datasetId aggregation on every save (PR review, pchoisel)
+
+- **Severity:** Low (cost/complexity)
+- **Location:** `server/models/annotation.py:save/saveMany`
+- **Summary:** Every save and saveMany ran a `distinctDatasetIds` aggregation
+  before writing, solely to catch the rare bulk-move case where an update
+  changes an annotation's `datasetId`. An annotation belongs to exactly one
+  dataset, so the set-and-loop shape was misleading and the pre-query was
+  wasted work on every ordinary save.
+- **Status:** fixed — `save`/`saveMany` now bump only the saved documents'
+  datasetIds (no pre-query). The one path that moves annotations between
+  datasets, `updateMultiple`, captures moved-from datasetIds from the
+  documents it has already loaded (zero extra queries) and bumps those
+  sources after saving. Covered by
+  `testBulkMoveInvalidatesSourceAndDestinationRasters`, verified to fail
+  without the source bump.
+- **Follow-up (symmetric-path sweep):** the single-update endpoint
+  (`PUT /upenn_annotation/:id`) still passed `datasetId` through — and,
+  unlike create/updateMultiple, never converts body ids to ObjectIds, so a
+  datasetId change there stored a corrupt string. `datasetId` is now
+  stripped at that API boundary (immutable on the single path), making the
+  "only updateMultiple moves annotations" invariant real. Covered by
+  `testSingleUpdateCannotChangeDatasetId`, verified to fail without the
+  strip.
+
+## R14 — Thread-local raster-bump suppression legibility (PR review, pchoisel)
+
+- **Severity:** Low (style/legibility)
+- **Location:** `server/models/annotation.py:_rasterMutationState`
+- **Summary:** Reviewer concern that `_rasterMutationState` could misbehave
+  when users modify and remove annotations concurrently, with a suggestion to
+  thread an explicit inhibit argument through overridden Girder methods
+  instead.
+- **Status:** by-design / deferred — the state is a `threading.local()`;
+  each request thread carries its own `suppressRemoveBump` flag with
+  try/finally restore, so one user's bulk save cannot suppress another
+  request's invalidation. The flag exists only because
+  `CustomNimbusImageModel.saveMany` implements bulk update as
+  removeWithQuery + insert_many, whose internal remove would otherwise bump
+  the global epoch. Replacing the ambient flag with explicit argument
+  threading is a legibility refactor tracked as a follow-up issue.

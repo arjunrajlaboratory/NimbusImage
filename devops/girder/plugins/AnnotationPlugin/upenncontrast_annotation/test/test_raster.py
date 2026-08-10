@@ -670,3 +670,32 @@ class TestAnnotationRaster:
             str(document["_id"]) for document in batch
         ])
         assert requestTile(server, folder).headers["ETag"] != batchEtag
+
+    def testBulkMoveInvalidatesSourceAndDestinationRasters(
+        self, admin, server
+    ):
+        source = utilities.createFolder(
+            admin, "raster_move_source", upenn_utilities.datasetMetadata
+        )
+        destination = utilities.createFolder(
+            admin, "raster_move_destination", upenn_utilities.datasetMetadata
+        )
+        Folder().setPublic(source, True, save=True)
+        Folder().setPublic(destination, True, save=True)
+        annotation = createAnnotation(
+            source["_id"], [{"x": 30, "y": 30}], shape="point"
+        )
+
+        sourceEtag = requestTile(server, source).headers["ETag"]
+        destinationEtag = requestTile(server, destination).headers["ETag"]
+
+        Annotation().updateMultiple(
+            {annotation["_id"]: {"datasetId": destination["_id"]}}, admin
+        )
+
+        movedSource = requestTile(server, source)
+        movedDestination = requestTile(server, destination)
+        assert movedSource.headers["ETag"] != sourceEtag
+        assert movedDestination.headers["ETag"] != destinationEtag
+        assert responseImage(movedSource).getpixel((30, 30))[3] == 0
+        assert responseImage(movedDestination).getpixel((30, 30))[3] == 255
