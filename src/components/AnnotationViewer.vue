@@ -562,6 +562,18 @@ const isLayerIdValid = computed(() => {
   return (id: string) => validLayerIds.has(id);
 });
 
+// Whether the raster overview can represent this configuration at all, i.e.
+// whether hiding unhydrated stub dots is backed by a raster. Deliberately not
+// rasterActive: the stub-free handoff must also hold while zoomed in (raster
+// inactive but available), where stubs drive visibility and hydration without
+// flashing approximate dots.
+const stubFreeRasterHandoff = computed(
+  () =>
+    annotationStore.overviewConfig.enabled &&
+    !unrolling.value &&
+    annotationRasterSelectorsSupported(rasterSelectors.value),
+);
+
 // A map: map<layer id, map<annotation id, annotation or stub>>
 const layerAnnotations = computed(() => {
   const layerIdToAnnotationIds: Map<
@@ -687,13 +699,11 @@ const layerAnnotations = computed(() => {
       // The raster overview already represents every annotation while zoomed
       // out. During its vector handoff, keep stubs as the source of visibility
       // and hydration decisions but do not flash their approximate dots before
-      // the full geometry arrives. Disabling the overview or entering unroll
-      // mode (where no raster is available) preserves normal stub rendering.
-      if (
-        annotationStore.overviewConfig.enabled &&
-        !unrolling.value &&
-        !isHydratedAnnotation(renderData)
-      ) {
+      // the full geometry arrives. When no raster is available — overview
+      // disabled, unroll mode, or a selector set the raster contract rejects —
+      // preserve normal stub rendering instead of hiding dots with nothing
+      // behind them.
+      if (stubFreeRasterHandoff.value && !isHydratedAnnotation(renderData)) {
         continue;
       }
       annotationIdsSet.set(annotation.id, renderData);

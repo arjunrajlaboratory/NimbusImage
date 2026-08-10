@@ -604,6 +604,10 @@ Per `CLAUDE.md`, every item names its test:
   contain only hydrated geometry while unhydrated stubs remain available to
   visibility and hydration; disabling the overview or entering unroll restores
   stub dots — _"omits unhydrated stubs while raster overview is enabled"_.
+- **Handoff only when a raster is available**: above the 64-selector contract
+  limit the raster never activates, so stub dots must be retained rather than
+  hidden with nothing behind them — _"retains stub dots when the raster
+  selector contract is unsupported"_.
 - **Invalidation on every mutation verb**: create, updateMultiple,
   delete, deleteMultiple each change the ETag —
   _"testEveryModelMutationPathInvalidatesEtag"_ and

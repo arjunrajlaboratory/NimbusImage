@@ -179,3 +179,32 @@ Review base: `master` (`da7a9e4e`)
   removeWithQuery + insert_many, whose internal remove would otherwise bump
   the global epoch. Replacing the ambient flag with explicit argument
   threading is a legibility refactor tracked as a follow-up issue.
+
+## R15 — Stub-free handoff not gated on raster availability (Codex round, P2)
+
+- **Severity:** Medium
+- **Location:** `src/components/AnnotationViewer.vue:layerAnnotations`
+- **Summary:** The predicate that omits unhydrated stub dots during the
+  raster's vector handoff checked only `overviewConfig.enabled` and unroll.
+  On a stub-only dataset whose visible layers exceed the 64-selector
+  contract (where R10 correctly refuses to activate the raster), stubs were
+  still hidden — no raster and no stub dots, only the hydrated subset. A
+  half-done R10: activation was gated on the contract, the stub-omission
+  twin was not.
+- **Status:** fixed — the handoff predicate is now the
+  `stubFreeRasterHandoff` computed, which also requires
+  `annotationRasterSelectorsSupported(rasterSelectors)`. Deliberately NOT
+  `rasterActive`: the handoff must hold while zoomed in (raster available
+  but inactive). Covered by _"retains stub dots when the raster selector
+  contract is unsupported"_, verified to fail without the gate.
+
+## R16 — Raster activates on images larger than the backend dimension cap (Codex round, P2)
+
+- **Severity:** Low (niche: requires a source image > 131,072 px on a side)
+- **Location:** `src/components/ImageViewer.vue:_setupAnnotationOverview`,
+  `server/api/annotation.py` (sizeX/sizeY 400 above 131072)
+- **Status:** deferred — filed as a follow-up issue. Same
+  mirror-the-backend-contract family as R10/R15, but fixing it properly
+  means threading image dimensions through the shared wire-contract guard
+  used by both `ImageViewer` and `AnnotationViewer`, and no current dataset
+  approaches the cap.

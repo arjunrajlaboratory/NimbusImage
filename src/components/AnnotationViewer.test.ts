@@ -1877,6 +1877,83 @@ describe("AnnotationViewer", () => {
           ),
         ).toEqual(["stub-only", "hydrated"]);
       });
+
+      it("retains stub dots when the raster selector contract is unsupported", async () => {
+        // Above the 64-selector limit the raster can never activate, so the
+        // stub-free vector handoff must not run: hiding unhydrated stubs with
+        // no raster behind them would leave only the hydrated subset visible.
+        mockedStore.layers = Array.from({ length: 65 }, (_, channel) =>
+          makeLayer({ id: `layer-${channel}`, channel, visible: true }),
+        );
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        const unhydratedStub = {
+          id: "stub-only",
+          centroid: { x: 10, y: 20 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "polygon",
+          channel: 0,
+          tags: [],
+          color: null,
+          estimatedRadius: 5,
+        };
+        const hydratedStub = {
+          ...unhydratedStub,
+          id: "hydrated",
+          centroid: { x: 30, y: 40 },
+        };
+        const hydratedAnnotation = makeAnnotation({
+          id: "hydrated",
+          shape: "polygon",
+          coordinates: [
+            { x: 25, y: 35 },
+            { x: 35, y: 35 },
+            { x: 30, y: 45 },
+          ],
+        });
+        mockedAnnotationStore.stubOnlyMode = true;
+        mockedAnnotationStore.annotations = [
+          unhydratedStub,
+          hydratedStub,
+        ] as any;
+        mockedAnnotationStore.annotationStubs = new Map([
+          [unhydratedStub.id, unhydratedStub],
+          [hydratedStub.id, hydratedStub],
+        ]) as any;
+        mockedAnnotationStore.hydratedAnnotations = new Map([
+          [hydratedAnnotation.id, hydratedAnnotation],
+        ]);
+        mockedAnnotationStore.visibleAnnotationIds = new Set([
+          unhydratedStub.id,
+          hydratedStub.id,
+        ]);
+        mockedAnnotationStore.overviewConfig = {
+          enabled: true,
+          mode: "shapes",
+          opacity: 0.6,
+          vectorSwitchThreshold: 1,
+        } as any;
+        const map = mockAnnotationLayer().map();
+        map.unitsPerPixel.mockReturnValue(0.5);
+
+        wrapper = mountComponent({
+          map,
+          annotationOverviewLayer: mockOverviewLayer(),
+          lowestLayer: 0,
+          layerCount: 65,
+        });
+        await wrapper.vm.$nextTick();
+
+        expect((wrapper.vm as any).rasterActive).toBe(false);
+        expect(
+          (wrapper.vm as any).displayedAnnotations.map(
+            (annotation: any) => annotation.id,
+          ),
+        ).toEqual(["stub-only", "hydrated"]);
+      });
     });
 
     describe("connectionIdsSet", () => {
