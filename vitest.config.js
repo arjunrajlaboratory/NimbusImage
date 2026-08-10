@@ -30,11 +30,12 @@ export default mergeConfig(
     test: {
       globals: true,
       environment: "jsdom",
-      // Keep Vitest from globbing generated or duplicate test trees. Girder's
-      // .tox environments contain bundled *.spec.ts files, while Codex/Claude
-      // worktrees contain complete copies of this repository's tests. Both are
-      // absent in CI but cause spurious failures and duplicate memory use when
-      // running `pnpm test` locally.
+      // "**/.tox/**" keeps vitest from globbing Girder's bundled *.spec.ts
+      // files that appear under .tox/ after a backend `tox` run (they import
+      // @playwright/test and aren't ours). Harmless on CI (no .tox dir), but
+      // they cause spurious failures when running `pnpm test` locally.
+      // "**/.claude/worktrees/**" likewise excludes stale test copies in
+      // leftover review worktrees.
       exclude: [
         ...configDefaults.exclude,
         "e2e/*",

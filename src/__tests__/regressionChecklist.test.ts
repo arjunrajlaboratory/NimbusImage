@@ -104,6 +104,8 @@ const NOT_OURS = new Set([
   ".venv",
   "__pycache__",
   ".pnpm-store",
+  // Review worktrees are checkouts of this repo, not part of it.
+  ".claude",
 ]);
 
 /**
