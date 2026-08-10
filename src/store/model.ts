@@ -1104,6 +1104,12 @@ export interface IGeoJSOsmLayer extends IGeoJSLayer {
 
   _imageUrls?: (string | undefined)[];
   _tileBounds: (tile: IGeoJSTile) => IGeoJSBounds;
+  // The tile factory GeoJS documents for derived classes to override. Tiles
+  // have a promise-like interface; `catch` is the only failure signal the
+  // library exposes (there is no tile-error event).
+  _getTile?: (
+    ...args: unknown[]
+  ) => IGeoJSTile & { catch: (callback: (reason?: unknown) => void) => void };
   _options?: {
     minLevel?: number;
     maxLevel?: number;

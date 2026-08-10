@@ -1354,6 +1354,173 @@ describe("ImageViewer", () => {
       expect(mockedProgressStore.complete).toHaveBeenCalledWith("progress1");
     });
 
+    // A raster tile can 503 while another geometry key is still cold-building
+    // (the backend sends Retry-After: 1). GeoJS has no tile-error event, drops
+    // the failed tile, and keeps the rejected entry in its tile cache — so
+    // without a retry the hole persists while vectors stay suppressed.
+    it("retries failed overview tiles with a bounded delayed reset", async () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      const tileErrorCallbacks: Array<() => void> = [];
+      const innerGetTile = vi.fn(() => ({
+        catch: (callback: () => void) => {
+          tileErrorCallbacks.push(callback);
+        },
+      }));
+      (overviewLayer as any)._getTile = innerGetTile;
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+        // Draws keep running against this pinned entry while timers advance,
+        // so it needs the layers the z-order pass touches.
+        workerPreviewLayer: mockLayer(),
+        annotationLayer: mockLayer(),
+        textLayer: mockLayer(),
+        timelapseLayer: mockLayer(),
+        timelapseTextLayer: mockLayer(),
+        interactionLayer: mockLayer(),
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      await nextTick();
+      const mountedMapentry = (wrapper.vm as any).maps[0];
+      // Pin the map entry: the shared reactive store mock lets throttled
+      // draws rebuild entries while timers advance, which would orphan the
+      // layer from the retry's mounted check (a harness artifact —
+      // production entries are stable markRaw objects).
+      (mockedStore.setMaps as any).mockImplementation(() => {});
+      (mockedStore.setMapAt as any).mockImplementation(() => {});
+      mountedMapentry.annotationOverviewLayer = undefined;
+      // Draws keep creating image layers on this pinned entry; only the
+      // overview creation (the one that sets tilesMaxBounds) may receive the
+      // overview mock, or image-layer URL churn resets it.
+      mountedMapentry.map.createLayer.mockImplementation(
+        (_type: string, opts: any) =>
+          opts?.tilesMaxBounds ? overviewLayer : mockLayer(),
+      );
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mountedMapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
+      expect(overviewLayer.visible()).toBe(true);
+
+      // Creation wrapped the tile factory: fetching a tile registers a
+      // failure hook on the tile's promise interface.
+      (overviewLayer as any)._getTile({ x: 0, y: 0, level: 0 });
+      (overviewLayer as any)._getTile({ x: 1, y: 0, level: 0 });
+      expect(innerGetTile).toHaveBeenCalledTimes(2);
+      expect(tileErrorCallbacks).toHaveLength(2);
+
+      // Two failures in one batch coalesce into a single delayed retry.
+      tileErrorCallbacks[0]();
+      tileErrorCallbacks[1]();
+      expect(overviewLayer.reset).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(999);
+      expect(overviewLayer.reset).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(1);
+      expect(overviewLayer.draw).toHaveBeenCalled();
+
+      // Bounded: two more rounds retry, the fourth is dropped.
+      tileErrorCallbacks[0]();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(2);
+      tileErrorCallbacks[0]();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(3);
+      tileErrorCallbacks[0]();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(3);
+
+      // A new template (mutation bump) restores the retry budget.
+      mockedAnnotationStore.mutationCounter = 1;
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mountedMapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+      tileErrorCallbacks[0]();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(4);
+    });
+
+    it("does not retry tiles for a hidden overview layer", async () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      const tileErrorCallbacks: Array<() => void> = [];
+      (overviewLayer as any)._getTile = vi.fn(() => ({
+        catch: (callback: () => void) => {
+          tileErrorCallbacks.push(callback);
+        },
+      }));
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+        // Draws keep running against this pinned entry while timers advance,
+        // so it needs the layers the z-order pass touches.
+        workerPreviewLayer: mockLayer(),
+        annotationLayer: mockLayer(),
+        textLayer: mockLayer(),
+        timelapseLayer: mockLayer(),
+        timelapseTextLayer: mockLayer(),
+        interactionLayer: mockLayer(),
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      await nextTick();
+      const mountedMapentry = (wrapper.vm as any).maps[0];
+      // Pin the map entry (see the bounded-retry test above): without this
+      // the mounted check would already block the retry and this test would
+      // pass without exercising the visibility guard.
+      (mockedStore.setMaps as any).mockImplementation(() => {});
+      (mockedStore.setMapAt as any).mockImplementation(() => {});
+      mountedMapentry.annotationOverviewLayer = undefined;
+      // Draws keep creating image layers on this pinned entry; only the
+      // overview creation (the one that sets tilesMaxBounds) may receive the
+      // overview mock, or image-layer URL churn resets it.
+      mountedMapentry.map.createLayer.mockImplementation(
+        (_type: string, opts: any) =>
+          opts?.tilesMaxBounds ? overviewLayer : mockLayer(),
+      );
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mountedMapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
+
+      (overviewLayer as any)._getTile({ x: 0, y: 0, level: 0 });
+      tileErrorCallbacks[0]();
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
+        visible: false,
+        opacity: 0.6,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(overviewLayer.reset).not.toHaveBeenCalled();
+    });
+
     it("does not show progress when overview tiles are already cached", async () => {
       const map = mockMap();
       const overviewLayer = mockLayer();

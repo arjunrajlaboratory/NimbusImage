@@ -426,6 +426,11 @@ const blankUrl =
 const ANNOTATION_OVERVIEW_TILE_SIZE = 512;
 const ANNOTATION_OVERVIEW_FALLBACK_COLOR = "#FFD700";
 const ANNOTATION_OVERVIEW_PROGRESS_DELAY_MS = 300;
+// A raster tile can fail transiently: the backend answers 503 + Retry-After: 1
+// while another geometry key is still cold-building. The delay matches that
+// Retry-After; the bound keeps a genuinely broken template from looping.
+const ANNOTATION_OVERVIEW_RETRY_DELAY_MS = 1000;
+const ANNOTATION_OVERVIEW_MAX_RETRIES = 3;
 
 type AnnotationOverviewLayer = NonNullable<
   IMapEntry["annotationOverviewLayer"]
@@ -549,7 +554,91 @@ function applyAnnotationOverviewTemplate(layer: AnnotationOverviewLayer) {
       .replace("{y}", y.toString()),
   );
   appliedAnnotationOverviewTemplates.set(layer, template);
+  // A new template is a new set of tile requests — restore the retry budget.
+  cancelAnnotationOverviewRetry(layer, true);
   return true;
+}
+
+interface IAnnotationOverviewRetryState {
+  attempts: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const annotationOverviewRetryStates = new WeakMap<
+  AnnotationOverviewLayer,
+  IAnnotationOverviewRetryState
+>();
+
+// GeoJS exposes no tile-error event: a failed fetch logs a console warning,
+// removes the tile, and leaves the REJECTED tile in the layer's cache, so
+// later draws reuse the failure instead of refetching. The tile's documented
+// promise interface (`tile.catch`) is the only failure signal, and `_getTile`
+// is the factory GeoJS documents for derived classes to override — wrap it so
+// every tile carries a failure hook. Retry state itself stays out of the
+// GeoJS object (WeakMaps above).
+function hookAnnotationOverviewTileErrors(layer: AnnotationOverviewLayer) {
+  const originalGetTile = layer._getTile;
+  if (typeof originalGetTile !== "function") {
+    return;
+  }
+  layer._getTile = (...args: unknown[]) => {
+    const tile = originalGetTile.apply(layer, args);
+    tile.catch(() => scheduleAnnotationOverviewRetry(layer));
+    return tile;
+  };
+}
+
+function cancelAnnotationOverviewRetry(
+  layer: AnnotationOverviewLayer,
+  resetAttempts = false,
+) {
+  const state = annotationOverviewRetryStates.get(layer);
+  if (!state) {
+    return;
+  }
+  if (state.timer != null) {
+    clearTimeout(state.timer);
+    state.timer = null;
+  }
+  if (resetAttempts) {
+    state.attempts = 0;
+  }
+}
+
+function scheduleAnnotationOverviewRetry(layer: AnnotationOverviewLayer) {
+  let state = annotationOverviewRetryStates.get(layer);
+  if (!state) {
+    state = { attempts: 0, timer: null };
+    annotationOverviewRetryStates.set(layer, state);
+  }
+  // One pending retry covers every failed tile of the batch.
+  if (
+    state.timer != null ||
+    state.attempts >= ANNOTATION_OVERVIEW_MAX_RETRIES
+  ) {
+    return;
+  }
+  state.attempts += 1;
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    // Only retry a layer that is still mounted, shown, and displaying the
+    // same template — a template change redraws with a fresh budget anyway.
+    if (
+      !maps.value.some(
+        (mountedMapentry) =>
+          toRaw(mountedMapentry.annotationOverviewLayer) === toRaw(layer),
+      ) ||
+      !layer.visible() ||
+      !annotationOverviewTemplates.has(layer)
+    ) {
+      return;
+    }
+    // reset() clears the tile cache — the only way to make GeoJS refetch a
+    // tile whose previous fetch was rejected.
+    layer.reset();
+    layer.draw();
+    trackAnnotationOverviewLoad(layer);
+  }, ANNOTATION_OVERVIEW_RETRY_DELAY_MS);
 }
 
 function _setAnnotationOverviewVisibility(
@@ -579,6 +668,7 @@ function _setAnnotationOverviewVisibility(
   }
   if (!shouldShow) {
     cancelAnnotationOverviewLoad(layer);
+    cancelAnnotationOverviewRetry(layer);
     if (wasVisible) {
       layer.visible(false);
       layer.draw();
@@ -1436,6 +1526,9 @@ function _syncAnnotationOverviewLayer(
   const config = annotationStore.overviewConfig;
   if (!config?.enabled) {
     cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
+    if (mapentry.annotationOverviewLayer) {
+      cancelAnnotationOverviewRetry(mapentry.annotationOverviewLayer, true);
+    }
     mapentry.annotationOverviewLayer?.visible(false);
     if (mapentry.annotationOverviewLayer) {
       annotationOverviewTemplates.delete(mapentry.annotationOverviewLayer);
@@ -1478,6 +1571,7 @@ function _syncAnnotationOverviewLayer(
     mapentry.annotationOverviewLayer = markRaw(
       mapentry.map.createLayer("osm", params.layer),
     );
+    hookAnnotationOverviewTileErrors(mapentry.annotationOverviewLayer);
     mapentry.annotationOverviewLayer.node().css({ "mix-blend-mode": "unset" });
     const mapIndex = maps.value.indexOf(mapentry);
     if (mapIndex >= 0) {
@@ -1491,6 +1585,7 @@ function _syncAnnotationOverviewLayer(
   const datasetId = dataset.value?.id;
   if (!datasetId || unrolling.value) {
     cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
+    cancelAnnotationOverviewRetry(mapentry.annotationOverviewLayer, true);
     mapentry.annotationOverviewLayer.visible(false);
     annotationOverviewTemplates.delete(mapentry.annotationOverviewLayer);
     return;
@@ -1503,6 +1598,7 @@ function _syncAnnotationOverviewLayer(
   });
   if (!annotationRasterSelectorsSupported(selectors)) {
     cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
+    cancelAnnotationOverviewRetry(mapentry.annotationOverviewLayer, true);
     mapentry.annotationOverviewLayer.visible(false);
     annotationOverviewTemplates.delete(mapentry.annotationOverviewLayer);
     return;

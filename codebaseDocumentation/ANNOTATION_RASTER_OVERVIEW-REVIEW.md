@@ -208,3 +208,45 @@ Review base: `master` (`da7a9e4e`)
   means threading image dimensions through the shared wire-contract guard
   used by both `ImageViewer` and `AnnotationViewer`, and no current dataset
   approaches the cap.
+
+## R17 — Connection-row navigation cannot escape the raster (Codex 2026-08-07 round, P1)
+
+- **Severity:** High (user-facing dead end)
+- **Location:** `src/utils/annotationNavigation.ts:goToConnection`
+- **Summary:** Connections are not drawn while the raster is active, and
+  `frameCameraInfo` never zooms in — so clicking a same-frame connection row
+  from a zoomed-out view recentered without crossing the vector threshold,
+  leaving the clicked connection invisible. The cross-frame path
+  (`goToAnnotationLocation`) had already received the vector-threshold zoom;
+  the `bothDisplayed` framing path was its unfixed twin.
+- **Status:** fixed — the framing now starts from a camera recentered at the
+  midpoint inside the vector range (`zoomForVectorAnnotations` +
+  `recenterCameraInfoAtZoom`), so `frameCameraInfo` only zooms back out if
+  that is what it takes to keep both endpoints on screen — in which case no
+  zoom level could draw the connection anyway. Mirrors the hydrate-retry
+  nextTick used by `goToAnnotationLocation`. Covered by _"zooms a same-frame
+  connection into the vector-visible range"_ and _"frames a connection from
+  the current camera when vectors are already visible"_, verified to fail
+  without the fix. `goToTrack` was checked and left alone: it zooms in to
+  fit content by design.
+
+## R18 — Failed raster tiles are never retried (Codex 2026-08-07 round, P1)
+
+- **Severity:** High (holes in the overview persist)
+- **Location:** `src/components/ImageViewer.vue`,
+  `server/helpers/annotationRaster.py` (503 + Retry-After on busy builds)
+- **Summary:** A raster tile can 503 while another geometry key is still
+  cold-building. GeoJS has no tile-error event, drops the failed tile, and —
+  worse than originally reported — keeps the REJECTED tile in its cache, so
+  later draws reuse the failure instead of refetching. Vectors stay
+  suppressed while the raster shows holes.
+- **Status:** fixed — the overview layer's `_getTile` factory (the seam GeoJS
+  documents for derived classes) is wrapped at creation so every tile's
+  promise interface reports failures; a failure schedules one bounded retry
+  (max 3 per applied template, 1 s delay matching the server's Retry-After)
+  that runs `layer.reset()` (the only way to purge a rejected cached tile) +
+  redraw + reload tracking. Retries are skipped for unmounted, hidden, or
+  retemplated layers; a new template restores the budget. Retry state lives
+  in WeakMaps outside the GeoJS object (R6 rule). Covered by _"retries
+  failed overview tiles with a bounded delayed reset"_ and _"does not retry
+  tiles for a hidden overview layer"_, verified to fail without the fix.

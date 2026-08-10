@@ -376,6 +376,57 @@ describe("annotation overview navigation", () => {
     expect(h.recenterCameraInfo).toHaveBeenCalledTimes(1);
     expect(h.recenterCameraInfoAtZoom).not.toHaveBeenCalled();
   });
+
+  // While the raster is active, connections are not drawn, and framing never
+  // zooms in — so clicking a same-frame connection row from a zoomed-out view
+  // used to recenter without ever crossing the vector threshold, leaving the
+  // clicked connection invisible.
+  it("zooms a same-frame connection into the vector-visible range", async () => {
+    h.overviewConfig = {
+      ...h.overviewConfig,
+      enabled: true,
+      vectorSwitchThreshold: 1,
+    };
+    h.unitsPerPixel = 4;
+    addAnnotation("parent", 0, 0);
+    addAnnotation("child", 80, 0);
+
+    goToConnection("parent", "child");
+
+    // Framing starts from a camera already inside the vector range; it then
+    // only zooms back out if that is what it takes to keep both endpoints on
+    // screen — in which case no zoom level could draw the connection anyway.
+    expect(h.recenterCameraInfoAtZoom).toHaveBeenCalledTimes(1);
+    const [, center, zoom] = h.recenterCameraInfoAtZoom.mock.calls[0] as any[];
+    expect(center).toEqual({ x: 40, y: 0 }); // endpoint midpoint
+    expect(zoom).toBeGreaterThan(5);
+    expect(zoom).toBeLessThan(5.1);
+    expect(h.frameCameraInfo).toHaveBeenCalledTimes(1);
+    expect((h.frameCameraInfo.mock.calls[0] as any[])[0]).toEqual({
+      recenteredAndZoomed: true,
+    });
+    expect(h.setCameraInfo).toHaveBeenCalledWith({ framed: true });
+
+    // One immediate hydrate plus a retry after raster suppression reacts to
+    // the camera transition.
+    expect(h.ensureHydrated).toHaveBeenCalledTimes(1);
+    await nextTick();
+    expect(h.ensureHydrated).toHaveBeenCalledTimes(2);
+    expect(h.ensureHydrated).toHaveBeenLastCalledWith(["parent", "child"]);
+  });
+
+  it("frames a connection from the current camera when vectors are already visible", () => {
+    h.overviewConfig = { ...h.overviewConfig, enabled: true };
+    h.unitsPerPixel = 0.5;
+    addAnnotation("parent", 0, 0);
+    addAnnotation("child", 80, 0);
+
+    goToConnection("parent", "child");
+
+    expect(h.recenterCameraInfoAtZoom).not.toHaveBeenCalled();
+    expect(h.frameCameraInfo).toHaveBeenCalledTimes(1);
+    expect(h.setCameraInfo).toHaveBeenCalledWith({ framed: true });
+  });
 });
 
 describe("goToTrack", () => {

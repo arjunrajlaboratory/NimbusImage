@@ -181,9 +181,29 @@ export function goToConnection(parentId: string, childId: string) {
     x: (parentAt.x + childAt.x) / 2,
     y: (parentAt.y + childAt.y) / 2,
   };
+  // While the raster overview is active, connections are not drawn, and
+  // frameCameraInfo never zooms in — so framing from a zoomed-out camera would
+  // leave the clicked connection invisible. Frame from a camera already inside
+  // the vector range instead: the framing then only zooms back out if that is
+  // what it takes to keep BOTH endpoints on screen, in which case no zoom
+  // level could have drawn the connection anyway (an off-screen endpoint is
+  // not displayed, and an undisplayed endpoint draws no connection).
+  const map = store.maps?.[0]?.map;
+  const overviewConfig = annotationStore.overviewConfig;
+  const vectorZoom =
+    overviewConfig?.enabled && !store.unroll && map?.unitsPerPixel
+      ? zoomForVectorAnnotations({
+          currentZoom: store.cameraInfo.zoom,
+          unitsPerPixel: map.unitsPerPixel(store.cameraInfo.zoom),
+          vectorSwitchThreshold: overviewConfig.vectorSwitchThreshold,
+          maxZoom: map.zoomRange?.()?.max,
+        })
+      : null;
   store.setCameraInfo(
     frameCameraInfo(
-      store.cameraInfo,
+      vectorZoom === null
+        ? store.cameraInfo
+        : recenterCameraInfoAtZoom(store.cameraInfo, midpoint, vectorZoom),
       midpoint,
       // Signed delta: frameCameraInfo projects it onto the camera axes, and
       // under rotation the sign changes the result.
@@ -193,6 +213,12 @@ export function goToConnection(parentId: string, childId: string) {
   );
   annotationStore.setHoveredAnnotationId(target.id);
   annotationStore.ensureHydrated([parentId, childId]);
+  if (vectorZoom !== null) {
+    // The immediate hydrate above can still see raster suppression because the
+    // map and AnnotationViewer react to the new camera asynchronously. Retry
+    // after Vue has applied that transition; the store deduplicates ids.
+    void nextTick(() => annotationStore.ensureHydrated([parentId, childId]));
+  }
 }
 
 /**

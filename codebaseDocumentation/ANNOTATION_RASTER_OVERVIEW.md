@@ -608,6 +608,17 @@ Per `CLAUDE.md`, every item names its test:
   limit the raster never activates, so stub dots must be retained rather than
   hidden with nothing behind them — _"retains stub dots when the raster
   selector contract is unsupported"_.
+- **Connection navigation escapes the raster**: clicking a same-frame
+  connection row while zoomed out frames the endpoints from inside the
+  vector-visible range, zooming back out only as far as keeping both
+  endpoints on screen requires — _"zooms a same-frame connection into the
+  vector-visible range"_.
+- **Busy tiles retry**: a raster tile that fails (503 during a concurrent
+  cold build) triggers a bounded delayed `reset()`+redraw — GeoJS caches the
+  rejected tile, so nothing else ever refetches it — and hidden or
+  retemplated layers do not retry — _"retries failed overview tiles with a
+  bounded delayed reset"_ and _"does not retry tiles for a hidden overview
+  layer"_.
 - **Invalidation on every mutation verb**: create, updateMultiple,
   delete, deleteMultiple each change the ETag —
   _"testEveryModelMutationPathInvalidatesEtag"_ and
