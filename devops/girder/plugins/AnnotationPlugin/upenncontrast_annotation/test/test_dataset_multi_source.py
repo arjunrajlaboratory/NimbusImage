@@ -932,6 +932,57 @@ class TestDatasetMultiSourcePipeline:
             "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
         }) is None, "orphaned configuration item blocks every retry"
 
+    def testWorkerConvertedSourcesKeepTheirDerivedImage(
+        self, admin, server, largeImageCapable
+    ):
+        """A source whose largeImage carries originalId was produced by a
+        conversion job, and ImageItem().delete would remove that derived
+        file -- the only readable form of a source the configuration
+        references by name. Losing it makes the dataset unreadable and
+        re-marking cannot bring it back."""
+        folder = self._makeDatasetFolder(admin, "converted_source_dataset")
+        items = sorted(
+            Item().find({"folderId": folder["_id"]}),
+            key=lambda item: item["name"],
+        )
+        converted, plain = items[0], items[1]
+        for item in (converted, plain):
+            if "largeImage" not in item:
+                ImageItem().createImageItem(
+                    item, _firstFile(item), user=admin, createJob=False,
+                )
+        # Mark one as worker-converted, the shape a conversion job leaves.
+        converted = Item().load(converted["_id"], force=True)
+        converted["largeImage"]["originalId"] = converted["largeImage"][
+            "fileId"
+        ]
+        Item().save(converted)
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        keptItem = Item().load(converted["_id"], force=True)
+        assert "largeImage" in keptItem, (
+            "the worker-converted source lost its derived image"
+        )
+        clearedItem = Item().load(plain["_id"], force=True)
+        assert "largeImage" not in clearedItem, (
+            "ordinary sources should still be cleared"
+        )
+        # The leftover is harmless because the configuration is named
+        # explicitly, even though it sorts first.
+        assert keptItem["name"] < MULTI_SOURCE_ITEM_NAME
+        reloaded = Folder().load(
+            folder["_id"], user=admin, level=AccessType.READ
+        )
+        assert reloaded["meta"]["selectedLargeImageId"] == resp.json["itemId"]
+
     def testConfigurationIsTheSelectedLargeImage(
         self, admin, server, largeImageCapable
     ):

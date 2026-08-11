@@ -606,7 +606,27 @@ class Dataset(Resource):
         images once they are only inputs to the combined one. The
         configuration item is not in ``items`` and keeps its own mark --
         that mark is what makes the dataset readable.
+
+        One deliberate departure from the frontend: a source whose
+        ``largeImage`` carries ``originalId`` was produced by a conversion
+        job, and ``ImageItem().delete`` would remove that derived file --
+        the only readable form of a source the generated configuration
+        references by name. Losing it makes the dataset unreadable and
+        cannot be undone by re-marking. Nothing about the configuration
+        depends on clearing these, and the explicit
+        ``selectedLargeImageId`` means a leftover mark no longer makes the
+        dataset ambiguous, so they are left alone.
         """
         for item in items:
-            if "largeImage" in item:
-                self._imageItemModel.delete(item)
+            largeImage = item.get("largeImage")
+            if not largeImage:
+                continue
+            if "originalId" in largeImage:
+                logger.info(
+                    "Keeping the worker-converted large image on item %s: "
+                    "clearing it would delete the derived file the "
+                    "configuration reads",
+                    item.get("name"),
+                )
+                continue
+            self._imageItemModel.delete(item)

@@ -395,6 +395,15 @@ mongodb://mongodb:27017"` and
 - [ ] **The creator's channel-colour overrides are honoured.** —
   *"testUserChannelColoursAreHonoured"*, *"testUserOverrideWinsOverTheDefaultTable"*,
   *"testMergeDoesNotMutateTheSharedTable"*
+- [ ] **Worker-converted sources keep their derived image.** Clearing them
+  deletes the file a conversion job produced, which re-marking cannot restore;
+  the test also checks the leftover stays unambiguous. —
+  *"testWorkerConvertedSourcesKeepTheirDerivedImage"*
+- [ ] **One variable driving two dimensions is preserved, not "fixed".** The
+  component does this via `applyDimensionStrategy`, pinned by the
+  `strategy_override` golden; changing it belongs in the component. —
+  *"test_an_omitted_dimension_keeps_its_default_even_when_shared"*,
+  *"test_an_explicit_null_still_unassigns"*
 - [ ] **The configuration is the dataset's selected large image.** The viewer
   otherwise falls back to the first item with a `largeImage`, and the sources
   sort before `multi-source2.json`. —
