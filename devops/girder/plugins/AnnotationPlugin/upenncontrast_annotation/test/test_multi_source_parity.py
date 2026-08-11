@@ -283,3 +283,54 @@ class TestOneVariableCanDriveTwoDimensions:
         assert result["assignments"]["C"] is None
         for source in result["config"]["sources"]:
             assert "cValues" not in source
+
+
+class TestRgbLayoutComesFromTheFirstSourceOnly:
+    """Pinning a shared gap, so it is not "fixed" only in the port.
+
+    The RGB decision is taken from ``tiles_metadata[0]`` alone, matching
+    ``MultiSourceConfiguration.vue``:
+
+        const firstItem = tilesMetadata.value[0];
+        rgbBandCount.value = firstItem?.bandCount || 0;
+        isRGBFile.value = detectColorVsChannels(firstItem);
+
+    So a folder whose first item is RGB and whose second is grayscale asks
+    every source for bands 1-3, and the grayscale one has no bands 2 or 3.
+    That is a real defect -- filed as issue #1325 -- but it belongs in the
+    component first: rejecting it here would make the API refuse folders the
+    UI accepts, and the guard should read like ``mixedSourceDtypeError``,
+    with a parity fixture pinning the message on both sides.
+
+    When #1325 lands in the component, this test is what should fail.
+    """
+
+    def test_first_source_decides_for_the_whole_folder(self):
+        rgb = {"bandCount": 3, "frames": [], "sizeX": 16, "sizeY": 16,
+               "dtype": "uint8"}
+        grey = {"bandCount": 1, "frames": [], "sizeX": 16, "sizeY": 16,
+                "dtype": "uint8"}
+        result = compute_configuration(
+            ["a_colour.tif", "b_mono.tif"], [rgb, grey], [{}, {}],
+            strategy=None, split_rgb_bands=True, enable_compositing=False,
+        )
+        assert result["isRGBFile"] is True
+        assert result["rgbBandCount"] == 3
+        # Both sources get band styling, including the grayscale one.
+        byPath = {}
+        for source in result["config"]["sources"]:
+            byPath.setdefault(source["path"], []).append(
+                source["style"]["bands"][0]["band"]
+            )
+        assert byPath["b_mono.tif"] == [1, 2, 3], (
+            "if this changed, the component grew the guard from #1325 and "
+            "this port needs to follow it"
+        )
+
+    def test_the_dtype_guard_does_not_cover_it(self):
+        """Same pixel type, different band layout: nothing rejects it."""
+        rgb = {"bandCount": 3, "frames": [], "sizeX": 16, "sizeY": 16,
+               "dtype": "uint8"}
+        grey = {"bandCount": 1, "frames": [], "sizeX": 16, "sizeY": 16,
+                "dtype": "uint8"}
+        validate_source_dtypes([rgb, grey])

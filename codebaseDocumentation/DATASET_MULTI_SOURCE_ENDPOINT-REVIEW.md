@@ -395,6 +395,14 @@ mongodb://mongodb:27017"` and
 - [ ] **The creator's channel-colour overrides are honoured.** —
   *"testUserChannelColoursAreHonoured"*, *"testUserOverrideWinsOverTheDefaultTable"*,
   *"testMergeDoesNotMutateTheSharedTable"*
+- [ ] **Every exit from the marking loop rolls back its own marks.** The
+  caller's `newlyMarked` is only assigned on return, so an unexpected
+  exception used to leave sources marked. —
+  *"testAnyMarkingErrorRollsBackEarlierMarks"*
+- [ ] **RGB layout is taken from the first source, matching the component.**
+  Pinned deliberately; #1325 is the fix, and it belongs in the component
+  first. — *"test_first_source_decides_for_the_whole_folder"*,
+  *"test_the_dtype_guard_does_not_cover_it"*
 - [ ] **The dry-run and real-run response shapes stay in step.** They have
   drifted twice, both times because the dry run spreads
   `compute_configuration`'s result while the real run enumerates fields. —

@@ -276,7 +276,7 @@ class TestDatasetMultiSourceValidation:
         )
         assertStatus(resp, 400)
         assert "two_files.tif" in resp.json["message"]
-        assert "exactly one" in resp.json["message"]
+        assert "exactly one" in resp.json["message"].replace("\n", " ")
 
     def testMarksLargeImagesWithASingleFileQuery(
         self, admin, server, monkeypatch
@@ -931,6 +931,47 @@ class TestDatasetMultiSourcePipeline:
         assert Item().findOne({
             "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
         }) is None, "orphaned configuration item blocks every retry"
+
+    def testAnyMarkingErrorRollsBackEarlierMarks(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """The marking loop had a rollback per known error path, so an
+        UNexpected one -- a concurrent mark failing validation, say -- left
+        earlier sources marked: the caller's newlyMarked is only assigned
+        when the helper returns, so its finally saw an empty list."""
+        folder = self._makeDatasetFolder(admin, "marking_error_dataset")
+        _clearLargeImageMarks(folder)
+
+        realCreate = ImageItem.createImageItem
+        calls = []
+
+        def failTheSecondMark(self, item, file, **kwargs):
+            calls.append(item["name"])
+            if len(calls) == 2:
+                # Deliberately NOT a TileGeneralError.
+                raise ValueError("forced non-tile marking failure")
+            return realCreate(self, item, file, **kwargs)
+
+        monkeypatch.setattr(ImageItem, "createImageItem", failTheSecondMark)
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"dryRun": True}),
+            type="application/json",
+            exception=True,
+        )
+        monkeypatch.undo()
+
+        assertStatus(resp, 500)
+        assert len(calls) == 2, "expected the loop to reach the second item"
+        marked = [
+            item["name"] for item in Item().find({"folderId": folder["_id"]})
+            if "largeImage" in item
+        ]
+        assert marked == [], (
+            "an unexpected marking error left sources marked: %r" % (marked,)
+        )
 
     def testWorkerConvertedSourcesKeepTheirDerivedImage(
         self, admin, server, largeImageCapable

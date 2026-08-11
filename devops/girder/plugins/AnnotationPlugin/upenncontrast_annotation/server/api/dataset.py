@@ -504,41 +504,49 @@ class Dataset(Resource):
         ):
             filesByItemId.setdefault(file["itemId"], []).append(file)
 
-        for item in unmarked:
-            files = filesByItemId.get(item["_id"], [])
-            if not files:
-                self._rollbackLargeImages(newlyMarked)
-                raise RestException(
-                    'Item "%s" has no files and cannot be used as an '
-                    "image source." % item["name"],
-                    code=400,
-                )
-            if len(files) > 1:
-                # Mirror girder's own POST item/{id}/tiles, which requires an
-                # explicit fileId once an item has more than one file rather
-                # than guessing. Picking whichever file mongo returned first
-                # would be non-deterministic.
-                self._rollbackLargeImages(newlyMarked)
-                raise RestException(
-                    'Item "%s" has %d files; an image source item must have '
-                    "exactly one." % (item["name"], len(files)),
-                    code=400,
-                )
-            file = files[0]
-            try:
-                self._imageItemModel.createImageItem(
-                    item, file, user=user, token=token,
-                    createJob=False,
-                )
-            except TileGeneralError as e:
-                self._rollbackLargeImages(newlyMarked)
-                raise RestException(
-                    'Could not use item "%s" as a large image: %s' % (
-                        item["name"], e
-                    ),
-                    code=400,
-                )
-            newlyMarked.append(item)
+        # One rollback for every way out of this loop. The caller's
+        # `newlyMarked` is only assigned when this returns, so on any
+        # exception its `finally` sees an empty list and cannot clean up
+        # what was marked here. Catching broadly is the point: an
+        # unexpected error (a concurrent mark failing validation, say)
+        # must not leave half the folder marked. The original is re-raised
+        # untouched, and _rollbackLargeImages is per-item best-effort so it
+        # cannot replace it.
+        try:
+            for item in unmarked:
+                files = filesByItemId.get(item["_id"], [])
+                if not files:
+                    raise RestException(
+                        'Item "%s" has no files and cannot be used as an '
+                        "image source." % item["name"],
+                        code=400,
+                    )
+                if len(files) > 1:
+                    # Mirror girder's own POST item/{id}/tiles, which
+                    # requires an explicit fileId once an item has more
+                    # than one file rather than guessing. Picking whichever
+                    # file mongo returned first would be non-deterministic.
+                    raise RestException(
+                        'Item "%s" has %d files; an image source item must '
+                        "have exactly one." % (item["name"], len(files)),
+                        code=400,
+                    )
+                try:
+                    self._imageItemModel.createImageItem(
+                        item, files[0], user=user, token=token,
+                        createJob=False,
+                    )
+                except TileGeneralError as e:
+                    raise RestException(
+                        'Could not use item "%s" as a large image: %s' % (
+                            item["name"], e
+                        ),
+                        code=400,
+                    )
+                newlyMarked.append(item)
+        except Exception:
+            self._rollbackLargeImages(newlyMarked)
+            raise
         return newlyMarked
 
     def _rollbackLargeImages(self, markedItems):
