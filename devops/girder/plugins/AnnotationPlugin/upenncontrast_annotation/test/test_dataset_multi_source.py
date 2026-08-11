@@ -932,6 +932,101 @@ class TestDatasetMultiSourcePipeline:
             "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
         }) is None, "orphaned configuration item blocks every retry"
 
+    def testConfigurationIsTheSelectedLargeImage(
+        self, admin, server, largeImageCapable
+    ):
+        """The viewer falls back to "first item with a largeImage" when
+        selectedLargeImageId is null, and "chanA_pos1.tif" sorts before
+        "multi-source2.json"."""
+        folder = self._makeDatasetFolder(admin, "selected_image_dataset")
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        reloaded = Folder().load(
+            folder["_id"], user=admin, level=AccessType.READ
+        )
+        assert reloaded["meta"]["selectedLargeImageId"] == resp.json["itemId"]
+
+    def testSelectedImageSurvivesAToleratedClearingFailure(
+        self, admin, server, largeImageCapable, monkeypatch
+    ):
+        """The interaction between two deliberate choices: clearing the
+        sources is best-effort, and the viewer's fallback picks the FIRST
+        item that still has a largeImage. Without naming the configuration
+        explicitly, a tolerated clearing failure silently opens one raw
+        source channel instead of the combined image."""
+        folder = self._makeDatasetFolder(admin, "selected_image_leftover")
+
+        def boom(self, item, **kwargs):
+            raise ValueError("forced largeImage delete failure")
+
+        monkeypatch.setattr(ImageItem, "delete", boom)
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        monkeypatch.undo()
+        assertStatusOk(resp)
+
+        # The hazardous state really exists: a source that sorts before
+        # "multi-source2.json" still carries a largeImage.
+        leftovers = sorted(
+            item["name"] for item in Item().find({"folderId": folder["_id"]})
+            if "largeImage" in item and item["name"] != MULTI_SOURCE_ITEM_NAME
+        )
+        assert leftovers and leftovers[0] < MULTI_SOURCE_ITEM_NAME, (
+            "test no longer reproduces the ambiguous state: %r" % (leftovers,)
+        )
+        # ...and the dataset still resolves to the configuration.
+        reloaded = Folder().load(
+            folder["_id"], user=admin, level=AccessType.READ
+        )
+        assert reloaded["meta"]["selectedLargeImageId"] == resp.json["itemId"]
+
+    def testFailedRunRestoresFolderMetadataExactly(
+        self, admin, server, largeImageCapable, monkeypatch
+    ):
+        """Both managed keys are put back as found -- absent stays absent,
+        rather than being left behind as an explicit null."""
+        from ..server.models.datasetView import (
+            DatasetView as DatasetViewModel,
+        )
+
+        def boom(self, creator, dataset_view):
+            raise ValueError("forced dataset view failure")
+
+        monkeypatch.setattr(DatasetViewModel, "create", boom)
+        folder = self._makeDatasetFolder(admin, "metadata_restore_dataset")
+        before = dict(Folder().load(
+            folder["_id"], user=admin, level=AccessType.READ
+        )["meta"])
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+            exception=True,
+        )
+        assertStatus(resp, 500)
+        after = Folder().load(
+            folder["_id"], user=admin, level=AccessType.READ
+        )["meta"]
+        assert after == before, "folder metadata not restored: %r -> %r" % (
+            before, after,
+        )
+        assert "selectedLargeImageId" not in after
+        assert "dimensionLabels" not in after
+
     def testSourceClearingFailureDoesNotUndoAGoodDataset(
         self, admin, server, largeImageCapable, monkeypatch
     ):

@@ -321,6 +321,18 @@ class Dataset:
         Note:
             Unlike the web UI, this does not warm the tile/histogram
             caches, so the first open of a large dataset is slower.
+
+            When ``transcode`` is on this returns as soon as the job is
+            queued, so checking it is the caller's job::
+
+                result = ds.configure()
+                if result.job_id and not client.job(result.job_id).wait():
+                    ...  # the dataset is configured but its image is broken
+
+            A failed transcode leaves the dataset configured with an
+            unusable image, and configuring again raises 409 because the
+            configuration item exists. Recovering means deleting that item
+            (``result.item_id``) or starting from a new dataset.
         """
         body: dict = {
             "splitRGBBands": split_rgb_bands,

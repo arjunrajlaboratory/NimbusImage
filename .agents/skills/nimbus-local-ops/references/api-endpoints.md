@@ -169,7 +169,12 @@ A second call on a configured folder returns 409.
 
 On success the response has `itemId` (the new `multi-source2.json`), `jobId`
 (the transcode job, or `null`), `collectionId` / `viewId` (or `null` with
-`createView: false`), and the config. Caches are **not** warmed —
+`createView: false`), and the config.
+
+**`jobId` is yours to check.** The response returns once the transcode is
+queued. If that job later fails, the dataset stays configured with a broken
+image and re-running returns 409 (the configuration item exists) — recover by
+deleting that item, or start from a new dataset. Caches are **not** warmed —
 the frontend additionally calls `tile_frames`, `cache_maxmerge` and
 `histogram` after configuring, so the first open is slower than via the UI.
 

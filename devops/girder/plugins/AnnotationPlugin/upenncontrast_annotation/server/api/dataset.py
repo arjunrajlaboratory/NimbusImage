@@ -43,7 +43,11 @@ from ..models.datasetView import DatasetView as DatasetViewModel
 from ..models.userColors import UserColors as UserColorsModel
 
 MULTI_SOURCE_ITEM_NAME = "multi-source2.json"
-_NO_DIMENSION_LABELS = object()
+
+# Folder metadata keys this endpoint writes, and therefore has to be able to
+# put back exactly as it found them.
+_MANAGED_FOLDER_KEYS = ("dimensionLabels", "selectedLargeImageId")
+_ABSENT = object()
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +84,13 @@ class Dataset(Resource):
             "configuration is returned along with a validationError "
             "field (null when valid): use it to discover the variables "
             "and build an assignments override. A non-dry run rejects "
-            "the same condition with a 400." % (
+            "the same condition with a 400. When a transcode job is "
+            "scheduled the response returns as soon as it is queued, so "
+            "jobId is the caller's responsibility: if that job later "
+            "fails, the dataset stays configured with a broken image and "
+            "re-running returns 409, because the configuration item "
+            "exists. Recovering means deleting that item (and re-marking "
+            "the sources) or starting from a new dataset." % (
                 MULTI_SOURCE_ITEM_NAME
             )
         )
@@ -144,14 +154,16 @@ class Dataset(Resource):
         job = None
         collection = None
         datasetView = None
-        dimensionLabelsSet = False
+        folderMetadataSet = False
         committed = False
         folderMeta = folder.get("meta", {})
-        previousDimensionLabels = (
-            copy.deepcopy(folderMeta["dimensionLabels"])
-            if "dimensionLabels" in folderMeta
-            else _NO_DIMENSION_LABELS
-        )
+        previousFolderMetadata = {
+            key: (
+                copy.deepcopy(folderMeta[key]) if key in folderMeta
+                else _ABSENT
+            )
+            for key in _MANAGED_FOLDER_KEYS
+        }
         try:
             newlyMarked = self._markLargeImages(items, user, token)
 
@@ -226,11 +238,21 @@ class Dataset(Resource):
 
             # Store reversible folder metadata before starting a transcode
             # job or removing source large images.  If either operation
-            # fails, the exception handler below restores the old value.
-            Folder().setMetadata(
-                folder, {"dimensionLabels": result["dimensionLabels"]}
-            )
-            dimensionLabelsSet = True
+            # fails, the exception handler below restores the old values.
+            #
+            # selectedLargeImageId matters more than it looks: when it is
+            # null the viewer falls back to "the first item that still has
+            # a largeImage" (girderResources.ts), and clearing the source
+            # marks is deliberately best-effort below. A tolerated clearing
+            # failure would otherwise leave a source item whose name sorts
+            # before "multi-source2.json" as the image the dataset opens --
+            # one raw channel instead of the combined image. Naming the
+            # configuration explicitly makes that independent of leftovers.
+            Folder().setMetadata(folder, {
+                "dimensionLabels": result["dimensionLabels"],
+                "selectedLargeImageId": str(newItem["_id"]),
+            })
+            folderMetadataSet = True
 
             if transcode:
                 # The configuration we just uploaded has already been
@@ -362,14 +384,14 @@ class Dataset(Resource):
                         "Could not remove failed multi-source item %s",
                         newItemId,
                     )
-            if dimensionLabelsSet:
+            if folderMetadataSet:
                 try:
-                    self._restoreDimensionLabels(
-                        folder, previousDimensionLabels
+                    self._restoreFolderMetadata(
+                        folder, previousFolderMetadata
                     )
                 except Exception:
                     logger.exception(
-                        "Could not restore dimension labels on folder %s",
+                        "Could not restore metadata on folder %s",
                         folder.get("_id"),
                     )
             raise
@@ -417,14 +439,22 @@ class Dataset(Resource):
         return value
 
     @staticmethod
-    def _restoreDimensionLabels(folder, previous):
-        """Restore the folder's dimension labels after failed finalization."""
-        if previous is _NO_DIMENSION_LABELS:
-            Folder().setMetadata(folder, {"dimensionLabels": None})
-        else:
-            Folder().setMetadata(
-                folder, {"dimensionLabels": previous}, allowNull=True
-            )
+    def _restoreFolderMetadata(folder, previous):
+        """Restore the folder metadata this request writes, after a failed
+        finalization. ``previous`` maps each managed key to its old value or
+        ``_ABSENT``; absent keys are deleted rather than set to null, so a
+        folder that never had them is left exactly as it was found."""
+        toDelete = {
+            key: None for key, value in previous.items() if value is _ABSENT
+        }
+        toRestore = {
+            key: value for key, value in previous.items()
+            if value is not _ABSENT
+        }
+        if toDelete:
+            Folder().setMetadata(folder, toDelete)
+        if toRestore:
+            Folder().setMetadata(folder, toRestore, allowNull=True)
 
     def _markLargeImages(self, items, user, token):
         """Mark plain image items as large images without a job.

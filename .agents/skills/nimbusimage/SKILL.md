@@ -211,11 +211,16 @@ configuration — unassigned variables, **sources with different pixel types**
 if the dataset is already configured. Reconfiguring means starting from a new
 dataset.
 
-When `transcode` is on, `result.job_id` is the conversion job:
+When `transcode` is on, `configure()` returns as soon as the job is **queued**,
+so checking it is your job — and a failure is not self-healing:
 
 ```python
-if result.job_id:
-    client.job(result.job_id).wait()
+result = ds.configure()
+if result.job_id and not client.job(result.job_id).wait():
+    # The dataset is configured but its image is unusable. Configuring
+    # again raises 409 because the configuration item exists; delete
+    # result.item_id, or start from a new dataset.
+    ...
 ```
 
 ### Opening it in the UI

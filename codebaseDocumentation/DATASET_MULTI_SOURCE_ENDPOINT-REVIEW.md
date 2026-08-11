@@ -395,6 +395,17 @@ mongodb://mongodb:27017"` and
 - [ ] **The creator's channel-colour overrides are honoured.** —
   *"testUserChannelColoursAreHonoured"*, *"testUserOverrideWinsOverTheDefaultTable"*,
   *"testMergeDoesNotMutateTheSharedTable"*
+- [ ] **The configuration is the dataset's selected large image.** The viewer
+  otherwise falls back to the first item with a `largeImage`, and the sources
+  sort before `multi-source2.json`. —
+  *"testConfigurationIsTheSelectedLargeImage"*
+- [ ] **...even when clearing the sources failed.** The tolerated-failure path
+  is exactly when the fallback would pick the wrong image; the test asserts the
+  ambiguous state exists before asserting the outcome. —
+  *"testSelectedImageSurvivesAToleratedClearingFailure"*
+- [ ] **A failed run restores both managed folder keys exactly.** Absent stays
+  absent rather than becoming an explicit null. —
+  *"testFailedRunRestoresFolderMetadataExactly"*
 - [ ] **The ACL test's owner is not a site admin.** A site administrator
   passes every `hasAccess` check whatever the ACL says, which made the first
   version of this test vacuous on exactly the half it existed for; it asserts
