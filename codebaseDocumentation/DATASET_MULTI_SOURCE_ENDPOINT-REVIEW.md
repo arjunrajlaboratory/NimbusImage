@@ -395,6 +395,12 @@ mongodb://mongodb:27017"` and
 - [ ] **The creator's channel-colour overrides are honoured.** —
   *"testUserChannelColoursAreHonoured"*, *"testUserOverrideWinsOverTheDefaultTable"*,
   *"testMergeDoesNotMutateTheSharedTable"*
+- [ ] **Every `logger.exception` sits inside an exception handler.** Outside
+  one it records `NoneType: None`, so a best-effort handler whose only output
+  is the log reports no cause at all. Checked statically over the whole file,
+  because the mistake is invisible at the call site — and the checker itself
+  is guarded against passing vacuously. —
+  *"testEveryLoggerExceptionIsInsideAnExceptBlock"*, *"testTheCheckCanActuallyFail"*
 - [ ] **A ragged leading row is refused, not papered over.** The component
   throws on it, so the API must not accept it and write a `null` channel
   name; a ragged row anywhere else still parses. —

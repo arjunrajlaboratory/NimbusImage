@@ -564,10 +564,19 @@ class Dataset(Resource):
             try:
                 self._imageItemModel.delete(item)
             except Exception:
+                # Log inside the handler: this is the only place the real
+                # traceback exists, and it is what someone debugging a
+                # stuck rollback needs. (logger.exception outside a handler
+                # records "NoneType: None" instead.)
+                logger.exception(
+                    "Could not roll back the largeImage mark on item %s",
+                    item.get("name"),
+                )
                 undeleted.append(item.get("name"))
         if undeleted:
-            logger.exception(
-                "Could not roll back largeImage marks on %s",
+            logger.error(
+                "Left %d largeImage mark(s) behind after rollback: %s",
+                len(undeleted),
                 ", ".join(str(name) for name in undeleted),
             )
 

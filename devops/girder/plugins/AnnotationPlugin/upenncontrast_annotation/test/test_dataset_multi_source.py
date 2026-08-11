@@ -1645,3 +1645,65 @@ class TestDatasetMultiSourceHelperUsage:
 
     def testTileGeneralErrorIsImportable(self):
         assert issubclass(TileGeneralError, Exception)
+
+
+class TestLoggingHygiene:
+    """`logger.exception` records ``sys.exc_info()``, so outside an except
+    block it logs "NoneType: None" as the traceback -- no cause at all.
+
+    This endpoint has seven best-effort cleanup handlers whose only output
+    IS the log, so a silently causeless one is a real loss. Checked
+    statically over the whole file rather than by eye, because the mistake
+    is invisible at the call site: the line reads identically either way.
+    """
+
+    @staticmethod
+    def _sourceLines():
+        import os
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..", "server", "api", "dataset.py",
+        )
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().split("\n")
+
+    def testEveryLoggerExceptionIsInsideAnExceptBlock(self):
+        lines = self._sourceLines()
+        offenders = []
+        for index, line in enumerate(lines):
+            if "logger.exception" not in line:
+                continue
+            indent = len(line) - len(line.lstrip())
+            enclosed = False
+            for previous in reversed(lines[:index]):
+                if not previous.strip():
+                    continue
+                previousIndent = len(previous) - len(previous.lstrip())
+                if previousIndent >= indent:
+                    continue
+                enclosed = previous.strip().startswith("except")
+                break
+            if not enclosed:
+                offenders.append((index + 1, line.strip()))
+        assert offenders == [], (
+            "logger.exception outside an except block logs 'NoneType: None' "
+            "as the traceback; use logger.error there: %r" % (offenders,)
+        )
+
+    def testTheCheckCanActuallyFail(self):
+        """Guard the guard: the walk above is subtle enough to be wrong in
+        the passing direction, so prove it flags a known-bad shape."""
+        lines = [
+            "    def f(self):",
+            "        if thing:",
+            "            logger.exception('no handler here')",
+        ]
+        indent = len(lines[2]) - len(lines[2].lstrip())
+        enclosed = False
+        for previous in reversed(lines[:2]):
+            previousIndent = len(previous) - len(previous.lstrip())
+            if previousIndent >= indent:
+                continue
+            enclosed = previous.strip().startswith("except")
+            break
+        assert enclosed is False
