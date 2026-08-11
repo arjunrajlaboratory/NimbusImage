@@ -709,6 +709,52 @@ class TestDatasetMultiSourcePipeline:
             {"folderId": folder["_id"]}
         ) is None
 
+    def testRollbackTriesEveryItemAndDoesNotMaskTheResponse(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """The rollback runs from a finally block, so a raising delete
+        would both strand the remaining marks and discard the response --
+        a successful dry run would come back as a 500."""
+        _mockLargeImagePipeline(monkeypatch)
+        folder = self._makeDatasetFolder(admin, "rollback_partial_dataset")
+        _clearLargeImageMarks(folder)
+
+        attempted = []
+        realDelete = ImageItem.delete
+
+        def failTheFirstDelete(self, item, **kwargs):
+            attempted.append(item["name"])
+            if len(attempted) == 1:
+                raise ValueError("forced largeImage delete failure")
+            return realDelete(self, item, **kwargs)
+
+        monkeypatch.setattr(ImageItem, "delete", failTheFirstDelete)
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"dryRun": True}),
+            type="application/json",
+        )
+        monkeypatch.undo()
+
+        # The dry run still reports its result...
+        assertStatusOk(resp)
+        assert "variables" in resp.json
+        # ...and the failure did not stop the rollback reaching the rest.
+        assert len(attempted) == 2, (
+            "rollback stopped at the first failure: %r" % (attempted,)
+        )
+        remaining = [
+            item["name"] for item in Item().find({"folderId": folder["_id"]})
+            if "largeImage" in item
+        ]
+        assert len(remaining) == 1, (
+            "only the item whose delete failed should still be marked, got %r"
+            % (remaining,)
+        )
+
     def testConfigItemIsRemovedWhenItsLoadFails(
         self, admin, server, largeImageCapable, monkeypatch
     ):

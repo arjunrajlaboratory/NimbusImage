@@ -376,6 +376,10 @@ mongodb://mongodb:27017"` and
   orphaned configuration blocks every retry on the preflight 409. —
   *"testConfigItemIsRemovedWhenItsLoadFails"*,
   *"testViewFailureRollsBackTheWholeRequest"*
+- [ ] **Rollback attempts every item and never replaces the response.** It
+  runs from `finally`, where a raised exception discards the return value —
+  pre-fix, a successful dry run came back as a 500. —
+  *"testRollbackTriesEveryItemAndDoesNotMaskTheResponse"*
 - [ ] **A failed source-clear does not unwind a good dataset.** Clearing is
   several deletes and cannot be undone, so it happens after the commit and is
   best-effort. — *"testSourceClearingFailureDoesNotUndoAGoodDataset"*

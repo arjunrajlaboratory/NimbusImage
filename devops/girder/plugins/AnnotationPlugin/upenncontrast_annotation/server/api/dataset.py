@@ -117,6 +117,13 @@ class Dataset(Resource):
                 "Folder is not a contrastDataset.", code=400
             )
 
+        # A raw find is right here, and a per-item permission check would
+        # be redundant rather than safer: girder items have no ACL of their
+        # own. Item uses AccessControlMixin with resourceColl="folder" /
+        # resourceParent="folderId", so hasAccess loads the parent folder
+        # and delegates to it. These items are selected BY folderId, and
+        # the modelParam above already required WRITE on that folder, so
+        # re-checking each one evaluates the identical predicate.
         items = list(Item().find(
             {"folderId": folder["_id"]}, sort=[("lowerName", 1)]
         ))
@@ -461,9 +468,26 @@ class Dataset(Resource):
         return newlyMarked
 
     def _rollbackLargeImages(self, markedItems):
-        """Clear largeImage marks created earlier in this request."""
+        """Clear largeImage marks created earlier in this request.
+
+        Per item, best-effort. This runs from the ``finally`` block and
+        from a mid-loop marking failure, so letting one delete abort the
+        loop would both leave the remaining marks behind and replace the
+        response the caller should have got -- a raising ``finally``
+        discards the return value, so even a successful dry run would come
+        back as a 500. Try them all, then log what is left over.
+        """
+        undeleted = []
         for item in markedItems:
-            self._imageItemModel.delete(item)
+            try:
+                self._imageItemModel.delete(item)
+            except Exception:
+                undeleted.append(item.get("name"))
+        if undeleted:
+            logger.exception(
+                "Could not roll back largeImage marks on %s",
+                ", ".join(str(name) for name in undeleted),
+            )
 
     def _uploadConfiguration(self, folder, config, user):
         """Upload the generated config JSON as a new item in the folder.
