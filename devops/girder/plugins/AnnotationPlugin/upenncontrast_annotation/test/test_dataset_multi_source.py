@@ -133,6 +133,21 @@ def largeImageCapable(admin, fsAssetstore):
 
 
 @pytest.fixture
+def secondUser(db, admin):
+    """A second ordinary (non-site-admin) user.
+
+    ACL tests need two of them: pytest_girder provides ``admin`` (a site
+    administrator, who passes every access check regardless of the ACL) and
+    a single ``user``, which is not enough to model owner vs collaborator.
+    """
+    from girder.models.user import User
+    return User().createUser(
+        email="second@girder.test", login="second", firstName="Second",
+        lastName="User", password="password", admin=False,
+    )
+
+
+@pytest.fixture
 def largeImageAutoSet(db):
     """Reproduce the deployed server's ``largeImage.autoSet`` marking.
 
@@ -650,7 +665,7 @@ class TestDatasetMultiSourcePipeline:
         assert view["configurationId"] == collection["_id"]
 
     def testCollectionAndViewInheritTheFolderAcl(
-        self, admin, user, server, largeImageCapable
+        self, admin, user, secondUser, server, largeImageCapable
     ):
         """Collections and views are AccessControlledModels with their own
         enforced ACL (unlike items, which delegate to the folder), and both
@@ -659,21 +674,30 @@ class TestDatasetMultiSourcePipeline:
         owner out of their own dataset's configuration -- and since dataset
         discovery enumerates views, the owner stops seeing the dataset at
         all while the collaborator sees it.
+
+        The owner here is an ORDINARY user, not the ``admin`` fixture: a
+        site administrator passes every hasAccess check regardless of what
+        the ACL says, which would make the owner half of this test vacuous
+        -- the same masking that hid the bug in the first place.
         """
+        owner, collaborator = secondUser, user
+        assert not owner.get("admin"), "owner must not be a site admin"
+        assert not collaborator.get("admin")
+
         folder = utilities.createPrivateFolder(
-            admin, "acl_inherit_dataset", upenn_utilities.datasetMetadata
+            owner, "acl_inherit_dataset", upenn_utilities.datasetMetadata
         )
-        _uploadTiffItem(admin, folder, "chanA_pos1.tif", fill=10)
-        _uploadTiffItem(admin, folder, "chanB_pos1.tif", fill=20)
+        _uploadTiffItem(owner, folder, "chanA_pos1.tif", fill=10)
+        _uploadTiffItem(owner, folder, "chanB_pos1.tif", fill=20)
         Folder().setUserAccess(
-            folder, user=user, level=AccessType.WRITE, save=True
+            folder, user=collaborator, level=AccessType.WRITE, save=True
         )
 
         # The collaborator, not the owner, configures it.
         resp = server.request(
             path=MULTI_SOURCE_PATH % folder["_id"],
             method="POST",
-            user=user,
+            user=collaborator,
             body=json.dumps({"transcode": False}),
             type="application/json",
         )
@@ -696,18 +720,39 @@ class TestDatasetMultiSourcePipeline:
         ):
             # The owner keeps ADMIN...
             assert model.hasAccess(
-                document, user=admin, level=AccessType.ADMIN
+                document, user=owner, level=AccessType.ADMIN
             ), "owner lost ADMIN on the %s" % label
+            # ...by an explicit ACL entry, asserted independently of
+            # hasAccess so this cannot pass on a technicality.
+            granted = {
+                str(entry["id"]): entry["level"]
+                for entry in document["access"]["users"]
+            }
+            assert granted.get(str(owner["_id"])) == AccessType.ADMIN, (
+                "no explicit ADMIN entry for the owner on the %s: %r"
+                % (label, granted)
+            )
             # ...and the collaborator gets exactly their dataset rights,
             # not the ADMIN that createCollection/create would have given
             # them -- WRITE on a dataset must not become ADMIN on its
             # configuration.
-            assert model.hasAccess(
-                document, user=user, level=AccessType.WRITE
-            ), "collaborator lost WRITE on the %s" % label
+            assert granted.get(str(collaborator["_id"])) == AccessType.WRITE
             assert not model.hasAccess(
-                document, user=user, level=AccessType.ADMIN
+                document, user=collaborator, level=AccessType.ADMIN
             ), "WRITE on the dataset escalated to ADMIN on the %s" % label
+
+        # The path that actually broke: discovery enumerates views, so the
+        # owner seeing zero of them means the dataset vanished for them.
+        listing = server.request(
+            path="/dataset_view",
+            method="GET",
+            user=owner,
+            params={"datasetId": str(folder["_id"])},
+        )
+        assertStatusOk(listing)
+        assert [v["_id"] for v in listing.json] == [str(view["_id"])], (
+            "the owner cannot discover their own dataset's view"
+        )
 
     def testPublicDatasetGetsAPublicCollectionAndView(
         self, admin, server, largeImageCapable

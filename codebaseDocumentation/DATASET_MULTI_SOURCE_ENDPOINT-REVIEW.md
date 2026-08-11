@@ -395,6 +395,12 @@ mongodb://mongodb:27017"` and
 - [ ] **The creator's channel-colour overrides are honoured.** —
   *"testUserChannelColoursAreHonoured"*, *"testUserOverrideWinsOverTheDefaultTable"*,
   *"testMergeDoesNotMutateTheSharedTable"*
+- [ ] **The ACL test's owner is not a site admin.** A site administrator
+  passes every `hasAccess` check whatever the ACL says, which made the first
+  version of this test vacuous on exactly the half it existed for; it asserts
+  the explicit ACL entry too, and exercises the owner's view listing. Verified
+  by mutation (collaborator WRITE, owner never granted), not just by removing
+  the fix. — *"testCollectionAndViewInheritTheFolderAcl"*
 - [ ] **The collection and view inherit the dataset folder's ACL.** Both are
   AccessControlledModels seeded with the creator alone, so without this a
   WRITE collaborator's configuration is invisible to the owner — including in
