@@ -31,7 +31,9 @@ Fidelity notes (JS semantics that are reproduced here):
   ``len(minimal_columns) > 4``.
 * Categorization triggers are scanned in insertion order (z, xy, chan, t)
   and conflicts are resolved against ``["chan", "xy", "z", "t"]``.
-* Error paths are silent (return ``[]`` / skip), never raising.
+* Error paths are silent (return ``[]`` / skip) with one exception: a
+  ragged *leading* row in a spanning column raises ``ValueError``. See
+  ``_categorize_column`` for why refusing is the faithful choice there.
 """
 
 import re
@@ -173,13 +175,11 @@ def _find_common_substring(tokens):
     characters differ.
 
     JS reads ``tokens[0].length`` as the loop bound and treats
-    out-of-range / undefined characters as mismatches. If ``tokens[0]`` is
-    ``None`` (a ragged first row) JS would throw; here we treat it as an
-    empty string, which categorizes as "chan" -- fixtures avoid this case.
+    out-of-range / undefined characters as mismatches. ``tokens[0]`` being
+    ``None`` is rejected by the caller before we get here, because JS
+    throws on it -- see ``_categorize_column``.
     """
     first = tokens[0]
-    if first is None:
-        return ""
     common = ""
     for i in range(len(first)):
         current = first[i]
@@ -212,6 +212,23 @@ def _categorize_column(rows, col):
 
     if all(not _DIGIT_PATTERN.search(_js_str(token)) for token in tokens):
         return "chan"
+
+    if tokens[0] is None:
+        # This is exactly where JS reads `tokens[0].length` and throws
+        # `TypeError: Cannot read properties of undefined (reading
+        # 'length')` -- verified against the real collectFilenameMetadata2.
+        # That aborts the configuration screen, so the UI cannot configure
+        # such a folder at all. Returning "" instead (which categorizes as
+        # "chan") made this port *more permissive* than the component: it
+        # produced a variable whose values contain None, i.e. a channel
+        # literally named null in the written configuration. Refuse, with a
+        # message that beats the frontend's raw TypeError.
+        raise ValueError(
+            'Filenames do not have a consistent number of parts: "%s" has '
+            "no part %d, but that part is one of the ones that "
+            "distinguishes the files. Rename the files so that every name "
+            "has the same structure." % (rows[0][0], col)
+        )
 
     return _categorize_substring(_find_common_substring(tokens))
 

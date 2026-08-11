@@ -1547,6 +1547,35 @@ class TestDatasetMultiSourceValidationRules:
         assertStatusOk(fixed)
         assert fixed.json["assignments"]["XY"]["source"] == "filename"
 
+    def testRejectsInconsistentFilenameStructure(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """The UI cannot configure this folder at all -- the real
+        collectFilenameMetadata2 throws on it -- so the API refuses instead
+        of writing a configuration with a null channel name."""
+        metadata = {
+            name: {"bandCount": 1, "frames": [], "sizeX": 16, "sizeY": 16,
+                   "dtype": "uint16"}
+            for name in ("a.tif", "b_x_0.tif", "b_x_1.tif")
+        }
+        folder = self._makeFolder(
+            admin, "ragged_names_dataset", metadata, monkeypatch
+        )
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+        message = resp.json["message"].replace("\n", " ")
+        assert "consistent number of parts" in message
+        assert "a.tif" in message
+        assert Item().findOne({
+            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
+        }) is None
+
     def testDryRunStillRejectsMalformedBodies(self, admin, server):
         """Malformed requests are not discovery results: they 400 even in
         a dry run."""

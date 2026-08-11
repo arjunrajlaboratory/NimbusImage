@@ -342,3 +342,53 @@ class TestSpanningSearchIsBounded:
         # A single filename has no variance to report, but the search must
         # not crash or hang on it.
         assert isinstance(collect_filename_metadata(["only_one.tif"]), list)
+
+
+class TestRaggedLeadingRowIsRefused:
+    """The one place this port must NOT match the component's letter.
+
+    `a.tif` / `b_x_0.tif` / `b_x_1.tif`: token 3 is the first spanning
+    column and the sorted first row has no token 3. The real
+    `collectFilenameMetadata2` reads `tokens[0].length` and throws
+    `TypeError: Cannot read properties of undefined (reading 'length')`
+    (verified by running it), which aborts the configuration screen -- so
+    the UI cannot configure such a folder at all.
+
+    Treating the missing token as an empty string, as this port used to,
+    made the API *more permissive* than the UI: it produced a variable
+    whose values contained None, i.e. a channel named null in the written
+    configuration. Refusing is the faithful outcome, and a clear message
+    beats the frontend's raw TypeError.
+    """
+
+    RAGGED = ["a.tif", "b_x_0.tif", "b_x_1.tif"]
+
+    def testRaises(self):
+        with pytest.raises(ValueError, match="consistent number of parts"):
+            collect_filename_metadata(self.RAGGED)
+
+    def testNamesTheOffendingFileAndPart(self):
+        with pytest.raises(ValueError) as excinfo:
+            collect_filename_metadata(self.RAGGED)
+        assert '"a.tif"' in str(excinfo.value)
+        assert "no part 3" in str(excinfo.value)
+
+    def testDoesNotInventANullTokenValue(self):
+        """The old behaviour, stated as an assertion so it cannot return."""
+        try:
+            variables = collect_filename_metadata(self.RAGGED)
+        except ValueError:
+            return
+        for variable in variables:
+            assert None not in variable["values"], (
+                "a null token value reached the configuration: %r"
+                % (variable["values"],)
+            )
+
+    def testRaggedRowsThatAreNotLeadingStillParse(self):
+        """Only the FIRST sorted row matters -- the frontend indexes
+        tokens[0]. A later ragged row is fine on both sides, which
+        parsing_ragged.json already pins against the component."""
+        assert collect_filename_metadata(
+            ["a_x_0.tif", "b_x_1.tif", "c.tif"]
+        ) is not None

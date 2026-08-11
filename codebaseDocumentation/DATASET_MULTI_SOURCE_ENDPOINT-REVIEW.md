@@ -395,6 +395,12 @@ mongodb://mongodb:27017"` and
 - [ ] **The creator's channel-colour overrides are honoured.** —
   *"testUserChannelColoursAreHonoured"*, *"testUserOverrideWinsOverTheDefaultTable"*,
   *"testMergeDoesNotMutateTheSharedTable"*
+- [ ] **A ragged leading row is refused, not papered over.** The component
+  throws on it, so the API must not accept it and write a `null` channel
+  name; a ragged row anywhere else still parses. —
+  *"testRaises"*, *"testDoesNotInventANullTokenValue"*,
+  *"testRaggedRowsThatAreNotLeadingStillParse"*,
+  *"testRejectsInconsistentFilenameStructure"*
 - [ ] **Every exit from the marking loop rolls back its own marks.** The
   caller's `newlyMarked` is only assigned on return, so an unexpected
   exception used to leave sources marked. —
