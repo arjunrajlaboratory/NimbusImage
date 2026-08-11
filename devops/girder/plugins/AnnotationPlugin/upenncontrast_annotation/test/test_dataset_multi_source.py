@@ -649,6 +649,98 @@ class TestDatasetMultiSourcePipeline:
         assert view["datasetId"] == folder["_id"]
         assert view["configurationId"] == collection["_id"]
 
+    def testCollectionAndViewInheritTheFolderAcl(
+        self, admin, user, server, largeImageCapable
+    ):
+        """Collections and views are AccessControlledModels with their own
+        enforced ACL (unlike items, which delegate to the folder), and both
+        seed it with the CREATOR alone. Without copying the folder's ACL, a
+        WRITE collaborator configuring someone else's dataset locks the
+        owner out of their own dataset's configuration -- and since dataset
+        discovery enumerates views, the owner stops seeing the dataset at
+        all while the collaborator sees it.
+        """
+        folder = utilities.createPrivateFolder(
+            admin, "acl_inherit_dataset", upenn_utilities.datasetMetadata
+        )
+        _uploadTiffItem(admin, folder, "chanA_pos1.tif", fill=10)
+        _uploadTiffItem(admin, folder, "chanB_pos1.tif", fill=20)
+        Folder().setUserAccess(
+            folder, user=user, level=AccessType.WRITE, save=True
+        )
+
+        # The collaborator, not the owner, configures it.
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=user,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        from ..server.models.collection import Collection as CollectionModel
+        from ..server.models.datasetView import (
+            DatasetView as DatasetViewModel,
+        )
+        collection = CollectionModel().load(
+            ObjectId(resp.json["collectionId"]), force=True
+        )
+        view = DatasetViewModel().load(
+            ObjectId(resp.json["viewId"]), force=True
+        )
+
+        for label, model, document in (
+            ("collection", CollectionModel(), collection),
+            ("view", DatasetViewModel(), view),
+        ):
+            # The owner keeps ADMIN...
+            assert model.hasAccess(
+                document, user=admin, level=AccessType.ADMIN
+            ), "owner lost ADMIN on the %s" % label
+            # ...and the collaborator gets exactly their dataset rights,
+            # not the ADMIN that createCollection/create would have given
+            # them -- WRITE on a dataset must not become ADMIN on its
+            # configuration.
+            assert model.hasAccess(
+                document, user=user, level=AccessType.WRITE
+            ), "collaborator lost WRITE on the %s" % label
+            assert not model.hasAccess(
+                document, user=user, level=AccessType.ADMIN
+            ), "WRITE on the dataset escalated to ADMIN on the %s" % label
+
+    def testPublicDatasetGetsAPublicCollectionAndView(
+        self, admin, server, largeImageCapable
+    ):
+        """Otherwise an anonymous visitor can see the dataset but not the
+        configuration needed to open it."""
+        folder = utilities.createFolder(
+            admin, "acl_public_dataset", upenn_utilities.datasetMetadata
+        )
+        Folder().setPublic(folder, True, save=True)
+        _uploadTiffItem(admin, folder, "chanA_pos1.tif", fill=10)
+        _uploadTiffItem(admin, folder, "chanB_pos1.tif", fill=20)
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        from ..server.models.collection import Collection as CollectionModel
+        from ..server.models.datasetView import (
+            DatasetView as DatasetViewModel,
+        )
+        assert CollectionModel().load(
+            ObjectId(resp.json["collectionId"]), force=True
+        )["public"] is True
+        assert DatasetViewModel().load(
+            ObjectId(resp.json["viewId"]), force=True
+        )["public"] is True
+
     def testCreateViewCanBeDisabled(
         self, admin, server, largeImageCapable
     ):

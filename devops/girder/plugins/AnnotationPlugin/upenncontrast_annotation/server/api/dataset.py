@@ -261,6 +261,24 @@ class Dataset(Resource):
                     "layerContrasts": {},
                     "lastLocation": {"xy": 0, "z": 0, "time": 0},
                 })
+                # Unlike items, collections and dataset views are
+                # AccessControlledModels with their own enforced ACL, and
+                # both seed it with the CREATOR alone. Left at that, a
+                # collaborator with WRITE configuring someone else's
+                # dataset locks the owner out of their own dataset's
+                # configuration -- verified: the owner got 403 on both and
+                # zero rows from the view listing that discovers datasets.
+                # dataset_view/share keeps folder, collection and view in
+                # lockstep; match that at creation by giving them exactly
+                # the folder's ACL. Copying rather than adding the owner
+                # also avoids the reverse problem: the caller ends up with
+                # the rights they have on the dataset, no more.
+                self._collectionModel.copyAccessPolicies(
+                    folder, collection, save=True,
+                )
+                self._datasetViewModel.copyAccessPolicies(
+                    folder, datasetView, save=True,
+                )
 
             # Everything that defines the dataset now exists, so commit
             # before the last step rather than after it.

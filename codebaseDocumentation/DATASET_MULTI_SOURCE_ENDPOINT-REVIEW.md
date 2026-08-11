@@ -395,6 +395,15 @@ mongodb://mongodb:27017"` and
 - [ ] **The creator's channel-colour overrides are honoured.** —
   *"testUserChannelColoursAreHonoured"*, *"testUserOverrideWinsOverTheDefaultTable"*,
   *"testMergeDoesNotMutateTheSharedTable"*
+- [ ] **The collection and view inherit the dataset folder's ACL.** Both are
+  AccessControlledModels seeded with the creator alone, so without this a
+  WRITE collaborator's configuration is invisible to the owner — including in
+  the view listing that discovers datasets — and WRITE on a dataset would
+  become ADMIN on its configuration. —
+  *"testCollectionAndViewInheritTheFolderAcl"*
+- [ ] **A public dataset gets a public collection and view.** Otherwise an
+  anonymous visitor sees the dataset but cannot read the configuration needed
+  to open it. — *"testPublicDatasetGetsAPublicCollectionAndView"*
 - [ ] **A configured dataset gets a collection and a view by default.**
   Without them the UI has nothing to open and view-based listings cannot see
   it. — *"testCreatesCollectionAndViewByDefault"*
