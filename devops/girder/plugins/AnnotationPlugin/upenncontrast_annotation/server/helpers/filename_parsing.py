@@ -15,9 +15,12 @@ Fidelity notes (JS semantics that are reproduced here):
 * Rows are sorted by filename. Row order provably does not change the
   final output (values are re-sorted downstream), but it is mirrored for
   fidelity because ``findCommonSubstring`` reads ``tokens[0]``.
-* Column combinations are enumerated in the exact order of the JS
+* Column combinations are considered in the exact order of the JS
   ``getCombinations`` helper (sizes 1..n; for each size the head element
-  walks left to right and recurses on the tail).
+  walks left to right and recurses on the tail). They are walked rather
+  than materialized, and bounded -- see
+  ``_find_minimal_spanning_columns`` for why each bound cannot change
+  which combination is returned.
 * dataframe-js ``findAllComplementaryColumns`` returns, for each minimal
   column, ``[column, ...complementary]``. Only ``list[0]`` (the minimal
   column itself) is ever used downstream, and the number of lists equals
@@ -81,16 +84,42 @@ def _distinct_count(rows, col):
     return len({_column_value(row, col) for row in rows})
 
 
-def _get_combinations(elements, size):
-    """Port of the JS ``getCombinations`` helper (same emission order)."""
-    if size == 1:
-        return [[element] for element in elements]
-    combinations = []
-    for i in range(len(elements) - size + 1):
-        head = elements[i]
-        for tail in _get_combinations(elements[i + 1:], size - 1):
-            combinations.append([head] + tail)
-    return combinations
+def _search_combination(columns, counts, total_rows, size):
+    """First combination of exactly ``size`` columns whose distinct-count
+    product equals ``total_rows``, in the JS helper's emission order
+    (lexicographic by column index), or ``None``.
+
+    Walks the choices instead of materializing them -- the eager version
+    built every combination up front, which is where the memory went --
+    and prunes two ways that cannot skip a match:
+
+    * counts are >= 1, so the product only grows; once a partial product
+      exceeds ``total_rows`` no extension can come back down;
+    * the final product is the partial product times whole numbers, so it
+      can only equal ``total_rows`` if the partial one divides it.
+
+    The divisibility prune is what makes the all-varying case cheap: with
+    three files and 120 two-valued columns, every branch dies at depth one
+    (3 % 2 != 0) instead of expanding into millions of four-column sets.
+    """
+    chosen = []
+
+    def walk(start, remaining, product):
+        if remaining == 0:
+            return product == total_rows
+        # Leave room for the columns still to be chosen.
+        for index in range(start, len(columns) - remaining + 1):
+            column = columns[index]
+            nextProduct = product * counts[column]
+            if nextProduct > total_rows or total_rows % nextProduct:
+                continue
+            chosen.append(column)
+            if walk(index + 1, remaining - 1, nextProduct):
+                return True
+            chosen.pop()
+        return False
+
+    return list(chosen) if walk(0, size, 1) else None
 
 
 def _find_minimal_spanning_columns(rows, columns):
@@ -103,7 +132,8 @@ def _find_minimal_spanning_columns(rows, columns):
     underscore-separated tokens are ordinary -- measured on the pure
     helper, 20 tokens took 9s and each extra token doubles it.
 
-    Two bounds make that tractable **without changing what is returned**:
+    Three bounds make that tractable **without changing what is
+    returned**:
 
     1. A column with a single distinct value multiplies the product by 1,
        so any matching combination containing it also matches without it.
@@ -116,6 +146,11 @@ def _find_minimal_spanning_columns(rows, columns):
        than ``len(_BASE_CATEGORIES)`` columns, returning ``[]`` -- exactly
        what "no match" produces. Searching past that size can only spend
        time to reach the same answer.
+    3. Within a size, ``_search_combination`` prunes on the running
+       product (see there). Bound 1 alone left the all-varying case
+       expensive -- 120 two-valued columns still built every one- to
+       four-column set, ~2s and ~900MB -- because nothing was constant to
+       drop.
 
     Distinct counts are computed once per column rather than once per
     combination, which the original recomputed O(2**N) times.
@@ -127,12 +162,9 @@ def _find_minimal_spanning_columns(rows, columns):
 
     max_size = min(len(columns), len(_BASE_CATEGORIES))
     for size in range(1, max_size + 1):
-        for combination in _get_combinations(columns, size):
-            product = 1
-            for col in combination:
-                product *= counts[col]
-            if product == total_rows:
-                return combination
+        combination = _search_combination(columns, counts, total_rows, size)
+        if combination is not None:
+            return combination
     return []
 
 

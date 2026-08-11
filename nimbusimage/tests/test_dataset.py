@@ -305,3 +305,52 @@ class TestDatasetUpload:
         with pytest.raises(ValueError, match="nested"):
             Dataset(mock_gc, "folder_123").upload(tmp_path)
         mock_gc.uploadFileToFolder.assert_not_called()
+
+    def test_partial_upload_failure_removes_what_it_uploaded(
+        self, mock_gc, tmp_path,
+    ):
+        """Leaving them behind makes a retry upload duplicates, which
+        girder renames, and configure() then infers wrong dimensions."""
+        for name in ("a.tif", "b.tif", "c.tif"):
+            (tmp_path / name).write_bytes(b"x")
+        mock_gc.uploadFileToFolder.side_effect = [
+            {"itemId": "item_a"}, {"itemId": "item_b"},
+            RuntimeError("network went away"),
+        ]
+
+        with pytest.raises(RuntimeError, match="network went away"):
+            Dataset(mock_gc, "folder_123").upload(tmp_path)
+
+        assert [c[0][0] for c in mock_gc.delete.call_args_list] == [
+            "item/item_a", "item/item_b",
+        ]
+
+    def test_upload_reports_items_it_could_not_clean_up(
+        self, mock_gc, tmp_path,
+    ):
+        for name in ("a.tif", "b.tif"):
+            (tmp_path / name).write_bytes(b"x")
+        mock_gc.uploadFileToFolder.side_effect = [
+            {"itemId": "item_a"}, RuntimeError("network went away"),
+        ]
+        mock_gc.delete.side_effect = RuntimeError("delete failed too")
+
+        with pytest.raises(RuntimeError, match="item_a"):
+            Dataset(mock_gc, "folder_123").upload(tmp_path)
+
+    def test_failed_upload_invalidates_cached_metadata(
+        self, mock_gc, sample_tiles_metadata, tmp_path,
+    ):
+        mock_gc.get.side_effect = [
+            {"_id": "folder_123", "name": "Test", "meta": {}},
+            [{"_id": "item_456", "largeImage": {"fileId": "f1"}}],
+            sample_tiles_metadata,
+        ]
+        ds = Dataset(mock_gc, "folder_123")
+        assert ds.num_channels == 2
+
+        (tmp_path / "a.tif").write_bytes(b"x")
+        mock_gc.uploadFileToFolder.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError):
+            ds.upload(tmp_path)
+        assert ds._tiles is None

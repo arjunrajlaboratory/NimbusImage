@@ -271,6 +271,34 @@ class TestSpanningSearchIsBounded:
     about equality with the unbounded answer, not just about speed.
     """
 
+    def testManyVaryingTokensAreFast(self):
+        """The case the first version of this test missed: nothing is
+        constant, so the drop-constant-columns bound does not apply and
+        the search still had to build every one- to four-column set --
+        measured ~2s and ~900MB at 120 columns."""
+        import time
+        names = [
+            "_".join([
+                "v%d%s" % (i, "a" if (k + i) % 2 else "b")
+                for i in range(120)
+            ]) + ".tif"
+            for k in range(3)
+        ]
+        start = time.time()
+        assert collect_filename_metadata(names) == []
+        assert time.time() - start < 1.0
+
+    def testVaryingTokensStillFindTheSpanningColumns(self):
+        """The speed tests above all expect [], so on their own they would
+        pass against a search that returned nothing at all."""
+        names = [
+            "%s_%s_x.tif" % (a, b) for a in "pq" for b in "rs"
+        ]
+        found = collect_filename_metadata(names)
+        assert [(v["guess"], v["values"]) for v in found] == [
+            ("C", ["p", "q"]), ("XY", ["r", "s"]),
+        ]
+
     def testManyConstantTokensAreFast(self):
         import time
         names = [

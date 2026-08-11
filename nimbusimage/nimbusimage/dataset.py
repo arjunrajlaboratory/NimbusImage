@@ -201,6 +201,10 @@ class Dataset:
 
         Raises:
             ValueError: a directory contains a subdirectory.
+            RuntimeError: an upload failed AND the files already uploaded
+                by this call could not be removed again (the message names
+                them). Any other upload failure propagates unchanged, with
+                the folder left as it was found.
         """
         if isinstance(paths, (str, os.PathLike)):
             paths = [paths]
@@ -227,14 +231,34 @@ class Dataset:
             else:
                 expanded.append(path)
 
-        item_ids = []
-        for path in expanded:
-            file = self._gc.uploadFileToFolder(self._id, path)
-            item_ids.append(file["itemId"])
+        item_ids: list[str] = []
+        try:
+            for path in expanded:
+                file = self._gc.uploadFileToFolder(self._id, path)
+                item_ids.append(file["itemId"])
+        except Exception as exc:
+            # Leaving the earlier files behind is worse than removing them:
+            # retrying the same directory uploads them a second time, girder
+            # renames the duplicates, and configure() then sees two sources
+            # per image and infers the wrong dimensions. Put the folder back
+            # the way it was found so a retry is a retry.
+            undeleted = []
+            for item_id in item_ids:
+                try:
+                    self._gc.delete("item/%s" % item_id)
+                except Exception:
+                    undeleted.append(item_id)
+            self._invalidate_cache()
+            if undeleted:
+                raise RuntimeError(
+                    "Upload failed, and these already-uploaded items could "
+                    "not be removed: %s. Delete them before retrying, or "
+                    "configure() will see duplicate sources."
+                    % ", ".join(undeleted)
+                ) from exc
+            raise
         # Items changed, so any cached tile metadata is stale.
-        self._tiles = None
-        self._item_id = None
-        self._folder_data = None
+        self._invalidate_cache()
         return item_ids
 
     def configure(
@@ -313,10 +337,14 @@ class Dataset:
             f"dataset/{self._id}/multi_source", json=body
         )
         if not dry_run:
-            self._tiles = None
-            self._item_id = None
-            self._folder_data = None
+            self._invalidate_cache()
         return MultiSourceConfiguration(**result)
+
+    def _invalidate_cache(self) -> None:
+        """Drop the lazily-fetched metadata after the folder changes."""
+        self._tiles = None
+        self._item_id = None
+        self._folder_data = None
 
     # --- URLs ---
 

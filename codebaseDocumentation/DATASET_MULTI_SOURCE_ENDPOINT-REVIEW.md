@@ -117,9 +117,25 @@ case (`testConcurrentConfigurationUploadConflictsAndRollsBack`) has two
 requests in the same folder, and a name lookup would let the failing one delete
 the winner's configuration.
 
----
+## Fifth round (Codex, commit 82831be3)
 
-## P1 — the transcode path 500s on a real backend
+| # | Severity | Location | Summary | Status |
+|---|---|---|---|---|
+| Z1 | P1 | `server/helpers/filename_parsing.py` | The round-four bounds still left the *all-varying* case expensive: 3 files × 120 two-valued columns built every one- to four-column set — reproduced at 2.3s and **893MB peak RSS** | fixed — walk the choices instead of materializing them, plus product/divisibility pruning |
+| Z2 | P2 | `nimbusimage/dataset.py` | A partially failed `upload()` left the earlier files behind, so retrying uploaded duplicates that girder renamed and `configure()` then read as extra sources | fixed — the call removes what it uploaded |
+
+Z1 is a fair hit on the round-four **test** as much as the code: the cost test
+used constant tokens, which bound 1 drops outright, so it was passing on the
+case the bound already handled and blind to the one that mattered. The new
+tests cover all-varying tokens, and — because every speed assertion expects
+`[]` — one of them checks a set that *must* still match, so the suite cannot be
+satisfied by a search that returns nothing.
+
+The added prune is that the final product is the partial product times whole
+numbers, so a partial that does not divide the row count can be abandoned. With
+three files and two-valued columns every branch dies at depth one (`3 % 2`), so
+120 columns went from 2.3s/893MB to 0.0001s/18MB, and 400 columns is still
+instant.
 
 `transcode` defaults to `true` for any dataset that is not entirely `.nd2`, so
 this is the **primary** path, and it failed on every attempt:
@@ -336,8 +352,16 @@ mongodb://mongodb:27017"` and
 
 ### Cost and availability
 
+- [ ] **The spanning-column search stays bounded for varying tokens too.**
+  The first version of this check used constant tokens, which one bound drops
+  outright — it passed on the case already handled and missed 893MB of peak
+  RSS on all-varying ones. — *"testManyVaryingTokensAreFast"*
+- [ ] **A bounded search still finds real spanning columns.** Every speed
+  assertion expects `[]`, so without this one they would all pass against a
+  search that returned nothing. —
+  *"testVaryingTokensStillFindTheSpanningColumns"*
 - [ ] **The spanning-column search stays bounded.** It is 2**N in token
-  columns and runs inside a synchronous request; both bounds must remain
+  columns and runs inside a synchronous request; the bounds must remain
   output-preserving, so these assert equality with the unbounded answer, not
   just speed. — *"testManyConstantTokensAreFast"*,
   *"testSingleValueColumnsCannotChangeTheMinimalMatch"*,
@@ -408,6 +432,12 @@ mongodb://mongodb:27017"` and
 - [ ] **RGB fields survive the response.** They only ever came back on a dry
   run and the model was dropping them. —
   *"test_rgb_fields_survive_the_response"*
+- [ ] **A partially failed `upload()` leaves the folder as it found it.**
+  Otherwise a retry uploads duplicates, girder renames them, and
+  `configure()` reads them as extra sources. —
+  *"test_partial_upload_failure_removes_what_it_uploaded"*,
+  *"test_upload_reports_items_it_could_not_clean_up"*,
+  *"test_failed_upload_invalidates_cached_metadata"*
 - [ ] **`upload()` refuses subdirectories.** Silently skipping them made a
   partial upload look complete. — *"test_upload_rejects_subdirectories"*
 
