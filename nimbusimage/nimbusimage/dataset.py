@@ -298,7 +298,11 @@ class Dataset:
                 same rule the UI uses (on unless every file is ``.nd2``).
             split_rgb_bands: Split an RGB image into three channels.
             enable_compositing: Lay out a single multi-position ND2 by
-                stage coordinates instead of as separate XY positions.
+                stage coordinates instead of as separate XY positions. Only
+                takes effect for a single source with ND2 frame metadata --
+                check ``result.compositing`` for what actually happened,
+                and note that when it applies, XY collapses to one
+                position.
             create_view: Also create the collection and dataset view the
                 web UI needs. On by default: without them the dataset is
                 readable through this API but has nothing to open in the

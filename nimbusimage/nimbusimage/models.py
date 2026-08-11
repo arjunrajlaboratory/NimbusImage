@@ -200,6 +200,10 @@ class MultiSourceConfiguration(BaseModel):
     assignments: dict = Field(default_factory=dict)
     transcode: bool = False
     transcode_default: bool = Field(False, alias="transcodeDefault")
+    # Whether compositing was actually applied. Not the same as asking for
+    # it: enable_compositing only takes effect for a single source with ND2
+    # frame metadata, and when it does, XY collapses to one position.
+    compositing: bool = False
     is_rgb_file: bool = Field(False, alias="isRGBFile")
     rgb_band_count: int = Field(0, alias="rgbBandCount")
     validation_error: str | None = Field(None, alias="validationError")

@@ -202,7 +202,7 @@ of `filename`, `file` (embedded metadata such as ND2 IndexRange), or `images`
 |---|---|
 | `transcode` | Convert to one tiled TIFF. Omit to use the UI's rule (on unless every file is `.nd2`); pass `False` to skip. |
 | `split_rgb_bands` | Split an RGB image into three channels (default `True`). |
-| `enable_compositing` | Lay out a single multi-position ND2 by stage coordinates rather than as separate XY positions. |
+| `enable_compositing` | Lay out a single multi-position ND2 by stage coordinates rather than as separate XY positions. Only applies to a single source with ND2 frame metadata — read `result.compositing` for what actually happened, and expect XY to collapse to one position when it does. |
 | `create_view` | Also create the collection and dataset view the web UI needs (default `True`). Turn it off only if you are going to create your own. |
 
 Failures come back as `girder_client.HttpError`: 400 for an invalid

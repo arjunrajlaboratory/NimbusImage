@@ -983,6 +983,32 @@ class TestDatasetMultiSourcePipeline:
         )
         assert reloaded["meta"]["selectedLargeImageId"] == resp.json["itemId"]
 
+    def testDryRunAndRealRunAgreeOnTheResponseShape(
+        self, admin, server, largeImageCapable
+    ):
+        """The two shapes have drifted twice: isRGBFile/rgbBandCount/
+        transcodeDefault were dry-run-only, then `compositing` was. They
+        should differ only in what a dry run cannot have (the created ids)
+        and what a real run raises instead of reporting."""
+        folder = self._makeDatasetFolder(admin, "response_shape_dataset")
+        dry = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST", user=admin,
+            body=json.dumps({"dryRun": True}), type="application/json",
+        )
+        assertStatusOk(dry)
+        real = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST", user=admin,
+            body=json.dumps({"transcode": False}), type="application/json",
+        )
+        assertStatusOk(real)
+
+        assert set(dry.json) - set(real.json) == {"validationError"}
+        assert set(real.json) - set(dry.json) == {
+            "itemId", "jobId", "collectionId", "viewId",
+        }
+
     def testConfigurationIsTheSelectedLargeImage(
         self, admin, server, largeImageCapable
     ):

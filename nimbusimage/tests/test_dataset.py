@@ -208,6 +208,18 @@ class TestDatasetConfigure:
         assert plan.rgb_band_count == 3
         assert plan.transcode_default is False
 
+    def test_compositing_is_reported(self, mock_gc):
+        """Asking for compositing is not the same as getting it -- it needs a
+        single source with ND2 frame metadata -- so the server reports what
+        actually happened and the model has to carry it."""
+        mock_gc.post.return_value = self._plan(itemId="i", compositing=True)
+        assert Dataset(mock_gc, "f").configure().compositing is True
+
+        mock_gc.post.return_value = self._plan(itemId="i", compositing=False)
+        result = Dataset(mock_gc, "f").configure(enable_compositing=True)
+        assert mock_gc.post.call_args[1]["json"]["enableCompositing"] is True
+        assert result.compositing is False
+
     def test_assignments_override_is_forwarded(self, mock_gc):
         mock_gc.post.return_value = self._plan(itemId="i", jobId=None)
         Dataset(mock_gc, "folder_123").configure(

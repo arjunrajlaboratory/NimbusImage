@@ -395,6 +395,16 @@ mongodb://mongodb:27017"` and
 - [ ] **The creator's channel-colour overrides are honoured.** —
   *"testUserChannelColoursAreHonoured"*, *"testUserOverrideWinsOverTheDefaultTable"*,
   *"testMergeDoesNotMutateTheSharedTable"*
+- [ ] **The dry-run and real-run response shapes stay in step.** They have
+  drifted twice, both times because the dry run spreads
+  `compute_configuration`'s result while the real run enumerates fields. —
+  *"testDryRunAndRealRunAgreeOnTheResponseShape"*, *"test_compositing_is_reported"*
+- [ ] **Real RGB TIFFs split into three channels, and the un-split path
+  stays distinct.** Fixtures `real_rgb_split`, `real_rgb_no_split` and
+  `real_rgb_pyramidal` use metadata captured from the actual files (including
+  a pyramidal one whose extra TIFF pages are levels, not frames); their
+  goldens come from the component and both sides assert against them. —
+  *"config fixtures"*, *"test_parity"*
 - [ ] **Worker-converted sources keep their derived image.** Clearing them
   deletes the file a conversion job produced, which re-marking cannot restore;
   the test also checks the leftover stays unambiguous. —

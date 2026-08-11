@@ -90,7 +90,23 @@ class Dataset(Resource):
             "fails, the dataset stays configured with a broken image and "
             "re-running returns 409, because the configuration item "
             "exists. Recovering means deleting that item (and re-marking "
-            "the sources) or starting from a new dataset." % (
+            "the sources) or starting from a new dataset.\n\n"
+            "Body options, all optional: assignments (per-dimension "
+            "overrides, see below); transcode (default: on unless every "
+            "file is .nd2); splitRGBBands (default true -- an RGB file "
+            "becomes three channels); enableCompositing (default false -- "
+            "lay a single multi-position ND2 out by stage coordinates, "
+            "which collapses XY to one position); createView (default "
+            "true -- also create the collection and dataset view the web "
+            "UI needs, without which the dataset cannot be opened in the "
+            "browser and does not appear in listings that enumerate "
+            "views); dryRun (default false).\n\n"
+            "Response: config, dimensionLabels, variables, assignments, "
+            "transcode, transcodeDefault, isRGBFile, rgbBandCount and "
+            "compositing (whether compositing was actually applied, which "
+            "requires a single source with ND2 frame metadata) always; "
+            "itemId, jobId, collectionId and viewId on a real run; "
+            "validationError on a dry run." % (
                 MULTI_SOURCE_ITEM_NAME
             )
         )
@@ -99,7 +115,10 @@ class Dataset(Resource):
             destName="folder", level=AccessType.WRITE, paramType="path",
         )
         .jsonParam(
-            "body", "Multi-source configuration options.",
+            "body",
+            "Multi-source configuration options: assignments, transcode, "
+            "splitRGBBands, enableCompositing, createView, dryRun. See the "
+            "notes above for defaults and the response shape.",
             paramType="body", required=False, requireObject=True,
         )
         .errorResponse("ID was invalid.")
@@ -223,7 +242,7 @@ class Dataset(Resource):
             # be left with newItem = None and no way to remove the file it
             # had just created -- every retry would then hit the preflight
             # 409 forever. Same shape as the collection/view creation
-            # above: never let a resource exist without a handle to it.
+            # below: never let a resource exist without a handle to it.
             newFile = self._uploadConfiguration(
                 folder, result["config"], user
             )
@@ -342,6 +361,13 @@ class Dataset(Resource):
                 "isRGBFile": result["isRGBFile"],
                 "rgbBandCount": result["rgbBandCount"],
                 "transcodeDefault": result["transcodeDefault"],
+                # Whether compositing actually happened, which is not the
+                # same as having asked for it: it needs a single source with
+                # ND2 frame metadata. Returned by both paths so the two
+                # response shapes differ only in what a dry run cannot have
+                # (ids) and what a real run raises instead of reporting
+                # (validationError).
+                "compositing": result["compositing"],
             }
         except Exception:
             # Newest resources first, so a view is never left pointing at a
@@ -568,6 +594,10 @@ class Dataset(Resource):
         in ``helpers/default_configuration.py``.
         """
         assignments = result["assignments"]
+        # Physical scale comes from the first source rather than from the
+        # configured image (which does not exist yet). The frontend reads it
+        # from the dataset's own tile metadata, but a multi-source image
+        # inherits mm_x/mm_y from its sources, so the value is the same.
         firstTile = tilesMetadata[0] if tilesMetadata else {}
 
         # Compositing lays the sources out by stage position and forces
