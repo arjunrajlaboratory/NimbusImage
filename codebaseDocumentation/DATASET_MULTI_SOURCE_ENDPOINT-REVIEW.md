@@ -77,6 +77,46 @@ removes the derived image file — not recoverable by re-marking. Deferring the
 clear until nothing fallible remains removes the whole class rather than
 arguing about which failures are survivable.
 
+## Fourth round (Codex, commit 6ef3f3e6)
+
+| # | Severity | Location | Summary | Status |
+|---|---|---|---|---|
+| Y1 | P1 | `server/helpers/filename_parsing.py:96` | The minimal-spanning-column search is 2**N in token columns; measured 9.4s at 20 tokens, doubling per token, on a synchronous Girder request | fixed — two output-preserving bounds |
+| Y2 | P2 | `server/api/dataset.py` | `_uploadConfiguration` created the item and then loaded it; a failing load left the caller with no handle, orphaning `multi-source2.json` so every retry hit the preflight 409 | fixed |
+| Y3 | P2 | `server/api/dataset.py` | Source clearing is several deletes and was still inside the fallible region, so a mid-way failure destroyed some derived files *and* unwound a good dataset | fixed — commit first, clear best-effort |
+
+**Y1** is inherited from the frontend's algorithm, but the severity is not:
+in a browser it hangs one tab, behind this endpoint it blocks a request
+thread for every user. Both bounds are provably output-preserving, which is
+why no cap on user data was needed:
+
+1. A column with a single distinct value multiplies the product by 1, so any
+   matching combination containing it also matches without it — and the
+   smaller combination is enumerated first. The minimal match therefore never
+   contains one (except the empty combination, which is never enumerated and
+   only matches a single row, hence the `total_rows > 1` guard).
+2. `_assign_unique_categorizations` discards a minimal set larger than the
+   four categories, returning `[]` — exactly what "no match" returns. Searching
+   past size four can only spend time to reach the same answer.
+
+Distinct counts are also computed once per column instead of once per
+combination. 20 tokens went from 9.4s to under a millisecond, 120 tokens is
+instant, and all 108 parsing/parity tests are unchanged — which is the real
+evidence that the output is preserved.
+
+**Y2** is the third instance on this branch of one shape: *a helper creates a
+resource and the caller's rollback handle is only assigned when the helper
+returns*. The first two were the collection/view tuple and this. The rule now
+written down: never let a created resource exist without a caller-visible
+handle to it.
+
+Residual, deliberately not swept: if `Upload().uploadFromFile` itself fails
+*after* creating the item, there is no handle at all. Cleaning that up would
+mean finding the item by folder + name, which is unsafe — the concurrent-upload
+case (`testConcurrentConfigurationUploadConflictsAndRollsBack`) has two
+requests in the same folder, and a name lookup would let the failing one delete
+the winner's configuration.
+
 ---
 
 ## P1 — the transcode path 500s on a real backend
@@ -294,8 +334,27 @@ mongodb://mongodb:27017"` and
   never a `childFiles` call per item. —
   *"testMarksLargeImagesWithASingleFileQuery"*
 
+### Cost and availability
+
+- [ ] **The spanning-column search stays bounded.** It is 2**N in token
+  columns and runs inside a synchronous request; both bounds must remain
+  output-preserving, so these assert equality with the unbounded answer, not
+  just speed. — *"testManyConstantTokensAreFast"*,
+  *"testSingleValueColumnsCannotChangeTheMinimalMatch"*,
+  *"testMoreThanFourSpanningColumnsYieldsNothingEitherWay"*,
+  *"testSingleRowStillMatches"*
+
 ### Collection and view
 
+- [ ] **A created resource always has a caller-visible handle.** Three
+  instances on this branch: the collection/view tuple, and the configuration
+  item's separate load. Otherwise the rollback has nothing to undo and an
+  orphaned configuration blocks every retry on the preflight 409. —
+  *"testConfigItemIsRemovedWhenItsLoadFails"*,
+  *"testViewFailureRollsBackTheWholeRequest"*
+- [ ] **A failed source-clear does not unwind a good dataset.** Clearing is
+  several deletes and cannot be undone, so it happens after the commit and is
+  best-effort. — *"testSourceClearingFailureDoesNotUndoAGoodDataset"*
 - [ ] **A failed run leaves pre-existing `largeImage` state alone.** Items
   marked before the request are not in `newlyMarked` and cannot be restored,
   and clearing a worker-converted source deletes its derived file, so the

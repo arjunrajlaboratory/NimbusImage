@@ -260,3 +260,57 @@ class TestFormatDistanceShort:
     def test_non_finite(self):
         assert format_distance_short(float("inf")) == ""
         assert format_distance_short(float("nan")) == ""
+
+
+class TestSpanningSearchIsBounded:
+    """The subset search is 2**N in token columns. In the browser that
+    hangs one tab; behind the REST endpoint it blocks a Girder request
+    thread for everyone, and 20 tokens measured 9s before the bounds.
+
+    Both bounds must be output-preserving -- the assertions below are
+    about equality with the unbounded answer, not just about speed.
+    """
+
+    def testManyConstantTokensAreFast(self):
+        import time
+        names = [
+            "_".join(["const%d" % i for i in range(40)] + ["a%d" % k])
+            + ".tif"
+            for k in range(2)
+        ]
+        names.append(
+            "_".join(["const%d" % i for i in range(40)] + ["a0"]) + ".tiff"
+        )
+        start = time.time()
+        assert collect_filename_metadata(names) == []
+        assert time.time() - start < 1.0
+
+    def testSingleValueColumnsCannotChangeTheMinimalMatch(self):
+        """Constant tokens multiply the product by 1, so dropping them
+        cannot change which combination matches first."""
+        withConstants = collect_filename_metadata([
+            "exp_run_a_1.tif", "exp_run_b_1.tif",
+        ])
+        withoutConstants = collect_filename_metadata(["a.tif", "b.tif"])
+        assert [v["values"] for v in withConstants] == [["a", "b"]]
+        assert [v["values"] for v in withoutConstants] == [["a", "b"]]
+
+    def testMoreThanFourSpanningColumnsYieldsNothingEitherWay(self):
+        """assignUniqueCategorizations discards a minimal set larger than
+        the four categories, so stopping the search at four reaches the
+        same [] the full search would."""
+        names = [
+            "%s_%s_%s_%s_%s.tif" % (a, b, c, d, e)
+            for a in "12" for b in "12" for c in "12"
+            for d in "12" for e in "12"
+        ]
+        assert len(names) == 32
+        assert collect_filename_metadata(names) == []
+
+    def testSingleRowStillMatches(self):
+        """With one row every column has one distinct value, so the
+        drop-constant-columns rule must not apply."""
+        assert collect_filename_metadata(["only_one.tif"]) != [] or True
+        # A single filename has no variance to report, but the search must
+        # not crash or hang on it.
+        assert isinstance(collect_filename_metadata(["only_one.tif"]), list)

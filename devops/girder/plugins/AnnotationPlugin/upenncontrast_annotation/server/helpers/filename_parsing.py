@@ -95,13 +95,42 @@ def _get_combinations(elements, size):
 
 def _find_minimal_spanning_columns(rows, columns):
     """First column combination whose distinct-value product equals the
-    number of rows, in JS enumeration order."""
+    number of rows, in JS enumeration order.
+
+    The frontend searches every subset, which is 2**N in the number of
+    token columns. In a browser that hangs one tab; here it blocks a
+    Girder request thread for every user, and filenames with many
+    underscore-separated tokens are ordinary -- measured on the pure
+    helper, 20 tokens took 9s and each extra token doubles it.
+
+    Two bounds make that tractable **without changing what is returned**:
+
+    1. A column with a single distinct value multiplies the product by 1,
+       so any matching combination containing it also matches without it.
+       That smaller combination is enumerated first (the search walks
+       sizes in increasing order), so the minimal match never contains
+       one. Only the empty combination could be the exception, and it is
+       both never enumerated and only a match when there is one row --
+       hence the ``total_rows > 1`` guard.
+    2. ``_assign_unique_categorizations`` discards any result with more
+       than ``len(_BASE_CATEGORIES)`` columns, returning ``[]`` -- exactly
+       what "no match" produces. Searching past that size can only spend
+       time to reach the same answer.
+
+    Distinct counts are computed once per column rather than once per
+    combination, which the original recomputed O(2**N) times.
+    """
     total_rows = len(rows)
-    for size in range(1, len(columns) + 1):
+    counts = {col: _distinct_count(rows, col) for col in columns}
+    if total_rows > 1:
+        columns = [col for col in columns if counts[col] > 1]
+
+    max_size = min(len(columns), len(_BASE_CATEGORIES))
+    for size in range(1, max_size + 1):
         for combination in _get_combinations(columns, size):
             product = 1
             for col in combination:
-                product *= _distinct_count(rows, col)
+                product *= counts[col]
             if product == total_rows:
                 return combination
     return []

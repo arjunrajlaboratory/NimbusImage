@@ -709,6 +709,79 @@ class TestDatasetMultiSourcePipeline:
             {"folderId": folder["_id"]}
         ) is None
 
+    def testConfigItemIsRemovedWhenItsLoadFails(
+        self, admin, server, largeImageCapable, monkeypatch
+    ):
+        """The upload creates the item; loading it is a separate fallible
+        call. If the load raised and the caller had no handle on the id,
+        the orphan multi-source2.json would make every retry hit the
+        preflight 409 forever."""
+        realLoad = Item.load
+
+        def failTheEndpointsLoad(self, id, *args, **kwargs):
+            item = realLoad(self, id, *args, **kwargs)
+            # Match only the endpoint's own call. Girder's upload path
+            # loads items too, and failing THAT raises inside
+            # uploadFromFile before any handle exists -- a different
+            # (and, given the concurrent-upload case, not safely
+            # cleanable) scenario than the one under test.
+            if (item is not None
+                    and item.get("name") == MULTI_SOURCE_ITEM_NAME
+                    and kwargs.get("exc") is True
+                    and kwargs.get("level") == AccessType.READ):
+                raise ValueError("forced item load failure")
+            return item
+
+        monkeypatch.setattr(Item, "load", failTheEndpointsLoad)
+        folder = self._makeDatasetFolder(admin, "config_load_failure")
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+            exception=True,
+        )
+        assertStatus(resp, 500)
+        monkeypatch.undo()
+        assert Item().findOne({
+            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
+        }) is None, "orphaned configuration item blocks every retry"
+
+    def testSourceClearingFailureDoesNotUndoAGoodDataset(
+        self, admin, server, largeImageCapable, monkeypatch
+    ):
+        """Clearing the sources is several deletes and happens last. A
+        failure there has already destroyed some of them, so unwinding a
+        configured dataset over it would both report a false failure and
+        destroy more state on the way out."""
+        def boom(self, item, **kwargs):
+            raise ValueError("forced largeImage delete failure")
+
+        folder = self._makeDatasetFolder(admin, "clear_failure_dataset")
+        monkeypatch.setattr(ImageItem, "delete", boom)
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        monkeypatch.undo()
+        assertStatusOk(resp)
+        assert resp.json["itemId"]
+        assert resp.json["viewId"]
+        configItem = Item().findOne({
+            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
+        })
+        assert configItem is not None
+        reloadedFolder = Folder().load(
+            folder["_id"], user=admin, level=AccessType.READ
+        )
+        assert "dimensionLabels" in reloadedFolder["meta"]
+
     def testPreExistingLargeImagesSurviveAFailedRun(
         self, admin, server, largeImageCapable, monkeypatch
     ):

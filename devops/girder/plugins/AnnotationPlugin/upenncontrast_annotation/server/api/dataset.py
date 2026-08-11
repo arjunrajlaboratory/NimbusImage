@@ -132,6 +132,7 @@ class Dataset(Resource):
         token = self.getCurrentToken()
 
         newlyMarked = []
+        newItemId = None
         newItem = None
         job = None
         collection = None
@@ -198,8 +199,18 @@ class Dataset(Resource):
             if validationError is not None:
                 raise RestException(validationError, code=400)
 
-            newItem, newFile = self._uploadConfiguration(
+            # Record the id the moment the upload returns: Item().load
+            # below is itself fallible, and if it raised, the caller would
+            # be left with newItem = None and no way to remove the file it
+            # had just created -- every retry would then hit the preflight
+            # 409 forever. Same shape as the collection/view creation
+            # above: never let a resource exist without a handle to it.
+            newFile = self._uploadConfiguration(
                 folder, result["config"], user
+            )
+            newItemId = newFile["itemId"]
+            newItem = Item().load(
+                newItemId, user=user, level=AccessType.READ, exc=True
             )
             if newItem["name"] != MULTI_SOURCE_ITEM_NAME:
                 raise RestException(
@@ -244,14 +255,27 @@ class Dataset(Resource):
                     "lastLocation": {"xy": 0, "z": 0, "time": 0},
                 })
 
+            # Everything that defines the dataset now exists, so commit
+            # before the last step rather than after it.
+            committed = True
+
             # Clearing the SOURCE items is destructive and NOT undoable:
             # items that autoSet marked before this request are absent from
-            # newlyMarked, so the rollback below cannot put them back, and
-            # for a worker-converted source ImageItem().delete also removes
-            # the derived image file. Do it last, once nothing fallible is
-            # left, rather than before the transcode and view creation.
-            self._removeLargeImages(items)
-            committed = True
+            # newlyMarked, so the rollback cannot put them back, and for a
+            # worker-converted source ImageItem().delete also removes the
+            # derived image file. It is also several deletes, so a failure
+            # part way through has already destroyed some of them. Treat it
+            # as best-effort cleanup AFTER committing: a leftover mark is
+            # harmless, whereas unwinding a good dataset over it would turn
+            # a success into a 500 and destroy state on the way out.
+            try:
+                self._removeLargeImages(items)
+            except Exception:
+                logger.exception(
+                    "Could not clear source large images in folder %s; the "
+                    "dataset is configured and usable regardless",
+                    folder.get("_id"),
+                )
 
             return {
                 "itemId": str(newItem["_id"]),
@@ -299,13 +323,19 @@ class Dataset(Resource):
                         "Could not cancel failed dataset transcode job %s",
                         job.get("_id"),
                     )
-            if newItem is not None:
+            if newItemId is not None:
                 try:
-                    Item().remove(newItem)
+                    # newItem may be None if its load was what failed, so
+                    # fall back to the id recorded at upload time.
+                    staleItem = newItem or Item().load(
+                        newItemId, force=True, exc=False
+                    )
+                    if staleItem is not None:
+                        Item().remove(staleItem)
                 except Exception:
                     logger.exception(
                         "Could not remove failed multi-source item %s",
-                        newItem.get("_id"),
+                        newItemId,
                     )
             if dimensionLabelsSet:
                 try:
@@ -436,17 +466,18 @@ class Dataset(Resource):
             self._imageItemModel.delete(item)
 
     def _uploadConfiguration(self, folder, config, user):
-        """Upload the generated config JSON as a new item in the folder."""
+        """Upload the generated config JSON as a new item in the folder.
+
+        Returns only the file: the caller loads the item itself so the
+        created resource's id is in a caller variable before anything else
+        that can fail runs.
+        """
         configBytes = json.dumps(config).encode("utf-8")
-        newFile = Upload().uploadFromFile(
+        return Upload().uploadFromFile(
             io.BytesIO(configBytes), len(configBytes),
             MULTI_SOURCE_ITEM_NAME, "folder", folder, user=user,
             mimeType="application/json",
         )
-        newItem = Item().load(
-            newFile["itemId"], user=user, level=AccessType.READ, exc=True
-        )
-        return newItem, newFile
 
     @staticmethod
     def _assignedSize(assignments, dim):
