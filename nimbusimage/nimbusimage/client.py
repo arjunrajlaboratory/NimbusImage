@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 from nimbusimage._girder import create_client
@@ -105,6 +106,70 @@ class NimbusClient:
                     )
             raise ValueError(f"Dataset with name '{name}' not found")
         raise ValueError("Provide either dataset_id or name=")
+
+    def create_dataset(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        parent_folder_id: str | None = None,
+    ) -> Dataset:
+        """Create an empty dataset, ready for image files.
+
+        A dataset is not usable until files are uploaded into it and
+        configured, so this is normally step one of three::
+
+            ds = client.create_dataset("My Experiment")
+            ds.upload("path/to/images/")
+            ds.configure()
+
+        Args:
+            name: Dataset name.
+            description: Optional description.
+            parent_folder_id: Folder to create it in. Defaults to the
+                calling user's Private folder, so a new dataset is not
+                world-readable by accident; use ``ds.sharing`` to share it.
+
+        Returns:
+            Dataset with no image data yet. Its metadata properties
+            (``shape``, ``channels``, ...) raise until it is configured.
+        """
+        if parent_folder_id is None:
+            parent_folder_id = self._private_folder_id()
+
+        folder = self._gc.post(
+            "folder",
+            parameters={
+                "parentType": "folder",
+                "parentId": parent_folder_id,
+                "name": name,
+                "description": description,
+                "reuseExisting": "false",
+                "metadata": json.dumps({
+                    "subtype": "contrastDataset",
+                    "selectedLargeImageId": None,
+                }),
+            },
+        )
+        return Dataset(
+            self._gc, folder["_id"], frontend_url=self._frontend_url,
+        )
+
+    def _private_folder_id(self) -> str:
+        """The calling user's Private folder id."""
+        folders = self._gc.get(
+            "folder",
+            parameters={
+                "parentType": "user", "parentId": self.user_id, "limit": 0,
+            },
+        )
+        for folder in folders:
+            if folder.get("name") == "Private":
+                return folder["_id"]
+        raise ValueError(
+            "No Private folder found for the current user; pass "
+            "parent_folder_id= explicitly."
+        )
 
     def list_datasets(self) -> list[dict]:
         """List all accessible datasets.

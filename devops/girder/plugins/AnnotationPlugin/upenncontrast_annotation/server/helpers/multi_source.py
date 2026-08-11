@@ -109,10 +109,48 @@ def trim_float(n):
 
 
 def _is_finite(value):
-    return isinstance(value, (int, float)) and not (
+    """JS ``Number.isFinite(value)``: only actual finite numbers.
+
+    ``bool`` is excluded deliberately -- Python's ``isinstance(True, int)``
+    is ``True`` but ``Number.isFinite(true)`` is ``false``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return not (
         isinstance(value, float)
         and (value != value or value in (float("inf"), float("-inf")))
     )
+
+
+def _js_number_or_zero(value):
+    """JS ``Number(value ?? 0) || 0``.
+
+    Non-numeric input coerces to ``NaN`` in JS and ``|| 0`` then makes it
+    ``0``, where Python's ``float()`` would raise. ``|| 0`` is falsy-based,
+    so ``-0`` becomes ``+0`` too -- without that, a zero step renders as
+    "-0 nm" instead of "0 nm". Infinity is truthy in JS and is deliberately
+    preserved (the label formatters render it as "").
+
+    Residual difference, not worth a JS number parser: Python accepts the
+    strings ``"inf"``/``"nan"`` where ``Number()`` yields ``NaN``.
+    """
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        if value.strip() == "":
+            return 0.0  # JS Number("") === 0
+        try:
+            number = float(value)
+        except ValueError:
+            return 0.0  # NaN, then `|| 0`
+    else:
+        return 0.0  # Number({}) / Number([1,2]) is NaN, then `|| 0`
+    # NaN, 0 and -0 are all falsy, so `|| 0` maps every one of them to +0.
+    return 0.0 if number != number or number == 0 else number
 
 
 def format_duration_short(ms):
@@ -175,12 +213,8 @@ def _get_z_labels(internal_meta):
         return None
     count = max(0, int32(entry.get("count", 0)))
     params = entry.get("parameters") or {}
-    step_um = params.get("stepUm")
-    if step_um is None:
-        step_um = 0
-    step_um = float(step_um)
-    if step_um != step_um:  # NaN -> 0 (JS `|| 0`)
-        step_um = 0.0
+    # JS: Number(z.parameters.stepUm ?? 0) || 0
+    step_um = _js_number_or_zero(params.get("stepUm"))
 
     home_index = params.get("homeIndex")
     has_home = _is_finite(home_index)
@@ -263,7 +297,10 @@ def _detect_color_vs_channels(tile_meta):
         if index_c is not None and index_c > 1:
             is_color = False
 
-    if photo is None:
+    # JS `typeof photo === "undefined"`: an explicit null is an "object", so
+    # it does NOT reach the band-count fallback. Key on key presence, not on
+    # `photo is None`, which would conflate the two.
+    if "photometricInterpretation" not in metadata:
         if band_count == 3 or band_count == 4:
             is_color = True
 
@@ -474,6 +511,30 @@ def apply_assignment_strategy(dimensions, strategy):
     return assignments
 
 
+def validate_source_dtypes(tiles_metadata):
+    """Port of ``mixedSourceDtypeError``.
+
+    Refuse to combine sources with different pixel types. Mirrors the
+    frontend's ``sourceDtypes`` computed: string ``dtype`` values only,
+    trimmed and lowercased, de-duplicated in first-seen order.
+
+    Raises ``ValueError`` with the frontend's error text on failure.
+    """
+    dtypes = list(dict.fromkeys(
+        tile.get("dtype").strip().lower()
+        for tile in (tiles_metadata or [])
+        if isinstance(tile, dict) and isinstance(tile.get("dtype"), str)
+        and tile["dtype"].strip() != ""
+    ))
+    if len(dtypes) <= 1:
+        return
+    raise ValueError(
+        "Source images use different pixel types (%s). Convert all source "
+        "images to the same pixel type before combining them. You will "
+        "need to start over." % ", ".join(dtypes)
+    )
+
+
 def validate_assignments(dimensions, assignments, is_multiband_rgb,
                          split_rgb_bands):
     """Port of ``submitEnabled`` + ``isRGBAssignmentValid``.
@@ -594,7 +655,10 @@ def _camera_matrix_source(nd2):
     channels = nd2.get("channels")
     if not channels:
         return None
-    if isinstance(channels, dict) and channels.get("volume") is not None:
+    # JS `chan.volume !== undefined ? chan.volume : chan[0].volume`: an
+    # explicit null volume IS taken, so test key presence rather than
+    # `is not None`. A list has no "volume" key, so it falls through.
+    if isinstance(channels, dict) and "volume" in channels:
         volume = channels["volume"]
     else:
         volume = channels[0]["volume"]

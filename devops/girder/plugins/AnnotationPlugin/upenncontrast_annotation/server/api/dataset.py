@@ -33,9 +33,13 @@ from girder.models.upload import Upload
 from girder_jobs.models.job import Job
 from girder_large_image.models.image_item import ImageItem
 
+from ..helpers.default_configuration import build_default_configuration
 from ..helpers.multi_source import (
     UP_DIMS, compute_configuration, validate_assignments,
+    validate_source_dtypes,
 )
+from ..models.collection import Collection as CollectionModel
+from ..models.datasetView import DatasetView as DatasetViewModel
 
 MULTI_SOURCE_ITEM_NAME = "multi-source2.json"
 _NO_DIMENSION_LABELS = object()
@@ -51,6 +55,8 @@ class Dataset(Resource):
         self.resourceName = "dataset"
 
         self._imageItemModel = ImageItem()
+        self._collectionModel = CollectionModel()
+        self._datasetViewModel = DatasetViewModel()
 
         self.route("POST", (":id", "multi_source"), self.createMultiSource)
 
@@ -67,7 +73,12 @@ class Dataset(Resource):
             'it as "%s", optionally schedules a transcode job, and '
             "records dimension labels on the folder. Does not warm "
             "caches (tile_frames quad_info, cache_maxmerge, histogram) "
-            "the way the frontend does after configuration." % (
+            "the way the frontend does after configuration. "
+            "With dryRun, nothing is written and the computed "
+            "configuration is returned along with a validationError "
+            "field (null when valid): use it to discover the variables "
+            "and build an assignments override. A non-dry run rejects "
+            "the same condition with a 400." % (
                 MULTI_SOURCE_ITEM_NAME
             )
         )
@@ -97,6 +108,7 @@ class Dataset(Resource):
             body, "enableCompositing", False
         )
         dryRun = self._parseBooleanOption(body, "dryRun", False)
+        createView = self._parseBooleanOption(body, "createView", True)
 
         if folder.get("meta", {}).get("subtype") != "contrastDataset":
             raise RestException(
@@ -120,6 +132,8 @@ class Dataset(Resource):
         newlyMarked = []
         newItem = None
         job = None
+        collection = None
+        datasetView = None
         dimensionLabelsSet = False
         committed = False
         folderMeta = folder.get("meta", {})
@@ -147,26 +161,40 @@ class Dataset(Resource):
                     split_rgb_bands=splitRGBBands,
                     enable_compositing=enableCompositing,
                 )
-                # compute_configuration does not itself enforce the
-                # frontend's submitEnabled/isRGBAssignmentValid rules, so
-                # validate explicitly (see 1e in the spec).
-                isMultiBandRGB = (
-                    result["isRGBFile"] and result["rgbBandCount"] > 1
-                )
-                validate_assignments(
-                    result["variables"], result["assignments"],
-                    isMultiBandRGB, splitRGBBands,
-                )
             except ValueError as e:
                 raise RestException(str(e), code=400)
+
+            # compute_configuration does not itself enforce the frontend's
+            # mixed-dtype / submitEnabled / isRGBAssignmentValid rules, so
+            # validate explicitly (see 1e in the spec).  The order matches
+            # the frontend's `mixedSourceDtypeError ?? assignmentError`.
+            validationError = None
+            try:
+                validate_source_dtypes(tilesMetadata)
+                validate_assignments(
+                    result["variables"], result["assignments"],
+                    result["isRGBFile"] and result["rgbBandCount"] > 1,
+                    splitRGBBands,
+                )
+            except ValueError as e:
+                validationError = str(e)
 
             transcode = (
                 result["transcodeDefault"] if transcodeOption is None
                 else transcodeOption
             )
 
+            # A dry run is how a caller discovers what to assign, so report
+            # the failure in the body rather than raising: a 400 would
+            # withhold the very `variables` list needed to build a valid
+            # `assignments` override.  Real runs still refuse.
             if dryRun:
-                return dict(result, transcode=transcode)
+                return dict(
+                    result, transcode=transcode,
+                    validationError=validationError,
+                )
+            if validationError is not None:
+                raise RestException(validationError, code=400)
 
             newItem, newFile = self._uploadConfiguration(
                 folder, result["config"], user
@@ -184,25 +212,75 @@ class Dataset(Resource):
             )
             dimensionLabelsSet = True
 
+            # Clear the large images BEFORE scheduling the transcode, the way
+            # the frontend does (store.addMultiSourceMetadata clears every
+            # item, then calls generateTiles).  Ordering matters: girder's
+            # largeImage.autoSet marks the configuration we just uploaded
+            # (large_image's "multi" source can read it), and
+            # createImageItem refuses an item that already has one.
+            self._removeLargeImages(items, newItem if transcode else None)
+
             if transcode:
                 job = self._imageItemModel.createImageItem(
                     newItem, newFile, user=user, token=token,
                     createJob="always", localJob=True,
                 )
 
-            self._removeLargeImages(items, transcode)
+            if createView:
+                # Assign each resource to its own variable as it is
+                # created, never via a tuple returned from a helper: if
+                # the second call raises, a helper's locals are lost and
+                # the except-handler below would have nothing to roll the
+                # first one back with.
+                collection = self._createDefaultCollection(
+                    folder, result, tilesMetadata, user,
+                )
+                datasetView = self._datasetViewModel.create(user, {
+                    "datasetId": folder["_id"],
+                    "configurationId": collection["_id"],
+                    "layerContrasts": {},
+                    "lastLocation": {"xy": 0, "z": 0, "time": 0},
+                })
             committed = True
 
             return {
                 "itemId": str(newItem["_id"]),
                 "jobId": str(job["_id"]) if job is not None else None,
+                "collectionId": (
+                    str(collection["_id"]) if collection is not None else None
+                ),
+                "viewId": (
+                    str(datasetView["_id"]) if datasetView is not None
+                    else None
+                ),
                 "config": result["config"],
                 "dimensionLabels": result["dimensionLabels"],
                 "variables": result["variables"],
                 "assignments": result["assignments"],
                 "transcode": transcode,
+                "isRGBFile": result["isRGBFile"],
+                "rgbBandCount": result["rgbBandCount"],
+                "transcodeDefault": result["transcodeDefault"],
             }
         except Exception:
+            # Newest resources first, so a view is never left pointing at a
+            # collection that has already been removed.
+            if datasetView is not None:
+                try:
+                    self._datasetViewModel.delete(datasetView)
+                except Exception:
+                    logger.exception(
+                        "Could not remove failed dataset view %s",
+                        datasetView.get("_id"),
+                    )
+            if collection is not None:
+                try:
+                    self._collectionModel.remove(collection)
+                except Exception:
+                    logger.exception(
+                        "Could not remove failed collection %s",
+                        collection.get("_id"),
+                    )
             if job is not None:
                 try:
                     Job().cancelJob(job)
@@ -297,23 +375,35 @@ class Dataset(Resource):
         unmarked = [item for item in items if "largeImage" not in item]
         if not unmarked:
             return newlyMarked
-        # Batch-load the first file of each unmarked item (no per-item
-        # childFiles queries; see CLAUDE.md on looped DB calls).
-        firstFileByItemId = {}
+        # Batch-load the files of each unmarked item (no per-item childFiles
+        # queries; see CLAUDE.md on looped DB calls).
+        filesByItemId = {}
         for file in File().find(
             {"itemId": {"$in": [item["_id"] for item in unmarked]}}
         ):
-            firstFileByItemId.setdefault(file["itemId"], file)
+            filesByItemId.setdefault(file["itemId"], []).append(file)
 
         for item in unmarked:
-            file = firstFileByItemId.get(item["_id"])
-            if file is None:
+            files = filesByItemId.get(item["_id"], [])
+            if not files:
                 self._rollbackLargeImages(newlyMarked)
                 raise RestException(
                     'Item "%s" has no files and cannot be used as an '
                     "image source." % item["name"],
                     code=400,
                 )
+            if len(files) > 1:
+                # Mirror girder's own POST item/{id}/tiles, which requires an
+                # explicit fileId once an item has more than one file rather
+                # than guessing. Picking whichever file mongo returned first
+                # would be non-deterministic.
+                self._rollbackLargeImages(newlyMarked)
+                raise RestException(
+                    'Item "%s" has %d files; an image source item must have '
+                    "exactly one." % (item["name"], len(files)),
+                    code=400,
+                )
+            file = files[0]
             try:
                 self._imageItemModel.createImageItem(
                     item, file, user=user, token=token,
@@ -348,16 +438,57 @@ class Dataset(Resource):
         )
         return newItem, newFile
 
-    def _removeLargeImages(self, items, transcode):
+    @staticmethod
+    def _assignedSize(assignments, dim):
+        """The dataset's extent along ``dim``; 1 when nothing is assigned."""
+        assignment = assignments.get(dim)
+        return assignment["size"] if assignment else 1
+
+    def _createDefaultCollection(self, folder, result, tilesMetadata, user):
+        """Create the collection (configuration) for a configured dataset.
+
+        Paired with a dataset view by the caller. Without the two of them
+        the dataset is readable but effectively hidden: the UI has nothing
+        to open, and dataset listings enumerate views, so an API-created
+        one would not appear anywhere. The frontend does this on the
+        "Select a collection" step; the configuration content is the port
+        in ``helpers/default_configuration.py``.
+        """
+        assignments = result["assignments"]
+        firstTile = tilesMetadata[0] if tilesMetadata else {}
+
+        metadata = build_default_configuration(
+            # Post-RGB-expansion channel names, so the layers match what
+            # the configured image actually exposes.
+            result["config"]["channels"],
+            xy_count=self._assignedSize(assignments, "XY"),
+            z_count=self._assignedSize(assignments, "Z"),
+            t_count=self._assignedSize(assignments, "T"),
+            mm_x=firstTile.get("mm_x"),
+            mm_y=firstTile.get("mm_y"),
+            dimension_labels=result["dimensionLabels"],
+        )
+        return self._collectionModel.createCollection(
+            folder["name"], user, folder, metadata,
+            description="Created with the dataset",
+        )
+
+    def _removeLargeImages(self, items, configItem):
         """Remove the largeImage marking, mirroring the frontend.
 
-        If transcoding, the large image is removed from every source item.
-        The new configuration item is left untouched because its transcode
-        job has already been scheduled. Otherwise, only source items that
-        were marked as large images are cleared.
+        ``configItem`` is the newly uploaded configuration when its tiles are
+        about to be regenerated (transcoding), otherwise ``None``.  When
+        transcoding, the frontend clears every item including the
+        configuration, because girder's ``largeImage.autoSet`` has already
+        marked it and ``createImageItem`` rejects an item that has one; the
+        configuration's own file survives, since ``ImageItem().delete`` only
+        removes the underlying file for worker-converted images (those carry
+        ``largeImage.originalId``, which an autoSet mark never does).
+        Otherwise only source items that are marked as large images are
+        cleared, and the configuration keeps its mark.
         """
-        if transcode:
-            itemsToClear = items
+        if configItem is not None:
+            itemsToClear = list(items) + [configItem]
         else:
             itemsToClear = [item for item in items if "largeImage" in item]
         for item in itemsToClear:

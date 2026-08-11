@@ -10,6 +10,9 @@ directory.
 Fixture kinds:
 * ``parsing_*.json`` -- ``collect_filename_metadata(filenames)`` must equal
   ``expected.variables``.
+* ``kind: "validation"`` -- the component *refuses* these inputs; the
+  validators must raise ``ValueError`` with the component's exact
+  ``submitError`` text (and in the same precedence order).
 * everything else -- run ``compute_configuration`` and compare ``config``,
   ``dimensionLabels``, ``transcodeDefault``, ``defaultAssignments`` (from
   ``get_default_assignments`` BEFORE any strategy is applied) and
@@ -37,6 +40,8 @@ from helpers.multi_source import (  # noqa: E402
     build_dimensions,
     compute_configuration,
     get_default_assignments,
+    validate_assignments,
+    validate_source_dtypes,
 )
 
 _FIXTURE_DIR = os.path.join(_HERE, "parity_fixtures")
@@ -72,6 +77,49 @@ def _default_assignments_summary(dimensions):
     return summary
 
 
+def _assert_validation_parity(inp, expected):
+    """The validators must reproduce the component's ``submitError``.
+
+    The frontend's own precedence is
+    ``mixedSourceDtypeError ?? assignmentError``, so the dtype check runs
+    first here too -- the ``*_precedence`` fixture is what pins that order.
+
+    Only the *message* is parity-checked, deliberately: the two ends do not
+    behave the same way. ``submitError`` merely disables the UI's Submit
+    button, and ``validation_incomplete_assignments``'s golden records
+    ``configUploaded: true`` to prove ``generateJson`` still runs when it
+    is set. The API has no disabled button, so it turns the same condition
+    into a hard 400 (or, under dryRun, a ``validationError`` field). Do not
+    "fix" either side to match the other.
+    """
+    item_names = inp["itemNames"]
+    tiles_metadata = inp["tilesMetadata"]
+    options = inp.get("options") or {}
+    split_rgb_bands = options.get("splitRGBBands", True)
+
+    result = compute_configuration(
+        item_names,
+        tiles_metadata,
+        inp["tilesInternalMetadata"],
+        strategy=options.get("assignmentStrategy"),
+        split_rgb_bands=split_rgb_bands,
+        enable_compositing=options.get("enableCompositing", False),
+    )
+
+    error = None
+    try:
+        validate_source_dtypes(tiles_metadata)
+        validate_assignments(
+            result["variables"], result["assignments"],
+            result["isRGBFile"] and result["rgbBandCount"] > 1,
+            split_rgb_bands,
+        )
+    except ValueError as exc:
+        error = str(exc)
+
+    assert error == expected["submitError"]
+
+
 @pytest.mark.skipif(
     not _PATHS,
     reason="parity_fixtures directory missing (goldens not yet generated)",
@@ -91,6 +139,10 @@ def test_parity(path):
     if name.startswith("parsing_"):
         actual = _roundtrip(collect_filename_metadata(inp["filenames"]))
         assert actual == expected["variables"]
+        return
+
+    if fixture.get("kind") == "validation":
+        _assert_validation_parity(inp, expected)
         return
 
     if "config" not in expected:

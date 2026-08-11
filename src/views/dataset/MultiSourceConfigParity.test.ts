@@ -126,8 +126,15 @@ function writeFixture(file: string, json: any) {
 }
 
 const allFixtures = readFixtures();
-const configFixtures = allFixtures.filter((f) => f.json.input.itemNames);
+// `kind: "validation"` fixtures also carry itemNames, but the component
+// refuses to generate a config for them, so they get their own harness.
+const configFixtures = allFixtures.filter(
+  (f) => f.json.input.itemNames && f.json.kind !== "validation",
+);
 const parsingFixtures = allFixtures.filter((f) => f.json.input.filenames);
+const validationFixtures = allFixtures.filter(
+  (f) => f.json.kind === "validation",
+);
 
 // --- Mount helper ---
 const mockRouter = { push: vi.fn() };
@@ -303,6 +310,76 @@ describe("MultiSourceConfig parity", () => {
           transcodeDefault,
           config,
           dimensionLabels,
+        };
+
+        if (UPDATE_GOLDENS) {
+          fixture.json.expected = actual;
+          writeFixture(fixture.file, fixture.json);
+        } else if (fixture.json.expected === null) {
+          throw new Error(
+            `Golden not generated for ${fixture.file}; ` +
+              `run with UPDATE_PARITY_GOLDENS=1`,
+          );
+        } else {
+          expect(actual).toEqual(fixture.json.expected);
+        }
+      });
+    }
+  });
+
+  // The config harness above only compares configurations the component
+  // successfully generated, so a frontend-side *refusal* was invisible to it
+  // -- which is how the backend came to lack a mixed-dtype guard entirely.
+  // These fixtures pin the refusal messages and their precedence.
+  describe("validation fixtures", () => {
+    for (const fixture of validationFixtures) {
+      it(`${fixture.json.name} (${fixture.file})`, async () => {
+        const { itemNames, tilesMetadata, tilesInternalMetadata, options } =
+          fixture.json.input;
+
+        const items = itemNames.map((n: string, i: number) =>
+          itemFromName(n, i),
+        );
+        const tilesByName: Record<string, any> = {};
+        const internalByName: Record<string, any> = {};
+        itemNames.forEach((n: string, i: number) => {
+          tilesByName[n] = tilesMetadata[i];
+          internalByName[n] = tilesInternalMetadata[i];
+        });
+
+        mockGetItems.mockResolvedValue(items);
+        mockGetTiles.mockImplementation((item: any) =>
+          Promise.resolve(tilesByName[item.name]),
+        );
+        mockGetTilesInternalMetadata.mockImplementation((item: any) =>
+          Promise.resolve(internalByName[item.name]),
+        );
+
+        const wrapper = mountComponent();
+        const vm = wrapper.vm as any;
+        await vm.initialized;
+        await nextTick();
+
+        vm.splitRGBBands = options.splitRGBBands;
+        vm.enableCompositing = options.enableCompositing;
+        if (options.assignmentStrategy) {
+          vm.applyDimensionStrategy(
+            buildFullStrategy(vm, options.assignmentStrategy),
+          );
+          await nextTick();
+        }
+
+        // submitError is what disables Submit; generationErrorMessage is what
+        // generateJson reports if it is called anyway.
+        const submitError = vm.submitError ?? null;
+        mockAddMultiSourceMetadata.mockClear();
+        const generatedItemId = await vm.generateJson();
+
+        const actual = {
+          submitError,
+          generationErrorMessage: vm.generationErrorMessage ?? null,
+          generatedItemId: generatedItemId ?? null,
+          configUploaded: mockAddMultiSourceMetadata.mock.calls.length > 0,
         };
 
         if (UPDATE_GOLDENS) {

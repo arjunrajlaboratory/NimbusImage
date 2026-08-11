@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from nimbusimage.annotations import AnnotationAccessor
@@ -10,7 +11,11 @@ from nimbusimage.connections import ConnectionAccessor
 from nimbusimage.export import ExportAccessor
 from nimbusimage.history import HistoryAccessor
 from nimbusimage.images import ImageAccessor
-from nimbusimage.models import FrameInfo, PixelSize
+from nimbusimage.models import (
+    FrameInfo,
+    MultiSourceConfiguration,
+    PixelSize,
+)
 from nimbusimage.properties import PropertyAccessor
 from nimbusimage.sharing import SharingAccessor
 from nimbusimage.urls import (
@@ -175,6 +180,143 @@ class Dataset:
                 ),
             ))
         return result
+
+    # --- Building a dataset from image files ---
+
+    def upload(self, paths) -> list[str]:
+        """Upload image files into this dataset's folder.
+
+        Call before :meth:`configure`. Uploading does not by itself make a
+        usable dataset -- the files are just items in a folder until they
+        are configured into a multi-source image.
+
+        Args:
+            paths: A file path, a directory, or an iterable of paths.
+                Directories are not recursed into; a subdirectory raises
+                rather than being skipped, so a partial upload can't look
+                like a complete one. Dotfiles are ignored.
+
+        Returns:
+            The ids of the created items, ordered as uploaded.
+
+        Raises:
+            ValueError: a directory contains a subdirectory.
+        """
+        if isinstance(paths, (str, os.PathLike)):
+            paths = [paths]
+        expanded: list[str] = []
+        for path in paths:
+            path = os.fspath(path)
+            if os.path.isdir(path):
+                entries = [
+                    entry for entry in sorted(os.listdir(path))
+                    if not entry.startswith(".")
+                ]
+                subdirs = [
+                    entry for entry in entries
+                    if os.path.isdir(os.path.join(path, entry))
+                ]
+                if subdirs:
+                    raise ValueError(
+                        "%s contains subdirectories (%s); upload is not "
+                        "recursive. Pass the image files or the leaf "
+                        "directories explicitly." % (
+                            path, ", ".join(subdirs))
+                    )
+                expanded.extend(os.path.join(path, e) for e in entries)
+            else:
+                expanded.append(path)
+
+        item_ids = []
+        for path in expanded:
+            file = self._gc.uploadFileToFolder(self._id, path)
+            item_ids.append(file["itemId"])
+        # Items changed, so any cached tile metadata is stale.
+        self._tiles = None
+        self._item_id = None
+        self._folder_data = None
+        return item_ids
+
+    def configure(
+        self,
+        *,
+        assignments: dict | None = None,
+        transcode: bool | None = None,
+        split_rgb_bands: bool = True,
+        enable_compositing: bool = False,
+        create_view: bool = True,
+        dry_run: bool = False,
+    ) -> MultiSourceConfiguration:
+        """Configure the uploaded files as one multi-dimensional image.
+
+        This is the API equivalent of the web UI's dataset-configuration
+        screen: it works out which filename tokens and file metadata map to
+        XY / Z / Time / Channel, writes the multi-source configuration, and
+        (unless every file is ``.nd2``) schedules a transcode job.
+
+        **Start with ``dry_run=True``.** It computes and returns everything
+        without writing, including ``validation_error`` and ``variables``.
+        A real run turns that error into an exception, so the dry run is the
+        only way to see the variable list you need in order to fix it::
+
+            plan = ds.configure(dry_run=True)
+            if not plan.is_valid:
+                print(plan.validation_error)
+                print(plan.unassigned_variables)
+
+        Args:
+            assignments: Per-dimension overrides, ``{dim: {"source",
+                "guess"} | None}`` for dims ``XY``/``Z``/``T``/``C``. Copy
+                ``source``/``guess`` from a variable returned by a dry run;
+                ``None`` leaves a dimension unassigned, and omitted
+                dimensions keep their default.
+            transcode: Convert to a single tiled TIFF. Defaults to the
+                same rule the UI uses (on unless every file is ``.nd2``).
+            split_rgb_bands: Split an RGB image into three channels.
+            enable_compositing: Lay out a single multi-position ND2 by
+                stage coordinates instead of as separate XY positions.
+            create_view: Also create the collection and dataset view the
+                web UI needs. On by default: without them the dataset is
+                readable through this API but has nothing to open in the
+                browser, and ``client.list_datasets()`` -- which
+                enumerates dataset views -- will not show it.
+            dry_run: Compute without writing anything.
+
+        Returns:
+            MultiSourceConfiguration. When transcoding, ``job_id`` is the
+            conversion job -- pass it to ``client.job(...)`` to wait on it.
+            With ``create_view``, ``view_id`` is set and ``ds.open()``
+            works.
+
+        Raises:
+            girder_client.HttpError: 400 if the configuration is invalid
+                (unassigned variables, mixed pixel types across sources, an
+                item with zero or several files), 409 if the dataset is
+                already configured.
+
+        Note:
+            Unlike the web UI, this does not warm the tile/histogram
+            caches, so the first open of a large dataset is slower.
+        """
+        body: dict = {
+            "splitRGBBands": split_rgb_bands,
+            "enableCompositing": enable_compositing,
+            "createView": create_view,
+            "dryRun": dry_run,
+        }
+        if assignments is not None:
+            body["assignments"] = assignments
+        if transcode is not None:
+            body["transcode"] = transcode
+
+        result = self._gc.post(
+            f"dataset/{self._id}/multi_source", json=body
+        )
+        if not dry_run:
+            self._tiles = None
+            self._item_id = None
+            self._folder_data = None
+        return MultiSourceConfiguration(**result)
 
     # --- URLs ---
 

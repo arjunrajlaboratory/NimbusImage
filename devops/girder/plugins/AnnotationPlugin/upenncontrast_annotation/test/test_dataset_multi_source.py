@@ -4,12 +4,17 @@ Tests for the POST /dataset/{id}/multi_source endpoint.
 The access-control and validation tests below do not depend on any real
 image-processing capability and always run. The tests that exercise the
 full pipeline (dryRun / full run / transcode) need a Girder large_image
-tile source (e.g. large-image-source-tiff or large-image-source-pil) to
-actually be installed so that a real TIFF can be marked as a large image.
-The project's tox.ini only pins ``girder-large-image`` itself (no source
-extras), so those tests self-skip via the ``largeImageCapable`` fixture
-below when no tile source is available, rather than reporting a false
-failure caused by the test environment.
+tile source to actually be installed so that a real TIFF can be marked as
+a large image; they self-skip via the ``largeImageCapable`` fixture below
+when none is available, rather than reporting a false failure caused by
+the test environment.
+
+Running this file: prefer the Linux girder container over local tox on
+arm64 macOS, where ``large_image_source_tiff`` intermittently segfaults
+pylibtiff while probing the synthetic TIFFs (it takes down tests nobody
+touched, and whether it fires depends on test selection). The container
+recipe -- including the ``--mongo-uri`` that pytest-girder needs there --
+is in codebaseDocumentation/DATASET_MULTI_SOURCE_ENDPOINT-REVIEW.md.
 """
 
 import io
@@ -22,10 +27,13 @@ from large_image.exceptions import TileGeneralError, TileSourceError
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from girder.constants import AccessType
+from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.item import Item
 from girder.models.upload import Upload
 from girder_large_image.models.image_item import ImageItem
+
+from ..server.api.dataset import MULTI_SOURCE_ITEM_NAME
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -63,9 +71,15 @@ def _clearLargeImageMarks(folder):
 
 
 def _mockLargeImagePipeline(
-    monkeypatch, metadataError=None, transcodeError=None
+    monkeypatch, metadataError=None, transcodeError=None, metadataByName=None
 ):
-    """Install deterministic model doubles for endpoint failure tests."""
+    """Install deterministic model doubles for endpoint failure tests.
+
+    ``metadataByName`` overrides the tile metadata per item name, so tests
+    can drive dtype/IndexRange-dependent behaviour without needing a real
+    tile source (and without the arm64 pylibtiff crash that probing real
+    TIFFs triggers locally).
+    """
     def createImageItem(self, item, file, createJob=True, **kwargs):
         if createJob == "always" and transcodeError is not None:
             raise transcodeError
@@ -78,6 +92,8 @@ def _mockLargeImagePipeline(
     def getMetadata(self, item, **kwargs):
         if metadataError is not None:
             raise metadataError
+        if metadataByName is not None and item["name"] in metadataByName:
+            return metadataByName[item["name"]]
         return {"bandCount": 1, "frames": [], "sizeX": 16, "sizeY": 16}
 
     monkeypatch.setattr(ImageItem, "createImageItem", createImageItem)
@@ -110,10 +126,55 @@ def largeImageCapable(admin, fsAssetstore):
     except Exception as e:
         pytest.skip(
             "No usable large_image tile source is installed in this "
-            "test environment (tox.ini installs girder-large-image "
-            "without a source extra such as tiff/pil): %r" % e
+            "test environment (tox.ini pins large-image-source-pil and "
+            "large-image-source-tiff; check they installed): %r" % e
         )
     return True
+
+
+@pytest.fixture
+def largeImageAutoSet(db):
+    """Reproduce the deployed server's ``largeImage.autoSet`` marking.
+
+    Why this has to be simulated: ``pytest_girder`` loads only
+    ``upenncontrast_annotation`` (checked with ``loadedPlugins()``), so
+    ``girder_large_image``'s ``load()`` never runs and *none* of its event
+    handlers are bound. ``autoSet`` therefore cannot fire under test, no
+    matter which tile sources are installed -- which is exactly why the
+    transcode regression this guards was invisible to the suite while
+    failing on every real request.
+
+    Binding the genuine ``checkForLargeImageFiles`` was tried first and is
+    not usable here: probing the multi-source JSON walks every installed
+    source, and ``large_image_source_tiff`` segfaults pylibtiff on arm64
+    (crash inside ``libtiff.GetField``). The precondition that matters is
+    only "the configuration item already carries a largeImage mark by the
+    time the endpoint reaches createImageItem", so set that directly.
+    """
+    from girder import events
+
+    def markConfigUploads(event):
+        fileObj = event.info
+        if not str(fileObj.get("name", "")).endswith(".json"):
+            return
+        if not fileObj.get("itemId"):
+            return
+        item = Item().load(fileObj["itemId"], force=True, exc=False)
+        if item is None or "largeImage" in item:
+            return
+        # Shape matches what autoSet writes in production: a fileId and the
+        # source that claimed it, with no originalId/jobId.
+        item["largeImage"] = {
+            "fileId": fileObj["_id"], "sourceName": "multi",
+        }
+        Item().save(item)
+
+    events.bind(
+        "model.file.save.after", "test_large_image_autoset",
+        markConfigUploads,
+    )
+    yield True
+    events.unbind("model.file.save.after", "test_large_image_autoset")
 
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
@@ -172,6 +233,70 @@ class TestDatasetMultiSourceValidation:
         )
         assertStatus(resp, 400)
         assert "empty_item.tif" in resp.json["message"]
+
+    def testRejectsItemWithMultipleFiles(
+        self, admin, server, fsAssetstore
+    ):
+        """Girder's own POST item/{id}/tiles refuses an item with more than
+        one file rather than guessing which is the image, and so must this
+        endpoint: picking whichever file mongo returned first would be
+        non-deterministic."""
+        folder = utilities.createFolder(
+            admin, "multifile_dataset", upenn_utilities.datasetMetadata
+        )
+        item = Item().createItem("two_files.tif", admin, folder)
+        for name in ("a.tif", "b.tif"):
+            data = _createTinyTiffBytes()
+            Upload().uploadFromFile(
+                io.BytesIO(data), len(data), name, "item", item,
+                user=admin, mimeType="image/tiff",
+            )
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"dryRun": True}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+        assert "two_files.tif" in resp.json["message"]
+        assert "exactly one" in resp.json["message"]
+
+    def testMarksLargeImagesWithASingleFileQuery(
+        self, admin, server, monkeypatch
+    ):
+        """Cost invariant: the marking loop must batch-load files with one
+        query, never a childFiles call per item (CLAUDE.md)."""
+        folder = utilities.createFolder(
+            admin, "batch_query_dataset", upenn_utilities.datasetMetadata
+        )
+        for idx in range(5):
+            Item().createItem("img_%d.tif" % idx, admin, folder)
+
+        calls = []
+        originalFind = File.find
+
+        def countingFind(self, *args, **kwargs):
+            calls.append(args[0] if args else kwargs.get("query"))
+            return originalFind(self, *args, **kwargs)
+
+        monkeypatch.setattr(File, "find", countingFind)
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"dryRun": True}),
+            type="application/json",
+        )
+        # Every item is file-less, so this 400s -- but only after the single
+        # batched lookup that this test exists to pin.
+        assertStatus(resp, 400)
+        assert len(calls) == 1, "expected one batched File().find, got %r" % (
+            calls,
+        )
+        assert "$in" in calls[0]["itemId"]
 
     def testRejectsMalformedAssignments(self, admin, server):
         folder = utilities.createFolder(
@@ -270,7 +395,7 @@ class TestDatasetMultiSourcePipeline:
 
         # dryRun must not create the config item or touch folder meta.
         assert Item().findOne({
-            "folderId": folder["_id"], "name": "multi-source2.json",
+            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
         }) is None
         reloadedFolder = Folder().load(
             folder["_id"], user=admin, level=AccessType.READ
@@ -301,7 +426,7 @@ class TestDatasetMultiSourcePipeline:
 
         assertStatus(resp, 500)
         assert Item().findOne({
-            "folderId": folder["_id"], "name": "multi-source2.json",
+            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
         }) is None
         for item in Item().find({"folderId": folder["_id"]}):
             assert "largeImage" not in item
@@ -329,9 +454,8 @@ class TestDatasetMultiSourcePipeline:
             ObjectId(result["itemId"]), user=admin, level=AccessType.READ,
             exc=True,
         )
-        assert configItem["name"] == "multi-source2.json"
+        assert configItem["name"] == MULTI_SOURCE_ITEM_NAME
         configFile = _firstFile(configItem)
-        from girder.models.file import File
         with File().open(configFile) as fh:
             contents = fh.read()
         assert json.loads(contents) == result["config"]
@@ -350,7 +474,10 @@ class TestDatasetMultiSourcePipeline:
         # Non-transcode path strips largeImage from the (marked) source
         # items but leaves the new config item alone.
         sourceItems = list(Item().find(
-            {"folderId": folder["_id"], "name": {"$ne": "multi-source2.json"}}
+            {
+                "folderId": folder["_id"],
+                "name": {"$ne": MULTI_SOURCE_ITEM_NAME},
+            }
         ))
         assert len(sourceItems) == 2
         for item in sourceItems:
@@ -480,6 +607,172 @@ class TestDatasetMultiSourcePipeline:
         assert job is not None
         assert job["type"] == "large_image_tiff"
 
+    def testCreatesCollectionAndViewByDefault(
+        self, admin, server, largeImageCapable
+    ):
+        """Without a view the dataset is invisible: the UI has nothing to
+        open and dataset listings enumerate views, so a configured dataset
+        with none would not appear anywhere."""
+        folder = self._makeDatasetFolder(admin, "with_view_dataset")
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        assert resp.json["collectionId"]
+        assert resp.json["viewId"]
+
+        from ..server.models.collection import Collection as CollectionModel
+        from ..server.models.datasetView import (
+            DatasetView as DatasetViewModel,
+        )
+
+        collection = CollectionModel().load(
+            ObjectId(resp.json["collectionId"]), user=admin,
+            level=AccessType.READ, exc=True,
+        )
+        assert collection["meta"]["subtype"] == "contrastConfiguration"
+        # One layer per channel, named and coloured like the UI would.
+        layers = collection["meta"]["layers"]
+        assert [layer["name"] for layer in layers] == \
+            resp.json["config"]["channels"]
+        assert len({layer["color"] for layer in layers}) == len(layers)
+
+        view = DatasetViewModel().load(
+            ObjectId(resp.json["viewId"]), user=admin,
+            level=AccessType.READ, exc=True,
+        )
+        assert view["datasetId"] == folder["_id"]
+        assert view["configurationId"] == collection["_id"]
+
+    def testCreateViewCanBeDisabled(
+        self, admin, server, largeImageCapable
+    ):
+        folder = self._makeDatasetFolder(admin, "no_view_dataset")
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False, "createView": False}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        assert resp.json["collectionId"] is None
+        assert resp.json["viewId"] is None
+
+        from ..server.models.datasetView import (
+            DatasetView as DatasetViewModel,
+        )
+        assert DatasetViewModel().findOne(
+            {"datasetId": folder["_id"]}
+        ) is None
+
+    def testViewFailureRollsBackTheWholeRequest(
+        self, admin, server, largeImageCapable, monkeypatch
+    ):
+        """The view is created last, so its failure must still undo the
+        configuration item and the folder metadata -- otherwise a retry
+        hits the 409."""
+        from ..server.models.datasetView import (
+            DatasetView as DatasetViewModel,
+        )
+
+        def boom(self, creator, dataset_view):
+            raise ValueError("forced dataset view failure")
+
+        monkeypatch.setattr(DatasetViewModel, "create", boom)
+        folder = self._makeDatasetFolder(admin, "view_failure_dataset")
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+            exception=True,
+        )
+        assertStatus(resp, 500)
+        assert Item().findOne({
+            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
+        }) is None
+        reloadedFolder = Folder().load(
+            folder["_id"], user=admin, level=AccessType.READ
+        )
+        assert "dimensionLabels" not in reloadedFolder.get("meta", {})
+
+        from ..server.models.collection import Collection as CollectionModel
+        assert CollectionModel().findOne(
+            {"folderId": folder["_id"]}
+        ) is None
+
+    def testTranscodeSchedulesJobWhenConfigIsAutoMarked(
+        self, admin, server, largeImageCapable, largeImageAutoSet
+    ):
+        """Regression: the deployed server marks the configuration we just
+        uploaded as a large image (autoSet + the "multi" source), and
+        createImageItem refuses an item that already has one, so the whole
+        transcode path 500'd with "Item already has largeImage set."
+        """
+        folder = self._makeDatasetFolder(admin, "transcode_autoset_dataset")
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": True}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        result = resp.json
+        assert result["transcode"] is True
+        assert result["jobId"]
+
+        configItem = Item().load(
+            ObjectId(result["itemId"]), user=admin, level=AccessType.READ,
+            exc=True,
+        )
+        # The mark now belongs to the transcode job, not to autoSet.
+        assert configItem["largeImage"].get("sourceName") != "multi"
+        # Clearing the autoSet mark must not have deleted the configuration
+        # itself -- ImageItem().delete removes the underlying file only for
+        # worker-converted images (largeImage.originalId).
+        configFiles = list(Item().childFiles(configItem))
+        assert len(configFiles) == 1
+        with File().open(configFiles[0]) as fh:
+            assert json.loads(fh.read()) == result["config"]
+
+    def testAutoSetMarkSurvivesNonTranscodeRun(
+        self, admin, server, largeImageCapable, largeImageAutoSet
+    ):
+        """The twin of the transcode path: without transcoding, the
+        configuration must KEEP the mark (that is what makes the dataset
+        readable), while the source items lose theirs.
+        """
+        folder = self._makeDatasetFolder(admin, "autoset_keep_dataset")
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        configItem = Item().load(
+            ObjectId(resp.json["itemId"]), user=admin,
+            level=AccessType.READ, exc=True,
+        )
+        assert configItem["largeImage"]["sourceName"] == "multi"
+        for item in Item().find({
+            "folderId": folder["_id"],
+            "name": {"$ne": MULTI_SOURCE_ITEM_NAME},
+        }):
+            assert "largeImage" not in item
+
     def testTranscodeSetupFailureCanBeRetried(
         self, admin, server, fsAssetstore, monkeypatch
     ):
@@ -502,7 +795,7 @@ class TestDatasetMultiSourcePipeline:
 
         assertStatus(resp, 500)
         assert Item().findOne({
-            "folderId": folder["_id"], "name": "multi-source2.json",
+            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
         }) is None
         reloadedFolder = Folder().load(
             folder["_id"], user=admin, level=AccessType.READ
@@ -543,6 +836,193 @@ class TestDatasetMultiSourcePipeline:
             type="application/json",
         )
         assertStatusOk(resp)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestDatasetMultiSourceValidationRules:
+    """The frontend's refusal rules, driven through mocked tile metadata so
+    they need no real tile source."""
+
+    def _makeFolder(self, admin, name, metadataByName, monkeypatch):
+        _mockLargeImagePipeline(monkeypatch, metadataByName=metadataByName)
+        folder = utilities.createFolder(
+            admin, name, upenn_utilities.datasetMetadata
+        )
+        for itemName in metadataByName:
+            _uploadTiffItem(admin, folder, itemName)
+        _clearLargeImageMarks(folder)
+        return folder
+
+    # dtype and the number of sized variables are the two things the
+    # frontend refuses on; keep them adjacent so the precedence is obvious.
+    _MIXED_DTYPE = {
+        "gfp_A1.tif": {
+            "bandCount": 1, "frames": [], "sizeX": 16, "sizeY": 16,
+            "dtype": "uint16",
+        },
+        "red_A1.tif": {
+            "bandCount": 1, "frames": [], "sizeX": 16, "sizeY": 16,
+            "dtype": "uint8",
+        },
+    }
+    _UNIFORM_DTYPE = {
+        name: dict(meta, dtype="uint16")
+        for name, meta in _MIXED_DTYPE.items()
+    }
+
+    def testRejectsMixedSourceDtypes(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """Parity with master #1309: the frontend blocks submission when
+        sources have different pixel types, so the endpoint must too."""
+        folder = self._makeFolder(
+            admin, "mixed_dtype_dataset", self._MIXED_DTYPE, monkeypatch
+        )
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+        assert "different pixel types" in resp.json["message"]
+        assert "uint16, uint8" in resp.json["message"]
+        assert Item().findOne({
+            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
+        }) is None
+
+    def testUniformDtypesAreAccepted(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """The twin of the above: the guard must not reject the normal
+        case (and an absent dtype must not count as a distinct type)."""
+        folder = self._makeFolder(
+            admin, "uniform_dtype_dataset", self._UNIFORM_DTYPE, monkeypatch
+        )
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+    def testDryRunReportsMixedDtypeInsteadOfFailing(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        folder = self._makeFolder(
+            admin, "mixed_dtype_dry_dataset", self._MIXED_DTYPE, monkeypatch
+        )
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"dryRun": True}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        assert "different pixel types" in resp.json["validationError"]
+        assert "variables" in resp.json
+
+    def testDryRunReportsValidationErrorWithVariables(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """A dry run is how a caller discovers what to assign. Returning a
+        bare 400 withheld the `variables` list needed to build a valid
+        `assignments` override, so the caller could never recover.
+        """
+        # Two files whose IndexRange/IndexStride yield a file Z and a file
+        # C variable, plus a filename variable -- three sized variables, so
+        # the defaults (which fill Z and C) leave one unassigned.
+        metadata = {
+            "exp_a.nd2": {
+                "bandCount": 1, "sizeX": 16, "sizeY": 16, "dtype": "uint16",
+                "frames": [{}] * 6,
+                "IndexRange": {"IndexC": 2, "IndexZ": 3},
+                "IndexStride": {"IndexC": 1, "IndexZ": 2},
+                "channels": ["DAPI", "CY3"],
+            },
+            "exp_b.nd2": {
+                "bandCount": 1, "sizeX": 16, "sizeY": 16, "dtype": "uint16",
+                "frames": [{}] * 10,
+                "IndexRange": {"IndexC": 2, "IndexZ": 5},
+                "IndexStride": {"IndexC": 1, "IndexZ": 2},
+                "channels": ["DAPI", "CY3"],
+            },
+        }
+        folder = self._makeFolder(
+            admin, "incomplete_assignments_dataset", metadata, monkeypatch
+        )
+
+        dry = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"dryRun": True}),
+            type="application/json",
+        )
+        assertStatusOk(dry)
+        assert dry.json["validationError"] == "Not all variables are assigned"
+
+        # The whole point: the response carries enough to build the fix.
+        variables = dry.json["variables"]
+        filenameVar = next(
+            v for v in variables if v["source"] == "filename"
+        )
+        assert dry.json["assignments"]["XY"] is None
+
+        # A real run still refuses...
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+        assert resp.json["message"] == "Not all variables are assigned"
+
+        # ...until the caller uses what the dry run told them.
+        fixed = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({
+                "transcode": False,
+                "assignments": {"XY": {
+                    "source": filenameVar["source"],
+                    "guess": filenameVar["guess"],
+                }},
+            }),
+            type="application/json",
+        )
+        assertStatusOk(fixed)
+        assert fixed.json["assignments"]["XY"]["source"] == "filename"
+
+    def testDryRunStillRejectsMalformedBodies(self, admin, server):
+        """Malformed requests are not discovery results: they 400 even in
+        a dry run."""
+        folder = utilities.createFolder(
+            admin, "dry_malformed_dataset", upenn_utilities.datasetMetadata
+        )
+        Item().createItem("placeholder.tif", admin, folder)
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({
+                "dryRun": True, "assignments": {"bogus": None},
+            }),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+        # The folder's item is also file-less, which is a second route to a
+        # 400. Pin the reason, or this passes even if body parsing stopped
+        # running before the items are inspected.
+        assert "bogus" in resp.json["message"]
 
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")

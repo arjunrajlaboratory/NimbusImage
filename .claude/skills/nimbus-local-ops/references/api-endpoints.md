@@ -113,6 +113,66 @@ curl -s -X PUT -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   "http://localhost:8080/api/v1/upenn_collection/$COLLECTION_ID/metadata"
 ```
 
+## dataset (multi-source configuration)
+
+Turns a folder of uploaded image files into a configured dataset — the REST
+equivalent of the frontend's MultiSourceConfiguration screen. The folder must
+already be a dataset (`meta.subtype == "contrastDataset"`) with the image
+items uploaded into it.
+
+```bash
+# Discover what the configuration would be, writing nothing.
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"dryRun": true}' \
+  "http://localhost:8080/api/v1/dataset/$DATASET_ID/multi_source"
+
+# Configure for real (transcode defaults to true unless every file is .nd2)
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"transcode": false}' \
+  "http://localhost:8080/api/v1/dataset/$DATASET_ID/multi_source"
+```
+
+Body fields (all optional): `assignments`, `transcode`, `splitRGBBands`
+(default `true`), `enableCompositing` (default `false`), `createView`
+(default `true`), `dryRun`.
+
+`createView` also builds the collection and dataset view the web UI needs,
+with the same default layers the UI would create. Leave it on unless you are
+creating your own — without a view the dataset cannot be opened in the
+browser and does not appear in listings that enumerate views.
+
+**Start with `dryRun`.** It returns the computed `config`, `variables`,
+`assignments`, `dimensionLabels`, plus `validationError` — `null` when the
+configuration is valid, otherwise the same message the UI would show. A real
+run turns that message into a 400, so the dry run is the only way to see the
+`variables` list you need in order to fix it.
+
+The common failure is `"Not all variables are assigned"`: filenames and file
+metadata together produced more variables than the four dimensions' defaults
+fill. Read `variables` from the dry run and assign the leftover one:
+
+```bash
+# dryRun said: Filename variable 1 (source=filename, guess=C, size=2) unassigned
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"assignments": {"XY": {"source": "filename", "guess": "C"}},
+       "transcode": false}' \
+  "http://localhost:8080/api/v1/dataset/$DATASET_ID/multi_source"
+```
+
+Each `assignments` entry is `{"source", "guess"}` copied from a variable in the
+dry run (or `null` to leave a dimension unassigned); omitted dimensions keep
+their default. `source` is `filename`, `file`, or `images`.
+
+Other 400s: `"Source images use different pixel types (…)"` (all sources must
+share a `dtype`), an item with zero files, and an item with more than one file.
+A second call on a configured folder returns 409.
+
+On success the response has `itemId` (the new `multi-source2.json`), `jobId`
+(the transcode job, or `null`), `collectionId` / `viewId` (or `null` with
+`createView: false`), and the config. Caches are **not** warmed —
+the frontend additionally calls `tile_frames`, `cache_maxmerge` and
+`histogram` after configuring, so the first open is slower than via the UI.
+
 ## dataset_view
 
 ```bash

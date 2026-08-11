@@ -172,6 +172,62 @@ class PixelSize(BaseModel):
         return other * self.value
 
 
+class MultiSourceConfiguration(BaseModel):
+    """Result of configuring a folder of image files as a dataset.
+
+    Returned by ``Dataset.configure()``. On a dry run ``item_id`` and
+    ``job_id`` are ``None`` and nothing was written.
+
+    ``validation_error`` is the whole point of a dry run: it is ``None``
+    when the configuration is usable, and otherwise carries the same
+    message the web UI would show (e.g. "Not all variables are assigned").
+    A non-dry run raises on that condition instead, so inspect it here —
+    alongside ``variables`` — to work out which ``assignments`` override
+    to pass.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    item_id: str | None = Field(None, alias="itemId")
+    job_id: str | None = Field(None, alias="jobId")
+    collection_id: str | None = Field(None, alias="collectionId")
+    view_id: str | None = Field(None, alias="viewId")
+    config: dict = Field(default_factory=dict)
+    dimension_labels: dict = Field(
+        default_factory=dict, alias="dimensionLabels"
+    )
+    variables: list[dict] = Field(default_factory=list)
+    assignments: dict = Field(default_factory=dict)
+    transcode: bool = False
+    transcode_default: bool = Field(False, alias="transcodeDefault")
+    is_rgb_file: bool = Field(False, alias="isRGBFile")
+    rgb_band_count: int = Field(0, alias="rgbBandCount")
+    validation_error: str | None = Field(None, alias="validationError")
+
+    @property
+    def is_valid(self) -> bool:
+        """Whether this configuration would be accepted by a real run."""
+        return self.validation_error is None
+
+    @property
+    def unassigned_variables(self) -> list[dict]:
+        """Variables no dimension is currently using.
+
+        These are what an ``assignments`` override has to account for when
+        ``validation_error`` is "Not all variables are assigned"; pass a
+        variable's ``source``/``guess`` under the dimension you want it on.
+        """
+        # Match on `name`, which the server generates unique per variable
+        # ("Filename variable 2", "Metadata 1 (Z)"), rather than on
+        # (source, guess) -- that pair is unique today only because of an
+        # invariant on the other side of the wire.
+        used = {a["name"] for a in self.assignments.values() if a}
+        return [v for v in self.variables if v["name"] not in used]
+
+    def to_dict(self) -> dict:
+        return self.model_dump(by_alias=True)
+
+
 class FrameInfo(BaseModel):
     """Metadata for a single image frame."""
 
