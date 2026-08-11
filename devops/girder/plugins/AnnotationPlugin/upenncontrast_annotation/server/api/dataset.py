@@ -40,6 +40,7 @@ from ..helpers.multi_source import (
 )
 from ..models.collection import Collection as CollectionModel
 from ..models.datasetView import DatasetView as DatasetViewModel
+from ..models.userColors import UserColors as UserColorsModel
 
 MULTI_SOURCE_ITEM_NAME = "multi-source2.json"
 _NO_DIMENSION_LABELS = object()
@@ -57,6 +58,7 @@ class Dataset(Resource):
         self._imageItemModel = ImageItem()
         self._collectionModel = CollectionModel()
         self._datasetViewModel = DatasetViewModel()
+        self._userColorsModel = UserColorsModel()
 
         self.route("POST", (":id", "multi_source"), self.createMultiSource)
 
@@ -212,15 +214,15 @@ class Dataset(Resource):
             )
             dimensionLabelsSet = True
 
-            # Clear the large images BEFORE scheduling the transcode, the way
-            # the frontend does (store.addMultiSourceMetadata clears every
-            # item, then calls generateTiles).  Ordering matters: girder's
-            # largeImage.autoSet marks the configuration we just uploaded
-            # (large_image's "multi" source can read it), and
-            # createImageItem refuses an item that already has one.
-            self._removeLargeImages(items, newItem if transcode else None)
-
             if transcode:
+                # The configuration we just uploaded has already been
+                # marked by girder's largeImage.autoSet (large_image's
+                # "multi" source reads JSON), and createImageItem refuses
+                # an item that already has one, so clear it first. Its own
+                # file survives: ImageItem().delete only removes the
+                # underlying file for worker-converted images, which carry
+                # largeImage.originalId.
+                self._imageItemModel.delete(newItem)
                 job = self._imageItemModel.createImageItem(
                     newItem, newFile, user=user, token=token,
                     createJob="always", localJob=True,
@@ -241,6 +243,14 @@ class Dataset(Resource):
                     "layerContrasts": {},
                     "lastLocation": {"xy": 0, "z": 0, "time": 0},
                 })
+
+            # Clearing the SOURCE items is destructive and NOT undoable:
+            # items that autoSet marked before this request are absent from
+            # newlyMarked, so the rollback below cannot put them back, and
+            # for a worker-converted source ImageItem().delete also removes
+            # the derived image file. Do it last, once nothing fallible is
+            # left, rather than before the transcode and view creation.
+            self._removeLargeImages(items)
             committed = True
 
             return {
@@ -457,39 +467,43 @@ class Dataset(Resource):
         assignments = result["assignments"]
         firstTile = tilesMetadata[0] if tilesMetadata else {}
 
+        # Compositing lays the sources out by stage position and forces
+        # every xySet to 0, so the configured image has ONE xy position no
+        # matter how big the XY assignment was. Recording the assignment
+        # size here would make areCompatibles() report the collection as
+        # incompatible with the dataset it was just created for.
+        xyCount = 1 if result["compositing"] else self._assignedSize(
+            assignments, "XY",
+        )
+
         metadata = build_default_configuration(
             # Post-RGB-expansion channel names, so the layers match what
             # the configured image actually exposes.
             result["config"]["channels"],
-            xy_count=self._assignedSize(assignments, "XY"),
+            xy_count=xyCount,
             z_count=self._assignedSize(assignments, "Z"),
             t_count=self._assignedSize(assignments, "T"),
             mm_x=firstTile.get("mm_x"),
             mm_y=firstTile.get("mm_y"),
             dimension_labels=result["dimensionLabels"],
+            # The UI threads the configuring user's saved palette into
+            # newLayer; without it an API-created collection silently
+            # ignores their colours.
+            user_colors=self._userColorsModel.getUserColors(user),
         )
         return self._collectionModel.createCollection(
             folder["name"], user, folder, metadata,
             description="Created with the dataset",
         )
 
-    def _removeLargeImages(self, items, configItem):
-        """Remove the largeImage marking, mirroring the frontend.
+    def _removeLargeImages(self, items):
+        """Clear the largeImage marking from the source items.
 
-        ``configItem`` is the newly uploaded configuration when its tiles are
-        about to be regenerated (transcoding), otherwise ``None``.  When
-        transcoding, the frontend clears every item including the
-        configuration, because girder's ``largeImage.autoSet`` has already
-        marked it and ``createImageItem`` rejects an item that has one; the
-        configuration's own file survives, since ``ImageItem().delete`` only
-        removes the underlying file for worker-converted images (those carry
-        ``largeImage.originalId``, which an autoSet mark never does).
-        Otherwise only source items that are marked as large images are
-        cleared, and the configuration keeps its mark.
+        Mirrors the frontend, which stops treating the individual files as
+        images once they are only inputs to the combined one. The
+        configuration item is not in ``items`` and keeps its own mark --
+        that mark is what makes the dataset readable.
         """
-        if configItem is not None:
-            itemsToClear = list(items) + [configItem]
-        else:
-            itemsToClear = [item for item in items if "largeImage" in item]
-        for item in itemsToClear:
-            self._imageItemModel.delete(item)
+        for item in items:
+            if "largeImage" in item:
+                self._imageItemModel.delete(item)

@@ -28,6 +28,7 @@ from helpers.default_configuration import (  # noqa: E402
     build_scales,
     infer_z_step_um,
     parse_length_label_um,
+    resolve_channel_colors,
 )
 
 _MODEL_TS = os.path.abspath(os.path.join(
@@ -275,3 +276,41 @@ class TestColourTableParity:
     def testChannelColoursMatch(self):
         _, channels = self._frontendTables()
         assert CHANNEL_COLORS == channels
+
+
+class TestUserColorOverrides:
+    """The frontend threads the configuring user's saved palette into
+    newLayer; an API-created collection must do the same or it silently
+    differs from a UI-created one."""
+
+    def testUserOverrideWinsOverTheDefaultTable(self):
+        layers = build_default_layers(
+            ["GFP"], id_factory=_ids(), user_colors={"GFP": "#123456"},
+        )
+        assert layers[0]["color"] == "#123456"
+
+    def testUnrelatedDefaultsSurviveTheMerge(self):
+        layers = build_default_layers(
+            ["GFP", "DAPI"], id_factory=_ids(),
+            user_colors={"GFP": "#123456"},
+        )
+        assert [layer["color"] for layer in layers] == [
+            "#123456", CHANNEL_COLORS["DAPI"],
+        ]
+
+    def testOverrideCanIntroduceAClashHandledLikeAnyOther(self):
+        layers = build_default_layers(
+            ["GFP", "DAPI"], id_factory=_ids(),
+            user_colors={"DAPI": CHANNEL_COLORS["GFP"]},
+        )
+        assert layers[0]["color"] == CHANNEL_COLORS["GFP"]
+        assert layers[1]["color"] != layers[0]["color"]
+
+    def testNoOverridesIsTheDefaultTable(self):
+        assert resolve_channel_colors() == CHANNEL_COLORS
+        assert resolve_channel_colors({}) == CHANNEL_COLORS
+
+    def testMergeDoesNotMutateTheSharedTable(self):
+        before = dict(CHANNEL_COLORS)
+        resolve_channel_colors({"GFP": "#123456"})
+        assert CHANNEL_COLORS == before

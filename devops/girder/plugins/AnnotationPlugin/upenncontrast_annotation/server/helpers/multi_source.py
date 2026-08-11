@@ -864,7 +864,15 @@ def generate_multi_source_config(item_names, tiles_metadata,
         "singleBand": is_multiband_rgb,
     }
     dimension_labels = {"xy": xy_labels, "z": z_labels, "t": t_labels}
-    return {"config": config, "dimensionLabels": dimension_labels}
+    # `compositing` is not just an echo of the request: the sources are
+    # laid out by stage position and every xySet is forced to 0, so the
+    # resulting image has ONE xy position regardless of the assignment's
+    # size. Callers describing the dataset's extent need to know.
+    return {
+        "config": config,
+        "dimensionLabels": dimension_labels,
+        "compositing": should_composite,
+    }
 
 
 def _assignment_summary(assignment):
@@ -884,9 +892,10 @@ def compute_configuration(item_names, tiles_metadata, internal_metadata, *,
     """Chain the pipeline: build dimensions, resolve assignments (defaults
     or an explicit strategy) and generate the config + labels.
 
-    Returns a dict with ``config``, ``dimensionLabels``, ``variables``
-    (the dimensions), ``assignments`` (summaries), ``transcodeDefault``,
-    ``isRGBFile`` and ``rgbBandCount``.
+    Returns a dict with ``config``, ``dimensionLabels``, ``compositing``
+    (whether the sources were actually composited, which collapses xy to a
+    single position), ``variables`` (the dimensions), ``assignments``
+    (summaries), ``transcodeDefault``, ``isRGBFile`` and ``rgbBandCount``.
     """
     built = build_dimensions(item_names, tiles_metadata)
     dimensions = built["dimensions"]
@@ -909,6 +918,7 @@ def compute_configuration(item_names, tiles_metadata, internal_metadata, *,
     return {
         "config": generated["config"],
         "dimensionLabels": generated["dimensionLabels"],
+        "compositing": generated["compositing"],
         "variables": dimensions,
         "assignments": {
             dim: _assignment_summary(assignments.get(dim))

@@ -144,13 +144,23 @@ def infer_z_step_um(dimension_labels):
     return _median_positive_spacing(positions)
 
 
-def build_default_layers(channel_names, id_factory=None):
+def resolve_channel_colors(user_colors=None):
+    """Port of ``getChannelColors``: defaults with the user's overrides on
+    top. The frontend threads the configuring user's saved palette through
+    ``createConfigurationFromDataset`` into ``newLayer``, so an
+    API-created collection has to honour it or it silently differs from a
+    UI-created one."""
+    return {**CHANNEL_COLORS, **(user_colors or {})}
+
+
+def build_default_layers(channel_names, id_factory=None, user_colors=None):
     """Port of ``getDefaultLayers`` (at most six layers, one per channel).
 
     ``id_factory`` exists so tests can pin ids; production uses uuid4 like
     the frontend.
     """
     new_id = id_factory or (lambda: str(uuid.uuid4()))
+    channel_colors = resolve_channel_colors(user_colors)
     layers = []
     for index in range(min(6, len(channel_names))):
         # newLayer picks the first unused channel and, for a fresh
@@ -158,7 +168,7 @@ def build_default_layers(channel_names, id_factory=None):
         name = channel_names[index] or "Channel %d" % index
         used_colors = {layer["color"] for layer in layers}
 
-        color = CHANNEL_COLORS.get(name.upper())
+        color = channel_colors.get(name.upper())
         if not color or color in used_colors:
             unused = [c for c in COLORS if c not in used_colors]
             color = unused[0] if unused else COLORS[len(layers) % len(COLORS)]
@@ -222,7 +232,8 @@ def build_scales(mm_x, mm_y, dimension_labels, has_tile_metadata=True):
 
 def build_default_configuration(channel_names, *, xy_count, z_count,
                                 t_count, mm_x=None, mm_y=None,
-                                dimension_labels=None, id_factory=None):
+                                dimension_labels=None, id_factory=None,
+                                user_colors=None):
     """Port of ``defaultConfigurationBase`` + the ``subtype`` the frontend
     adds in ``createConfigurationFromBase``. Returns collection metadata.
     """
@@ -231,7 +242,10 @@ def build_default_configuration(channel_names, *, xy_count, z_count,
         "compatibility": build_compatibility(
             channel_names, xy_count, z_count, t_count,
         ),
-        "layers": build_default_layers(channel_names, id_factory=id_factory),
+        "layers": build_default_layers(
+            channel_names, id_factory=id_factory,
+            user_colors=user_colors,
+        ),
         "tools": [],
         "propertyIds": [],
         "snapshots": [],

@@ -178,3 +178,49 @@ def test_parity(path):
     assert result["transcodeDefault"] == expected["transcodeDefault"]
     assert default_assignments == expected["defaultAssignments"]
     assert filename_variables == expected["filenameVariables"]
+
+
+def _load(name):
+    with open(os.path.join(_FIXTURE_DIR, name), encoding="utf-8") as handle:
+        return json.load(handle)["input"]
+
+
+@pytest.mark.skipif(
+    not os.path.isfile(
+        os.path.join(_FIXTURE_DIR, "nd2_compositing_identity.json")
+    ),
+    reason="compositing fixture missing",
+)
+class TestCompositingCollapsesXY:
+    """`compositing` in the result is not an echo of the request.
+
+    When the sources are actually composited they are laid out by stage
+    position and every ``xySet`` is forced to 0, so the configured image
+    has ONE xy position however large the XY assignment was. The endpoint
+    reads this flag to record the dataset's real extent in the collection's
+    compatibility block -- recording the assignment size instead made
+    ``areCompatibles()`` report the new collection as incompatible with the
+    dataset it had just been created for.
+    """
+
+    @staticmethod
+    def _run(enable_compositing):
+        inp = _load("nd2_compositing_identity.json")
+        return compute_configuration(
+            inp["itemNames"], inp["tilesMetadata"],
+            inp["tilesInternalMetadata"],
+            strategy=(inp.get("options") or {}).get("assignmentStrategy"),
+            split_rgb_bands=True,
+            enable_compositing=enable_compositing,
+        )
+
+    def test_compositing_reported_and_xy_collapsed(self):
+        result = self._run(True)
+        assert result["compositing"] is True
+        assert {s["xySet"] for s in result["config"]["sources"]} == {0}
+
+    def test_not_compositing_when_not_requested(self):
+        result = self._run(False)
+        assert result["compositing"] is False
+        # ...and then the XY assignment's size is the real extent.
+        assert "xySet" not in result["config"]["sources"][0]

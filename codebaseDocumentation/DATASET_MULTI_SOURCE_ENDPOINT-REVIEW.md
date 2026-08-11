@@ -58,6 +58,25 @@ assigned — leaking the collection. Caught by
 `testViewFailureRollsBackTheWholeRequest`. Each resource is now assigned to its
 own variable as it is created.
 
+## Third round (Codex, commit b273889f)
+
+| # | Severity | Location | Summary | Status |
+|---|---|---|---|---|
+| X1 | P2 | `server/api/dataset.py` | Clearing the source items ran before the transcode and view creation, so a later failure destroyed `largeImage` state this request did not create and cannot restore — and deletes the derived file for a worker-converted source | fixed — the destructive clear is now the last step |
+| X2 | P2 | `server/api/dataset.py` | Compositing forces every `xySet` to 0, so the image has one XY position, but the collection recorded the assignment size and `areCompatibles()` would call it incompatible with its own dataset | fixed — `compute_configuration` reports `compositing`, and the compatibility block uses `xy_count=1` when it is set |
+| X3 | P2 | `server/helpers/default_configuration.py` | The creator's saved channel-colour overrides were ignored, so API-created collections silently differed from UI-created ones | fixed — `resolve_channel_colors` merges them, loaded via `UserColors().getUserColors(user)` |
+
+All three were verified against the frontend before fixing: `areCompatibles`
+does compare `xyDimensions` exactly, and `createConfigurationFromDataset` does
+thread `userColors` into `newLayer`.
+
+X1 is the sharper version of a trade-off the second round had noticed and
+accepted ("matches the frontend's failure state, and a retry re-marks"). What
+that reasoning missed is the worker-converted case, where `ImageItem().delete`
+removes the derived image file — not recoverable by re-marking. Deferring the
+clear until nothing fallible remains removes the whole class rather than
+arguing about which failures are survivable.
+
 ---
 
 ## P1 — the transcode path 500s on a real backend
@@ -277,6 +296,18 @@ mongodb://mongodb:27017"` and
 
 ### Collection and view
 
+- [ ] **A failed run leaves pre-existing `largeImage` state alone.** Items
+  marked before the request are not in `newlyMarked` and cannot be restored,
+  and clearing a worker-converted source deletes its derived file, so the
+  clear must come after everything fallible. —
+  *"testPreExistingLargeImagesSurviveAFailedRun"*
+- [ ] **Compositing collapses XY to one position, and the collection says
+  so.** Otherwise `areCompatibles()` rejects the collection for its own
+  dataset. — *"test_compositing_reported_and_xy_collapsed"*,
+  *"test_not_compositing_when_not_requested"*
+- [ ] **The creator's channel-colour overrides are honoured.** —
+  *"testUserChannelColoursAreHonoured"*, *"testUserOverrideWinsOverTheDefaultTable"*,
+  *"testMergeDoesNotMutateTheSharedTable"*
 - [ ] **A configured dataset gets a collection and a view by default.**
   Without them the UI has nothing to open and view-based listings cannot see
   it. — *"testCreatesCollectionAndViewByDefault"*

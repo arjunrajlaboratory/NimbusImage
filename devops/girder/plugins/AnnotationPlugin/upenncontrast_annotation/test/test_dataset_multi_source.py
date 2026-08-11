@@ -709,6 +709,82 @@ class TestDatasetMultiSourcePipeline:
             {"folderId": folder["_id"]}
         ) is None
 
+    def testPreExistingLargeImagesSurviveAFailedRun(
+        self, admin, server, largeImageCapable, monkeypatch
+    ):
+        """Source items marked before this request (autoSet does that on
+        upload) are absent from newlyMarked, so the rollback cannot put
+        them back -- and for a worker-converted source, clearing also
+        deletes the derived file. Clearing must therefore come after
+        everything that can still fail."""
+        from ..server.models.datasetView import (
+            DatasetView as DatasetViewModel,
+        )
+
+        def boom(self, creator, dataset_view):
+            raise ValueError("forced dataset view failure")
+
+        monkeypatch.setattr(DatasetViewModel, "create", boom)
+        folder = self._makeDatasetFolder(admin, "preexisting_marks_dataset")
+        # Mark them up front, the way autoSet would, so they are NOT this
+        # request's to roll back.
+        for item in Item().find({"folderId": folder["_id"]}):
+            if "largeImage" not in item:
+                ImageItem().createImageItem(
+                    item, _firstFile(item), user=admin, createJob=False,
+                )
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+            exception=True,
+        )
+        assertStatus(resp, 500)
+
+        sourceItems = list(Item().find({
+            "folderId": folder["_id"],
+            "name": {"$ne": MULTI_SOURCE_ITEM_NAME},
+        }))
+        assert len(sourceItems) == 2
+        for item in sourceItems:
+            assert "largeImage" in item, (
+                "a failed run destroyed pre-existing largeImage state"
+            )
+
+    def testUserChannelColoursAreHonoured(
+        self, admin, server, largeImageCapable
+    ):
+        """The UI passes the configuring user's saved palette into
+        newLayer; the endpoint must too."""
+        from ..server.models.userColors import (
+            UserColors as UserColorsModel,
+        )
+        UserColorsModel().setUserColors(admin, {"CHANA": "#123456"})
+
+        folder = self._makeDatasetFolder(admin, "user_colours_dataset")
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({"transcode": False}),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+
+        from ..server.models.collection import Collection as CollectionModel
+        collection = CollectionModel().load(
+            ObjectId(resp.json["collectionId"]), user=admin,
+            level=AccessType.READ, exc=True,
+        )
+        colours = {
+            layer["name"]: layer["color"]
+            for layer in collection["meta"]["layers"]
+        }
+        assert colours["chanA"] == "#123456"
+
     def testTranscodeSchedulesJobWhenConfigIsAutoMarked(
         self, admin, server, largeImageCapable, largeImageAutoSet
     ):
