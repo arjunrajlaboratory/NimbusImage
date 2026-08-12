@@ -1,4 +1,5 @@
 import re
+import threading
 
 import fastjsonschema
 
@@ -15,6 +16,10 @@ from ..helpers import analysis
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
+from ..helpers.annotationRaster import (
+    bumpDatasetRasterVersion,
+    bumpGlobalRasterVersion,
+)
 from .propertyValues import AnnotationPropertyValues
 
 # Bound any single aggregation's DB runtime so one expensive query (e.g. over a
@@ -138,6 +143,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # The property-values model, for PV-driven list queries. Girder
         # model instances are cached singletons, so this is cheap.
         self._pvModel = AnnotationPropertyValues()
+        # saveMany replaces existing rows through removeWithQuery. Suppress
+        # that internal removal's broad invalidation in the current thread;
+        # saveMany bumps the saved documents' datasets after success.
+        self._rasterMutationState = threading.local()
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)
@@ -205,6 +214,56 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def validate(self, document):
         return self.validateMultiple([document])[0]
+
+    def save(self, document, validate=True, triggerEvents=True):
+        # An annotation belongs to exactly one dataset. The only path that
+        # changes datasetId is updateMultiple, which bumps the source
+        # dataset itself, so bumping the saved dataset suffices here.
+        saved = super().save(document, validate, triggerEvents)
+        bumpDatasetRasterVersion(saved.get("datasetId"))
+        return saved
+
+    def saveMany(self, documents, validate=True, triggerEvents=True):
+        previous = getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        )
+        self._rasterMutationState.suppressRemoveBump = True
+        try:
+            saved = super().saveMany(documents, validate, triggerEvents)
+        finally:
+            self._rasterMutationState.suppressRemoveBump = previous
+        for datasetId in set(
+            document.get("datasetId") for document in saved
+        ):
+            bumpDatasetRasterVersion(datasetId)
+        return saved
+
+    def remove(self, document, **kwargs):
+        previous = getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        )
+        self._rasterMutationState.suppressRemoveBump = True
+        try:
+            result = super().remove(document, **kwargs)
+        finally:
+            self._rasterMutationState.suppressRemoveBump = previous
+        bumpDatasetRasterVersion(document.get("datasetId"))
+        return result
+
+    def removeWithQuery(self, query):
+        result = super().removeWithQuery(query)
+        if getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        ):
+            return result
+        datasetId = query.get("datasetId")
+        if isinstance(datasetId, ObjectId):
+            bumpDatasetRasterVersion(datasetId)
+        else:
+            # Bulk-id deletion does not carry dataset ids into the model.
+            # A global epoch is the safe no-query fallback.
+            bumpGlobalRasterVersion()
+        return result
 
     def validateMultiple(self, annotations):
         # Validate using the schema
@@ -1138,9 +1197,18 @@ class Annotation(AccessControlMixin, ProxiedModel):
         expectedIds = set(annotationIdToUpdate.keys())
         foundIds = set()
         updatedAnnotations = []
+        movedSourceDatasetIds = set()
         for annotation in cursor:
             annotationId = annotation["_id"]
             updateDoc = annotationIdToUpdate[annotationId]
+            newDatasetId = updateDoc.get("datasetId")
+            if (
+                newDatasetId is not None
+                and newDatasetId != annotation.get("datasetId")
+            ):
+                # This is the only path that moves an annotation between
+                # datasets; saveMany only bumps the destination raster.
+                movedSourceDatasetIds.add(annotation.get("datasetId"))
             annotation.update(updateDoc)
             foundIds.add(annotationId)
             updatedAnnotations.append(annotation)
@@ -1148,7 +1216,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
             raise AccessException(
                 "Write access was denied for one or more annotations."
             )
-        return self.saveMany(updatedAnnotations)
+        saved = self.saveMany(updatedAnnotations)
+        for datasetId in movedSourceDatasetIds:
+            bumpDatasetRasterVersion(datasetId)
+        return saved
 
     def compute(self, datasetId, tool, user=None):
         dataset = Folder().load(

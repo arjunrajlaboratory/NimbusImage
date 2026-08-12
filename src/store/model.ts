@@ -303,6 +303,7 @@ export interface IActiveTool<T extends TToolType = TToolType> {
 
 export enum ProgressType {
   ANNOTATION_FETCH = "ANNOTATION_FETCH",
+  ANNOTATION_RASTER = "ANNOTATION_RASTER",
   ANNOTATION_SAVE = "ANNOTATION_SAVE",
   ANNOTATION_DELETE = "ANNOTATION_DELETE",
   ANNOTATION_COMPUTE = "ANNOTATION_COMPUTE",
@@ -348,27 +349,28 @@ export interface INotification {
 
 export const PROGRESS_TYPE_ORDER = new Map<ProgressType, number>([
   [ProgressType.ANNOTATION_FETCH, 0],
-  [ProgressType.ANNOTATION_SAVE, 1],
-  [ProgressType.ANNOTATION_DELETE, 2],
-  [ProgressType.ANNOTATION_COMPUTE, 3],
-  [ProgressType.BATCH_ANNOTATION_COMPUTE, 4],
-  [ProgressType.PROPERTY_FETCH, 5],
-  [ProgressType.PROPERTY_COMPUTE, 6],
-  [ProgressType.BATCH_PROPERTY_COMPUTE, 7],
-  [ProgressType.CONNECTION_FETCH, 8],
-  [ProgressType.CONNECTION_SAVE, 9],
-  [ProgressType.CONNECTION_DELETE, 10],
-  [ProgressType.VIEW_FETCH, 11],
-  [ProgressType.LAYER_CACHE, 12],
-  [ProgressType.QUADTILE_CACHE, 13],
-  [ProgressType.MAXMERGE_SCHEDULE, 14],
-  [ProgressType.MAXMERGE_CACHE, 15],
-  [ProgressType.HISTOGRAM_SCHEDULE, 16],
-  [ProgressType.HISTOGRAM_CACHE, 17],
-  [ProgressType.MOVIE_GENERATION, 18],
-  [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 19],
-  [ProgressType.ZENODO_UPLOAD, 20],
-  [ProgressType.GENERIC, 21],
+  [ProgressType.ANNOTATION_RASTER, 1],
+  [ProgressType.ANNOTATION_SAVE, 2],
+  [ProgressType.ANNOTATION_DELETE, 3],
+  [ProgressType.ANNOTATION_COMPUTE, 4],
+  [ProgressType.BATCH_ANNOTATION_COMPUTE, 5],
+  [ProgressType.PROPERTY_FETCH, 6],
+  [ProgressType.PROPERTY_COMPUTE, 7],
+  [ProgressType.BATCH_PROPERTY_COMPUTE, 8],
+  [ProgressType.CONNECTION_FETCH, 9],
+  [ProgressType.CONNECTION_SAVE, 10],
+  [ProgressType.CONNECTION_DELETE, 11],
+  [ProgressType.VIEW_FETCH, 12],
+  [ProgressType.LAYER_CACHE, 13],
+  [ProgressType.QUADTILE_CACHE, 14],
+  [ProgressType.MAXMERGE_SCHEDULE, 15],
+  [ProgressType.MAXMERGE_CACHE, 16],
+  [ProgressType.HISTOGRAM_SCHEDULE, 17],
+  [ProgressType.HISTOGRAM_CACHE, 18],
+  [ProgressType.MOVIE_GENERATION, 19],
+  [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 20],
+  [ProgressType.ZENODO_UPLOAD, 21],
+  [ProgressType.GENERIC, 22],
 ]);
 
 export interface IProgress {
@@ -542,6 +544,9 @@ export interface IDatasetConfigurationBase {
   // compatibility with configurations created before these settings were
   // persisted.
   visibilityConfig?: IVisibilityConfig;
+  // Shared raster-overview settings. Optional for configurations created
+  // before the overview layer was introduced.
+  overviewConfig?: IAnnotationOverviewConfig;
   // Shared annotation-browser state (displayed property columns and property
   // filters). Optional for compatibility with configurations created before
   // this was persisted.
@@ -996,6 +1001,7 @@ export interface IGeoJSLayerSpec {
 // https://opengeoscience.github.io/geojs/apidocs/geo.layer.html
 export interface IGeoJSLayer extends IGeoJsObject {
   visible: (value?: boolean) => boolean | IGeoJSLayer;
+  opacity: (value?: number) => number | IGeoJSLayer;
   draw: () => IGeoJSLayer;
   map: () => IGeoJSMap;
   modes: {
@@ -1101,6 +1107,12 @@ export interface IGeoJSOsmLayer extends IGeoJSLayer {
 
   _imageUrls?: (string | undefined)[];
   _tileBounds: (tile: IGeoJSTile) => IGeoJSBounds;
+  // The tile factory GeoJS documents for derived classes to override. Tiles
+  // have a promise-like interface; `catch` is the only failure signal the
+  // library exposes (there is no tile-error event).
+  _getTile?: (
+    ...args: unknown[]
+  ) => IGeoJSTile & { catch: (callback: (reason?: unknown) => void) => void };
   _options?: {
     minLevel?: number;
     maxLevel?: number;
@@ -1693,6 +1705,33 @@ export interface IVisibilityConfig {
   viewportRefreshFraction: number;
 }
 
+export type TAnnotationOverviewMode = "shapes" | "discs";
+
+export interface IAnnotationOverviewConfig {
+  enabled: boolean;
+  mode: TAnnotationOverviewMode;
+  opacity: number;
+  // Raster is used above this many image pixels per screen pixel; vectors
+  // take over at or below it.
+  vectorSwitchThreshold: number;
+}
+
+export const DEFAULT_ANNOTATION_OVERVIEW_CONFIG: IAnnotationOverviewConfig = {
+  enabled: false,
+  mode: "shapes",
+  opacity: 0.6,
+  vectorSwitchThreshold: 1,
+};
+
+export function resolveAnnotationOverviewConfig(
+  config?: Partial<IAnnotationOverviewConfig>,
+): IAnnotationOverviewConfig {
+  return {
+    ...DEFAULT_ANNOTATION_OVERVIEW_CONFIG,
+    ...config,
+  };
+}
+
 // Annotation count above which the annotation browser list switches to the
 // backend-paginated (server) list, independently of stub-only mode. This is a
 // UI materialization limit (one v-data-table row per annotation, client-side
@@ -2247,6 +2286,7 @@ export interface IMapEntry {
   timelapseLayer: IGeoJSAnnotationLayer;
   timelapseTextLayer: IGeoJSFeatureLayer;
   interactionLayer: IGeoJSAnnotationLayer;
+  annotationOverviewLayer?: IGeoJSOsmLayer;
   uiLayer?: IGeoJSUiLayer;
   lowestLayer?: number;
 }
@@ -2508,6 +2548,7 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       tStep: { value: 1, unit: "s" },
     },
     visibilityConfig: resolveVisibilityConfig(),
+    overviewConfig: resolveAnnotationOverviewConfig(),
     annotationBrowserConfig: {
       displayedPropertyPaths: [],
       filterPaths: [],

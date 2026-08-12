@@ -118,6 +118,17 @@ def requireInt(value, field):
         raise RestException("%s must be an integer" % field, code=400)
 
 
+def requireFloat(value, field):
+    """Parse a finite float query parameter or raise a clean 400."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise RestException("%s must be a number" % field, code=400)
+    if not math.isfinite(parsed):
+        raise RestException("%s must be a finite number" % field, code=400)
+    return parsed
+
+
 def isValidPropertyPath(path):
     """A property path is a non-empty list of non-empty strings with no '.' or
     '$' (which would build a wrong/injected projection key)."""

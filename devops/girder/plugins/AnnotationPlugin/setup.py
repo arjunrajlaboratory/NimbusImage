@@ -36,6 +36,8 @@ setup(
         # pulling it in transitively.
         "numpy",
         "orjson",
+        "numpy",
+        "Pillow",
         "cryptography",
         "requests",
     ],

@@ -74,6 +74,9 @@ function determineTypeAndTitle(payload: {
       case ProgressType.ANNOTATION_FETCH:
         title = "Fetching annotations";
         break;
+      case ProgressType.ANNOTATION_RASTER:
+        title = "Computing annotation overview";
+        break;
       case ProgressType.ANNOTATION_DELETE:
         title = "Deleting annotations";
         break;

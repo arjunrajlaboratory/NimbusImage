@@ -1,3 +1,5 @@
+import math
+
 import orjson
 import cherrypy
 
@@ -6,7 +8,12 @@ from bson.objectid import ObjectId
 
 from girder.api import access
 from girder.api.describe import Description, describeRoute, autoDescribeRoute
-from girder.api.rest import Resource, loadmodel, setResponseHeader
+from girder.api.rest import (
+    Resource,
+    loadmodel,
+    setRawResponse,
+    setResponseHeader,
+)
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
@@ -16,7 +23,10 @@ from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.validation import (
     MAX_LIST_LIMIT,
     dropNoOpPropertyFilters,
+    requireCountWithin,
+    requireFloat,
     requireInt,
+    requireList,
     requireObjectBody,
     requireObjectId,
     validateAnalysisGatePlots,
@@ -27,9 +37,83 @@ from ..helpers.validation import (
 )
 from ..models.annotation import Annotation as AnnotationModel
 from ..helpers.serialization import orJsonDefaults
+from ..helpers.annotationRaster import (
+    COLOR_PATTERN,
+    RasterBuildBusy,
+    RasterBuildRateLimited,
+    RasterGeometryKey,
+    RasterLayerSelector,
+    RasterTileParams,
+    buildRasterEtag,
+    getFrameGeometry,
+    getRasterVersion,
+    parseHexColor,
+    renderRasterTile,
+)
 
 
 # Helper functions to get dataset ID for recordable endpoints
+
+MAX_RASTER_SELECTORS = 64
+
+
+def _parseRasterSelectors(value):
+    if isinstance(value, str):
+        try:
+            value = orjson.loads(value)
+        except orjson.JSONDecodeError:
+            raise RestException("selectors must be valid JSON", 400)
+    selectors = requireList(value, "selectors")
+    if not selectors:
+        raise RestException(
+            "selectors must contain at least one layer", 400
+        )
+    requireCountWithin(
+        len(selectors), MAX_RASTER_SELECTORS, "selectors"
+    )
+    allowedFields = {"channel", "XY", "Z", "Time"}
+    parsed = set()
+    for index, selector in enumerate(selectors):
+        name = "selectors[%d]" % index
+        selector = requireObjectBody(selector, name)
+        if not set(selector).issubset(allowedFields):
+            raise RestException(
+                "%s contains unsupported fields" % name, 400
+            )
+        fields = {}
+        for field in ("channel", "XY", "Z", "Time"):
+            fieldValue = selector.get(field)
+            if field == "channel" and fieldValue is None:
+                raise RestException("%s.channel is required" % name, 400)
+            if fieldValue is None:
+                fields[field] = None
+                continue
+            if not isinstance(fieldValue, int) or isinstance(
+                fieldValue, bool
+            ):
+                raise RestException(
+                    "%s.%s must be an integer" % (name, field), 400
+                )
+            if fieldValue < 0:
+                raise RestException(
+                    "%s.%s must be non-negative" % (name, field), 400
+                )
+            fields[field] = fieldValue
+        parsed.add(RasterLayerSelector(
+            channel=fields["channel"],
+            xy=fields["XY"],
+            z=fields["Z"],
+            time=fields["Time"],
+        ))
+    return tuple(sorted(
+        parsed,
+        key=lambda selector: (
+            selector.channel,
+            -1 if selector.xy is None else selector.xy,
+            -1 if selector.z is None else selector.z,
+            -1 if selector.time is None else selector.time,
+        ),
+    ))
 
 
 def _streamJsonArray(items, prefix=b"[", suffix=b"]", default=None):
@@ -119,6 +203,9 @@ class Annotation(Resource):
         self.route("POST", ("multiple",), self.createMultiple)
         self.route("DELETE", ("multiple",), self.deleteMultiple)
         self.route("GET", ("stubs",), self.stubs)
+        self.route(
+            "GET", ("raster", ":z", ":x", ":y"), self.rasterTile
+        )
         self.route("POST", ("hydrate",), self.hydrate)
         self.route("POST", ("list",), self.listAnnotations)
         self.route("POST", ("list", "ids"), self.listAnnotationIds)
@@ -239,6 +326,11 @@ class Annotation(Resource):
         filtered = self._annotationModel.filterUpdateFields(
             self.getBodyJson()
         )
+        # datasetId is immutable here: only the bulk update endpoint moves
+        # annotations between datasets (with destination access checks and
+        # source raster invalidation), and this endpoint never converts the
+        # body's string ids to ObjectIds.
+        filtered.pop("datasetId", None)
         upenn_annotation.update(filtered)
         self._annotationModel.save(upenn_annotation)
 
@@ -400,9 +492,10 @@ class Annotation(Resource):
     )
     def count(self, params):
         datasetId = ObjectId(params["datasetId"])
+        user = self.getCurrentUser()
         Folder().load(
             datasetId,
-            user=self.getCurrentUser(),
+            user=user,
             level=AccessType.READ,
             exc=True,
         )
@@ -529,6 +622,157 @@ class Annotation(Resource):
 
         setResponseHeader("Content-Type", "application/json")
         return _streamJsonArray(cursor, default=orJsonDefaults)
+
+    # GeoJS loads OSM tiles through <img> requests, which cannot attach the
+    # Girder-Token header used by the REST client.  This read-only route must
+    # therefore opt into Girder's HttpOnly auth cookie; the frontend sets
+    # crossDomain="use-credentials" on the layer so private datasets work.
+    @access.public(scope=TokenScope.DATA_READ, cookie=True)
+    @describeRoute(
+        Description("Render an annotation overview raster tile")
+        .param("z", "Tile pyramid level", paramType="path")
+        .param("x", "Tile x index", paramType="path")
+        .param("y", "Tile y index", paramType="path")
+        .param("datasetId", "Dataset folder id", required=True)
+        .jsonParam(
+            "selectors",
+            "Visible layer channel and optional XY/Z/Time selectors",
+            required=True,
+            requireArray=True,
+        )
+        .param("sizeX", "Full-resolution image width", required=True)
+        .param("sizeY", "Full-resolution image height", required=True)
+        .param("tileSize", "Output tile edge", required=False)
+        .param(
+            "maxLevel",
+            "Maximum level of the image coordinate pyramid",
+            required=True,
+        )
+        .param("mode", "shapes or discs", required=False)
+        .param("color", "Fallback #RRGGBB fill", required=False)
+        .param("pointRadius", "Point radius in tile pixels", required=False)
+        .param("lineWidth", "Line width in tile pixels", required=False)
+        .param("v", "Opaque client cache version", required=False)
+        .errorResponse("Invalid raster tile request", 400)
+        .errorResponse("Authentication required for private dataset", 401)
+        .errorResponse("Read access denied", 403)
+    )
+    def rasterTile(self, z, x, y, params):
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
+        level = requireInt(z, "z")
+        tileX = requireInt(x, "x")
+        tileY = requireInt(y, "y")
+        selectors = _parseRasterSelectors(params.get("selectors"))
+        sizeX = requireInt(params.get("sizeX"), "sizeX")
+        sizeY = requireInt(params.get("sizeY"), "sizeY")
+        tileSize = requireInt(params.get("tileSize", 512), "tileSize")
+        maxLevel = requireInt(params.get("maxLevel"), "maxLevel")
+        lineWidth = requireInt(params.get("lineWidth", 1), "lineWidth")
+        pointRadius = requireFloat(
+            params.get("pointRadius", 3), "pointRadius"
+        )
+
+        for field, value in (("sizeX", sizeX), ("sizeY", sizeY)):
+            if value < 1 or value > 131072:
+                raise RestException(
+                    "%s must be between 1 and 131072" % field, 400
+                )
+        if tileSize not in (256, 512, 1024):
+            raise RestException("tileSize must be 256, 512, or 1024", 400)
+        if maxLevel < 0 or maxLevel > 30:
+            raise RestException("maxLevel must be between 0 and 30", 400)
+        if lineWidth < 1 or lineWidth > 10:
+            raise RestException("lineWidth must be between 1 and 10", 400)
+        if pointRadius < 0.5 or pointRadius > 20:
+            raise RestException(
+                "pointRadius must be between 0.5 and 20", 400
+            )
+
+        mode = params.get("mode", "shapes")
+        if mode not in ("shapes", "discs"):
+            raise RestException("mode must be shapes or discs", 400)
+        fallbackColorValue = params.get("color", "#FFD700")
+        if (
+            not isinstance(fallbackColorValue, str)
+            or not COLOR_PATTERN.fullmatch(fallbackColorValue)
+        ):
+            raise RestException("color must be a #RRGGBB value", 400)
+        clientVersion = params.get("v", "")
+        if not isinstance(clientVersion, str) or len(clientVersion) > 64:
+            raise RestException("v must be at most 64 characters", 400)
+
+        key = RasterGeometryKey(
+            datasetId=datasetId,
+            selectors=selectors,
+            mode=mode,
+        )
+        tileParams = RasterTileParams(
+            geometryKey=key,
+            sizeX=sizeX,
+            sizeY=sizeY,
+            tileSize=tileSize,
+            maxLevel=maxLevel,
+            level=level,
+            x=tileX,
+            y=tileY,
+            fallbackColor=parseHexColor(fallbackColorValue),
+            pointRadius=pointRadius,
+            lineWidth=lineWidth,
+            clientVersion=clientVersion,
+        )
+        if level < 0 or level > maxLevel:
+            raise RestException("z is outside the tile pyramid", 400)
+        scale = tileParams.scale
+        tilesX = int(math.ceil(sizeX * scale / tileSize))
+        tilesY = int(math.ceil(sizeY * scale / tileSize))
+        if tileX < 0 or tileX >= tilesX or tileY < 0 or tileY >= tilesY:
+            raise RestException("x or y is outside the tile pyramid", 400)
+
+        user = self.getCurrentUser()
+        Folder().load(
+            datasetId,
+            user=user,
+            level=AccessType.READ,
+            exc=True,
+        )
+        version = getRasterVersion(datasetId)
+        etag = buildRasterEtag(version, tileParams)
+        setResponseHeader("ETag", etag)
+        # Revalidate so edits from another client can invalidate a revisited
+        # frame. The ETag still makes unchanged reloads a body-less 304.
+        setResponseHeader(
+            "Cache-Control", "private, max-age=0, must-revalidate"
+        )
+        if cherrypy.request.headers.get("If-None-Match") == etag:
+            cherrypy.response.status = 304
+            return b""
+
+        anonymousIdentity = None
+        if user is None:
+            anonymousIdentity = (
+                cherrypy.request.remote.ip,
+                str(datasetId),
+            )
+        try:
+            geometry = getFrameGeometry(
+                self._annotationModel,
+                tileParams,
+                version,
+                anonymousIdentity=anonymousIdentity,
+            )
+        except RasterBuildBusy:
+            setResponseHeader("Retry-After", "1")
+            raise RestException(
+                "Annotation raster geometry is busy; retry shortly", 503
+            )
+        except RasterBuildRateLimited:
+            setResponseHeader("Retry-After", "1")
+            raise RestException(
+                "Too many annotation raster geometry builds", 429
+            )
+        setResponseHeader("Content-Type", "image/png")
+        setRawResponse()
+        return renderRasterTile(geometry, tileParams)
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
