@@ -19,10 +19,11 @@ from . import analysis
 # Request-size sanity ceilings: reject only degenerate/garbage payloads that
 # would build a pathological pipeline, while never affecting real use (a
 # dataset has well under 1K properties; the frontend hydration budget is ~40K
-# ids and even "select all" on a 700K dataset is < 1M). These are guards, not
-# tuning knobs — runtime is bounded by AGGREGATION_MAX_TIME_MS, not by these.
-MAX_UNCOMPUTED_PROPERTIES = 10_000_000
-MAX_ANNOTATION_IDS = 10_000_000
+# ids and even "select all" on a multi-million-annotation dataset is < 100M).
+# These are guards, not tuning knobs — runtime is bounded by
+# AGGREGATION_MAX_TIME_MS, not by these.
+MAX_UNCOMPUTED_PROPERTIES = 100_000_000
+MAX_ANNOTATION_IDS = 100_000_000
 
 # Analysis-gating request ceilings (SERVER_GATING.md "Limits"): abuse guards
 # on the public gate-resolution endpoint, far above real use (a panel holds a

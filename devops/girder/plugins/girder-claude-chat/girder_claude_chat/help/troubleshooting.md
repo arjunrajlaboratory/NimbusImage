@@ -92,6 +92,14 @@ Improving results when analysis is incorrect:
 - For time lapse, check gap handling settings
 - Manually fix critical connections with connection tools
 
+## Unfamiliar Jobs in Jobs & Logs
+
+**"Pulled worker interface for ..." (followed by a worker image name)**:
+- Not an error, and not something the user started directly
+- When a worker tool is added — or when its parameter list isn't already cached — NimbusImage briefly runs the worker just to ask which parameters it accepts. That fetch is itself a job, so it shows up in Recent Jobs, usually immediately before the run that needed it
+- It does no analysis: it creates no objects, computes no properties, and changes no data
+- Safe to ignore. If it fails, the tool's parameter list can't load — check that the worker image is available on the server, then re-add the tool
+
 ## Common Error Messages
 
 **"Worker failed"**:

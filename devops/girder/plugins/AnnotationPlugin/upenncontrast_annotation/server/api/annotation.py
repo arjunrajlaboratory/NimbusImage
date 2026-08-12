@@ -480,7 +480,9 @@ class Annotation(Resource):
                 code=400, message="Missing datasetId parameter"
             )
         return self._annotationModel.compute(
-            datasetId, self.getBodyJson(), self.getCurrentUser()
+            datasetId,
+            requireObjectBody(self.getBodyJson(), "Tool"),
+            self.getCurrentUser(),
         )
 
     @access.public(scope=TokenScope.DATA_READ)

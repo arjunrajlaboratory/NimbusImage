@@ -112,7 +112,12 @@ async function fetchPagesUsingCursor(
   let lastCursor: string | null = null;
   let cursorStuckCount = 0;
   let requestCount = 0;
-  const MAX_REQUESTS = 100; // Safety limit to prevent infinite loops
+  // Safety limit to prevent infinite loops. Combined with the page size
+  // (`limit`, 100K by default) this bounds a single fetch at
+  // MAX_REQUESTS * pageSize = 100M rows -- high enough to page through the
+  // largest real datasets in full, low enough that a runaway cursor can't
+  // loop forever.
+  const MAX_REQUESTS = 1000;
   const MAX_CURSOR_STUCK = 1; // If cursor doesn't change, fall back to offset
 
   try {

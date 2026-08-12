@@ -6,6 +6,7 @@ import json
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
+from nimbusimage._workers import ANNOTATION_ROLE_LABEL, check_worker_role
 from nimbusimage.jobs import Job
 from nimbusimage.models import Annotation, Location
 
@@ -275,6 +276,14 @@ class AnnotationAccessor:
         Returns:
             A Job object. Call ``job.wait()`` to block until completion.
 
+        Raises:
+            ValueError: If ``location`` and ``assignment`` conflict, if
+                ``connect_to`` lacks a ``tags`` key, or if ``image`` is
+                a property worker (its role labels from
+                ``/worker_interface/available`` have ``isPropertyWorker``
+                but not ``isAnnotationWorker``) — property workers must
+                run through ``ds.properties.compute`` instead.
+
         Note:
             The worker container uses ``WorkerClient`` from the
             ``worker_client`` package, which requires all of these keys
@@ -308,6 +317,12 @@ class AnnotationAccessor:
                 "connect_to must contain a 'tags' key "
                 "(e.g., {'tags': ['nucleus'], 'channel': 0})"
             )
+
+        # Reject property workers before submitting: they crash on the
+        # annotation-compute payload (list-valued tags) after the job
+        # has already started. After the cheap argument checks above so
+        # bad arguments fail without an HTTP round-trip.
+        check_worker_role(self._gc, image, ANNOTATION_ROLE_LABEL)
 
         body = {
             "datasetId": self._dataset_id,
