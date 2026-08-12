@@ -207,7 +207,9 @@ of `filename`, `file` (embedded metadata such as ND2 IndexRange), or `images`
 
 Failures come back as `girder_client.HttpError`: 400 for an invalid
 configuration — unassigned variables, **sources with different pixel types**
-(every file must share a `dtype`), an item with zero or several files — and 409
+(every file must share a `dtype`), an item with zero or several files, and
+filenames whose parts do not line up (`a.tif` alongside `b_x_0.tif`: the web UI
+cannot configure that folder either) — and 409
 if the dataset is already configured. Reconfiguring means starting from a new
 dataset.
 

@@ -319,8 +319,9 @@ class Dataset:
         Raises:
             girder_client.HttpError: 400 if the configuration is invalid
                 (unassigned variables, mixed pixel types across sources, an
-                item with zero or several files), 409 if the dataset is
-                already configured.
+                item with zero or several files, or filenames whose parts do
+                not line up -- the web UI cannot configure that folder
+                either), 409 if the dataset is already configured.
 
         Note:
             Unlike the web UI, this does not warm the tile/histogram

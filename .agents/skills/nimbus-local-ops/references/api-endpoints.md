@@ -164,7 +164,11 @@ dry run (or `null` to leave a dimension unassigned); omitted dimensions keep
 their default. `source` is `filename`, `file`, or `images`.
 
 Other 400s: `"Source images use different pixel types (…)"` (all sources must
-share a `dtype`), an item with zero files, and an item with more than one file.
+share a `dtype`), an item with zero files, an item with more than one file, and
+`"Filenames do not have a consistent number of parts…"` — e.g. `a.tif` in a
+folder of `b_x_0.tif` / `b_x_1.tif`, where the token that distinguishes the
+files is missing from one name. The web UI cannot configure such a folder
+either (its parser throws), so this is a refusal rather than a divergence.
 A second call on a configured folder returns 409.
 
 On success the response has `itemId` (the new `multi-source2.json`), `jobId`
