@@ -111,6 +111,15 @@ export class Annotations extends VuexModule {
   // When true, annotations[] is empty and all metadata lives in annotationStubs.
   stubOnlyMode: boolean = false;
 
+  // Cheap change identity for annotation CONTENT and MEMBERSHIP. Every
+  // mutation that adds, removes, or edits annotations (or stubs) bumps it;
+  // view-only mutations (hover, selection, activation) must not. Above the
+  // analysis plot cap the server-gate refresh watches this instead of
+  // hashing a 700K-stub population per reactive touch (SERVER_GATING.md).
+  // Guarded by annotationContentRevision.test.ts, including a source scan
+  // that fails by name when a content-changing mutation forgets its bump.
+  contentRevision: number = 0;
+
   // Whether the annotation browser list should use the backend-paginated
   // (server) list instead of materializing a client-side v-data-table. True in
   // stub-only mode (the client has no full annotations to list) and for
@@ -481,6 +490,7 @@ export class Annotations extends VuexModule {
     this.stubOnlyMode = false;
     annotationSpatialIndex.clear();
     viewportHydrationTask.cancel();
+    this.contentRevision++;
   }
 
   // Clear per-dataset annotation state. Call when switching datasets so
@@ -765,6 +775,7 @@ export class Annotations extends VuexModule {
 
     // Spatial index
     annotationSpatialIndex.insert(value.id, centroid.x, centroid.y);
+    this.contentRevision++;
   }
 
   @Mutation
@@ -792,6 +803,7 @@ export class Annotations extends VuexModule {
     }
     this.annotationStubs = markRaw(newStubs);
     this.hydratedAnnotations = markRaw(newHydrated);
+    this.contentRevision++;
   }
 
   @Mutation
@@ -830,6 +842,7 @@ export class Annotations extends VuexModule {
 
     // Insert new position into spatial index
     annotationSpatialIndex.insert(annotation.id, centroid.x, centroid.y);
+    this.contentRevision++;
   }
 
   @Mutation
@@ -837,6 +850,7 @@ export class Annotations extends VuexModule {
     if (!values.length) {
       return;
     }
+    this.contentRevision++;
 
     const nextAnnotations = [...this.annotations];
     const nextStubs = new Map(this.annotationStubs);
@@ -923,6 +937,7 @@ export class Annotations extends VuexModule {
     // updateVisibilityAndHydration
     this.hydratedAnnotations = markRaw(new Map());
     this.stubOnlyMode = false;
+    this.contentRevision++;
   }
 
   @Mutation
@@ -953,6 +968,7 @@ export class Annotations extends VuexModule {
     // Mean radius feeds the density-derived zoomed-out render budget.
     this.averageStubRadius = radiusCount > 0 ? radiusSum / radiusCount : 0;
     annotationSpatialIndex.bulkLoad(spatialItems);
+    this.contentRevision++;
   }
 
   @Mutation
@@ -969,6 +985,7 @@ export class Annotations extends VuexModule {
     this.annotationStubs = markRaw(newStubs);
     this.hydratedAnnotations = markRaw(newHydrated);
     this.annotationCentroids = markRaw(newCentroids);
+    this.contentRevision++;
   }
 
   @Mutation
@@ -984,6 +1001,7 @@ export class Annotations extends VuexModule {
     if (!updates.length) {
       return;
     }
+    this.contentRevision++;
     const newStubs = new Map(this.annotationStubs);
     const newHydrated = new Map(this.hydratedAnnotations);
     for (const update of updates) {

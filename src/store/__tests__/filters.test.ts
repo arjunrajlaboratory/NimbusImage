@@ -4,28 +4,33 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // exercise the real refreshPropertyFilterPassingIds action and the
 // filteredAnnotations getter in isolation. ./root stays real — the dynamic
 // module registers on it.
-const { fetchAnnotationListIds, annotationMock, propertiesMock } = vi.hoisted(
-  () => ({
-    fetchAnnotationListIds: vi.fn(),
-    annotationMock: {
-      stubOnlyMode: false,
-      annotationsForIteration: [] as any[],
-      annotationCentroids: {} as Record<string, { x: number; y: number }>,
+const {
+  fetchAnnotationListIds,
+  fetchAnalysisGateIds,
+  annotationMock,
+  propertiesMock,
+} = vi.hoisted(() => ({
+  fetchAnnotationListIds: vi.fn(),
+  fetchAnalysisGateIds: vi.fn(),
+  annotationMock: {
+    stubOnlyMode: false,
+    annotationsForIteration: [] as any[],
+    annotationCentroids: {} as Record<string, { x: number; y: number }>,
+    contentRevision: 0,
+  },
+  propertiesMock: {
+    propertyValues: {} as Record<string, any>,
+    propertyValuesRevision: 0,
+    propertiesAPI: {
+      getPropertyHistogram: vi.fn(),
+      getPropertyValuesForIds: vi.fn(
+        async (): Promise<
+          { annotationId: string; values: Record<string, any> }[]
+        > => [],
+      ),
     },
-    propertiesMock: {
-      propertyValues: {} as Record<string, any>,
-      propertyValuesRevision: 0,
-      propertiesAPI: {
-        getPropertyHistogram: vi.fn(),
-        getPropertyValuesForIds: vi.fn(
-          async (): Promise<
-            { annotationId: string; values: Record<string, any> }[]
-          > => [],
-        ),
-      },
-    },
-  }),
-);
+  },
+}));
 
 vi.mock("@/store/index", () => ({
   default: {
@@ -35,25 +40,36 @@ vi.mock("@/store/index", () => ({
     time: 0,
     annotationsAPI: {
       fetchAnnotationListIds: (...a: any[]) => fetchAnnotationListIds(...a),
+      fetchAnalysisGateIds: (...a: any[]) => fetchAnalysisGateIds(...a),
     },
     scheduleAnnotationBrowserSave: () => {},
     isLoggedIn: true,
+    showAnnotationsFromHiddenLayers: true,
   },
 }));
 
-vi.mock("@/store/annotation", () => ({
-  default: annotationMock,
-}));
+// Reactive proxies, so getter caches invalidate when tests mutate store
+// members (e.g. contentRevision) — mutate through the imported proxy, not
+// the raw hoisted object, or the getters won't see the change (see
+// connectionList.test.ts for the same pattern).
+vi.mock("@/store/annotation", async () => {
+  const { reactive } = await import("vue");
+  return { default: reactive(annotationMock) };
+});
 
-vi.mock("@/store/properties", () => ({
-  default: propertiesMock,
-}));
+vi.mock("@/store/properties", async () => {
+  const { reactive } = await import("vue");
+  return { default: reactive(propertiesMock) };
+});
 
 vi.mock("geojs", () => ({
   default: { util: { pointInPolygon: vi.fn().mockReturnValue(false) } },
 }));
 
 import filters from "@/store/filters";
+// The mocked (reactive) store proxies — mutations must go through these.
+import annotationProxy from "@/store/annotation";
+import propertiesProxy from "@/store/properties";
 import {
   categoricalContentSignature,
   encodeAnalysisCategoryKey,
@@ -714,15 +730,29 @@ describe("filters.refreshAnalysis", () => {
     expect(filters.filteredAnnotations).toHaveLength(2);
   });
 
-  it("refuses to fetch or gate above the point cap", async () => {
+  it("resolves via the server above the point cap, without fetching values", async () => {
+    // SERVER_GATING.md Phase 1: the cap no longer disables gating — it
+    // routes resolution to the gate_ids endpoint. Property values are
+    // display data and are NOT fetched above the cap.
     annotationMock.annotationsForIteration = Array.from(
       { length: 50001 },
       (_, i) => makeStub(`id-${i}`),
     );
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-3", "id-7"] });
     await addPlot("p1", GATE);
     await filters.refreshAnalysis();
     expect(getValues).not.toHaveBeenCalled();
-    expect(filters.analysisGateIds).toEqual({});
+    expect(fetchAnalysisGateIds).toHaveBeenCalledWith(
+      "ds1",
+      [{ id: "p1", xAxis: AXIS, yAxis: AXIS, gate: GATE }],
+      expect.any(Function), // the failure-message callback
+    );
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-3", "id-7"] });
+    // Pure server ids compose client-side exactly like resolved gates.
+    expect(filters.filteredAnnotations.map((a: any) => a.id)).toEqual([
+      "id-3",
+      "id-7",
+    ]);
   });
 
   it("stops collecting an over-cap population before hashing its tail", async () => {
@@ -736,13 +766,15 @@ describe("filters.refreshAnalysis", () => {
       ...Array.from({ length: 50001 }, (_, i) => makeStub(`id-${i}`)),
       untouched,
     ];
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: [] });
     await addPlot("p1", GATE);
 
-    expect(filters.analysisInputSignature).toBe("over-cap");
+    // The over-cap signature is built from definitions and revisions — it
+    // must not hash (or even finish collecting) the population.
+    expect(filters.analysisInputSignature.startsWith("server|")).toBe(true);
     await expect(filters.refreshAnalysis()).resolves.toBeUndefined();
 
     expect(getValues).not.toHaveBeenCalled();
-    expect(filters.analysisGateIds).toEqual({});
   });
 
   it("resolves the polygon into ids and publishes the values it fetched", async () => {
@@ -944,5 +976,504 @@ describe("filters.refreshAnalysis", () => {
     await filters.refreshAnalysis();
     expect(filters.analysisGateIds).toEqual({});
     expect(filters.analysisValues).toEqual({});
+  });
+});
+
+// Server-side gate resolution above the cap (SERVER_GATING.md, Phase 1).
+// The gate is a pure predicate: no population hash, no filter state in the
+// signature, invalidation only via the two revision counters.
+describe("filters.refreshAnalysis above the cap (server resolution)", () => {
+  const AXIS = { type: "property" as const, path: ["prop", "Area"] };
+  const GATE = {
+    categoryKeyVersion: 1 as const,
+    vertices: [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 10 },
+    ],
+    xCategories: null,
+    yCategories: null,
+  };
+  const getValues = propertiesMock.propertiesAPI.getPropertyValuesForIds;
+
+  beforeEach(() => {
+    filters.resetFilterState();
+    filters.setAnalysisPanelOpen(false);
+    fetchAnalysisGateIds.mockReset();
+    getValues.mockReset();
+    getValues.mockResolvedValue([]);
+    propertiesProxy.propertyValuesRevision = 0;
+    annotationProxy.contentRevision = 0;
+    annotationProxy.stubOnlyMode = false;
+    (annotationProxy as any).annotationsForIteration = Array.from(
+      { length: 50001 },
+      (_, i) => makeStub(`id-${i}`),
+    ) as any;
+  });
+
+  const addGatedPlot = async (id: string, gate: any = GATE) => {
+    await filters.addAnalysisPlot(id);
+    await filters.setAnalysisPlotAxes({ id, xAxis: AXIS, yAxis: AXIS });
+    await filters.setAnalysisPlotGate({ id, gate });
+  };
+
+  it("keeps the signature free of population and filter state", async () => {
+    await addGatedPlot("p1");
+    const before = filters.analysisInputSignature;
+    expect(before.startsWith("server|")).toBe(true);
+    // Population content changes (same over-cap size) must not re-key the
+    // signature — the pure predicate does not depend on the population.
+    (annotationProxy as any).annotationsForIteration = Array.from(
+      { length: 50002 },
+      (_, i) => makeStub(`other-${i}`),
+    ) as any;
+    expect(filters.analysisInputSignature).toBe(before);
+    // But the revision counters and the gate definition must re-key it.
+    annotationProxy.contentRevision++;
+    const afterContent = filters.analysisInputSignature;
+    expect(afterContent).not.toBe(before);
+    propertiesProxy.propertyValuesRevision++;
+    const afterValues = filters.analysisInputSignature;
+    expect(afterValues).not.toBe(afterContent);
+    await filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: {
+        ...GATE,
+        vertices: [...GATE.vertices, { x: 0, y: 10 }],
+      },
+    });
+    expect(filters.analysisInputSignature).not.toBe(afterValues);
+  });
+
+  it("does not re-request when already resolved under the same inputs", async () => {
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds).toHaveBeenCalledTimes(1);
+    // Palette toggles and unrelated touches re-run the action; the resolved
+    // signature short-circuits the request (round-6 lesson).
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps same-input ids on a failed retry", async () => {
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+    // Force a re-request under identical inputs by clearing the resolved
+    // signature marker via a failed changed-input cycle: instead, simulate
+    // an identical-input retry after a transient failure by resetting the
+    // resolved ids' signature is NOT possible from outside — so exercise
+    // the real path: bump revision (drops ids), fail, then heal.
+    annotationProxy.contentRevision++;
+    fetchAnalysisGateIds.mockResolvedValueOnce(null);
+    await filters.refreshAnalysis();
+    // Changed-input failure: ids were dropped before the await and stay
+    // dropped — unresolved shows MORE, never stale.
+    expect(filters.analysisGateIds).toEqual({});
+    // Identical retry (inputs unchanged since the failure) now succeeds.
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-2"] });
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-2"] });
+    // A failure under those SAME inputs must not clear the good ids.
+    fetchAnalysisGateIds.mockResolvedValueOnce(null);
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-2"] });
+  });
+
+  it("surfaces why the server refused to resolve the gates", async () => {
+    // The endpoint enforces id budgets (MAX_GATE_RESPONSE_IDS) that a few
+    // broad gates on a 700K dataset genuinely exceed, and the retry under
+    // identical inputs fails identically. Reported only to the console, that
+    // read as "gates silently stopped working": the changed-input path had
+    // already dropped every id, so the viewer and the Objects tab widened to
+    // the whole dataset with nothing on screen accounting for it.
+    fetchAnalysisGateIds.mockImplementationOnce(
+      async (_datasetId: string, _plots: any[], onError: any) => {
+        onError?.("gates resolve to more than the 2000000 ids...");
+        return null;
+      },
+    );
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateError).toContain("2000000");
+
+    // ...and it clears once a resolution succeeds.
+    annotationProxy.contentRevision++;
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-1"] });
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateError).toBeNull();
+  });
+
+  it("clears the refusal banner when the population drops below the cap", async () => {
+    // Only the over-cap success path cleared it, so narrowing the filters
+    // below the cap after a refused resolution left "gates could not be
+    // applied — the viewer shows everything the other filters allow" on
+    // screen while the client was resolving the gates and the viewer was
+    // visibly thinning.
+    fetchAnalysisGateIds.mockImplementationOnce(
+      async (_d: string, _p: any[], onError: any) => {
+        onError?.("id budget exceeded");
+        return null;
+      },
+    );
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateError).toBe("id budget exceeded");
+
+    // Below the cap now: the client resolves locally and the banner's claim
+    // is no longer true.
+    (annotationProxy as any).annotationsForIteration = [makeStub("a")] as any;
+    getValues.mockResolvedValue([]);
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateError).toBeNull();
+  });
+
+  it("does not discard resolved ids when hydration replays identical plots", async () => {
+    // hydrateAnnotationBrowserState runs on every setSelectedDataset,
+    // including a same-dataset refreshDataset. The resolution identity is
+    // built from plot CONTENT, so replaying identical plots cleared the ids
+    // while leaving the signature byte-identical — and the Viewer's watcher
+    // only fires on change, so nothing re-requested them.
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+
+    await filters.hydrateAnalysisPlots(
+      JSON.parse(JSON.stringify(filters.analysisPlots)),
+    );
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+
+    // A genuinely different plot list still invalidates.
+    await filters.hydrateAnalysisPlots([]);
+    expect(filters.analysisGateIds).toEqual({});
+  });
+
+  it("discards a stale response that resolves after a newer request", async () => {
+    await addGatedPlot("p1");
+    const first = deferred<any>();
+    fetchAnalysisGateIds.mockReturnValueOnce(first.promise);
+    const firstRun = filters.refreshAnalysis();
+    // A newer refresh under changed inputs supersedes the in-flight one.
+    annotationProxy.contentRevision++;
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["fresh"] });
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["fresh"] });
+    first.resolve({ p1: ["stale"] });
+    await firstRun;
+    expect(filters.analysisGateIds).toEqual({ p1: ["fresh"] });
+  });
+
+  it("skips disabled gates while the panel is closed", async () => {
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await filters.toggleAnalysisPlotGateEnabled("p1");
+    fetchAnalysisGateIds.mockClear();
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds).not.toHaveBeenCalled();
+    expect(filters.analysisGateIds).toEqual({});
+  });
+
+  it("treats an empty server answer as a real match-none constraint", async () => {
+    fetchAnalysisGateIds.mockResolvedValue({ p1: [] });
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: [] });
+    expect(filters.filteredAnnotations).toEqual([]);
+    expect(filters.activeAnalysisGateIdLists).toEqual([[]]);
+  });
+
+  it("keeps other gates' pure ids when a plot is toggled, removed or re-axed", async () => {
+    // Above the cap each gate is resolved INDEPENDENTLY against the whole
+    // dataset, so there is no chain to invalidate. Dropping the downstream
+    // suffix anyway was not merely wasteful: the over-cap refresh identity
+    // projects only {id, xAxis, yAxis, gate}, so a mutation that changes none
+    // of those left the identity untouched. Nothing asked for a refresh, the
+    // dropped ids never came back, and both gates silently stopped filtering
+    // — one click on an enable toggle widened the viewer to the whole dataset
+    // and zeroed the badge, with no way back but reopening the panel.
+    filters.setAnalysisPanelOpen(true);
+    fetchAnalysisGateIds.mockResolvedValue({
+      p1: ["id-1", "id-2"],
+      p2: ["id-2", "id-3"],
+    });
+    await addGatedPlot("p1");
+    await addGatedPlot("p2");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({
+      p1: ["id-1", "id-2"],
+      p2: ["id-2", "id-3"],
+    });
+
+    const signature = filters.analysisInputSignature;
+    await filters.toggleAnalysisPlotGateEnabled("p1");
+    // p1 is disabled so it no longer constrains, but p2's ids must survive.
+    expect(filters.analysisGateIds.p2).toEqual(["id-2", "id-3"]);
+    expect(filters.activeAnalysisGateIdLists).toEqual([["id-2", "id-3"]]);
+    expect(filters.activeAnalysisGateCount).toBe(1);
+    // Nothing above changes what the server would be asked, so nothing
+    // requests a refresh — which is precisely why the ids had to survive.
+    expect(filters.analysisInputSignature).toBe(signature);
+
+    // Same for an UNGATED plot that precedes a gated one: it never appears in
+    // the request, so removing or re-axing it cannot move the identity.
+    await filters.addAnalysisPlot("p0");
+    await filters.setAnalysisPlotAxes({ id: "p0", xAxis: AXIS, yAxis: AXIS });
+    await filters.removeAnalysisPlot("p0");
+    expect(filters.analysisGateIds.p2).toEqual(["id-2", "id-3"]);
+  });
+
+  it("keeps resolved ids when opening the palette adds a disabled gate to the request", async () => {
+    // The per-plot fix was defeated one layer up. The refresh identity was
+    // ONE signature over the whole request, and analysisRefreshScope widens
+    // resolutionPlots from the enabled gates to every DRAWN gate when the
+    // palette opens — so merely opening the panel with one disabled gate
+    // present moved that signature and dropped every gate's ids before
+    // awaiting a re-resolution. For the seconds that took (a whole-dataset
+    // scan at 700K) the viewer, the Objects tab and the badge all widened to
+    // the unfiltered dataset, and a refused re-resolution made it permanent.
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await addGatedPlot("p2");
+    await filters.toggleAnalysisPlotGateEnabled("p2"); // drawn but disabled
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+    expect(fetchAnalysisGateIds).toHaveBeenCalledTimes(1);
+
+    // Opening the palette pulls the disabled gate into the request.
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p2: ["id-2"] });
+    filters.setAnalysisPanelOpen(true);
+    await filters.refreshAnalysis();
+    // p1 was never re-requested; only the newly-wanted p2 was.
+    expect(fetchAnalysisGateIds).toHaveBeenLastCalledWith(
+      "ds1",
+      [expect.objectContaining({ id: "p2" })],
+      expect.any(Function),
+    );
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"], p2: ["id-2"] });
+    expect(filters.activeAnalysisGateIdLists).toEqual([["id-1"]]);
+
+    // Closing again drops p2 from the request but must not discard its ids:
+    // they are still exactly what its polygon contains, and re-enabling must
+    // not pay for another whole-dataset resolution.
+    fetchAnalysisGateIds.mockClear();
+    filters.setAnalysisPanelOpen(false);
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds).not.toHaveBeenCalled();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"], p2: ["id-2"] });
+  });
+
+  it("re-resolves only the plot whose gate changed", async () => {
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"], p2: ["id-2"] });
+    await addGatedPlot("p1");
+    await addGatedPlot("p2");
+    await filters.refreshAnalysis();
+    fetchAnalysisGateIds.mockClear();
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p2: ["id-9"] });
+
+    await filters.setAnalysisPlotGate({
+      id: "p2",
+      gate: { ...GATE, vertices: [...GATE.vertices, { x: 0, y: 10 }] },
+    });
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds).toHaveBeenCalledTimes(1);
+    expect(fetchAnalysisGateIds.mock.calls[0][1]).toEqual([
+      expect.objectContaining({ id: "p2" }),
+    ]);
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"], p2: ["id-9"] });
+  });
+
+  it("re-resolves every plot when a revision counter moves", async () => {
+    // The counters stand in for population content, which every gate depends
+    // on — so unlike a definition edit, they must invalidate all of them.
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"], p2: ["id-2"] });
+    await addGatedPlot("p1");
+    await addGatedPlot("p2");
+    await filters.refreshAnalysis();
+    fetchAnalysisGateIds.mockClear();
+
+    annotationProxy.contentRevision++;
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds.mock.calls[0][1]).toHaveLength(2);
+  });
+
+  it("clears the refusal banner once the refused gate is gone", async () => {
+    // The banner is set per REQUEST but describes the plots that could not
+    // resolve. With per-plot staleness, a refused batch leaves the current
+    // gates filtering normally — so when the user deletes the gate that was
+    // refused, every remaining plot is current and the no-stale early return
+    // is the only path left. It returned without clearing, leaving "gates
+    // could not be applied — the viewer shows everything the other filters
+    // allow" on screen while the retained gate was visibly filtering.
+    filters.setAnalysisPanelOpen(true);
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+
+    // A second, broad gate is refused; p1 keeps filtering.
+    fetchAnalysisGateIds.mockImplementationOnce(
+      async (_d: string, _p: any[], onError: any) => {
+        onError?.("gates resolve to more than the 2000000 ids...");
+        return null;
+      },
+    );
+    await addGatedPlot("p2");
+    await filters.refreshAnalysis();
+    expect(filters.analysisGateError).toContain("2000000");
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+
+    fetchAnalysisGateIds.mockClear();
+    await filters.removeAnalysisPlot("p2");
+    await filters.refreshAnalysis();
+    expect(fetchAnalysisGateIds).not.toHaveBeenCalled(); // p1 is still current
+    expect(filters.analysisGateError).toBeNull();
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+  });
+
+  it("never leaves a pure signature without the ids it describes", async () => {
+    // analysisPureGateSignatures is only meaningful as a description of
+    // exactly the ids currently held. dropAnalysisGateIdsFromPlot is the one
+    // writer that assigns analysisGateIds directly rather than through
+    // setAnalysisGateIds (which resets the signatures wholesale), so it used
+    // to delete an id and leave its signature behind. Asserted as the
+    // invariant rather than one scenario of it, because the next writer that
+    // forgets will be a different scenario.
+    const sameKeys = () =>
+      expect(Object.keys(filters.analysisPureGateSignatures).sort()).toEqual(
+        Object.keys(filters.analysisGateIds).sort(),
+      );
+
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"], p2: ["id-2"] });
+    filters.setAnalysisPanelOpen(true);
+    await addGatedPlot("p1");
+    await addGatedPlot("p2");
+    await filters.refreshAnalysis();
+    sameKeys();
+
+    await filters.removeAnalysisPlot("p2");
+    sameKeys();
+
+    await filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: { ...GATE, vertices: [...GATE.vertices, { x: 0, y: 10 }] },
+    });
+    sameKeys();
+
+    await filters.setAnalysisPlotAxes({
+      id: "p1",
+      xAxis: { type: "categorical" as const, key: "tags" as const },
+    });
+    sameKeys();
+  });
+
+  it("still drops a plot's own pure ids when its gate changes", async () => {
+    // The other half: purity removes the SUFFIX, never the plot's own entry.
+    // Its polygon moved, so its ids describe a shape that no longer exists.
+    filters.setAnalysisPanelOpen(true);
+    fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"], p2: ["id-2"] });
+    await addGatedPlot("p1");
+    await addGatedPlot("p2");
+    await filters.refreshAnalysis();
+
+    await filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: { ...GATE, vertices: [...GATE.vertices, { x: 0, y: 10 }] },
+    });
+    expect(filters.analysisGateIds.p1).toBeUndefined();
+    expect(filters.analysisGateIds.p2).toEqual(["id-2"]);
+    // And the identity DID move, so the refresh that re-resolves p1 happens.
+    expect(filters.analysisInputSignature).not.toBe("");
+  });
+
+  it("clears the retained value cache when crossing above the cap", async () => {
+    // Below the cap first: values get cached for the scatter.
+    (annotationProxy as any).annotationsForIteration = [makeStub("a")] as any;
+    getValues.mockResolvedValue([
+      { annotationId: "a", values: { prop: { Area: 5 } } },
+    ]);
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    expect(Object.keys(filters.analysisValues)).toEqual(["a"]);
+    // Crossing the cap: the cache pins up to 50K values for nothing.
+    (annotationProxy as any).annotationsForIteration = Array.from(
+      { length: 50001 },
+      (_, i) => makeStub(`id-${i}`),
+    ) as any;
+    fetchAnalysisGateIds.mockResolvedValue({ p1: [] });
+    await filters.refreshAnalysis();
+    expect(filters.analysisValues).toEqual({});
+  });
+});
+
+// What the over-cap heatmaps can and cannot reflect (SERVER_GATING.md,
+// Phase 2): the serializable filters ride along; inexpressible ones are
+// REPORTED, so the panel can say the distribution may over-include. Gate
+// resolution is filter-independent and never degrades.
+describe("filters.analysisHistogramFilterSpec", () => {
+  beforeEach(() => {
+    filters.resetFilterState();
+    // resetFilterState deliberately preserves the frame toggle (a view
+    // preference, not dataset-scoped state) — reset it here.
+    filters.setOnlyCurrentFrame(false);
+  });
+
+  it("serializes tag, frame, and property filters", () => {
+    filters.setTagFilter({
+      id: "tagFilter",
+      exclusive: true,
+      enabled: true,
+      tags: ["nucleus"],
+    });
+    filters.setOnlyCurrentFrame(true);
+    addAreaRangeFilter(1, 5);
+    const spec = filters.analysisHistogramFilterSpec;
+    expect(spec.filters.tags).toEqual({
+      values: ["nucleus"],
+      exclusive: true,
+    });
+    expect(spec.filters.location).toEqual({ XY: 0, Z: 0, Time: 0 });
+    expect(spec.filters.propertyFilters).toEqual([
+      { path: ["p", "Area"], mode: "range", min: 1, max: 5 },
+    ]);
+    expect(spec.skipped).toEqual([]);
+  });
+
+  it("inlines bounded id lists and skips oversized ones with labels", () => {
+    filters.newAnnotationIdFilter(["a", "b"]);
+    expect(filters.analysisHistogramFilterSpec.filters.idConstraints).toEqual([
+      ["a", "b"],
+    ]);
+    expect(filters.analysisHistogramFilterSpec.skipped).toEqual([]);
+    filters.newAnnotationIdFilter(
+      Array.from({ length: 50001 }, (_, i) => `big-${i}`),
+    );
+    const spec = filters.analysisHistogramFilterSpec;
+    // Id filters are UNIONED into one constraint, so dropping only the
+    // oversized member would shrink the set — under-including. The whole
+    // union is dropped instead: the histogram may over-include, never
+    // under-include.
+    expect(spec.filters.idConstraints).toBeUndefined();
+    expect(spec.skipped).toEqual(["object-list filters"]);
+  });
+
+  it("reports region filters and the hidden-layer rule as skipped", () => {
+    filters.newROIFilter();
+    filters.validateNewROIFilter([
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+    ]);
+    const spec = filters.analysisHistogramFilterSpec;
+    expect(spec.skipped).toContain("region (ROI) filters");
+    expect(spec.filters.idConstraints).toBeUndefined();
+  });
+
+  it("is empty when nothing is active", () => {
+    const spec = filters.analysisHistogramFilterSpec;
+    expect(spec.filters).toEqual({});
+    expect(spec.skipped).toEqual([]);
   });
 });

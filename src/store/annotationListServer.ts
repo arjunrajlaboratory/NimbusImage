@@ -15,13 +15,9 @@ import {
   IAnnotationListRow,
   IAnnotationListSort,
   IAnnotationListFilters,
-  ITagAnnotationFilter,
-  IIdAnnotationFilter,
-  IAnnotationLocation,
 } from "./model";
 import {
-  IListPropertyFilterInput,
-  buildPropertyListFilters,
+  buildListFilters,
   filtersMatchNothing,
 } from "@/utils/annotationListFilters";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
@@ -38,59 +34,10 @@ const pageRequestGuard = createSequenceGuard();
 // cleanup. Every ordinary page fetch also invalidates pending navigation.
 const navigationRequestGuard = createSequenceGuard();
 
-// Pure: translate the client filter store into backend list filters.
-export function buildListFilters(input: {
-  tagFilter: Pick<ITagAnnotationFilter, "enabled" | "exclusive" | "tags">;
-  onlyCurrentFrame: boolean;
-  currentFrame: IAnnotationLocation;
-  idSubstring: string;
-  propertyFilters: IListPropertyFilterInput[];
-  selectionFilter: IIdAnnotationFilter;
-  annotationIdFilters: IIdAnnotationFilter[];
-  // One membership set per active analysis gate (already resolved to ids).
-  analysisGates?: string[][];
-}): IAnnotationListFilters {
-  const out: IAnnotationListFilters = {};
-  if (input.tagFilter.enabled && input.tagFilter.tags.length > 0) {
-    out.tags = {
-      values: input.tagFilter.tags,
-      exclusive: input.tagFilter.exclusive,
-    };
-  }
-  if (input.onlyCurrentFrame) {
-    out.location = { ...input.currentFrame };
-  }
-  if (input.idSubstring) {
-    out.idSubstring = input.idSubstring;
-  }
-  // Build the id constraints (AND of membership sets), mirroring the
-  // client filteredAnnotations semantics: the selection filter is one set,
-  // and the enabled annotation-id filters are unioned into a second set.
-  const idConstraints: string[][] = [];
-  if (
-    input.selectionFilter.enabled &&
-    input.selectionFilter.annotationIds.length > 0
-  ) {
-    idConstraints.push(input.selectionFilter.annotationIds);
-  }
-  const enabledIdFilters = input.annotationIdFilters.filter((f) => f.enabled);
-  if (enabledIdFilters.length > 0) {
-    idConstraints.push(enabledIdFilters.flatMap((f) => f.annotationIds));
-  }
-  // Analysis gates compose with AND (sequential gating), so each one is its own
-  // membership set — unlike the annotation-id filters, which are unioned above.
-  for (const gate of input.analysisGates ?? []) {
-    idConstraints.push(gate);
-  }
-  if (idConstraints.length > 0) {
-    out.idConstraints = idConstraints;
-  }
-  const pfs = buildPropertyListFilters(input.propertyFilters);
-  if (pfs.length > 0) {
-    out.propertyFilters = pfs;
-  }
-  return out;
-}
+// buildListFilters moved to @/utils/annotationListFilters so the filters
+// store can reuse it (importing it from here would be circular — this module
+// imports the filters store). Re-exported for existing import sites.
+export { buildListFilters } from "@/utils/annotationListFilters";
 
 @Module({ dynamic: true, store, name: "annotationListServer" })
 export class AnnotationListServer extends VuexModule {
@@ -142,22 +89,37 @@ export class AnnotationListServer extends VuexModule {
     return buildListFilters({
       tagFilter: filters.tagFilter,
       onlyCurrentFrame: filters.onlyCurrentFrame,
-      currentFrame: { XY: main.xy, Z: main.z, Time: main.time },
+      // Read frame state only when the filter uses it — the twin of the same
+      // rule in analysisHistogramFilterSpec and
+      // collectAnnotationsPassingNonGateFilters. Unconditionally, this getter
+      // depended on xy/z/time even when they are discarded, so every frame
+      // scrub re-ran buildListFilters and rebuilt enabledIdFilters' flatMap
+      // into a fresh array, missing idListSignature's identity-keyed memo and
+      // re-hashing up to 50,000 ids for a signature that cannot have changed.
+      currentFrame: filters.onlyCurrentFrame
+        ? { XY: main.xy, Z: main.z, Time: main.time }
+        : { XY: 0, Z: 0, Time: 0 },
       idSubstring: this.idSubstring,
       propertyFilters: filters.propertyFilters,
       selectionFilter: filters.selectionFilter,
       annotationIdFilters: filters.annotationIdFilters,
-      analysisGates: filters.activeAnalysisGateIdLists,
+      analysisGateDefinitions: filters.activeAnalysisGateDefinitions,
+      analysisGatesMatchNothing: filters.hasEmptyResolvedGate,
     });
   }
 
   // A cheap identity for `currentFilters`, for watchers that need to react when
   // the query changes. Never serialize `currentFilters` itself — see
-  // @/utils/signatures for why.
+  // @/utils/signatures for why. Gate DEFINITIONS are small (a lasso's worth
+  // of vertices) and serialize fine, but the ROWS a fixed definition matches
+  // can change when values are recomputed or annotations edited — the
+  // resolved-id hash appended here is what moves then.
   get currentFiltersSignature(): string {
     const { idConstraints, ...rest } = this.currentFilters;
     const constraints = (idConstraints ?? []).map(idListSignature).join(",");
-    return `${JSON.stringify(rest)}|${constraints}`;
+    return `${JSON.stringify(rest)}|${constraints}|${
+      filters.analysisGateSignature
+    }`;
   }
 
   /**

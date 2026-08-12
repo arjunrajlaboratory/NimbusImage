@@ -16,13 +16,18 @@ import {
   tagCloudFilterFunction,
   annotationTestPoints,
 } from "@/utils/annotation";
-import { buildPropertyListFilters } from "@/utils/annotationListFilters";
+import {
+  buildListFilters,
+  buildPropertyListFilters,
+} from "@/utils/annotationListFilters";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
 import { idListSignature } from "@/utils/signatures";
 
 import {
   TAnnotationOrStub,
   IAnalysisGate,
+  IAnalysisGateFilterTerm,
+  IAnalysisGatePlotRequest,
   IAnalysisPlot,
   IAnnotationFilter,
   ITagAnnotationFilter,
@@ -36,7 +41,11 @@ import {
   IAnnotationListFilters,
   TAnalysisAxis,
 } from "./model";
-import { MAX_ANALYSIS_PLOT_POINTS } from "./constants";
+import {
+  MAX_ANALYSIS_PLOTS,
+  MAX_ANALYSIS_PLOT_POINTS,
+  MAX_HISTOGRAM_ID_CONSTRAINT,
+} from "./constants";
 import {
   analysisCategoricalKeys,
   analysisPropertyPaths,
@@ -137,10 +146,47 @@ export class Filters extends VuexModule {
   // setAnalysisGateIds.
   analysisGateIds: { [plotId: string]: string[] } = markRaw({});
 
-  // The dataset/value inputs the enabled gate ids were resolved against. Plot
-  // edits invalidate their affected suffix synchronously in the mutators; this
-  // identity covers the other half of the dependency: the non-gate population
-  // and the values/categories read from it.
+  // Whether the ids currently held in analysisGateIds are PURE — resolved
+  // server-side, each gate independently against the whole dataset — rather
+  // than CHAINED, where plot N was resolved against the population surviving
+  // plots 1..N-1. Only chained ids have a dependent suffix to invalidate; see
+  // dropAnalysisGateIdsFromPlot, which used to drop that suffix either way.
+  analysisGateIdsArePure = false;
+
+  // Per-plot input identity for PURE (server-resolved) gate ids: {plotId: the
+  // signature its ids were resolved under}. Pure ids are independent by
+  // construction, so their validity has to be tracked independently too.
+  //
+  // A single whole-request signature could not express that. It was computed
+  // over serverGateRequestPlots(resolutionPlots), and resolutionPlots widens
+  // from the enabled gates to every drawn gate when the palette opens — so
+  // merely opening the panel with one disabled gate present moved the
+  // signature and dropped EVERY gate's ids before awaiting a re-resolution.
+  // For the seconds that took, the viewer, the Objects tab and the badge all
+  // widened to the unfiltered dataset (and a Select All in that window acted
+  // on it); if the re-resolution was refused, the drop was permanent. It also
+  // re-resolved every gate whenever any one of them changed.
+  analysisPureGateSignatures: { [plotId: string]: string } = markRaw({});
+
+  // Why the last server-side gate resolution failed, or null. Shown in the
+  // panel: the endpoint's id budgets are reachable with a few broad gates on
+  // a large dataset, and the retry under identical inputs fails identically,
+  // so a console-only failure left the gates in that batch silently not
+  // filtering with nothing on screen to explain it.
+  //
+  // Request-scoped, not per plot: resolution is per plot, so a failure is
+  // PARTIAL — the gates that were already current keep filtering. Anything
+  // reading this must say so rather than claim the viewer is unfiltered, and
+  // it must be cleared wherever "nothing is unresolved" becomes true again,
+  // which includes the no-stale early return.
+  analysisGateError: string | null = null;
+
+  // BELOW-CAP ONLY. The dataset/value inputs the chained gate ids were
+  // resolved against; plot edits invalidate their affected suffix
+  // synchronously in the mutators, and this identity covers the other half of
+  // the dependency: the non-gate population and the values/categories read
+  // from it. Above the cap it is nulled and analysisPureGateSignatures is
+  // authoritative instead — pure ids depend on none of that.
   analysisGateDataSignature: string | null = null;
 
   // The corresponding input identity for every gate resolved while the panel
@@ -193,6 +239,11 @@ export class Filters extends VuexModule {
     this.analysisValuePathKeys = markRaw([]);
     this.analysisGateDataSignature = null;
     this.analysisVisibleGateDataSignature = null;
+    this.analysisGateIdsArePure = false;
+    this.analysisPureGateSignatures = markRaw({});
+    // Scoped to the dataset like everything else here: a banner saying gates
+    // are not applying must not outlive the gates it was about.
+    this.analysisGateError = null;
     this.analysisLoading = false;
   }
 
@@ -370,8 +421,18 @@ export class Filters extends VuexModule {
     main.scheduleAnnotationBrowserSave();
   }
 
+  // False once the plot list is at the backend's per-request limit. The
+  // panel disables "Add plot" on this rather than letting a 21st plot make
+  // every gate request 400 (see MAX_ANALYSIS_PLOTS).
+  get canAddAnalysisPlot(): boolean {
+    return this.analysisPlots.length < MAX_ANALYSIS_PLOTS;
+  }
+
   @Action
   addAnalysisPlot(id: string) {
+    if (!this.canAddAnalysisPlot) {
+      return;
+    }
     this.applyAnalysisPlots([
       ...this.analysisPlots,
       { id, xAxis: null, yAxis: null, gate: null, gateEnabled: true },
@@ -444,10 +505,38 @@ export class Filters extends VuexModule {
   // hydration never schedules a save of its own.
   @Action
   hydrateAnalysisPlots(plots: IAnalysisPlot[]) {
+    if (JSON.stringify(plots) === JSON.stringify(this.analysisPlots)) {
+      // Nothing changed, so there is nothing to invalidate — and clearing
+      // anyway was unrecoverable: the resolution identity is built from plot
+      // CONTENT, so re-hydrating identical plots (every setSelectedDataset,
+      // including a same-dataset refreshDataset) dropped the ids while
+      // leaving the signature byte-identical, and the Viewer's watcher only
+      // fires on change. It happened to be rescued by contentRevision moving
+      // around it; nothing enforced that ordering.
+      return;
+    }
     this.setAnalysisPlotsImpl(plots);
     this.setAnalysisGateIds({});
     this.setAnalysisGateDataSignature(null);
     this.setAnalysisVisibleGateDataSignature(null);
+  }
+
+  /**
+   * Put back a previously captured set of plots — the agent's "Revert view
+   * changes" affordance. Identical to hydration except that it PERSISTS.
+   *
+   * Hydration deliberately does not save, because it runs when the store is
+   * catching up to the configuration. A revert runs in the other direction:
+   * the agent's create/clear already went through applyAnalysisPlots and was
+   * written to the shared configuration, so hydrating alone undid it in
+   * memory only. The next reload brought the agent's gates back, and any
+   * unrelated debounced save wrote the reverted state — the durable result
+   * depended on which happened first.
+   */
+  @Action
+  restoreAnalysisPlots(plots: IAnalysisPlot[]) {
+    this.hydrateAnalysisPlots(plots);
+    main.scheduleAnnotationBrowserSave();
   }
 
   /**
@@ -496,6 +585,27 @@ export class Filters extends VuexModule {
     // membership pass walk a reactive array. The slot reference is replaced
     // wholesale to drive reactivity.
     this.analysisGateIds = markRaw(gateIds);
+    // Chained, and with no per-plot identity, unless the committer says
+    // otherwise — so every clear and every below-cap resolution resets both
+    // without having to remember to, and neither can drift from the ids it
+    // describes. The pure path re-states both immediately after committing.
+    this.analysisGateIdsArePure = false;
+    this.analysisPureGateSignatures = markRaw({});
+  }
+
+  @Mutation
+  setAnalysisGateIdsArePure(pure: boolean) {
+    this.analysisGateIdsArePure = pure;
+  }
+
+  @Mutation
+  setAnalysisPureGateSignatures(signatures: { [plotId: string]: string }) {
+    this.analysisPureGateSignatures = markRaw(signatures);
+  }
+
+  @Mutation
+  setAnalysisGateError(message: string | null) {
+    this.analysisGateError = message;
   }
 
   @Mutation
@@ -510,19 +620,44 @@ export class Filters extends VuexModule {
       return;
     }
     const next = { ...this.analysisGateIds };
+    const nextSignatures = { ...this.analysisPureGateSignatures };
     let changed = false;
-    for (const plot of this.analysisPlots.slice(
-      plotIndex + (payload.includePlot ? 0 : 1),
-    )) {
+    let signaturesChanged = false;
+    // The suffix is dropped because chained ids for plot N were resolved
+    // against the population surviving plots 1..N-1. PURE ids have no such
+    // dependency, and dropping them was not merely wasteful: above the cap
+    // the refresh identity (serverGateInputSignature) projects only
+    // {id, xAxis, yAxis, gate}, so a mutation that changes none of those —
+    // toggling gateEnabled, or removing/re-axing an UNGATED plot that
+    // precedes a gated one — dropped downstream ids while leaving the
+    // identity untouched. Nothing then asked for a refresh, so those gates
+    // stopped filtering for the rest of the session and the badge went to 0.
+    const start = plotIndex + (payload.includePlot ? 0 : 1);
+    const end = this.analysisGateIdsArePure
+      ? plotIndex + (payload.includePlot ? 1 : 0)
+      : undefined;
+    for (const plot of this.analysisPlots.slice(start, end)) {
       if (next[plot.id] !== undefined) {
         delete next[plot.id];
         changed = true;
+      }
+      // Both maps, always. This is the one writer that assigns analysisGateIds
+      // directly instead of going through setAnalysisGateIds (which resets the
+      // signatures wholesale), so dropping an id here left its signature
+      // behind — and analysisPureGateSignatures is only meaningful as a
+      // description of exactly the ids currently held.
+      if (nextSignatures[plot.id] !== undefined) {
+        delete nextSignatures[plot.id];
+        signaturesChanged = true;
       }
     }
     if (changed) {
       // Unresolved contributes no constraint, so the interim shows MORE than
       // the final answer rather than filtering by a stale population.
       this.analysisGateIds = markRaw(next);
+    }
+    if (signaturesChanged) {
+      this.analysisPureGateSignatures = markRaw(nextSignatures);
     }
   }
 
@@ -554,6 +689,47 @@ export class Filters extends VuexModule {
 
   get activeAnalysisGateSets(): Set<string>[] {
     return this.activeAnalysisGateIdLists.map((ids) => new Set(ids));
+  }
+
+  // The active gates as DEFINITIONS for the server list query
+  // (SERVER_GATING.md, Phase 3). Same three-way predicate as the id lists —
+  // enabled AND drawn AND resolved (an unresolved gate constrains nothing,
+  // so the interim list shows MORE, mirroring the viewer) — minus the gates
+  // known to match nothing, which hasEmptyResolvedGate short-circuits
+  // client-side instead of asking the server.
+  get activeAnalysisGateDefinitions(): IAnalysisGateFilterTerm[] {
+    return this.analysisPlots.reduce<IAnalysisGateFilterTerm[]>(
+      (definitions, plot) => {
+        const ids = this.analysisGateIds[plot.id];
+        if (
+          plot.gateEnabled &&
+          plot.gate !== null &&
+          plot.xAxis !== null &&
+          plot.yAxis !== null &&
+          ids !== undefined &&
+          ids.length > 0
+        ) {
+          definitions.push({
+            xAxis: plot.xAxis,
+            yAxis: plot.yAxis,
+            gate: plot.gate,
+          });
+        }
+        return definitions;
+      },
+      [],
+    );
+  }
+
+  // True when an active gate resolved to zero annotations: the whole query
+  // matches nothing and the client already knows it.
+  get hasEmptyResolvedGate(): boolean {
+    return this.analysisPlots.some(
+      (plot) =>
+        plot.gateEnabled &&
+        plot.gate !== null &&
+        this.analysisGateIds[plot.id]?.length === 0,
+    );
   }
 
   // A cheap identity for the id-membership filters, for watchers that must
@@ -588,18 +764,6 @@ export class Filters extends VuexModule {
     }, "");
   }
 
-  // The exact identity for the population the analysis panel plots and gates
-  // against. Above the plotting cap there is deliberately no exact identity:
-  // analysisPopulation stops as soon as it proves the cap was crossed, so a
-  // persisted gate on a 700k-object dataset does not hash or retain the rest of
-  // that population just to decide that it cannot run.
-  get analysisPopulationSignature(): string {
-    const population = this.analysisPopulation;
-    return population.length > MAX_ANALYSIS_PLOT_POINTS
-      ? "over-cap"
-      : populationSignature(population);
-  }
-
   // What refreshAnalysis' result depends on.
   //
   // Membership alone is NOT enough. Editing an annotation's tags leaves the
@@ -622,7 +786,14 @@ export class Filters extends VuexModule {
     }
     const base = this.analysisPopulation;
     if (base.length > MAX_ANALYSIS_PLOT_POINTS) {
-      return "over-cap";
+      // Above the cap, resolution happens server-side against the whole
+      // dataset (SERVER_GATING.md): the identity is the gate definitions
+      // plus revision counters — never the population, which the bounded
+      // walk above deliberately stopped collecting.
+      const requestPlots = serverGateRequestPlots(resolutionPlots);
+      return requestPlots.length === 0
+        ? "server-idle"
+        : serverGateInputSignature(main.dataset?.id ?? "", requestPlots);
     }
     return [
       // Ungated plots affect the store only through the property paths needed
@@ -638,6 +809,62 @@ export class Filters extends VuexModule {
       ),
       paths.length > 0 ? properties.propertyValuesRevision : "-",
     ].join("|");
+  }
+
+  // What the over-cap heatmaps can and cannot reflect (SERVER_GATING.md,
+  // Phase 2). The serializable filters ride along in the histogram request;
+  // filters the list schema cannot express — ROI polygons, the hidden-layer
+  // rule, id lists past MAX_HISTOGRAM_ID_CONSTRAINT — are REPORTED in
+  // `skipped` so the panel can say the distribution may over-include. The
+  // direction is one-sided by construction: a skipped filter widens the
+  // pictured population, never narrows it (id filters union, so one
+  // oversized member drops the whole union). Gate RESOLUTION is
+  // filter-independent and never degrades.
+  get analysisHistogramFilterSpec(): {
+    filters: IAnnotationListFilters;
+    skipped: string[];
+  } {
+    const skipped: string[] = [];
+    const selectionOversized =
+      this.selectionFilter.enabled &&
+      this.selectionFilter.annotationIds.length > MAX_HISTOGRAM_ID_CONSTRAINT;
+    if (selectionOversized) {
+      skipped.push("selection filter");
+    }
+    const idFiltersOversized = this.annotationIdFilters.some(
+      (filter) =>
+        filter.enabled &&
+        filter.annotationIds.length > MAX_HISTOGRAM_ID_CONSTRAINT,
+    );
+    if (idFiltersOversized) {
+      skipped.push("object-list filters");
+    }
+    const filters = buildListFilters({
+      tagFilter: this.tagFilter,
+      onlyCurrentFrame: this.onlyCurrentFrame,
+      // Read frame state only when the filter uses it (same rule as
+      // collectAnnotationsPassingNonGateFilters). Reading it unconditionally
+      // made this getter depend on xy/z/time even when they are discarded, so
+      // every frame scrub with the palette open re-ran buildListFilters —
+      // including the enabledIdFilters flatMap, whose fresh array misses
+      // idListSignature's WeakMap memo and re-hashes up to 50,000 ids.
+      currentFrame: this.onlyCurrentFrame
+        ? { XY: main.xy, Z: main.z, Time: main.time }
+        : { XY: 0, Z: 0, Time: 0 },
+      idSubstring: "",
+      propertyFilters: this.propertyFilters,
+      selectionFilter: selectionOversized
+        ? { ...this.selectionFilter, enabled: false }
+        : this.selectionFilter,
+      annotationIdFilters: idFiltersOversized ? [] : this.annotationIdFilters,
+    });
+    if (this.roiFilters.some((filter) => filter.enabled)) {
+      skipped.push("region (ROI) filters");
+    }
+    if (!main.showAnnotationsFromHiddenLayers) {
+      skipped.push("hidden-layer visibility");
+    }
+    return { filters, skipped };
   }
 
   @Mutation
@@ -716,10 +943,15 @@ export class Filters extends VuexModule {
       return;
     }
     const base = this.analysisPopulation;
-    // Matches the panel's refusal to plot: a gate is only meaningful against
-    // the population it was drawn on, and above the cap we do not draw one.
+    // Above the cap, gates resolve server-side as pure predicates over the
+    // whole dataset (SERVER_GATING.md, Phase 1) — the cap bounds the client
+    // work (plotting, hashing, value fetches), not the gating.
     if (base.length > MAX_ANALYSIS_PLOT_POINTS) {
-      this.clearAnalysisDerivedState();
+      await this.refreshAnalysisAboveCap({
+        token,
+        datasetId,
+        resolutionPlots,
+      });
       return;
     }
 
@@ -824,6 +1056,13 @@ export class Filters extends VuexModule {
       );
       this.setAnalysisGateDataSignature(gateDataSignature);
       this.setAnalysisVisibleGateDataSignature(visibleGateDataSignature);
+      if (this.analysisGateError !== null) {
+        // The banner is about the SERVER refusing to resolve. Resolving here
+        // means it no longer applies — without this, narrowing the filters
+        // below the cap after a refused resolution left "gates could not be
+        // applied" on screen while the gates were visibly applying.
+        this.setAnalysisGateError(null);
+      }
     };
     let values = canReuseValues ? this.analysisValues : {};
     if (!canReuseValues && paths.length > 0) {
@@ -868,10 +1107,155 @@ export class Filters extends VuexModule {
     this.setAnalysisLoading(false);
   }
 
+  /**
+   * Over-cap half of refreshAnalysis: resolve drawn gates through the
+   * gate_ids endpoint and commit the PURE id lists. The committed ids are
+   * population-independent, so no filter change ever invalidates them — only
+   * the inputs named by `pureGateSignature`, PER PLOT, do. (Not
+   * `serverGateInputSignature`, which is the watcher's whole-request wake-up
+   * identity: it moves when the palette opens, which says nothing about
+   * whether any already-resolved gate is still correct.)
+   *
+   * `token` is the caller's already-claimed sequence token (claimed as the
+   * first statement of refreshAnalysis, before any early return).
+   */
+  @Action
+  private async refreshAnalysisAboveCap(payload: {
+    token: number;
+    datasetId: string;
+    resolutionPlots: IAnalysisPlot[];
+  }) {
+    const { token, datasetId } = payload;
+    const requestPlots = serverGateRequestPlots(payload.resolutionPlots);
+    if (requestPlots.length === 0) {
+      this.clearAnalysisDerivedState();
+      return;
+    }
+    // Per plot, never per request: see analysisPureGateSignatures. A plot's
+    // pure ids depend on its own definition and the two revision counters,
+    // and on nothing about the other plots or which of them are being asked
+    // for right now.
+    const wanted: { [plotId: string]: string } = {};
+    for (const plot of requestPlots) {
+      wanted[plot.id] = pureGateSignature(datasetId, plot);
+    }
+    const stale = requestPlots.filter(
+      (plot) =>
+        this.analysisPureGateSignatures[plot.id] !== wanted[plot.id] ||
+        this.analysisGateIds[plot.id] === undefined,
+    );
+    // Forget plots that no longer exist at all. A plot that merely left the
+    // request set (its gate was disabled, or the palette closed) keeps its
+    // ids: they are still exactly what its polygon contains, and re-enabling
+    // must not pay for a whole-dataset re-resolution.
+    const livePlotIds = new Set(this.analysisPlots.map((plot) => plot.id));
+    const staleIds = new Set(stale.map((plot) => plot.id));
+    const keptIds: { [plotId: string]: string[] } = {};
+    const keptSignatures: { [plotId: string]: string } = {};
+    for (const [plotId, ids] of Object.entries(this.analysisGateIds)) {
+      // Dropped BEFORE awaiting: a stale gate's ids describe obsolete data,
+      // and unresolved shows MORE rather than wrong.
+      if (livePlotIds.has(plotId) && !staleIds.has(plotId)) {
+        keptIds[plotId] = ids;
+        const held = this.analysisPureGateSignatures[plotId];
+        if (held !== undefined) {
+          keptSignatures[plotId] = held;
+        }
+      }
+    }
+    if (stale.length === 0) {
+      // Everything asked for is already resolved under its current inputs:
+      // palette toggles and unrelated reactive touches must not refetch.
+      if (
+        Object.keys(keptIds).length !== Object.keys(this.analysisGateIds).length
+      ) {
+        this.setAnalysisGateIds(keptIds);
+        this.setAnalysisGateIdsArePure(true);
+        this.setAnalysisPureGateSignatures(keptSignatures);
+      }
+      if (this.analysisGateError !== null) {
+        // Nothing is unresolved, so nothing is failing. The banner is set per
+        // REQUEST but describes the plots that could not resolve, so once the
+        // user deletes or edits away the gate that was refused, every
+        // remaining gate is current and this early return is the only path
+        // left — it used to return without clearing, leaving "gates could not
+        // be applied" up while the retained gates were visibly filtering.
+        this.setAnalysisGateError(null);
+      }
+      return;
+    }
+    this.setAnalysisGateIds(keptIds);
+    this.setAnalysisGateIdsArePure(true);
+    this.setAnalysisPureGateSignatures(keptSignatures);
+    // The chained below-cap identity means nothing to pure ids; null it so a
+    // later below-cap refresh re-derives rather than trusting it.
+    if (this.analysisGateDataSignature !== null) {
+      this.setAnalysisGateDataSignature(null);
+    }
+    if (this.analysisVisibleGateDataSignature !== null) {
+      this.setAnalysisVisibleGateDataSignature(null);
+    }
+    // The value cache serves the below-cap scatter; above the cap it pins up
+    // to 50K values for nothing. It would self-invalidate by signature on
+    // the way back down — clearing here just frees the memory sooner.
+    if (
+      this.analysisValuesSourceSignature !== null ||
+      Object.keys(this.analysisValues).length > 0
+    ) {
+      this.clearAnalysisValueCache();
+    }
+    this.setAnalysisLoading(true);
+    let failure: string | null = null;
+    // Only the stale plots. Every gate used to be re-resolved whenever any
+    // one of them changed, which on a 700K dataset is a whole-dataset scan
+    // per gate for work already done.
+    const gateIds = await main.annotationsAPI.fetchAnalysisGateIds(
+      datasetId,
+      stale,
+      (message) => {
+        failure = message;
+      },
+    );
+    if (!analysisGateGuard.isCurrent(token)) {
+      // A newer refresh owns the state (and the loading flag) now.
+      return;
+    }
+    this.setAnalysisLoading(false);
+    if (gateIds === null) {
+      // Failure ≠ empty: same-input ids stayed in place above; changed-input
+      // ids were dropped before the await. Either way, nothing to commit —
+      // but say so, because the changed-input path just left every gate
+      // unresolved and the retry will fail the same way.
+      this.setAnalysisGateError(failure);
+      return;
+    }
+    if (this.analysisGateError !== null) {
+      this.setAnalysisGateError(null);
+    }
+    // Merge: the plots that were already current kept their ids above.
+    // `resolved` is built from the captured keptSignatures, NOT from
+    // this.analysisPureGateSignatures — setAnalysisGateIds resets that map
+    // (so it can never drift from the ids), and reading it back here would
+    // return the copy that call had just emptied.
+    const resolved = { ...keptSignatures };
+    for (const plot of stale) {
+      if (gateIds[plot.id] !== undefined) {
+        resolved[plot.id] = wanted[plot.id];
+      }
+    }
+    this.setAnalysisGateIds({ ...this.analysisGateIds, ...gateIds });
+    this.setAnalysisGateIdsArePure(true);
+    this.setAnalysisPureGateSignatures(resolved);
+  }
+
   @Action
   private clearAnalysisDerivedState() {
     if (this.analysisLoading) {
       this.setAnalysisLoading(false);
+    }
+    if (this.analysisGateError !== null) {
+      // No gates left to resolve, so nothing is failing any more.
+      this.setAnalysisGateError(null);
     }
     if (Object.keys(this.analysisGateIds).length > 0) {
       this.setAnalysisGateIds({});
@@ -896,13 +1280,19 @@ export class Filters extends VuexModule {
     );
   }
 
-  // How many filters are currently narrowing the set of visible objects.
-  // Drives the count badge on the app-bar Filters button, so active filters
-  // stay discoverable while the panel is closed. Each enabled filter row
-  // counts once; the boolean toggles count once when set away from their
-  // permissive default (showAnnotationsFromHiddenLayers defaults to true, so
-  // it only counts when off). `emptyROIFilter` is a region still being drawn
-  // and filters nothing yet, so it is excluded.
+  // How many rows in the FILTERS panel are narrowing the visible set. Drives
+  // the count badge on the app-bar Filters button, so active filters stay
+  // discoverable while the panel is closed. Each enabled filter row counts
+  // once; the boolean toggles count once when set away from their permissive
+  // default (showAnnotationsFromHiddenLayers defaults to true, so it only
+  // counts when off). `emptyROIFilter` is a region still being drawn and
+  // filters nothing yet, so it is excluded.
+  //
+  // Analysis gates narrow the same set but are deliberately NOT counted here:
+  // each badge counts what its own panel shows, and gates have their own
+  // badge (activeAnalysisGateCount). Counting them here meant a lone gate
+  // rendered "Filters: 1" on a button whose panel then displayed nothing —
+  // the badge pointed at a filter the user could not find or clear.
   get activeFilterCount() {
     const countEnabled = (filterList: IAnnotationFilter[]) =>
       filterList.filter((filter: IAnnotationFilter) => filter.enabled).length;
@@ -913,8 +1303,7 @@ export class Filters extends VuexModule {
       (main.showAnnotationsFromHiddenLayers ? 0 : 1) +
       countEnabled(this.propertyFilters) +
       countEnabled(this.roiFilters) +
-      countEnabled(this.annotationIdFilters) +
-      this.activeAnalysisGateCount
+      countEnabled(this.annotationIdFilters)
     );
   }
 
@@ -1225,6 +1614,65 @@ function analysisRefreshScope(plots: IAnalysisPlot[], panelOpen: boolean) {
 
 function analysisPathKeys(paths: string[][]): string[] {
   return paths.map((path) => createPathStringFromPathArray(path)).sort();
+}
+
+/** The drawn plots of `plots`, shaped for the server gate_ids request. */
+function serverGateRequestPlots(
+  plots: IAnalysisPlot[],
+): IAnalysisGatePlotRequest[] {
+  return plots.reduce<IAnalysisGatePlotRequest[]>((request, plot) => {
+    if (plot.xAxis !== null && plot.yAxis !== null && plot.gate !== null) {
+      request.push({
+        id: plot.id,
+        xAxis: plot.xAxis,
+        yAxis: plot.yAxis,
+        gate: plot.gate,
+      });
+    }
+    return request;
+  }, []);
+}
+
+/**
+ * Identity of everything server-side gate resolution depends on
+ * (SERVER_GATING.md, Phase 1): the gate definitions plus the two revision
+ * counters standing in for population content. Deliberately NO population
+ * hash and no filter state — the pure predicate depends on neither, which is
+ * what keeps the over-cap signature O(plots) instead of O(population) and
+ * spares the invalidation matrix that population-derived gate ids need.
+ * Serializing the definitions is fine here: vertices are bounded by the
+ * lasso (hundreds), unlike the id lists signatures.ts exists to avoid.
+ */
+function serverGateInputSignature(
+  datasetId: string,
+  requestPlots: IAnalysisGatePlotRequest[],
+): string {
+  return [
+    "server",
+    datasetId,
+    JSON.stringify(requestPlots),
+    properties.propertyValuesRevision,
+    annotation.contentRevision,
+  ].join("|");
+}
+
+/**
+ * Identity of everything ONE pure gate's ids depend on. Deliberately not a
+ * slice of serverGateInputSignature: that one describes a whole request, and
+ * which plots are in a request changes with the palette's visibility, which
+ * has nothing to do with whether a resolved gate is still correct.
+ */
+function pureGateSignature(
+  datasetId: string,
+  plot: IAnalysisGatePlotRequest,
+): string {
+  return [
+    "server",
+    datasetId,
+    JSON.stringify(plot),
+    properties.propertyValuesRevision,
+    annotation.contentRevision,
+  ].join("|");
 }
 
 function channelDisplayName(channel: number): string {

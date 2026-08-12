@@ -169,7 +169,21 @@ describe("buildListFilters", () => {
     expect(filters.idConstraints).toBeUndefined();
   });
 
-  it("adds one AND constraint per analysis gate, not a union", () => {
+  it("sends gate DEFINITIONS, never gate id lists (SERVER_GATING.md P3)", () => {
+    const definition = {
+      xAxis: { type: "property" as const, path: ["p", "Area"] },
+      yAxis: { type: "property" as const, path: ["p", "Mean"] },
+      gate: {
+        categoryKeyVersion: 1 as const,
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+        ],
+        xCategories: null,
+        yCategories: null,
+      },
+    };
     const filters = buildListFilters({
       tagFilter: { enabled: false, exclusive: false, tags: [] },
       onlyCurrentFrame: false,
@@ -178,15 +192,18 @@ describe("buildListFilters", () => {
       propertyFilters: [],
       selectionFilter: disabledSelectionFilter,
       annotationIdFilters: disabledAnnotationIdFilters,
-      // Only active gates reach here — the store's activeAnalysisGateIdLists
-      // has already dropped disabled and unresolved ones.
-      analysisGates: [["a", "b"], ["b"]],
+      // Only active resolved gates reach here — the store's getter has
+      // already dropped disabled, unresolved, and match-nothing ones.
+      analysisGateDefinitions: [definition, definition],
     });
-    // Two sets, NOT one unioned set: sequential gating is an AND.
-    expect(filters.idConstraints).toEqual([["a", "b"], ["b"]]);
+    // Two AND terms; a page fetch carries polygons, not id lists.
+    expect(filters.analysisGates).toEqual([definition, definition]);
+    expect(filters.idConstraints).toBeUndefined();
   });
 
-  it("omits idConstraints when there are no analysis gates", () => {
+  it("expresses a match-nothing gate as an empty id constraint", () => {
+    // The AnnotationsAPI boundary answers this locally
+    // (filtersMatchNothing) — the wire never sees it.
     const filters = buildListFilters({
       tagFilter: { enabled: false, exclusive: false, tags: [] },
       onlyCurrentFrame: false,
@@ -195,9 +212,25 @@ describe("buildListFilters", () => {
       propertyFilters: [],
       selectionFilter: disabledSelectionFilter,
       annotationIdFilters: disabledAnnotationIdFilters,
-      analysisGates: [],
+      analysisGatesMatchNothing: true,
+    });
+    expect(filters.idConstraints).toEqual([[]]);
+    expect(filters.analysisGates).toBeUndefined();
+  });
+
+  it("omits gate terms when there are no analysis gates", () => {
+    const filters = buildListFilters({
+      tagFilter: { enabled: false, exclusive: false, tags: [] },
+      onlyCurrentFrame: false,
+      currentFrame: { XY: 0, Z: 0, Time: 0 },
+      idSubstring: "",
+      propertyFilters: [],
+      selectionFilter: disabledSelectionFilter,
+      annotationIdFilters: disabledAnnotationIdFilters,
+      analysisGateDefinitions: [],
     });
     expect(filters.idConstraints).toBeUndefined();
+    expect(filters.analysisGates).toBeUndefined();
   });
 });
 

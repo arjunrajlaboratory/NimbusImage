@@ -1,54 +1,83 @@
 <template>
   <div v-if="visible" class="analysis-panel">
     <div class="analysis-intro">
-      Plot any two object properties against each other, then lasso-select the
-      points to keep. Each plot shows the objects passing the previous plot's
-      gate, so plots chain into a sequential gating strategy. Gates are saved
-      with the configuration.
+      Plot any two object properties against each other, then select the points
+      to keep. Each plot shows the objects passing the previous plot's gate, so
+      plots chain into a sequential gating strategy. Gates are saved with the
+      configuration.
     </div>
 
     <div v-if="overCap" class="analysis-overcap">
       <v-icon size="16" class="mr-1">mdi-information-outline</v-icon>
       More than {{ MAX_ANALYSIS_PLOT_POINTS.toLocaleString() }} objects pass the
-      current filters — too many for a scatter plot to gate exactly. Narrow the
-      filters (by tag, property range, or region) and the plots will appear
-      here.
+      current filters, so plots show binned distributions computed on the
+      server. Draw a closed shape (or rectangle) around the objects to keep —
+      gates stay exact at any size.
+    </div>
+    <div
+      v-if="overCap && skippedHistogramFilters.length > 0"
+      class="analysis-overcap analysis-skipped"
+    >
+      <v-icon size="16" class="mr-1">mdi-alert-outline</v-icon>
+      The distributions ignore: {{ skippedHistogramFilters.join(", ") }}. The
+      pictured population may include objects those filters hide — gating itself
+      is unaffected.
     </div>
 
-    <template v-else>
-      <div v-if="loadingValues" class="analysis-loading">
-        <v-progress-circular indeterminate size="18" width="2" class="mr-2" />
-        Loading property values…
-      </div>
+    <!-- Says "some", and does not claim the gates are all off. Resolution is
+         per plot, so a failed batch leaves already-resolved gates filtering —
+         the previous wording ("the viewer shows everything the other filters
+         allow") described what happened before that change and now misstates
+         what is on screen. -->
+    <div v-if="gateError" class="analysis-overcap analysis-gate-error">
+      <v-icon size="16" class="mr-1">mdi-alert-circle-outline</v-icon>
+      Some gates could not be resolved: {{ gateError }} Those gates are not
+      filtering anything for now; any gate that resolved earlier still is.
+    </div>
 
-      <analysis-scatter-plot
-        v-for="(plot, index) in plots"
-        :key="plot.id"
-        :plot="plot"
-        :index="index"
-        :series="seriesByPlot[plot.id] ?? null"
-        :gate-ids="gateIds[plot.id] ?? null"
-        :input-count="plotInputs[index]?.length ?? 0"
-        :axis-items="axisItems"
-      />
+    <!-- Sticky: the palette body scrolls, so a notice in the content flow
+         disappears as soon as the user scrolls to a plot — which is exactly
+         when they are waiting on it. -->
+    <div v-if="busy" class="analysis-busy">
+      <v-progress-linear indeterminate color="primary" height="3" rounded />
+      <span class="analysis-busy-text">{{ busyLabel }}</span>
+    </div>
 
-      <div class="analysis-actions">
-        <v-btn
-          variant="outlined"
-          color="primary"
-          size="small"
-          prepend-icon="mdi-plus"
-          @click="addPlot"
-        >
-          Add plot
-        </v-btn>
-      </div>
+    <analysis-scatter-plot
+      v-for="(plot, index) in plots"
+      :key="plot.id"
+      :plot="plot"
+      :index="index"
+      :series="seriesByPlot[plot.id] ?? null"
+      :gate-ids="gateIds[plot.id] ?? null"
+      :input-count="plotInputs[index]?.length ?? 0"
+      :axis-items="axisItems"
+      :over-cap="overCap"
+      :histogram="histogramsByPlot[plot.id] ?? null"
+    />
 
-      <div class="analysis-footer">
-        {{ passingCount.toLocaleString() }} of
-        {{ baseCount.toLocaleString() }} filtered objects pass all gates
-      </div>
-    </template>
+    <div class="analysis-actions">
+      <v-btn
+        variant="outlined"
+        color="primary"
+        size="small"
+        prepend-icon="mdi-plus"
+        :disabled="!canAddPlot"
+        :title="
+          canAddPlot
+            ? undefined
+            : `Maximum of ${MAX_ANALYSIS_PLOTS} plots reached`
+        "
+        @click="addPlot"
+      >
+        Add plot
+      </v-btn>
+    </div>
+
+    <div class="analysis-footer">
+      {{ passingCount.toLocaleString() }} of
+      {{ baseCount.toLocaleString() }} filtered objects pass all gates
+    </div>
   </div>
 </template>
 
@@ -58,15 +87,28 @@ import { v4 as uuidv4 } from "uuid";
 import store from "@/store";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
-import { TAnnotationOrStub } from "@/store/model";
-import { MAX_ANALYSIS_PLOT_POINTS } from "@/store/constants";
+import annotationStore from "@/store/annotation";
+import {
+  IAnalysisHistogramDisplay,
+  IAnalysisHistogramRequest,
+  TAnnotationOrStub,
+} from "@/store/model";
+import {
+  ANALYSIS_HISTOGRAM_BINS,
+  MAX_ANALYSIS_PLOTS,
+  MAX_ANALYSIS_PLOT_POINTS,
+} from "@/store/constants";
 import AnalysisScatterPlot from "@/components/AnalysisScatterPlot.vue";
 import { CATEGORICAL_AXES, encodeAxis, IAxisItem } from "@/utils/analysisAxes";
 import {
   buildPlotSeries,
   chainPlotInputs,
   IAnalysisSeries,
+  labelForCategoryKey,
 } from "@/utils/analysisGating";
+import { createSequenceGuard, ISequenceGuard } from "@/utils/sequenceGuard";
+import { idListSignature } from "@/utils/signatures";
+import { logError } from "@/utils/log";
 
 // This panel's content stays MOUNTED while its palette is closed — the palette
 // hides it with display:none — so nothing here may run on mount: it would fetch
@@ -82,8 +124,16 @@ const gateIds = computed(() => filterStore.analysisGateIds);
 // collecting and retaining the remaining hundreds of thousands of rows would
 // defeat the guard before any plot or gate has a chance to bail out.
 const analysisPopulation = computed(() => filterStore.analysisPopulation);
-const baseCount = computed(() => analysisPopulation.value.length);
-const overCap = computed(() => baseCount.value > MAX_ANALYSIS_PLOT_POINTS);
+const overCap = computed(
+  () => analysisPopulation.value.length > MAX_ANALYSIS_PLOT_POINTS,
+);
+// Above the cap the bounded walk stops at cap+1, which is not the real base
+// count; the uncapped walk is what the viewer computes anyway.
+const baseCount = computed(() =>
+  overCap.value
+    ? filterStore.annotationsPassingNonGateFilters.length
+    : analysisPopulation.value.length,
+);
 
 // Values come from the store, which owns the single fetch: it must resolve
 // gates whether or not this palette is open, so having the panel fetch its own
@@ -97,6 +147,21 @@ const values = computed(() => filterStore.analysisValues);
 // result is a real outcome (a property computed for only some objects), and
 // inferring left this spinning forever on it.
 const loadingValues = computed(() => filterStore.analysisLoading);
+const gateError = computed(() => filterStore.analysisGateError);
+
+// How many histogram requests are outstanding. Above the cap these are the
+// slow part (seconds on a 700K dataset) and previously showed nothing at
+// all, so the panel looked idle while it was working hardest.
+const histogramsInFlight = shallowRef(0);
+
+const busy = computed(
+  () => loadingValues.value || histogramsInFlight.value > 0,
+);
+const busyLabel = computed(() =>
+  histogramsInFlight.value > 0
+    ? "Computing distributions…"
+    : "Loading property values…",
+);
 
 // Tell the store whether anyone is looking. It fetches for plots WITHOUT a gate
 // only while the panel is open — nothing else needs those values.
@@ -128,16 +193,20 @@ const axisItems = computed<IAxisItem[]>(() => [
 // more than once and in an order we don't control, and the pruning below is a
 // state change driven by a read. Keeping the mutation here leaves the reactive
 // graph pure.
+//
+// Above the cap the chain is never walked client-side — each plot's input
+// count comes from its histogram response instead.
 const plotInputs = shallowRef<TAnnotationOrStub[][]>([]);
 const previousInputs = new Map<string, TAnnotationOrStub[]>();
 
 watch(
   () =>
-    props.visible
+    props.visible && !overCap.value
       ? chainPlotInputs(plots.value, gateIds.value, analysisPopulation.value)
       : [],
   (next) => {
-    const plotIds = props.visible ? plots.value.map((plot) => plot.id) : [];
+    const plotIds =
+      props.visible && !overCap.value ? plots.value.map((plot) => plot.id) : [];
     const reconciled = next.map((rows, i) => {
       const previous = previousInputs.get(plotIds[i]);
       if (
@@ -177,10 +246,11 @@ const channelName = (channel: number) =>
 
 // The plotted series per plot, built here so the scatter component is a pure
 // renderer and so the coordinates it draws come from the same function the
-// store gates with.
+// store gates with. Above the cap there are no points to plot — the heatmaps
+// below take over — so no series is built at all.
 const seriesByPlot = computed(() => {
   const result: { [plotId: string]: IAnalysisSeries } = {};
-  if (!props.visible) {
+  if (!props.visible || overCap.value) {
     return result;
   }
   plots.value.forEach((plot, index) => {
@@ -203,7 +273,292 @@ const seriesByPlot = computed(() => {
   return result;
 });
 
+// ---- Over-cap heatmaps (SERVER_GATING.md, Phase 2) ----
+//
+// Display work only: fetched per plot while the panel is open, keyed by a
+// signature over everything the server answer depends on, with a per-plot
+// sequence guard. Gate RESOLUTION does not pass through here — the store owns
+// it and it runs panel-open or not.
+
+const histogramFilterSpec = computed(() =>
+  props.visible && overCap.value
+    ? filterStore.analysisHistogramFilterSpec
+    : { filters: {}, skipped: [] },
+);
+const skippedHistogramFilters = computed(
+  () => histogramFilterSpec.value.skipped,
+);
+
+const histogramsByPlot = shallowRef<{
+  [plotId: string]: IAnalysisHistogramDisplay | null;
+}>({});
+const histogramSignatures = new Map<string, string>();
+const histogramGuards = new Map<string, ISequenceGuard>();
+
+interface IHistogramWork {
+  plotId: string;
+  request: IAnalysisHistogramRequest;
+  signature: string;
+}
+
+// The id lists inside filter constraints can hold tens of thousands of ids;
+// hash them for the signature instead of serializing (signatures.ts rule).
+function requestSignature(request: IAnalysisHistogramRequest): string {
+  const { filters, ...definition } = request;
+  const { idConstraints, ...plainFilters } = filters;
+  return [
+    // Plot ids come from the configuration, which is shared across datasets,
+    // so the same ids reappear on the next dataset. Without the dataset id
+    // (which its twin, serverGateInputSignature, does include) a switch whose
+    // clear and re-hydration land in the same tick left the previous
+    // dataset's heatmap and counts on screen under the new dataset's axes.
+    store.dataset?.id ?? "",
+    JSON.stringify(definition),
+    JSON.stringify(plainFilters),
+    (idConstraints ?? []).map((ids) => idListSignature(ids)).join(","),
+    propertyStore.propertyValuesRevision,
+    annotationStore.contentRevision,
+  ].join("|");
+}
+
+const histogramWork = computed<IHistogramWork[]>(() => {
+  if (!props.visible || !overCap.value) {
+    return [];
+  }
+  const { filters } = histogramFilterSpec.value;
+  const allPlots = plots.value;
+  return allPlots
+    .filter((plot) => plot.xAxis !== null && plot.yAxis !== null)
+    .map((plot) => {
+      const index = allPlots.indexOf(plot);
+      const upstreamGates = allPlots
+        .slice(0, index)
+        .filter(
+          (upstream) =>
+            upstream.gateEnabled &&
+            upstream.gate !== null &&
+            upstream.xAxis !== null &&
+            upstream.yAxis !== null,
+        )
+        .map((upstream) => ({
+          xAxis: upstream.xAxis!,
+          yAxis: upstream.yAxis!,
+          gate: upstream.gate!,
+        }));
+      const request: IAnalysisHistogramRequest = {
+        xAxis: plot.xAxis!,
+        yAxis: plot.yAxis!,
+        xCategories: plot.gate?.xCategories ?? null,
+        yCategories: plot.gate?.yCategories ?? null,
+        bins: { x: ANALYSIS_HISTOGRAM_BINS, y: ANALYSIS_HISTOGRAM_BINS },
+        upstreamGates,
+        filters,
+        gate: plot.gate,
+      };
+      return { plotId: plot.id, request, signature: requestSignature(request) };
+    });
+});
+
+function toDisplay(
+  response: NonNullable<
+    Awaited<ReturnType<typeof store.annotationsAPI.fetchAnalysisHistogram>>
+  >,
+  request: IAnalysisHistogramRequest,
+): IAnalysisHistogramDisplay {
+  const labels = (
+    categories: string[] | null,
+    axis: IAnalysisHistogramRequest["xAxis"],
+  ) =>
+    // Array.isArray, not `!== null`: a response missing the field entirely
+    // gives `undefined`, which passes a null check and then throws on .map —
+    // a throw that used to poison the whole histogram queue.
+    Array.isArray(categories) && axis.type === "categorical"
+      ? categories.map((key) => labelForCategoryKey(key, axis.key, channelName))
+      : null;
+  return {
+    ...response,
+    xCategoryLabels: labels(response.xCategories, request.xAxis),
+    yCategoryLabels: labels(response.yCategories, request.yAxis),
+  };
+}
+
+// Histogram requests run ONE AT A TIME. Each one independently re-scans the
+// whole dataset and materializes the property values it needs server-side,
+// so firing one per plot on panel open (or on any signature change that
+// invalidates them all, like a property recompute) meant N concurrent
+// full-dataset scans — 20 of them on the supported plot count. The busy bar
+// covers the whole queue, so serializing costs visible latency but not
+// clarity.
+let histogramQueue: Promise<void> = Promise.resolve();
+
+// How many requests are queued or in flight PER PLOT. The queue captures a
+// guard OBJECT, so removing the plot's map entry does not stop its callback
+// — the guard has to be ADVANCED to supersede the captured token.
+//
+// A count, not a membership set: one plot can have several generations in
+// the queue at once (a superseded request whose replacement sits behind
+// another plot's). With a set, the older generation's cleanup removed the
+// entry the REPLACEMENT still needed, and invalidation could no longer see
+// it — so it dispatched a full-dataset scan after the panel had closed.
+//
+// Signatures of invalidated work are forgotten so it refetches when
+// relevant again; completed signatures are untouched, which is what keeps a
+// reopen from refetching everything.
+const pendingHistograms = new Map<string, number>();
+
+function invalidatePendingHistograms(plotIds: Iterable<string>) {
+  for (const plotId of plotIds) {
+    if (!pendingHistograms.has(plotId)) {
+      continue;
+    }
+    // Advancing supersedes EVERY generation queued for this plot at once.
+    histogramGuards.get(plotId)?.next();
+    histogramSignatures.delete(plotId);
+    // The count is NOT cleared here: it belongs to the outstanding callbacks,
+    // which each decrement it in their `finally` whether or not they were
+    // superseded. Deleting it made a superseded callback's decrement land on
+    // a LATER generation's entry and remove it, so that generation became
+    // invisible to the next invalidation — close, reopen, close again and a
+    // full-dataset histogram2d scan dispatched with the panel shut.
+  }
+}
+
+function enqueueHistogram(
+  plotId: string,
+  request: IAnalysisHistogramRequest,
+  guard: ISequenceGuard,
+  token: number,
+  datasetId: string,
+) {
+  histogramsInFlight.value += 1;
+  pendingHistograms.set(plotId, (pendingHistograms.get(plotId) ?? 0) + 1);
+  histogramQueue = histogramQueue.then(async () => {
+    try {
+      // Superseded before it ever started: skip the round trip entirely.
+      if (!guard.isCurrent(token)) {
+        return;
+      }
+      const response = await store.annotationsAPI.fetchAnalysisHistogram(
+        datasetId,
+        request,
+      );
+      if (!guard.isCurrent(token)) {
+        return;
+      }
+      if (response === null) {
+        // Failure ≠ empty: keep whatever was displayed, and forget the
+        // signature so the next input change (or panel reopen) retries.
+        histogramSignatures.delete(plotId);
+        return;
+      }
+      histogramsByPlot.value = {
+        ...histogramsByPlot.value,
+        [plotId]: toDisplay(response, request),
+      };
+    } catch (error) {
+      // The chain must never settle rejected. `histogramQueue.then(cb)` on a
+      // rejected promise skips cb entirely, so ONE throw here would silently
+      // disable histogram fetching for the rest of the session — and because
+      // histogramsInFlight is incremented before the .then, every skipped
+      // generation would leak a count and pin the busy bar on. Treat a throw
+      // exactly like a failed response: forget the signature so the next
+      // input change (or panel reopen) retries.
+      histogramSignatures.delete(plotId);
+      logError(error);
+    } finally {
+      // Only this generation is done; a newer one may still be queued.
+      const remaining = (pendingHistograms.get(plotId) ?? 1) - 1;
+      if (remaining > 0) {
+        pendingHistograms.set(plotId, remaining);
+      } else {
+        pendingHistograms.delete(plotId);
+      }
+      histogramsInFlight.value -= 1;
+    }
+  });
+}
+
+watch(
+  histogramWork,
+  (work) => {
+    const datasetId = store.dataset?.id;
+    // Prune state for removed plots — but only while the work list is
+    // authoritative. When the panel is hidden (or below the cap) the list is
+    // empty by construction, and pruning then would defeat the reopen
+    // behavior: signatures persist across panel closes on purpose, so
+    // reopening with unchanged inputs refetches nothing.
+    if (props.visible && overCap.value) {
+      const live = new Set(work.map(({ plotId }) => plotId));
+      const gone = [...pendingHistograms.keys()].filter((id) => !live.has(id));
+      // Advance before forgetting the guard, or the queued callback still
+      // holds a current token and repopulates the entry just pruned.
+      invalidatePendingHistograms(gone);
+      let pruned = false;
+      const next = { ...histogramsByPlot.value };
+      for (const plotId of Object.keys(next)) {
+        if (!live.has(plotId)) {
+          delete next[plotId];
+          histogramSignatures.delete(plotId);
+          histogramGuards.delete(plotId);
+          pruned = true;
+        }
+      }
+      for (const plotId of gone) {
+        histogramGuards.delete(plotId);
+      }
+      if (pruned) {
+        histogramsByPlot.value = next;
+      }
+    } else {
+      // Hidden, or back below the cap: nothing queued has a reason to run.
+      // Display work must not continue behind a closed palette.
+      invalidatePendingHistograms([...pendingHistograms.keys()]);
+    }
+    if (!datasetId) {
+      return;
+    }
+    // Drop the displayed histogram for every plot whose inputs changed,
+    // BEFORE queueing the replacement. Only committing on success meant the
+    // previous response stayed on screen for the seconds a whole-dataset
+    // request takes — and indefinitely if it failed, since a failure
+    // deliberately preserves the display. That is right for the same inputs
+    // and wrong for new ones: the stale response describes the OLD axes, and
+    // `onShapesRelayout` pins `props.histogram.xCategories` into any gate
+    // drawn meanwhile, so a gate could be saved carrying the previous axis's
+    // category order — silently the wrong membership, not just a stale
+    // picture.
+    const changed = work.filter(
+      ({ plotId, signature }) => histogramSignatures.get(plotId) !== signature,
+    );
+    const staleDisplays = changed.filter(
+      ({ plotId }) => histogramsByPlot.value[plotId] !== undefined,
+    );
+    if (staleDisplays.length > 0) {
+      const cleared = { ...histogramsByPlot.value };
+      for (const { plotId } of staleDisplays) {
+        delete cleared[plotId];
+      }
+      histogramsByPlot.value = cleared;
+    }
+    for (const { plotId, request, signature } of changed) {
+      histogramSignatures.set(plotId, signature);
+      let guard = histogramGuards.get(plotId);
+      if (!guard) {
+        guard = createSequenceGuard();
+        histogramGuards.set(plotId, guard);
+      }
+      const token = guard.next();
+      enqueueHistogram(plotId, request, guard, token, datasetId);
+    }
+  },
+  { immediate: true },
+);
+
 const passingCount = computed(() => filterStore.filteredAnnotations.length);
+
+// Disabled rather than silently no-op: the store refuses past the cap
+// because the backend rejects a larger request outright.
+const canAddPlot = computed(() => filterStore.canAddAnalysisPlot);
 
 function addPlot() {
   filterStore.addAnalysisPlot(uuidv4());
@@ -218,6 +573,13 @@ defineExpose({
   passingCount,
   baseCount,
   overCap,
+  busy,
+  busyLabel,
+  canAddPlot,
+  MAX_ANALYSIS_PLOTS,
+  histogramsByPlot,
+  histogramWork,
+  skippedHistogramFilters,
   MAX_ANALYSIS_PLOT_POINTS,
 });
 </script>
@@ -246,11 +608,33 @@ defineExpose({
   padding: 10px 12px;
 }
 
-.analysis-loading {
+.analysis-skipped {
+  background: rgba(var(--v-theme-warning), 0.08);
+  border-color: rgba(var(--v-theme-warning), 0.35);
+}
+
+.analysis-gate-error {
+  background: rgba(var(--v-theme-error), 0.08);
+  border-color: rgba(var(--v-theme-error), 0.35);
+}
+
+.analysis-busy {
+  /* Pinned to the top of the scrolling palette body so it stays visible
+     while the user scrolls through plots. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0 8px;
+  /* Opaque, so plot content scrolling underneath does not show through. */
+  background: var(--nimbus-surface, #1e1e1e);
+}
+
+.analysis-busy-text {
   font-size: 12px;
-  color: var(--nimbus-text-muted, #8a8f98);
+  color: var(--nimbus-text-secondary, #d0d6e0);
 }
 
 .analysis-actions {

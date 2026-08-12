@@ -6,6 +6,7 @@ import type {
   TAnalysisAxis,
 } from "@/store/model";
 import { ANALYSIS_CATEGORY_KEY_VERSION } from "@/store/model";
+import { MAX_ANALYSIS_PLOTS } from "@/store/constants";
 import { isCategoricalAxisKey } from "@/utils/analysisAxes";
 import { isEncodedAnalysisCategoryKey } from "@/utils/analysisGating";
 import { createPathStringFromPathArray } from "@/utils/paths";
@@ -70,9 +71,17 @@ export function resolveAnnotationBrowserConfig(
     displayedPropertyPaths,
     filterPaths,
     propertyFilters,
+    // Capped on the way in as well as at creation: the backend rejects a
+    // gate request carrying more than MAX_ANALYSIS_PLOTS outright, and a
+    // stored configuration is not bound by the creation guard (it can be
+    // written by the API, or by a future client). Past the cap every gate
+    // request would 400 and, since a failed resolve leaves ids cleared, all
+    // gates would stop filtering with no way to recover — strictly worse
+    // than dropping the tail.
     analysisPlots: asArray(config?.analysisPlots)
       .map((plot) => resolveAnalysisPlot(plot, isKnownPath))
-      .filter((plot): plot is IAnalysisPlot => plot !== null),
+      .filter((plot): plot is IAnalysisPlot => plot !== null)
+      .slice(0, MAX_ANALYSIS_PLOTS),
   };
 }
 

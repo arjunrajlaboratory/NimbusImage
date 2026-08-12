@@ -40,7 +40,9 @@ export interface IAnalysisSeries {
   skipped: number;
 }
 
-type TAnalysisCategoryRaw = string | string[] | number;
+// `null` is the identity of a document missing the field entirely — see
+// locationComponent. It is a real, encodable category, not an error value.
+type TAnalysisCategoryRaw = string | string[] | number | null;
 
 const ANALYSIS_CATEGORY_KEY_PREFIX = "v1:";
 
@@ -49,29 +51,58 @@ export function encodeAnalysisCategoryKey(raw: TAnalysisCategoryRaw): string {
   return `${ANALYSIS_CATEGORY_KEY_PREFIX}${JSON.stringify(raw)}`;
 }
 
-function decodeAnalysisCategoryKey(key: string): TAnalysisCategoryRaw | null {
+/**
+ * `null` is a legal decoded identity (a document missing the field), so it
+ * cannot double as "this is not a key" — reusing it made `"v1:null"`
+ * undecodable, and since isEncodedAnalysisCategoryKey guards the persisted
+ * pinned order, a gate drawn on such an axis was silently discarded on the
+ * next page load. A distinct sentinel keeps the two answers apart.
+ */
+const NOT_A_CATEGORY_KEY = Symbol("notACategoryKey");
+
+function decodeAnalysisCategoryKey(
+  key: string,
+): TAnalysisCategoryRaw | typeof NOT_A_CATEGORY_KEY {
   if (!key.startsWith(ANALYSIS_CATEGORY_KEY_PREFIX)) {
-    return null;
+    return NOT_A_CATEGORY_KEY;
   }
   try {
     const raw: unknown = JSON.parse(
       key.slice(ANALYSIS_CATEGORY_KEY_PREFIX.length),
     );
-    if (typeof raw === "string" || typeof raw === "number") {
-      return raw;
-    }
-    if (Array.isArray(raw) && raw.every((entry) => typeof entry === "string")) {
-      return raw;
+    if (
+      raw === null ||
+      typeof raw === "string" ||
+      typeof raw === "number" ||
+      (Array.isArray(raw) && raw.every((entry) => typeof entry === "string"))
+    ) {
+      return raw as TAnalysisCategoryRaw;
     }
   } catch {
     // Invalid persisted keys are rejected by isEncodedAnalysisCategoryKey.
   }
-  return null;
+  return NOT_A_CATEGORY_KEY;
 }
 
 /** True for the versioned, collision-free category identities stored in gates. */
 export function isEncodedAnalysisCategoryKey(key: string): boolean {
-  return decodeAnalysisCategoryKey(key) !== null;
+  return decodeAnalysisCategoryKey(key) !== NOT_A_CATEGORY_KEY;
+}
+
+/**
+ * Display label for an encoded category key — used where categories arrive
+ * as keys without their population (the server-binned histograms). Falls
+ * back to the raw key for anything undecodable.
+ */
+export function labelForCategoryKey(
+  key: string,
+  axisKey: TAnalysisCategoricalKey,
+  channelName: (channel: number) => string,
+): string {
+  const decoded = decodeAnalysisCategoryKey(key);
+  return decoded === NOT_A_CATEGORY_KEY
+    ? key
+    : categoricalLabelFromRaw(decoded, axisKey, channelName);
 }
 
 /**
@@ -93,6 +124,19 @@ export function jitterFromId(id: string, salt: number): number {
 const X_JITTER_SALT = 17;
 const Y_JITTER_SALT = 31;
 
+/**
+ * A stored annotation can be missing a location component: the backend's
+ * `locationSchema` declares XY/Z/Time without a `required` list, so
+ * `"location": {}` is a valid write. Coerce the gap to `null` — that encodes
+ * to `"v1:null"`, exactly what the server's `categorical_raw_identity`
+ * produces for the same document. Leaving it `undefined` encoded to
+ * `"v1:undefined"`, a key the server can never emit, so those annotations
+ * belonged to different categories on the two sides of the parity contract.
+ */
+function locationComponent(value: number | undefined): number | null {
+  return value ?? null;
+}
+
 function categoricalRawIdentity(
   annotation: TAnnotationOrStub,
   key: TAnalysisCategoricalKey,
@@ -105,11 +149,11 @@ function categoricalRawIdentity(
     case "channel":
       return annotation.channel;
     case "xy":
-      return annotation.location.XY;
+      return locationComponent(annotation.location.XY);
     case "z":
-      return annotation.location.Z;
+      return locationComponent(annotation.location.Z);
     case "time":
-      return annotation.location.Time;
+      return locationComponent(annotation.location.Time);
   }
 }
 
@@ -118,6 +162,11 @@ function categoricalLabelFromRaw(
   key: TAnalysisCategoricalKey,
   channelName: (channel: number) => string,
 ): string {
+  if (raw === null) {
+    // A document missing the field. Named rather than rendered as "XY 1",
+    // which is what `null + 1` would have produced.
+    return "(none)";
+  }
   switch (key) {
     case "tags": {
       const tags = raw as string[];
@@ -228,31 +277,45 @@ export function buildPlotSeries(input: {
         return presentLabel;
       }
       const decoded = decodeAnalysisCategoryKey(key);
-      return decoded === null
+      return decoded === NOT_A_CATEGORY_KEY
         ? key
         : categoricalLabelFromRaw(decoded, axis.key, channelName);
     };
     // A pinned ordering wins, extended with any category it does not know so
-    // new categories still plot (at the end) instead of vanishing.
+    // new categories still plot (at the end) instead of vanishing. Note that
+    // appended categories are display-only: a gate never contains them (see
+    // resolveGateIds), so their indices carry no gate semantics.
     const categories = order ? [...order] : [];
     const indexOf = new Map(categories.map((key, idx) => [key, idx]));
+    // Sort by encoded key, in UTF-16 code-unit order — the same comparison
+    // `Array.prototype.sort` uses by default and the same one the server's
+    // `utf16_sort_key` implements. Applied to the whole axis when no ordering
+    // is pinned, and to the appended slice when one is; appended indices must
+    // not depend on population iteration order.
+    //
+    // NOT by display label, which is what this did. Two reasons: the server
+    // cannot reproduce it (labels for `channel` come from the dataset config,
+    // and `localeCompare` is locale-dependent), so crossing the plot cap
+    // silently reordered a categorical axis; and the same divergence made the
+    // over-cap heatmap and the below-cap scatter disagree about the same
+    // dataset. Gate membership was never affected — a gate pins its own
+    // category order — but the picture was.
+    const byKey = (left: string, right: string) =>
+      left < right ? -1 : left > right ? 1 : 0;
+    const appended: string[] = [];
     for (const { key } of categoryValues) {
       if (!indexOf.has(key)) {
-        indexOf.set(key, categories.length);
-        categories.push(key);
+        indexOf.set(key, 0); // marker; real indices assigned below
+        appended.push(key);
       }
     }
+    appended.sort(byKey);
+    categories.push(...appended);
     if (!order) {
-      // No pinned ordering: sort by readable label, then raw identity so
-      // duplicate display labels remain deterministic and separate.
-      categories.sort(
-        (left, right) =>
-          labelForKey(left).localeCompare(labelForKey(right)) ||
-          left.localeCompare(right),
-      );
-      indexOf.clear();
-      categories.forEach((key, idx) => indexOf.set(key, idx));
+      categories.sort(byKey);
     }
+    indexOf.clear();
+    categories.forEach((key, idx) => indexOf.set(key, idx));
     return {
       coords: categoryValues.map(
         ({ key }, i) => indexOf.get(key)! + jitterFromId(ids[i], salt),
@@ -299,7 +362,17 @@ function isPointInPolygon(
   return inside;
 }
 
-/** The ids of `series` whose point falls inside `gate`. */
+/**
+ * The ids of `series` whose point falls inside `gate`.
+ *
+ * A categorical point whose category is NOT in the gate's pinned order is
+ * never inside, no matter where the polygon reaches (SERVER_GATING.md,
+ * "unknown categories are outside the gate"). Appended categories plot at
+ * indices ≥ the pinned count, and jitter is bounded by ±0.28, so rounding
+ * the coordinate recovers the index exactly. This is what keeps the gate a
+ * pure per-annotation predicate — the property that lets the server resolve
+ * it without knowing the client's population.
+ */
 export function resolveGateIds(
   series: IAnalysisSeries,
   gate: IAnalysisGate,
@@ -309,8 +382,22 @@ export function resolveGateIds(
   if (gate.vertices.length < 3) {
     return [];
   }
+  const xPinned =
+    series.xCategories !== null && gate.xCategories !== null
+      ? gate.xCategories.length
+      : null;
+  const yPinned =
+    series.yCategories !== null && gate.yCategories !== null
+      ? gate.yCategories.length
+      : null;
   const ids: string[] = [];
   for (let i = 0; i < series.ids.length; i++) {
+    if (xPinned !== null && Math.round(series.x[i]) >= xPinned) {
+      continue;
+    }
+    if (yPinned !== null && Math.round(series.y[i]) >= yPinned) {
+      continue;
+    }
     if (isPointInPolygon(series.x[i], series.y[i], gate.vertices)) {
       ids.push(series.ids[i]);
     }
@@ -357,6 +444,75 @@ export function selectionEventToGate(
         { x: x0, y: y1 },
       ],
       ...categories,
+    };
+  }
+  return null;
+}
+
+/**
+ * Translate a Plotly layout SHAPE (drawclosedpath / drawrect, the drawing
+ * tools available on a heatmap, where lasso selection does not exist) into a
+ * persistable gate. The pinned category orders come from the axis metadata
+ * in effect when the shape was drawn — above the cap that is the
+ * server-derived order from the histogram response.
+ *
+ * Returns null for anything that does not describe an area (malformed path,
+ * fewer than 3 vertices, missing rect corners, unknown shape type), so the
+ * caller leaves the existing gate alone.
+ */
+export function shapeToGate(
+  shape:
+    | {
+        type?: string;
+        path?: string;
+        x0?: number;
+        x1?: number;
+        y0?: number;
+        y1?: number;
+      }
+    | null
+    | undefined,
+  categories: {
+    xCategories: string[] | null;
+    yCategories: string[] | null;
+  },
+): IAnalysisGate | null {
+  if (!shape) {
+    return null;
+  }
+  const base = {
+    categoryKeyVersion: ANALYSIS_CATEGORY_KEY_VERSION,
+    xCategories: categories.xCategories,
+    yCategories: categories.yCategories,
+  };
+  if (shape.type === "path" && typeof shape.path === "string") {
+    // Plotly emits "M x,y L x,y ... Z" with plain decimal/exponent numbers.
+    const NUMBER = "-?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?";
+    const vertexPattern = new RegExp(`[ML](${NUMBER}),(${NUMBER})`, "g");
+    const vertices: IGeoJSPosition[] = [];
+    for (const match of shape.path.matchAll(vertexPattern)) {
+      vertices.push({ x: parseFloat(match[1]), y: parseFloat(match[2]) });
+    }
+    return vertices.length >= 3 ? { vertices, ...base } : null;
+  }
+  if (shape.type === "rect") {
+    const { x0, x1, y0, y1 } = shape;
+    if (
+      typeof x0 !== "number" ||
+      typeof x1 !== "number" ||
+      typeof y0 !== "number" ||
+      typeof y1 !== "number"
+    ) {
+      return null;
+    }
+    return {
+      vertices: [
+        { x: x0, y: y0 },
+        { x: x1, y: y0 },
+        { x: x1, y: y1 },
+        { x: x0, y: y1 },
+      ],
+      ...base,
     };
   }
   return null;
