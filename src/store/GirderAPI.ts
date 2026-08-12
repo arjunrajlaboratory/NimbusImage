@@ -1346,6 +1346,7 @@ export interface IHistogramOptions {
 
 export interface ITileMeta {
   [x: string]: any;
+  dtype?: string;
   IndexRange: any;
   levels: number;
   magnification: number;

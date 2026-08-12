@@ -108,6 +108,8 @@ const NOT_OURS = new Set([
   // test tree, but are not part of this checkout's sources. Descending into
   // them makes the completeness guard report those copies as new roots.
   "worktrees",
+  // Review worktrees are checkouts of this repo, not part of it.
+  ".claude",
 ]);
 
 /**
