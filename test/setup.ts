@@ -3,6 +3,24 @@ import { createVuetify } from "vuetify";
 import { reactive } from "vue";
 import { vi } from "vitest";
 
+// jsdom's CSS parser cannot handle Vuetify 4's stylesheet (cascade layers,
+// nested selectors), so EVERY component mount logs "Could not parse CSS
+// stylesheet" followed by the entire sheet — about 5,500 lines, ~150KB, per
+// mount. With ~2,000 mounts across the suite the reporter buffers hundreds of
+// megabytes of it and the run dies with a heap OOM once the suite grows a
+// little. The error tells us nothing (styles are irrelevant to these tests), so
+// drop exactly this one message and let everything else through.
+const originalConsoleError = console.error;
+console.error = (...args: unknown[]) => {
+  const [first] = args;
+  const text =
+    first instanceof Error ? first.message : typeof first === "string" ? first : "";
+  if (text.includes("Could not parse CSS stylesheet")) {
+    return;
+  }
+  originalConsoleError(...args);
+};
+
 // Polyfill visualViewport for jsdom (required by Vuetify 3 overlay components)
 if (typeof globalThis.visualViewport === "undefined") {
   (globalThis as any).visualViewport = {

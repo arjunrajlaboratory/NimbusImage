@@ -29,6 +29,8 @@ from ..helpers.validation import (
     requireList,
     requireObjectBody,
     requireObjectId,
+    validateAnalysisGatePlots,
+    validateAnalysisHistogramRequest,
     validateAnnotationIdCount,
     validateListInputs,
     validateUncomputedCountsProperties,
@@ -207,6 +209,12 @@ class Annotation(Resource):
         self.route("POST", ("hydrate",), self.hydrate)
         self.route("POST", ("list",), self.listAnnotations)
         self.route("POST", ("list", "ids"), self.listAnnotationIds)
+        self.route(
+            "POST", ("analysis", "gate_ids"), self.analysisGateIds
+        )
+        self.route(
+            "POST", ("analysis", "histogram2d"), self.analysisHistogram2d
+        )
         self.route("POST", ("uncomputed_counts",), self.uncomputedCounts)
 
     # TODO: anytime a dataset is mentioned, load the dataset and check for
@@ -829,11 +837,81 @@ class Annotation(Resource):
         filters = bodyJson.get("filters") or {}
         validateListInputs(filters)
         dropNoOpPropertyFilters(filters)
+        try:
+            self._annotationModel.resolveListGateConstraints(
+                datasetId, filters
+            )
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
         ids = self._annotationModel.listIds(datasetId, filters)
 
         prefix = b'{"total":' + str(len(ids)).encode() + b',"ids":['
         setResponseHeader("Content-Type", "application/json")
         return _streamJsonArray(ids, prefix=prefix, suffix=b"]}")
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Resolve analysis gate polygons to annotation ids")
+        .notes(
+            "Each plot's gate is resolved as a pure per-annotation "
+            "predicate over the whole dataset — independent of the other "
+            "plots and of any filter state. See "
+            "codebaseDocumentation/SERVER_GATING.md."
+        )
+        .param("body", "JSON: {datasetId, plots}", paramType="body")
+        .errorResponse()
+        .errorResponse("Read access denied.", 403)
+    )
+    def analysisGateIds(self, params):
+        bodyJson = requireObjectBody(self.getBodyJson())
+        datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetId, user=self.getCurrentUser(),
+            level=AccessType.READ, exc=True,
+        )
+        plots = validateAnalysisGatePlots(bodyJson.get("plots"))
+        try:
+            return {
+                "gateIds": self._annotationModel.resolveAnalysisGates(
+                    datasetId, plots
+                )
+            }
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Binned 2D counts for one analysis plot")
+        .notes(
+            "Display only: the population is the dataset narrowed by the "
+            "serializable list filters and the upstream plots' gates. Gate "
+            "RESOLUTION uses analysis/gate_ids, not this. See "
+            "codebaseDocumentation/SERVER_GATING.md."
+        )
+        .param(
+            "body",
+            "JSON: {datasetId, xAxis, yAxis, xCategories?, yCategories?, "
+            "bins, upstreamGates, filters, gate?}",
+            paramType="body",
+        )
+        .errorResponse()
+        .errorResponse("Read access denied.", 403)
+    )
+    def analysisHistogram2d(self, params):
+        bodyJson = requireObjectBody(self.getBodyJson())
+        datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetId, user=self.getCurrentUser(),
+            level=AccessType.READ, exc=True,
+        )
+        spec = validateAnalysisHistogramRequest(bodyJson)
+        try:
+            return self._annotationModel.analysisHistogram(datasetId, spec)
+        except ValueError as exc:
+            # Domain errors from the pure helpers (e.g. a categorical grid
+            # whose size only becomes known after deriving categories from
+            # the data) are client-input problems, not 500s.
+            raise RestException(str(exc), code=400)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -871,6 +949,16 @@ class Annotation(Resource):
 
         validateListInputs(filters, sort, propertyPaths)
         dropNoOpPropertyFilters(filters)
+        # Resolve gate definitions ONCE here, so the page, count, and anchor
+        # position below all reuse the same constraints (SERVER_GATING.md,
+        # Phase 3). Over-budget gates raise ValueError -> 400, like a bad
+        # sort key below.
+        try:
+            self._annotationModel.resolveListGateConstraints(
+                datasetId, filters
+            )
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
 
         # Build the page first: its pipeline construction validates the sort
         # field (ValueError -> 400) before the expensive count aggregation

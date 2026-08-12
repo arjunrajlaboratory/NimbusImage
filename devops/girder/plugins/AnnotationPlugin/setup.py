@@ -31,6 +31,10 @@ setup(
         "girder-user-quota>5",
         "girder-import-tracker>5",
         "fastjsonschema",
+        # Analysis gating (helpers/analysis.py) and connection helpers use
+        # numpy directly; declare it rather than relying on large_image
+        # pulling it in transitively.
+        "numpy",
         "orjson",
         "numpy",
         "Pillow",

@@ -225,6 +225,50 @@
               </button>
             </template>
           </v-tooltip>
+          <v-tooltip :text="analysisTooltip">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: analysisPanel }"
+                :aria-label="analysisAriaLabel"
+                @click.stop="togglePalette('analysisPanel')"
+              >
+                <v-icon size="18">mdi-chart-scatter-plot</v-icon>
+                <!-- Count of gates narrowing the object set. Gates apply with
+                     the palette closed and are restored from the saved
+                     configuration, so without this a dataset could open
+                     already filtered with nothing on screen to say why. The
+                     Filters badge cannot cover it: each badge counts only what
+                     its own panel can show. -->
+                <span
+                  v-if="activeAnalysisGateCount > 0"
+                  class="palette-ibtn-badge"
+                >
+                  {{
+                    activeAnalysisGateCount > 9 ? "9+" : activeAnalysisGateCount
+                  }}
+                </span>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip
+            text="Analysis: plot object properties against each other and lasso-select objects to keep"
+          >
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: analysisPanel }"
+                aria-label="Analysis plots"
+                @click.stop="togglePalette('analysisPanel')"
+              >
+                <v-icon size="18">mdi-chart-scatter-plot</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
           <v-tooltip
             text="Snapshots for bookmarking and downloading cropped regions in your dataset"
           >
@@ -414,8 +458,8 @@
       v-model="annotationPanel"
       title="Object Browser"
       :width="RIGHT_PALETTE_WIDTHS.objectBrowser"
-      :top="annotationBrowserTop"
-      :max-height="annotationBrowserMaxHeight"
+      :top="stackedHostTop"
+      :max-height="stackedHostMaxHeight"
     >
       <annotation-browser></annotation-browser>
     </floating-palette>
@@ -428,6 +472,20 @@
       :max-height="filtersMaxHeight"
     >
       <filters-panel />
+    </floating-palette>
+
+    <floating-palette
+      v-model="analysisPanel"
+      title="Analysis"
+      :width="RIGHT_PALETTE_WIDTHS.analysis"
+      :top="stackedHostTop"
+      :max-height="stackedHostMaxHeight"
+    >
+      <!-- FloatingPalette keeps its content mounted and hides it with
+           display:none, so the panel needs the open state explicitly: without
+           it, its property-value fetch would run on every dataset open even for
+           users who never open the palette. -->
+      <analysis-panel :visible="analysisPanel" />
     </floating-palette>
 
     <template v-if="store.dataset && routeName === 'datasetview'">
@@ -505,6 +563,7 @@ import Snapshots from "./components/Snapshots.vue";
 import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.vue";
 import DataIoMenu from "@/components/DataIOMenu.vue";
 import FiltersPanel from "@/components/FiltersPanel.vue";
+import AnalysisPanel from "@/components/AnalysisPanel.vue";
 import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
 import PipelineDialog from "@/components/PipelineDialog.vue";
 import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
@@ -552,6 +611,7 @@ void AnnotationsSettings;
 void Snapshots;
 void AnnotationBrowser;
 void FiltersPanel;
+void AnalysisPanel;
 void AnalyzeDialog;
 void PipelineDialog;
 void UndoRedoButtons;
@@ -575,6 +635,7 @@ const snapshotPanelFull = ref(false);
 const annotationPanel = ref(false);
 const settingsPanel = ref(false);
 const filtersPanel = ref(false);
+const analysisPanel = ref(false);
 const analyzePanel = ref(false);
 const aiPanelOpen = ref(false);
 
@@ -625,6 +686,7 @@ const rightEdgeClearance = computed(() =>
   rightEdgeClearX([
     { open: annotationPanel.value, width: RIGHT_PALETTE_WIDTHS.objectBrowser },
     { open: filtersPanel.value, width: RIGHT_PALETTE_WIDTHS.filters },
+    { open: analysisPanel.value, width: RIGHT_PALETTE_WIDTHS.analysis },
     { open: settingsPanel.value, width: RIGHT_PALETTE_WIDTHS.settings },
     { open: snapshotPanel.value, width: RIGHT_PALETTE_WIDTHS.snapshots },
     {
@@ -757,6 +819,7 @@ const helpPanelIsOpen = ref(false);
 type PaletteId =
   | "annotationPanel"
   | "filtersPanel"
+  | "analysisPanel"
   | "snapshotPanel"
   | "settingsPanel"
   | "navigatorPanel"
@@ -768,12 +831,15 @@ type PaletteZone = "left" | "right";
 interface PaletteRole {
   role: "primary" | "companion";
   zone: PaletteZone;
-  host?: PaletteId;
+  // Primaries a companion may share the column with. A companion evicts any
+  // primary NOT listed here.
+  hosts?: PaletteId[];
 }
 
 const paletteOpen: Record<PaletteId, Ref<boolean>> = {
   annotationPanel,
   filtersPanel,
+  analysisPanel,
   snapshotPanel,
   settingsPanel,
   navigatorPanel,
@@ -783,9 +849,17 @@ const paletteOpen: Record<PaletteId, Ref<boolean>> = {
 
 const paletteRoles: Record<PaletteId, PaletteRole> = {
   annotationPanel: { role: "primary", zone: "right" },
+  analysisPanel: { role: "primary", zone: "right" },
   snapshotPanel: { role: "primary", zone: "right" },
   settingsPanel: { role: "primary", zone: "right" },
-  filtersPanel: { role: "companion", zone: "right", host: "annotationPanel" },
+  // Filters hosts alongside both the Object Browser and the Analysis panel:
+  // the Analysis panel's own guidance above the cap is "narrow the filters",
+  // which would be self-defeating if opening Filters closed it.
+  filtersPanel: {
+    role: "companion",
+    zone: "right",
+    hosts: ["annotationPanel", "analysisPanel"],
+  },
   navigatorPanel: { role: "primary", zone: "left" },
   toolsPanel: { role: "primary", zone: "left" },
   layersPanel: { role: "primary", zone: "left" },
@@ -805,12 +879,18 @@ function openPalette(id: PaletteId) {
       const otherDef = paletteRoles[other];
       if (def.role === "primary") {
         // A new primary clears every other primary, plus any companion that
-        // isn't hosted by it.
-        if (otherDef.role === "primary" || otherDef.host !== id) {
+        // doesn't host with it.
+        if (
+          otherDef.role === "primary" ||
+          !(otherDef.hosts ?? []).includes(id)
+        ) {
           paletteOpen[other].value = false;
         }
-      } else if (otherDef.role === "primary" && other !== def.host) {
-        // A companion evicts any primary that isn't its host.
+      } else if (
+        otherDef.role === "primary" &&
+        !(def.hosts ?? []).includes(other)
+      ) {
+        // A companion evicts any primary that isn't one of its hosts.
         paletteOpen[other].value = false;
       }
     }
@@ -876,26 +956,34 @@ function observePaletteHeight(
   return observer;
 }
 
-// Right zone: Filters stacks above the Object Browser.
+// Right zone: Filters stacks above whichever primary is hosting it. Both the
+// Object Browser and the Analysis panel host it (see paletteRoles), and the two
+// are mutually exclusive primaries, so at most one host is open at a time and
+// one shared offset covers both. Keyed on the host set rather than the Object
+// Browser alone: making Filters a companion of Analysis without this left the
+// two palettes at the same top/right, with the wider Analysis panel drawn over
+// Filters — so the Analysis panel's "narrow the filters" guidance was still
+// unusable without closing it first.
 const filtersPaletteRef = ref<PaletteRefEl>();
 const filtersHeight = ref(0);
 let filtersResizeObserver: ResizeObserver | null = null;
 
 const filtersStacked = computed(
-  () => filtersPanel.value && annotationPanel.value,
+  () => filtersPanel.value && (annotationPanel.value || analysisPanel.value),
 );
 
-const annotationBrowserTop = computed(() =>
+// Top edge of whichever primary Filters is currently stacked above.
+const stackedHostTop = computed(() =>
   filtersStacked.value
     ? PALETTE_TOP + filtersHeight.value + STACK_GAP
     : PALETTE_TOP,
 );
 
-const annotationBrowserMaxHeight = computed(
-  () => `calc(100vh - ${annotationBrowserTop.value + COLUMN_BOTTOM_INSET}px)`,
+const stackedHostMaxHeight = computed(
+  () => `calc(100vh - ${stackedHostTop.value + COLUMN_BOTTOM_INSET}px)`,
 );
 
-// When stacked, cap Filters so the Browser always keeps a minimum height.
+// When stacked, cap Filters so its host always keeps a minimum height.
 const filtersMaxHeight = computed(() =>
   filtersStacked.value
     ? `calc(100vh - ${
@@ -1042,6 +1130,35 @@ const filtersAriaLabel = computed(() =>
   activeFilterCount.value === 0
     ? "Filters"
     : `Filters (${activeFilterCount.value} active)`,
+);
+
+// Gates are counted separately from activeFilterCount: each badge counts what
+// its own panel shows, so the Filters button never claims a filter its panel
+// cannot display (and vice versa).
+const activeAnalysisGateCount = computed(
+  () => filterStore.activeAnalysisGateCount,
+);
+
+const analysisTooltip = computed(() => {
+  const base =
+    "Analysis: plot object properties against each other and " +
+    "select the objects to keep";
+  const count = activeAnalysisGateCount.value;
+  if (count === 0) {
+    return base;
+  }
+  return `${base} (${count} gate${count === 1 ? "" : "s"} active)`;
+});
+
+// Terse like the sibling palette buttons, but carrying the count: aria-label
+// overrides the button's content, which would otherwise hide the badge from
+// assistive tech.
+const analysisAriaLabel = computed(() =>
+  activeAnalysisGateCount.value === 0
+    ? "Analysis plots"
+    : `Analysis plots (${activeAnalysisGateCount.value} gate${
+        activeAnalysisGateCount.value === 1 ? "" : "s"
+      } active)`,
 );
 
 const hasUncomputedProperties = computed(() => {
@@ -1230,12 +1347,15 @@ defineExpose({
   appHotkeys,
   routeName,
   activeFilterCount,
+  activeAnalysisGateCount,
+  analysisTooltip,
+  analysisAriaLabel,
   filtersTooltip,
   filtersAriaLabel,
   hasUncomputedProperties,
   filteredToursByCategory,
   filtersStacked,
-  annotationBrowserTop,
+  stackedHostTop,
   fetchConfig,
   loadAllTours,
   goHome,
@@ -1315,7 +1435,8 @@ $palette-cluster-tone: #0f1217;
 }
 
 /* Count badge pinned to the top-right of a palette-toggle button (used by
-   Filters to surface the number of active filters while the panel is closed).
+   Filters and Analysis to surface how much each panel is narrowing the object
+   set while it is closed; each badge counts only its own panel's rows).
    The ring reuses the cluster's own tone, opaque, so the count reads as
    separate from the icon glyph it overlaps. It stays within the cluster's 4px
    padding and its 2px inter-button gap, so it never covers a neighbour. */

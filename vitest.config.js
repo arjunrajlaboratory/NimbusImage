@@ -34,8 +34,9 @@ export default mergeConfig(
       // files that appear under .tox/ after a backend `tox` run (they import
       // @playwright/test and aren't ours). Harmless on CI (no .tox dir), but
       // they cause spurious failures when running `pnpm test` locally.
-      // "**/.claude/worktrees/**" likewise excludes stale test copies in
-      // leftover review worktrees.
+      // "**/.claude/worktrees/**" likewise: agent review worktrees are full
+      // repo checkouts whose tests double the run and fail outside their own
+      // node_modules (locally they can even OOM the worker pool).
       exclude: [
         ...configDefaults.exclude,
         "e2e/*",

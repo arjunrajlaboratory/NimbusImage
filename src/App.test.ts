@@ -31,6 +31,7 @@ vi.mock("@/store/properties", () => ({
 vi.mock("@/store/filters", () => ({
   default: {
     activeFilterCount: 0,
+    activeAnalysisGateCount: 0,
   },
 }));
 
@@ -131,6 +132,7 @@ describe("App", () => {
     };
     (propertyStore as any).uncomputedCountByProperty = {};
     (filterStore as any).activeFilterCount = 0;
+    (filterStore as any).activeAnalysisGateCount = 0;
     (axios.get as any) = vi
       .fn()
       .mockResolvedValue({ data: [{ name: "Tool1", type: "create" }] });
@@ -185,6 +187,36 @@ describe("App", () => {
     vm.togglePalette("filtersPanel");
     expect(vm.annotationPanel).toBe(true);
     expect(vm.filtersPanel).toBe(true);
+  });
+
+  it("Filters and the Analysis panel can be open together", () => {
+    // The Analysis panel's over-cap guidance is "narrow the filters", so
+    // opening Filters must not evict it.
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.togglePalette("analysisPanel");
+    vm.togglePalette("filtersPanel");
+    expect(vm.analysisPanel).toBe(true);
+    expect(vm.filtersPanel).toBe(true);
+  });
+
+  it("stacks Filters above whichever primary hosts it", () => {
+    // Coexisting is not enough: both palettes are right-anchored, so without a
+    // stacking offset the wider Analysis panel simply covers Filters and the
+    // guidance to use it stays unusable. The offset must apply to BOTH hosts.
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.filtersStacked).toBe(false);
+
+    vm.togglePalette("annotationPanel");
+    vm.togglePalette("filtersPanel");
+    expect(vm.filtersStacked).toBe(true);
+
+    // Switch the host to the Analysis panel: still stacked, not overlapping.
+    vm.togglePalette("analysisPanel");
+    expect(vm.analysisPanel).toBe(true);
+    expect(vm.filtersPanel).toBe(true);
+    expect(vm.filtersStacked).toBe(true);
   });
 
   it("Filters stays open when the Object Browser is closed", () => {
@@ -340,6 +372,58 @@ describe("App", () => {
     (filterStore as any).activeFilterCount = 12;
     const wrapper = mountWithAppBar();
     expect(wrapper.find(".palette-ibtn-badge").text()).toBe("9+");
+  });
+
+  // -- Gate-count badge on the Analysis button --
+  //
+  // Gates narrow the object set from a different panel, so the Filters badge
+  // cannot speak for them: it counts only rows its own panel can show. Without
+  // a badge here, a saved gate silently hid objects with nothing on screen to
+  // say so — the palette can be closed and the gate still applies.
+  it("renders no badge on the Analysis button when no gate is active", () => {
+    const wrapper = mountWithAppBar();
+    expect(wrapper.find(".palette-ibtn-badge").exists()).toBe(false);
+  });
+
+  it("renders the active gate count on the Analysis button", () => {
+    (filterStore as any).activeAnalysisGateCount = 2;
+    const wrapper = mountWithAppBar();
+    const badge = wrapper.find(".palette-ibtn-badge");
+    expect(badge.exists()).toBe(true);
+    expect(badge.text()).toBe("2");
+    expect(badge.element.closest("button")?.getAttribute("aria-label")).toBe(
+      "Analysis plots (2 gates active)",
+    );
+  });
+
+  it("keeps the two badges independent", () => {
+    (filterStore as any).activeFilterCount = 3;
+    (filterStore as any).activeAnalysisGateCount = 1;
+    const wrapper = mountWithAppBar();
+    const badges = wrapper.findAll(".palette-ibtn-badge");
+    expect(badges.map((b) => b.text())).toEqual(["3", "1"]);
+    expect(
+      badges.map((b) =>
+        b.element.closest("button")?.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Filters (3 active)", "Analysis plots (1 gate active)"]);
+  });
+
+  it("caps the gate badge at 9+ like the filters one", () => {
+    (filterStore as any).activeAnalysisGateCount = 11;
+    const wrapper = mountWithAppBar();
+    expect(wrapper.find(".palette-ibtn-badge").text()).toBe("9+");
+  });
+
+  it("analysisTooltip names the gate count, singular and plural", () => {
+    let wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).analysisTooltip).not.toContain("active");
+    (filterStore as any).activeAnalysisGateCount = 1;
+    wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).analysisTooltip).toContain("(1 gate active)");
+    (filterStore as any).activeAnalysisGateCount = 3;
+    wrapper = mountComponent({ name: "datasetview" });
+    expect((wrapper.vm as any).analysisTooltip).toContain("(3 gates active)");
   });
 
   // -- Computed: filteredToursByCategory --

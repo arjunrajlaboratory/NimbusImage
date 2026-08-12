@@ -2268,6 +2268,13 @@ export class Main extends VuexModule {
   // dragging a filter histogram slider emits a continuous stream of updates.
   @Action
   scheduleAnnotationBrowserSave() {
+    // Anonymous viewers can filter and gate; their state just stays
+    // session-only. Without this, syncConfiguration's own isLoggedIn branch
+    // fires createNotLoggedInNotification, so every lasso drag or filter tweak
+    // popped a login notification for a read-only visitor.
+    if (!this.isLoggedIn) {
+      return;
+    }
     if (annotationBrowserSaveTimer !== null) {
       clearTimeout(annotationBrowserSaveTimer);
     }
@@ -2305,6 +2312,7 @@ export class Main extends VuexModule {
         properties.displayedPropertyPaths,
         filters.filterPaths,
         filters.propertyFilters,
+        filters.analysisPlots,
       ),
     );
     await this.syncConfiguration("annotationBrowserConfig");
@@ -2343,6 +2351,11 @@ export class Main extends VuexModule {
       filterPaths: config.filterPaths,
       propertyFilters: config.propertyFilters,
     });
+    // Restored gates hold polygons, not ids. Hydration only seeds the plots;
+    // Viewer owns resolution through its analysisInputSignature watcher, which
+    // reacts to this state change in both 2D and 3D. Dispatching here as well
+    // issued the same property-values request twice on dataset open.
+    this.context.dispatch("hydrateAnalysisPlots", config.analysisPlots ?? []);
   }
 
   @Action

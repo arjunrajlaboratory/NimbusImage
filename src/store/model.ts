@@ -527,6 +527,9 @@ export interface IAnnotationBrowserConfig {
   filterPaths: string[][];
   // Range/values and enabled state of those filter rows
   propertyFilters: IPropertyAnnotationFilter[];
+  // Analysis-panel scatter plots and their gate polygons. Optional for
+  // compatibility with configurations saved before analysis plots existed.
+  analysisPlots?: IAnalysisPlot[];
 }
 
 export interface IDatasetConfigurationBase {
@@ -1613,6 +1616,16 @@ export interface IAnnotationListPropertyFilter {
   values?: number[];
 }
 
+// One analysis gate as a query term: the DEFINITION (axes + polygon +
+// pinned categories), which the server resolves per request as a pure
+// predicate (SERVER_GATING.md, Phase 3). Shipping definitions instead of
+// resolved id lists keeps page fetches small at any gate size.
+export interface IAnalysisGateFilterTerm {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;
+}
+
 export interface IAnnotationListFilters {
   shape?: string;
   tags?: { values: string[]; exclusive: boolean };
@@ -1622,6 +1635,8 @@ export interface IAnnotationListFilters {
   // A list of id-sets; an annotation matches iff its _id is in EVERY set
   // (AND of $in's). Used to apply the selection and annotation-id filters.
   idConstraints?: string[][];
+  // Analysis gate definitions, ANDed with everything above.
+  analysisGates?: IAnalysisGateFilterTerm[];
 }
 
 export interface IAnnotationListQuery {
@@ -1807,6 +1822,105 @@ export interface IIdAnnotationFilter extends IAnnotationFilter {
 
 export interface IROIAnnotationFilter extends IAnnotationFilter {
   roi: IGeoJSPosition[];
+}
+
+// --- Analysis panel (scatter gating) ---
+
+// Categorical axes are annotation fields available on stubs too, so the
+// analysis panel works in both full and lazy (stub-only) modes.
+export type TAnalysisCategoricalKey =
+  | "tags"
+  | "shape"
+  | "channel"
+  | "xy"
+  | "z"
+  | "time";
+
+export type TAnalysisAxis =
+  | { type: "property"; path: string[] }
+  | { type: "categorical"; key: TAnalysisCategoricalKey };
+
+// Explicitly identifies how categorical values in a gate are encoded. This
+// cannot be inferred from a string prefix: legacy display labels are
+// user-controlled and may themselves begin with that prefix.
+export const ANALYSIS_CATEGORY_KEY_VERSION = 1 as const;
+
+// A drawn gate, stored as the lasso polygon in PLOT COORDINATE space rather
+// than as the annotation ids it happened to contain.
+//
+// This is what makes a gate persistable. A configuration is shared by every
+// dataset using it, while annotation ids belong to one dataset — persisting ids
+// would apply one dataset's objects to another. A polygon is defined in
+// property-value space, so it re-resolves correctly in any dataset, which is
+// also the point of a gating strategy: draw it once, apply it to each replicate.
+//
+// For a categorical axis a coordinate is a category index, so the ordering of
+// collision-free raw category keys that was in effect when the gate was drawn
+// is part of the gate's meaning and is stored with it. Human-readable labels
+// are display-only and are not persisted as identities.
+export interface IAnalysisGate {
+  categoryKeyVersion: typeof ANALYSIS_CATEGORY_KEY_VERSION;
+  vertices: IGeoJSPosition[];
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+}
+
+// One scatter plot in the analysis panel. Plots are ordered: each plot shows
+// the population passing the gates of all plots BEFORE it (plus the regular
+// filters), and its own gate further narrows the population downstream —
+// flow-cytometry-style sequential gating. `gate` is null until a selection is
+// drawn. The annotation ids inside a gate are derived, not stored here: see
+// `analysisGateIds` in the filters store.
+export interface IAnalysisPlot {
+  id: string;
+  xAxis: TAnalysisAxis | null;
+  yAxis: TAnalysisAxis | null;
+  gate: IAnalysisGate | null;
+  gateEnabled: boolean;
+}
+
+// One plot in a server-side gate-resolution request: a DRAWN plot's
+// definition (both axes chosen, gate present). The server resolves the gate
+// as a pure per-annotation predicate over the whole dataset; see
+// codebaseDocumentation/SERVER_GATING.md.
+export interface IAnalysisGatePlotRequest {
+  id: string;
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;
+}
+
+// Server-binned display data for one analysis plot above the cap
+// (SERVER_GATING.md, Phase 2). Rows of `counts` are y bins, columns x bins.
+export interface IAnalysisHistogramResponse {
+  counts: number[][];
+  xEdges: number[] | null;
+  yEdges: number[] | null;
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+  inputCount: number;
+  plottedCount: number;
+  // |own gate ∩ input| — the chained badge count — when a gate was sent.
+  gateCount: number | null;
+}
+
+// The histogram response plus display labels for categorical axes, resolved
+// by the panel (labels need the dataset's channel names, which the server
+// does not have).
+export interface IAnalysisHistogramDisplay extends IAnalysisHistogramResponse {
+  xCategoryLabels: string[] | null;
+  yCategoryLabels: string[] | null;
+}
+
+export interface IAnalysisHistogramRequest {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+  bins: { x: number; y: number };
+  upstreamGates: Omit<IAnalysisGatePlotRequest, "id">[];
+  filters: IAnnotationListFilters;
+  gate: IAnalysisGate | null;
 }
 
 export interface IAnnotationPropertyConfiguration {
