@@ -65,3 +65,24 @@ export function buildPropertyListFilters(
           },
     );
 }
+
+/**
+ * True when these filters cannot match anything, so no request should be sent.
+ *
+ * An id-membership constraint that is present but EMPTY — an analysis gate
+ * resolved to zero annotations, i.e. a lasso over empty space — is a real
+ * constraint meaning "nothing". The list API deliberately rejects `[[]]` with a
+ * 400 (`server/helpers/validation.py` wants match-none explicit rather than an
+ * accidental `$in: []`), so sending it fails the request and leaves whatever
+ * was on screen before.
+ *
+ * Lives here, and is applied in the API client rather than in each store
+ * action, because the first fix guarded the two page fetches and missed
+ * `fetchMatchingIds` — the action behind "Select all" and "Delete Unselected".
+ * At the request boundary there is nothing left to miss.
+ */
+export function filtersMatchNothing(filters: {
+  idConstraints?: string[][];
+}): boolean {
+  return (filters.idConstraints ?? []).some((ids) => ids.length === 0);
+}

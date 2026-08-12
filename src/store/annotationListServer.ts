@@ -22,8 +22,10 @@ import {
 import {
   IListPropertyFilterInput,
   buildPropertyListFilters,
+  filtersMatchNothing,
 } from "@/utils/annotationListFilters";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
+import { idListSignature } from "@/utils/signatures";
 
 // Monotonic stale-response guard: only the latest fetchPage may apply its
 // result. Debounce reduces overlap but doesn't eliminate it (e.g. immediate
@@ -45,6 +47,8 @@ export function buildListFilters(input: {
   propertyFilters: IListPropertyFilterInput[];
   selectionFilter: IIdAnnotationFilter;
   annotationIdFilters: IIdAnnotationFilter[];
+  // One membership set per active analysis gate (already resolved to ids).
+  analysisGates?: string[][];
 }): IAnnotationListFilters {
   const out: IAnnotationListFilters = {};
   if (input.tagFilter.enabled && input.tagFilter.tags.length > 0) {
@@ -72,6 +76,11 @@ export function buildListFilters(input: {
   const enabledIdFilters = input.annotationIdFilters.filter((f) => f.enabled);
   if (enabledIdFilters.length > 0) {
     idConstraints.push(enabledIdFilters.flatMap((f) => f.annotationIds));
+  }
+  // Analysis gates compose with AND (sequential gating), so each one is its own
+  // membership set — unlike the annotation-id filters, which are unioned above.
+  for (const gate of input.analysisGates ?? []) {
+    idConstraints.push(gate);
   }
   if (idConstraints.length > 0) {
     out.idConstraints = idConstraints;
@@ -138,7 +147,27 @@ export class AnnotationListServer extends VuexModule {
       propertyFilters: filters.propertyFilters,
       selectionFilter: filters.selectionFilter,
       annotationIdFilters: filters.annotationIdFilters,
+      analysisGates: filters.activeAnalysisGateIdLists,
     });
+  }
+
+  // A cheap identity for `currentFilters`, for watchers that need to react when
+  // the query changes. Never serialize `currentFilters` itself — see
+  // @/utils/signatures for why.
+  get currentFiltersSignature(): string {
+    const { idConstraints, ...rest } = this.currentFilters;
+    const constraints = (idConstraints ?? []).map(idListSignature).join(",");
+    return `${JSON.stringify(rest)}|${constraints}`;
+  }
+
+  /**
+   * True when the current query cannot match anything — see
+   * `filtersMatchNothing`. The short-circuit itself lives in the API client so
+   * every caller is covered; this getter exists for the UI and for the actions
+   * below, which still skip their loading churn when there is nothing to ask.
+   */
+  get queryMatchesNothing(): boolean {
+    return filtersMatchNothing(this.currentFilters);
   }
 
   // The query fields shared by every list fetch; each action adds its own
@@ -160,6 +189,11 @@ export class AnnotationListServer extends VuexModule {
     }
     navigationRequestGuard.next();
     const token = pageRequestGuard.next();
+    if (this.queryMatchesNothing) {
+      this.setPageResult({ rows: [], total: 0 });
+      this.setLoading(false);
+      return;
+    }
     this.setLoading(true);
     try {
       const page = await main.annotationsAPI.fetchAnnotationListPage({
@@ -191,6 +225,12 @@ export class AnnotationListServer extends VuexModule {
     }
     const navigationToken = navigationRequestGuard.next();
     const pageToken = pageRequestGuard.next();
+    if (this.queryMatchesNothing) {
+      // Nothing matches, so no row can be navigated to.
+      this.setPageResult({ rows: [], total: 0 });
+      this.setLoading(false);
+      return false;
+    }
     this.setLoading(true);
     try {
       const page = await main.annotationsAPI.fetchAnnotationListPage({

@@ -417,6 +417,12 @@ vi.mock("@/store/filters", () => {
       emptyROIFilter: null as any,
       validateNewROIFilter: vi.fn(),
       updateHistograms: vi.fn(),
+      // Every store member an immediate watcher in AnnotationViewer.vue reads
+      // MUST be stubbed here. A missing one is not a silently absent stub: the
+      // watcher throws on every one of this file's 300+ mounts, Vue's error
+      // report embeds the rendered component tree, and the whole vitest run
+      // dies with a heap OOM that names no test.
+      propertyFilters: [] as any[],
     }),
   };
 });

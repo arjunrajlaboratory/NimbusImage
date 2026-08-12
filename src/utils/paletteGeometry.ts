@@ -55,6 +55,7 @@ export const RIGHT_PALETTE_WIDTHS = {
   settings: 480,
   snapshots: 480,
   analyze: 480,
+  analysis: 560,
 } as const;
 
 /** Kept as its own name: the Object Browser is referenced by several callers. */

@@ -5,6 +5,28 @@ description: "Use when writing or modifying Vue 3 components, Vuex store modules
 
 # Nimbus Frontend Development
 
+## Test mocks must model the real store's REPLACEMENT semantics
+
+A mock that mutates state in place where the real store replaces it makes
+tests silently vacuous. `AnalysisPanel.test.ts`'s `setPlots` did
+`plots.length = 0; plots.push(...)` while the real `applyAnalysisPlots`
+builds a new array. Vue short-circuits a computed whose value is unchanged
+by identity, so `analysisPlots` never invalidated and **every watcher
+downstream of it silently never re-ran** — a new test for plot-removal
+behavior passed against code that did nothing.
+
+It hid because an existing test appeared to cover removal: its watcher
+happened to read `analysisPopulation`, which returns a fresh array each
+evaluation, so that one re-fired for an unrelated reason.
+
+Rules:
+- Mock setters replace (`mocks.plots = [...next]`), matching the store.
+- Booleans and other scalars are the same trap in reverse: an intermediate
+  computed returning an unchanged `true` stops propagation, so a test that
+  changes only downstream data may never re-run the watcher.
+- Before trusting a new watcher test, make it FAIL once (revert the fix, or
+  assert the opposite) — this one passed for the wrong reason first.
+
 ## Component Patterns
 
 ### Script Setup (Composition API)
@@ -621,6 +643,34 @@ Before claiming a frontend change done:
 4. **In-browser verification for anything user-facing** — tsc/lint/vitest green does not mean the UI works (pointer-events, layering, watcher-firing, and store-corruption bugs all passed every static gate). See the in-browser-testing skill; remember to hard-reload after store edits.
 
 Component-level test patterns (AnnotationViewer harness, GeoJS mocks): see the nimbus-geojs skill and `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`.
+
+### A mock that cannot represent the bug makes its tests meaningless
+
+Worse than a mock returning the wrong constant is a mock that models *none* of
+the real action's effect. `addAnalysisPlot` was a bare `vi.fn()`, so
+`mockFilters.analysisPlots` stayed empty no matter what the code under test
+did. Nine tests passed against it — and none of them could observe whether the
+executor's plot had actually landed, which is precisely the state the bug
+produced (the store refuses at its cap by no-oping, and the executor went on
+to configure and report a plot that did not exist).
+
+The rule: **a mocked action must reproduce the state change its caller depends
+on, including its refusal behaviour.** If the real action appends, the mock
+appends; if the real one silently no-ops past a cap, the mock does too. When a
+test needs extra side effects on top, factor the default into a helper and
+call it, rather than replacing the implementation and silently dropping the
+effect the code under test is checking for:
+
+```ts
+function appendAnalysisPlot(id: string) { /* what the real action does */ }
+beforeEach(() => { mock.addAnalysisPlot.mockImplementation(appendAnalysisPlot); });
+// A test layering extra behaviour composes rather than replaces:
+mock.addAnalysisPlot.mockImplementation((id) => { appendAnalysisPlot(id); ...extra... });
+```
+
+Also reset such state in **every** `describe`'s `beforeEach`, not just the
+first — a test that flips a cap flag or swaps an API stub mid-await leaks it
+into every later block.
 
 ### A mock that returns a fixed value can fail your test for the wrong reason
 
