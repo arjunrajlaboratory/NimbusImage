@@ -1712,10 +1712,36 @@ export class Annotations extends VuexModule {
     // started from — not to whatever is open when it finishes.
     const datasetId = main.dataset?.id;
     const configurationId = main.configuration?.id;
-    const patched = await this.updateAnnotationsPerId({
-      annotationIds,
-      editFunction,
-    });
+    let patched = 0;
+    try {
+      patched = await this.updateAnnotationsPerId({
+        annotationIds,
+        editFunction,
+      });
+    } catch (error) {
+      // Same may-have-written shape as the apply/clear failure paths: the
+      // backend's bulk save is remove + insert_many, so a non-400 failure
+      // can leave PART of the manual recolor written. A property legend
+      // standing over half-overwritten colors is the wrong-legend state the
+      // design forbids — retire it (a missing legend is the accepted worst
+      // case) and resync the canvas to whatever actually landed. A 400 was
+      // rejected before any write, so nothing changed and the legend holds.
+      if (
+        (error as any)?.response?.status !== 400 &&
+        datasetId &&
+        configurationId
+      ) {
+        await main.saveColorByPropertyFor({
+          datasetId,
+          configurationId,
+          state: null,
+        });
+        if (main.dataset?.id === datasetId) {
+          await this.fetchAnnotations();
+        }
+      }
+      throw error;
+    }
     // Retire the persisted legend so it stops claiming the colors come from a
     // property mapping. This action is the choke point for every manual color
     // assignment (context menu, color-selected dialog, tag-cloud coloring, AI

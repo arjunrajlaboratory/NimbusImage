@@ -1312,6 +1312,32 @@ class Annotation(AccessControlMixin, ProxiedModel):
         ):
             valueByAnnotation[annotationId] = value
 
+        # A property value's datasetId is denormalized and can go stale:
+        # moving an annotation between datasets doesn't move its value
+        # documents, and the property-value endpoints accept mismatched
+        # pairs. The update operations below are scoped by the ANNOTATION's
+        # datasetId, so a stale pair can never recolor a foreign annotation
+        # — but an unfiltered map would still drive the range, the category
+        # counts, and the returned assignment, distorting the legend and
+        # listing ids that were never written. One chunked, indexed id pass
+        # (the read twin of _buildColorOperations' write chunking).
+        presentIds = set()
+        staleIds = list(valueByAnnotation.keys())
+        for start in range(0, len(staleIds), self.COLOR_WRITE_CHUNK):
+            chunk = staleIds[start:start + self.COLOR_WRITE_CHUNK]
+            presentIds.update(
+                document["_id"]
+                for document in self.find(
+                    {"datasetId": datasetId, "_id": {"$in": chunk}},
+                    fields=["_id"],
+                )
+            )
+        valueByAnnotation = {
+            annotationId: value
+            for annotationId, value in valueByAnnotation.items()
+            if annotationId in presentIds
+        }
+
         if not valueByAnnotation:
             raise ValueError(
                 "No values found for this property in this dataset"
@@ -1565,10 +1591,13 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
             if skipClear and colored < total:
                 # The id count implied full coverage but the writes
-                # disagree — e.g. a property value referencing an annotation
-                # outside this dataset inflated the count. Some annotations
-                # may still hold a stale color, so fall back to the
-                # clear-then-reapply order.
+                # disagree. colorByProperty filters its map to annotations
+                # actually in the dataset, so the known cause (a stale
+                # property value whose annotation moved datasets) is
+                # prevented upstream — this stays as the backstop for
+                # anything else that desynchronizes the count, because some
+                # annotations may still hold a stale color. Fall back to
+                # the clear-then-reapply order.
                 self.clearColors(datasetId)
                 colored = self._applyColorOperations(operations)
         finally:

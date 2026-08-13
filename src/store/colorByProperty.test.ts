@@ -159,6 +159,46 @@ describe("color-by-property configuration persistence", () => {
     expect(updateConfigurationKey).not.toHaveBeenCalled();
   });
 
+  it("a failed manual recolor that may have written retires the legend and resyncs", async () => {
+    // The backend's bulk save is remove + insert_many, so a non-400 failure
+    // can leave PART of the manual recolor written — the same
+    // may-have-written shape as the apply/clear failure paths. The property
+    // legend must not stay standing over half-overwritten colors, and the
+    // canvas must resync to whatever actually landed.
+    setConfiguration(legendFixture);
+    seedPatchableStub().mockRejectedValue({ response: { status: 500 } });
+    const api = annotationStore.annotationsAPI as any;
+    const getAnnotationCount = vi
+      .spyOn(api, "getAnnotationCount")
+      .mockResolvedValue(0);
+    vi.spyOn(api, "getAnnotationsForDatasetId").mockResolvedValue([]);
+    vi.spyOn(api, "getConnectionsForDatasetId").mockResolvedValue([]);
+
+    await expect(
+      annotationStore.colorAnnotationIds({
+        annotationIds: ["a1"],
+        color: "#ff0000",
+      }),
+    ).rejects.toBeTruthy();
+
+    expect(main.colorByPropertyForCurrentDataset).toBeNull();
+    expect(updateConfigurationKey).toHaveBeenCalledTimes(1);
+    expect(getAnnotationCount).toHaveBeenCalled();
+  });
+
+  it("a 400 from a manual recolor keeps the legend (nothing was written)", async () => {
+    setConfiguration(legendFixture);
+    seedPatchableStub().mockRejectedValue({ response: { status: 400 } });
+    await expect(
+      annotationStore.colorAnnotationIds({
+        annotationIds: ["a1"],
+        color: "#ff0000",
+      }),
+    ).rejects.toBeTruthy();
+    expect(main.colorByPropertyForCurrentDataset).toEqual(legendFixture);
+    expect(updateConfigurationKey).not.toHaveBeenCalled();
+  });
+
   it("a dataset+configuration switch mid-recolor still retires the captured configuration's legend", async () => {
     // The recolor changed ds1's colors, so ds1's legend is wrong no matter
     // what is open when the write completes. Bailing entirely (the old

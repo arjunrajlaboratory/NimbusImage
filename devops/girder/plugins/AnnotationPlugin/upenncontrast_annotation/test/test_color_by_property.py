@@ -664,6 +664,57 @@ class TestColorByProperty:
         assertStatusOk(resp)
         assert "assignment" not in resp.json
 
+    def testMovedAnnotationsValuesAreExcludedFromTheMapping(
+        self, admin, server
+    ):
+        # A property value's datasetId is denormalized: moving an annotation
+        # between datasets does not move its value documents, and the
+        # property-value endpoints accept mismatched pairs. The write
+        # operations are scoped by the ANNOTATION's datasetId, so a stale
+        # pair never recolors a foreign annotation — but the unfiltered
+        # value map used to drive the range, the counts, and the returned
+        # assignment, distorting the legend and listing ids that were never
+        # written.
+        folder, ids = self._makeDatasetWithValues(
+            admin, [{"propA": 1}, {"propA": 2}, {"propA": 100}]
+        )
+        other = utilities.createFolder(
+            admin, "moved_target", upenn_utilities.datasetMetadata
+        )
+        # Move the outlier's annotation; its value document still records the
+        # source dataset.
+        Annotation().update(
+            {"_id": ObjectId(ids[2])},
+            {"$set": {"datasetId": other["_id"]}},
+        )
+        resp = self._colorBy(
+            server,
+            admin,
+            {
+                "datasetId": str(folder["_id"]),
+                "propertyPath": ["propA"],
+                "percentileLow": 0,
+                "percentileHigh": 100,
+                "returnAssignment": True,
+            },
+        )
+        assertStatusOk(resp)
+        # The moved annotation's value (100) must not stretch the range...
+        assert resp.json["legend"]["min"] == 1
+        assert resp.json["legend"]["max"] == 2
+        # ...inflate the counts (2 in-dataset annotations, both colored)...
+        assert resp.json["colored"] == 2
+        assert resp.json["uncolored"] == 0
+        # ...or appear in the assignment.
+        assignedIds = {
+            annotationId
+            for group in resp.json["assignment"]
+            for annotationId in group["ids"]
+        }
+        assert assignedIds == {ids[0], ids[1]}
+        # The moved annotation keeps its color in ITS dataset.
+        assert self._colorsById(other)[ids[2]] is None
+
     def testAssignmentListsExactlyWhatWasWritten(self, admin, server):
         # The assignment lets a client repaint without refetching, so it must
         # match the database exactly: same ids, same colours, and annotations

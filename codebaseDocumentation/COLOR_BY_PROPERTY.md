@@ -568,6 +568,20 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       write)"*, *"a 400 rejection keeps a previously persisted legend
       (nothing was written)"*, *"a non-400 clear failure retires the legend
       too"*
+- [ ] **A failed MANUAL recolor that may have written also retires the
+      legend and resyncs the canvas.** The bulk save is remove +
+      insert_many, so a non-400 failure can leave part of the manual
+      recolor written under a standing property legend — the same
+      may-have-written shape as apply/clear, via `colorAnnotationIds`. —
+      *"a failed manual recolor that may have written retires the legend
+      and resyncs"*, *"a 400 from a manual recolor keeps the legend
+      (nothing was written)"*
+- [ ] **Stale property values (annotation moved to another dataset) are
+      excluded from the mapping.** The value document's `datasetId` is
+      denormalized; without the filter a moved annotation's value stretched
+      the legend range and appeared in the returned assignment while the
+      writes (correctly) never touched it. —
+      *"testMovedAnnotationsValuesAreExcludedFromTheMapping"*
 - [ ] **The annotation-overview raster repaints in the new colors.** The
       overview is a server-rendered image of `annotation.color`, so a recolor
       has to invalidate it on both sides: the client bumps `mutationCounter`
