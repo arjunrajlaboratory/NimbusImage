@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import main from "./index";
 import store from "./root";
 import annotationStore from "./annotation";
+import girderResources from "./girderResources";
 import { exampleConfigurationBase, IColorByPropertyState } from "./model";
 
 // The generated module accessor exposes state as non-configurable getters, so
@@ -156,6 +157,68 @@ describe("color-by-property configuration persistence", () => {
       color: "#ff0000",
     });
     expect(updateConfigurationKey).not.toHaveBeenCalled();
+  });
+
+  it("a dataset+configuration switch mid-recolor still retires the captured configuration's legend", async () => {
+    // The recolor changed ds1's colors, so ds1's legend is wrong no matter
+    // what is open when the write completes. Bailing entirely (the old
+    // behavior) left the stale legend to reappear on ds1's next load; the
+    // guard must protect the NEWLY opened configuration, not abandon the
+    // captured one.
+    setConfiguration(legendFixture);
+    const capturedConfiguration = (store.state as any).main.configuration;
+    seedPatchableStub().mockImplementation(async () => {
+      // Simulate the user switching while the write is in flight.
+      (store.state as any).main.dataset = { id: "ds2" };
+      (store.state as any).main.configuration = {
+        ...capturedConfiguration,
+        id: "config2",
+        colorByProperty: {},
+      };
+      return [];
+    });
+    const getConfiguration = vi.fn().mockResolvedValue(capturedConfiguration);
+    (girderResources as any).getConfiguration = getConfiguration;
+
+    await annotationStore.colorAnnotationIds({
+      annotationIds: ["a1"],
+      color: "#ff0000",
+    });
+
+    // The captured configuration was fetched and written back without ds1's
+    // legend...
+    expect(getConfiguration).toHaveBeenCalledWith("config1");
+    expect(updateConfigurationKey).toHaveBeenCalledTimes(1);
+    const [written, key] = updateConfigurationKey.mock.calls[0];
+    expect(key).toBe("colorByProperty");
+    expect(written.id).toBe("config1");
+    expect(written.colorByProperty).toEqual({});
+    // ...and the newly opened configuration was left alone.
+    expect((store.state as any).main.configuration.id).toBe("config2");
+    expect((store.state as any).main.configuration.colorByProperty).toEqual({});
+  });
+
+  it("a dataset switch under the SAME configuration retires the captured dataset's legend only", async () => {
+    // A configuration is reusable across datasets, so the switch can keep
+    // config1 open while the legend being retired belongs to ds1. The write
+    // must target ds1's slot, not the now-current dataset's.
+    setConfiguration(legendFixture);
+    const otherLegend = { ...legendFixture, propertyName: "Prop 2" };
+    (store.state as any).main.configuration.colorByProperty.ds2 = otherLegend;
+    seedPatchableStub().mockImplementation(async () => {
+      (store.state as any).main.dataset = { id: "ds2" };
+      return [];
+    });
+
+    await annotationStore.colorAnnotationIds({
+      annotationIds: ["a1"],
+      color: "#ff0000",
+    });
+
+    expect(updateConfigurationKey).toHaveBeenCalledTimes(1);
+    expect((store.state as any).main.configuration.colorByProperty).toEqual({
+      ds2: otherLegend,
+    });
   });
 });
 

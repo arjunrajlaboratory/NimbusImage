@@ -722,6 +722,46 @@ class TestAnnotationRaster:
             0xFF, 0xD7, 0x00, 255
         )
 
+    def testFailedColorWritesStillInvalidateRaster(
+        self, admin, server, monkeypatch
+    ):
+        # Unordered bulk writes can raise after applying only some
+        # operations, and a clear's update_many can fail partway too. The
+        # frontend already treats a non-400 failure as "colors may have
+        # changed" and refetches; the server cache must reach the same
+        # conclusion, or it keeps serving the pre-failure image (geometry
+        # cache + 304s) until the 120s TTL rotation.
+        folder = utilities.createFolder(
+            admin, "raster_color_failure", upenn_utilities.datasetMetadata
+        )
+        Folder().setPublic(folder, True, save=True)
+        annotation = createAnnotation(
+            folder["_id"], [{"x": 30, "y": 30}], shape="point"
+        )
+        AnnotationPropertyValues().appendValues(
+            {"propA": 1}, annotation["_id"], folder["_id"]
+        )
+        model = Annotation()
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("simulated mid-write failure")
+
+        etag = requestTile(server, folder).headers["ETag"]
+        monkeypatch.setattr(model, "_applyColorOperations", explode)
+        with pytest.raises(RuntimeError):
+            model.colorByProperty(folder["_id"], ["propA"])
+        monkeypatch.undo()
+        failedAssignEtag = requestTile(server, folder).headers["ETag"]
+        assert failedAssignEtag != etag
+
+        monkeypatch.setattr(model, "update", explode)
+        with pytest.raises(RuntimeError):
+            model.clearColors(folder["_id"])
+        monkeypatch.undo()
+        assert (
+            requestTile(server, folder).headers["ETag"] != failedAssignEtag
+        )
+
     def testBulkMoveInvalidatesSourceAndDestinationRasters(
         self, admin, server
     ):

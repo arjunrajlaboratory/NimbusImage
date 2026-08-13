@@ -641,7 +641,10 @@ Per `CLAUDE.md`, every item names its test:
 - **Invalidation on the bulk-write paths too**: color-by-property and its
   clear twin write with `bulk_write`/`update`, so the model overrides above
   never see them; both must change the ETag and repaint in the new colors —
-  _"testColorByPropertyInvalidatesEtagAndRepaints"_.
+  _"testColorByPropertyInvalidatesEtagAndRepaints"_ — and both must
+  invalidate even when the write raises partway, since an unordered
+  bulk write can fail after applying some operations —
+  _"testFailedColorWritesStillInvalidateRaster"_.
 - **Bulk move invalidates both datasets**: an updateMultiple that changes an
   annotation's datasetId bumps the source and destination rasters (saves
   themselves bump only the saved documents' datasets; the move path bumps

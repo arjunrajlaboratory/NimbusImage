@@ -160,4 +160,39 @@ describe("ColorByPropertyDialog", () => {
     wrapper.vm.selectedPathKey = "gone.property";
     expect(wrapper.vm.canApply).toBe(false);
   });
+
+  it("an invalid bound blocks Apply instead of silently using defaults", () => {
+    // parseBound used to map invalid text ("1e309", a partial exponent) to
+    // undefined — the same value as an intentionally blank field — so Apply
+    // proceeded with the DEFAULT range on a destructive, non-undoable
+    // operation. Invalid must be a distinct, blocking state.
+    const wrapper = mountDialog();
+    wrapper.vm.selectedPathKey = "prop1";
+    expect(wrapper.vm.canApply).toBe(true);
+    for (const invalid of ["1e309", "-1e999", "1e", "abc"]) {
+      wrapper.vm.rangeMinText = invalid;
+      expect(wrapper.vm.canApply, invalid).toBe(false);
+      expect(wrapper.vm.boundErrors.rangeMin, invalid).not.toBeNull();
+    }
+    // Blank stays a valid "use the default" state, and every field is
+    // checked, not just the one the finding named.
+    wrapper.vm.rangeMinText = "  ";
+    expect(wrapper.vm.canApply).toBe(true);
+    expect(wrapper.vm.boundErrors.rangeMin).toBeNull();
+    wrapper.vm.percentileHighText = "9e999";
+    expect(wrapper.vm.canApply).toBe(false);
+    expect(wrapper.vm.boundErrors.percentileHigh).not.toBeNull();
+  });
+
+  it("a stale invalid bound does not block a categorical apply", () => {
+    // The range fields are hidden in categorical mode and never sent (see
+    // the omits-range-params test); leftover invalid text from continuous
+    // mode must not disable Apply about a field the user cannot see.
+    const wrapper = mountDialog();
+    wrapper.vm.selectedPathKey = "prop1";
+    wrapper.vm.rangeMinText = "1e309";
+    expect(wrapper.vm.canApply).toBe(false);
+    wrapper.vm.mode = "categorical";
+    expect(wrapper.vm.canApply).toBe(true);
+  });
 });

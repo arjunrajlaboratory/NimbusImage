@@ -113,3 +113,29 @@ Two defects found while building it, both by measuring rather than reasoning:
 Verified live on the 708K dataset: **zero** stub refetches on both apply and
 clear, **zero** mismatches across all 708,983 stub colours against the returned
 assignment, and a direct 5/5 spot-check of client colours against MongoDB.
+
+## Merge-round findings (Codex on merge commit `34053a4`, plus carried-over P2s)
+
+Codex re-reviewed after the merge of master (annotation raster overview,
+analysis gating). Three new findings, two P2s from the original `6aeeb2f4`
+round that were never addressed, and one human style comment.
+
+| # | Severity | Location | Finding | Status |
+|---|----------|----------|---------|--------|
+| M1 | P2 | `api/annotation.py` bound loop | `math.isfinite(10**1000)` raises `OverflowError` → 500 instead of the clean 400 the loop exists to provide. Siblings found by sweep: `requireFloat` (`float(bigint)` raises the same, uncaught by its `(TypeError, ValueError)`), `_isFiniteNumber` (gate-vertex validation on the public analysis endpoints). | fixed — `isFiniteNumber` exported from validation.py (OverflowError-safe), used by the bound loop and gate vertices; `requireFloat` catches OverflowError. Tests: `TestIsFiniteNumber`, `TestRequireFloat`, `TestGateVertexValidation`, huge-int case in `testNonFiniteBoundsAreClean400s` |
+| M2 | P2 | `models/annotation.py` `_writeColors`/`clearColors` | The raster-version bump sits after the writes, so a `bulk_write`/`update` raising partway leaves partially-changed colors cached (geometry + 304s) until the 120s TTL. The frontend already treats non-400 failures as "may have written" and refetches; the server cache must too. | fixed — bump moved into `finally` in both `_writeColors` and `clearColors`; over-invalidation on a no-write failure costs one cache rebuild, the reverse serves wrong colors. Test: `testFailedColorWritesStillInvalidateRaster` |
+| M3 | P2 | `annotation.ts` `colorAnnotationIds` | A dataset/configuration switch during the awaited write suppresses legend retirement entirely — the captured dataset's colors were changed but its configuration keeps the stale property legend. Guard must protect the NEW dataset without abandoning cleanup of the captured one. | fixed — new `main.retireColorByProperty({datasetId, configurationId})` targets the captured pair; same-config path reuses the local mutation with the captured dataset id, switched-config path PUTs the pruned key via `updateConfigurationKey` (best-effort, like `saveColorByProperty`). Tests: two switch cases in `colorByProperty.test.ts` |
+| M4 | P3 | `annotation.ts` comment, `COLOR_BY_PROPERTY.md` dialog-flow | Prose still describes the pre-`returnAssignment` behavior (apply ⇒ refetch); successful apply/remove now patch locally and deliberately skip the refetch. | fixed — comment in `annotation.ts`, apply-flow + clearing-semantics + testing sections in `COLOR_BY_PROPERTY.md`, and the dialog's apply() comment now describe the local assignment; refetch is documented as the fallback only |
+| M5 | P2 (orig. round) | `ColorByPropertyDialog.vue` `parseBound` | Invalid numeric text (`1e309`, partial exponent) parses to `undefined` — the same value as an intentionally blank field — so Apply silently proceeds with defaults on a destructive, non-undoable operation. | fixed — `boundErrors` computed distinguishes invalid from blank, shows per-field errors, and gates `canApply` (except categorical mode, where the fields are hidden and never sent). Tests: two new dialog cases |
+| M6 | style (pchoisel) | `api/annotation.py` `colorByProperty` `.notes()` | The `Body: {...}` schema blob makes the notes unreadable; move it to a comment/docstring at the top of the function. | fixed — body schema moved to the endpoint docstring; `.notes()` keeps the behavioral prose |
+
+Sweep notes for this round:
+
+- `History._undoOrRedo` (master, pre-existing) has the same write-then-bump
+  shape as M2 — raw restore operations, bump only after success. Out of this
+  branch's scope; noted here rather than churned.
+- Every new frontend/unit test was watched failing pre-fix.
+  `testFailedColorWritesStillInvalidateRaster` needs the MongoDB-backed
+  server fixture, which this environment cannot run; its pre-fix failure is
+  structural (the bump was sequenced after the raising call, so it provably
+  never ran) and the green side runs in CI.

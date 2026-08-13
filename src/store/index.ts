@@ -2385,6 +2385,55 @@ export class Main extends VuexModule {
     await this.syncConfiguration("colorByProperty");
   }
 
+  // Retire the legend for a specific dataset+configuration pair, which may no
+  // longer be the pair on screen: a manual recolor can outlive a dataset or
+  // configuration switch, and the legend it invalidated belongs to the
+  // captured pair. Skipping the cleanup then would leave the captured
+  // dataset's configuration claiming its (now manually overwritten) colors
+  // come from a property mapping. Same best-effort contract as
+  // saveColorByProperty: the recolor already happened, a failed metadata
+  // write must not fail it.
+  @Action
+  async retireColorByProperty({
+    datasetId,
+    configurationId,
+  }: {
+    datasetId: string;
+    configurationId: string;
+  }) {
+    if (this.configuration?.id === configurationId) {
+      if (!this.configuration.colorByProperty?.[datasetId]) {
+        return;
+      }
+      // The mutation takes the CAPTURED dataset id: a configuration is
+      // reusable across datasets, so "same configuration" does not imply the
+      // captured dataset is still the one open.
+      this.setConfigurationColorByProperty({ datasetId, state: null });
+      await this.syncConfiguration("colorByProperty");
+      return;
+    }
+    // The recolor outlived a configuration switch, so there is no live store
+    // copy to mutate: write to the captured configuration directly.
+    // girderResources holds this session's latest copy (syncConfiguration
+    // invalidates it on every write).
+    try {
+      const configuration =
+        await girderResources.getConfiguration(configurationId);
+      if (!configuration?.colorByProperty?.[datasetId]) {
+        return;
+      }
+      const colorByProperty = { ...configuration.colorByProperty };
+      delete colorByProperty[datasetId];
+      await this.api.updateConfigurationKey(
+        { ...configuration, colorByProperty },
+        "colorByProperty",
+      );
+      this.context.dispatch("ressourceChanged", configurationId);
+    } catch (error) {
+      sync.setSaving(error as Error);
+    }
+  }
+
   // Push the configuration's persisted annotation-browser state into the
   // properties and filters stores. Idempotent; called both when a
   // configuration loads and at the end of

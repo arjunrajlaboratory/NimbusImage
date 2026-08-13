@@ -434,7 +434,10 @@ class TestColorByProperty:
         # surfaced an internal ValueError ("cannot convert float NaN to
         # integer") to the client as if it were input validation.
         folder, _ = self._makeDatasetWithValues(admin, [{"propA": 1}])
-        for raw in ("1e999", "-1e999"):
+        # The third case is an integer too large to convert to float: JSON
+        # ints are unbounded, and math.isfinite raises OverflowError on one
+        # (it is not a ValueError), which unguarded became a 500.
+        for raw in ("1e999", "-1e999", "1" + "0" * 400):
             resp = server.request(
                 path="/upenn_annotation/color_by_property",
                 method="POST",
@@ -444,7 +447,7 @@ class TestColorByProperty:
                 type="application/json",
             )
             assertStatus(resp, 400)
-            assert "finite number" in resp.json["message"], raw
+            assert "finite number" in resp.json["message"], raw[:20]
 
     def testDuplicatePropertyValueDocsDoNotHideAStaleColor(self, admin):
         # An annotation with two property-value documents used to land in two

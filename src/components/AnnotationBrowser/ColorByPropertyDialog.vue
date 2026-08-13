@@ -65,11 +65,12 @@
                 v-model="percentileLowText"
                 label="Low percentile"
                 :placeholder="String(DEFAULT_PERCENTILE_LOW)"
+                :error-messages="boundErrors.percentileLow ?? []"
                 type="number"
                 density="compact"
                 variant="outlined"
                 persistent-placeholder
-                hide-details
+                hide-details="auto"
               />
             </v-col>
             <v-col cols="6">
@@ -77,11 +78,12 @@
                 v-model="percentileHighText"
                 label="High percentile"
                 :placeholder="String(DEFAULT_PERCENTILE_HIGH)"
+                :error-messages="boundErrors.percentileHigh ?? []"
                 type="number"
                 density="compact"
                 variant="outlined"
                 persistent-placeholder
-                hide-details
+                hide-details="auto"
               />
             </v-col>
           </v-row>
@@ -90,20 +92,22 @@
               <v-text-field
                 v-model="rangeMinText"
                 label="Min value (overrides)"
+                :error-messages="boundErrors.rangeMin ?? []"
                 type="number"
                 density="compact"
                 variant="outlined"
-                hide-details
+                hide-details="auto"
               />
             </v-col>
             <v-col cols="6">
               <v-text-field
                 v-model="rangeMaxText"
                 label="Max value (overrides)"
+                :error-messages="boundErrors.rangeMax ?? []"
                 type="number"
                 density="compact"
                 variant="outlined"
-                hide-details
+                hide-details="auto"
               />
             </v-col>
           </v-row>
@@ -213,6 +217,34 @@ const hasActiveColoring = computed(
   () => !!store.colorByPropertyForCurrentDataset,
 );
 
+// Invalid numeric text must be a distinct state from blank, not collapse
+// into it: parseBound maps both to undefined, and a request sent without the
+// bound recolors every annotation with the DEFAULT range — a destructive,
+// non-undoable operation the user thought they had constrained. "1e309"
+// parses to Infinity and a partial exponent to NaN; both must block Apply.
+function boundError(text: string): string | null {
+  const trimmed = text.trim();
+  return trimmed === "" || Number.isFinite(Number(trimmed))
+    ? null
+    : "Not a finite number";
+}
+
+const boundErrors = computed(() => ({
+  rangeMin: boundError(rangeMinText.value),
+  rangeMax: boundError(rangeMaxText.value),
+  percentileLow: boundError(percentileLowText.value),
+  percentileHigh: boundError(percentileHighText.value),
+}));
+
+// Categorical mode hides the range fields and apply() never sends them, so
+// stale invalid text from continuous mode must not block an apply about
+// fields the user can no longer see (twin of the send-side guard in apply).
+const hasInvalidBound = computed(
+  () =>
+    mode.value !== "categorical" &&
+    Object.values(boundErrors.value).some((error) => error !== null),
+);
+
 // The dialog instance survives dataset/configuration switches (the browser
 // palette stays mounted), so a previously selected path may no longer exist.
 // Requiring a live pathByKey entry keeps Apply from being an enabled no-op.
@@ -220,7 +252,8 @@ const canApply = computed(
   () =>
     store.isLoggedIn &&
     selectedPathKey.value !== null &&
-    pathByKey.value.has(selectedPathKey.value),
+    pathByKey.value.has(selectedPathKey.value) &&
+    !hasInvalidBound.value,
 );
 
 function gradientStyle(name: string) {
@@ -267,8 +300,9 @@ async function apply() {
   isApplying.value = true;
   errorMessage.value = null;
   try {
-    // The store action owns the apply invariant (backend colors ⇒ legend in
-    // configuration ⇒ refetch); the dialog only holds form state.
+    // The store action owns the apply invariant (backend colors ⇒ local
+    // apply from the returned assignment ⇒ legend in configuration); the
+    // dialog only holds form state.
     // Categorical ignores the colormap and range entirely, and its fields are
     // hidden — so don't send them. A stale invalid pair left over from
     // continuous mode (Min 100 / Max 50) would otherwise 400 a categorical
@@ -325,6 +359,7 @@ defineExpose({
   isApplying,
   propertyItems,
   canApply,
+  boundErrors,
   hasActiveColoring,
   apply,
   removeColoring,

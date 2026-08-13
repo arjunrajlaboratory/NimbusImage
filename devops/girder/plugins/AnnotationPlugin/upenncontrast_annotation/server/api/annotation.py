@@ -28,6 +28,7 @@ from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.validation import (
     MAX_LIST_LIMIT,
     dropNoOpPropertyFilters,
+    isFiniteNumber,
     isValidPropertyPath,
     requireCountWithin,
     requireFloat,
@@ -564,15 +565,7 @@ class Annotation(Resource):
             "color). Returns {colored, uncolored, legend}, where legend "
             "describes the applied mapping (gradient stops + range for "
             "continuous, value/color swatches for categorical). "
-            "Body: {datasetId, propertyPath: string[], mode?: "
-            "'auto'|'continuous'|'categorical', colormap?: string, "
-            "rangeMin?: number, rangeMax?: number, percentileLow?: number, "
-            "percentileHigh?: number, clear?: boolean, "
-            "returnAssignment?: boolean}. "
-            "returnAssignment adds `assignment`: [{color, ids}] listing what "
-            "was written, so a client can repaint the annotations it already "
-            "holds instead of refetching the dataset (large: one id per "
-            "annotation). "
+            "Body fields are documented on the endpoint implementation. "
             "Continuous ranges default to the 1st..99th percentile (real "
             "distributions are long-tailed, and a full-extent ramp collapses "
             "into one bucket); rangeMin/rangeMax override a bound absolutely. "
@@ -591,6 +584,21 @@ class Annotation(Resource):
         .errorResponse("Write access was denied for the dataset.", 403)
     )
     def colorByProperty(self, body):
+        """POST /upenn_annotation/color_by_property
+
+        Body:
+            datasetId: str (required)
+            propertyPath: string[] (required unless clear)
+            mode: 'auto' | 'continuous' | 'categorical' (default 'auto')
+            colormap: str (default DEFAULT_COLORMAP)
+            rangeMin, rangeMax: number (absolute bound overrides)
+            percentileLow, percentileHigh: number in [0, 100]
+            clear: bool (reset every color to null instead)
+            returnAssignment: bool — adds `assignment`: [{color, ids}]
+                listing what was written, so a client can repaint the
+                annotations it already holds instead of refetching the
+                dataset (large: one id per annotation)
+        """
         datasetId = requireObjectId(body.get("datasetId"), "datasetId")
         Folder().load(
             datasetId,
@@ -645,12 +653,10 @@ class Annotation(Resource):
             # json.loads accepts bare NaN/Infinity, and a non-finite bound
             # propagates into the range arithmetic as NaN — where int(round(
             # nan)) raises a ValueError that the model-error mapping below
-            # would relay as a bogus "validation" message.
-            if value is not None and (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-            ):
+            # would relay as a bogus "validation" message. isFiniteNumber
+            # also covers the int-too-large-for-float case, where
+            # math.isfinite raises OverflowError instead of returning False.
+            if value is not None and not isFiniteNumber(value):
                 raise RestException(
                     "%s must be a finite number" % bound, code=400
                 )

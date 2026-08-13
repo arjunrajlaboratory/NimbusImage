@@ -1726,13 +1726,14 @@ export class Annotations extends VuexModule {
     // not-logged-in attempt all reach here having written nothing, and
     // deleting the legend then would leave the canvas correctly colored by
     // the property with no legend to explain it.
-    if (
-      patched > 0 &&
-      main.dataset?.id === datasetId &&
-      main.configuration?.id === configurationId &&
-      main.colorByPropertyForCurrentDataset
-    ) {
-      await main.saveColorByProperty(null);
+    //
+    // The retirement targets the CAPTURED pair, not the current one: the
+    // colors it invalidated were written to that dataset regardless of what
+    // is open when the write completes, so a mid-await switch must not
+    // abandon the cleanup (it used to, leaving the stale legend to reappear
+    // on the captured dataset's next load).
+    if (patched > 0 && datasetId && configurationId) {
+      await main.retireColorByProperty({ datasetId, configurationId });
     }
   }
 
@@ -1752,10 +1753,11 @@ export class Annotations extends VuexModule {
   }
 
   // Apply server-side color-by-property and keep the three-step invariant in
-  // one place: colors written on the backend ⇒ legend persisted in the
-  // configuration ⇒ annotations refetched. rawError so callers (the dialog)
-  // can show the backend's real 400 message instead of the decorator's
-  // generic wrapper.
+  // one place: colors written on the backend ⇒ applied locally from the
+  // returned assignment (a full refetch only as the fallback when the local
+  // apply couldn't happen) ⇒ legend persisted in the configuration. rawError
+  // so callers (the dialog) can show the backend's real 400 message instead
+  // of the decorator's generic wrapper.
   @Action({ rawError: true })
   public async applyColorByProperty(params: {
     propertyPath: string[];

@@ -282,7 +282,9 @@ allowed).
 
 Main store (`src/store/index.ts`): mutation
 `setConfigurationColorByProperty`, action `saveColorByProperty(state | null)`
-→ mutation + `syncConfiguration("colorByProperty")`.
+→ mutation + `syncConfiguration("colorByProperty")`, and action
+`retireColorByProperty({datasetId, configurationId})` — the switch-safe
+retirement used by `colorAnnotationIds` (see "Clearing semantics").
 
 ### API
 
@@ -319,24 +321,38 @@ New component `src/components/AnnotationBrowser/ColorByPropertyDialog.vue`:
   `GET /upenn_annotation/color_by_property/options` (fetched once, the first
   time the dialog opens), so the backend tables remain the single source of
   truth — no duplicate colormap definitions in TypeScript;
-- optional min/max overrides (continuous);
-- Apply → endpoint → `main.saveColorByProperty(legend + showLegend: true)` →
-  `annotationStore.fetchAnnotations()` (re-pulls full annotations or stubs,
-  both carry the new colors);
-- "Remove property coloring" button → `clear: true` →
-  `saveColorByProperty(null)` → refetch.
+- optional min/max overrides (continuous); invalid numeric text in any range
+  or percentile field is a distinct, blocking state (error message + Apply
+  disabled), never silently treated as "use the default" — the operation
+  replaces every color and cannot be undone;
+- Apply → endpoint (with `returnAssignment`) → colors patched in place from
+  the returned assignment (§ "The post-apply refetch") →
+  `main.saveColorByProperty(legend + showLegend: true)`. A full
+  `fetchAnnotations()` runs only as the fallback when the local apply could
+  not happen (a non-400 failure that may have written);
+- "Remove property coloring" button → `clear: true` → empty assignment
+  applied locally (nulls every color) → `saveColorByProperty(null)`.
 
 ### Clearing semantics (legend honesty)
 
 `annotationStore.colorAnnotationIds` is the single choke point through which
 every other color assignment flows (context menu, color-selected dialog,
-tag-cloud coloring, AI-agent executor). After it applies its edit, if
-this dataset has a legend, dispatch `saveColorByProperty(null)` — but only
-when the edit actually patched something. An empty selection, a color every
-target already had, and a not-logged-in attempt all write nothing, and
-retiring the legend then would leave the canvas correctly colored by the
-property with nothing to explain it. `updateAnnotationsPerId` returns its
-patch count for exactly this.
+tag-cloud coloring, AI-agent executor). After it applies its edit, it
+retires the captured dataset+configuration pair's legend via
+`main.retireColorByProperty` — but only when the edit actually patched
+something. An empty selection, a color every target already had, and a
+not-logged-in attempt all write nothing, and retiring the legend then would
+leave the canvas correctly colored by the property with nothing to explain
+it. `updateAnnotationsPerId` returns its patch count for exactly this.
+
+The retirement targets the pair captured *before* the awaited write, not
+whatever is open when it completes: a large recolor takes seconds, and a
+dataset or configuration switch during it must neither write the cleanup to
+the newly opened configuration nor abandon it — the captured dataset's
+colors were changed either way, so its legend is wrong either way. When the
+captured configuration is no longer the current one,
+`retireColorByProperty` loads it via `girderResources` and PUTs the pruned
+`colorByProperty` key directly (best-effort, like `saveColorByProperty`).
 The legend disappears; colors keep whatever the user just set.
 
 Known, accepted staleness (documented, not tracked):
@@ -403,15 +419,16 @@ Backend (`test_color_by_property.py`, tox):
 - permission: user without WRITE on dataset → 403; invalid body shapes → 400.
 
 Frontend (vitest):
-- dialog: apply calls API with chosen params, saves legend to config, triggers
-  `fetchAnnotations`;
+- dialog: apply calls API with chosen params; the store action patches colors
+  locally from the returned assignment and saves the legend to config;
 - `colorAnnotationIds` clears the legend when it patched something, and keeps
   it when it didn't;
 - legend component renders gradient stops / swatches / collapse from a config
   fixture.
 
 Manual (user-supplied dataset): apply continuous + categorical coloring on a
-stub-mode dataset, verify colors appear after refetch and legend matches.
+stub-mode dataset, verify colors appear immediately (no stub refetch) and the
+legend matches.
 
 ## Regression checklist
 
@@ -429,6 +446,18 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       invert the range and must 400 rather than silently paint everything the
       middle color.** — *"testExplicitBoundsOverridePercentiles"*,
       *"testEmptyExplicitRangeIsA400"*
+- [ ] **Every malformed bound is a clean 400, including an int too large to
+      convert to float** — JSON ints are unbounded and `math.isfinite(bigint)`
+      raises `OverflowError`, not `False`, so the unguarded check was a 500. —
+      *"testNonFiniteBoundsAreClean400s"*,
+      *"testHugeIntIsNonFiniteNotAnError"*
+- [ ] **Invalid numeric text in a dialog bound field blocks Apply** instead of
+      collapsing into the blank/"use default" state — the operation replaces
+      every color, non-undoably, so a dropped constraint is destructive. Stale
+      invalid text must not block a categorical apply (fields hidden, never
+      sent). — *"an invalid bound blocks Apply instead of silently using
+      defaults"*, *"a stale invalid bound does not block a categorical
+      apply"*
 - [ ] **Extremes reach the ends of the colormap** when the full extent is
       requested. — *"testContinuousAutoMapsExtremesAndSkipsMissing"*
 - [ ] **Categories past the palette's length stay distinguishable.** A real
@@ -517,6 +546,20 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       *"bumps mutationCounter on the clear path too"*,
       *"does not bump when no color actually moved"*,
       *"testColorByPropertyInvalidatesEtagAndRepaints"*
+- [ ] **The raster version bumps even when the color writes fail partway.**
+      Unordered bulk writes can raise after applying some operations —
+      exactly when the cached raster is most wrong. The frontend treats a
+      non-400 failure as "may have written" and refetches; the server cache
+      must reach the same conclusion. —
+      *"testFailedColorWritesStillInvalidateRaster"*
+- [ ] **A dataset or configuration switch during a manual recolor still
+      retires the CAPTURED pair's legend** — the recolor changed that
+      dataset's colors regardless of what is open when it completes, and
+      bailing left the stale legend to reappear on the next load. The
+      newly opened configuration must stay untouched. —
+      *"a dataset+configuration switch mid-recolor still retires the captured
+      configuration's legend"*, *"a dataset switch under the SAME
+      configuration retires the captured dataset's legend only"*
 - [ ] **A color-only change does NOT bump `contentRevision`.** That counter
       feeds the analysis gate and histogram signatures, none of which depend on
       color; bumping it would re-resolve every gate over the whole dataset for

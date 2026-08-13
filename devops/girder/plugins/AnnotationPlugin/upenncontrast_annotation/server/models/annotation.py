@@ -1250,16 +1250,21 @@ class Annotation(AccessControlMixin, ProxiedModel):
     def clearColors(self, datasetId):
         """Reset every annotation color in the dataset to null (layer color).
         Returns the number of annotations in the dataset."""
-        result = self.update(
-            {"datasetId": datasetId}, {"$set": {"color": None}}
-        )
-        # The overview raster renders each annotation's own color, and its
-        # geometry cache and ETag are keyed by the dataset's raster version.
-        # This path writes colors with a bulk update rather than through
-        # save()/saveMany(), so nothing else bumps that version and a
-        # revisited frame would keep serving pre-clear colors (304 on an
-        # unchanged ETag) until the 120s cache-TTL rotation.
-        bumpDatasetRasterVersion(datasetId)
+        try:
+            result = self.update(
+                {"datasetId": datasetId}, {"$set": {"color": None}}
+            )
+        finally:
+            # The overview raster renders each annotation's own color, and
+            # its geometry cache and ETag are keyed by the dataset's raster
+            # version. This path writes colors with a bulk update rather
+            # than through save()/saveMany(), so nothing else bumps that
+            # version and a revisited frame would keep serving pre-clear
+            # colors (304 on an unchanged ETag) until the 120s cache-TTL
+            # rotation. In a finally because a failed update can still have
+            # cleared part of the dataset; a bump without a write only costs
+            # one cache rebuild, the reverse serves wrong colors.
+            bumpDatasetRasterVersion(datasetId)
         return result.matched_count
 
     @staticmethod
@@ -1553,22 +1558,27 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # cross-check below is sound.
         coveredIds = sum(len(ids) for ids in idsByColor.values())
         skipClear = coveredIds >= total
-        if not skipClear:
-            self.clearColors(datasetId)
-        colored = self._applyColorOperations(operations)
-
-        if skipClear and colored < total:
-            # The id count implied full coverage but the writes disagree —
-            # e.g. a property value referencing an annotation outside this
-            # dataset inflated the count. Some annotations may still hold a
-            # stale color, so fall back to the clear-then-reapply order.
-            self.clearColors(datasetId)
+        try:
+            if not skipClear:
+                self.clearColors(datasetId)
             colored = self._applyColorOperations(operations)
 
-        # The assignment writes are the half clearColors' bump does not cover
-        # (skipClear skips it entirely), and they are what changes the colors
-        # the overview raster draws.
-        bumpDatasetRasterVersion(datasetId)
+            if skipClear and colored < total:
+                # The id count implied full coverage but the writes
+                # disagree — e.g. a property value referencing an annotation
+                # outside this dataset inflated the count. Some annotations
+                # may still hold a stale color, so fall back to the
+                # clear-then-reapply order.
+                self.clearColors(datasetId)
+                colored = self._applyColorOperations(operations)
+        finally:
+            # The assignment writes are the half clearColors' bump does not
+            # cover (skipClear skips it entirely), and they are what changes
+            # the colors the overview raster draws. In a finally because an
+            # unordered bulk_write can raise after applying some operations
+            # — exactly when the cached raster is most wrong (see
+            # clearColors).
+            bumpDatasetRasterVersion(datasetId)
         return {"colored": colored, "uncolored": max(total - colored, 0)}
 
     def compute(self, datasetId, tool, user=None):
