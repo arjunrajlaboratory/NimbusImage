@@ -256,29 +256,30 @@ found, too many categories), mapped to 400 in the API layer.
 `src/store/model.ts`:
 
 ```ts
-export type TColorByLegendType = "continuous" | "categorical";
-export interface IColorByPropertyState {
-  propertyPath: string[];
+// The wire legend (IColorByPropertyLegend) carries type, gradient stops +
+// range for continuous, value/color/count swatches for categorical; the
+// persisted state adds what the client snapshots at apply time.
+export interface IColorByPropertyState extends IColorByPropertyLegend {
   propertyName: string; // display name snapshot at apply time
-  type: TColorByLegendType;
-  // continuous
-  colormap?: string;
-  stops?: string[];
-  min?: number;
-  max?: number;
-  // categorical
-  categories?: { value: string; color: string; count: number }[];
-  appliedAt: number; // epoch ms
   showLegend: boolean;
 }
+
+// Keyed by dataset id: the legend is per-DATASET derived state, but a
+// configuration is reusable across datasets (ImportConfiguration adds a
+// dataset to existing collections), so a single slot would show dataset A's
+// legend over dataset B's colors.
+export type TColorByPropertyByDataset = {
+  [datasetId: string]: IColorByPropertyState;
+};
 ```
 
-`IDatasetConfigurationBase` gains `colorByProperty?: IColorByPropertyState | null`
+`IDatasetConfigurationBase` gains `colorByProperty?: TColorByPropertyByDataset`
 (optional for pre-existing configurations, like `annotationBrowserConfig`).
-Added to `exampleConfigurationBase()` (as `null`) so `configurationBaseKeys`
+Added to `exampleConfigurationBase()` (as `{}`) so `configurationBaseKeys`
 includes it and `updateConfigurationKey`/`setBaseCollectionValues` round-trip
 it. The backend collection schema needs no change (extra `meta` keys are
-allowed).
+allowed). Read the current dataset's slot via
+`main.colorByPropertyForCurrentDataset`.
 
 Main store (`src/store/index.ts`): mutation
 `setConfigurationColorByProperty`, action `saveColorByProperty(state | null)`
@@ -329,11 +330,18 @@ New component `src/components/AnnotationBrowser/ColorByPropertyDialog.vue`:
   replaces every color and cannot be undone;
 - Apply → endpoint (with `returnAssignment`) → colors patched in place from
   the returned assignment (§ "The post-apply refetch") →
-  `main.saveColorByProperty(legend + showLegend: true)`. A full
+  `main.saveColorByPropertyFor({datasetId, configurationId, state: legend +
+  showLegend: true})`, targeting the pair captured before the request so a
+  mid-request switch cannot misdirect or drop it. A full
   `fetchAnnotations()` runs only as the fallback when the local apply could
-  not happen (a non-400 failure that may have written);
+  not happen (a non-400 failure that may have written) — and that failure
+  path also RETIRES the captured pair's legend, since a partial write means
+  any earlier legend describes neither the half-applied mapping nor the
+  refetched colors;
 - "Remove property coloring" button → `clear: true` → empty assignment
-  applied locally (nulls every color) → `saveColorByProperty(null)`.
+  applied locally (nulls every color) → `saveColorByPropertyFor(state:
+  null)` for the captured pair, on the success and may-have-written failure
+  paths alike.
 
 ### Clearing semantics (legend honesty)
 
@@ -550,6 +558,16 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       configuration"*,
       *"a dataset switch mid-clear nulls nothing locally but retires the
       captured dataset's legend"*
+- [ ] **A may-have-written failure retires a previously persisted legend; a
+      400 keeps it.** A non-400 failure can be a partial bulk write (the
+      backend invalidates its raster in a `finally` for the same reason), so
+      an earlier apply's legend describes neither the half-applied mapping
+      nor the refetched colors — while a 400 wrote nothing and the earlier
+      legend still holds. Both the apply and the clear path. —
+      *"a non-400 failure retires a previously persisted legend (partial
+      write)"*, *"a 400 rejection keeps a previously persisted legend
+      (nothing was written)"*, *"a non-400 clear failure retires the legend
+      too"*
 - [ ] **The annotation-overview raster repaints in the new colors.** The
       overview is a server-rendered image of `annotation.color`, so a recolor
       has to invalidate it on both sides: the client bumps `mutationCounter`

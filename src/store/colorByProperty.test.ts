@@ -450,6 +450,49 @@ describe("applyColorByProperty / removeColorByProperty store actions", () => {
     expect(getAnnotationCount).toHaveBeenCalled();
   });
 
+  it("a non-400 failure retires a previously persisted legend (partial write)", async () => {
+    // The unordered bulk write can fail after applying some operations —
+    // the backend bumps its raster version in a finally for exactly this
+    // case — so a legend from an EARLIER apply now describes neither the
+    // partially applied mapping nor the refetched colors. It must go.
+    setConfiguration(legendFixture);
+    colorByPropertyApi.mockRejectedValue({ response: { status: 500 } });
+    await expect(
+      annotationStore.applyColorByProperty({
+        propertyPath: ["prop2"],
+        propertyName: "Prop 2",
+      }),
+    ).rejects.toBeTruthy();
+    expect(main.colorByPropertyForCurrentDataset).toBeNull();
+    expect(updateConfigurationKey).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 400 rejection keeps a previously persisted legend (nothing was written)", async () => {
+    // A 400 is rejected before any write, so the earlier apply's legend
+    // still describes the colors exactly; retiring it would strip the
+    // explanation from a correctly colored canvas.
+    setConfiguration(legendFixture);
+    colorByPropertyApi.mockRejectedValue({ response: { status: 400 } });
+    await expect(
+      annotationStore.applyColorByProperty({
+        propertyPath: ["prop2"],
+        propertyName: "Prop 2",
+      }),
+    ).rejects.toBeTruthy();
+    expect(main.colorByPropertyForCurrentDataset).toEqual(legendFixture);
+    expect(updateConfigurationKey).not.toHaveBeenCalled();
+  });
+
+  it("a non-400 clear failure retires the legend too", async () => {
+    // The clear's update_many can also fail partway; partially cleared
+    // colors under a standing legend is the same wrong-legend state.
+    setConfiguration(legendFixture);
+    clearColorByPropertyApi.mockRejectedValue({ response: { status: 500 } });
+    await expect(annotationStore.removeColorByProperty()).rejects.toBeTruthy();
+    expect(main.colorByPropertyForCurrentDataset).toBeNull();
+    expect(updateConfigurationKey).toHaveBeenCalledTimes(1);
+  });
+
   it("remove clears backend colors, retires the legend, and nulls colors locally", async () => {
     setConfiguration(legendFixture);
     (store.state as any).annotation.annotationStubs = new Map([

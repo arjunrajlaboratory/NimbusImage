@@ -1823,6 +1823,19 @@ export class Annotations extends VuexModule {
       return result;
     } catch (error) {
       backendMayHaveChanged = (error as any)?.response?.status !== 400;
+      // A non-400 failure can be a PARTIAL write (the bulk write is
+      // unordered; the backend bumps its raster version in a finally for
+      // exactly this case), so a legend persisted by an EARLIER apply now
+      // describes neither the half-applied mapping nor the refetched
+      // colors. Retire it. A 400 was rejected before any write, so the
+      // earlier legend still holds and must stay.
+      if (backendMayHaveChanged && configurationId) {
+        await main.saveColorByPropertyFor({
+          datasetId,
+          configurationId,
+          state: null,
+        });
+      }
       throw error;
     } finally {
       // Only fall back to the full refetch when the local apply couldn't
@@ -1870,6 +1883,17 @@ export class Annotations extends VuexModule {
       }
     } catch (error) {
       backendMayHaveChanged = (error as any)?.response?.status !== 400;
+      // Same as applyColorByProperty's failure path: the clear's update can
+      // fail partway, and partially cleared colors under a standing legend
+      // is the same wrong-legend state — retire it. Nothing was written on
+      // a 400, so the legend stays.
+      if (backendMayHaveChanged && configurationId) {
+        await main.saveColorByPropertyFor({
+          datasetId,
+          configurationId,
+          state: null,
+        });
+      }
       throw error;
     } finally {
       if (!applied && backendMayHaveChanged && main.dataset?.id === datasetId) {
