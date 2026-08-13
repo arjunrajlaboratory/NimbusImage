@@ -1733,7 +1733,11 @@ export class Annotations extends VuexModule {
     // abandon the cleanup (it used to, leaving the stale legend to reappear
     // on the captured dataset's next load).
     if (patched > 0 && datasetId && configurationId) {
-      await main.retireColorByProperty({ datasetId, configurationId });
+      await main.saveColorByPropertyFor({
+        datasetId,
+        configurationId,
+        state: null,
+      });
     }
   }
 
@@ -1787,37 +1791,33 @@ export class Annotations extends VuexModule {
         ...request,
       });
       // Coloring a large dataset takes seconds, and the user can switch
-      // datasets while it runs. Everything below applies THIS dataset's result
-      // to whatever is loaded now, so bail if that is no longer the same
-      // dataset: the assignment's ids would match none of the new dataset's
-      // annotations and null every one of their colors, and the legend would
-      // be written to the new dataset's configuration. The backend write
-      // stands and shows up when this dataset is next loaded.
-      if (main.dataset?.id !== datasetId) {
-        applied = true; // nothing local to do, and nothing to refetch either
-        return result;
-      }
-      // Apply locally BEFORE persisting the legend. This is a synchronous
-      // mutation, so nothing can interleave between the guard above and its
-      // effect. Persisting first would put an awaited configuration PUT in
-      // that gap — long enough to switch datasets, after which this
-      // assignment's ids match none of the newly loaded annotations and would
-      // null every one of their colors.
+      // datasets while it runs. The LOCAL apply below targets whatever is
+      // loaded now, so it must be skipped after a switch: the assignment's
+      // ids would match none of the new dataset's annotations and null every
+      // one of their colors. Apply locally BEFORE persisting the legend —
+      // this is a synchronous mutation, so nothing can interleave between
+      // the guard and its effect, while persisting first would put an
+      // awaited configuration PUT in that gap.
       // The endpoint returns the id→color grouping it just wrote, so the new
       // colors can be applied to the annotations already in memory instead of
       // refetching the whole dataset.
-      if (result.assignment) {
+      if (main.dataset?.id !== datasetId) {
+        applied = true; // nothing local to do, and nothing to refetch either
+      } else if (result.assignment) {
         this.applyColorAssignment(result.assignment);
         applied = true;
       }
-      // Same dataset reasoning for the configuration specifically: a dataset
-      // can be reopened under a different configuration, and the legend
-      // belongs to the one this coloring was started from.
-      if (result.legend && main.configuration?.id === configurationId) {
-        await main.saveColorByProperty({
-          ...result.legend,
-          propertyName,
-          showLegend: true,
+      // The legend, unlike the local apply, is NOT skipped on a switch: the
+      // backend recolored the captured dataset either way, and that dataset's
+      // slot in the captured configuration must describe the colors it now
+      // has — an older property coloring's legend left standing would not.
+      // saveColorByPropertyFor targets the captured pair even when a switch
+      // means it is no longer the pair on screen.
+      if (result.legend && configurationId) {
+        await main.saveColorByPropertyFor({
+          datasetId,
+          configurationId,
+          state: { ...result.legend, propertyName, showLegend: true },
         });
       }
       return result;
@@ -1847,21 +1847,26 @@ export class Annotations extends VuexModule {
     let applied = false;
     try {
       await this.annotationsAPI.clearColorByProperty(datasetId);
-      // Same dataset-switch guard as applyColorByProperty: an empty assignment
-      // nulls EVERY loaded color, so applying it to a dataset we didn't clear
-      // would wipe that dataset's colors locally.
-      if (main.dataset?.id !== datasetId) {
-        applied = true;
-        return;
+      // Same dataset-switch guard as applyColorByProperty for the LOCAL
+      // apply: an empty assignment nulls EVERY loaded color, so applying it
+      // to a dataset we didn't clear would wipe that dataset's colors
+      // locally. Local apply first, because an awaited configuration write
+      // between the guard and this mutation is a window in which the dataset
+      // can change.
+      if (main.dataset?.id === datasetId) {
+        this.applyColorAssignment([]);
       }
-      // Local apply first, for the same reason as applyColorByProperty: an
-      // awaited configuration write between the guard and this mutation is a
-      // window in which the dataset can change, and an empty assignment nulls
-      // EVERY loaded color.
-      this.applyColorAssignment([]);
       applied = true;
-      if (main.configuration?.id === configurationId) {
-        await main.saveColorByProperty(null);
+      // And like applyColorByProperty, the legend retirement is NOT skipped
+      // on a switch: the backend cleared the captured dataset's colors, so
+      // leaving its legend standing would claim a property mapping that no
+      // longer exists.
+      if (configurationId) {
+        await main.saveColorByPropertyFor({
+          datasetId,
+          configurationId,
+          state: null,
+        });
       }
     } catch (error) {
       backendMayHaveChanged = (error as any)?.response?.status !== 400;

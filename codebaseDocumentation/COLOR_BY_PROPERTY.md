@@ -283,8 +283,10 @@ allowed).
 Main store (`src/store/index.ts`): mutation
 `setConfigurationColorByProperty`, action `saveColorByProperty(state | null)`
 → mutation + `syncConfiguration("colorByProperty")`, and action
-`retireColorByProperty({datasetId, configurationId})` — the switch-safe
-retirement used by `colorAnnotationIds` (see "Clearing semantics").
+`saveColorByPropertyFor({datasetId, configurationId, state})` — the
+switch-safe write to a captured pair's slot, used by `colorAnnotationIds`
+(retire), `applyColorByProperty` (persist), and `removeColorByProperty`
+(retire) — see "Clearing semantics".
 
 ### API
 
@@ -339,11 +341,12 @@ New component `src/components/AnnotationBrowser/ColorByPropertyDialog.vue`:
 every other color assignment flows (context menu, color-selected dialog,
 tag-cloud coloring, AI-agent executor). After it applies its edit, it
 retires the captured dataset+configuration pair's legend via
-`main.retireColorByProperty` — but only when the edit actually patched
+`main.saveColorByPropertyFor` — but only when the edit actually patched
 something. An empty selection, a color every target already had, and a
 not-logged-in attempt all write nothing, and retiring the legend then would
 leave the canvas correctly colored by the property with nothing to explain
 it. `updateAnnotationsPerId` returns its patch count for exactly this.
+The legend disappears; colors keep whatever the user just set.
 
 The retirement targets the pair captured *before* the awaited write, not
 whatever is open when it completes: a large recolor takes seconds, and a
@@ -351,9 +354,16 @@ dataset or configuration switch during it must neither write the cleanup to
 the newly opened configuration nor abandon it — the captured dataset's
 colors were changed either way, so its legend is wrong either way. When the
 captured configuration is no longer the current one,
-`retireColorByProperty` loads it via `girderResources` and PUTs the pruned
+`saveColorByPropertyFor` loads it via `girderResources` and PUTs the updated
 `colorByProperty` key directly (best-effort, like `saveColorByProperty`).
-The legend disappears; colors keep whatever the user just set.
+
+The same rule holds for the property paths, in the opposite direction:
+`applyColorByProperty` persists the NEW legend to the captured pair after a
+mid-request switch (the backend recolored that dataset either way, and an
+older coloring's legend left standing would describe colors it no longer
+has), and `removeColorByProperty` retires the captured pair's legend after
+clearing. Only the LOCAL color apply is skipped on a switch — it targets
+whatever is loaded now.
 
 Known, accepted staleness (documented, not tracked):
 
@@ -528,12 +538,18 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       after it, while still supplying the fetched geometry. —
       *"a hydration that predates a recolor cannot reinstate the old color"*,
       *"preserves geometry from the fetch while overriding color"*
-- [ ] **A dataset switch mid-request applies nothing locally.** The assignment
-      names the OLD dataset's ids, so applying it to the newly loaded dataset
-      would null every one of its colors, and the legend would be persisted to
-      the new dataset's configuration. Both the apply and the clear path guard
-      this. — *"a dataset switch mid-request applies nothing locally"*,
-      *"a dataset switch mid-clear nulls nothing locally"*
+- [ ] **A dataset switch mid-request applies nothing locally, while the
+      captured pair's legend is still written.** The assignment names the OLD
+      dataset's ids, so applying it to the newly loaded dataset would null
+      every one of its colors — but the backend recolored (or cleared) the
+      captured dataset either way, so its slot in the captured configuration
+      must be updated (apply) or retired (clear), never abandoned. —
+      *"a dataset switch mid-request applies nothing locally but persists the
+      captured dataset's legend"*,
+      *"a configuration switch mid-apply writes the legend to the captured
+      configuration"*,
+      *"a dataset switch mid-clear nulls nothing locally but retires the
+      captured dataset's legend"*
 - [ ] **The annotation-overview raster repaints in the new colors.** The
       overview is a server-rendered image of `annotation.color`, so a recolor
       has to invalidate it on both sides: the client bumps `mutationCounter`

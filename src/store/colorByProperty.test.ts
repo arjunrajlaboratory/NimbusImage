@@ -307,16 +307,19 @@ describe("applyColorByProperty / removeColorByProperty store actions", () => {
     expect(annotationStore.annotationStubs.get("a1")?.color).toBe("#440154");
   });
 
-  it("a dataset switch mid-request applies nothing locally", async () => {
+  it("a dataset switch mid-request applies nothing locally but persists the captured dataset's legend", async () => {
     // Coloring 700K annotations takes ~10s; the user can switch datasets in
     // that window. The assignment's ids belong to the OLD dataset, so applying
-    // it would null every color in the new one, and the legend would be
-    // written to the new dataset's configuration.
+    // it would null every color in the new one — but the backend DID recolor
+    // the captured dataset, so its legend must still be persisted to its own
+    // slot: an older property coloring's legend left standing would describe
+    // colors the dataset no longer has.
     (store.state as any).annotation.annotationStubs = new Map([
       ["other1", { id: "other1", color: "#eeeeee", tags: [] }],
     ]);
     colorByPropertyApi.mockImplementation(async () => {
-      // The switch happens while the request is in flight.
+      // The switch happens while the request is in flight (same
+      // configuration — it is reusable across datasets).
       setDataset("ds2");
       return legendResponse;
     });
@@ -330,14 +333,54 @@ describe("applyColorByProperty / removeColorByProperty store actions", () => {
     expect(annotationStore.annotationStubs.get("other1")?.color).toBe(
       "#eeeeee",
     );
-    // ...the legend was not written to the new dataset's configuration...
+    // ...the current (new) dataset's slot stays empty while the CAPTURED
+    // dataset's slot carries the new legend...
     expect(main.colorByPropertyForCurrentDataset).toBeNull();
-    expect(updateConfigurationKey).not.toHaveBeenCalled();
+    expect(updateConfigurationKey).toHaveBeenCalledTimes(1);
+    expect(
+      (store.state as any).main.configuration.colorByProperty[DATASET_ID],
+    ).toMatchObject({ ...legendResponse.legend, propertyName: "Prop 1" });
     // ...and it did not refetch the new dataset either.
     expect(getAnnotationCount).not.toHaveBeenCalled();
   });
 
-  it("a dataset switch mid-clear nulls nothing locally", async () => {
+  it("a configuration switch mid-apply writes the legend to the captured configuration", async () => {
+    // The switched-away configuration has no live store copy, so the legend
+    // goes through the direct PUT path — same machinery as manual-recolor
+    // retirement, opposite direction (writing a legend, not pruning one).
+    const capturedConfiguration = (store.state as any).main.configuration;
+    colorByPropertyApi.mockImplementation(async () => {
+      setDataset("ds2");
+      (store.state as any).main.configuration = {
+        ...capturedConfiguration,
+        id: "config2",
+        colorByProperty: {},
+      };
+      return legendResponse;
+    });
+    const getConfiguration = vi.fn().mockResolvedValue(capturedConfiguration);
+    (girderResources as any).getConfiguration = getConfiguration;
+
+    await annotationStore.applyColorByProperty({
+      propertyPath: ["prop1"],
+      propertyName: "Prop 1",
+    });
+
+    expect(getConfiguration).toHaveBeenCalledWith("config1");
+    expect(updateConfigurationKey).toHaveBeenCalledTimes(1);
+    const [written, key] = updateConfigurationKey.mock.calls[0];
+    expect(key).toBe("colorByProperty");
+    expect(written.id).toBe("config1");
+    expect(written.colorByProperty[DATASET_ID]).toMatchObject({
+      ...legendResponse.legend,
+      propertyName: "Prop 1",
+      showLegend: true,
+    });
+    // The newly opened configuration was left alone.
+    expect((store.state as any).main.configuration.colorByProperty).toEqual({});
+  });
+
+  it("a dataset switch mid-clear nulls nothing locally but retires the captured dataset's legend", async () => {
     setConfiguration(legendFixture);
     (store.state as any).annotation.annotationStubs = new Map([
       ["other1", { id: "other1", color: "#eeeeee", tags: [] }],
@@ -353,6 +396,10 @@ describe("applyColorByProperty / removeColorByProperty store actions", () => {
       "#eeeeee",
     );
     expect(getAnnotationCount).not.toHaveBeenCalled();
+    // The backend cleared the captured dataset's colors, so its legend must
+    // not stay behind claiming they come from a property mapping.
+    expect(updateConfigurationKey).toHaveBeenCalledTimes(1);
+    expect((store.state as any).main.configuration.colorByProperty).toEqual({});
   });
 
   it("falls back to a full refetch when no assignment comes back", async () => {

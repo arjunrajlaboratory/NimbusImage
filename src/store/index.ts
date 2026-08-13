@@ -2385,30 +2385,35 @@ export class Main extends VuexModule {
     await this.syncConfiguration("colorByProperty");
   }
 
-  // Retire the legend for a specific dataset+configuration pair, which may no
-  // longer be the pair on screen: a manual recolor can outlive a dataset or
-  // configuration switch, and the legend it invalidated belongs to the
-  // captured pair. Skipping the cleanup then would leave the captured
-  // dataset's configuration claiming its (now manually overwritten) colors
-  // come from a property mapping. Same best-effort contract as
-  // saveColorByProperty: the recolor already happened, a failed metadata
-  // write must not fail it.
+  // Persist (state) or retire (null) the legend for a specific
+  // dataset+configuration pair, which may no longer be the pair on screen: a
+  // recolor takes seconds and can outlive a dataset or configuration switch,
+  // and the colors it wrote belong to the captured pair regardless of what
+  // is open when it completes. Skipping the write then leaves the captured
+  // dataset's configuration WRONG in both directions — a manual recolor
+  // leaves a legend claiming property colors that were just overwritten, and
+  // a property apply leaves an older legend describing colors the dataset no
+  // longer has. Same best-effort contract as saveColorByProperty: the
+  // recolor already happened, a failed metadata write must not fail it.
   @Action
-  async retireColorByProperty({
+  async saveColorByPropertyFor({
     datasetId,
     configurationId,
+    state,
   }: {
     datasetId: string;
     configurationId: string;
+    state: IColorByPropertyState | null;
   }) {
     if (this.configuration?.id === configurationId) {
-      if (!this.configuration.colorByProperty?.[datasetId]) {
+      if (state === null && !this.configuration.colorByProperty?.[datasetId]) {
+        // Nothing to retire; writing would only churn the configuration.
         return;
       }
       // The mutation takes the CAPTURED dataset id: a configuration is
       // reusable across datasets, so "same configuration" does not imply the
       // captured dataset is still the one open.
-      this.setConfigurationColorByProperty({ datasetId, state: null });
+      this.setConfigurationColorByProperty({ datasetId, state });
       await this.syncConfiguration("colorByProperty");
       return;
     }
@@ -2419,11 +2424,18 @@ export class Main extends VuexModule {
     try {
       const configuration =
         await girderResources.getConfiguration(configurationId);
-      if (!configuration?.colorByProperty?.[datasetId]) {
+      if (!configuration) {
         return;
       }
-      const colorByProperty = { ...configuration.colorByProperty };
-      delete colorByProperty[datasetId];
+      const colorByProperty = { ...(configuration.colorByProperty ?? {}) };
+      if (state === null) {
+        if (!(datasetId in colorByProperty)) {
+          return;
+        }
+        delete colorByProperty[datasetId];
+      } else {
+        colorByProperty[datasetId] = state;
+      }
       await this.api.updateConfigurationKey(
         { ...configuration, colorByProperty },
         "colorByProperty",
