@@ -7,6 +7,8 @@ import { jobStates } from "@/store/jobConstants";
 import volumeViewStore from "@/store/volumeView";
 import {
   AnnotationShape,
+  IAnalysisGate,
+  IAnalysisPlot,
   IAnnotation,
   IChatImage,
   IContrast,
@@ -18,8 +20,12 @@ import {
   IScales,
   IToolConfiguration,
   IWorkerInterfaceValues,
+  ANALYSIS_CATEGORY_KEY_VERSION,
   PropertyFilterMode,
+  TAnalysisAxis,
+  TAnalysisCategoricalKey,
   TLayerMode,
+  TPropertyHistogram,
   TUnitLength,
   TUnitTime,
 } from "@/store/model";
@@ -27,6 +33,9 @@ import {
   captureInterfaceScreenshot,
   captureViewportScreenshot,
 } from "@/utils/interfaceCapture";
+import { v4 as uuidv4 } from "uuid";
+import { CATEGORICAL_AXIS_KEYS } from "@/utils/analysisAxes";
+import { MAX_ANALYSIS_PLOTS } from "@/store/constants";
 import {
   getDefault,
   normalizeWorkerInterfaceValue,
@@ -63,6 +72,9 @@ import {
 export interface IAgentToolContext {
   // Element excluded from interface screenshots (the panel itself)
   panelElement: HTMLElement | null;
+  // Test seam for the analysis gate-resolution wait; production uses the
+  // default.
+  waitForGateTimeoutMs?: number;
   // Append an informational note to the panel transcript, used for events
   // that happen after the tool call returned (e.g. worker job completion)
   notify: (text: string) => void;
@@ -570,6 +582,232 @@ export function buildInterfaceState() {
       selected: annotationStore.selectedAnnotationIds.size,
       tags: [...annotationStore.annotationTags],
     },
+    // Analysis-panel gates narrow the SAME `filtered` count above, so
+    // without them here the model sees a shrunken population with no
+    // explanation and can conclude the tag/property filters did it.
+    analysisPlots: filterStore.analysisPlots.map((plot, index) => ({
+      plotId: plot.id,
+      index,
+      xAxis: describeAnalysisAxis(plot.xAxis),
+      yAxis: describeAnalysisAxis(plot.yAxis),
+      hasGate: plot.gate !== null,
+      gateEnabled: plot.gateEnabled,
+      // undefined while a gate is still resolving; it constrains nothing
+      // until then.
+      gatedCount: filterStore.analysisGateIds[plot.id]?.length ?? null,
+    })),
+  };
+}
+
+/** Human-readable axis label for the model (null when unset). */
+function describeAnalysisAxis(axis: TAnalysisAxis | null) {
+  if (!axis) {
+    return null;
+  }
+  return axis.type === "property"
+    ? {
+        type: "property",
+        propertyPath: axis.path,
+        label: propertyPathLabel(axis.path),
+      }
+    : { type: "categorical", key: axis.key };
+}
+
+/**
+ * Wait for a plot's gate ids to be committed.
+ *
+ * `refreshAnalysis` claims a stale-response guard token as its first
+ * statement, so a concurrent refresh (the Viewer watches the same inputs)
+ * supersedes ours and our await resolves without the commit having
+ * happened. Poll the derived state instead of trusting the await, and give
+ * up rather than hang — an unresolved gate constrains nothing, so reporting
+ * "not yet" is honest where reporting the pre-gate count is not.
+ */
+async function waitForGateResolution(
+  plotId: string,
+  timeoutMs: number = 15000,
+  abortSignal?: AbortSignal,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (filterStore.analysisGateIds[plotId] !== undefined) {
+      return true;
+    }
+    // Stop must unwind the turn immediately, like the other blocking tools.
+    // Without this the panel stayed busy for the rest of the deadline.
+    if (abortSignal?.aborted) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return filterStore.analysisGateIds[plotId] !== undefined;
+}
+
+/**
+ * Gate creations so far in this agent turn. Each one re-resolves every gate
+ * accumulated so far — a whole-dataset server scan above the plot cap — so
+ * the count is bounded per turn rather than only by MAX_ANALYSIS_PLOTS.
+ * Reset by the panel at the start of each turn, alongside the job tracker.
+ */
+let analysisPlotsCreatedThisTurn = 0;
+const MAX_AGENT_PLOTS_PER_TURN = 4;
+
+export function clearAgentTurnLimits() {
+  analysisPlotsCreatedThisTurn = 0;
+}
+
+/** Turn an agent axis spec into the store's TAnalysisAxis. */
+function resolveAgentAnalysisAxis(
+  spec: { propertyPath?: string[]; categorical?: string } | undefined,
+  field: string,
+): TAnalysisAxis {
+  if (!spec || (!spec.propertyPath && !spec.categorical)) {
+    throw new ToolExecutionError(
+      `${field} needs either a propertyPath or a categorical key.`,
+    );
+  }
+  if (spec.propertyPath && spec.categorical) {
+    throw new ToolExecutionError(
+      `${field} takes a propertyPath OR a categorical key, not both.`,
+    );
+  }
+  if (spec.categorical) {
+    if (!CATEGORICAL_AXIS_KEYS.includes(spec.categorical as any)) {
+      throw new ToolExecutionError(
+        `${field} categorical must be one of: ` +
+          `${CATEGORICAL_AXIS_KEYS.join(", ")}.`,
+      );
+    }
+    return {
+      type: "categorical",
+      key: spec.categorical as TAnalysisCategoricalKey,
+    };
+  }
+  validatePropertyPath(spec.propertyPath, `${field}.propertyPath`);
+  return { type: "property", path: spec.propertyPath as string[] };
+}
+
+/**
+ * How far out an "unbounded" side has to reach when the axis extent cannot be
+ * measured. Far past any physical measurement, and small enough that the
+ * polygon crossing test stays in comfortably finite arithmetic.
+ */
+const UNMEASURABLE_AXIS_EXTENT = 1e24;
+
+/**
+ * The largest |value| on one property axis, over the WHOLE dataset.
+ *
+ * Read from the server's property histogram rather than from
+ * propertyStore.propertyValues, because the values in the store are the wrong
+ * population twice over: above the plotting cap the annotations are stubs and
+ * the store holds none at all, and even below it the values are projected to
+ * the Annotation Browser's displayed columns, so an axis on an undisplayed
+ * property yields nothing. Both cases collapsed silently to the floor.
+ */
+async function propertyAxisExtent(
+  path: string[],
+  datasetId: string,
+): Promise<number> {
+  let histogram: TPropertyHistogram;
+  try {
+    histogram = await propertyStore.propertiesAPI.getPropertyHistogram(
+      datasetId,
+      path,
+      1,
+    );
+  } catch {
+    return UNMEASURABLE_AXIS_EXTENT;
+  }
+  let extreme = 0;
+  for (const bucket of histogram ?? []) {
+    for (const edge of [bucket.min, bucket.max]) {
+      if (typeof edge === "number" && isFinite(edge)) {
+        extreme = Math.max(extreme, Math.abs(edge));
+      }
+    }
+  }
+  return extreme > 0 ? extreme : UNMEASURABLE_AXIS_EXTENT;
+}
+
+/**
+ * A rectangle as a gate polygon, sized to the DATA rather than to a fixed
+ * sentinel.
+ *
+ * An omitted bound means "unbounded on that side", which is how users phrase
+ * one-sided gates ("area over 100"). A fixed stand-in silently broke that
+ * promise: with a constant 1e12, a property holding larger values had those
+ * objects excluded from an `x >= 100` gate, and a requested bound above the
+ * constant was rejected as an inverted range. The open side therefore reaches
+ * past both the furthest real point on that axis and any bound the caller
+ * asked for — the second half matters because an explicit `min` larger than
+ * the derived `max` is an inverted rectangle, which this used to reject as
+ * bad input rather than recognise as a bound that was too small.
+ */
+function openGateBound(
+  extent: number,
+  explicit: number | undefined,
+  otherExplicit: number | undefined,
+  direction: -1 | 1,
+): number {
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  const reach = Math.max(
+    extent,
+    otherExplicit !== undefined ? Math.abs(otherExplicit) : 0,
+  );
+  return direction * (reach * 1e3 + 1e6);
+}
+
+function requireFiniteBound(value: number | undefined): number | undefined {
+  if (value !== undefined && (typeof value !== "number" || !isFinite(value))) {
+    throw new ToolExecutionError("Range bounds must be finite numbers.");
+  }
+  return value;
+}
+
+async function rectangularGate(
+  xAxis: TAnalysisAxis,
+  yAxis: TAnalysisAxis,
+  xRange: { min?: number; max?: number } | undefined,
+  yRange: { min?: number; max?: number } | undefined,
+  datasetId: string,
+): Promise<IAnalysisGate> {
+  // Validate before spending two round trips on the extents.
+  const xMin = requireFiniteBound(xRange?.min);
+  const xMax = requireFiniteBound(xRange?.max);
+  const yMin = requireFiniteBound(yRange?.min);
+  const yMax = requireFiniteBound(yRange?.max);
+  // Only fetch an extent for an axis that actually has an open side.
+  const extentFor = async (axis: TAnalysisAxis, needed: boolean) =>
+    needed && axis.type === "property"
+      ? propertyAxisExtent(axis.path, datasetId)
+      : 0;
+  const [xExtent, yExtent] = await Promise.all([
+    extentFor(xAxis, xMin === undefined || xMax === undefined),
+    extentFor(yAxis, yMin === undefined || yMax === undefined),
+  ]);
+  const x0 = openGateBound(xExtent, xMin, xMax, -1);
+  const x1 = openGateBound(xExtent, xMax, xMin, 1);
+  const y0 = openGateBound(yExtent, yMin, yMax, -1);
+  const y1 = openGateBound(yExtent, yMax, yMin, 1);
+  if (x1 <= x0 || y1 <= y0) {
+    throw new ToolExecutionError(
+      "Each range needs max greater than min; an inverted or empty range " +
+        "would select nothing.",
+    );
+  }
+  return {
+    categoryKeyVersion: ANALYSIS_CATEGORY_KEY_VERSION,
+    vertices: [
+      { x: x0, y: y0 },
+      { x: x1, y: y0 },
+      { x: x1, y: y1 },
+      { x: x0, y: y1 },
+    ],
+    // Property axes only (enforced by the caller), so no pinned categories.
+    xCategories: null,
+    yCategories: null,
   };
 }
 
@@ -2414,6 +2652,186 @@ const registry: { [name: string]: IAgentToolEntry } = {
     },
   },
 
+  // --- Analysis panel (scatter gating) -------------------------------------
+  //
+  // The panel's gates are polygons in plot coordinate space. A model cannot
+  // sensibly hand-author a lasso, but a RECTANGLE is exactly two value
+  // ranges — which is also how users describe gates in words ("area over
+  // 100, intensity under 500"). So the tool takes ranges and builds the
+  // 4-vertex polygon; freehand shapes stay a human affair in the panel.
+  create_analysis_plot: {
+    execute: async (
+      input: {
+        xAxis?: { propertyPath?: string[]; categorical?: string };
+        yAxis?: { propertyPath?: string[]; categorical?: string };
+        xRange?: { min?: number; max?: number };
+        yRange?: { min?: number; max?: number };
+      },
+      context: IAgentToolContext,
+    ) => {
+      const dataset = requireDataset();
+      // Each call resolves EVERY gate accumulated so far, and above the cap
+      // that is a server-side scan of the whole dataset. The sequential-
+      // gating prompt actively encourages several calls per turn, so without
+      // a per-turn bound one natural-language request could reach the plot
+      // cap and cost 20 scans plus ~210 resolution passes. A gating strategy
+      // the model builds unattended is a handful of steps; beyond that it
+      // should hand back to the user.
+      if (analysisPlotsCreatedThisTurn >= MAX_AGENT_PLOTS_PER_TURN) {
+        throw new ToolExecutionError(
+          `Already created ${analysisPlotsCreatedThisTurn} analysis plots ` +
+            `in this turn, which is the limit — each one re-resolves every ` +
+            `gate over the whole dataset. Summarize what the current gates ` +
+            `show and let the user ask for more.`,
+        );
+      }
+      if (!filterStore.canAddAnalysisPlot) {
+        throw new ToolExecutionError(
+          `The Analysis panel already holds the maximum of ` +
+            `${MAX_ANALYSIS_PLOTS} plots. Remove one first ` +
+            `(clear_analysis_plots) before adding another.`,
+        );
+      }
+      const xAxis = resolveAgentAnalysisAxis(input.xAxis, "xAxis");
+      const yAxis = resolveAgentAnalysisAxis(input.yAxis, "yAxis");
+
+      const wantsGate =
+        input.xRange !== undefined || input.yRange !== undefined;
+      if (
+        wantsGate &&
+        (xAxis.type !== "property" || yAxis.type !== "property")
+      ) {
+        throw new ToolExecutionError(
+          "Ranges only define a gate when BOTH axes are properties. For a " +
+            "categorical axis, create the plot without ranges and ask the " +
+            "user to draw the gate in the Analysis panel.",
+        );
+      }
+
+      // Build and validate the gate BEFORE the first store mutation. An
+      // inverted range satisfies the JSON schema, so throwing after
+      // addAnalysisPlot left an orphan ungated plot behind on every failed
+      // call — and a few corrected retries would exhaust the plot cap.
+      const gate: IAnalysisGate | null = wantsGate
+        ? await rectangularGate(
+            xAxis,
+            yAxis,
+            input.xRange,
+            input.yRange,
+            dataset.id,
+          )
+        : null;
+      // Sizing the open sides hits the backend, so the user may have switched
+      // datasets underneath us; the plot below would land on the wrong one.
+      assertDatasetUnchanged(context);
+
+      const plotId = uuidv4();
+      await filterStore.addAnalysisPlot(plotId);
+      // addAnalysisPlot no-ops at the cap rather than throwing, and the cap
+      // check above is now stale: sizing an open bound awaits the backend, so
+      // the user can add the last allowed plot during that wait. Without this
+      // the executor went on to apply axes and a gate to an id that does not
+      // exist, waited for it to resolve, and reported a plot it never created.
+      // Confirm insertion rather than re-reading canAddAnalysisPlot, which is
+      // the same check-then-act one tick later.
+      if (!filterStore.analysisPlots.some((plot) => plot.id === plotId)) {
+        throw new ToolExecutionError(
+          `The Analysis panel filled up to its maximum of ` +
+            `${MAX_ANALYSIS_PLOTS} plots while this one was being prepared. ` +
+            `Remove one and try again.`,
+        );
+      }
+      // Counted only once the plot really exists, so a failed call does not
+      // consume the per-turn budget.
+      analysisPlotsCreatedThisTurn += 1;
+      await filterStore.setAnalysisPlotAxes({ id: plotId, xAxis, yAxis });
+      if (gate) {
+        await filterStore.setAnalysisPlotGate({ id: plotId, gate });
+      }
+      // Gate ids are DERIVED, never stored: without this the gate exists but
+      // constrains nothing and the counts below would be a lie.
+      await filterStore.refreshAnalysis();
+      // ...and awaiting it is NOT enough. refreshAnalysis claims a sequence
+      // token first; if the Viewer's watcher fires concurrently it takes a
+      // newer token and OUR call returns without committing, leaving the
+      // other one to finish afterwards. Observed live: the gate resolved to
+      // 0 while this reported the full 52,282 as passing. So wait for this
+      // plot's ids to actually appear before reporting any count.
+      const resolved = gate
+        ? await waitForGateResolution(
+            plotId,
+            context.waitForGateTimeoutMs,
+            context.abortSignal,
+          )
+        : true;
+
+      // Confirm the plot is STILL there, not just that it once was. The
+      // insertion check above is the twin of this one: between them sit
+      // refreshAnalysis and waitForGateResolution, which take seconds on a
+      // large dataset, and the user can delete the plot in that window. The
+      // wait then times out and this returned the removed plotId with a
+      // "still resolving" note — the same stale report the cap race produced,
+      // reached from the other end.
+      if (!filterStore.analysisPlots.some((plot) => plot.id === plotId)) {
+        return {
+          result: {
+            plotId: null,
+            removed: true,
+            note:
+              "The plot was removed while its gate was resolving, so it no " +
+              "longer exists. Nothing was left behind.",
+          },
+        };
+      }
+
+      const gatedCount = filterStore.analysisGateIds[plotId] ?? null;
+      return {
+        result: {
+          plotId,
+          xAxis: describeAnalysisAxis(xAxis),
+          yAxis: describeAnalysisAxis(yAxis),
+          gate: gate
+            ? { xRange: input.xRange ?? null, yRange: input.yRange ?? null }
+            : null,
+          gatedCount: gatedCount === null ? null : gatedCount.length,
+          filteredCount: resolved
+            ? filterStore.filteredAnnotations.length
+            : null,
+          note: !gate
+            ? "Plot created without a gate. Open the Analysis panel to draw one."
+            : resolved
+              ? undefined
+              : "The gate is still resolving; counts are not available yet. " +
+                "Call get_interface_state in a moment to read them.",
+        },
+      };
+    },
+  },
+
+  clear_analysis_plots: {
+    // Gated for the same reason set_scale is: it writes the shared
+    // annotationBrowserConfig, and what it destroys — a colleague's
+    // hand-drawn sequential gating strategy — cannot be reconstructed from
+    // anything the model knows. The system prompt actively steers here
+    // ("gates are a common reason a dataset shows fewer objects than
+    // expected"), so an unprompted call is likely, not hypothetical.
+    gated: true,
+    execute: async () => {
+      requireDataset();
+      const removed = filterStore.analysisPlots.length;
+      for (const plot of [...filterStore.analysisPlots]) {
+        await filterStore.removeAnalysisPlot(plot.id);
+      }
+      await filterStore.refreshAnalysis();
+      return {
+        result: {
+          removed,
+          filteredCount: filterStore.filteredAnnotations.length,
+        },
+      };
+    },
+  },
+
   undo: {
     execute: async () => {
       requireLogin();
@@ -2565,6 +2983,19 @@ export function describeAgentToolCall(name: string, input: any): string {
         : `Filter annotations${
             input?.tags ? ` by tags ${joinList(input.tags)}` : ""
           }${input?.currentFrameOnly ? " (current frame)" : ""}`;
+    case "create_analysis_plot": {
+      // joinList, not .join: this function must never throw on malformed
+      // input, and a propertyPath that is a bare string satisfies `?.` and
+      // then dies on .join.
+      const axis = (a: any) =>
+        a?.categorical ?? (joinList(a?.propertyPath, " / ") || "?");
+      const gated = input?.xRange !== undefined || input?.yRange !== undefined;
+      return `${gated ? "Gate" : "Plot"} ${axis(input?.yAxis)} vs ${axis(
+        input?.xAxis,
+      )} in the Analysis panel`;
+    }
+    case "clear_analysis_plots":
+      return "Remove all Analysis panel plots and gates";
     case "select_tool": {
       if (input?.toolId == null) {
         return "Deselect the active tool";
@@ -2688,6 +3119,10 @@ export interface IViewStateSnapshot {
   tagFilter: typeof filterStore.tagFilter;
   onlyCurrentFrame: boolean;
   propertyFilters: IPropertyAnnotationFilter[];
+  // Gates narrow the same object set as the filters above, so a revert that
+  // skipped them would leave a gate applied (or a cleared one deleted) while
+  // telling the user the view was restored.
+  analysisPlots: IAnalysisPlot[];
   selectedAnnotationIds: string[];
   selectedToolId: string | null;
   displayOptions: ReturnType<typeof currentDisplayOptions>;
@@ -2736,6 +3171,7 @@ export function snapshotViewState(): IViewStateSnapshot {
       tagFilter: filterStore.tagFilter,
       onlyCurrentFrame: filterStore.onlyCurrentFrame,
       propertyFilters: filterStore.propertyFilters,
+      analysisPlots: filterStore.analysisPlots,
       selectedAnnotationIds: [...annotationStore.selectedAnnotationIds],
       selectedToolId: main.selectedTool?.configuration.id ?? null,
       displayOptions: currentDisplayOptions(),
@@ -2817,6 +3253,21 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   }
   for (const saved of snapshot.propertyFilters) {
     filterStore.updatePropertyFilter(saved);
+  }
+  // Analysis plots are replaced wholesale (hydrateAnalysisPlots is the same
+  // path a saved configuration takes) and then re-resolved, since gate ids
+  // are derived. Only touched when they actually differ, so an ordinary
+  // revert does not pay a gate resolution.
+  const savedPlots = snapshot.analysisPlots ?? [];
+  if (
+    JSON.stringify(savedPlots) !== JSON.stringify(filterStore.analysisPlots)
+  ) {
+    // restore, not hydrate: the forward path (create_analysis_plot /
+    // clear_analysis_plots) writes plots to the shared configuration, so the
+    // revert has to write them back or it is a memory-only lie that the next
+    // reload undoes.
+    await filterStore.restoreAnalysisPlots(savedPlots);
+    await filterStore.refreshAnalysis();
   }
   annotationStore.setSelected(snapshot.selectedAnnotationIds);
   await main.setSelectedToolId(snapshot.selectedToolId);

@@ -1,5 +1,6 @@
 import math
 import re
+import threading
 from collections import defaultdict
 
 import fastjsonschema
@@ -14,6 +15,7 @@ from girder.models.folder import Folder
 
 from girder.utility.acl_mixin import AccessControlMixin
 
+from ..helpers import analysis
 from ..helpers.aggregation import AGGREGATION_MAX_TIME_MS
 from ..helpers.colormaps import (
     CONTINUOUS_COLORMAPS,
@@ -25,7 +27,26 @@ from ..helpers.colormaps import (
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
+from ..helpers.annotationRaster import (
+    bumpDatasetRasterVersion,
+    bumpGlobalRasterVersion,
+)
 from .propertyValues import AnnotationPropertyValues
+
+# Ceiling on how many ObjectIds all analysis gates together may push into a
+# list query. Each id costs ~20 bytes in a BSON array (12-byte oid + index
+# key + type), so 400K is ~8 MB — half of MongoDB's 16 MB command limit,
+# leaving room for the rest of the pipeline. Resolving a majority gate as
+# `$nin` of its complement (see resolveListGateConstraints) already halves
+# the worst case; this is the backstop past that.
+MAX_GATE_CONSTRAINT_IDS = 400_000
+
+# Ceiling on ids returned by one gate-resolution response, across all plots.
+# A single gate legitimately matches most of a large dataset (708K ids is
+# ~18 MB of JSON), but the allowed plot count multiplies that: 20 broad
+# gates on a 700K dataset is ~14M entries and hundreds of MB, which lands
+# on the Girder process and then on the browser parsing it.
+MAX_GATE_RESPONSE_IDS = 2_000_000
 
 DEFAULT_AGGREGATE_HINT = {"datasetId": 1, "_id": 1}
 
@@ -148,6 +169,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # The property-values model, for PV-driven list queries. Girder
         # model instances are cached singletons, so this is cheap.
         self._pvModel = AnnotationPropertyValues()
+        # saveMany replaces existing rows through removeWithQuery. Suppress
+        # that internal removal's broad invalidation in the current thread;
+        # saveMany bumps the saved documents' datasets after success.
+        self._rasterMutationState = threading.local()
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)
@@ -215,6 +240,56 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def validate(self, document):
         return self.validateMultiple([document])[0]
+
+    def save(self, document, validate=True, triggerEvents=True):
+        # An annotation belongs to exactly one dataset. The only path that
+        # changes datasetId is updateMultiple, which bumps the source
+        # dataset itself, so bumping the saved dataset suffices here.
+        saved = super().save(document, validate, triggerEvents)
+        bumpDatasetRasterVersion(saved.get("datasetId"))
+        return saved
+
+    def saveMany(self, documents, validate=True, triggerEvents=True):
+        previous = getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        )
+        self._rasterMutationState.suppressRemoveBump = True
+        try:
+            saved = super().saveMany(documents, validate, triggerEvents)
+        finally:
+            self._rasterMutationState.suppressRemoveBump = previous
+        for datasetId in set(
+            document.get("datasetId") for document in saved
+        ):
+            bumpDatasetRasterVersion(datasetId)
+        return saved
+
+    def remove(self, document, **kwargs):
+        previous = getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        )
+        self._rasterMutationState.suppressRemoveBump = True
+        try:
+            result = super().remove(document, **kwargs)
+        finally:
+            self._rasterMutationState.suppressRemoveBump = previous
+        bumpDatasetRasterVersion(document.get("datasetId"))
+        return result
+
+    def removeWithQuery(self, query):
+        result = super().removeWithQuery(query)
+        if getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        ):
+            return result
+        datasetId = query.get("datasetId")
+        if isinstance(datasetId, ObjectId):
+            bumpDatasetRasterVersion(datasetId)
+        else:
+            # Bulk-id deletion does not carry dataset ids into the model.
+            # A global epoch is the safe no-query fallback.
+            bumpGlobalRasterVersion()
+        return result
 
     def validateMultiple(self, annotations):
         # Validate using the schema
@@ -361,11 +436,15 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # and annotationIdFilters membership semantics. Ids are already
         # ObjectId-converted at the API boundary (_validateListInputs).
         idConstraints = filters.get("idConstraints")
-        if idConstraints:
-            match["$and"] = [
-                {"_id": {"$in": list(ids)}}
-                for ids in idConstraints
-            ]
+        andClauses = [
+            {"_id": {"$in": list(ids)}} for ids in (idConstraints or [])
+        ]
+        # Server-resolved analysis gates arrive as ready-made clauses because
+        # a majority gate is expressed as `$nin` of its complement rather
+        # than `$in` of its matches (see resolveListGateConstraints).
+        andClauses += filters.get("gateMatchClauses") or []
+        if andClauses:
+            match["$and"] = andClauses
 
         stages = [{"$match": match}]
 
@@ -396,6 +475,198 @@ class Annotation(AccessControlMixin, ProxiedModel):
         pipeline.append({"$project": {"_id": 1}})
         cursor = self._aggregate(self.collection, pipeline)
         return [str(doc["_id"]) for doc in cursor]
+
+    def _analysisData(self, datasetId, axes):
+        """(docs, valuesById) for the analysis endpoints, from at most two
+        projected scans regardless of how many plots share them: one over the
+        annotation collection (always — annotation docs anchor existence, so
+        an orphaned property-value doc can never produce an id) and one over
+        the property-values collection when any axis is a property axis.
+        """
+        propertyPaths = {}
+        categoricalKeys = set()
+        for axis in axes:
+            if axis["type"] == "property":
+                propertyPaths[".".join(axis["path"])] = axis["path"]
+            else:
+                categoricalKeys.add(axis["key"])
+
+        fields = {"_id": 1}
+        if "tags" in categoricalKeys:
+            fields["tags"] = 1
+        if "shape" in categoricalKeys:
+            fields["shape"] = 1
+        if "channel" in categoricalKeys:
+            fields["channel"] = 1
+        if categoricalKeys & {"xy", "z", "time"}:
+            fields["location"] = 1
+        docs = []
+        cursor = self._aggregate(
+            self.collection,
+            [{"$match": {"datasetId": datasetId}}, {"$project": fields}],
+        )
+        for doc in cursor:
+            doc["id"] = str(doc.pop("_id"))
+            docs.append(doc)
+
+        valuesById = {}
+        if propertyPaths:
+            pvFields = {"_id": 0, "annotationId": 1}
+            for path in propertyPaths.values():
+                pvFields["values." + ".".join(path)] = 1
+            pvCursor = self._aggregate(
+                self._pvModel.collection,
+                [
+                    {"$match": {"datasetId": datasetId}},
+                    {"$project": pvFields},
+                ],
+            )
+            for doc in pvCursor:
+                valuesById[str(doc["annotationId"])] = (
+                    doc.get("values") or {}
+                )
+        return docs, valuesById
+
+    def resolveListGateConstraints(self, datasetId, filters):
+        """Convert `filters['analysisGates']` (gate DEFINITIONS, validated at
+        the API boundary) into `idConstraints` entries, in place.
+
+        Called once per request, before the paged/count/ids pipelines, so a
+        page+count pair never resolves the same gate twice. A gate matching
+        nothing becomes an empty $in — zero rows, deliberately not an error
+        (unlike a client-sent empty idConstraints entry, which validation
+        rejects because the client already knows that answer).
+        """
+        gates = filters.pop("analysisGates", None)
+        if not gates:
+            return filters
+        axes = [
+            axis for gate in gates for axis in (gate["xAxis"], gate["yAxis"])
+        ]
+        docs, valuesById = self._analysisData(datasetId, axes)
+        allIds = [doc["id"] for doc in docs]
+        clauses = filters.setdefault("gateMatchClauses", [])
+        budget = 0
+        for gate in gates:
+            ids = analysis.resolve_gate_ids(docs, valuesById, gate)
+            complementSize = len(allIds) - len(ids)
+            if complementSize * 2 <= len(ids):
+                # The gate keeps at least twice what it drops. Inside a
+                # pipeline already scoped to this dataset, excluding the
+                # complement is equivalent to including the matches and is
+                # much smaller.
+                #
+                # The 2x threshold is measured, not merely "whichever array
+                # is shorter": per element `$nin` costs ~1.4x what `$in`
+                # does, so a marginally-smaller complement is a LOSS. On the
+                # 708,983-object dataset (count via aggregate, warm):
+                #
+                #   gate keeps   $in      $nin     ratio   winner
+                #   51%          566ms    746ms    0.96    $in
+                #   60%          648ms    617ms    0.67    $nin
+                #   75%          794ms    411ms    0.33    $nin
+                #   95%        1,228ms    172ms    0.05    $nin  (7x, and
+                #                                    13.5MB -> 0.7MB)
+                #
+                # Crossover sits near 0.67; 0.5 keeps us clear of it while
+                # still capturing the case this exists for.
+                keep, operator = complementSize, "$nin"
+            else:
+                keep, operator = len(ids), "$in"
+            # Budget checked BEFORE converting and retaining, not after.
+            # Checking at the end still materialized every gate's ObjectIds
+            # first: the allowed 20 gates on a 700K dataset can each keep
+            # ~350K ids, so the guard against exhausting memory would hold
+            # ~7M ObjectIds on its way to returning the 400.
+            budget += keep
+            if budget > MAX_GATE_CONSTRAINT_IDS:
+                # Even the smaller side of every gate can overflow MongoDB's
+                # 16 MB command limit on a large enough dataset. Fail with a
+                # comprehensible message instead of an opaque BSON error. The
+                # real remedy is to push the gate predicate into the query
+                # rather than materializing ids — see SERVER_GATING.md.
+                filters.pop("gateMatchClauses", None)
+                # Says "redraw or disable a gate", NOT "narrow the filters".
+                # A gate is a pure predicate resolved over the WHOLE dataset
+                # before any tag/property/frame filter applies, so narrowing
+                # those cannot change this count by one id — the advice sent
+                # the user round a loop that kept returning the same 400.
+                raise ValueError(
+                    "analysis gates resolve to more than the %d ids the "
+                    "list query can carry. Gates are resolved over the whole "
+                    "dataset, so other filters will not reduce this: redraw "
+                    "a gate to cover fewer objects, or disable one."
+                    % MAX_GATE_CONSTRAINT_IDS
+                )
+            if operator == "$nin":
+                matched = set(ids)
+                selected = [
+                    ObjectId(i) for i in allIds if i not in matched
+                ]
+            else:
+                selected = [ObjectId(i) for i in ids]
+            clauses.append({"_id": {operator: selected}})
+        return filters
+
+    def resolveAnalysisGates(self, datasetId, plots):
+        """Resolve each plot's gate polygon to matching annotation ids.
+
+        Each answer is the PURE per-annotation predicate over the whole
+        dataset — independent of every other plot and of any filter state
+        (SERVER_GATING.md, "a gate is a pure predicate"). Returns
+        {plotId: [id string, ...]}.
+        """
+        if not plots:
+            return {}
+        axes = [
+            axis for plot in plots for axis in (plot["xAxis"], plot["yAxis"])
+        ]
+        docs, valuesById = self._analysisData(datasetId, axes)
+        resolved = {}
+        total = 0
+        for plot in plots:
+            ids = analysis.resolve_gate_ids(docs, valuesById, plot)
+            total += len(ids)
+            if total > MAX_GATE_RESPONSE_IDS:
+                # Checked as it accumulates, for the same reason the list
+                # budget is: the guard must not first build the thing it
+                # exists to prevent.
+                # "remove a plot", NOT "disable a gate" — unlike the list
+                # path, which is fed activeAnalysisGateDefinitions (enabled
+                # only), this endpoint receives analysisRefreshScope's
+                # resolutionPlots, which deliberately includes DISABLED drawn
+                # gates while the panel is open so their counts can be shown.
+                # Unchecking the box therefore leaves this request identical
+                # and the retry fails the same way.
+                raise ValueError(
+                    "analysis gates resolve to more than the %d ids one "
+                    "response can carry. Gates are resolved over the whole "
+                    "dataset, so other filters will not reduce this: redraw "
+                    "a gate to cover fewer objects, or remove a plot."
+                    % MAX_GATE_RESPONSE_IDS
+                )
+            resolved[plot["id"]] = ids
+        return resolved
+
+    def analysisHistogram(self, datasetId, spec):
+        """Binned 2D counts for one plot, display only (SERVER_GATING.md,
+        Phase 2): the population is the dataset narrowed by the serializable
+        `filters` (the list-endpoint schema) and by the upstream plots'
+        gates, so the picture matches what reaches the plot.
+        """
+        axes = [spec["xAxis"], spec["yAxis"]]
+        for upstream in spec["upstreamGates"]:
+            axes += [upstream["xAxis"], upstream["yAxis"]]
+        docs, valuesById = self._analysisData(datasetId, axes)
+        if spec["filters"]:
+            passing = set(self.listIds(datasetId, spec["filters"]))
+            docs = [doc for doc in docs if doc["id"] in passing]
+        for upstream in spec["upstreamGates"]:
+            inside = set(
+                analysis.resolve_gate_ids(docs, valuesById, upstream)
+            )
+            docs = [doc for doc in docs if doc["id"] in inside]
+        return analysis.histogram2d(docs, valuesById, spec)
 
     def _centroidAddFields(self):
         return {"$addFields": {"centroid": {
@@ -507,6 +778,13 @@ class Annotation(AccessControlMixin, ProxiedModel):
         if any(location.get(k) is not None for k in ("XY", "Z", "Time")):
             return True
         if filters.get("idConstraints"):
+            return True
+        # Server-resolved gate clauses are `_id` constraints too, just in a
+        # different representation (see resolveListGateConstraints). Omitting
+        # them here sent a gate + property-filter query down the PV-driven
+        # path, where an `_id` clause on the annotation collection is never
+        # applied — the gate silently stopped filtering.
+        if filters.get("gateMatchClauses"):
             return True
         if filters.get("idSubstring"):
             return True
@@ -945,9 +1223,18 @@ class Annotation(AccessControlMixin, ProxiedModel):
         expectedIds = set(annotationIdToUpdate.keys())
         foundIds = set()
         updatedAnnotations = []
+        movedSourceDatasetIds = set()
         for annotation in cursor:
             annotationId = annotation["_id"]
             updateDoc = annotationIdToUpdate[annotationId]
+            newDatasetId = updateDoc.get("datasetId")
+            if (
+                newDatasetId is not None
+                and newDatasetId != annotation.get("datasetId")
+            ):
+                # This is the only path that moves an annotation between
+                # datasets; saveMany only bumps the destination raster.
+                movedSourceDatasetIds.add(annotation.get("datasetId"))
             annotation.update(updateDoc)
             foundIds.add(annotationId)
             updatedAnnotations.append(annotation)
@@ -955,7 +1242,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
             raise AccessException(
                 "Write access was denied for one or more annotations."
             )
-        return self.saveMany(updatedAnnotations)
+        saved = self.saveMany(updatedAnnotations)
+        for datasetId in movedSourceDatasetIds:
+            bumpDatasetRasterVersion(datasetId)
+        return saved
 
     def clearColors(self, datasetId):
         """Reset every annotation color in the dataset to null (layer color).
@@ -963,6 +1253,13 @@ class Annotation(AccessControlMixin, ProxiedModel):
         result = self.update(
             {"datasetId": datasetId}, {"$set": {"color": None}}
         )
+        # The overview raster renders each annotation's own color, and its
+        # geometry cache and ETag are keyed by the dataset's raster version.
+        # This path writes colors with a bulk update rather than through
+        # save()/saveMany(), so nothing else bumps that version and a
+        # revisited frame would keep serving pre-clear colors (304 on an
+        # unchanged ETag) until the 120s cache-TTL rotation.
+        bumpDatasetRasterVersion(datasetId)
         return result.matched_count
 
     @staticmethod
@@ -1222,7 +1519,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
         kind of sanctioned `collection` use as aggregate() -- and unlike
         find()/load(), update paths add no security behavior to bypass.
         Unordered so Mongo may parallelize; every operation targets a disjoint
-        id set, so order cannot matter between them."""
+        id set, so order cannot matter between them.
+
+        Bypassing save()/saveMany() also bypasses their raster-version bump,
+        so _writeColors bumps it explicitly (see clearColors)."""
         if not operations:
             return 0
         return self.collection.bulk_write(
@@ -1265,6 +1565,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
             self.clearColors(datasetId)
             colored = self._applyColorOperations(operations)
 
+        # The assignment writes are the half clearColors' bump does not cover
+        # (skipClear skips it entirely), and they are what changes the colors
+        # the overview raster draws.
+        bumpDatasetRasterVersion(datasetId)
         return {"colored": colored, "uncolored": max(total - colored, 0)}
 
     def compute(self, datasetId, tool, user=None):

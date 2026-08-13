@@ -73,6 +73,7 @@ import {
   NotificationType,
   IDimensionStrategy,
   IVisibilityConfig,
+  IAnnotationOverviewConfig,
   IAnnotationBrowserConfig,
   IColorByPropertyState,
   IUserStorageQuota,
@@ -1229,6 +1230,7 @@ export class Main extends VuexModule {
   }) {
     this.setConfigurationImpl({ id, data });
     this.context.dispatch("loadVisibilityConfig", data?.visibilityConfig);
+    this.context.dispatch("loadOverviewConfig", data?.overviewConfig);
     this.hydrateAnnotationBrowserState();
     // Warm the SAM model cache in the background: encoder downloads are
     // large, this way they are usually cached before a SAM tool is selected
@@ -1264,6 +1266,13 @@ export class Main extends VuexModule {
   private setConfigurationVisibilityConfig(config: IVisibilityConfig) {
     if (this.configuration) {
       this.configuration.visibilityConfig = { ...config };
+    }
+  }
+
+  @Mutation
+  private setConfigurationOverviewConfig(config: IAnnotationOverviewConfig) {
+    if (this.configuration) {
+      this.configuration.overviewConfig = { ...config };
     }
   }
 
@@ -2252,11 +2261,27 @@ export class Main extends VuexModule {
     await this.syncConfiguration("visibilityConfig");
   }
 
+  @Action
+  async saveOverviewConfig(config: IAnnotationOverviewConfig) {
+    if (!this.configuration) {
+      return;
+    }
+    this.setConfigurationOverviewConfig(config);
+    await this.syncConfiguration("overviewConfig");
+  }
+
   // Debounced entry point called by the properties/filters stores whenever
   // the user changes displayed columns or property filters. Debounced because
   // dragging a filter histogram slider emits a continuous stream of updates.
   @Action
   scheduleAnnotationBrowserSave() {
+    // Anonymous viewers can filter and gate; their state just stays
+    // session-only. Without this, syncConfiguration's own isLoggedIn branch
+    // fires createNotLoggedInNotification, so every lasso drag or filter tweak
+    // popped a login notification for a read-only visitor.
+    if (!this.isLoggedIn) {
+      return;
+    }
     if (annotationBrowserSaveTimer !== null) {
       clearTimeout(annotationBrowserSaveTimer);
     }
@@ -2294,6 +2319,7 @@ export class Main extends VuexModule {
         properties.displayedPropertyPaths,
         filters.filterPaths,
         filters.propertyFilters,
+        filters.analysisPlots,
       ),
     );
     await this.syncConfiguration("annotationBrowserConfig");
@@ -2383,6 +2409,11 @@ export class Main extends VuexModule {
       filterPaths: config.filterPaths,
       propertyFilters: config.propertyFilters,
     });
+    // Restored gates hold polygons, not ids. Hydration only seeds the plots;
+    // Viewer owns resolution through its analysisInputSignature watcher, which
+    // reacts to this state change in both 2D and 3D. Dispatching here as well
+    // issued the same property-values request twice on dataset open.
+    this.context.dispatch("hydrateAnalysisPlots", config.analysisPlots ?? []);
   }
 
   @Action

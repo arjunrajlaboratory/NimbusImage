@@ -129,7 +129,11 @@ export default class ExportAPI {
     const body = {
       datasetId: options.datasetId,
       propertyPaths: options.propertyPaths || [],
-      annotationIds: options.annotationIds || [],
+      // Omitting the field means "every annotation"; a present array is an
+      // exact subset, including the empty subset.
+      ...(options.annotationIds !== undefined
+        ? { annotationIds: options.annotationIds }
+        : {}),
       undefinedValue: options.undefinedValue ?? "",
       delimiter: options.delimiter || ",",
       sanitizeColumnNames: options.sanitizeColumnNames ?? false,

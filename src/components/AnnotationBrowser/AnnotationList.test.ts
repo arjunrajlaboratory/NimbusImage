@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
+import { reactive } from "vue";
 
 const mockSetXY = vi.fn();
 const mockSetZ = vi.fn();
@@ -152,6 +153,8 @@ import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 import annotationListServer from "@/store/annotationListServer";
 
+let filterSignatureState = reactive({ value: "initial-query" });
+
 function makeAnnotation(overrides: any = {}) {
   return {
     id: "ann1",
@@ -251,6 +254,11 @@ describe("AnnotationList", () => {
     (annotationListServer as any).page = 1;
     (annotationListServer as any).pageSize = 50;
     (annotationListServer as any).sort = null;
+    filterSignatureState = reactive({ value: "initial-query" });
+    Object.defineProperty(annotationListServer, "currentFiltersSignature", {
+      configurable: true,
+      get: () => filterSignatureState.value,
+    });
     // Reset to a controllable resolved-empty default; per-test overrides set
     // their own resolved value. restoreAllMocks would otherwise clear the
     // inline module-mock implementation.
@@ -1233,6 +1241,27 @@ describe("AnnotationList", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("selection scope", () => {
+    it("clears the global selection when an analysis gate changes in client mode", async () => {
+      // Client rows hide selected ids that no longer pass the gate, but bulk
+      // delete/tag/color actions read the global store set directly. The query
+      // change therefore has to prune the source of truth, not just the table's
+      // computed v-model.
+      (annotationStore as any).selectedAnnotationIds = new Set(["a"]);
+      (annotationStore as any).setSelected = (ids: string[]) => {
+        mockSetSelected(ids);
+        (annotationStore as any).selectedAnnotationIds = new Set(ids);
+      };
+      const wrapper = mountComponent();
+
+      filterSignatureState.value = "analysis-gate:p1:b";
+      await wrapper.vm.$nextTick();
+
+      expect(mockSetSelected).toHaveBeenCalledWith([]);
+      expect([...annotationStore.selectedAnnotationIds]).toEqual([]);
     });
   });
 

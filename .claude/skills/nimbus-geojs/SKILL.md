@@ -129,6 +129,17 @@ selects nothing; clicking the same spot on the first tile selects it. Verified l
 
 `_update` (the WebGL feature-data rebuild) only runs when the layer's `modified()` timestamp advanced. `clearOldAnnotations` marks modified only when it *removes* something; a pure add pass with `update=false` marks nothing → invisible features. Debugging tell: run `layer.modified(); layer.draw()` in the console — if features appear instantly, it's this, not missing data. Guard the `modified()` call on "count actually grew" so pure pans keep the incremental-draw optimization.
 
+## Tile URL changes already reset the GeoJS cache
+
+`tileLayer.url(newUrlOrCallback)` is not a plain option setter. GeoJS updates
+the URL, calls `reset()` to drop cached z/x/y tiles, and calls
+`map().draw()` (`geojs/src/tileLayer.js`). A freshly constructed callback has
+new identity, so changing a template through `layer.url(() => newTemplate)`
+already refetches tiles. Do not add a second explicit `layer.reset()` or draw at
+that call site; it duplicates work. A component mock whose `url` method is only
+a spy does not model this GeoJS side effect, so verify the library contract
+before accepting a review finding based on the mock.
+
 ## Hydration-coupled draw paths (stub-only datasets)
 
 `getAnnotationFromId` returns `undefined` for every unhydrated non-point annotation once
@@ -227,11 +238,34 @@ element.onclick = ...;
   element; `map.exit()` cascades to child widgets. Key per-map widget bookkeeping off the map
   object (a `WeakMap`), so a map reset naturally drops the stale entry.
 
+## Multi-map state: aggregate locally, clean up at the owner
+
+`layerMode === "unroll"` mounts one `AnnotationViewer` per layer group. A fact
+that is local to one GeoJS map (raster active, layer ready, renderer available)
+must not let each child independently overwrite shared annotation-store state;
+the last child to run will otherwise hide or reveal vectors for every sibling.
+Track the per-map fact in `ImageViewer` (a reactive `WeakMap` works well), derive
+the aggregate there, and pass the aggregate permission back to the children.
+Shared cleanup belongs at that same owner rather than in every child unmount.
+
+Teardown has a second ordering trap: `ImageViewer.draw()` can call `map.exit()`
+before Vue runs the removed child's `onBeforeUnmount`. A final child event may
+still update parent bookkeeping, but it must not call `visible()`, `draw()`, or
+other GeoJS methods on a layer whose map is no longer in `store.maps`. Guard the
+layer operation using current parent membership and test both the mixed-active
+case and the removed-map event. A Multiple → Unroll → Multiple live pass should
+also be console-clean; unit mocks do not model GeoJS's destroyed renderer.
+
 ## Testing AnnotationViewer (unit)
 
 Full guide: `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`. Non-obvious conventions in `src/components/AnnotationViewer.test.ts`:
 
 - **Store mocks are `reactive()`** — drive watchers/computeds after mount by mutating `mockedStore.z` / `mockedAnnotationStore.annotations`, then `await wrapper.vm.$nextTick()`.
+- **`ImageViewer` tests can replace a map entry during `draw()`.** Do not retain
+  a raw `IMapEntry` across `nextTick()` or fake-timer advancement and assume it
+  is still mounted; reacquire `wrapper.vm.maps[index]` before firing a child
+  event. Product bookkeeping keyed by a GeoJS map should normalize reactive
+  proxies with `toRaw`, or a raw event key and the store's proxy key will drift.
 - **Fake timers are active**; the draw path is `throttle(drawAnnotationsNoThrottle, 100)` — flush trailing draws with `vi.advanceTimersByTime(101)`.
 - **You cannot spy on `<script setup>` closures** — assert via side effects: `annotationLayer.draw` (a `vi.fn`) or exposed computeds like `wrapper.vm.displayedAnnotations`.
 - **`geojsAnnotationFactory` mock ignores its args** — to read drawn features by id, `mockImplementation((shape, coords, options) => { const f = mockGeoJSAnnotation(shape); if (options) f.options(options); return f; })`.

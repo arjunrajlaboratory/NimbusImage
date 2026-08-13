@@ -303,6 +303,7 @@ export interface IActiveTool<T extends TToolType = TToolType> {
 
 export enum ProgressType {
   ANNOTATION_FETCH = "ANNOTATION_FETCH",
+  ANNOTATION_RASTER = "ANNOTATION_RASTER",
   ANNOTATION_SAVE = "ANNOTATION_SAVE",
   ANNOTATION_DELETE = "ANNOTATION_DELETE",
   ANNOTATION_COMPUTE = "ANNOTATION_COMPUTE",
@@ -348,27 +349,28 @@ export interface INotification {
 
 export const PROGRESS_TYPE_ORDER = new Map<ProgressType, number>([
   [ProgressType.ANNOTATION_FETCH, 0],
-  [ProgressType.ANNOTATION_SAVE, 1],
-  [ProgressType.ANNOTATION_DELETE, 2],
-  [ProgressType.ANNOTATION_COMPUTE, 3],
-  [ProgressType.BATCH_ANNOTATION_COMPUTE, 4],
-  [ProgressType.PROPERTY_FETCH, 5],
-  [ProgressType.PROPERTY_COMPUTE, 6],
-  [ProgressType.BATCH_PROPERTY_COMPUTE, 7],
-  [ProgressType.CONNECTION_FETCH, 8],
-  [ProgressType.CONNECTION_SAVE, 9],
-  [ProgressType.CONNECTION_DELETE, 10],
-  [ProgressType.VIEW_FETCH, 11],
-  [ProgressType.LAYER_CACHE, 12],
-  [ProgressType.QUADTILE_CACHE, 13],
-  [ProgressType.MAXMERGE_SCHEDULE, 14],
-  [ProgressType.MAXMERGE_CACHE, 15],
-  [ProgressType.HISTOGRAM_SCHEDULE, 16],
-  [ProgressType.HISTOGRAM_CACHE, 17],
-  [ProgressType.MOVIE_GENERATION, 18],
-  [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 19],
-  [ProgressType.ZENODO_UPLOAD, 20],
-  [ProgressType.GENERIC, 21],
+  [ProgressType.ANNOTATION_RASTER, 1],
+  [ProgressType.ANNOTATION_SAVE, 2],
+  [ProgressType.ANNOTATION_DELETE, 3],
+  [ProgressType.ANNOTATION_COMPUTE, 4],
+  [ProgressType.BATCH_ANNOTATION_COMPUTE, 5],
+  [ProgressType.PROPERTY_FETCH, 6],
+  [ProgressType.PROPERTY_COMPUTE, 7],
+  [ProgressType.BATCH_PROPERTY_COMPUTE, 8],
+  [ProgressType.CONNECTION_FETCH, 9],
+  [ProgressType.CONNECTION_SAVE, 10],
+  [ProgressType.CONNECTION_DELETE, 11],
+  [ProgressType.VIEW_FETCH, 12],
+  [ProgressType.LAYER_CACHE, 13],
+  [ProgressType.QUADTILE_CACHE, 14],
+  [ProgressType.MAXMERGE_SCHEDULE, 15],
+  [ProgressType.MAXMERGE_CACHE, 16],
+  [ProgressType.HISTOGRAM_SCHEDULE, 17],
+  [ProgressType.HISTOGRAM_CACHE, 18],
+  [ProgressType.MOVIE_GENERATION, 19],
+  [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 20],
+  [ProgressType.ZENODO_UPLOAD, 21],
+  [ProgressType.GENERIC, 22],
 ]);
 
 export interface IProgress {
@@ -525,6 +527,9 @@ export interface IAnnotationBrowserConfig {
   filterPaths: string[][];
   // Range/values and enabled state of those filter rows
   propertyFilters: IPropertyAnnotationFilter[];
+  // Analysis-panel scatter plots and their gate polygons. Optional for
+  // compatibility with configurations saved before analysis plots existed.
+  analysisPlots?: IAnalysisPlot[];
 }
 
 // Record of the last server-side color-by-property apply, returned by the
@@ -612,6 +617,9 @@ export interface IDatasetConfigurationBase {
   // compatibility with configurations created before these settings were
   // persisted.
   visibilityConfig?: IVisibilityConfig;
+  // Shared raster-overview settings. Optional for configurations created
+  // before the overview layer was introduced.
+  overviewConfig?: IAnnotationOverviewConfig;
   // Shared annotation-browser state (displayed property columns and property
   // filters). Optional for compatibility with configurations created before
   // this was persisted.
@@ -1070,6 +1078,7 @@ export interface IGeoJSLayerSpec {
 // https://opengeoscience.github.io/geojs/apidocs/geo.layer.html
 export interface IGeoJSLayer extends IGeoJsObject {
   visible: (value?: boolean) => boolean | IGeoJSLayer;
+  opacity: (value?: number) => number | IGeoJSLayer;
   draw: () => IGeoJSLayer;
   map: () => IGeoJSMap;
   modes: {
@@ -1175,6 +1184,12 @@ export interface IGeoJSOsmLayer extends IGeoJSLayer {
 
   _imageUrls?: (string | undefined)[];
   _tileBounds: (tile: IGeoJSTile) => IGeoJSBounds;
+  // The tile factory GeoJS documents for derived classes to override. Tiles
+  // have a promise-like interface; `catch` is the only failure signal the
+  // library exposes (there is no tile-error event).
+  _getTile?: (
+    ...args: unknown[]
+  ) => IGeoJSTile & { catch: (callback: (reason?: unknown) => void) => void };
   _options?: {
     minLevel?: number;
     maxLevel?: number;
@@ -1678,6 +1693,16 @@ export interface IAnnotationListPropertyFilter {
   values?: number[];
 }
 
+// One analysis gate as a query term: the DEFINITION (axes + polygon +
+// pinned categories), which the server resolves per request as a pure
+// predicate (SERVER_GATING.md, Phase 3). Shipping definitions instead of
+// resolved id lists keeps page fetches small at any gate size.
+export interface IAnalysisGateFilterTerm {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;
+}
+
 export interface IAnnotationListFilters {
   shape?: string;
   tags?: { values: string[]; exclusive: boolean };
@@ -1687,6 +1712,8 @@ export interface IAnnotationListFilters {
   // A list of id-sets; an annotation matches iff its _id is in EVERY set
   // (AND of $in's). Used to apply the selection and annotation-id filters.
   idConstraints?: string[][];
+  // Analysis gate definitions, ANDed with everything above.
+  analysisGates?: IAnalysisGateFilterTerm[];
 }
 
 export interface IAnnotationListQuery {
@@ -1753,6 +1780,33 @@ export interface IVisibilityConfig {
   // changes by this fraction (e.g. 0.2 = 20%). Panning has no threshold — any
   // pan refreshes — so this governs zoom only.
   viewportRefreshFraction: number;
+}
+
+export type TAnnotationOverviewMode = "shapes" | "discs";
+
+export interface IAnnotationOverviewConfig {
+  enabled: boolean;
+  mode: TAnnotationOverviewMode;
+  opacity: number;
+  // Raster is used above this many image pixels per screen pixel; vectors
+  // take over at or below it.
+  vectorSwitchThreshold: number;
+}
+
+export const DEFAULT_ANNOTATION_OVERVIEW_CONFIG: IAnnotationOverviewConfig = {
+  enabled: false,
+  mode: "shapes",
+  opacity: 0.6,
+  vectorSwitchThreshold: 1,
+};
+
+export function resolveAnnotationOverviewConfig(
+  config?: Partial<IAnnotationOverviewConfig>,
+): IAnnotationOverviewConfig {
+  return {
+    ...DEFAULT_ANNOTATION_OVERVIEW_CONFIG,
+    ...config,
+  };
 }
 
 // Annotation count above which the annotation browser list switches to the
@@ -1845,6 +1899,105 @@ export interface IIdAnnotationFilter extends IAnnotationFilter {
 
 export interface IROIAnnotationFilter extends IAnnotationFilter {
   roi: IGeoJSPosition[];
+}
+
+// --- Analysis panel (scatter gating) ---
+
+// Categorical axes are annotation fields available on stubs too, so the
+// analysis panel works in both full and lazy (stub-only) modes.
+export type TAnalysisCategoricalKey =
+  | "tags"
+  | "shape"
+  | "channel"
+  | "xy"
+  | "z"
+  | "time";
+
+export type TAnalysisAxis =
+  | { type: "property"; path: string[] }
+  | { type: "categorical"; key: TAnalysisCategoricalKey };
+
+// Explicitly identifies how categorical values in a gate are encoded. This
+// cannot be inferred from a string prefix: legacy display labels are
+// user-controlled and may themselves begin with that prefix.
+export const ANALYSIS_CATEGORY_KEY_VERSION = 1 as const;
+
+// A drawn gate, stored as the lasso polygon in PLOT COORDINATE space rather
+// than as the annotation ids it happened to contain.
+//
+// This is what makes a gate persistable. A configuration is shared by every
+// dataset using it, while annotation ids belong to one dataset — persisting ids
+// would apply one dataset's objects to another. A polygon is defined in
+// property-value space, so it re-resolves correctly in any dataset, which is
+// also the point of a gating strategy: draw it once, apply it to each replicate.
+//
+// For a categorical axis a coordinate is a category index, so the ordering of
+// collision-free raw category keys that was in effect when the gate was drawn
+// is part of the gate's meaning and is stored with it. Human-readable labels
+// are display-only and are not persisted as identities.
+export interface IAnalysisGate {
+  categoryKeyVersion: typeof ANALYSIS_CATEGORY_KEY_VERSION;
+  vertices: IGeoJSPosition[];
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+}
+
+// One scatter plot in the analysis panel. Plots are ordered: each plot shows
+// the population passing the gates of all plots BEFORE it (plus the regular
+// filters), and its own gate further narrows the population downstream —
+// flow-cytometry-style sequential gating. `gate` is null until a selection is
+// drawn. The annotation ids inside a gate are derived, not stored here: see
+// `analysisGateIds` in the filters store.
+export interface IAnalysisPlot {
+  id: string;
+  xAxis: TAnalysisAxis | null;
+  yAxis: TAnalysisAxis | null;
+  gate: IAnalysisGate | null;
+  gateEnabled: boolean;
+}
+
+// One plot in a server-side gate-resolution request: a DRAWN plot's
+// definition (both axes chosen, gate present). The server resolves the gate
+// as a pure per-annotation predicate over the whole dataset; see
+// codebaseDocumentation/SERVER_GATING.md.
+export interface IAnalysisGatePlotRequest {
+  id: string;
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;
+}
+
+// Server-binned display data for one analysis plot above the cap
+// (SERVER_GATING.md, Phase 2). Rows of `counts` are y bins, columns x bins.
+export interface IAnalysisHistogramResponse {
+  counts: number[][];
+  xEdges: number[] | null;
+  yEdges: number[] | null;
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+  inputCount: number;
+  plottedCount: number;
+  // |own gate ∩ input| — the chained badge count — when a gate was sent.
+  gateCount: number | null;
+}
+
+// The histogram response plus display labels for categorical axes, resolved
+// by the panel (labels need the dataset's channel names, which the server
+// does not have).
+export interface IAnalysisHistogramDisplay extends IAnalysisHistogramResponse {
+  xCategoryLabels: string[] | null;
+  yCategoryLabels: string[] | null;
+}
+
+export interface IAnalysisHistogramRequest {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+  bins: { x: number; y: number };
+  upstreamGates: Omit<IAnalysisGatePlotRequest, "id">[];
+  filters: IAnnotationListFilters;
+  gate: IAnalysisGate | null;
 }
 
 export interface IAnnotationPropertyConfiguration {
@@ -2210,6 +2363,7 @@ export interface IMapEntry {
   timelapseLayer: IGeoJSAnnotationLayer;
   timelapseTextLayer: IGeoJSFeatureLayer;
   interactionLayer: IGeoJSAnnotationLayer;
+  annotationOverviewLayer?: IGeoJSOsmLayer;
   uiLayer?: IGeoJSUiLayer;
   lowestLayer?: number;
 }
@@ -2471,6 +2625,7 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       tStep: { value: 1, unit: "s" },
     },
     visibilityConfig: resolveVisibilityConfig(),
+    overviewConfig: resolveAnnotationOverviewConfig(),
     annotationBrowserConfig: {
       displayedPropertyPaths: [],
       filterPaths: [],

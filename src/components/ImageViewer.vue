@@ -25,13 +25,7 @@
       </v-card>
     </v-dialog>
     <annotation-viewer
-      v-for="(mapentry, index) in maps.filter(
-        (mapentry) =>
-          mapentry.annotationLayer &&
-          mapentry.lowestLayer !== undefined &&
-          mapentry.imageLayers &&
-          mapentry.imageLayers.length,
-      )"
+      v-for="(mapentry, index) in annotationViewerMaps"
       :map="mapentry.map"
       :capturedMouseState="
         mouseState && mouseState.mapEntry === mapentry ? mouseState : null
@@ -42,6 +36,7 @@
       :timelapseTextLayer="mapentry.timelapseTextLayer"
       :workerPreviewFeature="mapentry.workerPreviewFeature"
       :interactionLayer="mapentry.interactionLayer"
+      :annotationOverviewLayer="mapentry.annotationOverviewLayer"
       :maps="maps"
       :unrollH="unrollH"
       :unrollW="unrollW"
@@ -49,7 +44,13 @@
       :tileHeight="tileHeight"
       :lowestLayer="mapentry.lowestLayer || 0"
       :layerCount="(mapentry.imageLayers || []).length / 2"
+      :allowSharedVisibilitySuppression="
+        allAnnotationOverviewViewersRasterActive
+      "
       :key="'annotation-viewer-' + index"
+      @annotation-overview-visibility-change="
+        _setAnnotationOverviewVisibility(mapentry, $event)
+      "
     />
     <!-- Mounted ONCE, outside the per-map v-for above. In unroll layer mode
          ImageViewer renders one AnnotationViewer per layer group, so a panel
@@ -222,6 +223,8 @@ import {
   onBeforeUnmount,
   nextTick,
   markRaw,
+  triggerRef,
+  toRaw,
 } from "vue";
 import annotationStore from "@/store/annotation";
 import connectionListStore from "@/store/connectionList";
@@ -270,6 +273,10 @@ import { IHotkey } from "@/utils/v-mousetrap";
 import { NoOutput } from "@/pipelines/computePipeline";
 import { logWarning } from "@/utils/log";
 import { getUnrollCells, IUnrollCell, unrollGridSize } from "@/utils/unroll";
+import {
+  annotationRasterSelectorsForLayers,
+  annotationRasterSelectorsSupported,
+} from "@/utils/annotationOverview";
 
 function generateFilterURL(
   index: number,
@@ -416,12 +423,302 @@ let synchronisationEnabled = true;
 
 const blankUrl =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQIHWNgYAAAAAMAAU9ICq8AAAAASUVORK5CYII=";
+const ANNOTATION_OVERVIEW_TILE_SIZE = 512;
+const ANNOTATION_OVERVIEW_FALLBACK_COLOR = "#FFD700";
+const ANNOTATION_OVERVIEW_PROGRESS_DELAY_MS = 300;
+// A raster tile can fail transiently: the backend answers 503 + Retry-After: 1
+// while another geometry key is still cold-building. The delay matches that
+// Retry-After; the bound keeps a genuinely broken template from looping.
+const ANNOTATION_OVERVIEW_RETRY_DELAY_MS = 1000;
+const ANNOTATION_OVERVIEW_MAX_RETRIES = 3;
+
+type AnnotationOverviewLayer = NonNullable<
+  IMapEntry["annotationOverviewLayer"]
+>;
+
+interface IAnnotationOverviewLoadState {
+  timer: ReturnType<typeof setTimeout> | null;
+  progressId: string | null;
+  finished: boolean;
+}
+
+const annotationOverviewLoadStates = new WeakMap<
+  AnnotationOverviewLayer,
+  IAnnotationOverviewLoadState
+>();
+const annotationOverviewTemplates = new WeakMap<
+  AnnotationOverviewLayer,
+  string
+>();
+const appliedAnnotationOverviewTemplates = new WeakMap<
+  AnnotationOverviewLayer,
+  string
+>();
+const trackedAnnotationOverviewLayers = new Set<AnnotationOverviewLayer>();
+// Raster visibility is local to each GeoJS map, while annotation visibility is
+// shared store state. Keep per-map activity weakly so layer-unroll maps can be
+// added and removed without retaining exited GeoJS maps.
+const annotationOverviewViewerActivity = shallowRef(
+  new WeakMap<IGeoJSMap, boolean>(),
+);
+
+function setAnnotationOverviewViewerActivity(
+  mapentry: IMapEntry,
+  active: boolean,
+) {
+  const map = toRaw(mapentry.map);
+  if (annotationOverviewViewerActivity.value.get(map) === active) {
+    return;
+  }
+  annotationOverviewViewerActivity.value.set(map, active);
+  triggerRef(annotationOverviewViewerActivity);
+}
+
+function finishAnnotationOverviewLoad(
+  layer: AnnotationOverviewLayer,
+  state: IAnnotationOverviewLoadState,
+) {
+  if (state.finished) {
+    return;
+  }
+  state.finished = true;
+  if (state.timer != null) {
+    clearTimeout(state.timer);
+    state.timer = null;
+  }
+  if (state.progressId) {
+    void progressStore.complete(state.progressId);
+    state.progressId = null;
+  }
+  if (annotationOverviewLoadStates.get(layer) === state) {
+    annotationOverviewLoadStates.delete(layer);
+  }
+  trackedAnnotationOverviewLayers.delete(layer);
+}
+
+function cancelAnnotationOverviewLoad(layer?: AnnotationOverviewLayer) {
+  if (!layer) {
+    return;
+  }
+  const state = annotationOverviewLoadStates.get(layer);
+  if (state) {
+    finishAnnotationOverviewLoad(layer, state);
+  }
+}
+
+function trackAnnotationOverviewLoad(layer: AnnotationOverviewLayer) {
+  cancelAnnotationOverviewLoad(layer);
+  const state: IAnnotationOverviewLoadState = {
+    timer: null,
+    progressId: null,
+    finished: false,
+  };
+  annotationOverviewLoadStates.set(layer, state);
+  trackedAnnotationOverviewLayers.add(layer);
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    if (state.finished || annotationOverviewLoadStates.get(layer) !== state) {
+      return;
+    }
+    if (layer.idle) {
+      finishAnnotationOverviewLoad(layer, state);
+      return;
+    }
+
+    layer.onIdle(() => finishAnnotationOverviewLoad(layer, state));
+    void (async () => {
+      const progressId = await progressStore.create({
+        type: ProgressType.ANNOTATION_RASTER,
+      });
+      if (state.finished || annotationOverviewLoadStates.get(layer) !== state) {
+        void progressStore.complete(progressId);
+        return;
+      }
+      state.progressId = progressId;
+      if (layer.idle) {
+        finishAnnotationOverviewLoad(layer, state);
+      }
+    })();
+  }, ANNOTATION_OVERVIEW_PROGRESS_DELAY_MS);
+}
+
+function applyAnnotationOverviewTemplate(layer: AnnotationOverviewLayer) {
+  const template = annotationOverviewTemplates.get(layer);
+  if (!template || appliedAnnotationOverviewTemplates.get(layer) === template) {
+    return false;
+  }
+  layer.url((x: number, y: number, level: number) =>
+    template
+      .replace("{z}", level.toString())
+      .replace("{x}", x.toString())
+      .replace("{y}", y.toString()),
+  );
+  appliedAnnotationOverviewTemplates.set(layer, template);
+  // A new template is a new set of tile requests — restore the retry budget.
+  cancelAnnotationOverviewRetry(layer, true);
+  return true;
+}
+
+interface IAnnotationOverviewRetryState {
+  attempts: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const annotationOverviewRetryStates = new WeakMap<
+  AnnotationOverviewLayer,
+  IAnnotationOverviewRetryState
+>();
+
+// GeoJS exposes no tile-error event: a failed fetch logs a console warning,
+// removes the tile, and leaves the REJECTED tile in the layer's cache, so
+// later draws reuse the failure instead of refetching. The tile's documented
+// promise interface (`tile.catch`) is the only failure signal, and `_getTile`
+// is the factory GeoJS documents for derived classes to override — wrap it so
+// every tile carries a failure hook. Retry state itself stays out of the
+// GeoJS object (WeakMaps above).
+function hookAnnotationOverviewTileErrors(layer: AnnotationOverviewLayer) {
+  const originalGetTile = layer._getTile;
+  if (typeof originalGetTile !== "function") {
+    return;
+  }
+  layer._getTile = (...args: unknown[]) => {
+    const tile = originalGetTile.apply(layer, args);
+    tile.catch(() => scheduleAnnotationOverviewRetry(layer));
+    return tile;
+  };
+}
+
+function cancelAnnotationOverviewRetry(
+  layer: AnnotationOverviewLayer,
+  resetAttempts = false,
+) {
+  const state = annotationOverviewRetryStates.get(layer);
+  if (!state) {
+    return;
+  }
+  if (state.timer != null) {
+    clearTimeout(state.timer);
+    state.timer = null;
+  }
+  if (resetAttempts) {
+    state.attempts = 0;
+  }
+}
+
+function scheduleAnnotationOverviewRetry(layer: AnnotationOverviewLayer) {
+  let state = annotationOverviewRetryStates.get(layer);
+  if (!state) {
+    state = { attempts: 0, timer: null };
+    annotationOverviewRetryStates.set(layer, state);
+  }
+  // One pending retry covers every failed tile of the batch.
+  if (
+    state.timer != null ||
+    state.attempts >= ANNOTATION_OVERVIEW_MAX_RETRIES
+  ) {
+    return;
+  }
+  state.attempts += 1;
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    // Only retry a layer that is still mounted, shown, and displaying the
+    // same template — a template change redraws with a fresh budget anyway.
+    if (
+      !maps.value.some(
+        (mountedMapentry) =>
+          toRaw(mountedMapentry.annotationOverviewLayer) === toRaw(layer),
+      ) ||
+      !layer.visible() ||
+      !annotationOverviewTemplates.has(layer)
+    ) {
+      return;
+    }
+    // reset() clears the tile cache — the only way to make GeoJS refetch a
+    // tile whose previous fetch was rejected.
+    layer.reset();
+    layer.draw();
+    trackAnnotationOverviewLoad(layer);
+  }, ANNOTATION_OVERVIEW_RETRY_DELAY_MS);
+}
+
+function _setAnnotationOverviewVisibility(
+  mapentry: IMapEntry,
+  state: { visible: boolean; opacity: number },
+) {
+  setAnnotationOverviewViewerActivity(mapentry, state.visible);
+  // Surplus layer-unroll maps are exited before Vue unmounts their child
+  // AnnotationViewer. Its final inactive event must still update the aggregate
+  // activity above, but the removed GeoJS layer no longer has a renderer.
+  if (
+    !maps.value.some(
+      (mountedMapentry) => toRaw(mountedMapentry.map) === toRaw(mapentry.map),
+    )
+  ) {
+    return;
+  }
+  const layer = mapentry.annotationOverviewLayer;
+  if (!layer) {
+    return;
+  }
+  const wasVisible = layer.visible();
+  const shouldShow = state.visible && annotationOverviewTemplates.has(layer);
+  const opacityChanged = layer.opacity() !== state.opacity;
+  if (opacityChanged) {
+    layer.opacity(state.opacity);
+  }
+  if (!shouldShow) {
+    cancelAnnotationOverviewLoad(layer);
+    cancelAnnotationOverviewRetry(layer);
+    if (wasVisible) {
+      layer.visible(false);
+      layer.draw();
+    }
+    return;
+  }
+
+  const templateChanged = applyAnnotationOverviewTemplate(layer);
+  if (!wasVisible) {
+    layer.visible(true);
+  }
+  if (!wasVisible || opacityChanged || templateChanged) {
+    layer.draw();
+  }
+  if (!wasVisible || templateChanged) {
+    trackAnnotationOverviewLoad(layer);
+  }
+}
 
 // ---- Computed Properties - Store Proxies ----
 
 const maps = computed({
   get: () => store.maps,
   set: (value: IMapEntry[]) => store.setMaps(value),
+});
+
+const annotationViewerMaps = computed(() =>
+  maps.value.filter(
+    (mapentry) =>
+      mapentry.annotationLayer &&
+      mapentry.lowestLayer !== undefined &&
+      mapentry.imageLayers &&
+      mapentry.imageLayers.length,
+  ),
+);
+
+const allAnnotationOverviewViewersRasterActive = computed(() => {
+  // An empty viewer set must never suppress shared visibility.
+  return (
+    annotationViewerMaps.value.length > 0 &&
+    annotationViewerMaps.value.every((mapentry) =>
+      annotationOverviewViewerActivity.value.get(toRaw(mapentry.map)),
+    )
+  );
+});
+
+watch(allAnnotationOverviewViewersRasterActive, (allActive) => {
+  if (!allActive) {
+    annotationStore.setVisibilitySuppressed(false);
+  }
 });
 
 const cameraInfo = computed({
@@ -1201,6 +1498,7 @@ function _setupMap(
     mapentry.uiLayer = markRaw(mapentry.map.createLayer("ui"));
     mapentry.uiLayer.node().css({ "mix-blend-mode": "unset" });
   }
+  _syncAnnotationOverviewLayer(mapentry, someImage, mapElement);
 
   // only have a scale widget on the first map
   if (mllidx === 0) {
@@ -1217,6 +1515,111 @@ function _setupMap(
       lastFittedDatasetId.value = currentDatasetId;
       fitOnDatasetChange.value++;
     }
+  }
+}
+
+function _syncAnnotationOverviewLayer(
+  mapentry: IMapEntry,
+  someImage: IImage,
+  mapElement: HTMLElement,
+) {
+  const config = annotationStore.overviewConfig;
+  if (!config?.enabled) {
+    cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
+    if (mapentry.annotationOverviewLayer) {
+      cancelAnnotationOverviewRetry(mapentry.annotationOverviewLayer, true);
+    }
+    mapentry.annotationOverviewLayer?.visible(false);
+    if (mapentry.annotationOverviewLayer) {
+      annotationOverviewTemplates.delete(mapentry.annotationOverviewLayer);
+    }
+    return;
+  }
+  // The map's units-per-pixel scale comes from the native image pyramid.
+  // A 512 px overview tile would otherwise infer a pyramid one level shorter
+  // than a 256 px image tile and rasterize every coordinate at half scale.
+  const coordinateMaxLevel =
+    mapentry.params.layer.maxLevel ?? someImage.levels - 1;
+  if (!mapentry.annotationOverviewLayer) {
+    const params = geojs.util.pixelCoordinateParams(
+      mapElement,
+      someImage.sizeX,
+      someImage.sizeY,
+      ANNOTATION_OVERVIEW_TILE_SIZE,
+      ANNOTATION_OVERVIEW_TILE_SIZE,
+    );
+    params.layer.maxLevel = coordinateMaxLevel;
+    params.layer.tilesAtZoom = (level: number) => {
+      const scale = Math.pow(2, coordinateMaxLevel - level);
+      return {
+        x: Math.ceil(someImage.sizeX / ANNOTATION_OVERVIEW_TILE_SIZE / scale),
+        y: Math.ceil(someImage.sizeY / ANNOTATION_OVERVIEW_TILE_SIZE / scale),
+      };
+    };
+    params.layer.tilesMaxBounds = (level: number) => {
+      const scale = Math.pow(2, coordinateMaxLevel - level);
+      return {
+        x: Math.floor(someImage.sizeX / scale),
+        y: Math.floor(someImage.sizeY / scale),
+      };
+    };
+    params.layer.crossDomain = "use-credentials";
+    params.layer.autoshareRenderer = false;
+    params.layer.nearestPixel = params.layer.maxLevel;
+    params.layer.url = blankUrl;
+    params.layer.visible = false;
+    mapentry.annotationOverviewLayer = markRaw(
+      mapentry.map.createLayer("osm", params.layer),
+    );
+    hookAnnotationOverviewTileErrors(mapentry.annotationOverviewLayer);
+    mapentry.annotationOverviewLayer.node().css({ "mix-blend-mode": "unset" });
+    const mapIndex = maps.value.indexOf(mapentry);
+    if (mapIndex >= 0) {
+      // IMapEntry is markRaw for GeoJS performance, so replace the reactive
+      // outer array after lazily adding the layer. This delivers the new prop
+      // to the already-mounted AnnotationViewer when overview is enabled later.
+      store.setMapAt({ index: mapIndex, mapEntry: mapentry });
+    }
+  }
+
+  const datasetId = dataset.value?.id;
+  if (!datasetId || unrolling.value) {
+    cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
+    cancelAnnotationOverviewRetry(mapentry.annotationOverviewLayer, true);
+    mapentry.annotationOverviewLayer.visible(false);
+    annotationOverviewTemplates.delete(mapentry.annotationOverviewLayer);
+    return;
+  }
+  const mapIndex = maps.value.indexOf(mapentry);
+  const selectors = annotationRasterSelectorsForLayers({
+    layers: (mapLayerList.value[mapIndex] ?? []).map(({ layer }) => layer),
+    showHiddenLayers: store.showAnnotationsFromHiddenLayers,
+    layerSliceIndexes: store.layerSliceIndexes,
+  });
+  if (!annotationRasterSelectorsSupported(selectors)) {
+    cancelAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
+    cancelAnnotationOverviewRetry(mapentry.annotationOverviewLayer, true);
+    mapentry.annotationOverviewLayer.visible(false);
+    annotationOverviewTemplates.delete(mapentry.annotationOverviewLayer);
+    return;
+  }
+  const template = annotationStore.annotationsAPI.annotationRasterTemplateUrl({
+    datasetId,
+    selectors,
+    sizeX: someImage.sizeX,
+    sizeY: someImage.sizeY,
+    tileSize: ANNOTATION_OVERVIEW_TILE_SIZE,
+    maxLevel: coordinateMaxLevel,
+    mode: config.mode,
+    color: ANNOTATION_OVERVIEW_FALLBACK_COLOR,
+    version: annotationStore.mutationCounter,
+  });
+  annotationOverviewTemplates.set(mapentry.annotationOverviewLayer, template);
+  if (
+    mapentry.annotationOverviewLayer.visible() &&
+    applyAnnotationOverviewTemplate(mapentry.annotationOverviewLayer)
+  ) {
+    trackAnnotationOverviewLoad(mapentry.annotationOverviewLayer);
   }
 }
 
@@ -1537,15 +1940,27 @@ function draw() {
       map.size({ width: nodeWidth, height: nodeHeight });
     }
     _setupTileLayers(mll, mllidx, someImage, baseLayerIndex);
+    const overviewOffset = mapentry.annotationOverviewLayer ? 1 : 0;
     if (
-      mapentry.workerPreviewLayer.zIndex() !== mll.length * 2 ||
-      mapentry.annotationLayer.zIndex() !== mll.length * 2 + 1 ||
-      mapentry.textLayer.zIndex() !== mll.length * 2 + 2 ||
-      mapentry.timelapseLayer.zIndex() !== mll.length * 2 + 3 ||
-      mapentry.timelapseTextLayer.zIndex() !== mll.length * 2 + 4 ||
-      mapentry.interactionLayer.zIndex() !== mll.length * 2 + 5 ||
-      (mapentry.uiLayer && mapentry.uiLayer.zIndex() !== mll.length * 2 + 6)
+      (mapentry.annotationOverviewLayer &&
+        mapentry.annotationOverviewLayer.zIndex() !== mll.length * 2) ||
+      mapentry.workerPreviewLayer.zIndex() !==
+        mll.length * 2 + overviewOffset ||
+      mapentry.annotationLayer.zIndex() !==
+        mll.length * 2 + 1 + overviewOffset ||
+      mapentry.textLayer.zIndex() !== mll.length * 2 + 2 + overviewOffset ||
+      mapentry.timelapseLayer.zIndex() !==
+        mll.length * 2 + 3 + overviewOffset ||
+      mapentry.timelapseTextLayer.zIndex() !==
+        mll.length * 2 + 4 + overviewOffset ||
+      mapentry.interactionLayer.zIndex() !==
+        mll.length * 2 + 5 + overviewOffset ||
+      (mapentry.uiLayer &&
+        mapentry.uiLayer.zIndex() !== mll.length * 2 + 6 + overviewOffset)
     ) {
+      if (mapentry.annotationOverviewLayer) {
+        mapentry.annotationOverviewLayer.moveToTop();
+      }
       mapentry.workerPreviewLayer.moveToTop();
       mapentry.annotationLayer.moveToTop();
       mapentry.textLayer.moveToTop();
@@ -1753,6 +2168,22 @@ watch(dataset, () => {
   datasetReset();
 });
 
+// Frame changes already redraw through mapLayerList. Overview-only settings
+// and client mutation versions do not, so explicitly refresh the lazy raster
+// layer for those two inputs.
+watch(
+  [() => annotationStore.overviewConfig, () => annotationStore.mutationCounter],
+  ([config], [previousConfig]) => {
+    // Annotation edits can be frequent. When overview has never been enabled,
+    // its cache-buster must remain truly zero-cost instead of redrawing every
+    // image layer for a raster layer that does not exist. The previous value
+    // keeps the disabling transition able to hide an existing layer.
+    if (config.enabled || previousConfig?.enabled) {
+      draw();
+    }
+  },
+);
+
 // Fit the image to the viewport on dataset load / transition so each dataset
 // opens at a sensible zoom (Phase 2.3 unclamped clampZoom, removing GeoJS's
 // auto-fit safety net). `_setupMap` bumps `fitOnDatasetChange` after it has
@@ -1802,6 +2233,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  annotationStore.setVisibilitySuppressed(false);
+  for (const layer of trackedAnnotationOverviewLayers) {
+    cancelAnnotationOverviewLoad(layer);
+  }
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
@@ -1821,6 +2256,8 @@ defineExpose({
   sync,
   hasGeoJSMapInput,
   maps,
+  annotationViewerMaps,
+  allAnnotationOverviewViewersRasterActive,
   cameraInfo,
   overview,
   dataset,
@@ -1895,6 +2332,8 @@ defineExpose({
   _setupMap,
   _setupTileLayers,
   _setTileUrls,
+  _syncAnnotationOverviewLayer,
+  _setAnnotationOverviewVisibility,
 });
 </script>
 

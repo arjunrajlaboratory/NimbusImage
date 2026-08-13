@@ -1,6 +1,11 @@
 import {
+  IAnalysisGateFilterTerm,
+  IAnnotationListFilters,
   IAnnotationListPropertyFilter,
   IAnnotationListSort,
+  IAnnotationLocation,
+  IIdAnnotationFilter,
+  ITagAnnotationFilter,
 } from "@/store/model";
 
 // Structural equality for two list sorts (or nulls). Compares type, order, and
@@ -64,4 +69,94 @@ export function buildPropertyListFilters(
             max: f.range.max,
           },
     );
+}
+
+/**
+ * True when these filters cannot match anything, so no request should be sent.
+ *
+ * An id-membership constraint that is present but EMPTY — an analysis gate
+ * resolved to zero annotations, i.e. a lasso over empty space — is a real
+ * constraint meaning "nothing". The list API deliberately rejects `[[]]` with a
+ * 400 (`server/helpers/validation.py` wants match-none explicit rather than an
+ * accidental `$in: []`), so sending it fails the request and leaves whatever
+ * was on screen before.
+ *
+ * Lives here, and is applied in the API client rather than in each store
+ * action, because the first fix guarded the two page fetches and missed
+ * `fetchMatchingIds` — the action behind "Select all" and "Delete Unselected".
+ * At the request boundary there is nothing left to miss.
+ */
+export function filtersMatchNothing(filters: {
+  idConstraints?: string[][];
+}): boolean {
+  return (filters.idConstraints ?? []).some((ids) => ids.length === 0);
+}
+
+// Pure: translate the client filter store into backend list filters. Shared
+// by the server-list query builder (annotationListServer.currentFilters) and
+// the over-cap analysis histogram requests (filters store) — one
+// serialization, so the two cannot drift.
+export function buildListFilters(input: {
+  tagFilter: Pick<ITagAnnotationFilter, "enabled" | "exclusive" | "tags">;
+  onlyCurrentFrame: boolean;
+  currentFrame: IAnnotationLocation;
+  idSubstring: string;
+  propertyFilters: IListPropertyFilterInput[];
+  selectionFilter: IIdAnnotationFilter;
+  annotationIdFilters: IIdAnnotationFilter[];
+  // Active analysis gates as DEFINITIONS, resolved server-side per request
+  // (SERVER_GATING.md, Phase 3) — id lists no longer ride on page fetches.
+  analysisGateDefinitions?: IAnalysisGateFilterTerm[];
+  // True when some active gate is known to match nothing. Expressed as an
+  // empty idConstraints entry, which the AnnotationsAPI boundary answers
+  // locally (filtersMatchNothing) — the wire never sees it, and no second
+  // short-circuit path exists to miss.
+  analysisGatesMatchNothing?: boolean;
+}): IAnnotationListFilters {
+  const out: IAnnotationListFilters = {};
+  if (input.tagFilter.enabled && input.tagFilter.tags.length > 0) {
+    out.tags = {
+      values: input.tagFilter.tags,
+      exclusive: input.tagFilter.exclusive,
+    };
+  }
+  if (input.onlyCurrentFrame) {
+    out.location = { ...input.currentFrame };
+  }
+  if (input.idSubstring) {
+    out.idSubstring = input.idSubstring;
+  }
+  // Build the id constraints (AND of membership sets), mirroring the
+  // client filteredAnnotations semantics: the selection filter is one set,
+  // and the enabled annotation-id filters are unioned into a second set.
+  const idConstraints: string[][] = [];
+  if (
+    input.selectionFilter.enabled &&
+    input.selectionFilter.annotationIds.length > 0
+  ) {
+    idConstraints.push(input.selectionFilter.annotationIds);
+  }
+  const enabledIdFilters = input.annotationIdFilters.filter((f) => f.enabled);
+  if (enabledIdFilters.length > 0) {
+    idConstraints.push(enabledIdFilters.flatMap((f) => f.annotationIds));
+  }
+  if (input.analysisGatesMatchNothing) {
+    idConstraints.push([]);
+  }
+  if (idConstraints.length > 0) {
+    out.idConstraints = idConstraints;
+  }
+  // Gates compose with AND (sequential gating), each as its own term —
+  // unlike the annotation-id filters, which are unioned above.
+  if (
+    input.analysisGateDefinitions &&
+    input.analysisGateDefinitions.length > 0
+  ) {
+    out.analysisGates = input.analysisGateDefinitions;
+  }
+  const pfs = buildPropertyListFilters(input.propertyFilters);
+  if (pfs.length > 0) {
+    out.propertyFilters = pfs;
+  }
+  return out;
 }

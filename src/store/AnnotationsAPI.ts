@@ -19,11 +19,29 @@ import {
   IAnnotationListFilters,
   IColorByPropertyOptions,
   IColorByPropertyResult,
+  TAnnotationOverviewMode,
+  IAnalysisGatePlotRequest,
+  IAnalysisHistogramRequest,
+  IAnalysisHistogramResponse,
 } from "./model";
+import type { IAnnotationRasterSelector } from "@/utils/annotationOverview";
 
+import { filtersMatchNothing } from "@/utils/annotationListFilters";
 import { logError } from "@/utils/log";
 import { fetchAllPages } from "@/utils/fetch";
 import { markRaw } from "vue";
+
+export interface IAnnotationRasterUrlOptions {
+  datasetId: string;
+  selectors: IAnnotationRasterSelector[];
+  sizeX: number;
+  sizeY: number;
+  tileSize: number;
+  maxLevel: number;
+  mode: TAnnotationOverviewMode;
+  color: string;
+  version: number;
+}
 
 export default class AnnotationsAPI {
   private readonly client: RestClientInstance;
@@ -114,6 +132,23 @@ export default class AnnotationsAPI {
     return (response.data as any[]).map(this.toStub);
   }
 
+  annotationRasterTemplateUrl(options: IAnnotationRasterUrlOptions): string {
+    const url = new URL(`${this.client.apiRoot}/upenn_annotation/raster/0/0/0`);
+    url.searchParams.set("datasetId", options.datasetId);
+    url.searchParams.set("selectors", JSON.stringify(options.selectors));
+    url.searchParams.set("sizeX", options.sizeX.toString());
+    url.searchParams.set("sizeY", options.sizeY.toString());
+    url.searchParams.set("tileSize", options.tileSize.toString());
+    url.searchParams.set("maxLevel", options.maxLevel.toString());
+    url.searchParams.set("mode", options.mode);
+    url.searchParams.set("color", options.color);
+    url.searchParams.set("v", options.version.toString());
+    return url.href.replace(
+      "/upenn_annotation/raster/0/0/0",
+      "/upenn_annotation/raster/{z}/{x}/{y}",
+    );
+  }
+
   toListRow = (item: any): IAnnotationListRow => {
     const stub = this.toStub(item);
     return markRaw({
@@ -126,6 +161,12 @@ export default class AnnotationsAPI {
   async fetchAnnotationListPage(
     query: IAnnotationListQuery,
   ): Promise<IAnnotationListPage> {
+    // An id constraint that is present but empty means "nothing matches", which
+    // the API rejects rather than answering (see filtersMatchNothing). The
+    // client already knows the answer, so it answers instead of asking.
+    if (filtersMatchNothing(query.filters)) {
+      return { total: 0, rows: [], offset: null };
+    }
     const response = await this.client.post("upenn_annotation/list", query);
     return {
       total: response.data.total,
@@ -138,11 +179,71 @@ export default class AnnotationsAPI {
     datasetId: string,
     filters: IAnnotationListFilters,
   ): Promise<string[]> {
+    if (filtersMatchNothing(filters)) {
+      return [];
+    }
     const response = await this.client.post("upenn_annotation/list/ids", {
       datasetId,
       filters,
     });
     return response.data.ids as string[];
+  }
+
+  /**
+   * Resolve gate polygons server-side (SERVER_GATING.md, Phase 1): each
+   * plot's answer is the pure per-annotation predicate over the whole
+   * dataset. Returns null on failure — never {} — so the caller can keep
+   * same-input gate ids on a transient error instead of resolving every
+   * gate to zero matches.
+   */
+  async fetchAnalysisGateIds(
+    datasetId: string,
+    plots: IAnalysisGatePlotRequest[],
+    // Receives the server's explanation when the request fails. The endpoint
+    // enforces id budgets (MAX_GATE_RESPONSE_IDS) that a few broad gates on a
+    // 700K dataset can genuinely exceed, and the retry under identical inputs
+    // fails identically — so without surfacing the reason, every gate simply
+    // stops filtering and the only trace is a console line.
+    onError?: (message: string) => void,
+  ): Promise<{ [plotId: string]: string[] } | null> {
+    if (plots.length === 0) {
+      return {};
+    }
+    try {
+      const response = await this.client.post(
+        "upenn_annotation/analysis/gate_ids",
+        { datasetId, plots },
+      );
+      return response.data.gateIds as { [plotId: string]: string[] };
+    } catch (error) {
+      logError("Failed to resolve analysis gates server-side:", error);
+      onError?.(
+        (error as any)?.response?.data?.message ??
+          "The server could not resolve the gates.",
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Server-binned display data for one over-cap analysis plot
+   * (SERVER_GATING.md, Phase 2). Returns null on failure so callers can
+   * distinguish "no data" from "request failed".
+   */
+  async fetchAnalysisHistogram(
+    datasetId: string,
+    request: IAnalysisHistogramRequest,
+  ): Promise<IAnalysisHistogramResponse | null> {
+    try {
+      const response = await this.client.post(
+        "upenn_annotation/analysis/histogram2d",
+        { datasetId, ...request },
+      );
+      return response.data as IAnalysisHistogramResponse;
+    } catch (error) {
+      logError("Failed to fetch analysis histogram:", error);
+      return null;
+    }
   }
 
   async hydrateAnnotations(

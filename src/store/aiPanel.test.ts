@@ -19,6 +19,7 @@ vi.mock("@/agent/wireConversation", () => ({
 vi.mock("@/agent/executors", () => ({
   buildInterfaceState: vi.fn(() => ({ dataset: null })),
   clearTrackedAgentJobs: vi.fn(),
+  clearAgentTurnLimits: vi.fn(),
   snapshotViewState: vi.fn(() => ({ datasetId: "ds1" })),
   describeAgentToolCall: vi.fn(() => "action"),
   executeAgentTool: vi.fn(),

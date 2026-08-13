@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import propertyStore from "./properties";
 import main from "./index";
 import store from "./root";
+import filters from "./filters";
 
 // Regression tests for the create_property error chain (issue #1239, Codex P2
 // on PR #1262).
@@ -94,5 +95,68 @@ describe("createProperty propagates the real failure reason", () => {
 
     await messageOf(propertyStore.createProperty({ name: "area" } as any));
     expect(propertyStore.properties.length).toBe(before);
+  });
+
+  it("reconciles plots immediately after deleting an attached property", async () => {
+    (
+      propertyStore as unknown as {
+        setPropertiesImpl: (properties: { id: string; name: string }[]) => void;
+      }
+    ).setPropertiesImpl([
+      { id: "deleted", name: "Deleted" },
+      { id: "kept", name: "Kept" },
+    ]);
+    const gate = {
+      categoryKeyVersion: 1 as const,
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+      ],
+      xCategories: null,
+      yCategories: null,
+    };
+    filters.hydrateAnalysisPlots([
+      {
+        id: "p1",
+        xAxis: { type: "property", path: ["deleted", "Area"] },
+        yAxis: { type: "categorical", key: "tags" },
+        gate,
+        gateEnabled: true,
+      },
+      {
+        id: "p2",
+        xAxis: { type: "property", path: ["kept", "Area"] },
+        yAxis: { type: "categorical", key: "shape" },
+        gate,
+        gateEnabled: true,
+      },
+    ]);
+    filters.setAnalysisGateIds({ p1: ["a"], p2: ["a"] });
+    vi.spyOn(main.api, "updateConfigurationKey").mockResolvedValue({} as any);
+    vi.spyOn(main, "scheduleAnnotationBrowserSave").mockImplementation(
+      () => undefined,
+    );
+
+    await propertyStore.deleteProperty("deleted");
+
+    expect(filters.analysisPlots[0].xAxis).toBeNull();
+    expect(filters.analysisPlots[0].gate).toBeNull();
+    expect(filters.analysisGateIds).toEqual({});
+  });
+
+  it("surfaces the backend's message when deleting a propertyIds sync fails", async () => {
+    (
+      propertyStore as unknown as {
+        setPropertiesImpl: (properties: { id: string; name: string }[]) => void;
+      }
+    ).setPropertiesImpl([{ id: "p1", name: "Area" }]);
+    vi.spyOn(main.api, "updateConfigurationKey").mockRejectedValue(
+      new Error("Read-only collection"),
+    );
+
+    expect(await messageOf(propertyStore.deleteProperty("p1"))).toBe(
+      "Read-only collection",
+    );
   });
 });

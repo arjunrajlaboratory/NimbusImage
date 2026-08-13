@@ -40,6 +40,7 @@ describe("applyColorAssignment", () => {
       hydratedAnnotations: new Map(),
       annotations: [],
       selectedAnnotationIds: [],
+      mutationCounter: 0,
     });
   });
 
@@ -106,6 +107,29 @@ describe("applyColorAssignment", () => {
       [...annotationStore.annotationStubs.values()].map((s) => s.color),
     ).toEqual([null, null]);
     expect(annotationStore.annotations[0].color).toBeNull();
+  });
+
+  it("bumps mutationCounter so the overview raster refetches its tiles", () => {
+    // The overview is a server-rendered image of these colors, and its tile
+    // URLs carry mutationCounter as the cache buster. Skipping the local
+    // refetch is only safe because this bump replaces it.
+    setState({ annotationStubs: new Map([["a1", stub("a1", null)]]) });
+    annotationStore.applyColorAssignment([{ color: "#111111", ids: ["a1"] }]);
+    expect(annotationStore.mutationCounter).toBe(1);
+  });
+
+  it("bumps mutationCounter on the clear path too", () => {
+    setState({ annotationStubs: new Map([["a1", stub("a1", "#111111")]]) });
+    annotationStore.applyColorAssignment([]);
+    expect(annotationStore.mutationCounter).toBe(1);
+  });
+
+  it("does not bump when no color actually moved", () => {
+    // Re-applying an identical assignment must not make the overview discard
+    // and re-fetch every tile for a byte-identical image.
+    setState({ annotationStubs: new Map([["a1", stub("a1", "#111111")]]) });
+    annotationStore.applyColorAssignment([{ color: "#111111", ids: ["a1"] }]);
+    expect(annotationStore.mutationCounter).toBe(0);
   });
 
   it("leaves geometry alone (colors don't move anything)", () => {

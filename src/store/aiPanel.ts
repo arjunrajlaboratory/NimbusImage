@@ -16,6 +16,7 @@ import {
 } from "./AgentAPI";
 import {
   buildInterfaceState,
+  clearAgentTurnLimits,
   clearTrackedAgentJobs,
   describeAgentToolCall,
   executeAgentTool,
@@ -90,6 +91,10 @@ const VIEW_STATE_TOOLS = new Set([
   "select_annotations",
   "set_annotation_filter",
   "select_tool",
+  // Analysis gates narrow the same filtered set as the other filters, so a
+  // turn that adds one must be revertible by the same affordance.
+  "create_analysis_plot",
+  "clear_analysis_plots",
 ]);
 
 // Kept outside Vuex state: the wire conversation contains base64 images and
@@ -400,6 +405,9 @@ export class AiPanel extends VuexModule {
     this.setStopRequested(false);
     turnAbortController = new AbortController();
     turnSnapshot = snapshotViewState();
+    // Per-turn budgets (e.g. how many analysis gates the model may create,
+    // each of which re-resolves every gate over the whole dataset).
+    clearAgentTurnLimits();
     this.setCanRevert(false);
     // If the conversation is cleared mid-run (e.g. the user logs out/in),
     // conversationGeneration is bumped; the loop below bails on any mismatch

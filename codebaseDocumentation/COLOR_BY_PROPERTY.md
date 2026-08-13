@@ -415,8 +415,9 @@ stub-mode dataset, verify colors appear after refetch and legend matches.
 
 ## Regression checklist
 
-Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.test.ts src/store/__tests__/rawStateMaps.test.ts src/components/AnnotationColorLegend.test.ts src/components/AnnotationBrowser/ColorByPropertyDialog.test.ts src/__tests__/mdiIconNames.test.ts` and, from
-`devops/girder/plugins/AnnotationPlugin`, `tox -- upenncontrast_annotation/test/test_color_by_property.py`.
+Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.test.ts src/store/__tests__/rawStateMaps.test.ts src/store/__tests__/annotationContentRevision.test.ts src/components/AnnotationColorLegend.test.ts src/components/AnnotationBrowser/ColorByPropertyDialog.test.ts src/__tests__/mdiIconNames.test.ts` and, from
+`devops/girder/plugins/AnnotationPlugin`,
+`tox -- upenncontrast_annotation/test/test_color_by_property.py upenncontrast_annotation/test/test_raster.py`.
 
 ### Mapping values to colors
 
@@ -504,6 +505,23 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       the new dataset's configuration. Both the apply and the clear path guard
       this. — *"a dataset switch mid-request applies nothing locally"*,
       *"a dataset switch mid-clear nulls nothing locally"*
+- [ ] **The annotation-overview raster repaints in the new colors.** The
+      overview is a server-rendered image of `annotation.color`, so a recolor
+      has to invalidate it on both sides: the client bumps `mutationCounter`
+      (the tile URLs' cache buster) and the backend bumps the dataset's raster
+      version (the geometry cache's key and the tile ETag). Neither happens for
+      free here — the write paths use `bulk_write`/`update`, not
+      `save()`/`saveMany()`, and skipping the refetch means nothing else bumps
+      the client counter. Both halves, and the no-op case that must not bump. —
+      *"bumps mutationCounter so the overview raster refetches its tiles"*,
+      *"bumps mutationCounter on the clear path too"*,
+      *"does not bump when no color actually moved"*,
+      *"testColorByPropertyInvalidatesEtagAndRepaints"*
+- [ ] **A color-only change does NOT bump `contentRevision`.** That counter
+      feeds the analysis gate and histogram signatures, none of which depend on
+      color; bumping it would re-resolve every gate over the whole dataset for
+      an identical answer. —
+      *"does NOT bump on a color-only assignment (applyColorAssignment)"*
 
 ### The legend tells the truth
 
