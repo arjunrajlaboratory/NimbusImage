@@ -7,6 +7,11 @@
           {{ objectCount.toLocaleString() }}
         </v-chip>
       </v-tab>
+      <!-- MOCKUP Option 1: Measurements tab -->
+      <v-tab v-if="MOCKUP_MEASURE_TAB" value="measurements">
+        <v-icon size="16" start>mdi-ruler-square</v-icon>
+        Measurements
+      </v-tab>
       <v-tab value="connections">
         Connections
         <v-chip v-if="connectionCount > 0" size="x-small" class="ml-2">
@@ -19,6 +24,13 @@
     <v-window v-model="activeTab" class="browser-window">
       <v-window-item value="objects" class="browser-window-item">
         <annotation-list @clickedTag="clickedTag" />
+      </v-window-item>
+      <v-window-item
+        v-if="MOCKUP_MEASURE_TAB"
+        value="measurements"
+        class="browser-window-item"
+      >
+        <measure-tab-mockup />
       </v-window-item>
       <v-window-item value="connections" class="browser-window-item">
         <!-- is-active drives the reveal-on-show retry: this component mounts
@@ -38,6 +50,10 @@
 import { computed } from "vue";
 import AnnotationList from "@/components/AnnotationBrowser/AnnotationList.vue";
 import ConnectionList from "@/components/AnnotationBrowser/ConnectionList.vue";
+import MeasureTabMockup from "@/components/AnnotationBrowser/MeasureTabMockup.vue";
+
+// MOCKUP flag — flip to preview the Measurements-tab option.
+const MOCKUP_MEASURE_TAB = true;
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";

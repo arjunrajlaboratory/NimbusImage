@@ -111,6 +111,28 @@
       :data-tour="TOUR_ANCHORS.annotationListContent"
       class="annotation-list-content"
     >
+      <!-- MOCKUP Option 2: measurements chip strip -->
+      <property-chip-strip v-if="MOCKUP_CHIP_STRIP" />
+      <!-- MOCKUP Option 3: post-compute banner with auto-added columns -->
+      <v-alert
+        v-if="MOCKUP_COMPUTE_BANNER"
+        type="success"
+        variant="tonal"
+        density="compact"
+        class="mb-2 compute-banner"
+        closable
+      >
+        <div class="d-flex align-center flex-wrap ga-2">
+          <span>
+            <strong>Gene Expression</strong> finished computing — 2 values added
+            to the list, <strong>12 more</strong> available.
+          </span>
+          <v-btn variant="text" color="primary" size="small">Show all 14</v-btn>
+          <v-btn variant="text" color="primary" size="small">
+            Choose values…
+          </v-btn>
+        </div>
+      </v-alert>
       <v-dialog v-model="annotationFilteredDialog">
         <v-card>
           <v-card-title>
@@ -339,6 +361,11 @@ import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
+import PropertyChipStrip from "@/components/AnnotationBrowser/PropertyChipStrip.vue";
+
+// MOCKUP flags — flip to preview each property-discoverability option.
+const MOCKUP_CHIP_STRIP = true;
+const MOCKUP_COMPUTE_BANNER = false;
 import AnnotationListRow from "@/components/AnnotationBrowser/AnnotationListRow.vue";
 import PropertyColumnHeader from "@/components/AnnotationBrowser/PropertyColumnHeader.vue";
 

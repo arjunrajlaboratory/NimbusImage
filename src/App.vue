@@ -304,7 +304,31 @@
             </template>
           </v-tooltip>
         </div>
+        <!-- MOCKUP Option 4: promoted, labeled Measure entry with status badge -->
         <v-tooltip
+          v-if="MOCKUP_PROMOTED_MEASURE"
+          text="Measure objects: compute per-object values (area, intensity, …) and show them in the object list"
+        >
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              :data-tour="TOUR_ANCHORS.analyzeButton"
+              v-tour-trigger="TOUR_TRIGGERS.analyzeButton"
+              variant="outlined"
+              color="primary"
+              size="small"
+              class="ml-1 measure-mockup-btn"
+              aria-label="Measure objects"
+              @click="analyzeDialogOpen = true"
+            >
+              <v-icon size="16" start>mdi-ruler-square</v-icon>
+              Measure
+              <span class="palette-ibtn-badge measure-mockup-badge">2</span>
+            </v-btn>
+          </template>
+        </v-tooltip>
+        <v-tooltip
+          v-else
           text="Measure objects: configure and run property computations"
         >
           <template v-slot:activator="{ props: activatorProps }">
@@ -782,6 +806,9 @@ const allLeftPalettesOpen = computed(
 const anyLeftPaletteOpen = computed(
   () => navigatorPanel.value || layersPanel.value || toolsPanel.value,
 );
+
+// MOCKUP flag — flip to preview the promoted Measure button option.
+const MOCKUP_PROMOTED_MEASURE = true;
 
 // The Measure dialog is mounted once here but can be opened from several
 // places (app-bar ruler, Object Browser), so its open state lives in the
@@ -1440,6 +1467,12 @@ $palette-cluster-tone: #0f1217;
    The ring reuses the cluster's own tone, opaque, so the count reads as
    separate from the icon glyph it overlaps. It stays within the cluster's 4px
    padding and its 2px inter-button gap, so it never covers a neighbour. */
+/* MOCKUP Option 4: labeled Measure button hosts the same badge. */
+.measure-mockup-btn {
+  position: relative;
+  overflow: visible;
+}
+
 .palette-ibtn-badge {
   position: absolute;
   top: -1px;
