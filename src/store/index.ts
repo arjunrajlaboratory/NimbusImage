@@ -147,10 +147,9 @@ function apiRootFromGirderUrl(girderUrl: string) {
 // replayed to a different one when the user switches domains.
 const TOKEN_STORAGE_KEY = "nimbus.girderToken";
 
-// Per-configuration chain serializing saveColorByPropertyFor's direct
-// (configuration-not-current) writes. File scope, not module state: it holds
-// promises, which must never become reactive. See the action for why the
-// read-modify-write has to be serialized as a unit.
+// Per-configuration chain serializing EVERY colorByProperty write (current
+// path and direct path alike — see saveColorByPropertyFor). File scope, not
+// module state: it holds promises, which must never become reactive.
 const directColorByPropertyWrites = new Map<string, Promise<void>>();
 
 interface StoredAuth {
@@ -2391,11 +2390,15 @@ export class Main extends VuexModule {
   @Action
   async saveColorByProperty(state: IColorByPropertyState | null) {
     const datasetId = this.dataset?.id;
-    if (!this.configuration || !datasetId) {
+    const configurationId = this.configuration?.id;
+    if (!configurationId || !datasetId) {
       return;
     }
-    this.setConfigurationColorByProperty({ datasetId, state });
-    await this.syncConfiguration("colorByProperty");
+    // Delegates so that EVERY legend write joins the per-configuration
+    // chain: an unchained current-path write (e.g. the legend collapse
+    // toggle) could otherwise land inside a direct write's read window and
+    // be erased by its older full-key PUT.
+    await this.saveColorByPropertyFor({ datasetId, configurationId, state });
   }
 
   // Persist (state) or retire (null) the legend for a specific
@@ -2418,29 +2421,37 @@ export class Main extends VuexModule {
     configurationId: string;
     state: IColorByPropertyState | null;
   }) {
-    if (this.configuration?.id === configurationId) {
-      if (state === null && !this.configuration.colorByProperty?.[datasetId]) {
-        // Nothing to retire; writing would only churn the configuration.
-        return;
-      }
-      // The mutation takes the CAPTURED dataset id: a configuration is
-      // reusable across datasets, so "same configuration" does not imply the
-      // captured dataset is still the one open.
-      this.setConfigurationColorByProperty({ datasetId, state });
-      await this.syncConfiguration("colorByProperty");
-      return;
-    }
-    // The recolor outlived a configuration switch, so there is no live store
-    // copy to mutate: write to the captured configuration directly.
-    // Serialized per configuration, with the read INSIDE the chained task:
-    // two overlapping direct writes (slow recolors for two datasets sharing
-    // the configuration) would otherwise clone the same cached map, and the
-    // later full-key PUT would erase the earlier one's slot — a lost write,
-    // not mere staleness. Each chained write re-reads girderResources (every
-    // write path evicts it), so it sees its predecessor's result.
+    // EVERY write for a configuration — current-path and direct alike —
+    // joins one per-configuration chain, and the current-vs-direct decision
+    // happens INSIDE the chained task, at execution time. Serializing only
+    // the direct writes was the classic one-of-two-symmetric-paths miss:
+    // a current-path write completed during a direct write's awaited read
+    // still lost to the direct task's older full-key PUT landing last.
+    // Chained, the newer write runs after the older one and reads its
+    // result; and a task that finds its configuration reopened simply takes
+    // the live path. Two overlapping direct writes are covered for the same
+    // reason (each re-reads girderResources inside the chain — every write
+    // path evicts it).
     const previousWrite =
       directColorByPropertyWrites.get(configurationId) ?? Promise.resolve();
     const write = previousWrite.then(async () => {
+      if (this.configuration?.id === configurationId) {
+        if (
+          state === null &&
+          !this.configuration.colorByProperty?.[datasetId]
+        ) {
+          // Nothing to retire; writing would only churn the configuration.
+          return;
+        }
+        // The mutation takes the CAPTURED dataset id: a configuration is
+        // reusable across datasets, so "same configuration" does not imply
+        // the captured dataset is still the one open.
+        this.setConfigurationColorByProperty({ datasetId, state });
+        await this.syncConfiguration("colorByProperty");
+        return;
+      }
+      // The recolor outlived a configuration switch, so there is no live
+      // store copy to mutate: write to the captured configuration directly.
       const configuration =
         await girderResources.getConfiguration(configurationId);
       if (!configuration) {

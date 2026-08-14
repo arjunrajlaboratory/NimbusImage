@@ -361,6 +361,52 @@ describe("color-by-property configuration persistence", () => {
     expect(updateConfigurationKey).toHaveBeenCalledTimes(2);
   });
 
+  it("a current-path write queued during a direct write's read lands LAST on the backend", async () => {
+    // The direct path's awaited read is a window: the user can reopen the
+    // captured configuration and complete a NEWER legend write through the
+    // current-configuration path while the direct task still holds its
+    // stale map — and the direct task's full-key PUT would then land last,
+    // erasing the newer legend from the BACKEND (the live-copy guard only
+    // protects the store). Both paths must share one per-configuration
+    // chain so the newer write serializes after the older one.
+    setDataset("ds2");
+    const capturedConfiguration = {
+      id: "config1",
+      name: "config",
+      description: "",
+      ...exampleConfigurationBase(),
+      colorByProperty: { [DATASET_ID]: legendFixture },
+    };
+    (store.state as any).main.configuration = {
+      ...capturedConfiguration,
+      id: "config2",
+      colorByProperty: {},
+    };
+    // Slow read: the reopen + newer write happen inside this window.
+    (girderResources as any).getConfiguration = vi.fn(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve(capturedConfiguration), 10),
+        ),
+    );
+    const newerLegend = { ...legendFixture, propertyName: "Newer" };
+
+    const directRetire = main.saveColorByPropertyFor({
+      datasetId: DATASET_ID,
+      configurationId: "config1",
+      state: null,
+    });
+    // Reopen the captured configuration and write the newer legend through
+    // the current-configuration path while the direct read is pending.
+    (store.state as any).main.dataset = { id: DATASET_ID };
+    (store.state as any).main.configuration = capturedConfiguration;
+    const newerWrite = main.saveColorByProperty(newerLegend);
+    await Promise.all([directRetire, newerWrite]);
+
+    const lastWritten = updateConfigurationKey.mock.calls.at(-1)![0];
+    expect(lastWritten.colorByProperty[DATASET_ID]).toEqual(newerLegend);
+  });
+
   it("the post-PUT live patch does not overwrite a newer legend", async () => {
     // Sequence: direct-path retire of ds1's legend on config1 → config1 is
     // REOPENED during the PUT → a NEWER coloring writes ds1's live slot.

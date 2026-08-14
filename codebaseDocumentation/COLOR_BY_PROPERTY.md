@@ -612,6 +612,14 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       load, not the pre-write copy the user just reopened. —
       *"a configuration reopened during the direct PUT gets its live copy
       patched"*
+- [ ] **ALL legend writes to one configuration are serialized — current
+      path and direct path share the chain, with the path decision made at
+      execution time.** Chaining only the direct writes was the
+      one-of-two-symmetric-paths miss: a current-path write completing
+      during a direct write's awaited read still lost to the older full-key
+      PUT landing last on the backend. —
+      *"a current-path write queued during a direct write's read lands LAST
+      on the backend"*
 - [ ] **Direct legend writes to one configuration are serialized, and the
       live patch is conditional.** Two overlapping direct writes would clone
       the same cached map and the later full-key PUT would erase the
