@@ -375,6 +375,17 @@ whatever is loaded now.
 
 Known, accepted staleness (documented, not tracked):
 
+- **other configurations of the same dataset keep their own legends.**
+  `annotation.color` is dataset-global while legends live per
+  (configuration, dataset), so recoloring under configuration A leaves
+  configuration B's slot describing colors the dataset no longer has — for
+  B open in the same session and, unavoidably, for configurations that are
+  not open at all, including other users'. The client cannot fix this: it
+  would have to enumerate and write configurations the recoloring user may
+  not own (the permission-escalation shape the backend rules forbid). The
+  principled fix is moving legend provenance onto the dataset itself —
+  recoloring already requires dataset WRITE, so ownership aligns — noted as
+  the follow-up if this staleness bites in practice;
 - annotations created/imported *after* an apply have no property color until
   the user re-applies;
 - re-computing property values does not re-color; the legend describes the
