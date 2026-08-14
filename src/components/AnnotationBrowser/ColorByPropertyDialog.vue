@@ -123,12 +123,16 @@
         </v-alert>
       </v-card-text>
       <v-card-actions class="button-bar">
+        <!-- Disabled, not hidden, when logged out: an unauthenticated viewer
+             of a public dataset still sees the active coloring, but the
+             endpoint requires an authenticated write token (same rule as
+             Apply and the menu entries). -->
         <v-btn
           v-if="hasActiveColoring"
           variant="text"
           color="error"
           size="small"
-          :disabled="isApplying"
+          :disabled="isApplying || !store.isLoggedIn"
           @click="removeColoring"
         >
           Remove coloring

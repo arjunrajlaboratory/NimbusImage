@@ -4,6 +4,8 @@ import { mount, VueWrapper } from "@vue/test-utils";
 const mockedStore = vi.hoisted(() => ({
   isLoggedIn: true,
   configuration: { colorByProperty: null } as any,
+  // The per-dataset legend getter the dialog's hasActiveColoring reads.
+  colorByPropertyForCurrentDataset: null as any,
   annotationsAPI: {
     getColorByPropertyOptions: vi.fn(),
   },
@@ -37,6 +39,7 @@ describe("ColorByPropertyDialog", () => {
     vi.clearAllMocks();
     mockedStore.isLoggedIn = true;
     mockedStore.configuration = { colorByProperty: null };
+    mockedStore.colorByPropertyForCurrentDataset = null;
     mockedAnnotationStore.applyColorByProperty.mockResolvedValue({
       colored: 2,
       uncolored: 0,
@@ -182,6 +185,22 @@ describe("ColorByPropertyDialog", () => {
     wrapper.vm.percentileHighText = "9e999";
     expect(wrapper.vm.canApply).toBe(false);
     expect(wrapper.vm.boundErrors.percentileHigh).not.toBeNull();
+  });
+
+  it("disables Remove coloring for unauthenticated viewers", async () => {
+    // A logged-out viewer of a public dataset sees the active coloring and
+    // its legend; the endpoint requires an authenticated write token, so an
+    // enabled Remove button can only produce an authorization error.
+    mockedStore.isLoggedIn = false;
+    mockedStore.colorByPropertyForCurrentDataset = { propertyPath: ["p"] };
+    mountDialog(false);
+    // VDialog teleports its content to document.body, so query there.
+    await wrapper!.setProps({ show: true });
+    const removeButton = [...document.body.querySelectorAll("button")].find(
+      (button) => button.textContent?.includes("Remove coloring"),
+    );
+    expect(removeButton).toBeDefined();
+    expect(removeButton!.hasAttribute("disabled")).toBe(true);
   });
 
   it("a stale invalid bound does not block a categorical apply", () => {

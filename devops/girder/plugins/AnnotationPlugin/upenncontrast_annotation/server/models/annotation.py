@@ -1289,7 +1289,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
         """Assign each annotation's color from its value at propertyPath.
 
         Continuous mode maps numeric values through a colormap over
-        [rangeMin, rangeMax] (defaulting to the data extent); categorical
+        [rangeMin, rangeMax]; an omitted bound resolves from the percentile
+        parameters, which default to the 1st..99th (NOT the data extent —
+        real distributions are long-tailed, and a full-extent ramp collapses
+        into one bucket; see _colorContinuous). Categorical
         mode assigns palette colors per distinct value. Annotations without
         a usable value get color null (layer color). Returns
         {colored, uncolored, legend}, plus `assignment` (see

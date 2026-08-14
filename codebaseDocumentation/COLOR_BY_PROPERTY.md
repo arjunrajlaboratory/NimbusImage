@@ -642,6 +642,11 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
 - [ ] **The destructive warning stays in the dialog.** Applying overwrites every
       annotation's color, non-undoably. —
       *"warns that applying replaces all colors and cannot be undone"*
+- [ ] **Every mutating control in the dialog disables when logged out.** An
+      unauthenticated viewer of a public dataset sees the coloring and its
+      legend, but Apply, the menu entries, AND Remove coloring can only 401 —
+      the remove button was the one of the set that stayed enabled. —
+      *"disables Remove coloring for unauthenticated viewers"*
 - [ ] **Every `mdi-*` name resolves in the pinned `@mdi/font`.** This shipped
       with `mdi-gradient-horizontal`, which does not exist in 5.9.55, so the
       *More Actions* entry rendered with a blank icon slot — invisible to tsc,
