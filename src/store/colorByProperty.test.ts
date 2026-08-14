@@ -79,6 +79,33 @@ describe("color-by-property configuration persistence", () => {
     expect(updateConfigurationKey.mock.calls[0][1]).toBe("colorByProperty");
   });
 
+  it("invalidates the WRITTEN configuration's cache after a mid-PUT switch", async () => {
+    // syncConfiguration dispatches ressourceChanged after its awaited PUT; a
+    // configuration switch during the PUT must not redirect that
+    // invalidation to the newly opened configuration — the written one's
+    // cached copy would stay stale, so switching back to it in-session
+    // would restore an obsolete legend (or any other stale key).
+    setConfiguration(null);
+    (store.state as any).girderResources.resources = {
+      config1: { _modelType: "upenn_collection", _id: "config1" },
+      config2: { _modelType: "upenn_collection", _id: "config2" },
+    };
+    const capturedConfiguration = (store.state as any).main.configuration;
+    updateConfigurationKey.mockImplementation(async () => {
+      (store.state as any).main.configuration = {
+        ...capturedConfiguration,
+        id: "config2",
+        colorByProperty: {},
+      };
+      return {};
+    });
+    await main.saveColorByProperty(legendFixture);
+    const resources = (store.state as any).girderResources.resources;
+    expect("config1" in resources).toBe(false);
+    expect("config2" in resources).toBe(true);
+    (store.state as any).girderResources.resources = {};
+  });
+
   // colorAnnotationIds only retires the legend when it actually recolours
   // something, so these tests need an annotation that really gets patched.
   function seedPatchableStub(color: string | null = null) {

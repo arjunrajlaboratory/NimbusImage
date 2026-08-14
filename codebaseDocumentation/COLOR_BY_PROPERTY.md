@@ -118,10 +118,13 @@ Response:
      `categoricalColor(index)`, which cycles the 20-color palette and shifts
      lightness on each cycle so categories past the 20th stay distinguishable
      (a real 36-cluster clustering rendered only 20 distinct colors before
-     this). Reject with 400 as soon as distinct values exceed 256 — checked
-     **inside** the grouping loop, because forcing categorical on a continuous
-     property would otherwise build one group per value (measured: 555,479
-     groups before the cap rejected the request).
+     this). Reject with 400 as soon as distinct values exceed
+     `MAX_CATEGORIES` — derived as palette × cycles (20 × 5 = **100**), so
+     the cap and the palette's distinct capacity cannot drift apart — and
+     checked **inside** the grouping loop, because forcing categorical on a
+     continuous property would otherwise build one group per value
+     (measured: 555,479 groups before the then-256 cap rejected the
+     request).
 5. Write:
    - a `Model.update({datasetId}, {$set: {color: None}})` clearing pass so
      annotations without a value fall back to layer color — **skipped when the
@@ -441,7 +444,8 @@ Backend (`test_color_by_property.py`, tox):
   colormap colors, annotations without values get `color: null`;
 - explicit range clamps out-of-range values to the ends;
 - categorical mapping: distinct values each get a palette color; counts in
-  legend; >256 distinct values → 400 (raised as ValueError in model);
+  legend; more than `MAX_CATEGORIES` (100, derived from the palette) distinct
+  values → 400 (raised as ValueError in model);
 - auto mode picks continuous for numeric, categorical for strings;
 - nested property path resolution;
 - `clear: true` nulls colors and returns `legend: null`;
@@ -480,6 +484,11 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       raises `OverflowError`, not `False`, so the unguarded check was a 500. —
       *"testNonFiniteBoundsAreClean400s"*,
       *"testHugeIntIsNonFiniteNotAnError"*
+- [ ] **Individually finite bounds whose difference overflows are rejected
+      before any write.** `1e308 - -1e308 == inf`, so the mapping computed
+      every `t` against infinity — near-zero values silently took the first
+      color and a value at the bound produced NaN. —
+      *"testOverflowingSpanIsAClean400BeforeAnyWrite"*
 - [ ] **Invalid numeric text in a dialog bound field blocks Apply** instead of
       collapsing into the blank/"use default" state — the operation replaces
       every color, non-undoably, so a dropped constraint is destructive. Stale
@@ -518,9 +527,10 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
 
 ### Cost (regresses silently — no visible behavior change)
 
-- [ ] **Forcing categorical on a continuous property bails at the cap**, rather
-      than first building one group per distinct value (measured: 555,479 groups
-      before a 256 cap rejected the request). —
+- [ ] **Forcing categorical on a continuous property bails at the cap**
+      (`MAX_CATEGORIES` = 100, derived from the palette), rather than first
+      building one group per distinct value (measured: 555,479 groups before
+      the then-256 cap rejected the request). —
       *"testTooManyCategoriesBailsBeforeGroupingEverything"*
 - [ ] **The per-annotation state maps stay non-reactive.** A missing `markRaw`
       makes Vue proxy ~700K entries and dwarfs the operation; it is invisible to
@@ -611,6 +621,13 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       non-400 failure as "may have written" and refetches; the server cache
       must reach the same conclusion. —
       *"testFailedColorWritesStillInvalidateRaster"*
+- [ ] **`syncConfiguration` invalidates the configuration it WROTE, not the
+      one open when the PUT returns.** A mid-PUT configuration switch used to
+      redirect the `ressourceChanged` invalidation to the newly opened
+      configuration, leaving the written one's cached copy stale — switching
+      back in-session restored an obsolete legend from that cache. —
+      *"invalidates the WRITTEN configuration's cache after a mid-PUT
+      switch"*
 - [ ] **A dataset or configuration switch during a manual recolor still
       retires the CAPTURED pair's legend** — the recolor changed that
       dataset's colors regardless of what is open when it completes, and

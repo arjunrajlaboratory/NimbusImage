@@ -2240,9 +2240,16 @@ export class Main extends VuexModule {
       return;
     }
     sync.setSaving(true);
+    // Capture before the await: a configuration switch during the PUT must
+    // invalidate the configuration that was WRITTEN in girderResources —
+    // reading this.configuration.id afterwards invalidates the newly opened
+    // one instead, leaving the written one's cached copy stale (switching
+    // back in-session would restore an obsolete legend or any other stale
+    // key). Also keeps a mid-PUT dataset close from dereferencing null.
+    const configurationId = this.configuration.id;
     try {
       await this.api.updateConfigurationKey(this.configuration, key);
-      this.context.dispatch("ressourceChanged", this.configuration.id);
+      this.context.dispatch("ressourceChanged", configurationId);
       sync.setSaving(false);
     } catch (error) {
       sync.setSaving(error as Error);

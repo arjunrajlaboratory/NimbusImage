@@ -1439,6 +1439,17 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 "property's values" % (low, high)
             )
         span = high - low
+        # Individually finite bounds can still overflow their DIFFERENCE
+        # (rangeMin=-1e308, rangeMax=1e308 → span == inf): every t below
+        # would compute against infinity — near-zero values silently landing
+        # on the first color, a value at the bound producing NaN. Raised
+        # before any write, like every ValueError in this path (the API
+        # relays it as a 400 and the client skips its refetch on 400s).
+        if not math.isfinite(span):
+            raise ValueError(
+                "The requested range [%g, %g] is too wide to color by"
+                % (low, high)
+            )
 
         # Sample the colormap once per quantized level, not once per
         # annotation: table[level] == sampleColormap(colormap,

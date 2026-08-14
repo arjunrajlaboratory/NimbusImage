@@ -449,6 +449,30 @@ class TestColorByProperty:
             assertStatus(resp, 400)
             assert "finite number" in resp.json["message"], raw[:20]
 
+    def testOverflowingSpanIsAClean400BeforeAnyWrite(self, admin, server):
+        # Individually finite bounds can overflow their DIFFERENCE:
+        # 1e308 - -1e308 == inf, so t = (value - low) / span computed
+        # against infinity — near-zero values silently landed on the first
+        # color while a value at the bound produced NaN, surfacing an
+        # internal ValueError as if it were input validation.
+        folder, _ = self._makeDatasetWithValues(admin, [{"propA": 1}])
+        resp = self._colorBy(
+            server,
+            admin,
+            {
+                "datasetId": str(folder["_id"]),
+                "propertyPath": ["propA"],
+                "rangeMin": -1e308,
+                "rangeMax": 1e308,
+            },
+        )
+        assertStatus(resp, 400)
+        assert "too wide" in resp.json["message"]
+        # Rejected before any write: no color landed.
+        assert all(
+            color is None for color in self._colorsById(folder).values()
+        )
+
     def testDuplicatePropertyValueDocsDoNotHideAStaleColor(self, admin):
         # An annotation with two property-value documents used to land in two
         # colour groups, which inflated the covered-id count that decides the
