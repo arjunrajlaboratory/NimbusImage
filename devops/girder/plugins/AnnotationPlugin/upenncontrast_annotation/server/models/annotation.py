@@ -1322,19 +1322,17 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # datasetId, so a stale pair can never recolor a foreign annotation
         # — but an unfiltered map would still drive the range, the category
         # counts, and the returned assignment, distorting the legend and
-        # listing ids that were never written. One chunked, indexed id pass
-        # (the read twin of _buildColorOperations' write chunking).
-        presentIds = set()
-        staleIds = list(valueByAnnotation.keys())
-        for start in range(0, len(staleIds), self.COLOR_WRITE_CHUNK):
-            chunk = staleIds[start:start + self.COLOR_WRITE_CHUNK]
-            presentIds.update(
-                document["_id"]
-                for document in self.find(
-                    {"datasetId": datasetId, "_id": {"$in": chunk}},
-                    fields=["_id"],
-                )
+        # listing ids that were never written. One dataset-scoped, indexed
+        # id scan, NOT a chunked $in loop: chunking at COLOR_WRITE_CHUNK
+        # meant ~15 sequential round trips on the measured 708K dataset
+        # before any coloring started, and the whole id set is already in
+        # memory (valueByAnnotation's keys) at this point anyway.
+        presentIds = {
+            document["_id"]
+            for document in self.find(
+                {"datasetId": datasetId}, fields=["_id"]
             )
+        }
         valueByAnnotation = {
             annotationId: value
             for annotationId, value in valueByAnnotation.items()

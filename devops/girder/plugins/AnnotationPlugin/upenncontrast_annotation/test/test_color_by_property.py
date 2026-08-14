@@ -449,6 +449,30 @@ class TestColorByProperty:
             assertStatus(resp, 400)
             assert "finite number" in resp.json["message"], raw[:20]
 
+    def testMembershipFilterIsOneQueryNotAChunkLoop(self, admin, monkeypatch):
+        # The membership filter (see
+        # testMovedAnnotationsValuesAreExcludedFromTheMapping) must be one
+        # dataset-scoped id scan: a chunked $in loop issued one sequential
+        # find per 50K property-valued annotations (~15 round trips on the
+        # measured 708K dataset) before any coloring started.
+        folder, _ = self._makeDatasetWithValues(
+            admin, [{"propA": 1}, {"propA": 2}, {"propA": 3}]
+        )
+        model = Annotation()
+        # A chunk size of 1 makes a chunked implementation visible with a
+        # 3-annotation fixture (3 calls); the single-scan shape stays at 1.
+        monkeypatch.setattr(model, "COLOR_WRITE_CHUNK", 1)
+        realFind = model.find
+        findCalls = []
+
+        def countingFind(*args, **kwargs):
+            findCalls.append(args)
+            return realFind(*args, **kwargs)
+
+        monkeypatch.setattr(model, "find", countingFind)
+        model.colorByProperty(folder["_id"], ["propA"])
+        assert len(findCalls) == 1
+
     def testOverflowingSpanIsAClean400BeforeAnyWrite(self, admin, server):
         # Individually finite bounds can overflow their DIFFERENCE:
         # 1e308 - -1e308 == inf, so t = (value - low) / span computed

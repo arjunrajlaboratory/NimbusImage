@@ -265,6 +265,43 @@ describe("color-by-property configuration persistence", () => {
     expect((store.state as any).main.configuration.colorByProperty).toEqual({});
   });
 
+  it("a configuration reopened during the direct PUT gets its live copy patched", async () => {
+    // Sequence: recolor starts under config1 → user switches away (so the
+    // write takes the direct-PUT path) → user REOPENS config1 while the PUT
+    // is in flight. The reopened copy predates the write, and the cache
+    // eviction only helps the next load — the live store copy must be
+    // patched too, or the session keeps showing the stale legend.
+    setConfiguration(legendFixture);
+    const capturedConfiguration = (store.state as any).main.configuration;
+    seedPatchableStub().mockImplementation(async () => {
+      // Switched away by the time the write completes.
+      (store.state as any).main.dataset = { id: "ds2" };
+      (store.state as any).main.configuration = {
+        ...capturedConfiguration,
+        id: "config2",
+        colorByProperty: {},
+      };
+      return [];
+    });
+    (girderResources as any).getConfiguration = vi
+      .fn()
+      .mockResolvedValue(capturedConfiguration);
+    updateConfigurationKey.mockImplementation(async () => {
+      // Reopened the captured configuration while the PUT is in flight —
+      // the copy loaded is the PRE-write one, stale legend included.
+      (store.state as any).main.configuration = capturedConfiguration;
+      return {};
+    });
+
+    await annotationStore.colorAnnotationIds({
+      annotationIds: ["a1"],
+      color: "#ff0000",
+    });
+
+    // The live (reopened) copy no longer claims the retired legend.
+    expect((store.state as any).main.configuration.colorByProperty).toEqual({});
+  });
+
   it("a dataset switch under the SAME configuration retires the captured dataset's legend only", async () => {
     // A configuration is reusable across datasets, so the switch can keep
     // config1 open while the legend being retired belongs to ds1. The write

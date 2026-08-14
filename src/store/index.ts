@@ -2447,6 +2447,14 @@ export class Main extends VuexModule {
         { ...configuration, colorByProperty },
         "colorByProperty",
       );
+      // The user can REOPEN the captured configuration while the PUT is in
+      // flight; the copy they reopened predates the write, and the cache
+      // eviction below only helps the NEXT load. Patch the live slot so the
+      // session doesn't keep showing the stale legend the backend no longer
+      // has.
+      if (this.configuration?.id === configurationId) {
+        this.setConfigurationColorByProperty({ datasetId, state });
+      }
       this.context.dispatch("ressourceChanged", configurationId);
     } catch (error) {
       sync.setSaving(error as Error);

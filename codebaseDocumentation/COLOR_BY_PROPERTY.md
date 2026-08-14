@@ -603,6 +603,15 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       the legend range and appeared in the returned assignment while the
       writes (correctly) never touched it. —
       *"testMovedAnnotationsValuesAreExcludedFromTheMapping"*
+- [ ] **The membership filter is one dataset-scoped id scan, not a chunked
+      `$in` loop** — chunking at 50K meant ~15 sequential round trips on the
+      708K dataset before any coloring started. —
+      *"testMembershipFilterIsOneQueryNotAChunkLoop"*
+- [ ] **A configuration reopened while the direct legend PUT is in flight
+      gets its live copy patched** — the cache eviction only fixes the next
+      load, not the pre-write copy the user just reopened. —
+      *"a configuration reopened during the direct PUT gets its live copy
+      patched"*
 - [ ] **The annotation-overview raster repaints in the new colors.** The
       overview is a server-rendered image of `annotation.color`, so a recolor
       has to invalidate it on both sides: the client bumps `mutationCounter`
