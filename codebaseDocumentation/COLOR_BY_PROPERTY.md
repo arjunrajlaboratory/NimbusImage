@@ -595,8 +595,8 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       recolor written under a standing property legend — the same
       may-have-written shape as apply/clear, via `colorAnnotationIds`. —
       *"a failed manual recolor that may have written retires the legend
-      and resyncs"*, *"a 400 from a manual recolor keeps the legend
-      (nothing was written)"*
+      and resyncs"*, *"a pre-write rejection from a manual recolor keeps
+      the legend"*
 - [ ] **Stale property values (annotation moved to another dataset) are
       excluded from the mapping.** The value document's `datasetId` is
       denormalized; without the filter a moved annotation's value stretched
@@ -612,6 +612,22 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
       load, not the pre-write copy the user just reopened. —
       *"a configuration reopened during the direct PUT gets its live copy
       patched"*
+- [ ] **Direct legend writes to one configuration are serialized, and the
+      live patch is conditional.** Two overlapping direct writes would clone
+      the same cached map and the later full-key PUT would erase the
+      earlier's slot (a lost write); and the post-PUT live patch must not
+      clobber a slot a newer action wrote while the PUT ran. —
+      *"concurrent direct saves for two datasets on one configuration both
+      survive"*, *"the post-PUT live patch does not overwrite a newer
+      legend"*
+- [ ] **Pre-write rejections (400/401/403) keep the legend and skip the
+      refetch on every failure path.** The endpoints check dataset WRITE
+      access before any mutation, so a READ-only user's 403 is guaranteed
+      no-write — retiring their valid legend and refetching 700K stubs for
+      it was pure loss. —
+      *"a 403 keeps the legend and skips the refetch (authorization precedes
+      writes)"*, *"a pre-write rejection from a manual recolor keeps the
+      legend"*
 - [ ] **The annotation-overview raster repaints in the new colors.** The
       overview is a server-rendered image of `annotation.color`, so a recolor
       has to invalidate it on both sides: the client bumps `mutationCounter`

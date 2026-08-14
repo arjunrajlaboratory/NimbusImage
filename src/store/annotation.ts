@@ -76,6 +76,18 @@ type IndexedAnnotationUpdate = {
   updateCentroid?: boolean;
 };
 
+// Whether a failed color write can have changed backend colors. 400
+// (validation), 401 and 403 (authentication/authorization) are all raised
+// BEFORE the first mutation — the color endpoints check dataset WRITE access
+// up front, and the bulk update's access check precedes its saves — so those
+// leave colors untouched: the legend must stay and the refetch is pure
+// waste (a READ-only user clicking Apply used to lose their valid legend to
+// a guaranteed-no-write 403). Anything else can be a partial write.
+function failureMayHaveWritten(error: unknown): boolean {
+  const status = (error as any)?.response?.status;
+  return status !== 400 && status !== 401 && status !== 403;
+}
+
 function cloneAnnotation(annotation: IAnnotation): IAnnotation {
   const rawAnnotation = toRaw(annotation);
   return markRaw({
@@ -1726,11 +1738,7 @@ export class Annotations extends VuexModule {
       // design forbids — retire it (a missing legend is the accepted worst
       // case) and resync the canvas to whatever actually landed. A 400 was
       // rejected before any write, so nothing changed and the legend holds.
-      if (
-        (error as any)?.response?.status !== 400 &&
-        datasetId &&
-        configurationId
-      ) {
+      if (failureMayHaveWritten(error) && datasetId && configurationId) {
         await main.saveColorByPropertyFor({
           datasetId,
           configurationId,
@@ -1807,7 +1815,8 @@ export class Annotations extends VuexModule {
     const { propertyName, ...request } = params;
     // The backend's write covers the dataset, so any failure past validation
     // may have already changed colors — the canvas must not keep showing the
-    // old ones. A 400 is rejected before any write, so nothing changed and the
+    // old ones. 400/401/403 are rejected before any write (see
+    // failureMayHaveWritten), so nothing changed and the
     // (potentially large) refetch can be skipped.
     let backendMayHaveChanged = true;
     let applied = false;
@@ -1848,12 +1857,12 @@ export class Annotations extends VuexModule {
       }
       return result;
     } catch (error) {
-      backendMayHaveChanged = (error as any)?.response?.status !== 400;
+      backendMayHaveChanged = failureMayHaveWritten(error);
       // A non-400 failure can be a PARTIAL write (the bulk write is
       // unordered; the backend bumps its raster version in a finally for
       // exactly this case), so a legend persisted by an EARLIER apply now
       // describes neither the half-applied mapping nor the refetched
-      // colors. Retire it. A 400 was rejected before any write, so the
+      // colors. Retire it. 400/401/403 were rejected before any write, so the
       // earlier legend still holds and must stay.
       if (backendMayHaveChanged && configurationId) {
         await main.saveColorByPropertyFor({
@@ -1908,7 +1917,7 @@ export class Annotations extends VuexModule {
         });
       }
     } catch (error) {
-      backendMayHaveChanged = (error as any)?.response?.status !== 400;
+      backendMayHaveChanged = failureMayHaveWritten(error);
       // Same as applyColorByProperty's failure path: the clear's update can
       // fail partway, and partially cleared colors under a standing legend
       // is the same wrong-legend state — retire it. Nothing was written on

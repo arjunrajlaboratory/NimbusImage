@@ -147,6 +147,12 @@ function apiRootFromGirderUrl(girderUrl: string) {
 // replayed to a different one when the user switches domains.
 const TOKEN_STORAGE_KEY = "nimbus.girderToken";
 
+// Per-configuration chain serializing saveColorByPropertyFor's direct
+// (configuration-not-current) writes. File scope, not module state: it holds
+// promises, which must never become reactive. See the action for why the
+// read-modify-write has to be serialized as a unit.
+const directColorByPropertyWrites = new Map<string, Promise<void>>();
+
 interface StoredAuth {
   apiRoot: string;
   token: string;
@@ -2426,14 +2432,21 @@ export class Main extends VuexModule {
     }
     // The recolor outlived a configuration switch, so there is no live store
     // copy to mutate: write to the captured configuration directly.
-    // girderResources holds this session's latest copy (syncConfiguration
-    // invalidates it on every write).
-    try {
+    // Serialized per configuration, with the read INSIDE the chained task:
+    // two overlapping direct writes (slow recolors for two datasets sharing
+    // the configuration) would otherwise clone the same cached map, and the
+    // later full-key PUT would erase the earlier one's slot — a lost write,
+    // not mere staleness. Each chained write re-reads girderResources (every
+    // write path evicts it), so it sees its predecessor's result.
+    const previousWrite =
+      directColorByPropertyWrites.get(configurationId) ?? Promise.resolve();
+    const write = previousWrite.then(async () => {
       const configuration =
         await girderResources.getConfiguration(configurationId);
       if (!configuration) {
         return;
       }
+      const basedOn = configuration.colorByProperty?.[datasetId];
       const colorByProperty = { ...(configuration.colorByProperty ?? {}) };
       if (state === null) {
         if (!(datasetId in colorByProperty)) {
@@ -2451,13 +2464,33 @@ export class Main extends VuexModule {
       // flight; the copy they reopened predates the write, and the cache
       // eviction below only helps the NEXT load. Patch the live slot so the
       // session doesn't keep showing the stale legend the backend no longer
-      // has.
-      if (this.configuration?.id === configurationId) {
+      // has — but only while it still holds the value this write was based
+      // on: a NEWER action can have written the slot in the meantime, and
+      // clobbering it back would show the older legend until a reload.
+      if (
+        this.configuration?.id === configurationId &&
+        JSON.stringify(
+          this.configuration.colorByProperty?.[datasetId] ?? null,
+        ) === JSON.stringify(basedOn ?? null)
+      ) {
         this.setConfigurationColorByProperty({ datasetId, state });
       }
       this.context.dispatch("ressourceChanged", configurationId);
+    });
+    // Store settled so one failed write can't wedge the chain.
+    const chained = write.then(
+      () => undefined,
+      () => undefined,
+    );
+    directColorByPropertyWrites.set(configurationId, chained);
+    try {
+      await write;
     } catch (error) {
       sync.setSaving(error as Error);
+    } finally {
+      if (directColorByPropertyWrites.get(configurationId) === chained) {
+        directColorByPropertyWrites.delete(configurationId);
+      }
     }
   }
 

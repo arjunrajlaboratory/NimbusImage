@@ -213,15 +213,20 @@ describe("color-by-property configuration persistence", () => {
     expect(getAnnotationCount).toHaveBeenCalled();
   });
 
-  it("a 400 from a manual recolor keeps the legend (nothing was written)", async () => {
+  it("a pre-write rejection from a manual recolor keeps the legend", async () => {
+    // 400 (validation) and 401/403 (auth) are all raised before the
+    // backend's bulk save starts, so nothing changed and the legend holds.
     setConfiguration(legendFixture);
-    seedPatchableStub().mockRejectedValue({ response: { status: 400 } });
-    await expect(
-      annotationStore.colorAnnotationIds({
-        annotationIds: ["a1"],
-        color: "#ff0000",
-      }),
-    ).rejects.toBeTruthy();
+    const updateAnnotations = seedPatchableStub();
+    for (const status of [400, 401, 403]) {
+      updateAnnotations.mockRejectedValue({ response: { status } });
+      await expect(
+        annotationStore.colorAnnotationIds({
+          annotationIds: ["a1"],
+          color: "#ff0000",
+        }),
+      ).rejects.toBeTruthy();
+    }
     expect(main.colorByPropertyForCurrentDataset).toEqual(legendFixture);
     expect(updateConfigurationKey).not.toHaveBeenCalled();
   });
@@ -300,6 +305,102 @@ describe("color-by-property configuration persistence", () => {
 
     // The live (reopened) copy no longer claims the retired legend.
     expect((store.state as any).main.configuration.colorByProperty).toEqual({});
+  });
+
+  it("concurrent direct saves for two datasets on one configuration both survive", async () => {
+    // Two slow recolors for different datasets sharing the same NON-current
+    // configuration can finish concurrently. Without serializing the direct
+    // read-modify-write, both clone the same cached map and the later PUT
+    // erases the other dataset's freshly persisted legend — a lost write,
+    // not mere staleness.
+    setDataset("dsX");
+    (store.state as any).main.configuration = {
+      id: "configX",
+      name: "x",
+      description: "",
+      ...exampleConfigurationBase(),
+      colorByProperty: {},
+    };
+    const sharedConfiguration = {
+      id: "config1",
+      name: "config",
+      description: "",
+      ...exampleConfigurationBase(),
+      colorByProperty: {
+        ds1: legendFixture,
+        ds2: { ...legendFixture, propertyName: "Prop 2" },
+      },
+    };
+    let lastWritten: any = null;
+    const getConfiguration = vi
+      .fn()
+      .mockImplementation(async () => lastWritten ?? sharedConfiguration);
+    (girderResources as any).getConfiguration = getConfiguration;
+    updateConfigurationKey.mockImplementation(async (written: any) => {
+      // Slow PUT so the two saves genuinely overlap.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      lastWritten = written;
+      return written;
+    });
+
+    await Promise.all([
+      main.saveColorByPropertyFor({
+        datasetId: "ds1",
+        configurationId: "config1",
+        state: null,
+      }),
+      main.saveColorByPropertyFor({
+        datasetId: "ds2",
+        configurationId: "config1",
+        state: null,
+      }),
+    ]);
+
+    // Both retirements landed: the final written map holds neither slot.
+    expect(lastWritten.colorByProperty).toEqual({});
+    expect(updateConfigurationKey).toHaveBeenCalledTimes(2);
+  });
+
+  it("the post-PUT live patch does not overwrite a newer legend", async () => {
+    // Sequence: direct-path retire of ds1's legend on config1 → config1 is
+    // REOPENED during the PUT → a NEWER coloring writes ds1's live slot.
+    // When the older PUT resolves, its live patch must not clobber the
+    // newer slot back to the retired state.
+    setDataset("ds2");
+    const capturedConfiguration = {
+      id: "config1",
+      name: "config",
+      description: "",
+      ...exampleConfigurationBase(),
+      colorByProperty: { [DATASET_ID]: legendFixture },
+    };
+    (store.state as any).main.configuration = {
+      ...capturedConfiguration,
+      id: "config2",
+      colorByProperty: {},
+    };
+    (girderResources as any).getConfiguration = vi
+      .fn()
+      .mockResolvedValue(capturedConfiguration);
+    const newerLegend = { ...legendFixture, propertyName: "Newer" };
+    updateConfigurationKey.mockImplementation(async () => {
+      // Reopened mid-PUT, then a newer action wrote the same slot.
+      (store.state as any).main.configuration = capturedConfiguration;
+      (store.state as any).main.configuration.colorByProperty = {
+        [DATASET_ID]: newerLegend,
+      };
+      return {};
+    });
+
+    await main.saveColorByPropertyFor({
+      datasetId: DATASET_ID,
+      configurationId: "config1",
+      state: null,
+    });
+
+    expect(
+      (store.state as any).main.configuration.colorByProperty[DATASET_ID],
+    ).toEqual(newerLegend);
   });
 
   it("a dataset switch under the SAME configuration retires the captured dataset's legend only", async () => {
@@ -585,6 +686,24 @@ describe("applyColorByProperty / removeColorByProperty store actions", () => {
     ).rejects.toBeTruthy();
     expect(main.colorByPropertyForCurrentDataset).toEqual(legendFixture);
     expect(updateConfigurationKey).not.toHaveBeenCalled();
+  });
+
+  it("a 403 keeps the legend and skips the refetch (authorization precedes writes)", async () => {
+    // A logged-in user with READ but not WRITE access can click Apply; the
+    // endpoint's dataset WRITE check rejects with 403 BEFORE any color
+    // write. Classifying that as "may have written" retired their valid
+    // legend and refetched the whole dataset for nothing.
+    setConfiguration(legendFixture);
+    colorByPropertyApi.mockRejectedValue({ response: { status: 403 } });
+    await expect(
+      annotationStore.applyColorByProperty({
+        propertyPath: ["prop2"],
+        propertyName: "Prop 2",
+      }),
+    ).rejects.toBeTruthy();
+    expect(main.colorByPropertyForCurrentDataset).toEqual(legendFixture);
+    expect(updateConfigurationKey).not.toHaveBeenCalled();
+    expect(getAnnotationCount).not.toHaveBeenCalled();
   });
 
   it("a non-400 clear failure retires the legend too", async () => {
