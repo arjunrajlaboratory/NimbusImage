@@ -254,22 +254,6 @@
             </template>
           </v-tooltip>
           <v-tooltip
-            text="Analysis: plot object properties against each other and lasso-select objects to keep"
-          >
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: analysisPanel }"
-                aria-label="Analysis plots"
-                @click.stop="togglePalette('analysisPanel')"
-              >
-                <v-icon size="18">mdi-chart-scatter-plot</v-icon>
-              </button>
-            </template>
-          </v-tooltip>
-          <v-tooltip
             text="Snapshots for bookmarking and downloading cropped regions in your dataset"
           >
             <template v-slot:activator="{ props: activatorProps }">
