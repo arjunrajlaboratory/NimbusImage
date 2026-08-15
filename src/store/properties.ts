@@ -438,18 +438,52 @@ export class Properties extends VuexModule {
   updateDisplayedFromComputedProperties() {
     // This action is called in a global watcher (see "setupWatchers" in main store)
     // When propertyValues changes, some paths may be removed
-    const availablePaths = new Set(
-      this.computedPropertyPaths.map((path) => serializePropertyPath(path)),
-    );
-    // While properties or values haven't been fetched yet for the current
-    // dataset, computedPropertyPaths is empty; pruning against it would wipe
-    // the paths just hydrated from the configuration. Skip until data arrives.
-    if (availablePaths.size === 0) {
+    const displayed = this.displayedPropertyPaths;
+    let newPaths: string[][];
+    if (annotations.stubOnlyMode) {
+      // Lazy mode: `computedPropertyPaths` comes from a sample of
+      // PROPERTY_PATH_SAMPLE_SIZE value docs, so a path can be computed for
+      // the dataset yet absent from that sample — properties are shape/tag
+      // scoped and computed at different times, so whole columns can miss it.
+      // Pruning against the sample dropped valid columns, and the debounced
+      // annotation-browser save then persisted the loss (#1326). The only
+      // authoritative signal here is whether the path's property is still
+      // attached to the configuration; a retained column still renders, since
+      // its values are fetched by explicit path (findByAnnotationIds) rather
+      // than through discovery.
+      // An empty property list means they haven't been fetched yet.
+      if (this.properties.length === 0) {
+        return;
+      }
+      const knownPropertyIds = new Set(this.properties.map(({ id }) => id));
+      newPaths = displayed.filter((displayedPath) =>
+        knownPropertyIds.has(displayedPath[0]),
+      );
+    } else {
+      // Wholesale mode: `computedPropertyPaths` is derived from every loaded
+      // value, so it is authoritative and exact paths can be pruned.
+      const availablePaths = new Set(
+        this.computedPropertyPaths.map((path) => serializePropertyPath(path)),
+      );
+      // While properties or values haven't been fetched yet for the current
+      // dataset, computedPropertyPaths is empty; pruning against it would wipe
+      // the paths just hydrated from the configuration. Skip until data
+      // arrives.
+      if (availablePaths.size === 0) {
+        return;
+      }
+      newPaths = displayed.filter((displayedPath) =>
+        availablePaths.has(serializePropertyPath(displayedPath)),
+      );
+    }
+    // Both branches only ever drop entries, so an unchanged length means an
+    // unchanged list. Skip the write then: the array identity is a reactive
+    // dependency (AnnotationViewer re-runs ensureVisiblePropertyValues on it,
+    // which can commit property values and re-enter this watcher), and in lazy
+    // mode this action runs on every viewport-scoped value merge.
+    if (newPaths.length === displayed.length) {
       return;
     }
-    const newPaths = this.displayedPropertyPaths.filter((displayedPath) =>
-      availablePaths.has(serializePropertyPath(displayedPath)),
-    );
     this.setDisplayedPropertyPaths(newPaths);
   }
 

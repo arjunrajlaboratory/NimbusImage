@@ -156,6 +156,20 @@ Existing in-codebase idioms for writing once:
 
 Writes to genuinely *different* resources can't be merged (the configuration vs the dataset view are separate endpoints); say so at the call site rather than leaving it looking like an oversight.
 
+### Never reconcile persisted state against a partial source
+
+A reconcile-on-change watcher ("drop saved entries that no longer resolve") is only as correct as the set it validates against. When that set is a **sample, a page, a viewport-scoped cache, or anything else that is partial by design**, the watcher deletes valid user state — and because these stores persist through a *debounced* save (`main.scheduleAnnotationBrowserSave()` → `syncConfiguration`), the very next unrelated UI touch writes the deletion to the backend. The user sees nothing until the next session, when their columns/filters/plots are simply gone. Issue #1326: `updateDisplayedFromComputedProperties` pruned saved property columns against `computedPropertyPaths`, which in lazy (stub-only) mode is built from a 512-doc *sample*; three of five saved columns vanished from a real 708K-annotation dataset's configuration.
+
+Before writing (or reviewing) a prune, answer two questions:
+
+1. **Is the validating set complete?** Grep the getter to its source. `propertyValues` is a viewport-scoped merge cache in lazy mode; `annotations` holds stubs only; server-paginated lists hold one page. Any of those makes "not present ⇒ deleted" a false inference. An emptiness guard (`if (available.size === 0) return`) only covers *nothing loaded yet* — a **partially** loaded set sails straight past it, which is exactly why this shipped.
+2. **What is authoritative here?** Prune against the narrowest fact you can actually prove. For property paths in lazy mode that is "is this path's property still attached to the configuration" (`properties`), not "did this exact path appear in the sample". Different modes legitimately get different prune rules — branch on the mode rather than weakening both.
+
+Two follow-ons that apply to every such watcher:
+
+- **Skip the write when nothing changed.** A prune that only ever drops entries can compare lengths and return early. The replaced array's identity is a reactive dependency (in this case `AnnotationViewer` re-runs `ensureVisiblePropertyValues` on it, which can commit values and re-enter the same watcher), and these watchers run on *every* data change — every pan, in lazy mode.
+- **Reconciling on load is not the same as reconciling live.** `resolveAnnotationBrowserConfig` already drops paths whose property left the configuration at hydration time, against the authoritative `configuration.propertyIds`. Check whether the load-time reconcile already covers the case before making the live watcher do more than it can prove.
+
 ### Watching Getters That Rebuild Their Return Object
 
 `watch(() => someGetter, cb, { deep: true })` on a getter that returns a **new object on every read** fires on every dependency touch — including dependencies the getter reads but that don't change the output (`deep: true` skips the value comparison entirely). This shipped a real bug: a deep watch on `currentFilters` cleared the selection on every Z-scrub because the getter read `z` unconditionally. tsc/lint/reasoning all passed; only the live app caught it.
