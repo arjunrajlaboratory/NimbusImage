@@ -10,7 +10,7 @@
       <v-chip
         size="small"
         variant="outlined"
-        class="chip-new"
+        class="chip-new chip-accent-primary"
         @click="store.setIsAnalyzeDialogOpen(true)"
       >
         <v-icon size="14" start>mdi-plus</v-icon>
@@ -122,31 +122,17 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import store from "@/store";
-import propertyStore from "@/store/properties";
-import { IAnnotationProperty } from "@/store/model";
-import { findIndexOfPath } from "@/utils/paths";
-
-interface IPropertyEntry {
-  property: IAnnotationProperty;
-  paths: string[][];
-  shownCount: number;
-}
+import {
+  IPropertyEntry,
+  usePropertyEntries,
+  isPathShown,
+  togglePathVisibility,
+  propertyValueName,
+} from "@/utils/propertyEntries";
 
 const filterText = ref<string | null>(null);
 
-const propertyEntries = computed((): IPropertyEntry[] => {
-  const allPaths = propertyStore.computedPropertyPaths;
-  const displayed = propertyStore.displayedPropertyPaths;
-  return propertyStore.properties
-    .map((property) => {
-      const paths = allPaths.filter((path) => path[0] === property.id);
-      const shownCount = displayed.filter(
-        (path) => path[0] === property.id,
-      ).length;
-      return { property, paths, shownCount };
-    })
-    .filter((entry) => entry.paths.length > 0);
-});
+const propertyEntries = usePropertyEntries({ includeUncomputed: false });
 
 const query = computed(() => filterText.value?.trim().toLowerCase() ?? "");
 
@@ -177,18 +163,16 @@ function menuPaths(entry: IPropertyEntry): string[][] {
   );
 }
 
-function isShown(path: string[]): boolean {
-  return findIndexOfPath(path, propertyStore.displayedPropertyPaths) >= 0;
-}
+const isShown = isPathShown;
+const togglePath = togglePathVisibility;
+const subName = propertyValueName;
 
-function togglePath(path: string[]) {
-  propertyStore.togglePropertyPathVisibility(path);
-}
-
+// Toggles run synchronously in one tick, so Vue batches the watcher flush and
+// the debounced configuration save coalesces into a single write.
 function showAll(entry: IPropertyEntry) {
   for (const path of entry.paths) {
     if (!isShown(path)) {
-      propertyStore.togglePropertyPathVisibility(path);
+      togglePath(path);
     }
   }
 }
@@ -196,13 +180,9 @@ function showAll(entry: IPropertyEntry) {
 function hideAll(entry: IPropertyEntry) {
   for (const path of entry.paths) {
     if (isShown(path)) {
-      propertyStore.togglePropertyPathVisibility(path);
+      togglePath(path);
     }
   }
-}
-
-function subName(path: string[]): string {
-  return propertyStore.getSubIdsNameFromPath(path) ?? path.slice(1).join(" / ");
 }
 
 defineExpose({
@@ -290,7 +270,8 @@ defineExpose({
 }
 
 .chip-new {
-  border-style: dashed;
+  /* Dashed border and primary tinge come from .chip-accent-primary in
+     style.scss (scoped rules can't outrank the global chip overrides). */
   flex: 0 0 auto;
 }
 

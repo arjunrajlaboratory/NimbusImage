@@ -1,5 +1,8 @@
 <template>
-  <div class="measurements-tab">
+  <!-- The window item stays mounted once opened (hidden with v-show), so all
+       content is gated on isActive: a hidden tab must not re-render — and so
+       re-evaluate uncomputedCountByProperty — on every annotation change. -->
+  <div v-if="isActive" class="measurements-tab">
     <div class="measurements-toolbar">
       <v-btn
         variant="flat"
@@ -63,10 +66,15 @@
       >
         <div
           class="group-header"
-          :class="{ expandable: entry.paths.length > 0 }"
-          @click="toggleExpanded(entry.property.id)"
+          @click="entry.paths.length > 0 && toggleExpanded(entry.property.id)"
         >
-          <v-icon size="16" class="mr-1">
+          <!-- Invisible placeholder keeps names aligned when a group has no
+               values to expand. -->
+          <v-icon
+            size="16"
+            class="mr-1"
+            :class="{ 'chevron-hidden': entry.paths.length === 0 }"
+          >
             {{
               expanded.has(entry.property.id)
                 ? "mdi-chevron-down"
@@ -112,6 +120,27 @@
             {{ uncomputedCount(entry.property.id) }}
           </span>
         </div>
+        <!-- A failed Run must be visible here, not only in the Measure
+             dialog: computeProperty fills the errorInfo we registered on the
+             property's status. -->
+        <v-alert
+          v-for="(error, index) in errorsFor(entry.property.id)"
+          :key="`error-${index}`"
+          type="error"
+          density="compact"
+          class="group-alert"
+        >
+          {{ error.title }}: {{ error.error }}
+        </v-alert>
+        <v-alert
+          v-for="(warning, index) in warningsFor(entry.property.id)"
+          :key="`warning-${index}`"
+          type="warning"
+          density="compact"
+          class="group-alert"
+        >
+          {{ warning.title }}: {{ warning.warning }}
+        </v-alert>
         <div
           v-if="expanded.has(entry.property.id) && entry.paths.length > 0"
           class="group-body"
@@ -144,15 +173,24 @@
 import { computed, reactive } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
-import { IAnnotationProperty, IErrorInfoList } from "@/store/model";
-import { findIndexOfPath } from "@/utils/paths";
+import {
+  IAnnotationProperty,
+  IErrorInfoList,
+  MessageType,
+} from "@/store/model";
+import {
+  usePropertyEntries,
+  isPathShown,
+  togglePathVisibility,
+  propertyValueName,
+} from "@/utils/propertyEntries";
 
-interface IPropertyEntry {
-  property: IAnnotationProperty;
-  paths: string[][];
-  shownCount: number;
-}
+defineProps<{
+  isActive: boolean;
+}>();
 
+// Survives tab switches: the component stays mounted, only the template is
+// gated on isActive.
 const expanded = reactive(new Set<string>());
 
 function toggleExpanded(id: string) {
@@ -167,17 +205,7 @@ const properties = computed(() => propertyStore.properties);
 
 // Every property appears, including ones with no computed values yet — those
 // are exactly the ones a user needs to find and Run.
-const propertyEntries = computed((): IPropertyEntry[] => {
-  const allPaths = propertyStore.computedPropertyPaths;
-  const displayed = propertyStore.displayedPropertyPaths;
-  return properties.value.map((property) => {
-    const paths = allPaths.filter((path) => path[0] === property.id);
-    const shownCount = displayed.filter(
-      (path) => path[0] === property.id,
-    ).length;
-    return { property, paths, shownCount };
-  });
-});
+const propertyEntries = usePropertyEntries({ includeUncomputed: true });
 
 const uncomputedProperties = computed(() => {
   const counts = propertyStore.uncomputedCountByProperty;
@@ -206,8 +234,35 @@ function compute(property: IAnnotationProperty) {
   if (isRunning(property.id)) {
     return;
   }
+  // Register the errorInfo on the property's status (same pattern as
+  // Property.vue) so errorsFor/warningsFor can render failures in this tab.
   const errorInfo: IErrorInfoList = { errors: [] };
+  if (!propertyStore.propertyStatuses[property.id]) {
+    propertyStore.propertyStatuses[property.id] = {
+      running: false,
+      previousRun: null,
+      progressInfo: {},
+      errorInfo,
+    };
+  }
+  propertyStore.propertyStatuses[property.id].errorInfo = errorInfo;
   propertyStore.computeProperty({ property, errorInfo });
+}
+
+function errorsFor(propertyId: string) {
+  return (
+    propertyStore.propertyStatuses[propertyId]?.errorInfo?.errors.filter(
+      (error) => error.error && error.type === MessageType.ERROR,
+    ) ?? []
+  );
+}
+
+function warningsFor(propertyId: string) {
+  return (
+    propertyStore.propertyStatuses[propertyId]?.errorInfo?.errors.filter(
+      (error) => error.warning && error.type === MessageType.WARNING,
+    ) ?? []
+  );
 }
 
 function computeUncomputedProperties() {
@@ -216,17 +271,9 @@ function computeUncomputedProperties() {
   }
 }
 
-function isShown(path: string[]): boolean {
-  return findIndexOfPath(path, propertyStore.displayedPropertyPaths) >= 0;
-}
-
-function togglePath(path: string[]) {
-  propertyStore.togglePropertyPathVisibility(path);
-}
-
-function subName(path: string[]): string {
-  return propertyStore.getSubIdsNameFromPath(path) ?? path.slice(1).join(" / ");
-}
+const isShown = isPathShown;
+const togglePath = togglePathVisibility;
+const subName = propertyValueName;
 
 defineExpose({
   expanded,
@@ -236,6 +283,8 @@ defineExpose({
   uncomputedRunning,
   compute,
   computeUncomputedProperties,
+  errorsFor,
+  warningsFor,
   isShown,
   togglePath,
   subName,
@@ -303,6 +352,15 @@ defineExpose({
 .group-count {
   font-size: 11px;
   opacity: 0.55;
+}
+
+.chevron-hidden {
+  opacity: 0;
+}
+
+.group-alert {
+  margin: 0 10px 8px;
+  font-size: 12px;
 }
 
 .group-body {

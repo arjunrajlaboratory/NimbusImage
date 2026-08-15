@@ -25,7 +25,10 @@
         <annotation-list @clickedTag="clickedTag" />
       </v-window-item>
       <v-window-item value="measurements" class="browser-window-item">
-        <measurements-tab />
+        <!-- is-active gates rendering: once opened the item stays mounted
+             (hidden, not unmounted), and a hidden tab must not re-render on
+             every annotation/property change. -->
+        <measurements-tab :is-active="activeTab === 'measurements'" />
       </v-window-item>
       <v-window-item value="connections" class="browser-window-item">
         <!-- is-active drives the reveal-on-show retry: this component mounts

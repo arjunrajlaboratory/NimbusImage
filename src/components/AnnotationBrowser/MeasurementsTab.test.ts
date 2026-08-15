@@ -33,8 +33,8 @@ import store from "@/store";
 import propertyStore from "@/store/properties";
 import MeasurementsTab from "./MeasurementsTab.vue";
 
-function mountComponent() {
-  return mount(MeasurementsTab);
+function mountComponent(props: { isActive: boolean } = { isActive: true }) {
+  return mount(MeasurementsTab, { props });
 }
 
 describe("MeasurementsTab", () => {
@@ -138,5 +138,27 @@ describe("MeasurementsTab", () => {
     (propertyStore as any).properties = [];
     const wrapper = mountComponent();
     expect(wrapper.find(".measurements-empty").exists()).toBe(true);
+  });
+
+  it("renders nothing while inactive so a hidden tab does no work", () => {
+    const wrapper = mountComponent({ isActive: false });
+    expect(wrapper.find(".measurements-tab").exists()).toBe(false);
+  });
+
+  it("surfaces compute errors registered on the property status", () => {
+    (propertyStore as any).propertyStatuses.pending = {
+      running: false,
+      errorInfo: {
+        errors: [
+          { type: "error", error: "boom", title: "Compute failed" },
+          { type: "warning", warning: "slow", title: "Heads up" },
+        ],
+      },
+    };
+    const wrapper = mountComponent();
+    const alerts = wrapper.findAll(".group-alert");
+    expect(alerts).toHaveLength(2);
+    expect(wrapper.text()).toContain("Compute failed: boom");
+    expect(wrapper.text()).toContain("Heads up: slow");
   });
 });
