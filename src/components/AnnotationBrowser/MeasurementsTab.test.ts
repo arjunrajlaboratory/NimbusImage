@@ -109,6 +109,54 @@ describe("MeasurementsTab", () => {
     expect(wrapper.vm.expanded.has("genes")).toBe(false);
   });
 
+  it("uses a semantic expand button with aria-expanded state", async () => {
+    const wrapper = mountComponent();
+    const genesToggle = wrapper.findAll(".group-toggle")[1];
+
+    expect(genesToggle.element.tagName).toBe("BUTTON");
+    expect(genesToggle.attributes("aria-expanded")).toBe("false");
+    await genesToggle.trigger("keydown", { key: "Enter" });
+    expect(genesToggle.attributes("aria-expanded")).toBe("true");
+  });
+
+  it("renders expanded property values with virtual scrolling", async () => {
+    const wrapper = mountComponent();
+    wrapper.vm.toggleExpanded("genes");
+    await wrapper.vm.$nextTick();
+
+    const virtualScroll = wrapper.findComponent({ name: "VVirtualScroll" });
+    expect(virtualScroll.exists()).toBe(true);
+    expect(virtualScroll.props("items")).toEqual([
+      ["genes", "TCF7"],
+      ["genes", "SELL"],
+    ]);
+  });
+
+  it("gives value checkboxes descriptive accessible names", async () => {
+    const wrapper = mountComponent();
+    wrapper.vm.toggleExpanded("genes");
+    await wrapper.vm.$nextTick();
+
+    const labels = wrapper
+      .findAll('input[type="checkbox"]')
+      .map((checkbox) => checkbox.attributes("aria-label"));
+    expect(labels).toEqual(
+      expect.arrayContaining(["Hide TCF7 column", "Show SELL column"]),
+    );
+  });
+
+  it("keeps a stable accessible name and disables Run while computing", () => {
+    (propertyStore as any).propertyStatuses.pending.running = true;
+    const wrapper = mountComponent();
+    const runButtons = wrapper.findAll(".run-property");
+    const pendingRun = runButtons[2];
+
+    expect(pendingRun.attributes("aria-label")).toBe(
+      "Computing Not Computed Yet",
+    );
+    expect(pendingRun.attributes("disabled")).toBeDefined();
+  });
+
   it("the New measurement button opens the Measure dialog", async () => {
     const wrapper = mountComponent();
     await wrapper.find("button").trigger("click");

@@ -43,7 +43,15 @@ export function togglePathVisibility(path: string[]) {
   propertyStore.togglePropertyPathVisibility(path);
 }
 
+export function setPathsVisibility(paths: string[][], visible: boolean) {
+  propertyStore.setPropertyPathsVisibility({ paths, visible });
+}
+
 /** Display name of a value path without its property prefix. */
 export function propertyValueName(path: string[]): string {
   return propertyStore.getSubIdsNameFromPath(path) ?? path.slice(1).join(" / ");
+}
+
+export function propertyColumnActionLabel(path: string[]): string {
+  return `${isPathShown(path) ? "Hide" : "Show"} ${propertyValueName(path)} column`;
 }

@@ -23,5 +23,5 @@ export function computePropertyWithStatus(property: IAnnotationProperty) {
     };
   }
   propertyStore.propertyStatuses[property.id].errorInfo = errorInfo;
-  propertyStore.computeProperty({ property, errorInfo });
+  return propertyStore.computeProperty({ property, errorInfo });
 }

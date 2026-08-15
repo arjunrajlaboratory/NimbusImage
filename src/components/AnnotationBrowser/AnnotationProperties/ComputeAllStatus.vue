@@ -15,9 +15,7 @@
     @click="computeUncomputedProperties"
     :disabled="uncomputedRunning > 0"
   >
-    {{
-      uncomputedRunning > 0 ? "Running uncomputed properties" : "Compute all"
-    }}
+    {{ computeButtonLabel }}
     <template v-if="uncomputedRunning > 0">
       <v-progress-circular indeterminate size="16" width="2" class="ml-1" />
     </template>
@@ -31,7 +29,7 @@
 import { computed } from "vue";
 import propertyStore from "@/store/properties";
 import { IAnnotationProperty } from "@/store/model";
-import { computePropertyWithStatus } from "@/utils/propertyCompute";
+import { MAX_PROPERTY_COMPUTE_BATCH } from "@/store/constants";
 
 const props = withDefaults(
   defineProps<{
@@ -60,19 +58,27 @@ const uncomputedRunning = computed(
     ).length,
 );
 
+const computeButtonLabel = computed(() => {
+  if (uncomputedRunning.value > 0) {
+    return "Running uncomputed properties";
+  }
+  return uncomputedProperties.value.length > MAX_PROPERTY_COMPUTE_BATCH
+    ? `Compute next ${MAX_PROPERTY_COMPUTE_BATCH}`
+    : "Compute all";
+});
+
 function computeUncomputedProperties() {
   if (props.applyToAllDatasets) {
     emit("compute-properties-batch", uncomputedProperties.value);
     return;
   }
-  for (const property of uncomputedProperties.value) {
-    computePropertyWithStatus(property);
-  }
+  void propertyStore.computeProperties(uncomputedProperties.value);
 }
 
 defineExpose({
   uncomputedProperties,
   uncomputedRunning,
+  computeButtonLabel,
   computeUncomputedProperties,
 });
 </script>

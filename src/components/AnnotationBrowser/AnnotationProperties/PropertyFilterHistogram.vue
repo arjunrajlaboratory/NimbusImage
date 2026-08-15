@@ -117,6 +117,7 @@ import { IPropertyAnnotationFilter, PropertyFilterMode } from "@/store/model";
 import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
 import { area as d3Area, curveStepBefore } from "d3-shape";
 import { v4 as uuidv4 } from "uuid";
+import { logError } from "@/utils/log";
 
 import { scaleLinear, scaleSymlog } from "d3-scale";
 import debounce from "lodash/debounce";
@@ -367,7 +368,9 @@ onMounted(() => {
     valuesInput.value = propertyFilter.value.values.join(", ");
   }
 
-  filterStore.updateHistograms();
+  void filterStore
+    .updateHistograms()
+    .catch((error) => logError("Failed to refresh property histograms", error));
   initializeHandles();
 });
 

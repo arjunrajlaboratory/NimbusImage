@@ -440,7 +440,7 @@ vi.mock("@/store/filters", () => {
       roiFilters: [] as any[],
       emptyROIFilter: null as any,
       validateNewROIFilter: vi.fn(),
-      updateHistograms: vi.fn(),
+      updateHistograms: vi.fn().mockResolvedValue(undefined),
       // Every store member an immediate watcher in AnnotationViewer.vue reads
       // MUST be stubbed here. A missing one is not a silently absent stub: the
       // watcher throws on every one of this file's 300+ mounts, Vue's error

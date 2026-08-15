@@ -30,34 +30,45 @@
         :key="entry.property.id"
         class="measurement-group"
       >
-        <div
-          class="group-header"
-          @click="entry.paths.length > 0 && toggleExpanded(entry.property.id)"
-        >
-          <!-- Invisible placeholder keeps names aligned when a group has no
-               values to expand. -->
-          <v-icon
-            size="16"
-            class="mr-1"
-            :class="{ 'chevron-hidden': entry.paths.length === 0 }"
+        <div class="group-header">
+          <button
+            type="button"
+            class="group-toggle"
+            :disabled="entry.paths.length === 0"
+            :aria-expanded="
+              entry.paths.length > 0
+                ? expanded.has(entry.property.id)
+                : undefined
+            "
+            :aria-label="`Toggle ${entry.property.name} values`"
+            @click="toggleExpanded(entry.property.id)"
+            @keydown.enter.prevent="toggleExpanded(entry.property.id)"
+            @keydown.space.prevent="toggleExpanded(entry.property.id)"
           >
-            {{
-              expanded.has(entry.property.id)
-                ? "mdi-chevron-down"
-                : "mdi-chevron-right"
-            }}
-          </v-icon>
-          <span class="group-name">{{ entry.property.name }}</span>
-          <v-chip
-            v-if="entry.shownCount > 0"
-            size="x-small"
-            variant="tonal"
-            color="primary"
-            class="ml-2"
-          >
-            {{ entry.shownCount }} shown
-          </v-chip>
-          <v-spacer />
+            <!-- Invisible placeholder keeps names aligned when a group has no
+                 values to expand. -->
+            <v-icon
+              size="16"
+              class="mr-1"
+              :class="{ 'chevron-hidden': entry.paths.length === 0 }"
+            >
+              {{
+                expanded.has(entry.property.id)
+                  ? "mdi-chevron-down"
+                  : "mdi-chevron-right"
+              }}
+            </v-icon>
+            <span class="group-name">{{ entry.property.name }}</span>
+            <v-chip
+              v-if="entry.shownCount > 0"
+              size="x-small"
+              variant="tonal"
+              color="primary"
+              class="ml-2"
+            >
+              {{ entry.shownCount }} shown
+            </v-chip>
+          </button>
           <span class="group-count">
             {{
               entry.paths.length > 0
@@ -71,11 +82,23 @@
             size="x-small"
             variant="tonal"
             color="primary"
-            class="ml-2"
+            class="run-property ml-2"
+            :disabled="isRunning(entry.property.id)"
+            :aria-label="
+              isRunning(entry.property.id)
+                ? `Computing ${entry.property.name}`
+                : `Run ${entry.property.name}`
+            "
+            :aria-busy="isRunning(entry.property.id)"
             @click.stop="compute(entry.property)"
           >
             <template v-if="isRunning(entry.property.id)">
-              <v-progress-circular indeterminate size="14" width="2" />
+              <v-progress-circular
+                indeterminate
+                size="14"
+                width="2"
+                aria-hidden="true"
+              />
             </template>
             <template v-else>Run</template>
           </v-btn>
@@ -107,29 +130,30 @@
         >
           {{ warning.title }}: {{ warning.warning }}
         </v-alert>
-        <div
+        <v-virtual-scroll
           v-if="expanded.has(entry.property.id) && entry.paths.length > 0"
+          :items="entry.paths"
+          :height="Math.min(entry.paths.length * 32, 280)"
+          item-height="32"
           class="group-body"
         >
-          <div
-            v-for="path in entry.paths"
-            :key="path.join('.')"
-            class="value-row"
-            @click="togglePath(path)"
-          >
-            <v-checkbox-btn
-              :model-value="isShown(path)"
-              density="compact"
-              class="value-check"
-              @click.stop="togglePath(path)"
-            />
-            <span class="value-name">{{ subName(path) }}</span>
-            <v-spacer />
-            <v-icon size="14" class="value-eye">
-              {{ isShown(path) ? "mdi-eye" : "mdi-eye-off-outline" }}
-            </v-icon>
-          </div>
-        </div>
+          <template #default="{ item: path }">
+            <label :key="path.join('.')" class="value-row">
+              <v-checkbox-btn
+                :model-value="isShown(path)"
+                density="compact"
+                class="value-check"
+                :aria-label="columnActionLabel(path)"
+                @click.stop="togglePath(path)"
+              />
+              <span class="value-name">{{ subName(path) }}</span>
+              <v-spacer />
+              <v-icon size="14" class="value-eye">
+                {{ isShown(path) ? "mdi-eye" : "mdi-eye-off-outline" }}
+              </v-icon>
+            </label>
+          </template>
+        </v-virtual-scroll>
       </div>
     </div>
   </div>
@@ -146,6 +170,7 @@ import {
   isPathShown,
   togglePathVisibility,
   propertyValueName,
+  propertyColumnActionLabel,
 } from "@/utils/propertyEntries";
 import { computePropertyWithStatus } from "@/utils/propertyCompute";
 
@@ -182,7 +207,7 @@ function uncomputedCount(propertyId: string): number {
 function compute(property: IAnnotationProperty) {
   // Registers errorInfo on the property's status so errorsFor/warningsFor
   // can render failures in this tab; no-ops while already running.
-  computePropertyWithStatus(property);
+  void computePropertyWithStatus(property);
 }
 
 function errorsFor(propertyId: string) {
@@ -204,6 +229,7 @@ function warningsFor(propertyId: string) {
 const isShown = isPathShown;
 const togglePath = togglePathVisibility;
 const subName = propertyValueName;
+const columnActionLabel = propertyColumnActionLabel;
 
 defineExpose({
   expanded,
@@ -215,6 +241,7 @@ defineExpose({
   isShown,
   togglePath,
   subName,
+  columnActionLabel,
 });
 </script>
 
@@ -262,12 +289,29 @@ defineExpose({
 .group-header {
   display: flex;
   align-items: center;
-  padding: 8px 10px;
-  cursor: pointer;
+  padding: 4px 10px 4px 4px;
   user-select: none;
+}
 
-  &:hover {
+.group-toggle {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+
+  &:not(:disabled):hover {
     background: rgba(255, 255, 255, 0.04);
+  }
+
+  &:disabled {
+    cursor: default;
   }
 }
 

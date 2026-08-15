@@ -15,6 +15,7 @@ vi.mock("@/store/properties", () => ({
     uncomputedCountByProperty: {},
     propertyStatuses: {},
     computeProperty: vi.fn(),
+    computeProperties: vi.fn(),
   },
 }));
 
@@ -68,22 +69,21 @@ describe("ComputeAllStatus", () => {
     expect(wrapper.vm.uncomputedRunning).toBe(1);
   });
 
-  it("computeUncomputedProperties calls computeProperty for each", () => {
+  it("computeUncomputedProperties submits the group through one store action", () => {
     const wrapper = mountComponent();
     wrapper.vm.computeUncomputedProperties();
-    expect(propertyStore.computeProperty).toHaveBeenCalledTimes(1);
-    expect(
-      (propertyStore.computeProperty as any).mock.calls[0][0].property.id,
-    ).toBe("prop-1");
+    expect(propertyStore.computeProperties).toHaveBeenCalledTimes(1);
+    expect(propertyStore.computeProperties).toHaveBeenCalledWith([
+      expect.objectContaining({ id: "prop-1" }),
+    ]);
+    expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 
-  it("registers the errorInfo on the property status before computing", () => {
+  it("does not create per-property error state in the component", () => {
     const wrapper = mountComponent();
     wrapper.vm.computeUncomputedProperties();
-    const passedErrorInfo = (propertyStore.computeProperty as any).mock
-      .calls[0][0].errorInfo;
     expect((propertyStore as any).propertyStatuses["prop-1"].errorInfo).toBe(
-      passedErrorInfo,
+      undefined,
     );
   });
 
@@ -91,6 +91,25 @@ describe("ComputeAllStatus", () => {
     const wrapper = mountComponent({ applyToAllDatasets: true });
     wrapper.vm.computeUncomputedProperties();
     expect(wrapper.emitted("compute-properties-batch")).toBeTruthy();
+    expect(propertyStore.computeProperties).not.toHaveBeenCalled();
     expect(propertyStore.computeProperty).not.toHaveBeenCalled();
+  });
+
+  it("labels an over-limit run as the next bounded batch", () => {
+    (propertyStore as any).properties = Array.from(
+      { length: 101 },
+      (_, index) => ({ id: `prop-${index}`, name: `Prop ${index}` }),
+    );
+    (propertyStore as any).uncomputedCountByProperty = Object.fromEntries(
+      (propertyStore as any).properties.map((property: any) => [
+        property.id,
+        1,
+      ]),
+    );
+    (propertyStore as any).propertyStatuses = {};
+
+    const wrapper = mountComponent();
+
+    expect(wrapper.text()).toContain("Compute next 100");
   });
 });

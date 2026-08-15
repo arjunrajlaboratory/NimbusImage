@@ -5,6 +5,17 @@ export const MAX_NUMBER_OF_RECENT_DATASET_VIEWS = 20;
 // authoritative batch actions enforce the same limit.
 export const BATCH_DATASET_LIMIT = 50;
 
+// A data table with hundreds or thousands of value columns is not usable and
+// multiplies render/sort/filter work for every visible annotation. Keep this
+// as a store invariant so bulk controls, individual toggles, and persisted
+// configuration hydration cannot bypass it.
+export const MAX_DISPLAYED_PROPERTY_PATHS = 100;
+
+// Compute-all advances through larger configurations in explicit chunks
+// rather than entering a running state for an unbounded set. A backend batch
+// endpoint with the same limit is planned; keep the two in sync when it lands.
+export const MAX_PROPERTY_COMPUTE_BATCH = 100;
+
 // Upper bound on how many annotations "Connect selected" will chain in one go.
 // Without it, a select-all in the Objects tab (routinely tens of thousands of
 // objects) followed by one click would POST that many connections in a single

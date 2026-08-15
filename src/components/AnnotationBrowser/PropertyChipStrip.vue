@@ -41,6 +41,8 @@
           :variant="entry.shownCount > 0 ? 'flat' : 'outlined'"
           :color="entry.shownCount > 0 ? 'primary' : undefined"
           :class="{ 'chip-off': entry.shownCount === 0 }"
+          :disabled="!isShown(entry.paths[0]) && columnLimitReached"
+          :aria-label="columnActionLabel(entry.paths[0])"
           @click="togglePath(entry.paths[0])"
         >
           <v-icon size="14" start>
@@ -76,7 +78,9 @@
                 variant="text"
                 size="x-small"
                 @click="showAll(entry)"
-                :disabled="entry.shownCount === entry.paths.length"
+                :disabled="
+                  entry.shownCount === entry.paths.length || columnLimitReached
+                "
               >
                 Show all
               </v-btn>
@@ -89,26 +93,42 @@
                 Hide all
               </v-btn>
             </div>
+            <div
+              v-if="columnLimitReached && entry.shownCount < entry.paths.length"
+              class="path-limit"
+            >
+              {{ MAX_DISPLAYED_PROPERTY_PATHS }}-column limit reached. Hide a
+              column to show another value.
+            </div>
             <v-divider class="my-1" />
-            <v-list density="compact" class="path-list">
-              <v-list-item
-                v-for="path in menuPaths(entry)"
-                :key="path.join('.')"
-                class="path-item"
-                @click="togglePath(path)"
-              >
-                <template #prepend>
-                  <v-checkbox-btn
-                    :model-value="isShown(path)"
-                    density="compact"
-                    @click.stop="togglePath(path)"
-                  />
-                </template>
-                <v-list-item-title class="path-title">
-                  {{ subName(path) }}
-                </v-list-item-title>
-              </v-list-item>
-            </v-list>
+            <v-virtual-scroll
+              :items="menuPaths(entry)"
+              :height="Math.min(entry.paths.length * 36, 280)"
+              item-height="36"
+              class="path-list"
+            >
+              <template #default="{ item: path }">
+                <v-list-item
+                  :key="path.join('.')"
+                  class="path-item"
+                  :disabled="!isShown(path) && columnLimitReached"
+                  @click="togglePath(path)"
+                >
+                  <template #prepend>
+                    <v-checkbox-btn
+                      :model-value="isShown(path)"
+                      density="compact"
+                      :disabled="!isShown(path) && columnLimitReached"
+                      :aria-label="columnActionLabel(path)"
+                      @click.stop="togglePath(path)"
+                    />
+                  </template>
+                  <v-list-item-title class="path-title">
+                    {{ subName(path) }}
+                  </v-list-item-title>
+                </v-list-item>
+              </template>
+            </v-virtual-scroll>
           </v-card>
         </v-menu>
       </template>
@@ -122,19 +142,27 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import store from "@/store";
+import propertyStore from "@/store/properties";
 import {
   IPropertyEntry,
   usePropertyEntries,
   isPathShown,
   togglePathVisibility,
+  setPathsVisibility,
   propertyValueName,
+  propertyColumnActionLabel,
 } from "@/utils/propertyEntries";
+import { MAX_DISPLAYED_PROPERTY_PATHS } from "@/store/constants";
 
 const filterText = ref<string | null>(null);
 
 const propertyEntries = usePropertyEntries({ includeUncomputed: false });
 
 const query = computed(() => filterText.value?.trim().toLowerCase() ?? "");
+const columnLimitReached = computed(
+  () =>
+    propertyStore.displayedPropertyPaths.length >= MAX_DISPLAYED_PROPERTY_PATHS,
+);
 
 // A property matches when its name or any of its value names contains the
 // query, so e.g. a gene name finds the property that computed it.
@@ -166,23 +194,14 @@ function menuPaths(entry: IPropertyEntry): string[][] {
 const isShown = isPathShown;
 const togglePath = togglePathVisibility;
 const subName = propertyValueName;
+const columnActionLabel = propertyColumnActionLabel;
 
-// Toggles run synchronously in one tick, so Vue batches the watcher flush and
-// the debounced configuration save coalesces into a single write.
 function showAll(entry: IPropertyEntry) {
-  for (const path of entry.paths) {
-    if (!isShown(path)) {
-      togglePath(path);
-    }
-  }
+  setPathsVisibility(entry.paths, true);
 }
 
 function hideAll(entry: IPropertyEntry) {
-  for (const path of entry.paths) {
-    if (isShown(path)) {
-      togglePath(path);
-    }
-  }
+  setPathsVisibility(entry.paths, false);
 }
 
 defineExpose({
@@ -195,6 +214,8 @@ defineExpose({
   showAll,
   hideAll,
   subName,
+  columnLimitReached,
+  columnActionLabel,
 });
 </script>
 
@@ -288,7 +309,12 @@ defineExpose({
 
 .path-list {
   max-height: 280px;
-  overflow-y: auto;
+}
+
+.path-limit {
+  padding: 2px 6px 4px;
+  color: rgb(var(--v-theme-warning));
+  font-size: 11px;
 }
 
 .path-title {
