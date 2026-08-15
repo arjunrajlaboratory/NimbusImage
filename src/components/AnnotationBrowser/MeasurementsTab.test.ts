@@ -75,13 +75,6 @@ describe("MeasurementsTab", () => {
     expect(wrapper.text()).toContain("not computed");
   });
 
-  it("uncomputedProperties reflects the store counts", () => {
-    const wrapper = mountComponent();
-    expect(wrapper.vm.uncomputedProperties.map((p: any) => p.id)).toEqual([
-      "pending",
-    ]);
-  });
-
   it("compute delegates to the store", () => {
     const wrapper = mountComponent();
     wrapper.vm.compute({ id: "pending", name: "Not Computed Yet" } as any);
@@ -96,18 +89,6 @@ describe("MeasurementsTab", () => {
     const wrapper = mountComponent();
     wrapper.vm.compute({ id: "pending", name: "Not Computed Yet" } as any);
     expect(propertyStore.computeProperty).not.toHaveBeenCalled();
-  });
-
-  it("computeUncomputedProperties runs each property with uncomputed objects", () => {
-    const wrapper = mountComponent();
-    wrapper.vm.computeUncomputedProperties();
-    expect(propertyStore.computeProperty).toHaveBeenCalledTimes(1);
-  });
-
-  it("uncomputedRunning counts running uncomputed properties", () => {
-    (propertyStore as any).propertyStatuses.pending.running = true;
-    const wrapper = mountComponent();
-    expect(wrapper.vm.uncomputedRunning).toBe(1);
   });
 
   it("togglePath delegates to the store", () => {

@@ -14,41 +14,7 @@
         New measurement
       </v-btn>
       <v-spacer />
-      <template v-if="properties.length > 0">
-        <span
-          v-if="uncomputedProperties.length <= 0"
-          class="text-none px-2 text-success"
-        >
-          Computations done
-          <v-icon size="small" color="success">mdi-check</v-icon>
-        </span>
-        <v-btn
-          v-else
-          variant="text"
-          size="small"
-          color="primary"
-          class="text-none px-2"
-          @click="computeUncomputedProperties"
-          :disabled="uncomputedRunning > 0"
-        >
-          {{
-            uncomputedRunning > 0
-              ? "Running uncomputed properties"
-              : "Compute all"
-          }}
-          <template v-if="uncomputedRunning > 0">
-            <v-progress-circular
-              indeterminate
-              size="16"
-              width="2"
-              class="ml-1"
-            />
-          </template>
-          <template v-else>
-            <v-icon size="small" end>mdi-play-circle-outline</v-icon>
-          </template>
-        </v-btn>
-      </template>
+      <compute-all-status v-if="properties.length > 0" />
     </div>
     <div class="measurements-hint">
       Checked values appear as columns in the Objects tab and can be used in
@@ -173,17 +139,15 @@
 import { computed, reactive } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
-import {
-  IAnnotationProperty,
-  IErrorInfoList,
-  MessageType,
-} from "@/store/model";
+import ComputeAllStatus from "@/components/AnnotationBrowser/AnnotationProperties/ComputeAllStatus.vue";
+import { IAnnotationProperty, MessageType } from "@/store/model";
 import {
   usePropertyEntries,
   isPathShown,
   togglePathVisibility,
   propertyValueName,
 } from "@/utils/propertyEntries";
+import { computePropertyWithStatus } from "@/utils/propertyCompute";
 
 defineProps<{
   isActive: boolean;
@@ -207,21 +171,6 @@ const properties = computed(() => propertyStore.properties);
 // are exactly the ones a user needs to find and Run.
 const propertyEntries = usePropertyEntries({ includeUncomputed: true });
 
-const uncomputedProperties = computed(() => {
-  const counts = propertyStore.uncomputedCountByProperty;
-  return properties.value.filter((property) => (counts[property.id] ?? 0) > 0);
-});
-
-const uncomputedRunning = computed(() => {
-  let value = 0;
-  for (const property of uncomputedProperties.value) {
-    if (propertyStore.propertyStatuses[property.id]?.running) {
-      value++;
-    }
-  }
-  return value;
-});
-
 function isRunning(propertyId: string): boolean {
   return propertyStore.propertyStatuses[propertyId]?.running ?? false;
 }
@@ -231,22 +180,9 @@ function uncomputedCount(propertyId: string): number {
 }
 
 function compute(property: IAnnotationProperty) {
-  if (isRunning(property.id)) {
-    return;
-  }
-  // Register the errorInfo on the property's status (same pattern as
-  // Property.vue) so errorsFor/warningsFor can render failures in this tab.
-  const errorInfo: IErrorInfoList = { errors: [] };
-  if (!propertyStore.propertyStatuses[property.id]) {
-    propertyStore.propertyStatuses[property.id] = {
-      running: false,
-      previousRun: null,
-      progressInfo: {},
-      errorInfo,
-    };
-  }
-  propertyStore.propertyStatuses[property.id].errorInfo = errorInfo;
-  propertyStore.computeProperty({ property, errorInfo });
+  // Registers errorInfo on the property's status so errorsFor/warningsFor
+  // can render failures in this tab; no-ops while already running.
+  computePropertyWithStatus(property);
 }
 
 function errorsFor(propertyId: string) {
@@ -265,12 +201,6 @@ function warningsFor(propertyId: string) {
   );
 }
 
-function computeUncomputedProperties() {
-  for (const property of uncomputedProperties.value) {
-    compute(property);
-  }
-}
-
 const isShown = isPathShown;
 const togglePath = togglePathVisibility;
 const subName = propertyValueName;
@@ -279,10 +209,7 @@ defineExpose({
   expanded,
   toggleExpanded,
   propertyEntries,
-  uncomputedProperties,
-  uncomputedRunning,
   compute,
-  computeUncomputedProperties,
   errorsFor,
   warningsFor,
   isShown,
