@@ -67,6 +67,76 @@ describe("resetPropertyState (Finding 7)", () => {
   });
 });
 
+// The pruner runs from a global watcher on propertyValues, and any later
+// annotation-browser change persists the pruned list into the configuration —
+// so a wrong prune here silently and permanently drops saved columns (#1326).
+describe("updateDisplayedFromComputedProperties in lazy mode", () => {
+  const setProperties = (ids: string[]) =>
+    (
+      properties as unknown as {
+        setPropertiesImpl: (props: { id: string; name: string }[]) => void;
+      }
+    ).setPropertiesImpl(ids.map((id) => ({ id, name: id })));
+
+  beforeEach(() => {
+    properties.resetPropertyState();
+    setProperties([]);
+    annotationMock.stubOnlyMode = true;
+  });
+
+  it("keeps a displayed path that the sampled discovery missed", () => {
+    // Only propA appeared in the bounded value-doc sample; propB is computed
+    // for the dataset but sits outside it.
+    setProperties(["propA", "propB"]);
+    properties.setDiscoveredPropertyPaths([["propA", "Area"]]);
+    properties.hydrateDisplayedPropertyPaths([
+      ["propA", "Area"],
+      ["propB", "MeanIntensity"],
+    ]);
+
+    properties.updateDisplayedFromComputedProperties();
+
+    expect(properties.displayedPropertyPaths).toEqual([
+      ["propA", "Area"],
+      ["propB", "MeanIntensity"],
+    ]);
+  });
+
+  it("prunes a path whose property left the configuration", () => {
+    setProperties(["propA"]);
+    properties.setDiscoveredPropertyPaths([["propA", "Area"]]);
+    properties.hydrateDisplayedPropertyPaths([
+      ["propA", "Area"],
+      ["deletedProp", "Area"],
+    ]);
+
+    properties.updateDisplayedFromComputedProperties();
+
+    expect(properties.displayedPropertyPaths).toEqual([["propA", "Area"]]);
+  });
+
+  it("keeps hydrated paths while the property list has not loaded yet", () => {
+    properties.hydrateDisplayedPropertyPaths([["propA", "Area"]]);
+
+    properties.updateDisplayedFromComputedProperties();
+
+    expect(properties.displayedPropertyPaths).toEqual([["propA", "Area"]]);
+  });
+
+  it("does not replace the array when nothing is pruned", () => {
+    // The array identity is a reactive dependency (AnnotationViewer refetches
+    // visible values on it), and this runs on every viewport value merge.
+    setProperties(["propA"]);
+    properties.setDiscoveredPropertyPaths([["propA", "Area"]]);
+    properties.hydrateDisplayedPropertyPaths([["propA", "Area"]]);
+    const before = properties.displayedPropertyPaths;
+
+    properties.updateDisplayedFromComputedProperties();
+
+    expect(properties.displayedPropertyPaths).toBe(before);
+  });
+});
+
 describe("ensureVisiblePropertyValues stale guard (Finding 6)", () => {
   beforeEach(() => {
     getPropertyValuesForIds.mockReset();

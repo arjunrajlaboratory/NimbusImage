@@ -1213,6 +1213,55 @@ paths for the visible set, not per-column-lazy); D3 server aggregation for plots
 (plots and the properties panels still read the cache / load wholesale); D4 PV stubs; D5
 explicit LRU eviction (Stage 1/2 bound via visible-set scoping rather than an LRU counter).
 
+#### Sampled discovery is NOT authoritative — never prune saved state against it (issue #1326)
+
+`discoveredPropertyPaths` comes from `PROPERTY_PATH_SAMPLE_SIZE = 512` value docs, and the
+"property structure is homogeneous across a dataset" assumption that justifies the sample
+**does not hold** in general: properties are shape/tag-scoped
+(`canComputeAnnotationProperty`) and are computed at different times, so a property computed
+only for, say, `cell`-tagged polygons can be entirely absent from the sample while being
+computed for hundreds of thousands of annotations.
+
+`updateDisplayedFromComputedProperties` (the global watcher on `propertyValues`) used to
+prune `displayedPropertyPaths` against `computedPropertyPaths` in **both** modes. In lazy
+mode that meant pruning saved columns against a sample, and the next annotation-browser
+change (any filter tweak or column toggle) persisted the pruned list through the debounced
+`saveAnnotationBrowserConfig` — silently and permanently dropping columns from the
+configuration. Observed live on the 708K dataset: 3 of 5 saved columns disappeared between
+sessions.
+
+The prune is now mode-aware:
+
+| Mode | Path set pruned against | Skipped while |
+|---|---|---|
+| wholesale (client) | `computedPropertyPaths` (exact paths, derived from every loaded value — authoritative) | `computedPropertyPaths` is empty |
+| lazy (stub-only) | the **property ids** still attached to the configuration | `properties` is empty |
+
+A displayed column retained in lazy mode still renders: values are fetched by explicit path
+(`findByAnnotationIds` projection), never through discovery. The remaining consequence is
+that a path missing from the sample is not offered by `PropertyPicker` (it lists
+`computedPropertyPaths`), so such a column can be *removed* (the list header's
+`removePropertyColumn`) but not re-*added* until the sample happens to include it. Making
+discovery authoritative — a server-side distinct-path aggregation over the dataset's value
+docs — is the follow-up that would close that gap (see D3).
+
+**Regression checklist for property-path discovery / pruning** (all in
+`store/__tests__/properties.test.ts` unless noted):
+- Lazy mode keeps a displayed path the sample missed — "keeps a displayed path that the
+  sampled discovery missed".
+- Lazy mode still drops a path whose property left the configuration — "prunes a path whose
+  property left the configuration".
+- Neither mode prunes before its input has loaded — "keeps hydrated paths while the property
+  list has not loaded yet" and, for wholesale mode, `annotationBrowserConfig.test.ts` "keeps
+  hydrated paths while no property values are available yet".
+- Wholesale mode still prunes exact stale paths — `annotationBrowserConfig.test.ts` "still
+  prunes stale paths once values are available".
+- The action does not replace `displayedPropertyPaths` when nothing was pruned — "does not
+  replace the array when nothing is pruned". Cost invariant with no visible behavior: the
+  array identity is a reactive dependency (`AnnotationViewer` re-runs
+  `ensureVisiblePropertyValues` on it, which can commit values and re-enter this watcher),
+  and in lazy mode the action runs on **every** viewport-scoped value merge, i.e. every pan.
+
 #### Stage 2 — server-side filtered drawing (DONE 2026-06-20)
 
 Removes the **last wholesale-load path**: in lazy mode an active property filter no longer
