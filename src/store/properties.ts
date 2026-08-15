@@ -44,7 +44,7 @@ import jobs, {
   createProgressEventCallback,
   createErrorEventCallback,
 } from "./jobs";
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
 import { findIndexOfPath } from "@/utils/paths";
 import progress from "./progress";
 import {
@@ -609,7 +609,17 @@ export class Properties extends VuexModule {
 
   @Mutation
   private setDisplayedPropertyPaths(paths: string[][]) {
-    this.displayedPropertyPaths = uniquePropertyPaths(paths);
+    const unique = uniquePropertyPaths(paths);
+    if (unique.length < new Set(paths.map(serializePropertyPath)).size) {
+      // A saved configuration can exceed the cap (or the cap may shrink);
+      // clamping is the invariant, but a silent drop of saved columns should
+      // at least be diagnosable.
+      logWarning(
+        `Displayed property columns clamped to ${MAX_DISPLAYED_PROPERTY_PATHS}; ` +
+          "hide columns to make room for others.",
+      );
+    }
+    this.displayedPropertyPaths = unique;
   }
 
   @Action
