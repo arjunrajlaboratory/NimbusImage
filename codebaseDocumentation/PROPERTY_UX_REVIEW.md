@@ -96,11 +96,10 @@ test that holds the invariant.
       and _"submits at most 100 properties per compute-all run"_.
 - [ ] Compute all uses one client request and the batch endpoint permission-
       checks properties without looped loads — held by the follow-up backend
-      PR ("Property compute: batch submission endpoint"):
-      _"submits every property in one request"_,
-      _"testComputeMultipleSubmitsAllPropertiesInOneRequest"_,
-      _"testComputeMultipleValidatesEveryPropertyBeforeSubmitting"_, and
-      _"testComputeRequiresDatasetWriteAccess"_.
+      PR ("Property compute: batch submission endpoint"), whose tests cover
+      single-request submission, preflight validation, and dataset WRITE
+      enforcement. Test names are cited there once the endpoint lands; this
+      branch deliberately submits per property.
 - [x] Submission, missing-job, worker-failure, and refresh-failure paths always
       clear running/progress state and surface an error —
       _"cleans up and surfaces an API submission failure"_,
@@ -108,7 +107,7 @@ test that holds the invariant.
       _"cleans up and surfaces job tracking failures"_,
       _"cleans up and surfaces post-job refresh failures"_,
       _"surfaces worker failure when job completes unsuccessfully"_,
-      _"cleans up batch state when the batch API rejects"_,
+      _"cleans up batch state when every submission rejects"_,
       _"cleans up batch state when the server omits a job"_, and
       _"returns the store promise so callers can observe completion"_.
 - [x] Every non-batch UI entry point goes through the shared compute helper —
