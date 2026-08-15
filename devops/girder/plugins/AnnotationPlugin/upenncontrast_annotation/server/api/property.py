@@ -2,12 +2,21 @@ from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.constants import AccessType, TokenScope
 from girder.api.rest import Resource, loadmodel
-from ..helpers.validation import requireObjectBody
+from girder.models.folder import Folder
+from ..helpers.validation import (
+    requireCountWithin,
+    requireList,
+    requireObjectBody,
+    requireObjectId,
+)
 from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from girder.exceptions import RestException, AccessException
 from bson import ObjectId
 from bson.errors import InvalidId
+
+
+MAX_COMPUTE_PROPERTIES = 100
 
 
 class AnnotationProperty(Resource):
@@ -22,6 +31,7 @@ class AnnotationProperty(Resource):
         self.route("GET", (), self.getAllProperties)
         self.route("GET", ("count",), self.count)
         self.route("POST", (), self.create)
+        self.route("POST", ("compute",), self.computeMultiple)
         self.route("PUT", (":id",), self.update)
         self.route(
             "POST",
@@ -61,14 +71,93 @@ class AnnotationProperty(Resource):
         level=AccessType.READ,
     )
     def compute(self, annotation_property, params):
-        datasetId = params.get("datasetId", None)
-        if datasetId and id:
+        parameters = requireObjectBody(self.getBodyJson(), "Parameters")
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
+        try:
             return self._propertyModel.compute(
-                annotation_property,
-                datasetId,
-                requireObjectBody(self.getBodyJson(), "Parameters"),
+                annotation_property, str(datasetId), parameters
             )
-        return {}
+        except ValueError as error:
+            raise RestException(str(error), code=400) from error
+
+    @access.user(scope=TokenScope.DATA_WRITE)
+    @describeRoute(
+        Description("Compute multiple properties for one dataset")
+        .param(
+            "body",
+            "Dataset id and property computation requests",
+            paramType="body",
+        )
+    )
+    def computeMultiple(self, params):
+        body = requireObjectBody(self.getBodyJson())
+        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
+        requests = requireList(body.get("properties", []), "properties")
+        requireCountWithin(
+            len(requests), MAX_COMPUTE_PROPERTIES, "properties"
+        )
+
+        propertyIds = []
+        parametersById = {}
+        for request in requests:
+            request = requireObjectBody(request, "each property request")
+            propertyId = requireObjectId(request.get("id"), "property id")
+            propertyKey = str(propertyId)
+            if propertyKey in parametersById:
+                raise RestException(
+                    "property ids must be unique", code=400
+                )
+            propertyIds.append(propertyId)
+            parametersById[propertyKey] = requireObjectBody(
+                request.get("parameters"), "property parameters"
+            )
+
+        currentUser = self.getCurrentUser()
+        Folder().load(
+            datasetId,
+            user=currentUser,
+            level=AccessType.WRITE,
+            exc=True,
+        )
+        properties = list(
+            self._propertyModel.findWithPermissions(
+                {"_id": {"$in": propertyIds}},
+                user=currentUser,
+                level=AccessType.READ,
+            )
+        )
+        if len(properties) != len(propertyIds):
+            raise AccessException(
+                "Read access denied for one or more properties"
+            )
+
+        propertiesById = {
+            str(annotationProperty["_id"]): annotationProperty
+            for annotationProperty in properties
+        }
+        try:
+            for annotationProperty in properties:
+                self._propertyModel.validateCompute(annotationProperty)
+        except ValueError as error:
+            raise RestException(str(error), code=400) from error
+
+        return [
+            {
+                "propertyId": str(propertyId),
+                "jobs": self._propertyModel.compute(
+                    propertiesById[str(propertyId)],
+                    str(datasetId),
+                    parametersById[str(propertyId)],
+                ),
+            }
+            for propertyId in propertyIds
+        ]
 
     @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(

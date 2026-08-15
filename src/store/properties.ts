@@ -783,41 +783,44 @@ export class Properties extends VuexModule {
     if (runs.length === 0) {
       return [];
     }
-    // Submit each property through the existing per-property endpoint. The
-    // requests are sequential and small-N (bounded by the batch cap); a
-    // batch submission endpoint is planned as a follow-up backend PR.
+    const properties = runs.map(({ property }) => property);
+
+    let submissions;
+    try {
+      submissions = await this.propertiesAPI.computeProperties(
+        datasetId,
+        properties,
+        main.scales,
+      );
+    } catch (error) {
+      for (const [index, run] of runs.entries()) {
+        finishPropertyRun(run, false, {
+          title: "Property submission failed",
+          value: error,
+          notify: index === 0,
+        });
+      }
+      return [];
+    }
+
+    const submissionsByProperty = new Map(
+      submissions.map((submission) => [submission.propertyId, submission]),
+    );
     const tracked: {
       run: (typeof runs)[number];
       job: IPropertyComputeJob;
       completion: Promise<boolean>;
     }[] = [];
-    let submissionNotificationShown = false;
+    let missingJobNotificationShown = false;
     for (const run of runs) {
-      let jobId;
-      try {
-        const response = await this.propertiesAPI.computeProperty(
-          run.property.id,
-          datasetId,
-          run.property,
-          main.scales,
-        );
-        jobId = response.data[0]?._id;
-      } catch (error) {
-        finishPropertyRun(run, false, {
-          title: "Property submission failed",
-          value: error,
-          notify: !submissionNotificationShown,
-        });
-        submissionNotificationShown = true;
-        continue;
-      }
+      const jobId = submissionsByProperty.get(run.property.id)?.jobs[0]?._id;
       if (!jobId) {
         finishPropertyRun(run, false, {
           title: "Property submission failed",
           value: "The server did not return a compute job.",
-          notify: !submissionNotificationShown,
+          notify: !missingJobNotificationShown,
         });
-        submissionNotificationShown = true;
+        missingJobNotificationShown = true;
         continue;
       }
       const job: IPropertyComputeJob = {

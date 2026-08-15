@@ -57,3 +57,26 @@ describe("PropertiesAPI.getUncomputedCounts", () => {
     expect(post).not.toHaveBeenCalled();
   });
 });
+
+describe("PropertiesAPI.computeProperties", () => {
+  it("submits every property in one request", async () => {
+    const post = vi.fn().mockResolvedValue({ data: [] });
+    const api = new PropertiesAPI({ post } as any);
+    const properties = [
+      makeProperty("p1", "point", ["nucleus"], false),
+      makeProperty("p2", "polygon", [], true),
+    ];
+    const scales = { pixelSize: { value: 1, unit: "um" } } as any;
+
+    await api.computeProperties("dataset-1", properties, scales);
+
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith("annotation_property/compute", {
+      datasetId: "dataset-1",
+      properties: properties.map((property) => ({
+        id: property.id,
+        parameters: { ...property, scales },
+      })),
+    });
+  });
+});
