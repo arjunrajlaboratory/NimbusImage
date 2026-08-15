@@ -20,6 +20,11 @@ import {
   buildListFilters,
   buildPropertyListFilters,
 } from "@/utils/annotationListFilters";
+import {
+  IActiveConstraint,
+  collectActiveConstraints,
+  countActiveConstraints,
+} from "@/utils/activeConstraints";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
 import { idListSignature } from "@/utils/signatures";
 
@@ -29,7 +34,6 @@ import {
   IAnalysisGateFilterTerm,
   IAnalysisGatePlotRequest,
   IAnalysisPlot,
-  IAnnotationFilter,
   ITagAnnotationFilter,
   IPropertyAnnotationFilter,
   IROIAnnotationFilter,
@@ -661,16 +665,11 @@ export class Filters extends VuexModule {
     }
   }
 
-  // How many gates are narrowing the filtered set. Counted from the plots
-  // rather than from activeAnalysisGateSets so the badge never materializes a
-  // Set per gate just to read its length.
+  // How many gates are narrowing the filtered set. Counted from the shared
+  // constraint list (never from activeAnalysisGateSets, which would
+  // materialize a Set per gate just to read its length).
   get activeAnalysisGateCount(): number {
-    return this.analysisPlots.filter(
-      (plot) =>
-        plot.gateEnabled &&
-        plot.gate !== null &&
-        this.analysisGateIds[plot.id] !== undefined,
-    ).length;
+    return countActiveConstraints(this.activeConstraints, "analysis");
   }
 
   // The gates that actually narrow the filtered set right now, in plot order.
@@ -1294,17 +1293,31 @@ export class Filters extends VuexModule {
   // rendered "Filters: 1" on a button whose panel then displayed nothing —
   // the badge pointed at a filter the user could not find or clear.
   get activeFilterCount() {
-    const countEnabled = (filterList: IAnnotationFilter[]) =>
-      filterList.filter((filter: IAnnotationFilter) => filter.enabled).length;
-    return (
-      (this.tagFilter.enabled ? 1 : 0) +
-      (this.onlyCurrentFrame ? 1 : 0) +
-      (this.selectionFilter.enabled ? 1 : 0) +
-      (main.showAnnotationsFromHiddenLayers ? 0 : 1) +
-      countEnabled(this.propertyFilters) +
-      countEnabled(this.roiFilters) +
-      countEnabled(this.annotationIdFilters)
-    );
+    return countActiveConstraints(this.activeConstraints, "filters");
+  }
+
+  // EVERYTHING narrowing the object set, both panels' worth, as pure data
+  // (see utils/activeConstraints.ts). The two badges above and the
+  // render-coverage HUD's "(N filters applied)" suffix all count this one
+  // list, so a constraint can never be surfaced by one and missed by another.
+  get activeConstraints(): IActiveConstraint[] {
+    return collectActiveConstraints({
+      tagFilter: this.tagFilter,
+      onlyCurrentFrame: this.onlyCurrentFrame,
+      selectionFilter: this.selectionFilter,
+      showAnnotationsFromHiddenLayers: main.showAnnotationsFromHiddenLayers,
+      propertyFilters: this.propertyFilters,
+      roiFilters: this.roiFilters,
+      annotationIdFilters: this.annotationIdFilters,
+      analysisPlots: this.analysisPlots,
+      analysisGateIds: this.analysisGateIds,
+    });
+  }
+
+  // The count the HUD reads: filters AND gates, since both narrow the same set
+  // and the user reading "Showing 826 of 826 in view" cannot tell which did it.
+  get activeConstraintCount(): number {
+    return this.activeConstraints.length;
   }
 
   @Mutation

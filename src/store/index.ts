@@ -77,6 +77,7 @@ import {
   IAnnotationBrowserConfig,
   IUserStorageQuota,
   TAnnotationBrowserTab,
+  TRequestablePalette,
 } from "./model";
 import {
   buildAnnotationBrowserConfig,
@@ -406,6 +407,12 @@ export class Main extends VuexModule {
 
   isAnnotationPanelOpen: boolean = false;
   annotationBrowserTab: TAnnotationBrowserTab = "objects";
+  // Palettes something has asked App.vue to open, in the order they should be
+  // opened (a companion palette after its host stays open alongside it).
+  // Same escape hatch as isAnnotationPanelOpen, for components with no path to
+  // the palette registry — here, the render-coverage HUD deep inside
+  // ImageViewer. App.vue opens them and clears the list.
+  paletteOpenRequests: TRequestablePalette[] = [];
   annotationPanelBadge: boolean = false;
   isHelpPanelOpen: boolean = false;
   isAnalyzeDialogOpen: boolean = false;
@@ -1341,6 +1348,21 @@ export class Main extends VuexModule {
   public openAnnotationBrowserTab(tab: TAnnotationBrowserTab) {
     this.setAnnotationBrowserTab(tab);
     this.setIsAnnotationPanelOpen(true);
+  }
+
+  @Mutation
+  public setPaletteOpenRequests(palettes: TRequestablePalette[]) {
+    this.paletteOpenRequests = palettes;
+  }
+
+  /**
+   * Ask App.vue to open these palettes (see `paletteOpenRequests`). App.vue
+   * clears the request once it has honoured it, so asking for the same palette
+   * twice in a row still opens it the second time.
+   */
+  @Action
+  public requestPaletteOpen(palettes: TRequestablePalette[]) {
+    this.setPaletteOpenRequests(palettes);
   }
 
   @Mutation

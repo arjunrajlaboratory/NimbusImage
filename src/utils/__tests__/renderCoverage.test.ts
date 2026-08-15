@@ -83,6 +83,55 @@ describe("computeRenderCoverage", () => {
     expect(c.shownLabel).toBe("No annotations in view");
   });
 
+  it("says nothing about constraints when none is active", () => {
+    const c = computeRenderCoverage({
+      stubMode: true,
+      viewportShown: 826,
+      viewportTotal: 826,
+      loaded: 708983,
+    });
+    expect(c.constraintLabel).toBeNull();
+  });
+
+  it("announces active constraints, pluralized", () => {
+    // The reported case: a restored lasso gate cut 708,983 to 72,925, so a
+    // viewport that visibly held thousands read "826 of 826" — data loss.
+    const one = computeRenderCoverage({
+      stubMode: true,
+      viewportShown: 826,
+      viewportTotal: 826,
+      loaded: 708983,
+      constraintCount: 1,
+    });
+    expect(one.constraintLabel).toBe("(1 filter applied)");
+    expect(one.shownLabel).toBe(
+      `Showing ${(826).toLocaleString()} of ${(826).toLocaleString()} in view`,
+    );
+    expect(
+      computeRenderCoverage({
+        stubMode: true,
+        viewportShown: 826,
+        viewportTotal: 826,
+        loaded: 708983,
+        constraintCount: 3,
+      }).constraintLabel,
+    ).toBe("(3 filters applied)");
+  });
+
+  it("announces constraints outside stub mode too", () => {
+    // The counts are filtered in client mode as well, so the cue cannot be
+    // gated on stub mode.
+    const c = computeRenderCoverage({
+      stubMode: false,
+      viewportShown: 100,
+      viewportTotal: 45000,
+      loaded: 45000,
+      constraintCount: 2,
+    });
+    expect(c.show).toBe(true);
+    expect(c.constraintLabel).toBe("(2 filters applied)");
+  });
+
   it("clamps the fraction to [0, 1]", () => {
     const over = computeRenderCoverage({
       stubMode: true,

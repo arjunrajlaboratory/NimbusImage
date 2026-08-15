@@ -7,6 +7,21 @@
   >
     <span class="render-coverage__label">
       {{ coverage.shownLabel }}
+      <!-- Both counts above are computed AFTER filters and analysis gates, so
+           a restored gate can make the HUD read "826 of 826" in a viewport
+           that visibly holds thousands. The suffix says narrowing is active,
+           its tooltip says which, and clicking it opens the panel that owns
+           it — the palette badges are too far from the count being read. -->
+      <button
+        v-if="coverage.constraintLabel"
+        type="button"
+        class="render-coverage__constraints"
+        :title="constraintTooltip"
+        :aria-label="constraintTooltip"
+        @click="openConstraintPanels"
+      >
+        {{ coverage.constraintLabel }}
+      </button>
     </span>
     <div class="render-coverage__track">
       <div
@@ -42,7 +57,12 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import store from "@/store";
 import annotationStore from "@/store/annotation";
+import filterStore from "@/store/filters";
+import propertyStore from "@/store/properties";
+import { TRequestablePalette } from "@/store/model";
+import { summarizeActiveConstraints } from "@/utils/activeConstraints";
 import { computeRenderCoverage } from "@/utils/renderCoverage";
 import VisibilitySettings from "@/components/VisibilitySettings.vue";
 
@@ -64,14 +84,52 @@ const stubMode = computed(
       annotationStore.visibilityConfig.stubThreshold,
 );
 
+// Filters AND analysis gates, from the one list the app-bar badges count too
+// (utils/activeConstraints.ts), so the three surfaces cannot disagree.
+const constraints = computed(() => filterStore.activeConstraints);
+
 const coverage = computed(() =>
   computeRenderCoverage({
     stubMode: stubMode.value,
     viewportShown: annotationStore.viewportRenderedCount,
     viewportTotal: annotationStore.viewportAnnotationCount,
     loaded: annotationStore.annotationStubs.size,
+    constraintCount: constraints.value.length,
   }),
 );
+
+// Which palettes own the active constraints, Analysis first: it is a primary
+// palette, and Filters is a companion that hosts alongside it — opening them
+// the other way round would close the one just opened.
+const constraintPalettes = computed<TRequestablePalette[]>(() => {
+  const palettes: TRequestablePalette[] = [];
+  if (
+    constraints.value.some((constraint) => constraint.source === "analysis")
+  ) {
+    palettes.push("analysisPanel");
+  }
+  if (constraints.value.some((constraint) => constraint.source === "filters")) {
+    palettes.push("filtersPanel");
+  }
+  return palettes;
+});
+
+const PALETTE_NAMES: Record<TRequestablePalette, string> = {
+  analysisPanel: "Analysis",
+  filtersPanel: "Filters",
+};
+
+const constraintTooltip = computed(() => {
+  const summary = summarizeActiveConstraints(constraints.value, (path) =>
+    propertyStore.getFullNameFromPath(path),
+  );
+  const names = constraintPalettes.value.map((id) => PALETTE_NAMES[id]);
+  return `Objects are narrowed by ${summary}. Click to open ${names.join(" and ")}.`;
+});
+
+function openConstraintPanels() {
+  store.requestPaletteOpen(constraintPalettes.value);
+}
 </script>
 
 <style lang="scss" scoped>
@@ -100,6 +158,31 @@ const coverage = computed(() =>
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
+}
+
+.render-coverage__constraints {
+  // A real <button> (it is clickable and focusable), stripped back to text so
+  // it reads as part of the sentence rather than as a form control.
+  background: none;
+  border: 0;
+  padding: 0;
+  // Explicit, so the gap does not depend on how the template's whitespace
+  // survives compilation.
+  margin-left: 4px;
+  // Warning-tinted and underlined: the reason the counts are smaller than the
+  // eye expects, sitting on the line the user is actually reading.
+  color: rgb(var(--v-theme-warning));
+  font: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  // Re-enable clicks on just this button (the container is click-through).
+  pointer-events: auto;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline solid;
+  }
 }
 
 .render-coverage__suffix {

@@ -6,21 +6,29 @@ vi.mock("@/utils/log", () => ({
   logError: vi.fn(),
 }));
 
-vi.mock("@/store", () => ({
-  default: {
-    isLoggedIn: false,
-    girderUser: null,
-    dataset: null,
-    setToolTemplateList: vi.fn(),
-    setIsAnnotationPanelOpen: vi.fn(),
-    api: {
-      getUserPrivateFolder: vi.fn().mockResolvedValue({ _id: "folder-1" }),
-    },
-    initializeUploadWorkflow: vi.fn(),
-    isAnnotationPanelOpen: false,
-    annotationPanel: false,
-  },
-}));
+// Reactive: App.vue watches the store for palette-open requests (the escape
+// hatch used by components with no access to the palette registry), and a
+// plain object would never fire that watcher.
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      isLoggedIn: false,
+      girderUser: null,
+      dataset: null,
+      setToolTemplateList: vi.fn(),
+      setIsAnnotationPanelOpen: vi.fn(),
+      api: {
+        getUserPrivateFolder: vi.fn().mockResolvedValue({ _id: "folder-1" }),
+      },
+      initializeUploadWorkflow: vi.fn(),
+      isAnnotationPanelOpen: false,
+      annotationPanel: false,
+      paletteOpenRequests: [] as string[],
+      setPaletteOpenRequests: vi.fn(),
+    }),
+  };
+});
 
 vi.mock("@/store/properties", () => ({
   default: {
@@ -130,6 +138,8 @@ describe("App", () => {
     (store as any).api = {
       getUserPrivateFolder: vi.fn().mockResolvedValue({ _id: "folder-1" }),
     };
+    (store as any).paletteOpenRequests = [];
+    (store as any).setPaletteOpenRequests = vi.fn();
     (propertyStore as any).uncomputedCountByProperty = {};
     (filterStore as any).activeFilterCount = 0;
     (filterStore as any).activeAnalysisGateCount = 0;
@@ -424,6 +434,31 @@ describe("App", () => {
     (filterStore as any).activeAnalysisGateCount = 3;
     wrapper = mountComponent({ name: "datasetview" });
     expect((wrapper.vm as any).analysisTooltip).toContain("(3 gates active)");
+  });
+
+  // -- Palette-open requests from components with no palette registry --
+  //
+  // The render-coverage HUD lives inside ImageViewer, far below the route
+  // component, so it asks for a panel through the store rather than by event.
+  it("opens the palettes a store request asks for, then clears the request", async () => {
+    const wrapper = mountComponent({ name: "datasetview" });
+    const vm = wrapper.vm as any;
+    (store as any).paletteOpenRequests = ["analysisPanel", "filtersPanel"];
+    await nextTick();
+    // Both, not one: Filters is a companion that hosts alongside Analysis, so
+    // a gate and a tag filter can be shown together.
+    expect(vm.analysisPanel).toBe(true);
+    expect(vm.filtersPanel).toBe(true);
+    // Cleared, so asking for the same palette again is still seen as a change.
+    expect(store.setPaletteOpenRequests).toHaveBeenCalledWith([]);
+  });
+
+  it("ignores an empty palette request", async () => {
+    const wrapper = mountComponent({ name: "datasetview" });
+    (store as any).paletteOpenRequests = [];
+    await nextTick();
+    expect((wrapper.vm as any).filtersPanel).toBe(false);
+    expect(store.setPaletteOpenRequests).not.toHaveBeenCalled();
   });
 
   // -- Computed: filteredToursByCategory --
