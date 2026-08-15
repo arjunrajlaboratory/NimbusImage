@@ -441,7 +441,7 @@ export type TLayerMode = "single" | "multiple" | "unroll";
 export type TTimelapseTrackColoring = "track" | "uniform";
 
 /** Which tab the Object Browser is showing. */
-export type TAnnotationBrowserTab = "objects" | "connections";
+export type TAnnotationBrowserTab = "objects" | "measurements" | "connections";
 
 export type TVolumeViewMode = "2d" | "3d";
 
