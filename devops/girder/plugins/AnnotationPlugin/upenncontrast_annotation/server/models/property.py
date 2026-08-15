@@ -1,5 +1,5 @@
 from ..helpers.proxiedModel import ProxiedModel
-from girder.exceptions import ValidationException, RestException
+from girder.exceptions import ValidationException
 from girder.constants import AccessType
 from ..helpers.tasks import runJobRequest
 
@@ -65,11 +65,13 @@ class AnnotationProperty(ProxiedModel):
     def getPropertyById(self, id, user=None):
         return self.load(id, user=user)
 
-    def compute(self, property, datasetId, params):
+    def validateCompute(self, property):
         image = property.get("image", None)
         if not image:
-            raise RestException(code=500, message="Invalid property: no image")
+            raise ValueError("Invalid property: no image")
+        return image
 
-        if property:
-            return runJobRequest(image, datasetId, params, "compute")
-        return {}
+    def compute(self, property, datasetId, params):
+        return runJobRequest(
+            self.validateCompute(property), datasetId, params, "compute"
+        )
