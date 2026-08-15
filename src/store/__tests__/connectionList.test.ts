@@ -19,6 +19,7 @@ const {
     isLoggedIn: true,
     dataset: { id: "ds1" },
     currentLocation: { xy: 0, z: 0, time: 0 },
+    scheduleAnnotationBrowserSave: vi.fn(),
   },
   annotationMock: {
     annotationConnections: [] as any[],
@@ -478,5 +479,32 @@ describe("connectionList connect selected", () => {
       ["a1", "a2"],
     ]);
     expect(bases[0].tags).toEqual(["Time lapse connection"]);
+  });
+});
+
+// --- Track label property (issue #1330) ---
+//
+// The chosen path is persisted per configuration through the annotation
+// browser config, so the same schedule-on-change / silent-hydration contract
+// as displayedPropertyPaths applies.
+describe("track label path", () => {
+  it("schedules a configuration save when the user picks a property", () => {
+    connectionList.setTrackLabelPath(["prop1", "trackId"]);
+    expect(connectionList.trackLabelPath).toEqual(["prop1", "trackId"]);
+    expect(mainMock.scheduleAnnotationBrowserSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not schedule a save when hydrating from a configuration", () => {
+    connectionList.hydrateTrackLabelPath(["prop1", "trackId"]);
+    expect(connectionList.trackLabelPath).toEqual(["prop1", "trackId"]);
+    expect(mainMock.scheduleAnnotationBrowserSave).not.toHaveBeenCalled();
+  });
+
+  it("clears the path on a dataset switch", () => {
+    connectionList.hydrateTrackLabelPath(["prop1", "trackId"]);
+    connectionList.resetConnectionListState();
+    // The path names a property id from the outgoing configuration;
+    // hydrateAnnotationBrowserState re-seeds it after this reset.
+    expect(connectionList.trackLabelPath).toEqual([]);
   });
 });

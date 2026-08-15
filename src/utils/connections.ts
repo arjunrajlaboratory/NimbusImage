@@ -412,6 +412,71 @@ export function buildTrackRows(
   });
 }
 
+// --- Track labels from a property ---
+
+/**
+ * A track's label resolved from a per-annotation property value (e.g. the
+ * `trackId` computed by the Parent-Child Connection IDs worker).
+ *
+ * The four statuses are deliberate: `partial` and `mixed` are staleness
+ * signals, not error states. The worker assigned its values against the
+ * connection graph as it existed at compute time, so members that disagree or
+ * lack a value mean the graph changed since — exactly the tracks worth a
+ * second look during post-processing.
+ */
+export type TTrackLabelResolution =
+  | { status: "value"; value: number | string }
+  /** One shared value, but some members have none (e.g. links added since). */
+  | { status: "partial"; value: number | string }
+  /** Members carry differing values (e.g. two tracks joined since). */
+  | { status: "mixed"; values: (number | string)[] }
+  /** No member has a value for the chosen property. */
+  | { status: "missing" };
+
+/**
+ * Resolve a track's label from its members' property values.
+ *
+ * `getValue` returns the member's value for the chosen property path, or null
+ * when it has none (not computed, dangling endpoint, or — in lazy mode — not
+ * fetched yet, which resolves once the fetch lands and this recomputes).
+ */
+export function resolveTrackLabelValue(
+  annotationIds: Iterable<string>,
+  getValue: (annotationId: string) => number | string | null,
+): TTrackLabelResolution {
+  const distinct: (number | string)[] = [];
+  let missingCount = 0;
+  for (const annotationId of annotationIds) {
+    const value = getValue(annotationId);
+    if (value === null) {
+      missingCount++;
+    } else if (!distinct.includes(value)) {
+      distinct.push(value);
+    }
+  }
+  if (distinct.length === 0) {
+    return { status: "missing" };
+  }
+  if (distinct.length > 1) {
+    return { status: "mixed", values: distinct };
+  }
+  return missingCount > 0
+    ? { status: "partial", value: distinct[0] }
+    : { status: "value", value: distinct[0] };
+}
+
+/**
+ * Display form of a track-label value. Workers store integer ids as floats
+ * (42.0), which JavaScript already reads back as 42; anything genuinely
+ * fractional is kept short rather than shown at full float precision.
+ */
+export function formatTrackLabelValue(value: number | string): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  return Number.isInteger(value) ? value.toString() : value.toPrecision(4);
+}
+
 // --- Connect selected ---
 
 /** Key for an unordered annotation pair, for dedupe against existing links. */

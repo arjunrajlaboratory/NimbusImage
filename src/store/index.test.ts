@@ -17,6 +17,9 @@ import jobs from "./jobs";
 import rootStore from "./root";
 import "./filters";
 import "./properties";
+// Registers hydrateTrackLabelPath, which hydrateAnnotationBrowserState
+// dispatches by name.
+import "./connectionList";
 
 function mockSuccessfulUploadAndTiles() {
   vi.spyOn(main.api, "uploadJSONFile").mockResolvedValue({
@@ -136,6 +139,7 @@ describe("annotation-browser hydration", () => {
     unsubscribe();
 
     expect(actionNames).toContain("hydrateAnalysisPlots");
+    expect(actionNames).toContain("hydrateTrackLabelPath");
     // Viewer owns the one refresh through its analysisInputSignature watcher;
     // hydration only changes the state that drives that watcher.
     expect(actionNames).not.toContain("refreshAnalysis");

@@ -111,6 +111,54 @@ count plus time range on each track row makes a truncated track obvious.
 Track ids are the smallest member annotation id, so expansion state survives
 re-renders.
 
+### Track ID property
+
+*Issue [#1330](https://github.com/arjunrajlaboratory/NimbusImage/issues/1330).*
+
+By default a track row is titled `Track #<short id>`. The By-track view adds a
+**Track ID property** select that instead labels each track with a computed
+property value — typically the `trackId` the *Parent-Child Connection IDs*
+worker writes (with "Add track IDs" checked), so a track flagged during
+post-processing (`trackId = 42` in an exported CSV) can be found here as
+`Track 42`.
+
+The worker cannot be hardcoded: the property carries a user-chosen name, and
+its integer ids are assigned by fetch order, so they are only meaningful as
+stored values. The select therefore offers every computed property path
+(`propertyStore.computedPropertyPaths`), plus the persisted selection even when
+its values have since disappeared, so it can be seen and cleared.
+
+Resolution per track (`resolveTrackLabelValue` in `@/utils/connections`), over
+all member annotation ids:
+
+| Members' values | Title | Badge |
+|---|---|---|
+| all share one value | the value | — |
+| one value, some members without | the value | `partial` (warning) |
+| differing values | short id | `mixed IDs` (warning) |
+| none | short id | `no ID` |
+
+The badges are staleness signals, not error states: the worker assigned values
+against the connection graph at compute time, so `partial` (members added
+since) and `mixed` (tracks joined since) flag exactly the tracks whose
+connections changed after the property ran — the ones worth a second look.
+Dangling endpoints count as members without values, which is deliberate for
+the same reason.
+
+Value lookup is mode-split: wholesale mode reads `propertyStore.propertyValues`
+directly; lazy (stub-only) mode fetches the members' values once per
+path/revision with a single batched `getPropertyValuesForIds` call, cached in
+the component (the store's value cache is pruned to the viewport on every pan,
+so it cannot hold track members). A `propertyValuesRevision` bump — recompute
+or import — invalidates and refetches.
+
+The chosen path is persisted per **configuration** in
+`annotationBrowserConfig.trackLabelPath` (a property id only means something
+within one configuration), hydrated through `hydrateTrackLabelPath` with the
+same schedule-on-change / silent-hydration contract as the displayed property
+columns, and validated by `resolveAnnotationBrowserConfig` so a path whose
+property left the configuration falls back to default labels.
+
 ### Row labelling
 
 Annotation ObjectIds are 24 hex characters and unreadable, and the Objects tab's index
@@ -467,7 +515,7 @@ draw path had just dropped, and a per-viewer mount reappeared as duplicate
 delete requests. Each line names the invariant and the test that holds it, so
 changing this code means re-checking the list rather than rediscovering it.
 
-Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camera.test.ts src/utils/__tests__/annotationNavigation.test.ts src/store/__tests__/connectionList.test.ts src/components/AnnotationBrowser src/components/ConnectionActionPanel.test.ts src/components/AnnotationViewer.test.ts src/components/TimelapsePanel.test.ts src/utils/__tests__/paletteGeometry.test.ts`.
+Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camera.test.ts src/utils/__tests__/annotationNavigation.test.ts src/store/__tests__/connectionList.test.ts src/store/annotationBrowserConfig.test.ts src/components/AnnotationBrowser src/components/ConnectionActionPanel.test.ts src/components/AnnotationViewer.test.ts src/components/TimelapsePanel.test.ts src/utils/__tests__/paletteGeometry.test.ts`.
 
 ### Drawing
 
@@ -530,6 +578,16 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **"Delete all timelapse connections" is guarded on the tagged count, not the total.** The readout beside it counts every connection on purpose (the timelapse view draws any connection whose endpoints are both displayed, tag or no tag), but the action deletes only `TIMELAPSE_CONNECTION_TAG` ones. Guarding on the total left the button enabled on a dataset whose connections are all hand-made or from Connect-to-nearest, where the click deleted nothing and reported nothing. — *"enables delete-all only when tagged connections exist"*
 
 - [ ] **A time jump keeps its track's colour.** It was forced to `#ff6b6b`, which broke both colouring controls: "uniform" left those segments red among white ones, and per-track showed a hue swatch against a red line for any track whose drawn segments are all jumps. The dash (`[5, 5]`) and the reduced opacity (0.7) are two cues no other segment has, so the colour was the redundant third one — dropping it makes "the swatch matches the line" true unconditionally. — *"keeps a time-jump segment on the %s track colour"* (it.each over uniform/track)
+
+### Track labels from a property
+
+- [ ] **A value of 0 is a value.** The parent_child worker's track ids start at 0, so any falsy check in the resolution or the fetch-cache read (`??` vs `||`) silently relabels track 0 as "missing". — *"does not confuse a value of 0 with a missing value"*
+- [ ] **Partial coverage keeps the value AND badges it.** A member without a value means the graph changed since the property ran; folding that case into "mixed" loses the findable id, and hiding it loses the staleness signal. — *"keeps the shared value but flags partial coverage"*, *"keeps the shared value but badges a partially-covered track"*
+- [ ] **Lazy mode fetches member values itself, in ONE batched request.** The store's value cache is pruned to the viewport on every pan, so track members are structurally absent from it; and a confirmed miss (id absent from the response) must be cached as `null` or every tracks-change refetches it. — *"fetches member values in lazy mode with one batched request"*
+- [ ] **Wholesale mode never fetches.** `propertyValues` already holds every computed value; a fetch there is a duplicate request per tracks change. — *"never fetches in wholesale mode"*
+- [ ] **The persisted path stays pickable after its values disappear**, so it can be seen and cleared instead of rendering as a raw path key. — *"keeps a persisted path listed after its values disappear"*
+- [ ] **User picks schedule a configuration save; hydration never does.** Same contract as displayedPropertyPaths — a violation makes every dataset open dirty the shared configuration. — *"schedules a configuration save when the user picks a property"*, *"does not schedule a save when hydrating from a configuration"*
+- [ ] **The path resets on dataset switch and re-hydrates from the configuration** (it names a property id from the outgoing configuration), and resolve drops a path whose property left the configuration. — *"clears the path on a dataset switch"*, *"drops a path whose property left the configuration"*, *"survives a build/resolve round trip"*
 
 ### Destructive actions
 

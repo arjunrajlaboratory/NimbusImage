@@ -54,6 +54,29 @@
       </v-btn>
     </div>
 
+    <!-- Track labels can mirror a worker-computed property (e.g. Parent-Child
+         Connection IDs' trackId), so a track flagged during post-processing
+         can be found here under the same id. Only meaningful for the By-track
+         view. -->
+    <div
+      v-if="connectionListStore.grouping === 'track'"
+      class="connection-list-toolbar"
+    >
+      <v-select
+        :model-value="trackLabelKey"
+        :items="trackLabelItems"
+        item-title="title"
+        item-value="value"
+        label="Track ID property"
+        density="compact"
+        variant="outlined"
+        hide-details
+        class="track-label-select"
+        title="Label tracks with a computed property value (e.g. the trackId from the Parent-Child Connection IDs worker) instead of the default short object id."
+        @update:model-value="setTrackLabelFromKey"
+      />
+    </div>
+
     <!-- Chaining an unbounded selection would POST tens of thousands of
          connections in one request, so the action is capped rather than left
          to fail slowly. -->
@@ -157,7 +180,22 @@
               :style="{ backgroundColor: swatchColor(track) }"
               aria-hidden="true"
             />
-            <span class="track-title">Track {{ shortId(track.id) }}</span>
+            <span class="track-title" :title="trackTitleTooltip(track)">
+              Track {{ trackTitle(track) }}
+            </span>
+            <!-- Staleness badges, not error states: a partial or mixed track
+                 means the connection graph changed after the property was
+                 computed — exactly the tracks worth a second look. -->
+            <v-chip
+              v-if="trackBadge(track)"
+              size="x-small"
+              variant="tonal"
+              :color="trackBadge(track)?.color"
+              class="track-badge"
+              :title="trackBadge(track)?.tooltip"
+            >
+              {{ trackBadge(track)?.text }}
+            </v-chip>
             <!-- Also in the title attribute: the counts are what gets
                  ellipsized when the row is tight, and the link count is the
                  diagnostic one (it exceeds objects−1 only when a track
@@ -249,6 +287,7 @@ import connectionListStore, {
   TConnectionScope,
 } from "@/store/connectionList";
 import { MAX_CONNECT_SELECTED } from "@/store/constants";
+import propertyStore from "@/store/properties";
 import timelapseStore from "@/store/timelapse";
 import ConnectionListRow from "@/components/AnnotationBrowser/ConnectionListRow.vue";
 import { goToConnection, goToTrack } from "@/utils/annotationNavigation";
@@ -256,9 +295,16 @@ import { logError } from "@/utils/log";
 import {
   IConnectionRow,
   ITrackRow,
+  TTrackLabelResolution,
+  formatTrackLabelValue,
+  resolveTrackLabelValue,
   shortAnnotationId,
   trackColor,
 } from "@/utils/connections";
+import {
+  createPathStringFromPathArray,
+  getValueFromObjectAndPath,
+} from "@/utils/paths";
 
 const props = withDefaults(
   defineProps<{
@@ -388,6 +434,226 @@ function trackMeta(track: ITrackRow) {
     ? ` · T${track.timeRange.start + 1}–T${track.timeRange.end + 1}`
     : "";
   return `${track.annotationCount} objects${range} · ${track.rows.length} links`;
+}
+
+// --- Track labels from a property (issue #1330) ---
+
+const trackLabelPath = computed(() => connectionListStore.trackLabelPath);
+const trackLabelActive = computed(
+  () =>
+    props.isActive &&
+    connectionListStore.grouping === "track" &&
+    trackLabelPath.value.length > 0,
+);
+
+const trackLabelPropertyName = computed(
+  () =>
+    propertyStore.getFullNameFromPath(trackLabelPath.value) ??
+    trackLabelPath.value.join(" / "),
+);
+
+const trackLabelItems = computed(() => {
+  const items = propertyStore.computedPropertyPaths.map((path) => ({
+    title: propertyStore.getFullNameFromPath(path) ?? path.join(" / "),
+    value: createPathStringFromPathArray(path),
+  }));
+  // Keep the persisted selection listed even when its values are gone (e.g.
+  // deleted between sessions), so the select shows what is configured and the
+  // user can clear it — rather than displaying a raw path key.
+  const currentKey = createPathStringFromPathArray(trackLabelPath.value);
+  if (currentKey && !items.some((item) => item.value === currentKey)) {
+    items.push({ title: trackLabelPropertyName.value, value: currentKey });
+  }
+  return [{ title: "Object ID (default)", value: "" }, ...items];
+});
+
+const trackLabelKey = computed(() =>
+  createPathStringFromPathArray(trackLabelPath.value),
+);
+
+function setTrackLabelFromKey(key: string | null) {
+  if (!key) {
+    connectionListStore.setTrackLabelPath([]);
+    return;
+  }
+  // The only offered key outside computedPropertyPaths is the currently
+  // persisted one (see trackLabelItems), so a miss means "keep what we have".
+  const path = propertyStore.computedPropertyPaths.find(
+    (candidate) => createPathStringFromPathArray(candidate) === key,
+  );
+  if (path) {
+    connectionListStore.setTrackLabelPath(path);
+  }
+}
+
+/**
+ * Lazy (stub-only) mode only: property values for track members, which the
+ * viewport-scoped propertyValues cache does not hold. `null` marks an id that
+ * was fetched and confirmed to have no value, so it is never refetched.
+ */
+const fetchedTrackValues = ref<Map<string, number | string | null>>(new Map());
+// Identifies what the cache was fetched FOR; a path change or a server-side
+// recompute (revision bump) invalidates it wholesale.
+let fetchedTrackValuesKey = "";
+// Stale-response guard: only the latest in-flight fetch may merge.
+let trackValueFetchToken = 0;
+
+function asLeafValue(value: unknown): number | string | null {
+  return typeof value === "number" || typeof value === "string" ? value : null;
+}
+
+function trackMemberValue(annotationId: string): number | string | null {
+  if (annotationStore.stubOnlyMode) {
+    return fetchedTrackValues.value.get(annotationId) ?? null;
+  }
+  const values = propertyStore.propertyValues[annotationId];
+  return values
+    ? asLeafValue(getValueFromObjectAndPath(values, trackLabelPath.value))
+    : null;
+}
+
+const trackLabels = computed((): Map<string, TTrackLabelResolution> => {
+  const labels = new Map<string, TTrackLabelResolution>();
+  if (!trackLabelActive.value) {
+    return labels;
+  }
+  for (const track of tracks.value) {
+    labels.set(
+      track.id,
+      resolveTrackLabelValue(track.annotationIds, trackMemberValue),
+    );
+  }
+  return labels;
+});
+
+/**
+ * Lazy mode: fetch the chosen property's values for track members missing from
+ * the local cache. Wholesale mode reads propertyValues directly and never gets
+ * here. Re-entered whenever the tracks change (cheap no-op once every member
+ * is cached — comparable to the per-pan row rebuild the tab already pays).
+ */
+async function ensureTrackLabelValues() {
+  if (!trackLabelActive.value || !annotationStore.stubOnlyMode) {
+    return;
+  }
+  const path = trackLabelPath.value;
+  const cacheKey = `${propertyStore.propertyValuesRevision}:${createPathStringFromPathArray(path)}`;
+  if (cacheKey !== fetchedTrackValuesKey) {
+    fetchedTrackValuesKey = cacheKey;
+    fetchedTrackValues.value = new Map();
+  }
+  const cache = fetchedTrackValues.value;
+  const missingIds: string[] = [];
+  const seen = new Set<string>();
+  for (const track of tracks.value) {
+    for (const annotationId of track.annotationIds) {
+      if (!cache.has(annotationId) && !seen.has(annotationId)) {
+        seen.add(annotationId);
+        missingIds.push(annotationId);
+      }
+    }
+  }
+  const datasetId = store.dataset?.id;
+  if (missingIds.length === 0 || !datasetId) {
+    return;
+  }
+  const token = ++trackValueFetchToken;
+  try {
+    // Single batched request — never a fetch-per-annotation loop.
+    const entries = await propertyStore.propertiesAPI.getPropertyValuesForIds(
+      datasetId,
+      missingIds,
+      [path],
+    );
+    if (token !== trackValueFetchToken) {
+      return;
+    }
+    const valuesById = new Map(
+      entries.map(({ annotationId, values }) => [annotationId, values]),
+    );
+    const next = new Map(fetchedTrackValues.value);
+    for (const annotationId of missingIds) {
+      const values = valuesById.get(annotationId);
+      // Ids absent from the response have no value doc at all — record the
+      // confirmed miss so they are not refetched on every tracks change.
+      next.set(
+        annotationId,
+        values ? asLeafValue(getValueFromObjectAndPath(values, path)) : null,
+      );
+    }
+    fetchedTrackValues.value = next;
+  } catch (error) {
+    logError("Failed to fetch track label property values", error);
+  }
+}
+
+watch([trackLabelActive, trackLabelPath, tracks], ensureTrackLabelValues, {
+  immediate: true,
+});
+// A recompute/import replaces the values server-side; refetch rather than
+// keep labelling from the superseded run.
+watch(() => propertyStore.propertyValuesRevision, ensureTrackLabelValues);
+
+function trackTitle(track: ITrackRow): string {
+  const resolution = trackLabels.value.get(track.id);
+  if (
+    resolution &&
+    (resolution.status === "value" || resolution.status === "partial")
+  ) {
+    return formatTrackLabelValue(resolution.value);
+  }
+  return shortId(track.id);
+}
+
+// With a property label shown, the default id moves into the tooltip so the
+// track can still be told apart from a same-valued neighbour.
+function trackTitleTooltip(track: ITrackRow): string | undefined {
+  const resolution = trackLabels.value.get(track.id);
+  if (
+    resolution &&
+    (resolution.status === "value" || resolution.status === "partial")
+  ) {
+    return `${trackLabelPropertyName.value} · ${shortId(track.id)}`;
+  }
+  return undefined;
+}
+
+function trackBadge(
+  track: ITrackRow,
+): { text: string; color?: string; tooltip: string } | null {
+  const resolution = trackLabels.value.get(track.id);
+  if (!resolution) {
+    return null;
+  }
+  const propertyName = trackLabelPropertyName.value;
+  switch (resolution.status) {
+    case "value":
+      return null;
+    case "partial":
+      return {
+        text: "partial",
+        color: "warning",
+        tooltip:
+          `Some objects in this track have no "${propertyName}" value — ` +
+          `the property may predate the current connections. Recompute it ` +
+          `to refresh the ids.`,
+      };
+    case "mixed":
+      return {
+        text: "mixed IDs",
+        color: "warning",
+        tooltip:
+          `Objects in this track carry differing "${propertyName}" values ` +
+          `(${resolution.values.slice(0, 4).map(formatTrackLabelValue).join(", ")}` +
+          `${resolution.values.length > 4 ? ", …" : ""}) — the property may ` +
+          `predate the current connections. Recompute it to refresh the ids.`,
+      };
+    case "missing":
+      return {
+        text: "no ID",
+        tooltip: `No "${propertyName}" values on this track's objects yet.`,
+      };
+  }
 }
 
 /**
@@ -637,6 +903,14 @@ defineExpose({
   swatchColor,
   showTrackSwatches,
   trackMeta,
+  trackLabelItems,
+  trackLabelKey,
+  setTrackLabelFromKey,
+  trackLabels,
+  trackTitle,
+  trackTitleTooltip,
+  trackBadge,
+  ensureTrackLabelValues,
 });
 </script>
 
@@ -658,6 +932,14 @@ defineExpose({
 
 .scope-select {
   max-width: 220px;
+}
+
+.track-label-select {
+  max-width: 280px;
+}
+
+.track-badge {
+  flex: 0 0 auto;
 }
 
 .connection-count {

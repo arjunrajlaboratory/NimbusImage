@@ -2302,17 +2302,20 @@ export class Main extends VuexModule {
     if (!configuration) {
       return;
     }
-    // index.ts cannot statically import the properties/filters modules (they
-    // import this one), so pull their typed instances lazily. buildAnnotation-
-    // BrowserConfig keeps only the filters backing a visible row.
+    // index.ts cannot statically import the properties/filters/connectionList
+    // modules (they import this one), so pull their typed instances lazily.
+    // buildAnnotationBrowserConfig keeps only the filters backing a visible
+    // row.
     const properties = (await import("./properties")).default;
     const filters = (await import("./filters")).default;
+    const connectionList = (await import("./connectionList")).default;
     this.setConfigurationAnnotationBrowserConfig(
       buildAnnotationBrowserConfig(
         properties.displayedPropertyPaths,
         filters.filterPaths,
         filters.propertyFilters,
         filters.analysisPlots,
+        connectionList.trackLabelPath,
       ),
     );
     await this.syncConfiguration("annotationBrowserConfig");
@@ -2351,6 +2354,9 @@ export class Main extends VuexModule {
       filterPaths: config.filterPaths,
       propertyFilters: config.propertyFilters,
     });
+    // Dispatched by name (actions register unnamespaced) to avoid an import
+    // cycle with the connectionList module, which imports main.
+    this.context.dispatch("hydrateTrackLabelPath", config.trackLabelPath ?? []);
     // Restored gates hold polygons, not ids. Hydration only seeds the plots;
     // Viewer owns resolution through its analysisInputSignature watcher, which
     // reacts to this state change in both 2D and 3D. Dispatching here as well

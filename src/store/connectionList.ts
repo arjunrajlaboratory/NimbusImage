@@ -55,6 +55,18 @@ export class ConnectionList extends VuexModule {
   expandedTrackIds: Set<string> = markRaw(new Set());
 
   /**
+   * Property path labelling tracks in the "By track" view ([] = default
+   * short-id labels). Lets the panel show the same track ids a property
+   * worker computed (e.g. Parent-Child Connection IDs' `trackId`), so a track
+   * flagged during post-processing can be found here by that id.
+   *
+   * Persisted per configuration alongside the annotation browser's displayed
+   * columns — the path names a property id, which only means something within
+   * one configuration.
+   */
+  trackLabelPath: string[] = [];
+
+  /**
    * Predicate deciding whether ONE connection is in scope.
    *
    * A predicate, not a set of qualifying annotation ids: building that set
@@ -282,6 +294,24 @@ export class ConnectionList extends VuexModule {
   }
 
   @Mutation
+  protected setTrackLabelPathImpl(path: string[]) {
+    this.trackLabelPath = path;
+  }
+
+  @Action
+  public setTrackLabelPath(path: string[]) {
+    this.setTrackLabelPathImpl(path);
+    main.scheduleAnnotationBrowserSave();
+  }
+
+  // Restore the persisted path from the configuration. Uses the raw mutation
+  // so hydration never schedules a save of its own.
+  @Action
+  public hydrateTrackLabelPath(path: string[]) {
+    this.setTrackLabelPathImpl(path);
+  }
+
+  @Mutation
   public setPage(page: number) {
     this.page = page;
   }
@@ -343,6 +373,10 @@ export class ConnectionList extends VuexModule {
     // Per-dataset like the rest: a stale "was dedupe" flag would mislabel the
     // next empty result in a different dataset as "already connected".
     this.lastConnectSkippedAsDuplicate = false;
+    // References a property id from the outgoing configuration.
+    // hydrateAnnotationBrowserState re-seeds it after this reset (same
+    // lifecycle as displayedPropertyPaths in the properties store).
+    this.trackLabelPath = [];
   }
 
   // Clear per-dataset connection view state. Scope and grouping survive: they

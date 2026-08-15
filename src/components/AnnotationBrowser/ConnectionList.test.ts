@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { shallowMount } from "@vue/test-utils";
+import { flushPromises, shallowMount } from "@vue/test-utils";
 import {
   AnnotationShape,
   IAnnotation,
@@ -18,11 +18,14 @@ const h = vi.hoisted(() => ({
   deleteSelectedInScopeConnections: vi.fn(),
   connectSelectedAnnotations: vi.fn(),
   setSelectedConnectionIds: vi.fn(),
+  getPropertyValuesForIds: vi.fn(),
   state: {
     scope: "all",
     grouping: "flat",
     page: 1,
     itemsPerPage: 50,
+    trackLabelPath: [] as string[],
+    setTrackLabelPath: vi.fn(),
     hoveredConnectionId: null as string | null,
     selectedConnectionIds: new Set<string>(),
     selectedExistingConnectionIds: [] as string[],
@@ -51,7 +54,25 @@ const h = vi.hoisted(() => ({
   } as any,
 }));
 
-vi.mock("@/store", () => ({ default: { isLoggedIn: true } }));
+vi.mock("@/store", () => ({
+  default: { isLoggedIn: true, dataset: { id: "ds" } },
+}));
+
+// Plain-object mocks like the rest of the file: tests set the fields up and
+// mount fresh rather than driving updates post-mount.
+const propertyStoreMock = vi.hoisted(() => ({
+  propertyValues: {} as Record<string, any>,
+  computedPropertyPaths: [] as string[][],
+  propertyValuesRevision: 0,
+  getFullNameFromPath: (path: string[]) => path.join(" / "),
+  propertiesAPI: { getPropertyValuesForIds: undefined as any },
+}));
+
+vi.mock("@/store/properties", () => {
+  propertyStoreMock.propertiesAPI.getPropertyValuesForIds =
+    h.getPropertyValuesForIds;
+  return { default: propertyStoreMock };
+});
 
 // Mutable (and reset in beforeEach) because the swatch gate depends on the
 // timelapse mode as well as the colouring option, and both need to be driven.
@@ -63,12 +84,18 @@ const timelapseStore = vi.hoisted(() => ({
 
 vi.mock("@/store/timelapse", () => ({ default: timelapseStore }));
 
-vi.mock("@/store/annotation", () => ({
-  default: {
-    setSelected: h.setSelected,
-    selectedAnnotationIds: new Set<string>(),
-  },
-}));
+const annotationStoreMock = vi.hoisted(
+  () =>
+    ({
+      selectedAnnotationIds: new Set<string>(),
+      stubOnlyMode: false,
+    }) as any,
+);
+
+vi.mock("@/store/annotation", () => {
+  annotationStoreMock.setSelected = h.setSelected;
+  return { default: annotationStoreMock };
+});
 
 vi.mock("@/utils/annotationNavigation", () => ({
   goToConnection: h.goToConnection,
@@ -151,6 +178,12 @@ beforeEach(() => {
   h.state.itemsPerPage = 50;
   h.state.trackRows = [];
   h.state.isTrackExpanded = () => false;
+  h.state.trackLabelPath = [];
+  annotationStoreMock.stubOnlyMode = false;
+  propertyStoreMock.propertyValues = {};
+  propertyStoreMock.computedPropertyPaths = [];
+  propertyStoreMock.propertyValuesRevision = 0;
+  h.getPropertyValuesForIds.mockResolvedValue([]);
   h.connectSelectedAnnotations.mockResolvedValue([]);
   setRows([], []);
 });
@@ -728,5 +761,150 @@ describe("ConnectionList", () => {
     const wrapper = mountComponent();
     await wrapper.vm.connectSelected();
     expect(wrapper.vm.connectError).toContain("Failed to create connections");
+  });
+});
+
+// --- Track labels from a property (issue #1330) ---
+//
+// The By-track view can label tracks with a worker-computed property value
+// (e.g. the Parent-Child Connection IDs worker's trackId) so a track flagged
+// during post-processing can be found here by the same id.
+describe("track labels from a property", () => {
+  const PATH = ["prop1", "trackId"];
+
+  function trackRowFor(annotationIds: string[]) {
+    return {
+      id: annotationIds[0],
+      colorKey: annotationIds[0],
+      annotationIds,
+      annotationCount: annotationIds.length,
+      timeRange: { start: 0, end: annotationIds.length - 1 },
+      rows: h.state.connectionRows,
+    };
+  }
+
+  function setupTrackView(values: Record<string, any>, path = PATH) {
+    h.state.grouping = "track";
+    h.state.trackLabelPath = path;
+    propertyStoreMock.propertyValues = values;
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    h.state.trackRows = [trackRowFor(["a", "b"])];
+    return mountComponent();
+  }
+
+  it("labels a track with the shared property value", () => {
+    const wrapper = setupTrackView({
+      a: { prop1: { trackId: 42 } },
+      b: { prop1: { trackId: 42 } },
+    });
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("42");
+    expect(wrapper.vm.trackBadge(track)).toBeNull();
+    // The default id moves into the tooltip so same-valued neighbours can
+    // still be told apart.
+    expect(wrapper.vm.trackTitleTooltip(track)).toContain("#");
+    expect(wrapper.text()).toContain("Track 42");
+  });
+
+  it("falls back to the short id without a chosen property", () => {
+    const wrapper = setupTrackView({ a: { prop1: { trackId: 42 } } }, []);
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("#a");
+    expect(wrapper.vm.trackBadge(track)).toBeNull();
+  });
+
+  it("keeps the shared value but badges a partially-covered track", () => {
+    const wrapper = setupTrackView({ a: { prop1: { trackId: 42 } } });
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("42");
+    expect(wrapper.vm.trackBadge(track)?.text).toBe("partial");
+  });
+
+  it("badges differing values and falls back to the short id", () => {
+    const wrapper = setupTrackView({
+      a: { prop1: { trackId: 42 } },
+      b: { prop1: { trackId: 43 } },
+    });
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("#a");
+    const badge = wrapper.vm.trackBadge(track);
+    expect(badge?.text).toBe("mixed IDs");
+    expect(badge?.tooltip).toContain("42, 43");
+  });
+
+  it("badges a track with no values at all", () => {
+    const wrapper = setupTrackView({});
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("#a");
+    expect(wrapper.vm.trackBadge(track)?.text).toBe("no ID");
+  });
+
+  it("integer floats from the worker display without decimals", () => {
+    const wrapper = setupTrackView({
+      a: { prop1: { trackId: 7.0 } },
+      b: { prop1: { trackId: 7.0 } },
+    });
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("7");
+  });
+
+  it("offers the default and every computed path in the picker", () => {
+    propertyStoreMock.computedPropertyPaths = [PATH, ["prop2"]];
+    h.state.grouping = "track";
+    const wrapper = mountComponent();
+    expect(wrapper.vm.trackLabelItems).toEqual([
+      { title: "Object ID (default)", value: "" },
+      { title: "prop1 / trackId", value: "prop1.trackId" },
+      { title: "prop2", value: "prop2" },
+    ]);
+  });
+
+  it("keeps a persisted path listed after its values disappear", () => {
+    propertyStoreMock.computedPropertyPaths = [["prop2"]];
+    h.state.grouping = "track";
+    h.state.trackLabelPath = PATH;
+    const wrapper = mountComponent();
+    expect(wrapper.vm.trackLabelItems).toContainEqual({
+      title: "prop1 / trackId",
+      value: "prop1.trackId",
+    });
+    expect(wrapper.vm.trackLabelKey).toBe("prop1.trackId");
+  });
+
+  it("maps picker selections back to store paths", () => {
+    propertyStoreMock.computedPropertyPaths = [PATH];
+    h.state.grouping = "track";
+    const wrapper = mountComponent();
+    wrapper.vm.setTrackLabelFromKey("prop1.trackId");
+    expect(h.state.setTrackLabelPath).toHaveBeenCalledWith(PATH);
+    wrapper.vm.setTrackLabelFromKey("");
+    expect(h.state.setTrackLabelPath).toHaveBeenCalledWith([]);
+  });
+
+  it("fetches member values in lazy mode with one batched request", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    h.getPropertyValuesForIds.mockResolvedValue([
+      { annotationId: "a", values: { prop1: { trackId: 42 } } },
+      // b intentionally absent: no value doc at all — a confirmed miss.
+    ]);
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledWith(
+      "ds",
+      ["a", "b"],
+      [PATH],
+    );
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("42");
+    expect(wrapper.vm.trackBadge(track)?.text).toBe("partial");
+  });
+
+  it("never fetches in wholesale mode", async () => {
+    setupTrackView({ a: { prop1: { trackId: 1 } } });
+    await flushPromises();
+    expect(h.getPropertyValuesForIds).not.toHaveBeenCalled();
   });
 });

@@ -530,6 +530,10 @@ export interface IAnnotationBrowserConfig {
   // Analysis-panel scatter plots and their gate polygons. Optional for
   // compatibility with configurations saved before analysis plots existed.
   analysisPlots?: IAnalysisPlot[];
+  // Property path labelling tracks in the Connections tab ([] = default
+  // short-id labels). Optional for compatibility with configurations saved
+  // before track labels existed.
+  trackLabelPath?: string[];
 }
 
 export interface IDatasetConfigurationBase {

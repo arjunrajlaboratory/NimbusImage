@@ -14,6 +14,8 @@ import {
   chainAnnotationsByTime,
   findConnectedComponents,
   findTimeTies,
+  formatTrackLabelValue,
+  resolveTrackLabelValue,
   shortAnnotationId,
   trackColor,
   trackKey,
@@ -643,5 +645,59 @@ describe("findTimeTies", () => {
         makeAnnotation("e", 9),
       ]),
     ).toEqual([1, 4]);
+  });
+});
+
+describe("resolveTrackLabelValue", () => {
+  const values = (map: Record<string, number | string | null>) => {
+    return (id: string) => map[id] ?? null;
+  };
+
+  it("returns the shared value when every member agrees", () => {
+    expect(
+      resolveTrackLabelValue(["a", "b"], values({ a: 42, b: 42 })),
+    ).toEqual({ status: "value", value: 42 });
+  });
+
+  it("keeps the shared value but flags partial coverage", () => {
+    expect(
+      resolveTrackLabelValue(["a", "b"], values({ a: 42, b: null })),
+    ).toEqual({ status: "partial", value: 42 });
+  });
+
+  it("reports each differing value once", () => {
+    expect(
+      resolveTrackLabelValue(["a", "b", "c"], values({ a: 42, b: 43, c: 43 })),
+    ).toEqual({ status: "mixed", values: [42, 43] });
+  });
+
+  it("reports missing when no member has a value", () => {
+    expect(resolveTrackLabelValue(["a", "b"], () => null)).toEqual({
+      status: "missing",
+    });
+  });
+
+  // 0 is a legitimate track id (the parent_child worker starts at 0), so the
+  // resolution must never treat it as "no value".
+  it("does not confuse a value of 0 with a missing value", () => {
+    expect(resolveTrackLabelValue(["a", "b"], values({ a: 0, b: 0 }))).toEqual({
+      status: "value",
+      value: 0,
+    });
+  });
+});
+
+describe("formatTrackLabelValue", () => {
+  it("shows worker integer floats without decimals", () => {
+    expect(formatTrackLabelValue(42.0)).toBe("42");
+    expect(formatTrackLabelValue(0)).toBe("0");
+  });
+
+  it("keeps fractional values short", () => {
+    expect(formatTrackLabelValue(1.23456789)).toBe("1.235");
+  });
+
+  it("passes strings through", () => {
+    expect(formatTrackLabelValue("t-7")).toBe("t-7");
   });
 });
