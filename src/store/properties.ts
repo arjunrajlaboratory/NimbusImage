@@ -25,6 +25,8 @@ import {
   IJobEventData,
   IErrorInfoList,
   IDatasetView,
+  MessageType,
+  NotificationType,
 } from "./model";
 
 import main from "./index";
@@ -42,9 +44,13 @@ import jobs, {
   createProgressEventCallback,
   createErrorEventCallback,
 } from "./jobs";
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
 import { findIndexOfPath } from "@/utils/paths";
 import progress from "./progress";
+import {
+  MAX_DISPLAYED_PROPERTY_PATHS,
+  MAX_PROPERTY_COMPUTE_BATCH,
+} from "./constants";
 
 // In lazy (stub-only) mode, property structure is homogeneous across a dataset,
 // so this many value docs are enough to discover every property path without
@@ -67,6 +73,122 @@ const defaultStatus: () => IPropertyStatus = () => ({
 
 function serializePropertyPath(path: string[]) {
   return path.join("\u0000");
+}
+
+function uniquePropertyPaths(paths: string[][]): string[][] {
+  const pathsByKey = new Map<string, string[]>();
+  for (const path of paths) {
+    const key = serializePropertyPath(path);
+    if (!pathsByKey.has(key)) {
+      pathsByKey.set(key, path);
+    }
+    if (pathsByKey.size === MAX_DISPLAYED_PROPERTY_PATHS) {
+      break;
+    }
+  }
+  return [...pathsByKey.values()];
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function addComputeError(
+  errorInfo: IErrorInfoList,
+  title: string,
+  error: unknown,
+  notify = true,
+) {
+  const message = errorMessage(error);
+  errorInfo.errors.push({
+    title,
+    error: message,
+    type: MessageType.ERROR,
+  });
+  if (notify) {
+    progress.createNotification({
+      type: NotificationType.ERROR,
+      title,
+      message,
+      timeout: 0,
+    });
+  }
+}
+
+interface IPropertyRun {
+  property: IAnnotationProperty;
+  status: IPropertyStatus;
+  errorInfo: IErrorInfoList;
+  progressId: string;
+}
+
+function finishPropertyRun(
+  run: IPropertyRun,
+  success: boolean,
+  error?: { title: string; value: unknown; notify?: boolean },
+) {
+  if (error) {
+    addComputeError(
+      run.errorInfo,
+      error.title,
+      error.value,
+      error.notify ?? true,
+    );
+  } else if (!success && run.errorInfo.errors.length === 0) {
+    addComputeError(
+      run.errorInfo,
+      "Property computation failed",
+      "The worker job did not complete successfully.",
+    );
+  }
+  progress.complete(run.progressId);
+  run.status.running = false;
+  run.status.previousRun = success && !error;
+  run.status.progressInfo = {};
+  run.status.errorInfo = run.errorInfo;
+}
+
+async function finishPropertyRuns(
+  tracked: { run: IPropertyRun; completion: Promise<boolean> }[],
+  refresh: () => Promise<void>,
+) {
+  const results = await Promise.all(
+    tracked.map(async ({ run, completion }) => {
+      try {
+        return { run, success: await completion, trackingError: null };
+      } catch (trackingError) {
+        return { run, success: false, trackingError };
+      }
+    }),
+  );
+
+  let refreshError: unknown = null;
+  if (results.some(({ success }) => success)) {
+    try {
+      await refresh();
+    } catch (error) {
+      refreshError = error;
+    }
+  }
+
+  let refreshNotificationShown = false;
+  for (const { run, success, trackingError } of results) {
+    if (trackingError) {
+      finishPropertyRun(run, false, {
+        title: "Property job tracking failed",
+        value: trackingError,
+      });
+    } else if (refreshError && success) {
+      finishPropertyRun(run, false, {
+        title: "Property refresh failed",
+        value: refreshError,
+        notify: !refreshNotificationShown,
+      });
+      refreshNotificationShown = true;
+    } else {
+      finishPropertyRun(run, success);
+    }
+  }
 }
 
 @Module({ dynamic: true, store, name: "properties" })
@@ -309,21 +431,77 @@ export class Properties extends VuexModule {
   }
 
   @Mutation
-  private togglePropertyPathVisibilityImpl(path: string[]) {
-    const pathIdx = findIndexOfPath(path, this.displayedPropertyPaths);
-    if (pathIdx < 0) {
-      this.displayedPropertyPaths = [...this.displayedPropertyPaths, path];
-    } else {
-      this.displayedPropertyPaths = this.displayedPropertyPaths.filter(
-        (_, i) => i !== pathIdx,
+  private setPropertyPathsVisibilityImpl({
+    paths,
+    visible,
+  }: {
+    paths: string[][];
+    visible: boolean;
+  }) {
+    const requestedKeys = new Set(paths.map(serializePropertyPath));
+    if (requestedKeys.size === 0) {
+      return;
+    }
+    if (!visible) {
+      const filtered = this.displayedPropertyPaths.filter(
+        (path) => !requestedKeys.has(serializePropertyPath(path)),
       );
+      if (filtered.length !== this.displayedPropertyPaths.length) {
+        this.displayedPropertyPaths = filtered;
+      }
+      return;
+    }
+
+    const displayedKeys = new Set(
+      this.displayedPropertyPaths.map(serializePropertyPath),
+    );
+    const additions: string[][] = [];
+    for (const path of paths) {
+      if (
+        this.displayedPropertyPaths.length + additions.length >=
+        MAX_DISPLAYED_PROPERTY_PATHS
+      ) {
+        break;
+      }
+      const key = serializePropertyPath(path);
+      if (!displayedKeys.has(key)) {
+        displayedKeys.add(key);
+        additions.push(path);
+      }
+    }
+    if (additions.length > 0) {
+      this.displayedPropertyPaths = [
+        ...this.displayedPropertyPaths,
+        ...additions,
+      ];
     }
   }
 
   @Action
   togglePropertyPathVisibility(path: string[]) {
-    this.togglePropertyPathVisibilityImpl(path);
-    main.scheduleAnnotationBrowserSave();
+    const previous = this.displayedPropertyPaths;
+    this.setPropertyPathsVisibilityImpl({
+      paths: [path],
+      visible: findIndexOfPath(path, previous) < 0,
+    });
+    if (previous !== this.displayedPropertyPaths) {
+      main.scheduleAnnotationBrowserSave();
+    }
+  }
+
+  @Action
+  setPropertyPathsVisibility({
+    paths,
+    visible,
+  }: {
+    paths: string[][];
+    visible: boolean;
+  }) {
+    const previous = this.displayedPropertyPaths;
+    this.setPropertyPathsVisibilityImpl({ paths, visible });
+    if (previous !== this.displayedPropertyPaths) {
+      main.scheduleAnnotationBrowserSave();
+    }
   }
 
   // Restore displayed columns persisted in the configuration. Uses the raw
@@ -431,7 +609,17 @@ export class Properties extends VuexModule {
 
   @Mutation
   private setDisplayedPropertyPaths(paths: string[][]) {
-    this.displayedPropertyPaths = paths;
+    const unique = uniquePropertyPaths(paths);
+    if (unique.length < new Set(paths.map(serializePropertyPath)).size) {
+      // A saved configuration can exceed the cap (or the cap may shrink);
+      // clamping is the invariant, but a silent drop of saved columns should
+      // at least be diagnosable.
+      logWarning(
+        `Displayed property columns clamped to ${MAX_DISPLAYED_PROPERTY_PATHS}; ` +
+          "hide columns to make room for others.",
+      );
+    }
+    this.displayedPropertyPaths = unique;
   }
 
   @Action
@@ -468,36 +656,62 @@ export class Properties extends VuexModule {
     const datasetId = main.dataset.id;
     const scales = main.scales;
 
-    // Create a progress entry using the new progress store
-    const progressId = await progress.create({
-      type: ProgressType.PROPERTY_COMPUTE,
-      title: `Computing ${property.name}`,
-    });
-
-    // Set up the old progress tracking
-    if (!this.propertyStatuses[propertyId]) {
-      this.propertyStatuses[propertyId] = defaultStatus();
-    }
-    const status = this.propertyStatuses[propertyId];
+    const status =
+      this.propertyStatuses[propertyId] ??
+      (this.propertyStatuses[propertyId] = defaultStatus());
     status.running = true;
     status.previousRun = null;
+    status.progressInfo = {};
+    const activeErrorInfo = errorInfo ?? { errors: [] };
+    activeErrorInfo.errors = [];
+    status.errorInfo = activeErrorInfo;
 
-    // Clear errors if errorInfo is provided
-    if (errorInfo) {
-      errorInfo.errors = [];
+    let progressId;
+    try {
+      progressId = await progress.create({
+        type: ProgressType.PROPERTY_COMPUTE,
+        title: `Computing ${property.name}`,
+      });
+    } catch (error) {
+      addComputeError(
+        activeErrorInfo,
+        "Property progress tracking failed",
+        error,
+      );
+      status.running = false;
+      status.previousRun = false;
+      return null;
     }
-
-    const response = await this.propertiesAPI.computeProperty(
-      propertyId,
-      datasetId,
+    const run: IPropertyRun = {
       property,
-      scales,
-    );
+      status,
+      errorInfo: activeErrorInfo,
+      progressId,
+    };
+
+    let response;
+    try {
+      response = await this.propertiesAPI.computeProperty(
+        propertyId,
+        datasetId,
+        property,
+        scales,
+      );
+    } catch (error) {
+      finishPropertyRun(run, false, {
+        title: "Property submission failed",
+        value: error,
+      });
+      return null;
+    }
 
     // Keep track of running jobs
     const jobId = response.data[0]?._id;
     if (!jobId) {
-      progress.complete(progressId); // Clean up progress if job creation fails
+      finishPropertyRun(run, false, {
+        title: "Property submission failed",
+        value: "The server did not return a compute job.",
+      });
       return null;
     }
 
@@ -516,32 +730,126 @@ export class Properties extends VuexModule {
           defaultTitle: `Computing ${property.name}`,
         });
       },
-      errorCallback: errorInfo
-        ? createErrorEventCallback(errorInfo)
-        : undefined,
+      errorCallback: createErrorEventCallback(activeErrorInfo),
     };
 
-    jobs.addJob(computeJob).then(async (success: boolean) => {
+    const completion = jobs.addJob(computeJob);
+    void finishPropertyRuns([{ run, completion }], async () => {
       await this.fetchPropertyValues();
       await (await import("./filters")).default.updateHistograms();
-      // Update both progress systems
-      progress.complete(progressId);
-      status.running = false;
-      status.previousRun = success;
-      status.progressInfo = {};
-      if (errorInfo) {
-        status.errorInfo = errorInfo;
-      }
     });
 
     return computeJob;
+  }
+
+  @Action
+  async computeProperties(
+    requestedProperties: IAnnotationProperty[],
+  ): Promise<IPropertyComputeJob[]> {
+    if (!main.dataset || requestedProperties.length === 0) {
+      return [];
+    }
+    const datasetId = main.dataset.id;
+    const eligibleProperties = requestedProperties
+      .filter((property) => !this.propertyStatuses[property.id]?.running)
+      .slice(0, MAX_PROPERTY_COMPUTE_BATCH);
+    if (eligibleProperties.length === 0) {
+      return [];
+    }
+
+    const runs: IPropertyRun[] = [];
+    for (const property of eligibleProperties) {
+      const errorInfo: IErrorInfoList = { errors: [] };
+      const status =
+        this.propertyStatuses[property.id] ??
+        (this.propertyStatuses[property.id] = defaultStatus());
+      status.running = true;
+      status.previousRun = null;
+      status.progressInfo = {};
+      status.errorInfo = errorInfo;
+      try {
+        const progressId = await progress.create({
+          type: ProgressType.PROPERTY_COMPUTE,
+          title: `Computing ${property.name}`,
+        });
+        runs.push({ property, status, errorInfo, progressId });
+      } catch (error) {
+        addComputeError(errorInfo, "Property progress tracking failed", error);
+        status.running = false;
+        status.previousRun = false;
+        status.progressInfo = {};
+      }
+    }
+    if (runs.length === 0) {
+      return [];
+    }
+    // Submit each property through the existing per-property endpoint. The
+    // requests are sequential and small-N (bounded by the batch cap); a
+    // batch submission endpoint is planned as a follow-up backend PR.
+    const tracked: {
+      run: (typeof runs)[number];
+      job: IPropertyComputeJob;
+      completion: Promise<boolean>;
+    }[] = [];
+    let submissionNotificationShown = false;
+    for (const run of runs) {
+      let jobId;
+      try {
+        const response = await this.propertiesAPI.computeProperty(
+          run.property.id,
+          datasetId,
+          run.property,
+          main.scales,
+        );
+        jobId = response.data[0]?._id;
+      } catch (error) {
+        finishPropertyRun(run, false, {
+          title: "Property submission failed",
+          value: error,
+          notify: !submissionNotificationShown,
+        });
+        submissionNotificationShown = true;
+        continue;
+      }
+      if (!jobId) {
+        finishPropertyRun(run, false, {
+          title: "Property submission failed",
+          value: "The server did not return a compute job.",
+          notify: !submissionNotificationShown,
+        });
+        submissionNotificationShown = true;
+        continue;
+      }
+      const job: IPropertyComputeJob = {
+        propertyId: run.property.id,
+        jobId,
+        datasetId,
+        eventCallback: (jobData: IJobEventData) => {
+          createProgressEventCallback(run.status.progressInfo)(jobData);
+          progress.handleJobProgress({
+            jobData,
+            progressId: run.progressId,
+            defaultTitle: `Computing ${run.property.name}`,
+          });
+        },
+        errorCallback: createErrorEventCallback(run.errorInfo),
+      };
+      tracked.push({ run, job, completion: jobs.addJob(job) });
+    }
+
+    void finishPropertyRuns(tracked, async () => {
+      await this.fetchPropertyValues();
+      await (await import("./filters")).default.updateHistograms();
+    });
+
+    return tracked.map(({ job }) => job);
   }
 
   // Thin, promise-returning submitter for a single property-compute job.
   // Unlike computeProperty it does NOT own progress creation or the
   // post-completion fetchPropertyValues/updateHistograms — the caller (e.g. the
   // pipeline runner) drives those once for the whole run.
-  @Action
+  @Action({ rawError: true })
   async submitPropertyJob({
     property,
     datasetId,
@@ -582,7 +890,7 @@ export class Properties extends VuexModule {
     return { job: computeJob, completionPromise };
   }
 
-  @Action
+  @Action({ rawError: true })
   async computePropertyBatch({
     property,
     configurationId,
@@ -761,13 +1069,23 @@ export class Properties extends VuexModule {
     // Complete batch progress
     progress.complete(batchProgressId);
 
-    // Refresh property values for the current dataset
-    await this.fetchPropertyValues();
-    await (await import("./filters")).default.updateHistograms();
+    // Refresh property values for the current dataset. Job completion and
+    // client refresh are separate success conditions: a failed refresh must
+    // still release the running state and remain visible to the user.
+    let refreshSucceeded = true;
+    try {
+      await this.fetchPropertyValues();
+      await (await import("./filters")).default.updateHistograms();
+    } catch (error) {
+      refreshSucceeded = false;
+      const errorInfo = status.errorInfo ?? { errors: [] };
+      status.errorInfo = errorInfo;
+      addComputeError(errorInfo, "Property refresh failed", error);
+    }
 
     // Update property status
     status.running = false;
-    status.previousRun = completed > 0 && failed === 0;
+    status.previousRun = completed > 0 && failed === 0 && refreshSucceeded;
     status.progressInfo = {};
 
     onComplete({ succeeded: completed, failed, cancelled });
@@ -831,7 +1149,7 @@ export class Properties extends VuexModule {
   // Otherwise it loads everything as before. The property-filter case (which
   // still needs every value for client-side filtered drawing) is handled by
   // AnnotationViewer, which calls fetchAllPropertyValues while a filter is on.
-  @Action
+  @Action({ rawError: true })
   async fetchPropertyValues() {
     if (!main.dataset?.id) {
       return;
@@ -874,7 +1192,7 @@ export class Properties extends VuexModule {
     );
   }
 
-  @Action
+  @Action({ rawError: true })
   async fetchAllPropertyValues() {
     if (!main.dataset?.id) {
       return;
@@ -883,7 +1201,7 @@ export class Properties extends VuexModule {
     this.updatePropertyValues(values);
   }
 
-  @Action
+  @Action({ rawError: true })
   async fetchPropertyPathsSample() {
     if (!main.dataset?.id) {
       return;

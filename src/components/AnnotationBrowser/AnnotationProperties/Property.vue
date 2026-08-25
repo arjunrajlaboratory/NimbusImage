@@ -65,11 +65,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import propertyStore, { IPropertyStatus } from "@/store/properties";
-import {
-  IAnnotationProperty,
-  IErrorInfoList,
-  MessageType,
-} from "@/store/model";
+import { IAnnotationProperty, MessageType } from "@/store/model";
+import { computePropertyWithStatus } from "@/utils/propertyCompute";
 
 const props = withDefaults(
   defineProps<{
@@ -119,26 +116,7 @@ function compute() {
     return;
   }
 
-  // Create a new error info object for this computation
-  const errorInfo: IErrorInfoList = { errors: [] };
-
-  // Ensure the property status exists
-  if (!propertyStore.propertyStatuses[props.property.id]) {
-    propertyStore.propertyStatuses[props.property.id] = {
-      running: false,
-      previousRun: null,
-      progressInfo: {},
-      errorInfo: { errors: [] },
-    };
-  }
-
-  // Update the status with the new error info
-  propertyStore.propertyStatuses[props.property.id].errorInfo = errorInfo;
-
-  propertyStore.computeProperty({
-    property: props.property,
-    errorInfo,
-  });
+  void computePropertyWithStatus(props.property);
 }
 
 defineExpose({ status, uncomputed, filteredErrors, filteredWarnings, compute });
