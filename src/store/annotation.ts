@@ -76,6 +76,18 @@ type IndexedAnnotationUpdate = {
   updateCentroid?: boolean;
 };
 
+// Whether a failed color write can have changed backend colors. 400
+// (validation), 401 and 403 (authentication/authorization) are all raised
+// BEFORE the first mutation — the color endpoints check dataset WRITE access
+// up front, and the bulk update's access check precedes its saves — so those
+// leave colors untouched: the legend must stay and the refetch is pure
+// waste (a READ-only user clicking Apply used to lose their valid legend to
+// a guaranteed-no-write 403). Anything else can be a partial write.
+function failureMayHaveWritten(error: unknown): boolean {
+  const status = (error as any)?.response?.status;
+  return status !== 400 && status !== 401 && status !== 403;
+}
+
 function cloneAnnotation(annotation: IAnnotation): IAnnotation {
   const rawAnnotation = toRaw(annotation);
   return markRaw({
@@ -1513,9 +1525,13 @@ export class Annotations extends VuexModule {
   }: {
     annotationIds: string[];
     editFunction: (annotation: IAnnotation) => void;
-  }) {
+  }): Promise<number> {
+    // Returns how many annotations were actually patched. Callers that own
+    // state derived from the edit (the color-by-property legend) must not act
+    // on an edit that wrote nothing — not logged in, an empty selection, or
+    // values that already matched.
     if (!main.isLoggedIn) {
-      return;
+      return 0;
     }
     if (this.stubOnlyMode) {
       // In stub-only mode annotations[] is empty, so the patch-from-full-
@@ -1524,7 +1540,7 @@ export class Annotations extends VuexModule {
       // from the stubs instead, persist them, and sync tags/color back onto
       // local stubs so the canvas stays consistent.
       if (!annotationIds.length) {
-        return;
+        return 0;
       }
       sync.setSaving(true);
       try {
@@ -1539,12 +1555,12 @@ export class Annotations extends VuexModule {
           this.bumpMutationCounter();
         }
         sync.setSaving(false);
+        return patches.length;
       } catch (error) {
         logError(`Failed to update annotations: ${(error as Error).message}`);
         sync.setSaving(error as Error);
         throw error;
       }
-      return;
     }
     sync.setSaving(true);
     const originalAnnotations: IndexedAnnotationUpdate[] = [];
@@ -1581,6 +1597,7 @@ export class Annotations extends VuexModule {
         this.bumpMutationCounter();
       }
       sync.setSaving(false);
+      return annotationUpdates.length;
     } catch (error) {
       this.setAnnotationsAtIndices(originalAnnotations);
       logError(`Failed to update annotations: ${(error as Error).message}`);
@@ -1702,7 +1719,60 @@ export class Annotations extends VuexModule {
         annotation.color = color;
       }
     };
-    await this.updateAnnotationsPerId({ annotationIds, editFunction });
+    // Capture before the await: a large selection takes seconds to persist,
+    // and the legend below belongs to the dataset/configuration this recolor
+    // started from — not to whatever is open when it finishes.
+    const datasetId = main.dataset?.id;
+    const configurationId = main.configuration?.id;
+    let patched = 0;
+    try {
+      patched = await this.updateAnnotationsPerId({
+        annotationIds,
+        editFunction,
+      });
+    } catch (error) {
+      // Same may-have-written shape as the apply/clear failure paths: the
+      // backend's bulk save is remove + insert_many, so a non-400 failure
+      // can leave PART of the manual recolor written. A property legend
+      // standing over half-overwritten colors is the wrong-legend state the
+      // design forbids — retire it (a missing legend is the accepted worst
+      // case) and resync the canvas to whatever actually landed. A 400 was
+      // rejected before any write, so nothing changed and the legend holds.
+      if (failureMayHaveWritten(error) && datasetId && configurationId) {
+        await main.saveColorByPropertyFor({
+          datasetId,
+          configurationId,
+          state: null,
+        });
+        if (main.dataset?.id === datasetId) {
+          await this.fetchAnnotations();
+        }
+      }
+      throw error;
+    }
+    // Retire the persisted legend so it stops claiming the colors come from a
+    // property mapping. This action is the choke point for every manual color
+    // assignment (context menu, color-selected dialog, tag-cloud coloring, AI
+    // agent).
+    //
+    // Only when something was actually recolored: "Color Selected" with an
+    // empty selection, a color that every target already had, and a
+    // not-logged-in attempt all reach here having written nothing, and
+    // deleting the legend then would leave the canvas correctly colored by
+    // the property with no legend to explain it.
+    //
+    // The retirement targets the CAPTURED pair, not the current one: the
+    // colors it invalidated were written to that dataset regardless of what
+    // is open when the write completes, so a mid-await switch must not
+    // abandon the cleanup (it used to, leaving the stale legend to reappear
+    // on the captured dataset's next load).
+    if (patched > 0 && datasetId && configurationId) {
+      await main.saveColorByPropertyFor({
+        datasetId,
+        configurationId,
+        state: null,
+      });
+    }
   }
 
   @Action
@@ -1718,6 +1788,153 @@ export class Annotations extends VuexModule {
       color,
       randomize,
     });
+  }
+
+  // Apply server-side color-by-property and keep the three-step invariant in
+  // one place: colors written on the backend ⇒ applied locally from the
+  // returned assignment (a full refetch only as the fallback when the local
+  // apply couldn't happen) ⇒ legend persisted in the configuration. rawError
+  // so callers (the dialog) can show the backend's real 400 message instead
+  // of the decorator's generic wrapper.
+  @Action({ rawError: true })
+  public async applyColorByProperty(params: {
+    propertyPath: string[];
+    propertyName: string;
+    mode?: "auto" | "continuous" | "categorical";
+    colormap?: string;
+    rangeMin?: number;
+    rangeMax?: number;
+    percentileLow?: number;
+    percentileHigh?: number;
+  }) {
+    const datasetId = main.dataset?.id;
+    const configurationId = main.configuration?.id;
+    if (!datasetId) {
+      return null;
+    }
+    const { propertyName, ...request } = params;
+    // The backend's write covers the dataset, so any failure past validation
+    // may have already changed colors — the canvas must not keep showing the
+    // old ones. 400/401/403 are rejected before any write (see
+    // failureMayHaveWritten), so nothing changed and the
+    // (potentially large) refetch can be skipped.
+    let backendMayHaveChanged = true;
+    let applied = false;
+    try {
+      const result = await this.annotationsAPI.colorByProperty({
+        datasetId,
+        ...request,
+      });
+      // Coloring a large dataset takes seconds, and the user can switch
+      // datasets while it runs. The LOCAL apply below targets whatever is
+      // loaded now, so it must be skipped after a switch: the assignment's
+      // ids would match none of the new dataset's annotations and null every
+      // one of their colors. Apply locally BEFORE persisting the legend —
+      // this is a synchronous mutation, so nothing can interleave between
+      // the guard and its effect, while persisting first would put an
+      // awaited configuration PUT in that gap.
+      // The endpoint returns the id→color grouping it just wrote, so the new
+      // colors can be applied to the annotations already in memory instead of
+      // refetching the whole dataset.
+      if (main.dataset?.id !== datasetId) {
+        applied = true; // nothing local to do, and nothing to refetch either
+      } else if (result.assignment) {
+        this.applyColorAssignment(result.assignment);
+        applied = true;
+      }
+      // The legend, unlike the local apply, is NOT skipped on a switch: the
+      // backend recolored the captured dataset either way, and that dataset's
+      // slot in the captured configuration must describe the colors it now
+      // has — an older property coloring's legend left standing would not.
+      // saveColorByPropertyFor targets the captured pair even when a switch
+      // means it is no longer the pair on screen.
+      if (result.legend && configurationId) {
+        await main.saveColorByPropertyFor({
+          datasetId,
+          configurationId,
+          state: { ...result.legend, propertyName, showLegend: true },
+        });
+      }
+      return result;
+    } catch (error) {
+      backendMayHaveChanged = failureMayHaveWritten(error);
+      // A non-400 failure can be a PARTIAL write (the bulk write is
+      // unordered; the backend bumps its raster version in a finally for
+      // exactly this case), so a legend persisted by an EARLIER apply now
+      // describes neither the half-applied mapping nor the refetched
+      // colors. Retire it. 400/401/403 were rejected before any write, so the
+      // earlier legend still holds and must stay.
+      if (backendMayHaveChanged && configurationId) {
+        await main.saveColorByPropertyFor({
+          datasetId,
+          configurationId,
+          state: null,
+        });
+      }
+      throw error;
+    } finally {
+      // Only fall back to the full refetch when the local apply couldn't
+      // happen (a failure mid-write leaves colors we can't enumerate) AND the
+      // dataset is still the one we colored.
+      if (!applied && backendMayHaveChanged && main.dataset?.id === datasetId) {
+        await this.fetchAnnotations();
+      }
+    }
+  }
+
+  // Twin of applyColorByProperty: reset every color to null (layer color)
+  // and retire the persisted legend.
+  @Action({ rawError: true })
+  public async removeColorByProperty() {
+    const datasetId = main.dataset?.id;
+    if (!datasetId) {
+      return;
+    }
+    const configurationId = main.configuration?.id;
+    let backendMayHaveChanged = true;
+    let applied = false;
+    try {
+      await this.annotationsAPI.clearColorByProperty(datasetId);
+      // Same dataset-switch guard as applyColorByProperty for the LOCAL
+      // apply: an empty assignment nulls EVERY loaded color, so applying it
+      // to a dataset we didn't clear would wipe that dataset's colors
+      // locally. Local apply first, because an awaited configuration write
+      // between the guard and this mutation is a window in which the dataset
+      // can change.
+      if (main.dataset?.id === datasetId) {
+        this.applyColorAssignment([]);
+      }
+      applied = true;
+      // And like applyColorByProperty, the legend retirement is NOT skipped
+      // on a switch: the backend cleared the captured dataset's colors, so
+      // leaving its legend standing would claim a property mapping that no
+      // longer exists.
+      if (configurationId) {
+        await main.saveColorByPropertyFor({
+          datasetId,
+          configurationId,
+          state: null,
+        });
+      }
+    } catch (error) {
+      backendMayHaveChanged = failureMayHaveWritten(error);
+      // Same as applyColorByProperty's failure path: the clear's update can
+      // fail partway, and partially cleared colors under a standing legend
+      // is the same wrong-legend state — retire it. Nothing was written on
+      // a 400, so the legend stays.
+      if (backendMayHaveChanged && configurationId) {
+        await main.saveColorByPropertyFor({
+          datasetId,
+          configurationId,
+          state: null,
+        });
+      }
+      throw error;
+    } finally {
+      if (!applied && backendMayHaveChanged && main.dataset?.id === datasetId) {
+        await this.fetchAnnotations();
+      }
+    }
   }
 
   @Action
@@ -2464,7 +2681,22 @@ export class Annotations extends VuexModule {
     }
     for (const { id, annotation } of payload.newEntries) {
       newMap.delete(id);
-      newMap.set(id, annotation);
+      // Take `color` from the local stub when we have one. The stub map is the
+      // client's authoritative view of per-annotation color — every local
+      // color operation patches it — while hydration exists to supply
+      // geometry. Without this, a hydration issued BEFORE a bulk recolor
+      // (e.g. color-by-property, which takes seconds on a large dataset) can
+      // land AFTER it and reinstate the pre-recolor color on whichever
+      // annotations happened to be hydrating at the time. Preferring the stub
+      // is also self-consistent: a stub that has gone stale relative to the
+      // backend is already what the other ~99% of the canvas is drawn from.
+      const stub = this.annotationStubs.get(id);
+      newMap.set(
+        id,
+        stub === undefined || stub.color === annotation.color
+          ? annotation
+          : markRaw({ ...annotation, color: stub.color }),
+      );
     }
     const cap = this.visibilityConfig.hydrationCacheCap;
     if (cap > 0 && newMap.size > cap) {
@@ -2489,6 +2721,83 @@ export class Annotations extends VuexModule {
   @Mutation
   clearHydrationCache() {
     this.hydratedAnnotations = markRaw(new Map());
+  }
+
+  /**
+   * Apply a whole-dataset color assignment locally, mirroring exactly what the
+   * backend just wrote: every annotation listed takes its group's color, and
+   * every annotation NOT listed becomes null (the layer color) — because the
+   * backend's write covers the dataset, clearing whatever it doesn't assign.
+   * An empty assignment therefore means "all colors cleared".
+   *
+   * This replaces refetching every stub after a recolor: the geometry is
+   * unchanged, so the centroid index and spatial index stay valid and only the
+   * color field moves. Measured on a 708K-annotation dataset: ~0.5s here
+   * against 12.8s for fetchAnnotations.
+   */
+  @Mutation
+  applyColorAssignment(groups: { color: string; ids: string[] }[]) {
+    const colorById = new Map<string, string>();
+    for (const group of groups) {
+      for (const id of group.ids) {
+        colorById.set(id, group.color);
+      }
+    }
+    // The annotation-overview raster is a server-rendered image of these
+    // colors, and its tile URLs carry mutationCounter as their cache buster —
+    // so a recolor that doesn't bump it leaves the overview drawing the
+    // previous colors. Bumped here rather than in the two callers because this
+    // mutation is the only place a color assignment lands locally; the
+    // wholesale-refetch fallback bumps via fetchAnnotations.
+    let changed = false;
+    if (this.annotationStubs.size > 0) {
+      const newStubs = new Map(this.annotationStubs);
+      for (const [id, stub] of newStubs) {
+        const color = colorById.get(id) ?? null;
+        if (stub.color !== color) {
+          newStubs.set(id, { ...stub, color });
+          changed = true;
+        }
+      }
+      // markRaw like every other assignment to this map: without it Vue walks
+      // and proxies all ~700K entries, which dwarfs the patch itself.
+      this.annotationStubs = markRaw(newStubs);
+    }
+    if (this.hydratedAnnotations.size > 0) {
+      const newHydrated = new Map(this.hydratedAnnotations);
+      for (const [id, annotation] of newHydrated) {
+        const color = colorById.get(id) ?? null;
+        if (annotation.color !== color) {
+          newHydrated.set(id, markRaw({ ...annotation, color }));
+          changed = true;
+        }
+      }
+      this.hydratedAnnotations = markRaw(newHydrated);
+    }
+    if (this.annotations.length > 0) {
+      this.annotations = this.annotations.map((annotation) => {
+        const color = colorById.get(annotation.id) ?? null;
+        if (annotation.color === color) {
+          return annotation;
+        }
+        changed = true;
+        return markRaw({ ...annotation, color });
+      });
+    }
+    // Only when a color actually moved: an assignment that changes nothing
+    // (re-applying the same coloring, clearing an already-cleared dataset)
+    // would otherwise make the overview discard and re-fetch every tile for
+    // an identical image.
+    //
+    // Deliberately NOT contentRevision, unlike every other mutation that edits
+    // stubs: that counter feeds the analysis gate/histogram signatures, and no
+    // gate depends on color. Bumping it would re-resolve every gate
+    // server-side, over the whole dataset, for a guaranteed-identical answer.
+    // (applyStubFieldUpdates does bump it because it also carries tags.)
+    // Pinned by annotationContentRevision.test.ts.
+    if (changed) {
+      this.mutationCounter += 1;
+    }
   }
 
   @Action

@@ -277,7 +277,7 @@
               bulkExporting ? "Exporting datasets..." : "Preparing download..."
             }}
           </template>
-          <v-icon> mdi-save </v-icon>
+          <v-icon> mdi-content-save </v-icon>
           {{ downloadButtonText }}
         </v-btn>
       </v-card-actions>

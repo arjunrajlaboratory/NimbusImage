@@ -3,6 +3,21 @@
     <!-- Measure/column controls live in the measurements chip strip below and
          the Measurements tab, so the toolbar only holds object actions. -->
     <div class="annotation-list-toolbar">
+      <v-tooltip text="Color objects by a property value">
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-btn
+            v-bind="activatorProps"
+            variant="text"
+            icon
+            size="small"
+            class="mr-1"
+            aria-label="Color objects by property"
+            @click="store.setIsColorByPropertyDialogOpen(true)"
+          >
+            <v-icon>mdi-palette</v-icon>
+          </v-btn>
+        </template>
+      </v-tooltip>
       <v-spacer />
       <v-btn
         variant="text"
@@ -43,10 +58,21 @@
             :disabled="!isLoggedIn"
           />
 
+          <!-- Paint-bucket rather than a palette: "Color Selected" applies one
+               chosen color to the selection, while the palette icon is reserved
+               for Color by Property (its two other entry points are icon-only
+               buttons, so the icon has to carry the meaning). -->
           <v-list-item
-            prepend-icon="mdi-palette"
+            prepend-icon="mdi-format-color-fill"
             title="Color Selected"
             @click="showColorDialog = true"
+            :disabled="!isLoggedIn"
+          />
+
+          <v-list-item
+            prepend-icon="mdi-palette"
+            title="Color by Property…"
+            @click="store.setIsColorByPropertyDialogOpen(true)"
             :disabled="!isLoggedIn"
           />
 

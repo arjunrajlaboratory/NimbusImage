@@ -119,14 +119,30 @@ def requireInt(value, field):
 
 
 def requireFloat(value, field):
-    """Parse a finite float query parameter or raise a clean 400."""
+    """Parse a finite float query parameter or raise a clean 400.
+
+    OverflowError: JSON ints are unbounded, and float(bigint) raises it
+    (it is not a ValueError) — same overflow class isFiniteNumber guards."""
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise RestException("%s must be a number" % field, code=400)
     if not math.isfinite(parsed):
         raise RestException("%s must be a finite number" % field, code=400)
     return parsed
+
+
+def isFiniteNumber(value):
+    """True for an int/float usable in float arithmetic; False for
+    everything else — including bool (a JSON true parses as int-like) and
+    an int too large to convert to float, where math.isfinite raises
+    OverflowError instead of returning False."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def isValidPropertyPath(path):
@@ -225,14 +241,6 @@ ANALYSIS_CATEGORICAL_KEYS = ("tags", "shape", "channel", "xy", "z", "time")
 ANALYSIS_CATEGORY_KEY_VERSION = 1
 
 
-def _isFiniteNumber(value):
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
-
-
 def _validateAnalysisAxis(axis, name):
     if not isinstance(axis, dict):
         raise RestException("%s must be an object" % name, code=400)
@@ -287,8 +295,8 @@ def _validateGateObject(gate, xAxis, yAxis):
     for vertex in vertices:
         if (
             not isinstance(vertex, dict)
-            or not _isFiniteNumber(vertex.get("x"))
-            or not _isFiniteNumber(vertex.get("y"))
+            or not isFiniteNumber(vertex.get("x"))
+            or not isFiniteNumber(vertex.get("y"))
         ):
             raise RestException(
                 "gate vertices must be {x, y} finite numbers", code=400

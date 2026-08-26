@@ -532,6 +532,79 @@ export interface IAnnotationBrowserConfig {
   analysisPlots?: IAnalysisPlot[];
 }
 
+// Record of the last server-side color-by-property apply, returned by the
+// color_by_property endpoint and persisted in the configuration. Non-null
+// means the annotation colors currently reflect this property mapping (any
+// other color assignment clears it — see annotation store colorAnnotationIds)
+// and drives the viewer legend.
+export interface IColorByPropertyCategory {
+  value: string;
+  color: string;
+  count: number;
+}
+
+// Legend part of the color_by_property endpoint response.
+export interface IColorByPropertyLegend {
+  type: "continuous" | "categorical";
+  propertyPath: string[];
+  // continuous only
+  colormap?: string;
+  // Hex gradient stops, uniformly spaced — exactly what the server applied
+  stops?: string[];
+  // Range the ramp spans; defaults to the 1st..99th percentile, so it is
+  // usually narrower than the data extent below (values outside clamp to the
+  // end colors).
+  min?: number;
+  max?: number;
+  // True extent of the data, and whether the ramp clipped it — lets the
+  // legend label its ends "≤"/"≥" rather than implying the ramp covers
+  // everything.
+  dataMin?: number;
+  dataMax?: number;
+  clippedLow?: boolean;
+  clippedHigh?: boolean;
+  // categorical only
+  categories?: IColorByPropertyCategory[];
+}
+
+// The id→color grouping the backend just wrote, requested with
+// returnAssignment so the client can repaint the annotations it already holds
+// instead of refetching the dataset. Annotations absent from every group were
+// cleared to the layer color; an empty array therefore means "all cleared".
+export interface IColorAssignmentGroup {
+  color: string;
+  ids: string[];
+}
+
+export interface IColorByPropertyResult {
+  colored: number;
+  uncolored: number;
+  legend: IColorByPropertyLegend | null;
+  assignment?: IColorAssignmentGroup[];
+}
+
+export interface IColorByPropertyOptions {
+  colormaps: { [name: string]: string[] };
+  default: string;
+  palette: string[];
+}
+
+export interface IColorByPropertyState extends IColorByPropertyLegend {
+  // Display name snapshot at apply time, so the legend has a label even if
+  // the property is later renamed or removed
+  propertyName: string;
+  showLegend: boolean;
+}
+
+// Keyed by dataset id. The legend is per-DATASET derived state (its range and
+// category counts describe one dataset's values), but a configuration is
+// explicitly reusable across datasets — ImportConfiguration adds a dataset to
+// existing collections — so a single slot would show dataset A's legend over
+// dataset B's colors. Read via main.colorByPropertyForCurrentDataset.
+export type TColorByPropertyByDataset = {
+  [datasetId: string]: IColorByPropertyState;
+};
+
 export interface IDatasetConfigurationBase {
   compatibility: IDatasetConfigurationCompatibility;
   layers: IDisplayLayer[];
@@ -551,6 +624,10 @@ export interface IDatasetConfigurationBase {
   // filters). Optional for compatibility with configurations created before
   // this was persisted.
   annotationBrowserConfig?: IAnnotationBrowserConfig;
+  // Last color-by-property apply per dataset (drives the viewer legend); a
+  // dataset absent from the map has no property coloring. Optional for
+  // compatibility with configurations created before this was persisted.
+  colorByProperty?: TColorByPropertyByDataset;
 }
 
 export interface IDatasetConfiguration extends IDatasetConfigurationBase {
@@ -2554,6 +2631,7 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       filterPaths: [],
       propertyFilters: [],
     },
+    colorByProperty: {},
   };
 }
 

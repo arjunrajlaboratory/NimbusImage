@@ -123,6 +123,22 @@ describe("annotation contentRevision", () => {
     ).toBe(false);
   });
 
+  it("does NOT bump on a color-only assignment (applyColorAssignment)", () => {
+    // Colors are content, but no gate or histogram depends on them, and this
+    // assignment covers the whole dataset. Bumping here would re-resolve every
+    // server gate over 700K annotations for a guaranteed-identical answer. The
+    // overview raster, which DOES draw these colors, is refreshed by
+    // mutationCounter instead (applyColorAssignment.test.ts).
+    annotationStore.setStubsFromServer([makeStub("s1")]);
+    expect(
+      bumped(() =>
+        annotationStore.applyColorAssignment([
+          { color: "#111111", ids: ["s1"] },
+        ]),
+      ),
+    ).toBe(false);
+  });
+
   it("strictly increases across successive edits", () => {
     const first = annotationStore.contentRevision;
     annotationStore.setAnnotations([makeAnnotation("a")]);
