@@ -1315,10 +1315,23 @@ class Annotation(AccessControlMixin, ProxiedModel):
         ):
             valueByAnnotation[annotationId] = value
 
-        # A property value's datasetId is denormalized and can go stale:
-        # moving an annotation between datasets doesn't move its value
-        # documents, and the property-value endpoints accept mismatched
-        # pairs. The update operations below are scoped by the ANNOTATION's
+        # Membership guard: drop values whose annotation is not (or is no
+        # longer) in this dataset. In normal app use this filters nothing —
+        # the UI never moves an annotation between datasets, and deleting
+        # annotations deletes their value documents (annotationsRemovedEvent).
+        # But the guarded states are reachable through the API, so a value's
+        # denormalized datasetId cannot be trusted:
+        #   - the bulk update endpoint explicitly supports changing an
+        #     annotation's datasetId (the single-update endpoint strips it;
+        #     updateMultiple access-checks destinations and bumps source
+        #     rasters), and moving an annotation does NOT move its value
+        #     documents;
+        #   - the value-creation endpoints never check that annotationId
+        #     belongs to the claimed datasetId, so any script can insert a
+        #     mismatched pair — including the app's own compute jobs, which
+        #     can post values for annotations deleted mid-job (the removal
+        #     cleanup fired before those values existed).
+        # The update operations below are scoped by the ANNOTATION's
         # datasetId, so a stale pair can never recolor a foreign annotation
         # — but an unfiltered map would still drive the range, the category
         # counts, and the returned assignment, distorting the legend and
