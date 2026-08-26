@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import os
+
+import girder_client
 
 from nimbusimage._girder import create_client
 from nimbusimage.collections import Collection
@@ -137,18 +138,13 @@ class NimbusClient:
         if parent_folder_id is None:
             parent_folder_id = self._private_folder_id()
 
-        folder = self._gc.post(
-            "folder",
-            parameters={
-                "parentType": "folder",
-                "parentId": parent_folder_id,
-                "name": name,
-                "description": description,
-                "reuseExisting": "false",
-                "metadata": json.dumps({
-                    "subtype": "contrastDataset",
-                    "selectedLargeImageId": None,
-                }),
+        folder = self._gc.createFolder(
+            parent_folder_id,
+            name,
+            description=description,
+            metadata={
+                "subtype": "contrastDataset",
+                "selectedLargeImageId": None,
             },
         )
         return Dataset(
@@ -157,15 +153,10 @@ class NimbusClient:
 
     def _private_folder_id(self) -> str:
         """The calling user's Private folder id."""
-        folders = self._gc.get(
-            "folder",
-            parameters={
-                "parentType": "user", "parentId": self.user_id, "limit": 0,
-            },
-        )
-        for folder in folders:
-            if folder.get("name") == "Private":
-                return folder["_id"]
+        for folder in self._gc.listFolder(
+            self.user_id, parentFolderType="user", name="Private"
+        ):
+            return folder["_id"]
         raise ValueError(
             "No Private folder found for the current user; pass "
             "parent_folder_id= explicitly."
@@ -188,9 +179,10 @@ class NimbusClient:
             if did and did not in seen:
                 seen.add(did)
                 try:
-                    folder = self._gc.get(f"folder/{did}")
-                    datasets.append(folder)
-                except Exception:
+                    datasets.append(self._gc.get(f"folder/{did}"))
+                except girder_client.HttpError:
+                    # A view can be shared while its dataset folder is not;
+                    # skip those. Anything else propagates.
                     pass
         return datasets
 

@@ -194,6 +194,26 @@ same asymmetry: `_markLargeImages` correctly covers only source items (the
 configuration does not exist yet), and the failure path removes the
 configuration item wholesale via `Item().remove`, so its mark cannot leak.
 
+## Sixth round (human review, pchoisel, 2026-08-12/13)
+
+| # | Severity | Location | Summary | Status |
+|---|---|---|---|---|
+| H1 | nit | `server/api/dataset.py:405` | "Print the exception message for all the following try/except" | already-satisfied — every cleanup handler uses `logger.exception`, which logs the message *and* traceback; swept the branch for silent swallows and fixed the one found (H1b) |
+| H1b | low | `nimbusimage/client.py:190` (`list_datasets`) | Sibling of H1: `except Exception: pass` swallowed every error, not just the inaccessible-folder case it meant to skip | fixed — catches `girder_client.HttpError` only; anything else propagates |
+| H2 | low | `server/api/dataset.py:484` | `_parseBooleanOption` belongs in `helpers/validation.py` | fixed — moved as `optionalBoolean`, with unit tests; `_parseAssignmentStrategy` stays: it validates against `UP_DIMS` and builds endpoint-specific messages, i.e. it is this endpoint's schema, not a shared validator |
+| H3 | low | `server/helpers/multi_source.py:51` | `x != x` NaN idiom — use `math.isnan(x)` | fixed — all 3 occurrences, plus `x in (inf, -inf)` → `math.isinf(x)` |
+| H4 | question | `tox.ini:14` | Why pin `large-image-source-pil/tiff==1.34.2a166`? | by-design — they must match the pre-existing `girder-large-image==1.34.2a166` pin (all released in lockstep from the girder/large_image monorepo; a stable-latest source against an alpha core can skew); documented in tox.ini |
+| H5 | low | `nimbusimage/client.py:168` | Hand-rolled Private-folder scan — use `gc.listFolder(..., name=...)` | fixed — and the sweep converted `create_dataset`'s raw `gc.post("folder", ...)` to `gc.createFolder(..., metadata=...)` (girder_client JSON-encodes metadata itself) |
+
+Generalized lessons written into the `branch-review` skill: (1) every
+`except` must surface the exception message — `logger.exception` inside the
+handler, `str(e)` when converting to another error, never a bare `pass` or a
+message-less log; (2) placement check — pure input validators in an API file
+belong in `helpers/validation.py`; (3) in the `nimbusimage` package, check
+whether `girder_client` already provides the operation (`listFolder(name=)`,
+`createFolder(metadata=)`, `listItem`, upload helpers) before hand-rolling
+`gc.get`/`gc.post` calls.
+
 ## P2 — `dryRun` cannot be used to discover variables
 
 `compute_configuration` → `validate_assignments` → `if dryRun: return` meant a

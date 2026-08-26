@@ -48,7 +48,7 @@ _DIMENSION_NAMES = {
 
 def int32(x):
     """JS ``x | 0``: ToInt32 truncation toward zero, mod 2^32 signed."""
-    if x != x or x in (float("inf"), float("-inf")):
+    if math.isnan(x) or math.isinf(x):
         return 0
     n = int(math.trunc(x)) & 0xFFFFFFFF
     if n >= 0x80000000:
@@ -58,7 +58,7 @@ def int32(x):
 
 def js_math_round(x):
     """JS ``Math.round(x)``: round half toward +infinity, returns int."""
-    if x != x:
+    if math.isnan(x):
         return 0
     return math.floor(x + 0.5)
 
@@ -69,7 +69,7 @@ def js_to_fixed(x, digits):
     Rounds the exact double value half away from zero (matching V8) and
     preserves the sign of a value that rounds to ``-0``.
     """
-    if x != x:
+    if math.isnan(x):
         return "NaN"
     quantum = Decimal(1).scaleb(-digits)
     value = Decimal(x).quantize(quantum, rounding=ROUND_HALF_UP)

@@ -64,6 +64,7 @@ from ..helpers.multi_source import (
     UP_DIMS, compute_configuration, validate_assignments,
     validate_source_dtypes,
 )
+from ..helpers.validation import optionalBoolean
 from ..models.collection import Collection as CollectionModel
 from ..models.datasetView import DatasetView as DatasetViewModel
 from ..models.userColors import UserColors as UserColorsModel
@@ -155,17 +156,11 @@ class Dataset(Resource):
         assignmentStrategy = self._parseAssignmentStrategy(
             body.get("assignments")
         )
-        transcodeOption = self._parseBooleanOption(
-            body, "transcode", None
-        )
-        splitRGBBands = self._parseBooleanOption(
-            body, "splitRGBBands", True
-        )
-        enableCompositing = self._parseBooleanOption(
-            body, "enableCompositing", False
-        )
-        dryRun = self._parseBooleanOption(body, "dryRun", False)
-        createView = self._parseBooleanOption(body, "createView", True)
+        transcodeOption = optionalBoolean(body, "transcode", None)
+        splitRGBBands = optionalBoolean(body, "splitRGBBands", True)
+        enableCompositing = optionalBoolean(body, "enableCompositing", False)
+        dryRun = optionalBoolean(body, "dryRun", False)
+        createView = optionalBoolean(body, "createView", True)
 
         if folder.get("meta", {}).get("subtype") != "contrastDataset":
             raise RestException(
@@ -479,16 +474,6 @@ class Dataset(Resource):
                     code=400,
                 )
         return strategy
-
-    @staticmethod
-    def _parseBooleanOption(body, name, default):
-        """Return a JSON boolean option without Python truthy coercion."""
-        if name not in body:
-            return default
-        value = body[name]
-        if not isinstance(value, bool):
-            raise RestException("%s must be a boolean." % name, code=400)
-        return value
 
     @staticmethod
     def _restoreFolderMetadata(folder, previous):
