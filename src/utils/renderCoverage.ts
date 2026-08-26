@@ -20,6 +20,12 @@ export interface IRenderCoverage {
   shownLabel: string;
   // "708,983 total annotations"
   totalLabel: string;
+  // "(1 filter applied)" — null when nothing is narrowing the object set.
+  constraintLabel: string | null;
+  // "(289,469 passing filters)" — how many of the total survive the active
+  // constraints. Null when nothing is narrowing the set (it would just repeat
+  // the total) or when the caller has no count to report.
+  passingLabel: string | null;
 }
 
 export function computeRenderCoverage(input: {
@@ -32,8 +38,24 @@ export function computeRenderCoverage(input: {
   viewportShown: number; // rendered annotations within the actual viewport
   viewportTotal: number; // all annotations within the actual viewport (current frame)
   loaded: number; // total stubs held in memory
+  // Filters AND analysis gates currently narrowing the object set
+  // (filters.activeConstraintCount). Both counts above are computed AFTER
+  // these are applied, so without saying so "Showing 826 of 826 in view" in a
+  // viewport that visibly holds thousands reads as data loss.
+  constraintCount?: number;
+  // How many annotations in the whole dataset pass the active constraints.
+  // Shown next to the total so the narrowed population is readable without
+  // opening a panel.
+  passingCount?: number;
 }): IRenderCoverage {
-  const { stubMode, viewportShown, viewportTotal, loaded } = input;
+  const {
+    stubMode,
+    viewportShown,
+    viewportTotal,
+    loaded,
+    constraintCount = 0,
+    passingCount,
+  } = input;
   const hasAnnotations = viewportTotal > 0;
   // Show whenever the dataset is in stub mode, OR the render is actively
   // downsampling (not everything in the current view is drawn):
@@ -57,5 +79,19 @@ export function computeRenderCoverage(input: {
       ? `Showing ${viewportShown.toLocaleString()} of ${viewportTotal.toLocaleString()} in view`
       : "No annotations in view",
     totalLabel: `${loaded.toLocaleString()} total annotations`,
+    // Deliberately NOT gated on stubMode: the counts are filtered in both
+    // stub and client modes, so the cue has to appear wherever the HUD does.
+    // "filter" covers gates too — the reader is being told their numbers are
+    // narrowed, and the tooltip names which panels did the narrowing.
+    constraintLabel:
+      constraintCount > 0
+        ? `(${constraintCount} filter${constraintCount === 1 ? "" : "s"} applied)`
+        : null,
+    // Gated on the same condition as constraintLabel: with nothing narrowing
+    // the set the passing count equals the total and saying so is noise.
+    passingLabel:
+      constraintCount > 0 && passingCount != null
+        ? `(${passingCount.toLocaleString()} passing filters)`
+        : null,
   };
 }

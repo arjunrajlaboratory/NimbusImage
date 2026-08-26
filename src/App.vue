@@ -1283,6 +1283,23 @@ watch(
   },
 );
 
+// Same escape hatch, generalized: a component with no access to the palette
+// registry (the render-coverage HUD, deep inside ImageViewer) asks for a
+// palette by id and this opens it. Cleared immediately so the next request for
+// the same palette is still seen as a change.
+watch(
+  () => store.paletteOpenRequests,
+  (requests) => {
+    if (requests.length === 0) {
+      return;
+    }
+    for (const id of requests) {
+      openPalette(id);
+    }
+    store.setPaletteOpenRequests([]);
+  },
+);
+
 watch(routeName, () => datasetChanged());
 
 // Left palettes mount/unmount with the dataset view, so (re)attach their

@@ -443,6 +443,13 @@ export type TTimelapseTrackColoring = "track" | "uniform";
 /** Which tab the Object Browser is showing. */
 export type TAnnotationBrowserTab = "objects" | "measurements" | "connections";
 
+/**
+ * Palettes that a component with no access to App.vue's palette registry may
+ * ask to have opened (see `paletteOpenRequests` in the main store). These are
+ * a subset of App.vue's `PaletteId`, which is where opening actually happens.
+ */
+export type TRequestablePalette = "filtersPanel" | "analysisPanel";
+
 export type TVolumeViewMode = "2d" | "3d";
 
 export type TVolumeBlendMode = "composite" | "mip";

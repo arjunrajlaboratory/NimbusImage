@@ -27,6 +27,20 @@ Rules:
 - Before trusting a new watcher test, make it FAIL once (revert the fix, or
   assert the opposite) — this one passed for the wrong reason first.
 
+Two related mock traps, both of which make a test assert against something
+the component never touched:
+
+- **A `vi.mock` factory captures the spy it closes over.** Reassigning
+  `mocks.someAction = vi.fn()` in `beforeEach` leaves the component calling
+  the *original* spy while the test asserts on the new one — "expected spy
+  to be called, number of calls: 0" with obviously working code. Use
+  `mocks.someAction.mockClear()` instead.
+- **A plain-object store mock is not reactive**, so a component watching
+  `() => store.something` never fires when a test assigns to it. If the
+  behavior under test is a watcher on store state, wrap the mock's default
+  export in `reactive()` (`vi.mock("@/store", async () => { const { reactive }
+  = await import("vue"); return { default: reactive({ … }) }; })`).
+
 ## Component Patterns
 
 ### Script Setup (Composition API)
@@ -564,6 +578,38 @@ Use the API classes from store — never put `girderRest.get(...)` in components
 import store from "@/store";
 const result = await store.api.someMethod();
 ```
+
+## Opening a palette from a component that has no palette registry
+
+App.vue owns palette (right/left panel) visibility in local refs, so a
+component mounted under the route tree — anything inside `ImageViewer` /
+`AnnotationViewer` — cannot open one by emitting an event. Ask through the
+main store instead: `store.requestPaletteOpen(["analysisPanel",
+"filtersPanel"])` sets `paletteOpenRequests`; App.vue watches it, opens each
+in order, and clears the list. Order matters — open the *primary* palette
+first, then its companion (Filters hosts alongside Analysis and the Object
+Browser); the other order closes the palette just opened.
+`TRequestablePalette` in `model.ts` is a subset of App.vue's `PaletteId`, so
+keep them in step — that is what makes a renamed palette a compile error
+rather than a click that does nothing. Same shape as the older
+`isAnnotationPanelOpen` hatch used by the Timelapse panel.
+
+## A count computed after filtering must say it was filtered
+
+Every count the UI prints from `filteredAnnotations`, `viewportAnnotationCount`,
+or any id set that survived filters/gates is a *filtered* number. Printed
+without a cue, it reads as data loss the moment a filter is restored from a
+saved configuration — the reported case was a HUD reading "Showing 826 of 826
+in view" in a viewport visibly holding thousands, because a saved lasso gate
+cut 708,983 to 72,925.
+
+- The cue belongs **next to the number**, not on a palette badge across the
+  window. A badge that was visible the whole time did not prevent the report.
+- Count constraints through `src/utils/activeConstraints.ts` —
+  `collectActiveConstraints` / `countActiveConstraints` — never with a fresh
+  ad-hoc sum. The Filters badge, the Analysis badge and the HUD suffix all
+  read that one list; a new narrowing filter that skips it is invisible on
+  all three. See `codebaseDocumentation/ACTIVE_CONSTRAINT_CUES.md`.
 
 ## Logging
 
