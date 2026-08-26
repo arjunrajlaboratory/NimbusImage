@@ -73,9 +73,12 @@ import {
   NotificationType,
   IDimensionStrategy,
   IVisibilityConfig,
+  IAnnotationOverviewConfig,
   IAnnotationBrowserConfig,
+  IColorByPropertyState,
   IUserStorageQuota,
   TAnnotationBrowserTab,
+  TRequestablePalette,
 } from "./model";
 import {
   buildAnnotationBrowserConfig,
@@ -144,6 +147,11 @@ function apiRootFromGirderUrl(girderUrl: string) {
 // `{ apiRoot, token }` JSON so a token issued by one Girder server is never
 // replayed to a different one when the user switches domains.
 const TOKEN_STORAGE_KEY = "nimbus.girderToken";
+
+// Per-configuration chain serializing EVERY colorByProperty write (current
+// path and direct path alike — see saveColorByPropertyFor). File scope, not
+// module state: it holds promises, which must never become reactive.
+const directColorByPropertyWrites = new Map<string, Promise<void>>();
 
 interface StoredAuth {
   apiRoot: string;
@@ -405,10 +413,17 @@ export class Main extends VuexModule {
 
   isAnnotationPanelOpen: boolean = false;
   annotationBrowserTab: TAnnotationBrowserTab = "objects";
+  // Palettes something has asked App.vue to open, in the order they should be
+  // opened (a companion palette after its host stays open alongside it).
+  // Same escape hatch as isAnnotationPanelOpen, for components with no path to
+  // the palette registry — here, the render-coverage HUD deep inside
+  // ImageViewer. App.vue opens them and clears the list.
+  paletteOpenRequests: TRequestablePalette[] = [];
   annotationPanelBadge: boolean = false;
   isHelpPanelOpen: boolean = false;
   isAnalyzeDialogOpen: boolean = false;
   isPipelineDialogOpen: boolean = false;
+  isColorByPropertyDialogOpen: boolean = false;
   // True while a layer is being dragged (reordered/grouped). Used to suppress
   // palette re-layout that would otherwise re-render the draggable mid-drag.
   isLayerDragging: boolean = false;
@@ -1227,6 +1242,7 @@ export class Main extends VuexModule {
   }) {
     this.setConfigurationImpl({ id, data });
     this.context.dispatch("loadVisibilityConfig", data?.visibilityConfig);
+    this.context.dispatch("loadOverviewConfig", data?.overviewConfig);
     this.hydrateAnnotationBrowserState();
     // Warm the SAM model cache in the background: encoder downloads are
     // large, this way they are usually cached before a SAM tool is selected
@@ -1262,6 +1278,13 @@ export class Main extends VuexModule {
   private setConfigurationVisibilityConfig(config: IVisibilityConfig) {
     if (this.configuration) {
       this.configuration.visibilityConfig = { ...config };
+    }
+  }
+
+  @Mutation
+  private setConfigurationOverviewConfig(config: IAnnotationOverviewConfig) {
+    if (this.configuration) {
+      this.configuration.overviewConfig = { ...config };
     }
   }
 
@@ -1335,6 +1358,21 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  public setPaletteOpenRequests(palettes: TRequestablePalette[]) {
+    this.paletteOpenRequests = palettes;
+  }
+
+  /**
+   * Ask App.vue to open these palettes (see `paletteOpenRequests`). App.vue
+   * clears the request once it has honoured it, so asking for the same palette
+   * twice in a row still opens it the second time.
+   */
+  @Action
+  public requestPaletteOpen(palettes: TRequestablePalette[]) {
+    this.setPaletteOpenRequests(palettes);
+  }
+
+  @Mutation
   public setIsHelpPanelOpen(value: boolean) {
     this.isHelpPanelOpen = value;
   }
@@ -1347,6 +1385,11 @@ export class Main extends VuexModule {
   @Mutation
   public setIsPipelineDialogOpen(value: boolean) {
     this.isPipelineDialogOpen = value;
+  }
+
+  @Mutation
+  public setIsColorByPropertyDialogOpen(value: boolean) {
+    this.isColorByPropertyDialogOpen = value;
   }
 
   @Mutation
@@ -2224,9 +2267,16 @@ export class Main extends VuexModule {
       return;
     }
     sync.setSaving(true);
+    // Capture before the await: a configuration switch during the PUT must
+    // invalidate the configuration that was WRITTEN in girderResources —
+    // reading this.configuration.id afterwards invalidates the newly opened
+    // one instead, leaving the written one's cached copy stale (switching
+    // back in-session would restore an obsolete legend or any other stale
+    // key). Also keeps a mid-PUT dataset close from dereferencing null.
+    const configurationId = this.configuration.id;
     try {
       await this.api.updateConfigurationKey(this.configuration, key);
-      this.context.dispatch("ressourceChanged", this.configuration.id);
+      this.context.dispatch("ressourceChanged", configurationId);
       sync.setSaving(false);
     } catch (error) {
       sync.setSaving(error as Error);
@@ -2245,11 +2295,27 @@ export class Main extends VuexModule {
     await this.syncConfiguration("visibilityConfig");
   }
 
+  @Action
+  async saveOverviewConfig(config: IAnnotationOverviewConfig) {
+    if (!this.configuration) {
+      return;
+    }
+    this.setConfigurationOverviewConfig(config);
+    await this.syncConfiguration("overviewConfig");
+  }
+
   // Debounced entry point called by the properties/filters stores whenever
   // the user changes displayed columns or property filters. Debounced because
   // dragging a filter histogram slider emits a continuous stream of updates.
   @Action
   scheduleAnnotationBrowserSave() {
+    // Anonymous viewers can filter and gate; their state just stays
+    // session-only. Without this, syncConfiguration's own isLoggedIn branch
+    // fires createNotLoggedInNotification, so every lasso drag or filter tweak
+    // popped a login notification for a read-only visitor.
+    if (!this.isLoggedIn) {
+      return;
+    }
     if (annotationBrowserSaveTimer !== null) {
       clearTimeout(annotationBrowserSaveTimer);
     }
@@ -2287,6 +2353,7 @@ export class Main extends VuexModule {
         properties.displayedPropertyPaths,
         filters.filterPaths,
         filters.propertyFilters,
+        filters.analysisPlots,
       ),
     );
     await this.syncConfiguration("annotationBrowserConfig");
@@ -2298,6 +2365,167 @@ export class Main extends VuexModule {
   ) {
     if (this.configuration) {
       this.configuration.annotationBrowserConfig = config;
+    }
+  }
+
+  // The color-by-property record for the dataset currently open, or null when
+  // its colors don't come from a property mapping. Keyed by dataset because a
+  // configuration is reusable across datasets while this state describes one
+  // dataset's values (see TColorByPropertyByDataset).
+  get colorByPropertyForCurrentDataset(): IColorByPropertyState | null {
+    const datasetId = this.dataset?.id;
+    if (!datasetId) {
+      return null;
+    }
+    return this.configuration?.colorByProperty?.[datasetId] ?? null;
+  }
+
+  @Mutation
+  private setConfigurationColorByProperty(payload: {
+    datasetId: string;
+    state: IColorByPropertyState | null;
+  }) {
+    if (!this.configuration) {
+      return;
+    }
+    // Replace the map rather than mutate it so dependents recompute, and drop
+    // the key when clearing so "absent" and "cleared" are one state.
+    const next = { ...(this.configuration.colorByProperty ?? {}) };
+    if (payload.state === null) {
+      delete next[payload.datasetId];
+    } else {
+      next[payload.datasetId] = payload.state;
+    }
+    this.configuration.colorByProperty = next;
+  }
+
+  // Persist (or clear, with null) the record of the last color-by-property
+  // apply for the dataset currently open. Non-null means that dataset's
+  // annotation colors reflect the property mapping; the annotation store
+  // clears it whenever colors are assigned by any other means, which is what
+  // keeps the viewer legend honest.
+  //
+  // Best-effort by design: the colors are already written on the backend, so a
+  // failed metadata write must not fail the operation that wrote them. The
+  // global sync indicator surfaces it; the worst case is a legend missing
+  // after a reload, never a wrong legend.
+  @Action
+  async saveColorByProperty(state: IColorByPropertyState | null) {
+    const datasetId = this.dataset?.id;
+    const configurationId = this.configuration?.id;
+    if (!configurationId || !datasetId) {
+      return;
+    }
+    // Delegates so that EVERY legend write joins the per-configuration
+    // chain: an unchained current-path write (e.g. the legend collapse
+    // toggle) could otherwise land inside a direct write's read window and
+    // be erased by its older full-key PUT.
+    await this.saveColorByPropertyFor({ datasetId, configurationId, state });
+  }
+
+  // Persist (state) or retire (null) the legend for a specific
+  // dataset+configuration pair, which may no longer be the pair on screen: a
+  // recolor takes seconds and can outlive a dataset or configuration switch,
+  // and the colors it wrote belong to the captured pair regardless of what
+  // is open when it completes. Skipping the write then leaves the captured
+  // dataset's configuration WRONG in both directions — a manual recolor
+  // leaves a legend claiming property colors that were just overwritten, and
+  // a property apply leaves an older legend describing colors the dataset no
+  // longer has. Same best-effort contract as saveColorByProperty: the
+  // recolor already happened, a failed metadata write must not fail it.
+  @Action
+  async saveColorByPropertyFor({
+    datasetId,
+    configurationId,
+    state,
+  }: {
+    datasetId: string;
+    configurationId: string;
+    state: IColorByPropertyState | null;
+  }) {
+    // EVERY write for a configuration — current-path and direct alike —
+    // joins one per-configuration chain, and the current-vs-direct decision
+    // happens INSIDE the chained task, at execution time. Serializing only
+    // the direct writes was the classic one-of-two-symmetric-paths miss:
+    // a current-path write completed during a direct write's awaited read
+    // still lost to the direct task's older full-key PUT landing last.
+    // Chained, the newer write runs after the older one and reads its
+    // result; and a task that finds its configuration reopened simply takes
+    // the live path. Two overlapping direct writes are covered for the same
+    // reason (each re-reads girderResources inside the chain — every write
+    // path evicts it).
+    const previousWrite =
+      directColorByPropertyWrites.get(configurationId) ?? Promise.resolve();
+    const write = previousWrite.then(async () => {
+      if (this.configuration?.id === configurationId) {
+        if (
+          state === null &&
+          !this.configuration.colorByProperty?.[datasetId]
+        ) {
+          // Nothing to retire; writing would only churn the configuration.
+          return;
+        }
+        // The mutation takes the CAPTURED dataset id: a configuration is
+        // reusable across datasets, so "same configuration" does not imply
+        // the captured dataset is still the one open.
+        this.setConfigurationColorByProperty({ datasetId, state });
+        await this.syncConfiguration("colorByProperty");
+        return;
+      }
+      // The recolor outlived a configuration switch, so there is no live
+      // store copy to mutate: write to the captured configuration directly.
+      const configuration =
+        await girderResources.getConfiguration(configurationId);
+      if (!configuration) {
+        return;
+      }
+      const basedOn = configuration.colorByProperty?.[datasetId];
+      const colorByProperty = { ...(configuration.colorByProperty ?? {}) };
+      if (state === null) {
+        if (!(datasetId in colorByProperty)) {
+          return;
+        }
+        delete colorByProperty[datasetId];
+      } else {
+        colorByProperty[datasetId] = state;
+      }
+      await this.api.updateConfigurationKey(
+        { ...configuration, colorByProperty },
+        "colorByProperty",
+      );
+      // The user can REOPEN the captured configuration while the PUT is in
+      // flight; the copy they reopened predates the write, and the cache
+      // eviction below only helps the NEXT load. Patch the live slot so the
+      // session doesn't keep showing the stale legend the backend no longer
+      // has. The basedOn equality check is defense-in-depth, not a live
+      // race guard: every legend write joins this chain, so a newer write
+      // cannot touch the slot mid-flight, and any reachable slot value
+      // equals basedOn. It only matters if a future writer bypasses the
+      // chain — then it keeps this older patch from clobbering that value.
+      if (
+        this.configuration?.id === configurationId &&
+        JSON.stringify(
+          this.configuration.colorByProperty?.[datasetId] ?? null,
+        ) === JSON.stringify(basedOn ?? null)
+      ) {
+        this.setConfigurationColorByProperty({ datasetId, state });
+      }
+      this.context.dispatch("ressourceChanged", configurationId);
+    });
+    // Store settled so one failed write can't wedge the chain.
+    const chained = write.then(
+      () => undefined,
+      () => undefined,
+    );
+    directColorByPropertyWrites.set(configurationId, chained);
+    try {
+      await write;
+    } catch (error) {
+      sync.setSaving(error as Error);
+    } finally {
+      if (directColorByPropertyWrites.get(configurationId) === chained) {
+        directColorByPropertyWrites.delete(configurationId);
+      }
     }
   }
 
@@ -2325,6 +2553,11 @@ export class Main extends VuexModule {
       filterPaths: config.filterPaths,
       propertyFilters: config.propertyFilters,
     });
+    // Restored gates hold polygons, not ids. Hydration only seeds the plots;
+    // Viewer owns resolution through its analysisInputSignature watcher, which
+    // reacts to this state change in both 2D and 3D. Dispatching here as well
+    // issued the same property-values request twice on dataset open.
+    this.context.dispatch("hydrateAnalysisPlots", config.analysisPlots ?? []);
   }
 
   @Action

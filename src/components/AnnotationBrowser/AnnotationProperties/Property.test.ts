@@ -26,7 +26,12 @@ vi.mock("@/store/properties", () => ({
   IPropertyStatus: {},
 }));
 
+vi.mock("@/utils/propertyCompute", () => ({
+  computePropertyWithStatus: vi.fn(),
+}));
+
 import propertyStore from "@/store/properties";
+import { computePropertyWithStatus } from "@/utils/propertyCompute";
 import Property from "./Property.vue";
 
 const baseProperty = {
@@ -107,10 +112,11 @@ describe("Property", () => {
     expect(wrapper.vm.filteredWarnings[0].warning).toBe("warn1");
   });
 
-  it("compute calls propertyStore.computeProperty", () => {
+  it("compute uses the shared status-aware helper", () => {
     const wrapper = mountComponent();
     wrapper.vm.compute();
-    expect(propertyStore.computeProperty).toHaveBeenCalled();
+    expect(computePropertyWithStatus).toHaveBeenCalledWith(baseProperty);
+    expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 
   it("compute is no-op when running", () => {
@@ -121,6 +127,7 @@ describe("Property", () => {
     });
     const wrapper = mountComponent();
     wrapper.vm.compute();
+    expect(computePropertyWithStatus).not.toHaveBeenCalled();
     expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 
@@ -131,6 +138,7 @@ describe("Property", () => {
     expect(wrapper.emitted("compute-property-batch")![0][0]).toStrictEqual(
       baseProperty,
     );
+    expect(computePropertyWithStatus).not.toHaveBeenCalled();
     expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 });

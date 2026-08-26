@@ -106,6 +106,7 @@ import {
   IGeoJSFeatureLayer,
   IGeoJSLineFeatureStyle,
   IGeoJSMap,
+  IGeoJSOsmLayer,
   IGeoJSPosition,
   IGeoJSPointFeatureStyle,
   IGeoJSPolygonFeatureStyle,
@@ -172,6 +173,15 @@ import { editPolygonAnnotation as editPolygonAnnotationUtil } from "@/utils/poly
 import { stubPerf } from "@/utils/stubPerf";
 import { visibilityBudgetForZoom } from "@/utils/visibilityBudget";
 import { cameraRefreshNeeded } from "@/utils/camera";
+import {
+  annotationMatchesRasterSelector,
+  annotationMatchesRasterSelectors,
+  annotationOverviewRasterActive,
+  annotationRasterSelectorForLayer,
+  annotationRasterSelectorsForLayers,
+  annotationRasterSelectorsSupported,
+  stableRandomSampleById,
+} from "@/utils/annotationOverview";
 import RBush from "rbush";
 
 // Module-level helpers
@@ -241,6 +251,7 @@ const props = withDefaults(
     timelapseLayer: IGeoJSAnnotationLayer;
     timelapseTextLayer: IGeoJSFeatureLayer;
     interactionLayer: IGeoJSAnnotationLayer;
+    annotationOverviewLayer?: IGeoJSOsmLayer;
     unrollH: number;
     unrollW: number;
     maps: IMapEntry[];
@@ -248,13 +259,21 @@ const props = withDefaults(
     tileHeight: number;
     lowestLayer: number;
     layerCount: number;
+    allowSharedVisibilitySuppression?: boolean;
   }>(),
-  { maps: () => [] },
+  { maps: () => [], allowSharedVisibilitySuppression: true },
 );
+const emit = defineEmits<{
+  (
+    event: "annotation-overview-visibility-change",
+    state: { visible: boolean; opacity: number },
+  ): void;
+}>();
 
 // ---- Refs (data fields) ----
 
 const isDragging = ref(false);
+const rasterActive = ref(false);
 const dragStartPosition = ref<IGeoJSPosition | null>(null);
 const draggedAnnotation = ref<IAnnotation | null>(null);
 // IGeoJSAnnotation instances are heavy native objects whose internals must
@@ -350,11 +369,17 @@ const selectedConnectionIds = computed(
 const hoveredConnectionId = computed(
   () => connectionListStore.hoveredConnectionId,
 );
-const shouldDrawAnnotations = computed((): boolean => store.drawAnnotations);
-const shouldDrawConnections = computed(
-  (): boolean => store.drawAnnotationConnections,
+const shouldDrawAnnotations = computed(
+  (): boolean =>
+    store.drawAnnotations &&
+    (!rasterActive.value || selectedAnnotationIds.value.size > 0),
 );
-const showTooltips = computed((): boolean => store.showTooltips);
+const shouldDrawConnections = computed(
+  (): boolean => store.drawAnnotationConnections && !rasterActive.value,
+);
+const showTooltips = computed(
+  (): boolean => store.showTooltips && !rasterActive.value,
+);
 const showTimelapseMode = computed((): boolean => timelapseStore.showMode);
 const timelapseModeWindow = computed((): number => timelapseStore.modeWindow);
 const showTimelapseLabels = computed((): boolean => timelapseStore.showLabels);
@@ -370,6 +395,29 @@ const propertyValues = computed(() => propertiesStore.propertyValues);
 const pendingStoreAnnotation = computed(
   () => annotationStore.pendingAnnotation,
 );
+
+function updateAnnotationOverviewMode() {
+  const layer = props.annotationOverviewLayer;
+  const nextActive =
+    layer && annotationRasterSelectorsSupported(rasterSelectors.value)
+      ? annotationOverviewRasterActive({
+          config: annotationStore.overviewConfig,
+          unitsPerPixel: props.map.unitsPerPixel(props.map.zoom()),
+          wasActive: rasterActive.value,
+          unrolling: unrolling.value,
+        })
+      : false;
+  if (nextActive !== rasterActive.value) {
+    rasterActive.value = nextActive;
+  }
+  if (!layer) {
+    return;
+  }
+  emit("annotation-overview-visibility-change", {
+    visible: nextActive && store.drawAnnotations,
+    opacity: annotationStore.overviewConfig.opacity,
+  });
+}
 
 const selectedToolConfiguration = computed(
   (): IToolConfiguration | null => store.selectedTool?.configuration ?? null,
@@ -498,6 +546,14 @@ const validLayers = computed(() =>
   layers.value.slice(props.lowestLayer, props.lowestLayer + props.layerCount),
 );
 
+const rasterSelectors = computed(() =>
+  annotationRasterSelectorsForLayers({
+    layers: validLayers.value,
+    showHiddenLayers: showAnnotationsFromHiddenLayers.value,
+    layerSliceIndexes: store.layerSliceIndexes,
+  }),
+);
+
 const isLayerIdValid = computed(() => {
   const validLayerIds: Set<string> = new Set();
   for (const layer of validLayers.value) {
@@ -506,12 +562,83 @@ const isLayerIdValid = computed(() => {
   return (id: string) => validLayerIds.has(id);
 });
 
+// Whether the raster overview can represent this configuration at all, i.e.
+// whether hiding unhydrated stub dots is backed by a raster. Deliberately not
+// rasterActive: the stub-free handoff must also hold while zoomed in (raster
+// inactive but available), where stubs drive visibility and hydration without
+// flashing approximate dots.
+const stubFreeRasterHandoff = computed(
+  () =>
+    annotationStore.overviewConfig.enabled &&
+    !unrolling.value &&
+    annotationRasterSelectorsSupported(rasterSelectors.value),
+);
+
 // A map: map<layer id, map<annotation id, annotation or stub>>
 const layerAnnotations = computed(() => {
   const layerIdToAnnotationIds: Map<
     string,
     Map<string, TAnnotationOrStub>
   > = new Map();
+  for (const layer of validLayers.value) {
+    layerIdToAnnotationIds.set(layer.id, new Map());
+  }
+
+  // While the raster represents the complete frame, draw only a bounded,
+  // stable pseudo-random sample of selected stubs as interaction feedback.
+  // Iterating selected ids instead of annotationsForIteration is important
+  // here: the latter can contain hundreds of thousands of unselected stubs.
+  // Prefer the stub even when geometry is hydrated so this overlay remains a
+  // cheap centroid indicator rather than duplicating shapes already
+  // represented by the raster.
+  if (rasterActive.value) {
+    const limit = Math.max(1, annotationStore.visibilityConfig.minimumVisible);
+    type RasterSelectionCandidate = {
+      annotationId: string;
+      annotation: TAnnotationOrStub;
+      layerIds: string[];
+    };
+    function* rasterSelectionCandidates(): Iterable<RasterSelectionCandidate> {
+      for (const annotationId of selectedAnnotationIds.value) {
+        const annotation =
+          annotationStore.annotationStubs?.get(annotationId) ??
+          annotationStore.getStub(annotationId) ??
+          getAnnotationFromId.value(annotationId);
+        if (!annotation) {
+          continue;
+        }
+        const layerIds: string[] = [];
+        for (const layer of validLayers.value) {
+          const selector = annotationRasterSelectorForLayer({
+            layer,
+            showHiddenLayers: showAnnotationsFromHiddenLayers.value,
+            layerSliceIndexes: store.layerSliceIndexes,
+          });
+          if (
+            selector &&
+            annotationMatchesRasterSelector(annotation, selector)
+          ) {
+            layerIds.push(layer.id);
+          }
+        }
+        if (layerIds.length > 0) {
+          yield { annotationId, annotation, layerIds };
+        }
+      }
+    }
+
+    for (const { annotationId, annotation, layerIds } of stableRandomSampleById(
+      rasterSelectionCandidates(),
+      limit,
+      (candidate) => candidate.annotationId,
+    )) {
+      for (const layerId of layerIds) {
+        layerIdToAnnotationIds.get(layerId)!.set(annotationId, annotation);
+      }
+    }
+    return layerIdToAnnotationIds;
+  }
+
   const stubsSize = annotationStore.annotationStubs?.size ?? 0;
   const { maxVisible, globalThreshold } = annotationStore.visibilityConfig;
   // Direct reads create reactive dependencies so layerAnnotations
@@ -525,7 +652,6 @@ const layerAnnotations = computed(() => {
   const layerFrameAnnotations: Map<string, TAnnotationOrStub[]> = new Map();
   let totalFrameCount = 0;
   for (const layer of validLayers.value) {
-    layerIdToAnnotationIds.set(layer.id, new Map());
     if (layer.visible || showAnnotationsFromHiddenLayers.value) {
       const layerChannelAnnotations =
         displayableAnnotationsByChannel.value.get(layer.channel) || [];
@@ -570,6 +696,16 @@ const layerAnnotations = computed(() => {
           annotationStore.annotationStubs?.get(annotation.id) ??
           annotation
         : annotation;
+      // The raster overview already represents every annotation while zoomed
+      // out. During its vector handoff, keep stubs as the source of visibility
+      // and hydration decisions but do not flash their approximate dots before
+      // the full geometry arrives. When no raster is available — overview
+      // disabled, unroll mode, or a selector set the raster contract rejects —
+      // preserve normal stub rendering instead of hiding dots with nothing
+      // behind them.
+      if (stubFreeRasterHandoff.value && !isHydratedAnnotation(renderData)) {
+        continue;
+      }
       annotationIdsSet.set(annotation.id, renderData);
     }
   }
@@ -2264,7 +2400,7 @@ function shouldSelectStub(
 function getSelectedAnnotationsFromAnnotation(
   selectAnnotation: IGeoJSAnnotation,
 ) {
-  if (!shouldDrawAnnotations.value) {
+  if (!store.drawAnnotations) {
     return [];
   }
   const coordinates = selectAnnotation.coordinates();
@@ -2350,12 +2486,7 @@ function getSelectedAnnotationsFromAnnotation(
       if (!candidate) {
         continue;
       }
-      // Check if annotation is on the current frame
-      if (
-        candidate.location.XY !== xy.value ||
-        candidate.location.Z !== z.value ||
-        candidate.location.Time !== time.value
-      ) {
+      if (!annotationMatchesRasterSelectors(candidate, rasterSelectors.value)) {
         continue;
       }
       if (!selectionCandidateInPolygon(candidate, coordinates)) {
@@ -4547,6 +4678,17 @@ let lastCameraEvent: { zoom: number; center: IGeoJSPosition } | null = null;
 
 // Visibility and hydration updates
 function updateVisibility() {
+  if (rasterActive.value && props.allowSharedVisibilitySuppression) {
+    annotationStore.updateVisibilityAndHydration({
+      currentFrameLocation: { XY: xy.value, Z: z.value, Time: time.value },
+      suppress: true,
+    });
+    lastRefreshCamera = {
+      zoom: store.cameraInfo.zoom,
+      center: store.cameraInfo.center,
+    };
+    return;
+  }
   // Only materialize an id array when a client filter is active. Without one,
   // omit it and let the store derive ids from its own stub map, avoiding a
   // full-dataset id array allocation per frame change (Finding 15).
@@ -4596,6 +4738,22 @@ function updateVisibility() {
   }
 }
 const updateVisibilityDebounced = debounce(updateVisibility, 250);
+
+watch(rasterActive, updateVisibility);
+watch(() => props.allowSharedVisibilitySuppression, updateVisibility);
+
+watch(
+  [
+    () => store.cameraInfo.zoom,
+    () => annotationStore.overviewConfig,
+    unrolling,
+    () => props.annotationOverviewLayer,
+    () => store.drawAnnotations,
+    rasterSelectors,
+  ],
+  updateAnnotationOverviewMode,
+  { immediate: true },
+);
 
 // Frame changes (XY, Z, Time) and annotation list changes update immediately
 // to avoid flash of empty frame while debounce waits
@@ -4846,7 +5004,9 @@ onMounted(() => {
   bindTimelapseEvents();
   bindInteractionEvents();
   updateValueOnHover();
-  filterStore.updateHistograms();
+  void filterStore
+    .updateHistograms()
+    .catch((error) => logError("Failed to refresh property histograms", error));
   addHoverCallback();
   updateVisibilityDebounced();
 });
@@ -4874,6 +5034,12 @@ onBeforeUnmount(() => {
     cancelIdleCallback(spatialIndexRequestId);
   }
   clearRetainedFeatureCache();
+  if (props.annotationOverviewLayer) {
+    emit("annotation-overview-visibility-change", {
+      visible: false,
+      opacity: annotationStore.overviewConfig.opacity,
+    });
+  }
 });
 
 // ---- Expose ----
@@ -4885,6 +5051,7 @@ defineExpose({
   filterStore,
   // Refs
   isDragging,
+  rasterActive,
   dragStartPosition,
   draggedAnnotation,
   dragGhostAnnotation,

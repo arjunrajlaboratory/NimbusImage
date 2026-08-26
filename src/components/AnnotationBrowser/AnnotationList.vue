@@ -1,9 +1,9 @@
 <template>
   <div class="annotation-list-panel">
+    <!-- Measure/column controls live in the measurements chip strip below and
+         the Measurements tab, so the toolbar only holds object actions. -->
     <div class="annotation-list-toolbar">
-      <v-tooltip
-        text="Measure objects: configure and run property computations"
-      >
+      <v-tooltip text="Color objects by a property value">
         <template v-slot:activator="{ props: activatorProps }">
           <v-btn
             v-bind="activatorProps"
@@ -11,28 +11,13 @@
             icon
             size="small"
             class="mr-1"
-            aria-label="Measure objects"
-            :data-tour="TOUR_ANCHORS.measureObjects"
-            v-tour-trigger="TOUR_TRIGGERS.measureObjects"
-            @click="store.setIsAnalyzeDialogOpen(true)"
+            aria-label="Color objects by property"
+            @click="store.setIsColorByPropertyDialogOpen(true)"
           >
-            <v-icon>mdi-ruler-square</v-icon>
+            <v-icon>mdi-palette</v-icon>
           </v-btn>
         </template>
       </v-tooltip>
-      <property-picker>
-        <template v-slot:activator="{ props: pickerProps }">
-          <v-btn
-            v-bind="pickerProps"
-            variant="flat"
-            color="primary"
-            size="small"
-            prepend-icon="mdi-plus"
-          >
-            Add property
-          </v-btn>
-        </template>
-      </property-picker>
       <v-spacer />
       <v-btn
         variant="text"
@@ -73,10 +58,21 @@
             :disabled="!isLoggedIn"
           />
 
+          <!-- Paint-bucket rather than a palette: "Color Selected" applies one
+               chosen color to the selection, while the palette icon is reserved
+               for Color by Property (its two other entry points are icon-only
+               buttons, so the icon has to carry the meaning). -->
           <v-list-item
-            prepend-icon="mdi-palette"
+            prepend-icon="mdi-format-color-fill"
             title="Color Selected"
             @click="showColorDialog = true"
+            :disabled="!isLoggedIn"
+          />
+
+          <v-list-item
+            prepend-icon="mdi-palette"
+            title="Color by Property…"
+            @click="store.setIsColorByPropertyDialogOpen(true)"
             :disabled="!isLoggedIn"
           />
 
@@ -111,6 +107,7 @@
       :data-tour="TOUR_ANCHORS.annotationListContent"
       class="annotation-list-content"
     >
+      <property-chip-strip />
       <v-dialog v-model="annotationFilteredDialog">
         <v-card>
           <v-card-title>
@@ -328,7 +325,7 @@ import { debounce } from "lodash";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import annotationListServer from "@/store/annotationListServer";
-import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
+import { TOUR_ANCHORS } from "@/tours/anchors";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { goToAnnotationLocation } from "@/utils/annotationNavigation";
@@ -338,7 +335,7 @@ import { listQueryingMessage } from "@/utils/loadingLabels";
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
-import PropertyPicker from "@/components/PropertyPicker.vue";
+import PropertyChipStrip from "@/components/AnnotationBrowser/PropertyChipStrip.vue";
 import AnnotationListRow from "@/components/AnnotationBrowser/AnnotationListRow.vue";
 import PropertyColumnHeader from "@/components/AnnotationBrowser/PropertyColumnHeader.vue";
 
@@ -934,13 +931,17 @@ watch(
       filterStore.tagFilter,
       filterStore.propertyFilters,
       filterStore.onlyCurrentFrame,
-      filterStore.selectionFilter,
-      filterStore.annotationIdFilters,
       propertyStore.displayedPropertyPaths,
       store.xy,
       store.z,
       store.time,
-    ]),
+    ]) +
+    // The id-membership filters and the analysis gates contribute SIGNATURES,
+    // never their id arrays: a select-all selection filter or a gate holds tens
+    // of thousands of ids, and this key re-evaluates on every frame scrub
+    // because it reads xy/z/time. See @/utils/signatures.
+    `|${filterStore.membershipFilterSignature}` +
+    `|${filterStore.analysisGateSignature}`,
   () => {
     if (!isServerMode.value) {
       return;
@@ -950,17 +951,20 @@ watch(
   },
 );
 
-// Scope server-mode selection to the current query. The selection set is
+// Scope selection to the current query in BOTH list modes. The selection set is
 // global, and deleteSelected/tag/color act on it directly, so a selection made
 // under one filter would otherwise persist — hidden — after switching filters,
 // and a later "delete selected" would silently delete rows no longer in view.
 // Clearing on any query change keeps the selection equal to "things in the
-// current filtered list", which is also what the header checkbox now reports.
+// current filtered list", which is also what the header checkbox reports. In
+// client mode `selectedIds` only HIDES ids outside `filteredAnnotationIdToIdx`;
+// it does not prune the global set consumed by the destructive actions.
 //
 // We key off currentFilters (the canonical query definition) so projection-only
 // changes (displayedPropertyPaths) and sort/page changes — none of which change
 // the matching set — don't drop the selection. We watch its JSON-serialized
-// value, NOT the object with { deep: true }: currentFilters is rebuilt as a new
+// SIGNATURE (see currentFiltersSignature — it excludes the potentially huge id
+// constraint arrays), NOT the object with { deep: true }: currentFilters is rebuilt as a new
 // object on every read and its getter reads the frame (xy/z/time)
 // unconditionally to assemble currentFrame, so main.z is a reactive dependency
 // even though the frame is only included in the output when onlyCurrentFrame is
@@ -970,13 +974,8 @@ watch(
 // the query content genuinely changes; stringify also traverses the object, so
 // nested filter changes are still tracked.
 watch(
-  () => JSON.stringify(annotationListServer.currentFilters),
-  () => {
-    if (!isServerMode.value) {
-      return;
-    }
-    annotationStore.setSelected([]);
-  },
+  () => annotationListServer.currentFiltersSignature,
+  () => annotationStore.setSelected([]),
 );
 
 // Server mode can now engage outside stub-only mode (fully-fetched dataset

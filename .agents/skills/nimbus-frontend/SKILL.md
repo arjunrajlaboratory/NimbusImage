@@ -5,6 +5,42 @@ description: "Use when writing or modifying Vue 3 components, Vuex store modules
 
 # Nimbus Frontend Development
 
+## Test mocks must model the real store's REPLACEMENT semantics
+
+A mock that mutates state in place where the real store replaces it makes
+tests silently vacuous. `AnalysisPanel.test.ts`'s `setPlots` did
+`plots.length = 0; plots.push(...)` while the real `applyAnalysisPlots`
+builds a new array. Vue short-circuits a computed whose value is unchanged
+by identity, so `analysisPlots` never invalidated and **every watcher
+downstream of it silently never re-ran** — a new test for plot-removal
+behavior passed against code that did nothing.
+
+It hid because an existing test appeared to cover removal: its watcher
+happened to read `analysisPopulation`, which returns a fresh array each
+evaluation, so that one re-fired for an unrelated reason.
+
+Rules:
+- Mock setters replace (`mocks.plots = [...next]`), matching the store.
+- Booleans and other scalars are the same trap in reverse: an intermediate
+  computed returning an unchanged `true` stops propagation, so a test that
+  changes only downstream data may never re-run the watcher.
+- Before trusting a new watcher test, make it FAIL once (revert the fix, or
+  assert the opposite) — this one passed for the wrong reason first.
+
+Two related mock traps, both of which make a test assert against something
+the component never touched:
+
+- **A `vi.mock` factory captures the spy it closes over.** Reassigning
+  `mocks.someAction = vi.fn()` in `beforeEach` leaves the component calling
+  the *original* spy while the test asserts on the new one — "expected spy
+  to be called, number of calls: 0" with obviously working code. Use
+  `mocks.someAction.mockClear()` instead.
+- **A plain-object store mock is not reactive**, so a component watching
+  `() => store.something` never fires when a test assigns to it. If the
+  behavior under test is a watcher on store state, wrap the mock's default
+  export in `reactive()` (`vi.mock("@/store", async () => { const { reactive }
+  = await import("vue"); return { default: reactive({ … }) }; })`).
+
 ## Component Patterns
 
 ### Script Setup (Composition API)
@@ -70,6 +106,37 @@ store.dispatch('sendUserMessage', 'Find the nuclei in this image.'); // fire, do
 **Send exactly once, from a clean/hydrated state.** Two `sendUserMessage`s in quick succession start two overlapping runs that both push to the module-level `wireMessages`, nesting the tool-result blocks (`content: [[tool_result,…]]`). The next request then fails with Anthropic `400 … messages.N.content.0: Input should be an object`. This is not a create/run bug — it's conversation corruption from concurrent turns. (The UI's `send()` and the `sendUserMessage` guard both check `running`, but a stale in-flight run or leftover persisted conversation can still bite; a hard reload + `clearConversationAndStorage` gives a truly clean slate.) Related: `hydrating` (module var) blocks sends until a reloaded conversation finishes restoring — a dispatch right after reload can no-op; wait a beat. `clearConversation()` (no `force`) no-ops while `running`; use `clearConversationAndStorage`.
 
 Agent tool executors live in `src/agent/executors.ts` (`executeAgentTool(name, input, ctx)`), importable in the Vite dev page for isolated testing: `await import('/src/agent/executors.ts?t=' + Date.now())` (the query-bust avoids a stale module cache). Worker tools save parameters under `tool.values.workerInterfaceValues`; `channelCheckboxes` values are `{channelIndex: true}` maps (a `true` value selects — key-presence alone does not).
+
+### Never assign a big per-annotation map to state without `markRaw`
+
+`annotationStubs`, `hydratedAnnotations`, and `annotationCentroids` hold one
+entry per annotation — up to ~700K. Every existing assignment wraps them in
+`markRaw(...)`; a new mutation that forgets it hands Vue a raw Map to walk and
+proxy entry by entry, and that cost dwarfs whatever the mutation was doing. A
+whole-dataset recolor measured **16.9s** with the `markRaw` missing against
+~5.5s with it — and the mutation itself was only ~0.5s of that.
+
+Nothing static catches this: `tsc` and lint are happy, and any test with a
+handful of fixture annotations is far too small to feel it. The tell is a
+measured time that doesn't add up from its parts.
+
+```typescript
+// BAD: Vue proxies ~700K entries on assignment
+this.annotationStubs = newStubs;
+
+// GOOD: matches the nine other assignments to this map
+this.annotationStubs = markRaw(newStubs);
+```
+
+`src/store/__tests__/rawStateMaps.test.ts` asserts `isReactive(...) === false`
+after every mutation that replaces one of these maps — extend it when you add
+another, rather than hand-checking. Verify a new row can fail by deleting only
+the `markRaw` call (not the whole mutation — stashing the file reverts it
+entirely and the test then fails for the wrong reason).
+
+Note the *array* convention differs: `annotations` is a plain reactive array of
+`markRaw`ed items (`setAnnotations` does `annotations.map(markRaw)`), so
+`markRaw` goes on the items there, not the array.
 
 ### Store Edits Break HMR — Hard-Reload
 
@@ -365,6 +432,33 @@ ignored).
 Extend that test rather than hand-grepping when auditing a new Vuetify
 deprecation.
 
+### Icon names: check `@mdi/font` 5.9.55, not the MDI website
+
+`@mdi/font` here is pinned at **5.9.55**, several major versions behind what
+mdi.dev documents. A name that doesn't exist in the installed font fails
+**silently and invisibly**: Vuetify sets the class, no `::before` rule matches,
+and the icon renders as blank space. `tsc`, lint and every component test stay
+green — the only symptom is a gap a human notices in a screenshot, which is
+exactly how `mdi-gradient-horizontal` shipped on a menu item. The sweep that
+followed found two more (`mdi-sitemap-outline`, added after 5.x, in two places;
+`mdi-save`, renamed to `mdi-content-save` in 5.x).
+
+Never write an icon name from memory or from current MDI docs — grep the
+installed font:
+
+```bash
+grep -c '^\.mdi-sitemap-outline::before' node_modules/@mdi/font/css/materialdesignicons.css   # 0 → blank icon
+```
+
+`src/__tests__/mdiIconNames.test.ts` enforces this across all of `src/`, so a
+bad name now fails the suite instead of shipping. Its one exclusion is itself
+(it quotes non-existent names in its own prose). In the browser, the direct
+evidence is `getComputedStyle(el, "::before").content` — a codepoint means the
+glyph resolved, `none`/`normal` means the class matched no rule.
+
+Common 5.9.55 gotchas: no `-outline` variant for many icons; `save` →
+`content-save`; `gradient` has no `-horizontal`/`-vertical` suffix.
+
 ### v-menu / v-dialog Initial State
 
 Vuetify 4's `v-menu` respects the initial `v-model` value immediately on mount. Vuetify 3 deferred it. If you set `v-model` to `true` before mount, the menu WILL open. Guard with conditions:
@@ -484,6 +578,38 @@ Use the API classes from store — never put `girderRest.get(...)` in components
 import store from "@/store";
 const result = await store.api.someMethod();
 ```
+
+## Opening a palette from a component that has no palette registry
+
+App.vue owns palette (right/left panel) visibility in local refs, so a
+component mounted under the route tree — anything inside `ImageViewer` /
+`AnnotationViewer` — cannot open one by emitting an event. Ask through the
+main store instead: `store.requestPaletteOpen(["analysisPanel",
+"filtersPanel"])` sets `paletteOpenRequests`; App.vue watches it, opens each
+in order, and clears the list. Order matters — open the *primary* palette
+first, then its companion (Filters hosts alongside Analysis and the Object
+Browser); the other order closes the palette just opened.
+`TRequestablePalette` in `model.ts` is a subset of App.vue's `PaletteId`, so
+keep them in step — that is what makes a renamed palette a compile error
+rather than a click that does nothing. Same shape as the older
+`isAnnotationPanelOpen` hatch used by the Timelapse panel.
+
+## A count computed after filtering must say it was filtered
+
+Every count the UI prints from `filteredAnnotations`, `viewportAnnotationCount`,
+or any id set that survived filters/gates is a *filtered* number. Printed
+without a cue, it reads as data loss the moment a filter is restored from a
+saved configuration — the reported case was a HUD reading "Showing 826 of 826
+in view" in a viewport visibly holding thousands, because a saved lasso gate
+cut 708,983 to 72,925.
+
+- The cue belongs **next to the number**, not on a palette badge across the
+  window. A badge that was visible the whole time did not prevent the report.
+- Count constraints through `src/utils/activeConstraints.ts` —
+  `collectActiveConstraints` / `countActiveConstraints` — never with a fresh
+  ad-hoc sum. The Filters badge, the Analysis badge and the HUD suffix all
+  read that one list; a new narrowing filter that skips it is invisible on
+  all three. See `codebaseDocumentation/ACTIVE_CONSTRAINT_CUES.md`.
 
 ## Logging
 
@@ -621,6 +747,34 @@ Before claiming a frontend change done:
 4. **In-browser verification for anything user-facing** — tsc/lint/vitest green does not mean the UI works (pointer-events, layering, watcher-firing, and store-corruption bugs all passed every static gate). See the in-browser-testing skill; remember to hard-reload after store edits.
 
 Component-level test patterns (AnnotationViewer harness, GeoJS mocks): see the nimbus-geojs skill and `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`.
+
+### A mock that cannot represent the bug makes its tests meaningless
+
+Worse than a mock returning the wrong constant is a mock that models *none* of
+the real action's effect. `addAnalysisPlot` was a bare `vi.fn()`, so
+`mockFilters.analysisPlots` stayed empty no matter what the code under test
+did. Nine tests passed against it — and none of them could observe whether the
+executor's plot had actually landed, which is precisely the state the bug
+produced (the store refuses at its cap by no-oping, and the executor went on
+to configure and report a plot that did not exist).
+
+The rule: **a mocked action must reproduce the state change its caller depends
+on, including its refusal behaviour.** If the real action appends, the mock
+appends; if the real one silently no-ops past a cap, the mock does too. When a
+test needs extra side effects on top, factor the default into a helper and
+call it, rather than replacing the implementation and silently dropping the
+effect the code under test is checking for:
+
+```ts
+function appendAnalysisPlot(id: string) { /* what the real action does */ }
+beforeEach(() => { mock.addAnalysisPlot.mockImplementation(appendAnalysisPlot); });
+// A test layering extra behaviour composes rather than replaces:
+mock.addAnalysisPlot.mockImplementation((id) => { appendAnalysisPlot(id); ...extra... });
+```
+
+Also reset such state in **every** `describe`'s `beforeEach`, not just the
+first — a test that flips a cap flag or swaps an API stub mid-await leaks it
+into every later block.
 
 ### A mock that returns a fixed value can fail your test for the wrong reason
 

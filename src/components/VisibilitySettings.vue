@@ -12,6 +12,67 @@
       </span>
     </p>
 
+    <section class="overview-settings">
+      <div class="overview-settings__title">Annotation overview</div>
+      <v-switch
+        v-model="overviewEnabled"
+        label="Annotation overview raster"
+        density="compact"
+        hide-details
+        v-description="{
+          section: 'Annotation rendering',
+          title: 'Annotation overview raster',
+          description:
+            'Show every annotation in a server-rendered raster while zoomed out, then switch to interactive vectors near full resolution.',
+        }"
+      />
+      <div class="overview-settings__controls">
+        <v-select
+          v-model="overviewMode"
+          :items="overviewModeItems"
+          item-title="title"
+          item-value="value"
+          label="Overview style"
+          density="compact"
+          hide-details
+          :disabled="!overviewEnabled"
+        />
+        <v-text-field
+          v-model.number="overviewThresholdDraft"
+          label="Vector switch (image px / screen px)"
+          type="number"
+          step="0.1"
+          :min="overviewThresholdBounds.min"
+          :max="overviewThresholdBounds.max"
+          density="compact"
+          hide-details
+          :disabled="!overviewEnabled"
+          @blur="commitOverviewThreshold"
+          @keydown.enter="commitOverviewThreshold"
+        />
+      </div>
+      <div class="overview-opacity-row">
+        <span class="text-caption">Raster opacity</span>
+        <v-slider
+          v-model="overviewOpacityDraft"
+          :min="overviewOpacityBounds.min"
+          :max="overviewOpacityBounds.max"
+          step="0.05"
+          density="compact"
+          hide-details
+          :disabled="!overviewEnabled"
+          @end="commitOverviewOpacity"
+        />
+        <span class="text-caption overview-opacity-value">
+          {{ Math.round(overviewOpacityDraft * 100) }}%
+        </span>
+      </div>
+      <p class="overview-settings__note">
+        Display-only while active; interactive vectors return when zoomed in.
+        The raster hides while frames are unrolled.
+      </p>
+    </section>
+
     <div v-for="field in numericFields" :key="field.key" class="field-row">
       <v-text-field
         v-model.number="draft[field.key]"
@@ -98,13 +159,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import annotationStore from "@/store/annotation";
 import {
   VISIBILITY_BOUNDS,
   clampVisibilityConfig,
   type TVisibilityNumericKey,
 } from "@/utils/visibilityConfigBounds";
+import {
+  ANNOTATION_OVERVIEW_OPACITY_BOUNDS,
+  ANNOTATION_OVERVIEW_THRESHOLD_BOUNDS,
+  clampAnnotationOverviewConfig,
+} from "@/utils/annotationOverview";
 
 withDefaults(defineProps<{ showBlurb?: boolean }>(), { showBlurb: true });
 
@@ -170,6 +236,16 @@ const numericFields: INumericField[] = [
 ];
 
 const bounds = VISIBILITY_BOUNDS;
+const overviewOpacityBounds = ANNOTATION_OVERVIEW_OPACITY_BOUNDS;
+const overviewThresholdBounds = ANNOTATION_OVERVIEW_THRESHOLD_BOUNDS;
+const overviewModeItems = [
+  { title: "Filled footprints", value: "shapes" as const },
+  { title: "Centroid discs", value: "discs" as const },
+];
+const overviewOpacityDraft = ref(annotationStore.overviewConfig.opacity);
+const overviewThresholdDraft = ref(
+  annotationStore.overviewConfig.vectorSwitchThreshold,
+);
 
 // Local editable copy of the numeric fields (free typing; committed on blur).
 const draft = reactive<Record<TVisibilityNumericKey, number>>(
@@ -194,6 +270,14 @@ watch(
     for (const field of numericFields) {
       draft[field.key] = config[field.key];
     }
+  },
+);
+
+watch(
+  () => annotationStore.overviewConfig,
+  (config) => {
+    overviewOpacityDraft.value = config.opacity;
+    overviewThresholdDraft.value = config.vectorSwitchThreshold;
   },
 );
 
@@ -247,8 +331,40 @@ const revealMoreOnZoom = computed({
   },
 });
 
+const overviewEnabled = computed({
+  get: () => annotationStore.overviewConfig.enabled,
+  set: (enabled: boolean) => annotationStore.updateOverviewConfig({ enabled }),
+});
+
+const overviewMode = computed({
+  get: () => annotationStore.overviewConfig.mode,
+  set: (mode: "shapes" | "discs") =>
+    annotationStore.updateOverviewConfig({ mode }),
+});
+
+function commitOverviewOpacity() {
+  const config = clampAnnotationOverviewConfig({
+    ...annotationStore.overviewConfig,
+    opacity: overviewOpacityDraft.value,
+  });
+  overviewOpacityDraft.value = config.opacity;
+  annotationStore.updateOverviewConfig({ opacity: config.opacity });
+}
+
+function commitOverviewThreshold() {
+  const config = clampAnnotationOverviewConfig({
+    ...annotationStore.overviewConfig,
+    vectorSwitchThreshold: overviewThresholdDraft.value,
+  });
+  overviewThresholdDraft.value = config.vectorSwitchThreshold;
+  annotationStore.updateOverviewConfig({
+    vectorSwitchThreshold: config.vectorSwitchThreshold,
+  });
+}
+
 function resetToDefaults() {
   annotationStore.resetVisibilityConfig();
+  annotationStore.resetOverviewConfig();
   // Reflect the restored values back into the inputs and clear any pending
   // "adjusted" notes/timers.
   for (const field of numericFields) {
@@ -289,6 +405,44 @@ function resetToDefaults() {
 
 .field-row {
   margin-bottom: 10px;
+}
+
+.overview-settings {
+  padding: 10px;
+  margin-bottom: 14px;
+  border: 1px solid rgb(var(--v-theme-on-surface) / 12%);
+  border-radius: 6px;
+}
+
+.overview-settings__title {
+  margin-bottom: 2px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.overview-settings__controls {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.overview-opacity-row {
+  display: grid;
+  grid-template-columns: auto 1fr 36px;
+  gap: 8px;
+  align-items: center;
+}
+
+.overview-opacity-value {
+  text-align: right;
+}
+
+.overview-settings__note {
+  margin: 2px 0 0;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  opacity: 0.65;
 }
 
 .info-icon {

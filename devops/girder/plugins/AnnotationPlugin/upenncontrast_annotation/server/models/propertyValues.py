@@ -7,6 +7,7 @@ from girder.constants import SortDir
 from girder.exceptions import ValidationException
 from girder.utility.acl_mixin import AccessControlMixin
 
+from ..helpers.aggregation import AGGREGATION_MAX_TIME_MS
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 
@@ -162,6 +163,50 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
             }
             results.extend(self.find(query, fields=fields))
         return results
+
+    def valuesForPath(self, datasetId, propertyPath):
+        """Yield (annotationId, value) for every property-value document in
+        the dataset with a non-null value at propertyPath (a list of keys).
+
+        Uses an aggregation rather than find() so the value can be projected
+        FLAT (two scalar fields per document). A find() projection preserves
+        the nested shape -- {values: {propertyId: {subKey: v}}} -- so pymongo
+        builds three dicts per document and the caller re-walks the path;
+        measured on a 708K-annotation dataset that cost 4.4s against 2.6s for
+        the flat form, for byte-identical data. Girder's find() cannot express
+        a computed projection, which is the sanctioned reason to reach for
+        collection.aggregate (see histogram below).
+
+        A path that runs through a scalar or is absent yields nothing:
+        Mongo's dotted-path traversal resolves those to "missing", which the
+        $match already excludes."""
+        valueKey = "values." + ".".join(propertyPath)
+        pipeline = [
+            {
+                "$match": {
+                    "datasetId": datasetId,
+                    valueKey: {"$exists": True, "$ne": None},
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "annotationId": 1,
+                    "value": "$" + valueKey,
+                }
+            },
+        ]
+        # No allowDiskUse: $match + $project are streaming stages with nothing
+        # to spill, so asking for disk would only grant a capability this
+        # pipeline cannot use. maxTimeMS still bounds it (this runs over every
+        # property value in a dataset).
+        cursor = self.collection.aggregate(
+            pipeline, maxTimeMS=AGGREGATION_MAX_TIME_MS
+        )
+        for document in cursor:
+            value = document.get("value")
+            if value is not None:
+                yield document["annotationId"], value
 
     def delete(self, propertyId, datasetId):
         # Could use self.collection.updateMany but girder doesn't expose it

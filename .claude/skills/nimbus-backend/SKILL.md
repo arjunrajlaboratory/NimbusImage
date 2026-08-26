@@ -311,6 +311,81 @@ Two habits close it:
 - **Assert the message, not just the status** (`assert "must be a JSON object" in resp.json["message"]`), and set up the request so the code actually reaches the validation — use a real `utilities.createFolder(...)` dataset when the handler looks one up before touching the body.
 - **`git stash push <source files>` and confirm the test fails**, leaving the new test file in place (untracked files aren't stashed). A malformed-input test that passes both ways is worse than none.
 
+## Resource Bounds on Public Endpoints (validate the DIMENSIONS, not just the shape)
+
+Shape validation stops 500s. It does **not** stop one valid request from
+exhausting the process. PR #1302 took **three consecutive review rounds**
+finding instances of this one class, so check it deliberately.
+
+For every public endpoint, enumerate the dimensions that **multiply**, and
+bound each one — plus their product where the product is what costs:
+
+| dimension | why a per-item cap is not enough |
+|---|---|
+| items × per-item work | 100 plots × a full-dataset coordinate build = ~130 s of CPU from one request |
+| a product cap alone | a 512×512 cell budget still allows **one** axis with 262,144 categories when the other collapses to 1 bin |
+| inner-loop length × collection size | `points_in_polygon` does one full-length numpy pass PER VERTEX: 10,000 vertices × 708K points ≈ 10 s per gate, and **no DB timeout covers Python work** |
+| response size | an unbounded id response is ~380 MB of JSON that lands on Girder *and* the browser |
+| client concurrency | one request per plot = N concurrent full-dataset scans; serialize or pool them |
+
+Three rules that each came from a real finding:
+
+1. **Check budgets AS they accumulate, before converting/retaining.** A
+   guard that validates after building the thing it guards against has
+   already paid the cost — the id-budget check held ~7M ObjectIds on its way
+   to returning a 400.
+2. **Bound what the DATA can produce, not just what the request asks for.**
+   Categories derived from annotations explode on a dataset where every
+   object carries a distinct tag; the API-boundary check cannot see that, so
+   re-check after deriving (helper raises `ValueError` → API maps to 400).
+3. **A backend limit needs its client counterpart.** Lowering a server cap
+   without one meant a 21st plot 400'd every request, the client turned that
+   into `null`, and the changed-input path had already cleared state — every
+   gate stopped filtering with no path to recovery.
+
+**Pick limits from measurement, not intuition.** A "whichever is smaller"
+rule for `$in` vs `$nin` looked obviously right and *lost* time near the
+crossover, because `$nin` costs ~1.4× per element. Time both and put the
+table in the comment.
+
+## A dict that is both client input and an internal write target
+
+When a request dict is validated at the boundary and then *written to* by
+internal code, an allowlist is not enough — the validator must **remove**
+keys it does not own. Two things conspire:
+
+- validators check the fields they know about and pass everything else
+  through untouched;
+- internal writers commonly use `setdefault(...)` / `.get(...) or []`, which
+  **appends to** a client-supplied value instead of replacing it.
+
+On PR #1302 `filters["gateMatchClauses"]` was internal — the gate resolver
+wrote it and the pipeline builder spliced its contents straight into
+`$match.$and`. A client could set it on three `@access.public` endpoints:
+
+```python
+# Uncaught 500: andClauses += "x" -> {"$and": ["x"]} -> OperationFailure
+{"filters": {"gateMatchClauses": "x"}}
+# Arbitrary operator ANDed into the dataset match, on a public endpoint
+{"filters": {"gateMatchClauses": [{"tags": {"$regex": "(a+)+$"}}]}}
+```
+
+Rules:
+
+1. **Strip internal keys at the top of the validator**, before anything
+   reads the dict: `filters.pop("gateMatchClauses", None)`. Stripping (not
+   rejecting) is right for a key that is not part of the client-facing
+   shape — the request simply ignores it.
+2. **Grep the writers, not the readers.** The reader
+   (`_buildListMatchStages`) looks innocuous; the bug lives in the fact that
+   the same dict has two authors. Search for `setdefault`, `.get(x) or []`,
+   and `dict[...] =` against any name that also reaches a request body.
+3. **Test it from the client side.** Every existing test set the key through
+   the resolver, so none of them could see it. Assert the request *succeeds
+   and ignores it*, with a clause that would visibly narrow the result if it
+   were applied — otherwise "stripped" and "applied but harmless" look the
+   same.
+
 ## Loading Plugin Changes Into the Running Backend
 
 The `girder` container bakes the plugin into its image (no source mount). After editing backend plugin code:
@@ -318,6 +393,34 @@ The `girder` container bakes the plugin into its image (no source mount). After 
 - `docker compose restart girder` does **NOT** load the change — new routes return `No matching route` while old ones work.
 - Required: `docker compose build girder && docker compose up -d girder` (fast — cached layers; girder is back in ~7s).
 - `tox` runs against plugin **source**, so tests pass even when the live `:8080` API is stale. Always rebuild before verifying endpoints with curl or the browser.
+
+## Measuring a Mongo write path: re-running the same write measures nothing
+
+WiredTiger largely no-ops a `$set` that writes the value a document already
+holds. So a benchmark loop that repeats the *same* operation measures real work
+on its first iteration and near-nothing afterwards — and a median over those
+runs is meaningless. This actively misled a real optimization: repeated
+identical colorings made the write path look **2.6s** when it is ~5s, which
+pointed the work at the read path while 80% of the request was writes.
+
+Two rules for any write-path measurement:
+
+- **Force a real change between runs.** Alternate between two different values
+  (two colormaps, two field values) so every document genuinely changes each
+  iteration, and report the spread rather than a median of no-ops.
+- **Instrument inside the request, not in a standalone script.** A separate
+  pymongo script misses everything the server does around the write — and, in
+  particular, misses *contention between phases*: a dataset-wide clear left
+  ~700K dirty pages that doubled the cost of the writes that followed it, which
+  no isolated per-phase timing revealed. Temporary `print(...)` in the model,
+  read back with `docker logs girder`, is enough (girder's `logprint` is not
+  importable from `girder` and its logger's INFO does not reach stdout).
+
+Also worth knowing before reaching for a clever pipeline: a server-side
+`$merge` that computes the new value and merges it into the target collection —
+no ids crossing the wire, no separate clearing pass — measured **12.6s against
+~4.5s** for a plain batched `bulk_write` of `UpdateMany` ops. Measure it before
+assuming "push it into the database" is faster.
 
 ## Logging
 

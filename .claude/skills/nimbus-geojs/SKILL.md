@@ -23,6 +23,7 @@ GeoJS's annotation layer has several asymmetric, mutating APIs. Each trap below 
 | Clicking a list row shows no connection at high zoom | A connection draws only when BOTH endpoints are displayed; recentering on one leaves the other outside the viewport | Frame both endpoints (`frameCameraInfo`) instead of recentering on one |
 | With an axis unrolled, the camera/hit-test lands exactly one tile-width (or a multiple) away from the object | The draw path offsets each annotation by its grid cell; the other path used the raw frame-local centroid | Put both through `@/utils/unroll` — see "Unrolled coordinates are a third space" |
 | Hover/selection highlight works on one layer and does nothing on another | The second layer rebuilds its features from scratch on every draw and bakes the highlight in at build time, so only the state wired to a rebuild is ever reflected | Give the features a base-style option and restyle them in place — see "Layers that bake style at draw time" |
+| A tile layer silently loads nothing: zero network requests, no errors, later draws/toggles no-ops | `tile.catch`/`tile.then` QUEUES the tile's fetch, and the queue's `needed` predicate requires `tile === cache.get(hash)` — a handler attached inside `_getTile` (pre-`cache.add`) rejects every tile at creation; rejected tiles stay cached with `_queued=true` so nothing ever refetches them | Attach tile promise handlers only post-cache: wrap `_getTileCached`, never `_getTile` — see "Tile promise handlers queue the fetch" |
 
 ## Layers that bake style at draw time
 
@@ -129,6 +130,50 @@ selects nothing; clicking the same spot on the first tile selects it. Verified l
 
 `_update` (the WebGL feature-data rebuild) only runs when the layer's `modified()` timestamp advanced. `clearOldAnnotations` marks modified only when it *removes* something; a pure add pass with `update=false` marks nothing → invisible features. Debugging tell: run `layer.modified(); layer.draw()` in the console — if features appear instantly, it's this, not missing data. Guard the `modified()` call on "count actually grew" so pure pans keep the incremental-draw optimization.
 
+## Tile promise handlers queue the fetch — attach post-cache only
+
+GeoJS tiles have a promise-like interface, and it is not passive: `tile.catch(cb)`
+calls `tile.then`, and `then` on a pending unfetched tile runs
+`this._queue.add(this, this.fetch)` — **attaching a handler queues the fetch**.
+The fetch queue's `needed` predicate accepts a tile only if it is already the
+cache's entry for its hash (`tile === cache.get(tile.toString())`), and
+`fetchQueue.add` processes synchronously. Inside `_getTileCached`, `_getTile`
+runs BEFORE `cache.add` — so a failure hook attached in a wrapped `_getTile`
+rejects every tile the instant it is created.
+
+The symptom is total silence: zero network requests, no console errors, and the
+failure is sticky — rejected tiles stay in the cache with `_queued=true`, and
+`_update` never re-queues a tile whose queue position is `-1`, so later draws
+and visibility toggles are no-ops until `layer.reset()` or a template change.
+This shipped as a blank annotation raster overview (review R19): the retry
+subsystem's own hook killed every tile, then consumed its retry budget on
+identical deaths.
+
+Rules:
+
+- Wrap `_getTileCached` (returns only after `cache.add`), never `_getTile`,
+  when you need a per-tile failure signal (there is no tile-error event).
+- Cache hits return the same tile — guard so each tile is hooked once
+  (WeakSet).
+- Unit-test the ordering contract with a mock that mimics create-then-cache
+  and records cache membership at `catch`-attach time
+  (`ImageViewer.test.ts`, `installMockTileFactory`); a mock that just exposes
+  `_getTile` cannot fail on this bug.
+- Diagnose live: `layer.cache._cache` sizes vs `read_network_requests`; the
+  counterfactual `layer.queue._needed = () => true` + `layer.reset()` +
+  `layer.draw()` making tiles load proves this mechanism.
+
+## Tile URL changes already reset the GeoJS cache
+
+`tileLayer.url(newUrlOrCallback)` is not a plain option setter. GeoJS updates
+the URL, calls `reset()` to drop cached z/x/y tiles, and calls
+`map().draw()` (`geojs/src/tileLayer.js`). A freshly constructed callback has
+new identity, so changing a template through `layer.url(() => newTemplate)`
+already refetches tiles. Do not add a second explicit `layer.reset()` or draw at
+that call site; it duplicates work. A component mock whose `url` method is only
+a spy does not model this GeoJS side effect, so verify the library contract
+before accepting a review finding based on the mock.
+
 ## Hydration-coupled draw paths (stub-only datasets)
 
 `getAnnotationFromId` returns `undefined` for every unhydrated non-point annotation once
@@ -227,11 +272,34 @@ element.onclick = ...;
   element; `map.exit()` cascades to child widgets. Key per-map widget bookkeeping off the map
   object (a `WeakMap`), so a map reset naturally drops the stale entry.
 
+## Multi-map state: aggregate locally, clean up at the owner
+
+`layerMode === "unroll"` mounts one `AnnotationViewer` per layer group. A fact
+that is local to one GeoJS map (raster active, layer ready, renderer available)
+must not let each child independently overwrite shared annotation-store state;
+the last child to run will otherwise hide or reveal vectors for every sibling.
+Track the per-map fact in `ImageViewer` (a reactive `WeakMap` works well), derive
+the aggregate there, and pass the aggregate permission back to the children.
+Shared cleanup belongs at that same owner rather than in every child unmount.
+
+Teardown has a second ordering trap: `ImageViewer.draw()` can call `map.exit()`
+before Vue runs the removed child's `onBeforeUnmount`. A final child event may
+still update parent bookkeeping, but it must not call `visible()`, `draw()`, or
+other GeoJS methods on a layer whose map is no longer in `store.maps`. Guard the
+layer operation using current parent membership and test both the mixed-active
+case and the removed-map event. A Multiple → Unroll → Multiple live pass should
+also be console-clean; unit mocks do not model GeoJS's destroyed renderer.
+
 ## Testing AnnotationViewer (unit)
 
 Full guide: `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`. Non-obvious conventions in `src/components/AnnotationViewer.test.ts`:
 
 - **Store mocks are `reactive()`** — drive watchers/computeds after mount by mutating `mockedStore.z` / `mockedAnnotationStore.annotations`, then `await wrapper.vm.$nextTick()`.
+- **`ImageViewer` tests can replace a map entry during `draw()`.** Do not retain
+  a raw `IMapEntry` across `nextTick()` or fake-timer advancement and assume it
+  is still mounted; reacquire `wrapper.vm.maps[index]` before firing a child
+  event. Product bookkeeping keyed by a GeoJS map should normalize reactive
+  proxies with `toRaw`, or a raw event key and the store's proxy key will drift.
 - **Fake timers are active**; the draw path is `throttle(drawAnnotationsNoThrottle, 100)` — flush trailing draws with `vi.advanceTimersByTime(101)`.
 - **You cannot spy on `<script setup>` closures** — assert via side effects: `annotationLayer.draw` (a `vi.fn`) or exposed computeds like `wrapper.vm.displayedAnnotations`.
 - **`geojsAnnotationFactory` mock ignores its args** — to read drawn features by id, `mockImplementation((shape, coords, options) => { const f = mockGeoJSAnnotation(shape); if (options) f.options(options); return f; })`.

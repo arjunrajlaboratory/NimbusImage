@@ -13,6 +13,10 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  scheduleAnnotationBrowserSave: vi.fn(),
+}));
+
 // The filters module only touches these dependencies inside getters/actions
 // that this test does not exercise, but they must be importable so the module
 // evaluates. Mock them to avoid pulling in the full store/geojs graph.
@@ -22,11 +26,19 @@ vi.mock("./index", () => ({
     z: 0,
     time: 0,
     dataset: null,
-    scheduleAnnotationBrowserSave: () => {},
+    showAnnotationsFromHiddenLayers: true,
+    scheduleAnnotationBrowserSave: mocks.scheduleAnnotationBrowserSave,
   },
 }));
 vi.mock("./annotation", () => ({
-  default: { annotations: [], selectedAnnotationIds: ["a", "b"] },
+  default: {
+    annotations: [],
+    selectedAnnotationIds: ["a", "b"],
+    stubOnlyMode: false,
+    annotationCentroids: {},
+    // Minimal population for the filteredAnnotations / gate tests below.
+    annotationsForIteration: [{ id: "a" }, { id: "b" }, { id: "c" }],
+  },
 }));
 vi.mock("./properties", () => ({
   default: {
@@ -39,6 +51,7 @@ vi.mock("geojs", () => ({
 }));
 vi.mock("@/utils/annotation", () => ({
   tagCloudFilterFunction: () => true,
+  annotationTestPoints: () => [],
 }));
 
 import filters from "./filters";
@@ -113,5 +126,269 @@ describe("filters.resetFilterState", () => {
     filters.resetFilterState();
 
     expect(filters.onlyCurrentFrame).toBe(true);
+  });
+
+  it("clears analysis plots on reset", () => {
+    filters.addAnalysisPlot("plot-1");
+
+    filters.resetFilterState();
+
+    expect(filters.analysisPlots).toEqual([]);
+  });
+});
+
+describe("analysis plot gates", () => {
+  beforeEach(() => {
+    filters.resetFilterState();
+    mocks.scheduleAnnotationBrowserSave.mockClear();
+  });
+
+  const filteredIds = () =>
+    filters.filteredAnnotations.map(
+      (annotation: { id: string }) => annotation.id,
+    );
+
+  // A gate is a polygon; the ids inside it are derived by
+  // refreshAnalysisGateIds. These tests drive the derived map directly so they
+  // pin the COMPOSITION rules; resolveAnalysisGateIds (polygon -> ids) is
+  // covered in analysisGating.test.ts.
+  const GATE = {
+    categoryKeyVersion: 1 as const,
+    vertices: [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+    ],
+    xCategories: null,
+    yCategories: null,
+  };
+
+  it("passes everything through while no gate is drawn", () => {
+    filters.addAnalysisPlot("p1");
+    expect(filteredIds()).toEqual(["a", "b", "c"]);
+    expect(filters.activeAnalysisGateCount).toBe(0);
+    expect(filters.activeFilterCount).toBe(0);
+  });
+
+  it("does not constrain a drawn gate until its ids have been resolved", () => {
+    // The window between drawing a gate and the values needed to resolve it
+    // arriving must not hide everything.
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
+    expect(filteredIds()).toEqual(["a", "b", "c"]);
+    expect(filters.activeAnalysisGateCount).toBe(0);
+    expect(filters.activeFilterCount).toBe(0);
+  });
+
+  it("ANDs the enabled resolved gates into filteredAnnotations", () => {
+    filters.addAnalysisPlot("p1");
+    filters.addAnalysisPlot("p2");
+    filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
+    filters.setAnalysisPlotGate({ id: "p2", gate: GATE });
+
+    filters.setAnalysisGateIds({ p1: ["a", "b"] });
+    expect(filteredIds()).toEqual(["a", "b"]);
+    // Gates count on the ANALYSIS badge, not the Filters badge: each badge
+    // counts what its own panel shows, so a lone gate no longer makes the
+    // Filters button claim a filter its panel cannot display.
+    expect(filters.activeAnalysisGateCount).toBe(1);
+    expect(filters.activeFilterCount).toBe(0);
+
+    filters.setAnalysisGateIds({ p1: ["a", "b"], p2: ["b", "c"] });
+    expect(filteredIds()).toEqual(["b"]);
+    expect(filters.activeAnalysisGateCount).toBe(2);
+    expect(filters.activeFilterCount).toBe(0);
+
+    // Disabling drops the constraint without losing the drawn polygon.
+    filters.toggleAnalysisPlotGateEnabled("p2");
+    expect(filteredIds()).toEqual(["a", "b"]);
+    expect(
+      filters.analysisPlots.find((plot) => plot.id === "p2")?.gate,
+    ).toEqual(GATE);
+
+    // Clearing the other gate restores the full population.
+    filters.setAnalysisPlotGate({ id: "p1", gate: null });
+    expect(filteredIds()).toEqual(["a", "b", "c"]);
+  });
+
+  it("treats an empty resolved gate as filtering everything out", () => {
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
+    filters.setAnalysisGateIds({ p1: [] });
+    expect(filteredIds()).toEqual([]);
+  });
+
+  it("invalidates the gate and its ids when an axis changes", () => {
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
+    filters.setAnalysisGateIds({ p1: ["a"] });
+    expect(filteredIds()).toEqual(["a"]);
+
+    filters.setAnalysisPlotAxes({
+      id: "p1",
+      xAxis: { type: "categorical", key: "tags" },
+    });
+
+    expect(filters.analysisPlots[0].gate).toBeNull();
+    expect(filters.analysisGateIds.p1).toBeUndefined();
+    expect(filters.analysisPlots[0].xAxis).toEqual({
+      type: "categorical",
+      key: "tags",
+    });
+    expect(filteredIds()).toEqual(["a", "b", "c"]);
+  });
+
+  it("drops missing property axes and invalidates their dependent plot suffix", () => {
+    filters.hydrateAnalysisPlots([
+      {
+        id: "p1",
+        xAxis: { type: "property", path: ["kept", "Area"] },
+        yAxis: { type: "categorical", key: "tags" },
+        gate: GATE,
+        gateEnabled: true,
+      },
+      {
+        id: "p2",
+        xAxis: { type: "property", path: ["deleted", "Area"] },
+        yAxis: { type: "categorical", key: "shape" },
+        gate: GATE,
+        gateEnabled: true,
+      },
+      {
+        id: "p3",
+        xAxis: { type: "categorical", key: "channel" },
+        yAxis: { type: "categorical", key: "tags" },
+        gate: GATE,
+        gateEnabled: true,
+      },
+    ]);
+    filters.setAnalysisGateIds({ p1: ["a", "b"], p2: ["b"], p3: ["b"] });
+
+    filters.reconcileAnalysisPlotsForPropertyIds(["kept"]);
+
+    expect(filters.analysisPlots[0].xAxis).toEqual({
+      type: "property",
+      path: ["kept", "Area"],
+    });
+    expect(filters.analysisPlots[0].gate).toEqual(GATE);
+    expect(filters.analysisPlots[1].xAxis).toBeNull();
+    expect(filters.analysisPlots[1].gate).toBeNull();
+    expect(filters.analysisGateIds).toEqual({ p1: ["a", "b"] });
+    expect(mocks.scheduleAnnotationBrowserSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("removing a plot removes its gate from the composition", () => {
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
+    filters.setAnalysisGateIds({ p1: ["a"] });
+    expect(filteredIds()).toEqual(["a"]);
+
+    filters.removeAnalysisPlot("p1");
+    expect(filters.analysisPlots).toEqual([]);
+    expect(filters.analysisGateIds.p1).toBeUndefined();
+    expect(filteredIds()).toEqual(["a", "b", "c"]);
+  });
+
+  it.each([
+    {
+      edit: "replacing an upstream gate",
+      mutate: () =>
+        filters.setAnalysisPlotGate({
+          id: "p1",
+          gate: { ...GATE, vertices: [...GATE.vertices] },
+        }),
+      expectedFirstIds: undefined,
+    },
+    {
+      edit: "changing an upstream axis",
+      mutate: () =>
+        filters.setAnalysisPlotAxes({
+          id: "p1",
+          xAxis: { type: "categorical" as const, key: "tags" as const },
+        }),
+      expectedFirstIds: undefined,
+    },
+    {
+      edit: "removing an upstream plot",
+      mutate: () => filters.removeAnalysisPlot("p1"),
+      expectedFirstIds: undefined,
+    },
+    {
+      edit: "toggling an upstream gate",
+      mutate: () => filters.toggleAnalysisPlotGateEnabled("p1"),
+      // Enabling/disabling a plot changes the population reaching later plots,
+      // but not the population against which this plot's own gate was resolved.
+      expectedFirstIds: ["a", "b"],
+    },
+  ])("drops stale downstream ids after $edit", async (testCase) => {
+    for (const id of ["p1", "p2", "p3"]) {
+      await filters.addAnalysisPlot(id);
+      await filters.setAnalysisPlotGate({ id, gate: GATE });
+    }
+    filters.setAnalysisGateIds({
+      p1: ["a", "b"],
+      p2: ["b"],
+      p3: ["b"],
+    });
+
+    await testCase.mutate();
+
+    expect(filters.analysisGateIds.p1).toEqual(testCase.expectedFirstIds);
+    expect(filters.analysisGateIds.p2).toBeUndefined();
+    expect(filters.analysisGateIds.p3).toBeUndefined();
+  });
+
+  it("exposes active gates as raw id lists, not Sets", () => {
+    // buildListFilters forwards these straight to the backend, so materializing
+    // a Set per gate just to hand it back as an array would be pure waste.
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
+    filters.setAnalysisGateIds({ p1: ["a", "b"] });
+    expect(filters.activeAnalysisGateIdLists).toEqual([["a", "b"]]);
+    filters.toggleAnalysisPlotGateEnabled("p1");
+    expect(filters.activeAnalysisGateIdLists).toEqual([]);
+  });
+
+  it("short-circuits the analysis signature when nothing needs resolving", () => {
+    // Guards the cost: with no gate and nobody looking, this getter must not
+    // touch the population.
+    filters.addAnalysisPlot("p1");
+    expect(filters.analysisInputSignature).toBe("idle");
+    filters.setAnalysisPlotAxes({
+      id: "p1",
+      xAxis: { type: "property", path: ["prop", "Area"] },
+      yAxis: { type: "property", path: ["prop", "Intensity"] },
+    });
+    filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
+    expect(filters.analysisInputSignature).not.toBe("idle");
+  });
+
+  it("wakes the analysis signature when the panel opens with no gate", () => {
+    // The panel needs values for ungated plots to draw them, so opening it has
+    // to trigger the fetch even though no gate needs resolving.
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotAxes({
+      id: "p1",
+      xAxis: { type: "property", path: ["prop", "Area"] },
+      yAxis: { type: "categorical", key: "shape" },
+    });
+    expect(filters.analysisInputSignature).toBe("idle");
+    filters.setAnalysisPanelOpen(true);
+    expect(filters.analysisInputSignature).not.toBe("idle");
+    filters.setAnalysisPanelOpen(false);
+  });
+
+  it("signs the id-membership filters without serializing their ids", () => {
+    // A select-all puts tens of thousands of ids in the selection filter, and
+    // the watchers keyed off this re-evaluate on every frame scrub.
+    filters.newAnnotationIdFilter(["aaa", "bbb", "ccc"]);
+    const sig = filters.membershipFilterSignature;
+    expect(sig).not.toContain("aaa");
+    expect(sig).not.toContain("ccc");
+    // ...and it still changes when the membership does, including a same-length
+    // change at a position a sampled signature would have missed.
+    filters.removeAnnotationIdFilter("Annotation List Filter 0");
+    filters.newAnnotationIdFilter(["aaa", "ZZZ", "ccc"]);
+    expect(filters.membershipFilterSignature).not.toBe(sig);
   });
 });
