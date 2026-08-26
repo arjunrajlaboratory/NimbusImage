@@ -29,7 +29,14 @@
         :style="{ width: `${(coverage.fraction * 100).toFixed(1)}%` }"
       />
     </div>
-    <span class="render-coverage__suffix">{{ coverage.totalLabel }}</span>
+    <!-- One interpolation (not sibling nodes) so the space between the total
+         and the passing count cannot be dropped by template whitespace
+         handling. -->
+    <span class="render-coverage__suffix">{{
+      coverage.passingLabel
+        ? `${coverage.totalLabel} ${coverage.passingLabel}`
+        : coverage.totalLabel
+    }}</span>
 
     <v-menu :close-on-content-click="false" location="bottom end" offset="6">
       <template #activator="{ props: menuProps }">
@@ -95,6 +102,10 @@ const coverage = computed(() =>
     viewportTotal: annotationStore.viewportAnnotationCount,
     loaded: annotationStore.annotationStubs.size,
     constraintCount: constraints.value.length,
+    // Already computed by the drawing path (AnnotationViewer renders from this
+    // getter), so reading its length here is a cached-getter lookup, not a new
+    // pass over the dataset.
+    passingCount: filterStore.filteredAnnotations.length,
   }),
 );
 

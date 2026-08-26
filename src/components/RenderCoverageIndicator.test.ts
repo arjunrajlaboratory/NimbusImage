@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   viewportRenderedCount: 826,
   viewportAnnotationCount: 826,
   stubOnlyMode: true,
+  // The component only reads .length, so a real array is not needed.
+  filteredAnnotationCount: 289469,
 }));
 
 vi.mock("@/store", () => ({
@@ -46,6 +48,9 @@ vi.mock("@/store/filters", () => ({
   default: {
     get activeConstraints() {
       return mocks.constraints;
+    },
+    get filteredAnnotations() {
+      return { length: mocks.filteredAnnotationCount };
     },
   },
 }));
@@ -111,6 +116,21 @@ describe("RenderCoverageIndicator", () => {
     expect(wrapper.find(".render-coverage__label").text()).toBe(
       "Showing 826 of 826 in view (1 filter applied)",
     );
+  });
+
+  it("shows how many objects pass next to the total when narrowed", () => {
+    mocks.constraints = [GATE_CONSTRAINT];
+    const suffix = mountIndicator().find(".render-coverage__suffix");
+    // One line: the total AND the narrowed population, so the user can read
+    // both without opening a panel. (The mock's stub map is empty → 0 total.)
+    expect(suffix.text()).toBe(
+      `0 total annotations (${(289469).toLocaleString()} passing filters)`,
+    );
+  });
+
+  it("keeps the total line bare when nothing is narrowing the set", () => {
+    const suffix = mountIndicator().find(".render-coverage__suffix");
+    expect(suffix.text()).toBe("0 total annotations");
   });
 
   it("names the active constraints in its tooltip", () => {

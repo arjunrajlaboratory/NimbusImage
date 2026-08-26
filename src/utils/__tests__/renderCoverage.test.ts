@@ -93,6 +93,45 @@ describe("computeRenderCoverage", () => {
     expect(c.constraintLabel).toBeNull();
   });
 
+  it("reports how many objects pass the active constraints", () => {
+    const c = computeRenderCoverage({
+      stubMode: true,
+      viewportShown: 826,
+      viewportTotal: 826,
+      loaded: 708983,
+      constraintCount: 1,
+      passingCount: 289469,
+    });
+    expect(c.passingLabel).toBe(
+      `(${(289469).toLocaleString()} passing filters)`,
+    );
+  });
+
+  it("omits the passing count when nothing is narrowing the set", () => {
+    // With no constraint active the passing count equals the total, so saying
+    // it would just repeat the number on the same line.
+    const c = computeRenderCoverage({
+      stubMode: true,
+      viewportShown: 826,
+      viewportTotal: 826,
+      loaded: 708983,
+      passingCount: 708983,
+    });
+    expect(c.passingLabel).toBeNull();
+  });
+
+  it("omits the passing count when the caller has none to report", () => {
+    const c = computeRenderCoverage({
+      stubMode: true,
+      viewportShown: 826,
+      viewportTotal: 826,
+      loaded: 708983,
+      constraintCount: 1,
+    });
+    expect(c.constraintLabel).toBe("(1 filter applied)");
+    expect(c.passingLabel).toBeNull();
+  });
+
   it("announces active constraints, pluralized", () => {
     // The reported case: a restored lasso gate cut 708,983 to 72,925, so a
     // viewport that visibly held thousands read "826 of 826" — data loss.
