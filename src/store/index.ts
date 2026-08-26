@@ -2475,9 +2475,11 @@ export class Main extends VuexModule {
       // flight; the copy they reopened predates the write, and the cache
       // eviction below only helps the NEXT load. Patch the live slot so the
       // session doesn't keep showing the stale legend the backend no longer
-      // has — but only while it still holds the value this write was based
-      // on: a NEWER action can have written the slot in the meantime, and
-      // clobbering it back would show the older legend until a reload.
+      // has. The basedOn equality check is defense-in-depth, not a live
+      // race guard: every legend write joins this chain, so a newer write
+      // cannot touch the slot mid-flight, and any reachable slot value
+      // equals basedOn. It only matters if a future writer bypasses the
+      // chain — then it keeps this older patch from clobbering that value.
       if (
         this.configuration?.id === configurationId &&
         JSON.stringify(
