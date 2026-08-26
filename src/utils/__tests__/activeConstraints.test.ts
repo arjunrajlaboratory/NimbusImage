@@ -132,6 +132,31 @@ describe("collectActiveConstraints", () => {
     ).toEqual([]);
   });
 
+  it("does not count an enabled values filter whose values list is empty", () => {
+    // Emptying the values textarea deliberately writes `values: []`, which the
+    // filtering path treats as pass-all (filters.ts) and the backend drops
+    // (dropNoOpPropertyFilters). Counting it would make the HUD claim the
+    // counts are narrowed while the viewer shows everything.
+    const noOp = {
+      ...propertyFilter(true, ["p", "Area"]),
+      valuesOrRange: PropertyFilterMode.Values,
+    };
+    expect(
+      collectActiveConstraints(input({ propertyFilters: [noOp] })),
+    ).toEqual([]);
+    expect(
+      collectActiveConstraints(
+        input({ propertyFilters: [{ ...noOp, values: undefined }] }),
+      ),
+    ).toEqual([]);
+    // With values present the same filter narrows, so it is counted again.
+    expect(
+      collectActiveConstraints(
+        input({ propertyFilters: [{ ...noOp, values: [3] }] }),
+      ),
+    ).toHaveLength(1);
+  });
+
   it("counts a gate only once it is enabled, drawn AND resolved", () => {
     const plot = {
       id: "p1",

@@ -21,6 +21,7 @@ import {
   IPropertyAnnotationFilter,
   IROIAnnotationFilter,
   ITagAnnotationFilter,
+  PropertyFilterMode,
   TAnalysisAxis,
 } from "@/store/model";
 import { CATEGORICAL_AXES } from "@/utils/analysisAxes";
@@ -68,6 +69,17 @@ export interface IActiveConstraintsInput {
 
 const isEnabled = (filter: IAnnotationFilter) => filter.enabled;
 
+// An enabled values-mode filter with an empty values list is a deliberate
+// pass-all: emptying the values textarea writes `values: []` meaning "do not
+// filter" (PropertyFilterHistogram), the client filtering path passes
+// everything for it (filters.ts), and the backend drops it
+// (dropNoOpPropertyFilters). Counting it would announce narrowing that the
+// viewer contradicts — the same reason an unresolved gate is not counted.
+// Range mode always narrows: the client shape always carries numeric bounds.
+const narrowsAnything = (filter: IPropertyAnnotationFilter) =>
+  filter.valuesOrRange !== PropertyFilterMode.Values ||
+  (filter.values?.length ?? 0) > 0;
+
 // Every constraint currently narrowing the object set, Filters panel first
 // then Analysis gates in plot order. `emptyROIFilter` (a region still being
 // drawn) filters nothing yet and is deliberately absent.
@@ -90,7 +102,9 @@ export function collectActiveConstraints(
   if (!input.showAnnotationsFromHiddenLayers) {
     pushFilter("hiddenLayers");
   }
-  for (const filter of input.propertyFilters.filter(isEnabled)) {
+  for (const filter of input.propertyFilters
+    .filter(isEnabled)
+    .filter(narrowsAnything)) {
     constraints.push({
       source: "filters",
       kind: "property",

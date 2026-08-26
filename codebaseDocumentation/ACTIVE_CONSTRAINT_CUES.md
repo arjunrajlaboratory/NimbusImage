@@ -41,9 +41,12 @@ place that decides what counts as "something is narrowing the object set":
 The filters store keeps its two existing getters but they now *count the one
 list* — `activeFilterCount` = `countActiveConstraints(activeConstraints,
 "filters")`, `activeAnalysisGateCount` = the `"analysis"` half — and gains
-`activeConstraints` / `activeConstraintCount` for the HUD. The semantics are
-unchanged (each badge still counts only what its own panel can show); what
-changes is that they can no longer drift from each other or from the HUD.
+`activeConstraints` / `activeConstraintCount` for the HUD. Each badge still
+counts only what its own panel can show, and they can no longer drift from
+each other or from the HUD. One deliberate semantic change (Codex review):
+an enabled values-mode property filter whose values list is empty no longer
+counts anywhere — it is a documented pass-all no-op, so the old badge count
+included a "filter" that filtered nothing.
 
 **The HUD suffix.** `computeRenderCoverage` takes `constraintCount` and returns
 `constraintLabel` — `"(1 filter applied)"` / `"(3 filters applied)"` — rendered
@@ -60,6 +63,15 @@ told their numbers are narrowed, and the tooltip names what did it.
 - **Not gated on stub mode.** The counts are filtered in client mode too, so
   the suffix appears wherever the HUD appears. It does not change *when* the
   HUD appears: the show rule is still stub mode or active downsampling.
+
+**The passing count.** The HUD's second line grows the narrowed population:
+`"708,983 total annotations (289,469 passing filters)"`. `computeRenderCoverage`
+takes `passingCount` and returns `passingLabel`, gated on the same
+`constraintCount > 0` condition as `constraintLabel` — with nothing narrowing
+the set the passing count equals the total, so saying it would repeat the
+number. The component feeds it `filterStore.filteredAnnotations.length`, which
+the drawing path (AnnotationViewer) already computes reactively, so the read is
+a cached-getter lookup, not a new pass over the dataset.
 
 **Reaching the palette registry.** The HUD is mounted deep inside
 `ImageViewer.vue`, with no path to App.vue's palette state, so it asks through
@@ -80,6 +92,12 @@ Change any of this and re-check these. Each item names the test that holds it.
   not, and a region still being drawn (`emptyROIFilter`) is not — *"collects
   every filter kind the Filters panel exposes"*, *"does not count disabled
   filters"*
+- An enabled values-mode property filter with an empty values list is not
+  collected: emptying the textarea writes `values: []` meaning "do not
+  filter", the filtering path passes everything for it, and the backend drops
+  it (`dropNoOpPropertyFilters`) — announcing it would claim narrowing the
+  viewer contradicts (Codex review on PR #1332) — *"does not count an enabled
+  values filter whose values list is empty"*
 - A gate counts only when enabled **and** drawn **and** resolved: an unresolved
   gate constrains nothing, so announcing it would contradict the viewer, which
   is showing more — *"counts a gate only once it is enabled, drawn AND
@@ -118,6 +136,15 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Null when no constraint is active; pluralized otherwise — *"says nothing
   about constraints when none is active"*, *"announces active constraints,
   pluralized"*
+- The passing count appears only while something narrows the set, and only
+  when a count was supplied — *"reports how many objects pass the active
+  constraints"*, *"omits the passing count when nothing is narrowing the
+  set"*, *"omits the passing count when the caller has none to report"*
+- On the HUD it shares the total's line, in one interpolation so template
+  whitespace handling cannot drop the space between them
+  (`RenderCoverageIndicator.test.ts`) — *"shows how many objects pass next to
+  the total when narrowed"*, *"keeps the total line bare when nothing is
+  narrowing the set"*
 
 **Palette requests (`src/App.test.ts`)**
 - A request opens every palette it names and is then cleared, so the same
