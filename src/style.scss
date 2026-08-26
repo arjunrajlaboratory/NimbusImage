@@ -430,12 +430,23 @@ body {
   color: rgb(var(--v-theme-project)) !important;
 }
 
+/* Accent chip (e.g. the measurements strip's "+ New measurement…"): a slight
+   primary tinge that survives the neutral chip overrides below (it is
+   excluded from the dark-theme neutralizer's :not() chain). */
+.v-chip.chip-accent-primary {
+  color: rgb(var(--v-theme-primary)) !important;
+  background: rgba(var(--v-theme-primary), 0.1) !important;
+  border: 1px dashed rgba(var(--v-theme-primary), 0.4) !important;
+}
+
 .v-theme--dark
   .v-chip:not([style*="background-color"]):not(.bg-primary):not(
     .bg-success
   ):not(.bg-error):not(.bg-warning):not(.bg-info):not(.text-dataset):not(
     .text-collection
-  ):not(.text-project):not(.bg-dataset):not(.bg-collection):not(.bg-project) {
+  ):not(.text-project):not(.bg-dataset):not(.bg-collection):not(.bg-project):not(
+    .chip-accent-primary
+  ) {
   background: rgba(255, 255, 255, 0.15) !important;
   border: 1px solid rgba(255, 255, 255, 0.15) !important;
 

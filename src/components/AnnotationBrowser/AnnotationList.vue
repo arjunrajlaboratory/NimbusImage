@@ -1,25 +1,8 @@
 <template>
   <div class="annotation-list-panel">
+    <!-- Measure/column controls live in the measurements chip strip below and
+         the Measurements tab, so the toolbar only holds object actions. -->
     <div class="annotation-list-toolbar">
-      <v-tooltip
-        text="Measure objects: configure and run property computations"
-      >
-        <template v-slot:activator="{ props: activatorProps }">
-          <v-btn
-            v-bind="activatorProps"
-            variant="text"
-            icon
-            size="small"
-            class="mr-1"
-            aria-label="Measure objects"
-            :data-tour="TOUR_ANCHORS.measureObjects"
-            v-tour-trigger="TOUR_TRIGGERS.measureObjects"
-            @click="store.setIsAnalyzeDialogOpen(true)"
-          >
-            <v-icon>mdi-ruler-square</v-icon>
-          </v-btn>
-        </template>
-      </v-tooltip>
       <v-tooltip text="Color objects by a property value">
         <template v-slot:activator="{ props: activatorProps }">
           <v-btn
@@ -35,19 +18,6 @@
           </v-btn>
         </template>
       </v-tooltip>
-      <property-picker>
-        <template v-slot:activator="{ props: pickerProps }">
-          <v-btn
-            v-bind="pickerProps"
-            variant="flat"
-            color="primary"
-            size="small"
-            prepend-icon="mdi-plus"
-          >
-            Add property
-          </v-btn>
-        </template>
-      </property-picker>
       <v-spacer />
       <v-btn
         variant="text"
@@ -137,6 +107,7 @@
       :data-tour="TOUR_ANCHORS.annotationListContent"
       class="annotation-list-content"
     >
+      <property-chip-strip />
       <v-dialog v-model="annotationFilteredDialog">
         <v-card>
           <v-card-title>
@@ -354,7 +325,7 @@ import { debounce } from "lodash";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import annotationListServer from "@/store/annotationListServer";
-import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
+import { TOUR_ANCHORS } from "@/tours/anchors";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { goToAnnotationLocation } from "@/utils/annotationNavigation";
@@ -364,7 +335,7 @@ import { listQueryingMessage } from "@/utils/loadingLabels";
 import TagSelectionDialog from "@/components/TagSelectionDialog.vue";
 import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
-import PropertyPicker from "@/components/PropertyPicker.vue";
+import PropertyChipStrip from "@/components/AnnotationBrowser/PropertyChipStrip.vue";
 import AnnotationListRow from "@/components/AnnotationBrowser/AnnotationListRow.vue";
 import PropertyColumnHeader from "@/components/AnnotationBrowser/PropertyColumnHeader.vue";
 

@@ -5004,7 +5004,9 @@ onMounted(() => {
   bindTimelapseEvents();
   bindInteractionEvents();
   updateValueOnHover();
-  filterStore.updateHistograms();
+  void filterStore
+    .updateHistograms()
+    .catch((error) => logError("Failed to refresh property histograms", error));
   addHoverCallback();
   updateVisibilityDebounced();
 });

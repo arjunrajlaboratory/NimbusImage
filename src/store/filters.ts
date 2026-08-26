@@ -1435,7 +1435,7 @@ export class Filters extends VuexModule {
     this.histograms = histograms;
   }
 
-  @Action
+  @Action({ rawError: true })
   async updateHistograms() {
     const dataset = main.dataset;
     if (!dataset) {
@@ -1451,7 +1451,8 @@ export class Filters extends VuexModule {
           histograms[key] = histogram;
         }),
     );
-    Promise.all(promises).then(() => this.setPropertyHistograms(histograms));
+    await Promise.all(promises);
+    this.setPropertyHistograms(histograms);
   }
 }
 
