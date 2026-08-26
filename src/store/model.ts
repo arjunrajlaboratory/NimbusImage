@@ -1184,10 +1184,13 @@ export interface IGeoJSOsmLayer extends IGeoJSLayer {
 
   _imageUrls?: (string | undefined)[];
   _tileBounds: (tile: IGeoJSTile) => IGeoJSBounds;
-  // The tile factory GeoJS documents for derived classes to override. Tiles
-  // have a promise-like interface; `catch` is the only failure signal the
-  // library exposes (there is no tile-error event).
-  _getTile?: (
+  // The cache-aware tile factory: creates a tile via `_getTile` and returns
+  // it only after it is the cache's entry for its hash. Tiles have a
+  // promise-like interface; `catch` is the only failure signal the library
+  // exposes (there is no tile-error event). Attaching any handler queues the
+  // tile's fetch, which the fetch queue drops unless the tile is already
+  // cached — so failure hooks must wrap this, never the pre-cache `_getTile`.
+  _getTileCached?: (
     ...args: unknown[]
   ) => IGeoJSTile & { catch: (callback: (reason?: unknown) => void) => void };
   _options?: {

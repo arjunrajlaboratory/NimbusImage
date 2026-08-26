@@ -634,6 +634,13 @@ Per `CLAUDE.md`, every item names its test:
   retemplated layers do not retry — _"retries failed overview tiles with a
   bounded delayed reset"_ and _"does not retry tiles for a hidden overview
   layer"_.
+- **Failure hook attaches only post-cache**: attaching `tile.catch` queues
+  the tile's fetch, which GeoJS's queue drops unless the tile is already the
+  cache's entry for its hash — so the hook must wrap `_getTileCached`, never
+  the pre-cache `_getTile`, or every tile is rejected at creation and the
+  raster is permanently blank (review R19) — ordering assertion in _"retries
+  failed overview tiles with a bounded delayed reset"_
+  (`catchAttachedWhileInCache`).
 - **Invalidation on every mutation verb**: create, updateMultiple,
   delete, deleteMultiple each change the ETag —
   _"testEveryModelMutationPathInvalidatesEtag"_ and
