@@ -567,11 +567,24 @@ const trackLabels = computed((): Map<string, TTrackLabelResolution> => {
 
 // A split (connection deleted after the worker ran) leaves two tracks whose
 // members each unanimously carry the same old id — per-track resolution alone
-// marks both clean. Detection is across the displayed (scope-narrowed) rows:
-// the default "All connections" scope makes that the whole dataset.
-const duplicateTrackLabelValues = computed(() =>
-  findDuplicateTrackLabelValues(trackLabels.value.values()),
-);
+// marks both clean. Detection is across the displayed (scope-narrowed) rows —
+// the default "All connections" scope makes that the whole dataset — but
+// keyed by colorKey, the DATASET-WIDE track identity: a narrow scope can
+// expose one intact track as two disconnected fragments, which share a value
+// legitimately and must not read as a split.
+const duplicateTrackLabelValues = computed(() => {
+  const labelledTracks: {
+    resolution: TTrackLabelResolution;
+    datasetTrackKey: string;
+  }[] = [];
+  for (const track of tracks.value) {
+    const resolution = trackLabels.value.get(track.id);
+    if (resolution) {
+      labelledTracks.push({ resolution, datasetTrackKey: track.colorKey });
+    }
+  }
+  return findDuplicateTrackLabelValues(labelledTracks);
+});
 
 /**
  * Lazy mode: fetch the chosen property's values for track members missing from
@@ -591,6 +604,13 @@ function hasUncoveredTrackMember(): boolean {
 
 async function ensureTrackLabelValues() {
   if (!trackLabelActive.value || !annotationStore.stubOnlyMode) {
+    // The lazy fetcher is out of play — wholesale mode reads resident values
+    // and an inactive view shows none — so a failure it recorded (possibly
+    // for a previous dataset: this component outlives dataset switches) is
+    // obsolete. Without this, a wholesale dataset opened after a lazy-mode
+    // failure shows a permanent warning that Retry (this same early return)
+    // can never clear.
+    trackLabelFetchFailed.value = false;
     return;
   }
   const path = trackLabelPath.value;

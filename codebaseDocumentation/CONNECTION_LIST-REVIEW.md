@@ -146,6 +146,32 @@ invariants extracted from these rounds.
   in linear time"* (100K members; the implicit test timeout is the cost
   guard).
 
+### C10 — Duplicate detection misreads scoped fragments as splits (P2, round 6, review 5038775165)
+- **Where:** `ConnectionList.vue:573`
+- **Severity:** P2
+- **Summary:** Displayed track rows are connected components of the SCOPED
+  connections, so a narrow scope (selected/filtered/current location) shows
+  one intact dataset-wide track as two fragments; both unanimously carry the
+  same value and were badged `duplicate ID` though no split happened.
+- **Status:** fixed — `findDuplicateTrackLabelValues` now takes the row's
+  `colorKey` (the dataset-wide track identity from `trackAnalysis`) and
+  reports a value only when it spans two DISTINCT dataset-wide tracks. The
+  other half of the finding — a real split whose twin is outside the scope is
+  missed — remains the documented scope limitation. Tests: *"does not badge
+  scoped fragments of one dataset-wide track"*, *"does not report fragments
+  of one dataset-wide track"* (utils).
+
+### C11 — Lazy-mode failure survives into wholesale datasets (P2, round 6, review 5038775165)
+- **Where:** `ConnectionList.vue:594`
+- **Severity:** P2
+- **Summary:** The component outlives dataset switches; after a lazy-mode
+  fetch failure, opening a wholesale dataset re-hydrated a label path and hit
+  the `!stubOnlyMode` early return without clearing `trackLabelFetchFailed` —
+  a permanent warning that Retry (the same early return) could never clear.
+- **Status:** fixed — the inactive/wholesale early return clears the flag:
+  with the fetcher out of play, any recorded failure is obsolete. Test:
+  *"clears a lazy-mode failure when wholesale mode takes over"*.
+
 ### C3 — Fetch failures indistinguishable from confirmed missing values (P2)
 - **Where:** `ConnectionList.vue:590` (lazy-mode fetch)
 - **Severity:** P2

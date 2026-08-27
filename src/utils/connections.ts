@@ -474,7 +474,7 @@ export function resolveTrackLabelValue(
 }
 
 /**
- * Values carried by more than one resolved track label.
+ * Values carried by more than one distinct DATASET-WIDE track.
  *
  * Covers the graph change per-track resolution cannot see: deleting a
  * connection after the worker ran splits one component into two tracks whose
@@ -482,20 +482,30 @@ export function resolveTrackLabelValue(
  * clean `value`. Partial resolutions contribute their value too (a split half
  * that later gained an unvalued member still collides with its twin); mixed
  * and missing resolutions carry no single value to collide on.
+ *
+ * `datasetTrackKey` must be the dataset-wide track identity (the row's
+ * `colorKey`), NOT the scoped row id: a narrow scope (selected, filtered,
+ * current location) can expose one intact dataset-wide track as two
+ * disconnected fragments, and those share a value legitimately — only a
+ * value spanning two distinct dataset-wide tracks evidences a split.
  */
 export function findDuplicateTrackLabelValues(
-  resolutions: Iterable<TTrackLabelResolution>,
+  labelledTracks: Iterable<{
+    resolution: TTrackLabelResolution;
+    datasetTrackKey: string;
+  }>,
 ): Set<number | string> {
-  const seen = new Set<number | string>();
+  const firstKeyByValue = new Map<number | string, string>();
   const duplicates = new Set<number | string>();
-  for (const resolution of resolutions) {
+  for (const { resolution, datasetTrackKey } of labelledTracks) {
     if (resolution.status !== "value" && resolution.status !== "partial") {
       continue;
     }
-    if (seen.has(resolution.value)) {
+    const firstKey = firstKeyByValue.get(resolution.value);
+    if (firstKey === undefined) {
+      firstKeyByValue.set(resolution.value, datasetTrackKey);
+    } else if (firstKey !== datasetTrackKey) {
       duplicates.add(resolution.value);
-    } else {
-      seen.add(resolution.value);
     }
   }
   return duplicates;

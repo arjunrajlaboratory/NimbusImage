@@ -947,6 +947,53 @@ describe("track labels from a property", () => {
     }
   });
 
+  // A narrow scope can expose one intact dataset-wide track as two
+  // disconnected fragment rows; they share a value AND a colorKey (the
+  // dataset-wide track identity), so no split happened and neither badges.
+  it("does not badge scoped fragments of one dataset-wide track", () => {
+    h.state.grouping = "track";
+    h.state.trackLabelPath = PATH;
+    propertyStoreMock.propertyValues = {
+      a: { prop1: { trackId: 42 } },
+      b: { prop1: { trackId: 42 } },
+      c: { prop1: { trackId: 42 } },
+      d: { prop1: { trackId: 42 } },
+    };
+    setRows(
+      [makeConnection("c1", "a", "b"), makeConnection("c2", "c", "d")],
+      [
+        makeAnnotation("a", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("c", 5),
+        makeAnnotation("d", 6),
+      ],
+    );
+    h.state.trackRows = [
+      { ...trackRowFor(["a", "b"]), colorKey: "dataset-track-1" },
+      { ...trackRowFor(["c", "d"]), colorKey: "dataset-track-1" },
+    ];
+    const wrapper = mountComponent();
+    for (const track of wrapper.vm.tracks) {
+      expect(wrapper.vm.trackTitle(track)).toBe("42");
+      expect(wrapper.vm.trackBadge(track)).toBeNull();
+    }
+  });
+
+  // The component outlives dataset switches; a failure recorded in a lazy
+  // dataset must not survive into a wholesale one, where the fetcher (and its
+  // Retry) is out of play and could never clear it.
+  it("clears a lazy-mode failure when wholesale mode takes over", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    h.getPropertyValuesForIds.mockRejectedValue(new Error("boom"));
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(true);
+    mockedAnnotationStore.stubOnlyMode = false;
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(false);
+    wrapper.unmount();
+  });
+
   it("does not badge distinct values as duplicates", () => {
     h.state.grouping = "track";
     h.state.trackLabelPath = PATH;
