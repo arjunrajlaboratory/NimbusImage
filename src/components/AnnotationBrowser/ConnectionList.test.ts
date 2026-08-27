@@ -1030,6 +1030,66 @@ describe("track labels from a property", () => {
     expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("42");
   });
 
+  // An obsolete request (for tracks shown before a scope change) can fail
+  // AFTER a newer request already covered everything displayed. Its failure
+  // is moot — flagging it would strand a warning that Retry cannot clear,
+  // because Retry finds nothing missing and returns early.
+  it("clears a stale failure once every displayed member is covered", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    let rejectA: (e: unknown) => void = () => {};
+    h.getPropertyValuesForIds.mockReturnValueOnce(
+      new Promise((_, rej) => {
+        rejectA = rej;
+      }),
+    );
+    h.getPropertyValuesForIds.mockResolvedValue([
+      { annotationId: "c", values: { prop1: { trackId: 7 } } },
+      { annotationId: "d", values: { prop1: { trackId: 7 } } },
+    ]);
+    const wrapper = setupTrackView({}); // tracks [a, b] — request A pending
+    await flushPromises();
+    // Scope swap to disjoint tracks while A is in flight.
+    await wrapper.setProps({ isActive: false });
+    h.state.trackRows = [trackRowFor(["c", "d"])];
+    await wrapper.setProps({ isActive: true });
+    await flushPromises(); // request B covers every displayed member
+    rejectA(new Error("obsolete"));
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(false);
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("7");
+  });
+
+  // A path/revision change mid-flight resets the pending set, and the new
+  // request re-adds the same member ids under the new key. The old request's
+  // cleanup must release ids from ITS OWN captured set — deleting from the
+  // current one strands the new request's ids as neither cached nor pending,
+  // so the next pan resends an identical batch.
+  it("a key change mid-flight does not strand the new request's pending ids", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    let settleA: (v: unknown) => void = () => {};
+    h.getPropertyValuesForIds
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          settleA = r;
+        }),
+      )
+      .mockReturnValueOnce(new Promise(() => {}));
+    const wrapper = setupTrackView({}); // request A pending for [a, b]
+    await flushPromises();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+    // A recompute bumps the revision (new cache key); request B re-sends the
+    // same members under it and stays in flight. Not awaited — the request is
+    // issued synchronously before the await point, and B never settles.
+    propertyStoreMock.propertyValuesRevision = 1;
+    void wrapper.vm.ensureTrackLabelValues();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(2);
+    settleA([]); // the superseded request settles
+    await flushPromises();
+    // A pan re-enters while B is still pending: nothing new to send.
+    await wrapper.vm.ensureTrackLabelValues();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(2);
+  });
+
   // stubOnlyMode is settled by the annotation fetch while the tracks are
   // settled by the connection fetch — parallel requests with no ordering
   // guarantee — so the fetcher must react to the mode flip itself, not only

@@ -92,6 +92,33 @@ invariants extracted from these rounds.
   Retry or the next run can resend them. Test: *"coalesces fetches while one
   is in flight and merges its response"*.
 
+### C6 — Obsolete request's failure strands the warning (P2, round 4, review 5038570740)
+- **Where:** `ConnectionList.vue:648`
+- **Severity:** P2
+- **Summary:** Consequence of C3+C5: a request for tracks shown before a
+  scope change can fail after a newer same-key request covered everything
+  displayed. Its failure set `trackLabelFetchFailed`, and Retry found
+  `missingIds.length === 0` and returned before the reset — a permanent
+  false warning above fully resolved tracks.
+- **Status:** fixed — the flag keys off `hasUncoveredTrackMember()` (a
+  displayed member with no cache entry), set on failure only when one exists
+  and cleared by the nothing-missing early return when none do. Test:
+  *"clears a stale failure once every displayed member is covered"*.
+
+### C7 — Settling request cleans the wrong pending set (P2, round 4, review 5038570740)
+- **Where:** `ConnectionList.vue:655`
+- **Severity:** P2
+- **Summary:** Consequence of C5's cleanup: after a key change the current
+  pending set belongs to the new key's request, which re-adds the same member
+  ids; the old request's `finally` deleted them from that current set,
+  stranding them as neither cached nor pending, so the next pan resent an
+  identical batch.
+- **Status:** fixed — cleanup deletes from the captured `pending` set the
+  request added its ids to; after a key change that set is the discarded one,
+  so the deletes are harmless. Test: *"a key change mid-flight does not
+  strand the new request's pending ids"* (verified to fail against the
+  pre-fix component via `git stash`).
+
 ### C3 — Fetch failures indistinguishable from confirmed missing values (P2)
 - **Where:** `ConnectionList.vue:590` (lazy-mode fetch)
 - **Severity:** P2

@@ -579,6 +579,16 @@ const duplicateTrackLabelValues = computed(() =>
  * here. Re-entered whenever the tracks change (cheap no-op once every member
  * is cached — comparable to the per-pan row rebuild the tab already pays).
  */
+// A displayed member with no cache entry (in flight or failed). The failure
+// warning keys off this, not off any individual request's fate: an obsolete
+// request can fail after a newer one already covered everything shown.
+function hasUncoveredTrackMember(): boolean {
+  const cache = fetchedTrackValues.value;
+  return tracks.value.some((track) =>
+    track.annotationIds.some((annotationId) => !cache.has(annotationId)),
+  );
+}
+
 async function ensureTrackLabelValues() {
   if (!trackLabelActive.value || !annotationStore.stubOnlyMode) {
     return;
@@ -608,6 +618,12 @@ async function ensureTrackLabelValues() {
   }
   const datasetId = store.dataset?.id;
   if (missingIds.length === 0 || !datasetId) {
+    // Everything displayed is covered: an earlier failure — possibly from a
+    // request for tracks shown before a scope change — is moot. Without this,
+    // Retry returns here and strands the warning forever.
+    if (!hasUncoveredTrackMember()) {
+      trackLabelFetchFailed.value = false;
+    }
     return;
   }
   trackLabelFetchFailed.value = false;
@@ -643,16 +659,21 @@ async function ensureTrackLabelValues() {
     fetchedTrackValues.value = next;
   } catch (error) {
     logError("Failed to fetch track label property values", error);
-    // A superseded key's failure says nothing about the current fetch state.
-    if (cacheKey === fetchedTrackValuesKey) {
+    // Warn only when a displayed member is actually uncovered: a superseded
+    // key's failure says nothing about the current fetch state, and even a
+    // current-key failure is moot once a newer request covered everything
+    // shown (Retry would find nothing missing and could never clear it).
+    if (cacheKey === fetchedTrackValuesKey && hasUncoveredTrackMember()) {
       trackLabelFetchFailed.value = true;
     }
   } finally {
-    // Merged, dropped, or failed — these ids are no longer in flight. After a
-    // key change the current set no longer contains them (deletes are no-ops)
-    // and a failure leaves them refetchable by the next run or the Retry
-    // button.
-    missingIds.forEach((id) => pendingTrackValueIds.delete(id));
+    // Merged, dropped, or failed — these ids are no longer in flight, and a
+    // failure leaves them refetchable by the next run or the Retry button.
+    // Release them from the CAPTURED set this request added them to: after a
+    // key change, the current set belongs to the new key's request, which may
+    // have re-added the same ids — deleting from it would strand them as
+    // neither cached nor pending, and the next pan would resend the batch.
+    missingIds.forEach((id) => pending.delete(id));
   }
 }
 
