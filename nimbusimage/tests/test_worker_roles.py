@@ -96,7 +96,7 @@ class TestAnnotationComputeRejectsPropertyWorker:
         job = accessor.compute(image=ANNOTATION_IMAGE, tags=["squares"])
         assert isinstance(job, Job)
         gc_with_workers.get.assert_called_with(
-            "/worker_interface/available"
+            "worker_interface/available"
         )
 
 
@@ -122,7 +122,7 @@ class TestPropertyComputeRejectsAnnotationWorker:
         job = accessor.compute(make_property(PROPERTY_IMAGE))
         assert isinstance(job, Job)
         gc_with_workers.get.assert_called_with(
-            "/worker_interface/available"
+            "worker_interface/available"
         )
 
 
@@ -185,7 +185,7 @@ class TestValidationIsBestEffort:
         mock_gc.get.side_effect = HttpError(
             status=403,
             text="forbidden",
-            url="/worker_interface/available",
+            url="worker_interface/available",
             method="GET",
         )
         self._submit_both(mock_gc)

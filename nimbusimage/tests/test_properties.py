@@ -54,7 +54,7 @@ class TestPropertyDefinitions:
     def test_delete(self, mock_gc):
         accessor = PropertyAccessor(mock_gc, "ds_001")
         accessor.delete("prop_001")
-        mock_gc.delete.assert_called_with("/annotation_property/prop_001")
+        mock_gc.delete.assert_called_with("annotation_property/prop_001")
 
 
 class TestPropertyValues:
