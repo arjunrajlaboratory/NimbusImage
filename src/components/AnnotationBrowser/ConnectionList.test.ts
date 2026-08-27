@@ -92,9 +92,15 @@ const annotationStoreMock = vi.hoisted(
     }) as any,
 );
 
-vi.mock("@/store/annotation", () => {
+// reactive() so a test can flip stubOnlyMode post-mount and drive the
+// component's watchers (see "fetches when lazy mode is determined after the
+// tracks arrive"). Mutations through the raw annotationStoreMock (as in
+// beforeEach) stay visible but deliberately do not trigger watchers; drive
+// them through the module's default export (the proxy) instead.
+vi.mock("@/store/annotation", async () => {
+  const { reactive } = await import("vue");
   annotationStoreMock.setSelected = h.setSelected;
-  return { default: annotationStoreMock };
+  return { default: reactive(annotationStoreMock) };
 });
 
 vi.mock("@/utils/annotationNavigation", () => ({
@@ -120,6 +126,9 @@ vi.mock("@/store/connectionList", () => {
 });
 
 import ConnectionList from "./ConnectionList.vue";
+// The mocked module's default export: the reactive proxy over
+// annotationStoreMock, for driving watchers post-mount.
+import mockedAnnotationStore from "@/store/annotation";
 import { buildConnectionRows, trackColor } from "@/utils/connections";
 
 function makeConnection(
@@ -906,5 +915,27 @@ describe("track labels from a property", () => {
     setupTrackView({ a: { prop1: { trackId: 1 } } });
     await flushPromises();
     expect(h.getPropertyValuesForIds).not.toHaveBeenCalled();
+  });
+
+  // stubOnlyMode is settled by the annotation fetch while the tracks are
+  // settled by the connection fetch — parallel requests with no ordering
+  // guarantee — so the fetcher must react to the mode flip itself, not only
+  // to track/path changes.
+  it("fetches when lazy mode is determined after the tracks arrive", async () => {
+    h.getPropertyValuesForIds.mockResolvedValue([
+      { annotationId: "a", values: { prop1: { trackId: 42 } } },
+      { annotationId: "b", values: { prop1: { trackId: 42 } } },
+    ]);
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    // Wholesale at mount: no fetch.
+    expect(h.getPropertyValuesForIds).not.toHaveBeenCalled();
+    mockedAnnotationStore.stubOnlyMode = true;
+    await flushPromises();
+    // At least once rather than exactly once: components mounted by earlier
+    // tests stay alive and their watchers also react to the shared proxy.
+    expect(h.getPropertyValuesForIds).toHaveBeenCalled();
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("42");
+    wrapper.unmount();
   });
 });

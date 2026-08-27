@@ -533,6 +533,11 @@ const trackLabels = computed((): Map<string, TTrackLabelResolution> => {
  * is cached — comparable to the per-pan row rebuild the tab already pays).
  */
 async function ensureTrackLabelValues() {
+  // Claim the token before every early return (same contract as
+  // ensureVisiblePropertyValues in the properties store): a bail-out must
+  // supersede any in-flight fetch, or its late response could merge values
+  // under a cache key it was not fetched for.
+  const token = ++trackValueFetchToken;
   if (!trackLabelActive.value || !annotationStore.stubOnlyMode) {
     return;
   }
@@ -557,7 +562,6 @@ async function ensureTrackLabelValues() {
   if (missingIds.length === 0 || !datasetId) {
     return;
   }
-  const token = ++trackValueFetchToken;
   try {
     // Single batched request — never a fetch-per-annotation loop.
     const entries = await propertyStore.propertiesAPI.getPropertyValuesForIds(
@@ -587,12 +591,24 @@ async function ensureTrackLabelValues() {
   }
 }
 
-watch([trackLabelActive, trackLabelPath, tracks], ensureTrackLabelValues, {
-  immediate: true,
-});
-// A recompute/import replaces the values server-side; refetch rather than
-// keep labelling from the superseded run.
-watch(() => propertyStore.propertyValuesRevision, ensureTrackLabelValues);
+watch(
+  [
+    trackLabelActive,
+    trackLabelPath,
+    tracks,
+    // The mode is settled by the annotation fetch while tracks are settled by
+    // the connection fetch — parallel requests with no ordering guarantee. The
+    // labels computed branches on the mode, so the fetcher must react to it
+    // too, or a late flip to lazy mode leaves every track "no ID" with no
+    // fetch ever issued.
+    () => annotationStore.stubOnlyMode,
+    // A recompute/import replaces the values server-side; refetch rather than
+    // keep labelling from the superseded run.
+    () => propertyStore.propertyValuesRevision,
+  ],
+  ensureTrackLabelValues,
+  { immediate: true },
+);
 
 function trackTitle(track: ITrackRow): string {
   const resolution = trackLabels.value.get(track.id);
