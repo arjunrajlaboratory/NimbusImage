@@ -446,13 +446,19 @@ export function resolveTrackLabelValue(
   annotationIds: Iterable<string>,
   getValue: (annotationId: string) => number | string | null,
 ): TTrackLabelResolution {
+  // Ordered array for the mixed-status report, Set for the membership check:
+  // a per-annotation path (e.g. annotationId) makes every member of a large
+  // track distinct, and this resolution reruns on every scoped-tracks
+  // rebuild, so an array scan here would be quadratic per pan.
   const distinct: (number | string)[] = [];
+  const distinctSet = new Set<number | string>();
   let missingCount = 0;
   for (const annotationId of annotationIds) {
     const value = getValue(annotationId);
     if (value === null) {
       missingCount++;
-    } else if (!distinct.includes(value)) {
+    } else if (!distinctSet.has(value)) {
+      distinctSet.add(value);
       distinct.push(value);
     }
   }

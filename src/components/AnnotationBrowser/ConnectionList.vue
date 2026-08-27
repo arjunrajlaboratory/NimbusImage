@@ -657,6 +657,13 @@ async function ensureTrackLabelValues() {
       );
     }
     fetchedTrackValues.value = next;
+    // Recompute the warning now that coverage grew: an obsolete request can
+    // fail WHILE this one is pending (warning correctly set at that instant),
+    // and this success is what makes it moot — clearing only at request start
+    // would strand it over fully resolved tracks.
+    if (!hasUncoveredTrackMember()) {
+      trackLabelFetchFailed.value = false;
+    }
   } catch (error) {
     logError("Failed to fetch track label property values", error);
     // Warn only when a displayed member is actually uncovered: a superseded

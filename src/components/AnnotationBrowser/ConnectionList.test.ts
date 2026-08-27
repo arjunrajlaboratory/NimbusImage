@@ -1059,6 +1059,44 @@ describe("track labels from a property", () => {
     expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("7");
   });
 
+  // The opposite completion order: the obsolete request fails WHILE the
+  // covering request is still pending (warning correctly set), and the
+  // covering request then succeeds. The success must clear the moot warning —
+  // clearing only at request start leaves it stranded over resolved tracks.
+  it("clears the failure when the covering request succeeds after it", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    let rejectA: (e: unknown) => void = () => {};
+    let resolveB: (v: unknown) => void = () => {};
+    h.getPropertyValuesForIds
+      .mockReturnValueOnce(
+        new Promise((_, rej) => {
+          rejectA = rej;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          resolveB = r;
+        }),
+      );
+    const wrapper = setupTrackView({}); // tracks [a, b] — request A pending
+    await flushPromises();
+    // Scope swap to disjoint tracks; request B launches and stays pending.
+    await wrapper.setProps({ isActive: false });
+    h.state.trackRows = [trackRowFor(["c", "d"])];
+    await wrapper.setProps({ isActive: true });
+    rejectA(new Error("obsolete"));
+    await flushPromises();
+    // Correct at this instant: B's members are still uncovered.
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(true);
+    resolveB([
+      { annotationId: "c", values: { prop1: { trackId: 7 } } },
+      { annotationId: "d", values: { prop1: { trackId: 7 } } },
+    ]);
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(false);
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("7");
+  });
+
   // A path/revision change mid-flight resets the pending set, and the new
   // request re-adds the same member ids under the new key. The old request's
   // cleanup must release ids from ITS OWN captured set — deleting from the

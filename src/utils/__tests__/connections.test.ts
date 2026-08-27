@@ -678,6 +678,18 @@ describe("resolveTrackLabelValue", () => {
     });
   });
 
+  // The picker offers per-annotation paths (e.g. the worker's annotationId),
+  // where every member of a large track is unique, and resolution repeats on
+  // every scoped-tracks rebuild (each pan). Collection must stay linear — a
+  // quadratic distinct-scan freezes the tab; the test's implicit 5s timeout
+  // is the cost regression guard (quadratic: minutes, linear: milliseconds).
+  it("resolves a large all-distinct track in linear time", () => {
+    const memberIds = Array.from({ length: 100_000 }, (_, i) => `m${i}`);
+    const result = resolveTrackLabelValue(memberIds, (id) => id);
+    expect(result.status).toBe("mixed");
+    expect(result.status === "mixed" && result.values.length).toBe(100_000);
+  });
+
   // 0 is a legitimate track id (the parent_child worker starts at 0), so the
   // resolution must never treat it as "no value".
   it("does not confuse a value of 0 with a missing value", () => {

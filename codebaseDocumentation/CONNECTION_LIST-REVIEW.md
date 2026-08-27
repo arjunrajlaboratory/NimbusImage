@@ -119,6 +119,33 @@ invariants extracted from these rounds.
   strand the new request's pending ids"* (verified to fail against the
   pre-fix component via `git stash`).
 
+### C8 — Success after a mid-flight failure leaves the warning stranded (P2, round 5, review 5038712578)
+- **Where:** `ConnectionList.vue:659`
+- **Severity:** P2
+- **Summary:** Mirror of C6: request A fails while covering request B is
+  still pending (flag correctly set at that instant); B then succeeds and
+  populates the cache, but the flag was only cleared at request start, so
+  "Couldn't load track ID values" stayed over fully resolved tracks until a
+  pointless Retry.
+- **Status:** fixed — the successful merge recomputes the flag
+  (`hasUncoveredTrackMember()`), so every settle path converges the warning
+  toward the truth. Test: *"clears the failure when the covering request
+  succeeds after it"*.
+
+### C9 — Quadratic distinct-value scan in label resolution (P2, round 5, review 5038712578)
+- **Where:** `src/utils/connections.ts:456` (`resolveTrackLabelValue`)
+- **Severity:** P2
+- **Summary:** `distinct.includes(value)` scanned a growing array per member.
+  The picker offers per-annotation paths (annotationId) where every member of
+  a large track is unique, and resolution reruns on every scoped-tracks
+  rebuild — quadratic per pan, a freeze on thousand-member tracks. (Flagged
+  as a nit in the internal round and wrongly deferred; the per-annotation-path
+  scenario makes it real.)
+- **Status:** fixed — a `Set` handles membership while the ordered array
+  keeps the mixed-status report. Test: *"resolves a large all-distinct track
+  in linear time"* (100K members; the implicit test timeout is the cost
+  guard).
+
 ### C3 — Fetch failures indistinguishable from confirmed missing values (P2)
 - **Where:** `ConnectionList.vue:590` (lazy-mode fetch)
 - **Severity:** P2
