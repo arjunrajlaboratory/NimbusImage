@@ -208,7 +208,10 @@ invariants extracted from these rounds.
   `_id`-sorted sample; a track-ID property computed only on a sparse subset
   may not appear in that sample, so the picker never offers its path — and
   the component only fetches values for an already-selected path.
-- **Status:** deferred — needs a design decision. This is a pre-existing
+- **Status:** deferred to issue
+  [#1338](https://github.com/arjunrajlaboratory/NimbusImage/issues/1338)
+  (server-side path discovery, fixing all consumers at once). This is a
+  pre-existing
   limitation of lazy-mode path discovery that affects every consumer the same
   way (displayed columns, filters, and this picker all read
   `computedPropertyPaths`); it predates this PR and fixing it only for this
