@@ -613,6 +613,14 @@ async function ensureTrackLabelValues() {
     trackLabelFetchFailed.value = false;
     return;
   }
+  // Readiness gate: during a dataset load stubOnlyMode flips before
+  // fetchPropertyValues bumps the revision, and a batch launched in that gap
+  // is superseded (and re-sent) moments later — one duplicated large query
+  // per dataset open. Wait until the property refresh ran for THIS dataset;
+  // the bump that records this id is a watch source, so the fetch fires then.
+  if (propertyStore.propertyValuesDatasetId !== store.dataset?.id) {
+    return;
+  }
   const path = trackLabelPath.value;
   const cacheKey = `${propertyStore.propertyValuesRevision}:${createPathStringFromPathArray(path)}`;
   if (cacheKey !== fetchedTrackValuesKey) {

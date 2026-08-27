@@ -18,6 +18,7 @@ vi.mock("@/store/index", () => ({
     isLoggedIn: true,
     propertiesAPI: {
       getPropertyValuesForIds: (...a: any[]) => getPropertyValuesForIds(...a),
+      getPropertyValuesSample: async () => [],
     },
     scheduleAnnotationBrowserSave: scheduleBrowserSave,
   },
@@ -178,5 +179,18 @@ describe("ensureVisiblePropertyValues stale guard (Finding 6)", () => {
     only.resolve([{ annotationId: "a", values: { propA: 9 } }]);
     await flush();
     expect(properties.propertyValues).toEqual({ a: { propA: 9 } });
+  });
+});
+
+// The Connections tab's lazy track-label fetcher gates on this readiness
+// signal: without it, a stubOnlyMode flip during dataset load launches a
+// batch that the revision bump (fetchPropertyValues' first operation)
+// immediately supersedes — one duplicated large query per dataset open.
+describe("fetchPropertyValues readiness signal", () => {
+  it("records the dataset id alongside the revision bump", async () => {
+    const before = properties.propertyValuesRevision;
+    await properties.fetchPropertyValues();
+    expect(properties.propertyValuesRevision).toBe(before + 1);
+    expect(properties.propertyValuesDatasetId).toBe("ds1");
   });
 });

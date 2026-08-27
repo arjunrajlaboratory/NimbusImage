@@ -217,6 +217,17 @@ export class Properties extends VuexModule {
   // server-side, so there is nothing client-side for them to diff.
   propertyValuesRevision = 0;
 
+  /**
+   * The dataset the current propertyValuesRevision belongs to — the readiness
+   * signal for per-dataset value consumers. During a dataset load,
+   * stubOnlyMode is settled (by fetchAnnotations) BEFORE fetchPropertyValues
+   * runs, and fetchPropertyValues' first operation bumps the revision; a
+   * consumer keying its cache on the revision that fetches in that gap gets
+   * superseded (and refetches) moments later. Gate on this id matching the
+   * open dataset instead (see the Connections tab's track-label fetcher).
+   */
+  propertyValuesDatasetId: string | null = null;
+
   // Lazy mode (stub-only) only: server-computed count of annotations still
   // awaiting each property's computation ({propertyId: count}). In wholesale
   // mode the count is derived client-side from the resident annotation set
@@ -377,6 +388,11 @@ export class Properties extends VuexModule {
   @Mutation
   bumpPropertyValuesRevision() {
     this.propertyValuesRevision++;
+  }
+
+  @Mutation
+  setPropertyValuesDatasetId(datasetId: string) {
+    this.propertyValuesDatasetId = datasetId;
   }
 
   @Mutation
@@ -1160,6 +1176,9 @@ export class Properties extends VuexModule {
       return;
     }
     this.bumpPropertyValuesRevision();
+    // In the same tick as the bump, so revision-keyed consumers see one
+    // consistent readiness change (see propertyValuesDatasetId).
+    this.setPropertyValuesDatasetId(main.dataset.id);
     if (annotations.stubOnlyMode) {
       await this.fetchPropertyPathsSample();
       this.ensureVisiblePropertyValues();

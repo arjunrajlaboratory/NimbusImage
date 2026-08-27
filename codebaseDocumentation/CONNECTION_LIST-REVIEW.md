@@ -172,6 +172,22 @@ invariants extracted from these rounds.
   with the fetcher out of play, any recorded failure is obsolete. Test:
   *"clears a lazy-mode failure when wholesale mode takes over"*.
 
+### C12 — Startup fetch superseded by the revision bump (P2, round 7, review 5038853319)
+- **Where:** `ConnectionList.vue:717`
+- **Severity:** P2
+- **Summary:** With the tab active during a lazy dataset load,
+  `fetchAnnotations` sets `stubOnlyMode` (a watch source since R2) before
+  `Viewer.fetchAnnotationData` calls `fetchPropertyValues`, whose first
+  operation bumps `propertyValuesRevision` — so the batch launched in that
+  gap was superseded by the key change and the same members re-sent, every
+  load.
+- **Status:** fixed — `properties.fetchPropertyValues` records
+  `propertyValuesDatasetId` in the same tick as the bump, and the fetcher
+  gates on it matching the open dataset (the bump is a watch source, so the
+  fetch fires the moment readiness lands). Tests: *"waits for the dataset's
+  property refresh before fetching"*, *"records the dataset id alongside the
+  revision bump"*.
+
 ### C3 — Fetch failures indistinguishable from confirmed missing values (P2)
 - **Where:** `ConnectionList.vue:590` (lazy-mode fetch)
 - **Severity:** P2

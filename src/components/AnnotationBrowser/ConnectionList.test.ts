@@ -64,6 +64,7 @@ const propertyStoreMock = vi.hoisted(() => ({
   propertyValues: {} as Record<string, any>,
   computedPropertyPaths: [] as string[][],
   propertyValuesRevision: 0,
+  propertyValuesDatasetId: "ds" as string | null,
   getFullNameFromPath: (path: string[]) => path.join(" / "),
   propertiesAPI: { getPropertyValuesForIds: undefined as any },
 }));
@@ -192,6 +193,7 @@ beforeEach(() => {
   propertyStoreMock.propertyValues = {};
   propertyStoreMock.computedPropertyPaths = [];
   propertyStoreMock.propertyValuesRevision = 0;
+  propertyStoreMock.propertyValuesDatasetId = "ds";
   h.getPropertyValuesForIds.mockResolvedValue([]);
   h.connectSelectedAnnotations.mockResolvedValue([]);
   setRows([], []);
@@ -977,6 +979,23 @@ describe("track labels from a property", () => {
       expect(wrapper.vm.trackTitle(track)).toBe("42");
       expect(wrapper.vm.trackBadge(track)).toBeNull();
     }
+  });
+
+  // During a dataset load, stubOnlyMode flips BEFORE fetchPropertyValues
+  // bumps the revision, so a fetch launched in that gap would be superseded
+  // (and re-sent) moments later — one duplicated large batch per dataset
+  // open. The fetcher waits for the readiness signal instead.
+  it("waits for the dataset's property refresh before fetching", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    propertyStoreMock.propertyValuesDatasetId = null;
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    expect(h.getPropertyValuesForIds).not.toHaveBeenCalled();
+    // fetchPropertyValues ran for this dataset (bump + id, one watcher fire).
+    propertyStoreMock.propertyValuesDatasetId = "ds";
+    propertyStoreMock.propertyValuesRevision = 1;
+    await wrapper.vm.ensureTrackLabelValues();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
   });
 
   // The component outlives dataset switches; a failure recorded in a lazy
