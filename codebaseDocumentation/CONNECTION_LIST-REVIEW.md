@@ -188,6 +188,18 @@ invariants extracted from these rounds.
   property refresh before fetching"*, *"records the dataset id alongside the
   revision bump"*.
 
+### C13 — Same-dataset refresh bypasses the readiness gate (P2, round 8, review 5038932811)
+- **Where:** `ConnectionList.vue:623` / `properties.ts resetPropertyStateImpl`
+- **Severity:** P2
+- **Summary:** Consequence of C12: `refreshDataset()` (e.g. after an unroll
+  toggle) resets property state while `store.dataset.id` stays the same, so
+  the readiness gate already passed before the new `fetchPropertyValues`
+  bump — reopening the duplicate-query window.
+- **Status:** fixed — `resetPropertyStateImpl` clears
+  `propertyValuesDatasetId`, so any reset (switch or same-id refresh) closes
+  the gate until the property refresh runs. Test: *"clears the readiness id
+  on a property-state reset"*.
+
 ### C3 — Fetch failures indistinguishable from confirmed missing values (P2)
 - **Where:** `ConnectionList.vue:590` (lazy-mode fetch)
 - **Severity:** P2

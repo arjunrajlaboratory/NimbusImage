@@ -345,6 +345,11 @@ export class Properties extends VuexModule {
     // otherwise only refreshed on the next fetchPropertyPathsSample).
     this.discoveredPropertyPaths = markRaw([]);
     this.uncomputedCounts = {};
+    // refreshDataset() resets this state while the dataset id stays the same,
+    // then re-runs fetchPropertyValues; leaving the readiness id in place
+    // would let revision-gated consumers fetch before the new bump and get
+    // superseded — the duplicate-query window the signal exists to close.
+    this.propertyValuesDatasetId = null;
     for (const handle of this.pendingWorkerPreviewTimeouts.values()) {
       clearTimeout(handle);
     }

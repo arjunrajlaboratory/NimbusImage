@@ -193,4 +193,15 @@ describe("fetchPropertyValues readiness signal", () => {
     expect(properties.propertyValuesRevision).toBe(before + 1);
     expect(properties.propertyValuesDatasetId).toBe("ds1");
   });
+
+  // refreshDataset() resets property state while the dataset id stays the
+  // same, then re-runs fetchPropertyValues. If the reset left the readiness
+  // id in place, the gate would already pass before the new revision bump —
+  // reopening the duplicate-query window the signal exists to close.
+  it("clears the readiness id on a property-state reset", async () => {
+    await properties.fetchPropertyValues();
+    expect(properties.propertyValuesDatasetId).toBe("ds1");
+    properties.resetPropertyState();
+    expect(properties.propertyValuesDatasetId).toBeNull();
+  });
 });
