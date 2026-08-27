@@ -17,8 +17,8 @@ vi.mock("@/store/properties", () => ({
       progressInfo: {},
       errorInfo: { errors: [] },
     }),
-    uncomputedAnnotationsPerProperty: {
-      "prop-1": ["ann-1", "ann-2"],
+    uncomputedCountByProperty: {
+      "prop-1": 2,
     },
     propertyStatuses: {},
     computeProperty: vi.fn(),
@@ -26,7 +26,12 @@ vi.mock("@/store/properties", () => ({
   IPropertyStatus: {},
 }));
 
+vi.mock("@/utils/propertyCompute", () => ({
+  computePropertyWithStatus: vi.fn(),
+}));
+
 import propertyStore from "@/store/properties";
+import { computePropertyWithStatus } from "@/utils/propertyCompute";
 import Property from "./Property.vue";
 
 const baseProperty = {
@@ -65,11 +70,14 @@ describe("Property", () => {
     expect(propertyStore.getStatus).toHaveBeenCalledWith("prop-1");
   });
 
-  it("uncomputed reads from store", () => {
+  it("uncomputed reads the count map from store", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.uncomputed).toBe(
-      propertyStore.uncomputedAnnotationsPerProperty,
-    );
+    expect(wrapper.vm.uncomputed).toBe(propertyStore.uncomputedCountByProperty);
+  });
+
+  it("shows the uncomputed count for the property", () => {
+    const wrapper = mountComponent();
+    expect(wrapper.text()).toContain("2");
   });
 
   it("filteredErrors filters by ERROR type", () => {
@@ -104,10 +112,11 @@ describe("Property", () => {
     expect(wrapper.vm.filteredWarnings[0].warning).toBe("warn1");
   });
 
-  it("compute calls propertyStore.computeProperty", () => {
+  it("compute uses the shared status-aware helper", () => {
     const wrapper = mountComponent();
     wrapper.vm.compute();
-    expect(propertyStore.computeProperty).toHaveBeenCalled();
+    expect(computePropertyWithStatus).toHaveBeenCalledWith(baseProperty);
+    expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 
   it("compute is no-op when running", () => {
@@ -118,6 +127,7 @@ describe("Property", () => {
     });
     const wrapper = mountComponent();
     wrapper.vm.compute();
+    expect(computePropertyWithStatus).not.toHaveBeenCalled();
     expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 
@@ -128,6 +138,7 @@ describe("Property", () => {
     expect(wrapper.emitted("compute-property-batch")![0][0]).toStrictEqual(
       baseProperty,
     );
+    expect(computePropertyWithStatus).not.toHaveBeenCalled();
     expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 });

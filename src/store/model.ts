@@ -1,7 +1,5 @@
-import { IGirderItem } from "@/girder";
+import { IGirderItem, IGirderFolder, IUPennCollection } from "@/girder";
 import type { ITileHistogram } from "./images";
-import Shepherd from "shepherd.js";
-
 interface IObject<Values = any> {
   [key: string]: Values;
 }
@@ -65,7 +63,9 @@ export type TToolType =
   | "edit"
   | "segmentation"
   | "samAnnotation"
-  | "tagging";
+  | "objectSegmentation"
+  | "tagging"
+  | "linescan";
 
 export interface IToolTemplateInterface {
   id: string;
@@ -148,6 +148,101 @@ export interface ISamAnnotationToolState {
   livePreview: IGeoJSPosition[] | null;
 }
 
+export const ObjectSegmentationToolStateSymbol: unique symbol = Symbol(
+  "ObjectSegmentationToolState",
+);
+
+export type TObjectSegmentationToolStateSymbol =
+  typeof ObjectSegmentationToolStateSymbol;
+
+// How the user picks a training/example object.
+//  - "samClick": shift-click a point; SAM decodes the object under it.
+//  - "samBox":   shift-drag a box; SAM decodes the object inside it.
+//  - "circle":   shift-drag a freehand lasso; the polygon IS the example
+//                (no decoder run).
+export type TObjectSelectionMode = "samClick" | "samBox" | "circle";
+
+// How examples are propagated to the rest of the image.
+//  - "samSimilarity":     SAM-embedding similarity search over candidate prompts.
+//  - "classifier":        in-browser random-forest classifier (web worker).
+//  - "samThenClassifier": chained - run SAM similarity, then train the
+//                         classifier on the examples + SAM proposals and show
+//                         the classifier's result.
+export type TObjectApplicationMethod =
+  | "samSimilarity"
+  | "classifier"
+  | "samThenClassifier";
+
+// Where matches are searched. "image" (whole-image) is not yet implemented;
+// only "viewport" (the currently displayed view) is available for now.
+export type TObjectSegmentationScope = "viewport" | "image";
+
+export interface IObjectSegmentationExample {
+  polarity: "foreground" | "background";
+  // null for a circled example: its polygon (below) is authoritative and no
+  // decoder prompt was ever run.
+  prompt: TSamPrompt | null;
+  // The resolved example outline in GCS (image) coords - the given polygon
+  // for a circled example, or the SAM-decoded mask for a prompt example.
+  // null until the example-resolve node has processed this example. Both
+  // application methods consume this: the classifier trains on these
+  // polygons, so a SAM-clicked example can feed the classifier too.
+  polygon: IGeoJSPosition[] | null;
+}
+
+export interface IObjectSegmentationStatus {
+  phase: "idle" | "computing" | "ready" | "error";
+  error?: string;
+  putativeCount: number; // proposals.length after all filtering
+  // SAM candidate-decode progress ("Scanning candidates … 23/64"). null when
+  // no SAM decode run is in flight (and always null for the classifier).
+  progress: { done: number; total: number } | null;
+  // Superset of both methods' timings: SAM (encode/decode) + classifier
+  // (features/train/predict/postprocess).
+  timings: {
+    encodeMs?: number;
+    decodeMs?: number;
+    featuresMs?: number;
+    trainMs?: number;
+    predictMs?: number;
+    postprocessMs?: number;
+  };
+  // Auto size range derived from foreground example areas, surfaced so the
+  // panel can display the size-filter placeholders.
+  autoSizeRange?: { min: number; max: number } | null;
+}
+
+export interface IObjectSegmentationToolState {
+  type: TObjectSegmentationToolStateSymbol;
+  nodes: TObjectSegmentationNodes; // markRaw'd pipeline nodes
+  // Reactive mirror of nodes.input.geoJSMap.output, same pattern as
+  // ISamAnnotationToolState.mapEntry.
+  mapEntry: IMapEntry | null;
+  // Reactive mirror of the examples input node, with resolved polygons filled
+  // in by the example-resolve node (same array order as the input).
+  examples: IObjectSegmentationExample[];
+  proposals: IGeoJSPosition[][] | null; // GCS polygons, post-dedupe; null = nothing computed
+  // Polarity applied to the next example; set by the panel.
+  nextPolarity: "foreground" | "background";
+  status: IObjectSegmentationStatus; // reactive mirror
+  // Transient per-node progress labels for the in-viewer overlay (e.g. "SAM
+  // encoding…", "SAM segmenting…", "Training classifier…"), same overlay as
+  // ISamAnnotationToolState.loadingMessages.
+  loadingMessages: string[];
+  // How the next example is captured; set by the panel. Reactive so the
+  // AnnotationViewer interaction/preview routing can switch live.
+  selectionMode: TObjectSelectionMode;
+  // How examples are propagated; set by the panel. Reactive mirror of the
+  // applicationMethod input node (which gates the two pipeline branches).
+  applicationMethod: TObjectApplicationMethod;
+  // Search scope; set by the panel. Only "viewport" is functional for now.
+  scope: TObjectSegmentationScope;
+  // Reactive mirror of the hover-preview decode node's output (GCS outline of
+  // the object under the cursor in a SAM selection mode); null when idle,
+  // dragging, in circle mode, or between debounced decodes.
+  livePreview: IGeoJSPosition[] | null;
+}
+
 export const ConnectionToolStateSymbol: unique symbol = Symbol(
   "ConnectionToolState",
 );
@@ -187,6 +282,7 @@ export interface IErrorToolState {
 
 interface IExplicitToolStateMap {
   samAnnotation: ISamAnnotationToolState | IErrorToolState;
+  objectSegmentation: IObjectSegmentationToolState | IErrorToolState;
   connection: IConnectionToolState;
   // Edit tool can have CombineToolState when action is "combine_click"
   edit: ICombineToolState | IBaseToolState;
@@ -207,6 +303,7 @@ export interface IActiveTool<T extends TToolType = TToolType> {
 
 export enum ProgressType {
   ANNOTATION_FETCH = "ANNOTATION_FETCH",
+  ANNOTATION_RASTER = "ANNOTATION_RASTER",
   ANNOTATION_SAVE = "ANNOTATION_SAVE",
   ANNOTATION_DELETE = "ANNOTATION_DELETE",
   ANNOTATION_COMPUTE = "ANNOTATION_COMPUTE",
@@ -216,6 +313,8 @@ export enum ProgressType {
   PROPERTY_FETCH = "PROPERTY_FETCH",
   PROPERTY_COMPUTE = "PROPERTY_COMPUTE",
   BATCH_PROPERTY_COMPUTE = "BATCH_PROPERTY_COMPUTE",
+  PIPELINE_COMPUTE = "PIPELINE_COMPUTE",
+  BATCH_PIPELINE_COMPUTE = "BATCH_PIPELINE_COMPUTE",
   CONNECTION_FETCH = "CONNECTION_FETCH",
   CONNECTION_SAVE = "CONNECTION_SAVE",
   CONNECTION_DELETE = "CONNECTION_DELETE",
@@ -228,6 +327,7 @@ export enum ProgressType {
   HISTOGRAM_CACHE = "HISTOGRAM_CACHE",
   MOVIE_GENERATION = "MOVIE_GENERATION",
   SNAPSHOT_BATCH_DOWNLOAD = "SNAPSHOT_BATCH_DOWNLOAD",
+  ZENODO_UPLOAD = "ZENODO_UPLOAD",
   GENERIC = "GENERIC",
 }
 
@@ -249,26 +349,28 @@ export interface INotification {
 
 export const PROGRESS_TYPE_ORDER = new Map<ProgressType, number>([
   [ProgressType.ANNOTATION_FETCH, 0],
-  [ProgressType.ANNOTATION_SAVE, 1],
-  [ProgressType.ANNOTATION_DELETE, 2],
-  [ProgressType.ANNOTATION_COMPUTE, 3],
-  [ProgressType.BATCH_ANNOTATION_COMPUTE, 4],
-  [ProgressType.PROPERTY_FETCH, 5],
-  [ProgressType.PROPERTY_COMPUTE, 6],
-  [ProgressType.BATCH_PROPERTY_COMPUTE, 7],
-  [ProgressType.CONNECTION_FETCH, 8],
-  [ProgressType.CONNECTION_SAVE, 9],
-  [ProgressType.CONNECTION_DELETE, 10],
-  [ProgressType.VIEW_FETCH, 11],
-  [ProgressType.LAYER_CACHE, 12],
-  [ProgressType.QUADTILE_CACHE, 13],
-  [ProgressType.MAXMERGE_SCHEDULE, 14],
-  [ProgressType.MAXMERGE_CACHE, 15],
-  [ProgressType.HISTOGRAM_SCHEDULE, 16],
-  [ProgressType.HISTOGRAM_CACHE, 17],
-  [ProgressType.MOVIE_GENERATION, 18],
-  [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 19],
-  [ProgressType.GENERIC, 20],
+  [ProgressType.ANNOTATION_RASTER, 1],
+  [ProgressType.ANNOTATION_SAVE, 2],
+  [ProgressType.ANNOTATION_DELETE, 3],
+  [ProgressType.ANNOTATION_COMPUTE, 4],
+  [ProgressType.BATCH_ANNOTATION_COMPUTE, 5],
+  [ProgressType.PROPERTY_FETCH, 6],
+  [ProgressType.PROPERTY_COMPUTE, 7],
+  [ProgressType.BATCH_PROPERTY_COMPUTE, 8],
+  [ProgressType.CONNECTION_FETCH, 9],
+  [ProgressType.CONNECTION_SAVE, 10],
+  [ProgressType.CONNECTION_DELETE, 11],
+  [ProgressType.VIEW_FETCH, 12],
+  [ProgressType.LAYER_CACHE, 13],
+  [ProgressType.QUADTILE_CACHE, 14],
+  [ProgressType.MAXMERGE_SCHEDULE, 15],
+  [ProgressType.MAXMERGE_CACHE, 16],
+  [ProgressType.HISTOGRAM_SCHEDULE, 17],
+  [ProgressType.HISTOGRAM_CACHE, 18],
+  [ProgressType.MOVIE_GENERATION, 19],
+  [ProgressType.SNAPSHOT_BATCH_DOWNLOAD, 20],
+  [ProgressType.ZENODO_UPLOAD, 21],
+  [ProgressType.GENERIC, 22],
 ]);
 
 export interface IProgress {
@@ -299,12 +401,19 @@ export interface IRestrictTagsAndLayer {
   layerId: string | null;
 }
 
+export interface IDimensionLabels {
+  xy?: string[] | null;
+  z?: string[] | null;
+  t?: string[] | null;
+}
+
 export interface IDataset {
   readonly id: string;
 
   name: string;
   description: string;
   creatorId: string;
+  dimensionLabels?: IDimensionLabels;
 
   xy: number[];
   z: number[];
@@ -323,6 +432,32 @@ export interface IViewConfiguration {
 }
 
 export type TLayerMode = "single" | "multiple" | "unroll";
+
+/**
+ * How timelapse track segments are coloured. "track" gives every connected
+ * component its own hue; "uniform" draws them all in `TRACK_UNIFORM_COLOR`,
+ * which is easier to read when many tracks overlap.
+ */
+export type TTimelapseTrackColoring = "track" | "uniform";
+
+/** Which tab the Object Browser is showing. */
+export type TAnnotationBrowserTab = "objects" | "measurements" | "connections";
+
+/**
+ * Palettes that a component with no access to App.vue's palette registry may
+ * ask to have opened (see `paletteOpenRequests` in the main store). These are
+ * a subset of App.vue's `PaletteId`, which is where opening actually happens.
+ */
+export type TRequestablePalette = "filtersPanel" | "analysisPanel";
+
+export type TVolumeViewMode = "2d" | "3d";
+
+export type TVolumeBlendMode = "composite" | "mip";
+
+export type TVolumeSegmentationColorMode = "tag" | "property";
+
+// Which dataset axis is mapped to the 3rd (depth) dimension of the volume.
+export type TVolumeAxis = "z" | "t";
 
 export interface IDownloadParameters {
   encoding: string;
@@ -392,13 +527,118 @@ export interface IDatasetConfigurationCompatibility {
   channels: { [key: number]: string };
 }
 
+export interface IAnnotationBrowserConfig {
+  // Property columns shown in the annotation list
+  displayedPropertyPaths: string[][];
+  // Properties with a filter row in the annotation browser
+  filterPaths: string[][];
+  // Range/values and enabled state of those filter rows
+  propertyFilters: IPropertyAnnotationFilter[];
+  // Analysis-panel scatter plots and their gate polygons. Optional for
+  // compatibility with configurations saved before analysis plots existed.
+  analysisPlots?: IAnalysisPlot[];
+  // Property path labelling tracks in the Connections tab ([] = default
+  // short-id labels). Optional for compatibility with configurations saved
+  // before track labels existed.
+  trackLabelPath?: string[];
+}
+
+// Record of the last server-side color-by-property apply, returned by the
+// color_by_property endpoint and persisted in the configuration. Non-null
+// means the annotation colors currently reflect this property mapping (any
+// other color assignment clears it — see annotation store colorAnnotationIds)
+// and drives the viewer legend.
+export interface IColorByPropertyCategory {
+  value: string;
+  color: string;
+  count: number;
+}
+
+// Legend part of the color_by_property endpoint response.
+export interface IColorByPropertyLegend {
+  type: "continuous" | "categorical";
+  propertyPath: string[];
+  // continuous only
+  colormap?: string;
+  // Hex gradient stops, uniformly spaced — exactly what the server applied
+  stops?: string[];
+  // Range the ramp spans; defaults to the 1st..99th percentile, so it is
+  // usually narrower than the data extent below (values outside clamp to the
+  // end colors).
+  min?: number;
+  max?: number;
+  // True extent of the data, and whether the ramp clipped it — lets the
+  // legend label its ends "≤"/"≥" rather than implying the ramp covers
+  // everything.
+  dataMin?: number;
+  dataMax?: number;
+  clippedLow?: boolean;
+  clippedHigh?: boolean;
+  // categorical only
+  categories?: IColorByPropertyCategory[];
+}
+
+// The id→color grouping the backend just wrote, requested with
+// returnAssignment so the client can repaint the annotations it already holds
+// instead of refetching the dataset. Annotations absent from every group were
+// cleared to the layer color; an empty array therefore means "all cleared".
+export interface IColorAssignmentGroup {
+  color: string;
+  ids: string[];
+}
+
+export interface IColorByPropertyResult {
+  colored: number;
+  uncolored: number;
+  legend: IColorByPropertyLegend | null;
+  assignment?: IColorAssignmentGroup[];
+}
+
+export interface IColorByPropertyOptions {
+  colormaps: { [name: string]: string[] };
+  default: string;
+  palette: string[];
+}
+
+export interface IColorByPropertyState extends IColorByPropertyLegend {
+  // Display name snapshot at apply time, so the legend has a label even if
+  // the property is later renamed or removed
+  propertyName: string;
+  showLegend: boolean;
+}
+
+// Keyed by dataset id. The legend is per-DATASET derived state (its range and
+// category counts describe one dataset's values), but a configuration is
+// explicitly reusable across datasets — ImportConfiguration adds a dataset to
+// existing collections — so a single slot would show dataset A's legend over
+// dataset B's colors. Read via main.colorByPropertyForCurrentDataset.
+export type TColorByPropertyByDataset = {
+  [datasetId: string]: IColorByPropertyState;
+};
+
 export interface IDatasetConfigurationBase {
   compatibility: IDatasetConfigurationCompatibility;
   layers: IDisplayLayer[];
   tools: IToolConfiguration[];
   snapshots: ISnapshot[];
   propertyIds: string[];
+  pipelines: IPipeline[];
   scales: IScales;
+  // Shared annotation-rendering tuning for this configuration. Optional for
+  // compatibility with configurations created before these settings were
+  // persisted.
+  visibilityConfig?: IVisibilityConfig;
+  // Shared raster-overview settings. Optional for configurations created
+  // before the overview layer was introduced.
+  overviewConfig?: IAnnotationOverviewConfig;
+  // Shared annotation-browser state (displayed property columns and property
+  // filters). Optional for compatibility with configurations created before
+  // this was persisted.
+  annotationBrowserConfig?: IAnnotationBrowserConfig;
+  // Last color-by-property apply per dataset (drives the viewer legend); a
+  // dataset absent from the map has no property coloring. Optional for
+  // compatibility with configurations created before this was persisted.
+  colorByProperty?: TColorByPropertyByDataset;
 }
 
 export interface IDatasetConfiguration extends IDatasetConfigurationBase {
@@ -425,6 +665,15 @@ export interface IDatasetViewBase {
 export interface IDatasetView extends IDatasetViewBase {
   readonly id: string;
   readonly _accessLevel?: number;
+}
+
+// Resolved view tile shown in the Recent Datasets list.
+// Built in Home.vue by joining a datasetView with the corresponding
+// resolved Girder folder (dataset) and configuration documents.
+export interface IRecentDatasetViewItem {
+  datasetView: IDatasetView;
+  datasetInfo: IGirderFolder;
+  configInfo: IUPennCollection;
 }
 
 // Access control types for sharing datasets
@@ -510,6 +759,30 @@ export function getProjectStatusColor(
   }
 }
 
+export type TZenodoStatus =
+  | "none"
+  | "uploading"
+  | "draft"
+  | "published"
+  | "error";
+
+export interface IZenodoProgress {
+  current: number;
+  total: number;
+  message: string;
+}
+
+export interface IProjectZenodo {
+  depositionId?: number;
+  depositionUrl?: string;
+  doi?: string;
+  status: TZenodoStatus;
+  sandbox: boolean;
+  progress?: IZenodoProgress | null;
+  error?: string | null;
+  lastPublished?: string;
+}
+
 export interface IProject {
   id: string;
   name: string;
@@ -524,6 +797,7 @@ export interface IProject {
     collections: IProjectCollectionReference[];
     metadata: IProjectMetadata;
     status: TProjectStatus;
+    zenodo?: IProjectZenodo;
   };
 }
 
@@ -557,6 +831,7 @@ export interface IDisplayLayer {
     lastImages: IImage[] | null;
     nextImages: IImage[] | null;
     lock: boolean;
+    cacheRevision: number;
   };
 }
 
@@ -814,6 +1089,7 @@ export interface IGeoJSLayerSpec {
 // https://opengeoscience.github.io/geojs/apidocs/geo.layer.html
 export interface IGeoJSLayer extends IGeoJsObject {
   visible: (value?: boolean) => boolean | IGeoJSLayer;
+  opacity: (value?: number) => number | IGeoJSLayer;
   draw: () => IGeoJSLayer;
   map: () => IGeoJSMap;
   modes: {
@@ -850,6 +1126,12 @@ export interface IGeoJSAnnotationLayer extends IGeoJSLayer {
     arg?: string | null,
     editAnnotation?: IGeoJSAnnotation,
   ) => string | null | IGeoJSAnnotationLayer;
+  // The annotation currently being created or edited, if any
+  currentAnnotation: IGeoJSAnnotation | null;
+  options: (() => IObject) &
+    ((key: string) => any) &
+    ((key: string, value: any) => IGeoJSAnnotationLayer) &
+    ((values: IObject) => IGeoJSAnnotationLayer);
 }
 
 // https://opengeoscience.github.io/geojs/apidocs/geo.html#.point2D
@@ -913,6 +1195,15 @@ export interface IGeoJSOsmLayer extends IGeoJSLayer {
 
   _imageUrls?: (string | undefined)[];
   _tileBounds: (tile: IGeoJSTile) => IGeoJSBounds;
+  // The cache-aware tile factory: creates a tile via `_getTile` and returns
+  // it only after it is the cache's entry for its hash. Tiles have a
+  // promise-like interface; `catch` is the only failure signal the library
+  // exposes (there is no tile-error event). Attaching any handler queues the
+  // tile's fetch, which the fetch queue drops unless the tile is already
+  // cached — so failure hooks must wrap this, never the pre-cache `_getTile`.
+  _getTileCached?: (
+    ...args: unknown[]
+  ) => IGeoJSTile & { catch: (callback: (reason?: unknown) => void) => void };
   _options?: {
     minLevel?: number;
     maxLevel?: number;
@@ -993,12 +1284,24 @@ interface IGeoJSScaleWidgetSpec {
 
 type IGeoJSScaleWidgetOptions = keyof IGeoJSScaleWidgetSpec;
 
+// https://opengeoscience.github.io/geojs/apidocs/geo.gui.domWidget.html
+// Created with a `position` of map coordinates ({ x, y }), the widget's element
+// tracks that point as the map is panned and zoomed.
+export interface IGeoJSDomWidget extends IGeoJSWidget {
+  canvas: (() => HTMLElement) & ((val: HTMLElement) => IGeoJSDomWidget);
+  layer: () => IGeoJSUiLayer;
+}
+
 // https://opengeoscience.github.io/geojs/apidocs/geo.gui.uiLayer.html
 export interface IGeoJSUiLayer extends IGeoJSLayer {
   createWidget: <WidgetName extends string, ParentType extends IGeoJsObject>(
     widgetName: WidgetName,
     arg: { parent?: ParentType; [k: string]: any },
-  ) => WidgetName extends "scale" ? IGeoJSScaleWidget : IGeoJSWidget;
+  ) => WidgetName extends "scale"
+    ? IGeoJSScaleWidget
+    : WidgetName extends "dom"
+      ? IGeoJSDomWidget
+      : IGeoJSWidget;
   deleteWidget: (widget: IGeoJSWidget) => IGeoJSUiLayer;
 }
 
@@ -1330,6 +1633,28 @@ export const AnnotationNames = {
   [AnnotationShape.Any]: "Any", // This was added to support the "Any" shape
 };
 
+// Shapes a computed property can be attached to. Must match the backend
+// annotation_property schema enum (server/models/property.py) — property
+// workers only operate on these, so a property step / materialized property
+// with any other shape would be rejected on compute.
+export const MATERIALIZABLE_PROPERTY_SHAPES: AnnotationShape[] = [
+  AnnotationShape.Point,
+  AnnotationShape.Line,
+  AnnotationShape.Polygon,
+];
+
+// Clamp an arbitrary annotation shape to one a property can be computed on,
+// falling back to Polygon (a rectangle/circle/ellipse annotation is closest to
+// a blob). Used wherever a property step derives its shape from an annotation
+// source: the AI suggestion path and the builder's tag auto-wiring.
+export function clampToMaterializablePropertyShape(
+  shape: AnnotationShape,
+): AnnotationShape {
+  return MATERIALIZABLE_PROPERTY_SHAPES.includes(shape)
+    ? shape
+    : AnnotationShape.Polygon;
+}
+
 export interface IAnnotationLocation {
   XY: number;
   Z: number;
@@ -1349,6 +1674,187 @@ export interface IAnnotationBase {
 export interface IAnnotation extends IAnnotationBase {
   id: string;
   name: string | null;
+}
+
+// --- Stub/Hydrated Annotation Architecture ---
+
+export interface IAnnotationStub {
+  id: string;
+  centroid: IGeoJSPosition;
+  location: IAnnotationLocation;
+  shape: AnnotationShape;
+  channel: number;
+  tags: string[];
+  color: string | null;
+  estimatedRadius?: number;
+}
+
+export type TAnnotationOrStub = IAnnotation | IAnnotationStub;
+
+// --- Server-side annotation list query/response ---
+
+export interface IAnnotationListSort {
+  type: "field" | "property";
+  key: string | string[]; // "location.XY" | "name" | ... | ["propId","sub"]
+  order: "asc" | "desc";
+}
+
+export interface IAnnotationListPropertyFilter {
+  path: string[];
+  mode: "range" | "values";
+  min?: number;
+  max?: number;
+  values?: number[];
+}
+
+// One analysis gate as a query term: the DEFINITION (axes + polygon +
+// pinned categories), which the server resolves per request as a pure
+// predicate (SERVER_GATING.md, Phase 3). Shipping definitions instead of
+// resolved id lists keeps page fetches small at any gate size.
+export interface IAnalysisGateFilterTerm {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;
+}
+
+export interface IAnnotationListFilters {
+  shape?: string;
+  tags?: { values: string[]; exclusive: boolean };
+  location?: IAnnotationLocation;
+  idSubstring?: string;
+  propertyFilters?: IAnnotationListPropertyFilter[];
+  // A list of id-sets; an annotation matches iff its _id is in EVERY set
+  // (AND of $in's). Used to apply the selection and annotation-id filters.
+  idConstraints?: string[][];
+  // Analysis gate definitions, ANDed with everything above.
+  analysisGates?: IAnalysisGateFilterTerm[];
+}
+
+export interface IAnnotationListQuery {
+  datasetId: string;
+  filters: IAnnotationListFilters;
+  sort: IAnnotationListSort | null;
+  propertyPaths: string[][];
+  offset: number;
+  limit: number;
+  // When supplied, the server ignores `offset` and returns the page containing
+  // this annotation under the same filters and sort. `offset` in the response
+  // is null when the annotation is not part of the filtered result.
+  anchorId?: string;
+}
+
+// A server list row: stub fields + the requested property values.
+export interface IAnnotationListRow extends IAnnotationStub {
+  name: string | null;
+  values: IAnnotationPropertyValues[string]; // {[propId]: value | nested}
+}
+
+export interface IAnnotationListPage {
+  total: number;
+  rows: IAnnotationListRow[];
+  offset?: number | null;
+}
+
+export type THydrationMode = "shapes" | "dots";
+
+export interface IVisibilityConfig {
+  // Dataset annotation count above which stub-only (lazy) mode activates: stubs
+  // are fetched and coordinates/property values load on demand. Independent of
+  // the render budget (maxVisible).
+  stubThreshold: number;
+  // Max annotations to render (stubs or shapes) — the cap when fully zoomed in.
+  // Datasets at or below this render fully at every zoom (the size gate).
+  maxVisible: number;
+  // Floor on the zoom-adaptive render budget: at least this many are drawn at
+  // any zoom (clamped to maxVisible). So a view holding fewer than this shows
+  // everything; a busier view shows at least this many (or the zoom-rule count,
+  // whichever is higher). Set to 0 to defer entirely to the zoom rule.
+  minimumVisible: number;
+  // Max annotations to keep hydrated per visibility update — the cap when fully
+  // zoomed in.
+  maxHydrated: number;
+  // Total cap on the hydration cache (accumulates across updates; LRU-evicts
+  // beyond cap, protecting selected).
+  hydrationCacheCap: number;
+  // If true, threshold applies to total frame annotations across all layers.
+  globalThreshold: boolean;
+  // Fraction of the screen the rendered dots may cover. See revealMoreOnZoom for
+  // how this interacts with zoom.
+  coverageTarget: number;
+  // Controls how the render budget responds to zoom:
+  //   false (default): enforce coverageTarget at EVERY zoom — the budget is the
+  //     number of dots that cover coverageTarget of the screen at the current
+  //     zoom, so the view stays at ~that density (uncrowded) and reveals
+  //     everything only when you zoom into a genuinely sparse region.
+  //   true: "reveal more as you zoom in" — coverageTarget sets the zoomed-out
+  //     floor and the budget doubles per zoom level up to maxVisible, so working
+  //     zooms progressively reveal (and can crowd) more.
+  revealMoreOnZoom: boolean;
+  // Zoom hysteresis: skip the camera-driven refresh until the zoom magnification
+  // changes by this fraction (e.g. 0.2 = 20%). Panning has no threshold — any
+  // pan refreshes — so this governs zoom only.
+  viewportRefreshFraction: number;
+}
+
+export type TAnnotationOverviewMode = "shapes" | "discs";
+
+export interface IAnnotationOverviewConfig {
+  enabled: boolean;
+  mode: TAnnotationOverviewMode;
+  opacity: number;
+  // Raster is used above this many image pixels per screen pixel; vectors
+  // take over at or below it.
+  vectorSwitchThreshold: number;
+}
+
+export const DEFAULT_ANNOTATION_OVERVIEW_CONFIG: IAnnotationOverviewConfig = {
+  enabled: false,
+  mode: "shapes",
+  opacity: 0.6,
+  vectorSwitchThreshold: 1,
+};
+
+export function resolveAnnotationOverviewConfig(
+  config?: Partial<IAnnotationOverviewConfig>,
+): IAnnotationOverviewConfig {
+  return {
+    ...DEFAULT_ANNOTATION_OVERVIEW_CONFIG,
+    ...config,
+  };
+}
+
+// Annotation count above which the annotation browser list switches to the
+// backend-paginated (server) list, independently of stub-only mode. This is a
+// UI materialization limit (one v-data-table row per annotation, client-side
+// sort), NOT a data-loading concern like stubThreshold — a fully-fetched
+// dataset can still be too large to sort/render as a client-side table.
+export const ANNOTATION_LIST_SERVER_THRESHOLD = 20000;
+
+export const DEFAULT_VISIBILITY_CONFIG: IVisibilityConfig = {
+  stubThreshold: 100000,
+  maxVisible: 50000,
+  minimumVisible: 5000,
+  maxHydrated: 20000,
+  hydrationCacheCap: 40000,
+  globalThreshold: true,
+  coverageTarget: 0.3,
+  revealMoreOnZoom: false,
+  viewportRefreshFraction: 0.2,
+};
+
+export function resolveVisibilityConfig(
+  config?: Partial<IVisibilityConfig>,
+): IVisibilityConfig {
+  return {
+    ...DEFAULT_VISIBILITY_CONFIG,
+    ...config,
+  };
+}
+
+export function isHydratedAnnotation(
+  annotation: TAnnotationOrStub,
+): annotation is IAnnotation {
+  return "coordinates" in annotation;
 }
 
 export enum TrackPositionType {
@@ -1409,6 +1915,105 @@ export interface IROIAnnotationFilter extends IAnnotationFilter {
   roi: IGeoJSPosition[];
 }
 
+// --- Analysis panel (scatter gating) ---
+
+// Categorical axes are annotation fields available on stubs too, so the
+// analysis panel works in both full and lazy (stub-only) modes.
+export type TAnalysisCategoricalKey =
+  | "tags"
+  | "shape"
+  | "channel"
+  | "xy"
+  | "z"
+  | "time";
+
+export type TAnalysisAxis =
+  | { type: "property"; path: string[] }
+  | { type: "categorical"; key: TAnalysisCategoricalKey };
+
+// Explicitly identifies how categorical values in a gate are encoded. This
+// cannot be inferred from a string prefix: legacy display labels are
+// user-controlled and may themselves begin with that prefix.
+export const ANALYSIS_CATEGORY_KEY_VERSION = 1 as const;
+
+// A drawn gate, stored as the lasso polygon in PLOT COORDINATE space rather
+// than as the annotation ids it happened to contain.
+//
+// This is what makes a gate persistable. A configuration is shared by every
+// dataset using it, while annotation ids belong to one dataset — persisting ids
+// would apply one dataset's objects to another. A polygon is defined in
+// property-value space, so it re-resolves correctly in any dataset, which is
+// also the point of a gating strategy: draw it once, apply it to each replicate.
+//
+// For a categorical axis a coordinate is a category index, so the ordering of
+// collision-free raw category keys that was in effect when the gate was drawn
+// is part of the gate's meaning and is stored with it. Human-readable labels
+// are display-only and are not persisted as identities.
+export interface IAnalysisGate {
+  categoryKeyVersion: typeof ANALYSIS_CATEGORY_KEY_VERSION;
+  vertices: IGeoJSPosition[];
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+}
+
+// One scatter plot in the analysis panel. Plots are ordered: each plot shows
+// the population passing the gates of all plots BEFORE it (plus the regular
+// filters), and its own gate further narrows the population downstream —
+// flow-cytometry-style sequential gating. `gate` is null until a selection is
+// drawn. The annotation ids inside a gate are derived, not stored here: see
+// `analysisGateIds` in the filters store.
+export interface IAnalysisPlot {
+  id: string;
+  xAxis: TAnalysisAxis | null;
+  yAxis: TAnalysisAxis | null;
+  gate: IAnalysisGate | null;
+  gateEnabled: boolean;
+}
+
+// One plot in a server-side gate-resolution request: a DRAWN plot's
+// definition (both axes chosen, gate present). The server resolves the gate
+// as a pure per-annotation predicate over the whole dataset; see
+// codebaseDocumentation/SERVER_GATING.md.
+export interface IAnalysisGatePlotRequest {
+  id: string;
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  gate: IAnalysisGate;
+}
+
+// Server-binned display data for one analysis plot above the cap
+// (SERVER_GATING.md, Phase 2). Rows of `counts` are y bins, columns x bins.
+export interface IAnalysisHistogramResponse {
+  counts: number[][];
+  xEdges: number[] | null;
+  yEdges: number[] | null;
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+  inputCount: number;
+  plottedCount: number;
+  // |own gate ∩ input| — the chained badge count — when a gate was sent.
+  gateCount: number | null;
+}
+
+// The histogram response plus display labels for categorical axes, resolved
+// by the panel (labels need the dataset's channel names, which the server
+// does not have).
+export interface IAnalysisHistogramDisplay extends IAnalysisHistogramResponse {
+  xCategoryLabels: string[] | null;
+  yCategoryLabels: string[] | null;
+}
+
+export interface IAnalysisHistogramRequest {
+  xAxis: TAnalysisAxis;
+  yAxis: TAnalysisAxis;
+  xCategories: string[] | null;
+  yCategories: string[] | null;
+  bins: { x: number; y: number };
+  upstreamGates: Omit<IAnalysisGatePlotRequest, "id">[];
+  filters: IAnnotationListFilters;
+  gate: IAnalysisGate | null;
+}
+
 export interface IAnnotationPropertyConfiguration {
   name: string;
   image: string;
@@ -1423,6 +2028,104 @@ export interface IAnnotationPropertyConfiguration {
 
 export interface IAnnotationProperty extends IAnnotationPropertyConfiguration {
   id: string;
+}
+
+// Annotation setup shared by the annotation-producing tool UIs and by
+// annotation pipeline steps. (Historically defined in AnnotationConfiguration.vue,
+// which now re-exports it from here.)
+export interface IAnnotationSetup {
+  tags: string[];
+  coordinateAssignments: {
+    layer: string | null | undefined;
+    Z: {
+      type: string;
+      value: number;
+      max: number;
+    };
+    Time: {
+      type: string;
+      value: number;
+      max: number;
+    };
+  };
+  shape: AnnotationShape;
+  color: string | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Worker pipelines
+//
+// A pipeline is an ordered list of steps stored on a configuration. Each step
+// is a self-contained worker invocation: either an annotation-producing worker
+// (segmentation path) or a property-computing worker (property path). Steps do
+// not pass data in memory — each writes annotations/property values back to the
+// dataset and downstream steps read them back, joined by tags + shape.
+// See codebaseDocumentation/WORKER_PIPELINES.md.
+// ---------------------------------------------------------------------------
+
+export type TPipelineStepKind = "annotation" | "property";
+
+export interface IPipelineStepBase {
+  // Stable id, unique within the pipeline.
+  readonly id: string;
+  kind: TPipelineStepKind;
+  // Display name, defaults to the worker's interfaceName label.
+  name: string;
+  // Docker image tag.
+  image: string;
+  // The user-picked runtime parameters for this worker image.
+  workerInterfaceValues: IWorkerInterfaceValues;
+  // Skipped by the runner when false.
+  enabled: boolean;
+}
+
+export interface IAnnotationPipelineStep extends IPipelineStepBase {
+  kind: "annotation";
+  // Mirrors tool.values.annotation. `annotation.tags` ARE this step's output
+  // tags (applied to the annotations the worker produces).
+  annotation: IAnnotationSetup;
+  // Mirrors tool.values.connectTo (optional connection wiring).
+  connectTo?: {
+    tags: string[];
+    layer: string | null;
+    exclusive?: boolean;
+  };
+  // Mirrors tool.values.jobDateTag.
+  jobDateTag?: boolean;
+}
+
+export interface IPropertyPipelineStep extends IPipelineStepBase {
+  kind: "property";
+  // Which annotations this property computes on.
+  shape: AnnotationShape;
+  // Tag filter selecting INPUT annotations. Normally set to the output tags of
+  // an upstream annotation step (see tag wiring in WORKER_PIPELINES.md).
+  inputTags: { tags: string[]; exclusive: boolean };
+  // True when inputTags/shape were auto-wired from an upstream annotation step
+  // (so the builder knows it may safely refresh them; manual edits clear it).
+  autoWired?: boolean;
+  // Set lazily by the runner on first successful run: the id of the persisted
+  // IAnnotationProperty this step created. Reused on later runs. Cleared if the
+  // referenced property no longer exists (runner re-creates).
+  materializedPropertyId?: string;
+}
+
+export type TPipelineStep = IAnnotationPipelineStep | IPropertyPipelineStep;
+
+export interface IPipeline {
+  readonly id: string;
+  name: string;
+  description?: string;
+  steps: TPipelineStep[];
+  // Provenance, for UI badges.
+  origin?: "user" | "preset";
+}
+
+export interface IPipelineRunResult {
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  failedStepIndex: number | null;
 }
 
 export type TNestedValues<T> = T | { [pathName: string]: TNestedValues<T> };
@@ -1442,11 +2145,52 @@ export type TPropertyHistogram = {
   max: number;
 }[];
 
+// Annotation export files are raw Mongo documents produced by
+// `GET /export/json`: the identifier lives under `_id`, and `id` isn't
+// present. These types describe that on-disk/import shape, as opposed to
+// the normalized `IAnnotation`/`IAnnotationConnection`/`IAnnotationProperty`
+// used everywhere else once the frontend has parsed a server response.
+export type ISerializedAnnotation = Omit<IAnnotation, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
+export type ISerializedConnection = Omit<IAnnotationConnection, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
+export type ISerializedProperty = Omit<IAnnotationProperty, "id"> & {
+  id?: string;
+  _id?: string;
+};
+
 export interface ISerializedData {
-  annotations: IAnnotation[];
-  annotationConnections: IAnnotationConnection[];
-  annotationProperties: IAnnotationProperty[];
+  annotations: ISerializedAnnotation[];
+  annotationConnections: ISerializedConnection[];
+  annotationProperties: ISerializedProperty[];
   annotationPropertyValues: IAnnotationPropertyValues;
+}
+
+export interface IAnnotationImportPayload {
+  datasetId: string;
+  annotations?: ISerializedAnnotation[];
+  connections?: ISerializedConnection[];
+  propertyValues?: IAnnotationPropertyValues;
+  propertyIdMap?: { [oldPropertyId: string]: string };
+}
+
+export interface IAnnotationImportResult {
+  annotationCount: number;
+  connectionCount: number;
+  propertyValueCount: number;
+}
+
+// Storage usage and quota for a user, as reported by the girder-user-quota
+// plugin. Sizes are in bytes; quota is null when unlimited.
+export interface IUserStorageQuota {
+  used: number;
+  quota: number | null;
 }
 
 export interface IJobEventData {
@@ -1517,7 +2261,7 @@ export interface IJobTimestamp {
 export interface IJob {
   _id: string;
   _modelType: string;
-  args: string[];
+  args?: string[];
   created: string;
   status: number;
   timestamps: IJobTimestamp[];
@@ -1562,21 +2306,23 @@ export interface ITourStep {
   position?: "top" | "bottom" | "left" | "right";
   waitForElement?: number;
   modalOverlay?: boolean;
-  beforeShow?: string;
-  onNext?: string;
   showNextButton?: boolean;
   onTriggerEvent?: string;
 }
 
-export interface IExtendedShepherdStep extends Shepherd.Step {
-  options: Shepherd.Step.StepOptions & {
-    route?: string;
-    beforeShow?: () => void;
-    onNext?: () => void;
-    hasModalOverlay?: boolean;
-    waitForElement?: number;
-    onTriggerEvent?: string;
-  };
+// Internal representation the TourManager builds from an ITourStep.
+// Engine-neutral: holds everything the controller needs to render and advance.
+export interface ITourStepRuntime {
+  id: string;
+  route: string;
+  element?: string;
+  title: string;
+  text: string;
+  position: "top" | "bottom" | "left" | "right";
+  waitForElement: number;
+  hasModalOverlay: boolean;
+  showNextButton: boolean;
+  onTriggerEvent?: string;
 }
 
 export interface ITourMetadata {
@@ -1591,14 +2337,6 @@ export interface ITourConfig extends ITourMetadata {
   options?: {
     modalOverlay?: boolean;
   };
-}
-
-declare module "vue" {
-  interface ComponentCustomProperties {
-    $startTour: (tourName: string) => Promise<void>;
-    $nextStep: (targetElementId?: string) => Promise<void>;
-    $loadAllTours: () => Promise<Record<string, ITourMetadata>>;
-  }
 }
 
 export enum WelcomeTourTypes {
@@ -1616,8 +2354,8 @@ export enum WelcomeTourStatus {
 
 export const WelcomeTourNames = {
   [WelcomeTourTypes.HOME]: "WelcomeTourHome",
-  [WelcomeTourTypes.VIEWER]: "WelcomeTourViewer",
-  [WelcomeTourTypes.ADVANCED_UPLOAD]: "WelcomeTourAdvancedUpload",
+  [WelcomeTourTypes.VIEWER]: "IntroViewerTour",
+  [WelcomeTourTypes.ADVANCED_UPLOAD]: "AdvancedUploadTour",
   [WelcomeTourTypes.WORKING_WITH_TAGS]: "WorkingWithTags",
 };
 
@@ -1639,6 +2377,7 @@ export interface IMapEntry {
   timelapseLayer: IGeoJSAnnotationLayer;
   timelapseTextLayer: IGeoJSFeatureLayer;
   interactionLayer: IGeoJSAnnotationLayer;
+  annotationOverviewLayer?: IGeoJSOsmLayer;
   uiLayer?: IGeoJSUiLayer;
   lowestLayer?: number;
 }
@@ -1811,6 +2550,7 @@ import { ISetQuadStatus } from "@/utils/setFrameQuad";
 import type { ITileMeta } from "./GirderAPI";
 import { isEqual } from "lodash";
 import type { TSamNodes } from "@/pipelines/samPipeline";
+import type { TObjectSegmentationNodes } from "@/pipelines/objectSegmentationPipeline";
 
 // TODO: It's kind of weird to have this function here.
 export function newLayer(
@@ -1892,11 +2632,20 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
     tools: [],
     snapshots: [],
     propertyIds: [],
+    pipelines: [],
     scales: {
       pixelSize: { value: 1, unit: "m" },
       zStep: { value: 1, unit: "m" },
       tStep: { value: 1, unit: "s" },
     },
+    visibilityConfig: resolveVisibilityConfig(),
+    overviewConfig: resolveAnnotationOverviewConfig(),
+    annotationBrowserConfig: {
+      displayedPropertyPaths: [],
+      filterPaths: [],
+      propertyFilters: [],
+    },
+    colorByProperty: {},
   };
 }
 
@@ -1940,12 +2689,51 @@ export interface IChatImage {
   visible?: boolean;
 }
 
-export interface IChatMessage {
-  type: "user" | "assistant" | "system" | "error";
-  content: string;
-  images?: IChatImage[];
-  visible?: boolean;
+// --- Automatic tool suggestions (see codebaseDocumentation/AUTO_TOOL_SUGGESTIONS.md) ---
+
+// One entry in the catalog of tools the frontend knows how to set up. Sent to
+// the backend so Claude can pick from tools that actually exist for this
+// dataset, and reused on the way back to build the concrete IToolConfiguration.
+export interface IToolSuggestionCatalogEntry {
+  id: string;
+  name: string;
+  kind: "worker" | "manual";
+  description: string;
+  // Worker tools only: the docker image to instantiate.
+  image?: string;
+  // Default annotation shape used when building the tool configuration.
+  defaultShape?: AnnotationShape;
 }
+
+// Display-layer context sent with the screenshot so Claude can map rendered
+// colors in the composite image back to the dataset's channel names.
+export interface IToolSuggestionLayerContext {
+  id: string;
+  name: string;
+  channel: number;
+  channelName: string;
+  color: string;
+  visible: boolean;
+}
+
+// A raw suggestion as returned by the backend (references a catalog entry by
+// id and, optionally, a channel to run on).
+export interface IToolSuggestion {
+  toolId: string;
+  channelName?: string;
+  reason: string;
+  confidence?: "low" | "medium" | "high";
+}
+
+// A suggestion after the frontend has resolved it against the catalog and
+// built a ready-to-add tool configuration.
+export interface IResolvedToolSuggestion {
+  suggestion: IToolSuggestion;
+  catalogEntry: IToolSuggestionCatalogEntry;
+  tool: IToolConfiguration;
+}
+
+export type TToolSuggestionStatus = "idle" | "loading" | "done" | "error";
 
 export const TaggingToolStateSymbol: unique symbol = Symbol("TaggingToolState");
 

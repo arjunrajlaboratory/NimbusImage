@@ -22,6 +22,50 @@ describe("ExportAPI", () => {
     api = new ExportAPI(createMockClient());
   });
 
+  describe("exportCsv", () => {
+    beforeEach(() => {
+      const mockBlob = new Blob(["csv-content"], { type: "text/csv" });
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(mockBlob),
+      });
+      global.URL.createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
+      global.URL.revokeObjectURL = vi.fn();
+    });
+
+    it("sends sanitizeColumnNames in the request body", async () => {
+      await api.exportCsv({
+        datasetId: "ds1",
+        propertyPaths: [["propA", "sub1"]],
+        sanitizeColumnNames: true,
+      });
+
+      const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+      expect(body.sanitizeColumnNames).toBe(true);
+    });
+
+    it("defaults sanitizeColumnNames to false", async () => {
+      await api.exportCsv({ datasetId: "ds1" });
+
+      const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+      expect(body.sanitizeColumnNames).toBe(false);
+    });
+
+    it("omits annotationIds when no subset is supplied", async () => {
+      await api.exportCsv({ datasetId: "ds1" });
+
+      const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+      expect(body).not.toHaveProperty("annotationIds");
+    });
+
+    it("preserves an explicitly empty annotation subset", async () => {
+      await api.exportCsv({ datasetId: "ds1", annotationIds: [] });
+
+      const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+      expect(body.annotationIds).toEqual([]);
+    });
+  });
+
   describe("exportBulkCsv", () => {
     beforeEach(() => {
       // Mock fetch for exportCsv calls
@@ -45,6 +89,7 @@ describe("ExportAPI", () => {
         propertyPaths: [["propA", "sub1"]],
         undefinedValue: "NA",
         delimiter: ",",
+        sanitizeColumnNames: true,
       });
 
       // Advance past delays
@@ -59,6 +104,7 @@ describe("ExportAPI", () => {
           propertyPaths: [["propA", "sub1"]],
           undefinedValue: "NA",
           delimiter: ",",
+          sanitizeColumnNames: true,
         }),
       );
       expect(exportCsvSpy).toHaveBeenCalledWith(

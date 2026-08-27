@@ -18,9 +18,12 @@
         autocomplete="current-password"
       />
       <div class="d-flex flex-column">
-        <v-btn type="submit" color="primary">Login</v-btn>
+        <v-btn type="submit" variant="flat" color="primary" size="small">
+          Login
+        </v-btn>
         <v-btn
           variant="text"
+          size="small"
           class="align-self-end my-2"
           @click="switchToSignUp"
         >
@@ -30,8 +33,10 @@
     </v-form>
     <template v-else>
       <div class="text-center mb-8">
-        <h2 class="text-h5 font-weight-bold mb-2">Sign up for NimbusImage!</h2>
-        <p class="text-subtitle-1">Create a new account to get started.</p>
+        <h2 class="page-title mb-2">Sign up for NimbusImage!</h2>
+        <p class="text-body-2 text-medium-emphasis">
+          Create a new account to get started.
+        </p>
       </div>
       <v-form @submit.prevent="signUp" class="my-8">
         <v-text-field
@@ -87,13 +92,16 @@
         <div class="d-flex flex-column">
           <v-btn
             type="submit"
+            variant="flat"
             color="primary"
+            size="small"
             :disabled="signupPassword !== signupPasswordVerification"
           >
             Sign up
           </v-btn>
           <v-btn
             variant="text"
+            size="small"
             class="align-self-end my-2"
             @click="switchToLogin"
           >

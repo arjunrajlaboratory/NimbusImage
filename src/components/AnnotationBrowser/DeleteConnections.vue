@@ -1,19 +1,24 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="{ props: activatorProps }">
-      <v-btn
-        v-bind="{ ...activatorProps, ...$attrs }"
-        :disabled="!isLoggedIn"
-        v-description="{
-          section: 'Object list actions',
-          title: 'Delete connections',
-          description:
-            'Open a dialog to delete annotation connections for dataset, location or selected anntoations',
-        }"
-      >
-        <v-icon>mdi-trash-can</v-icon>
-        Delete connections
-      </v-btn>
+    <template v-slot:activator="activatorBinding">
+      <slot name="activator" v-bind="activatorBinding">
+        <v-btn
+          variant="text"
+          color="error"
+          size="small"
+          v-bind="{ ...activatorBinding.props, ...$attrs }"
+          :disabled="!isLoggedIn"
+          v-description="{
+            section: 'Object list actions',
+            title: 'Delete connections',
+            description:
+              'Open a dialog to delete annotation connections for dataset, location or selected anntoations',
+          }"
+        >
+          <v-icon>mdi-trash-can</v-icon>
+          Delete connections
+        </v-btn>
+      </slot>
     </template>
     <v-card>
       <v-card-title> Delete annotation connections </v-card-title>
@@ -34,8 +39,15 @@
       </v-card-text>
       <v-card-actions :disabled="deleting">
         <v-spacer />
-        <v-btn @click.prevent="cancel" color="warning"> Cancel </v-btn>
-        <v-btn @click.prevent="submit" color="primary">
+        <v-btn variant="text" size="small" @click.prevent="cancel">
+          Cancel
+        </v-btn>
+        <v-btn
+          variant="flat"
+          color="error"
+          size="small"
+          @click.prevent="submit"
+        >
           Submit: delete connections
         </v-btn>
       </v-card-actions>
@@ -81,7 +93,7 @@ async function submit() {
     case "location":
       const currentLocation = store.currentLocation;
       const currentLocationAnnotationIds = new Set(
-        annotationStore.annotations
+        annotationStore.annotationsForIteration
           .filter(
             ({ location }) =>
               location.Time === currentLocation.time &&

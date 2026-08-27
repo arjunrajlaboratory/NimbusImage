@@ -8,6 +8,13 @@ from girder.exceptions import RestException
 from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
+from ..helpers.validation import (
+    requireList,
+    requireObjectBody,
+    requireObjectId,
+    validateAnnotationIdCount,
+    validatePropertyPaths,
+)
 from ..models.propertyValues import (
     AnnotationPropertyValues as PropertyValuesModel,
 )
@@ -22,6 +29,7 @@ class PropertyValues(Resource):
         self.route("DELETE", (), self.delete)
         self.route("POST", (), self.add)
         self.route("POST", ("multiple",), self.addMultiple)
+        self.route("POST", ("batch",), self.batch)
         self.route("GET", (), self.find)
         self.route("GET", ("count",), self.count)
         self.route("GET", ("histogram",), self.histogram)
@@ -121,7 +129,50 @@ class PropertyValues(Resource):
             params["propertyId"], params["datasetId"]
         )
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Get property values for a set of annotation ids")
+        .notes(
+            "POST to send the id list (avoids URL length limits). "
+            "Optionally projects only the requested property paths."
+        )
+        .param(
+            "body",
+            (
+                "{ datasetId: string, annotationIds: string[], "
+                "propertyPaths?: string[][] }"
+            ),
+            paramType="body",
+        )
+        .errorResponse()
+        .errorResponse("Read access was denied for the dataset.", 403)
+    )
+    def batch(self, params):
+        body = requireObjectBody(self.getBodyJson())
+        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
+        propertyPaths = body.get("propertyPaths")
+        if propertyPaths is not None:
+            # A component containing '.'/'$' would silently build a wrong or
+            # injected projection key; a non-list-of-lists-of-strings would
+            # raise TypeError in findByAnnotationIds. Reject at the boundary.
+            validatePropertyPaths(propertyPaths)
+        # Guard the list shape before len()/iterating: a scalar would raise
+        # TypeError on len(), a string would iterate per-character. Both must
+        # be a clean 400 on this public endpoint, not a 500.
+        rawIds = requireList(body.get("annotationIds", []), "annotationIds")
+        validateAnnotationIdCount(len(rawIds))
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True,
+        )
+        annotationIds = [requireObjectId(i, "annotationId") for i in rawIds]
+        return self._annotationPropertyValuesModel.findByAnnotationIds(
+            datasetId, annotationIds, propertyPaths
+        )
+
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Search for property values")
         .responseClass("annotation")
@@ -172,7 +223,7 @@ class PropertyValues(Resource):
             offset=offset,
         ).hint([("datasetId", 1), ("_id", 1)])
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Get property value count for a dataset")
         .param("datasetId", "Get count for this dataset", required=True)
@@ -195,7 +246,7 @@ class PropertyValues(Resource):
             )
         }
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description(
             "Get a histogram for property values in the specified dataset"

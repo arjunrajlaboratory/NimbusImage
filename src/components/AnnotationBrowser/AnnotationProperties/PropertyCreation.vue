@@ -2,22 +2,21 @@
   <v-card class="property-creation-card">
     <div
       class="d-flex align-center px-4 py-2"
-      id="create-property-header-tourstep"
+      :data-tour="TOUR_ANCHORS.createPropertyHeader"
     >
-      <span class="text-subtitle-1">Create new property</span>
+      <span class="panel-section-title">Create new property</span>
     </div>
     <v-card-text>
       <v-container class="pa-2">
         <v-row align="center" class="mb-1" density="comfortable">
           <v-col cols="4">
-            <v-list-subheader dense>Measure by tag:</v-list-subheader>
+            <v-list-subheader>Measure by tag:</v-list-subheader>
           </v-col>
           <v-col cols="5">
             <tag-picker
               v-model="filteringTags"
-              dense
-              id="property-tag-picker-tourstep"
-              v-tour-trigger="'property-tag-picker-tourtrigger'"
+              :data-tour="TOUR_ANCHORS.propertyTagPicker"
+              v-tour-trigger="TOUR_TRIGGERS.propertyTagPicker"
             />
           </v-col>
           <v-col cols="3">
@@ -31,9 +30,7 @@
         </v-row>
         <v-row align="center" density="comfortable">
           <v-col cols="4">
-            <v-list-subheader dense id="shape-selection-tourstep">{{
-              shapeSelectionString
-            }}</v-list-subheader>
+            <v-list-subheader>{{ shapeSelectionString }}</v-list-subheader>
           </v-col>
           <v-col cols="8">
             <v-select
@@ -45,6 +42,7 @@
               hide-details
               density="compact"
               :disabled="filteringTags.length > 0"
+              :data-tour="TOUR_ANCHORS.shapeSelection"
             ></v-select>
           </v-col>
         </v-row>
@@ -54,11 +52,10 @@
         <v-row density="comfortable">
           <v-col>
             <docker-image-select
-              dense
               v-model="dockerImage"
               :imageFilter="propertyImageFilter"
-              id="property-algorithm-select-tourstep"
-              v-tour-trigger="'property-algorithm-select-tourtrigger'"
+              :data-tour="TOUR_ANCHORS.propertyAlgorithmSelect"
+              v-tour-trigger="TOUR_TRIGGERS.propertyAlgorithmSelect"
             />
           </v-col>
         </v-row>
@@ -68,7 +65,6 @@
               <property-worker-menu
                 v-model="interfaceValues"
                 :image="dockerImage"
-                dense
               />
             </v-col>
           </v-row>
@@ -99,15 +95,16 @@
         <v-spacer></v-spacer>
         <v-btn
           class="mr-2"
+          variant="flat"
           color="primary"
           size="small"
           @click="createProperty"
-          id="create-property-button-tourstep"
-          v-tour-trigger="'create-property-button-tourtrigger'"
+          :data-tour="TOUR_ANCHORS.createPropertyButton"
+          v-tour-trigger="TOUR_TRIGGERS.createPropertyButton"
         >
           Create Property
         </v-btn>
-        <v-btn class="mr-2" color="warning" size="small" @click="reset"
+        <v-btn class="mr-2" variant="text" size="small" @click="reset"
           >Reset</v-btn
         >
       </div>
@@ -128,6 +125,8 @@ import DockerImageSelect from "@/components/DockerImageSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import PropertyWorkerMenu from "@/components/PropertyWorkerMenu.vue";
 import { tagFilterFunction } from "@/utils/annotation";
+import { computePropertyWithStatus } from "@/utils/propertyCompute";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 // Function to remove repeated words
 function removeRepeatedWords(input: string): string {
@@ -254,7 +253,7 @@ function filteringTagsChanged() {
   // The keys of counts are in AnnotationShape
   // Find the best matching shape for these tags
   const counts: { [key: string]: number } = {};
-  for (const annotation of annotationStore.annotations) {
+  for (const annotation of annotationStore.annotationsForIteration) {
     if (
       tagFilterFunction(
         annotation.tags,
@@ -309,10 +308,7 @@ function createProperty() {
         if (props.applyToAllDatasets) {
           emit("compute-property-batch", property);
         } else {
-          propertiesStore.computeProperty({
-            property,
-            errorInfo: { errors: [] },
-          });
+          void computePropertyWithStatus(property);
         }
       }
     });

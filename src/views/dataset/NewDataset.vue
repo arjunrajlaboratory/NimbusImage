@@ -31,6 +31,31 @@
         @error="interruptedUpload"
         @vue:mounted="uploadMounted"
       >
+        <template
+          #dropzone="{
+            files: uploadFiles,
+            dropzoneMessage,
+            multiple,
+            accept,
+            inputFilesChanged,
+          }"
+        >
+          <file-dropzone
+            v-if="!uploadFiles.length"
+            :multiple="multiple"
+            :accept="accept"
+            class="new-dataset-primary-dropzone"
+            @update:model-value="inputFilesChanged"
+          >
+            <template #default>
+              <v-icon size="50px">mdi-file-upload</v-icon>
+              <div class="text-body-1 font-weight-medium mt-3">
+                {{ dropzoneMessage }}
+              </div>
+            </template>
+          </file-dropzone>
+        </template>
+
         <template #files="{ files }" v-if="quickupload && !pipelineError">
           <v-card>
             <v-card-text>
@@ -48,12 +73,14 @@
       >
         <template #default>
           <v-icon size="50px">mdi-file-upload</v-icon>
-          <div class="title mt-3">Add more files to this dataset</div>
+          <div class="text-body-1 font-weight-medium mt-3">
+            Add more files to this dataset
+          </div>
         </template>
       </file-dropzone>
 
       <v-text-field
-        id="dataset-name-input-tourstep"
+        :data-tour="TOUR_ANCHORS.datasetNameInput"
         v-model="name"
         label="Name"
         required
@@ -62,7 +89,7 @@
       />
 
       <v-textarea
-        id="dataset-description-input-tourstep"
+        :data-tour="TOUR_ANCHORS.datasetDescriptionInput"
         v-model="description"
         label="Description"
         :readonly="pageTwo"
@@ -103,6 +130,9 @@
         Cannot create datasets in this location. Please select a subfolder
         within your user directory or group folder.
       </v-alert>
+      <v-alert v-if="storageWarningMessage" variant="tonal" type="warning">
+        {{ storageWarningMessage }}
+      </v-alert>
 
       <div
         class="button-bar d-flex justify-space-between align-center"
@@ -115,11 +145,17 @@
           <span v-if="maxApiKeyFileSize" class="mr-2">
             (using special permission code)</span
           >
+          <span v-if="storageUsageString" class="mr-2">
+            {{ storageUsageString }}</span
+          >
         </div>
         <div>
           <v-btn
-            id="upload-button-tourstep"
-            v-tour-trigger="'upload-button-tourtrigger'"
+            :data-tour="TOUR_ANCHORS.uploadButton"
+            v-tour-trigger="TOUR_TRIGGERS.uploadButton"
+            variant="flat"
+            color="success"
+            size="small"
             :disabled="
               !valid ||
               !filesSelected ||
@@ -128,7 +164,6 @@
               invalidLocation ||
               configuring
             "
-            color="success"
             @click="submit"
           >
             Upload
@@ -169,7 +204,7 @@
                 ? 'success'
                 : idx === store.uploadWorkflow.currentDatasetIndex
                   ? 'primary'
-                  : 'grey'
+                  : 'secondary'
             "
             size="small"
             class="mr-1"
@@ -192,11 +227,25 @@
         :autoDatasetRoute="false"
         @log="configurationLogs = $event"
         @generatedJson="generationDone"
+        @generationError="generationFailed"
       />
     </template>
 
     <!-- Quick import and auto-processing batch mode -->
     <template v-if="(isQuickImport || isBatchMode) && !showConfigAtTop">
+      <v-alert v-if="processingError" type="error" variant="tonal" class="mb-4">
+        <div class="mb-2">{{ processingError }}</div>
+        <v-btn
+          v-if="configurationLogs"
+          size="small"
+          variant="text"
+          color="info"
+          @click="showLogDialog = true"
+        >
+          <v-icon size="small" start>mdi-text-box-outline</v-icon>
+          View Log
+        </v-btn>
+      </v-alert>
       <template v-if="configuring && datasetId">
         <!-- Mount MultiSourceConfiguration for auto-processing -->
         <multi-source-configuration
@@ -205,10 +254,11 @@
           :autoDatasetRoute="false"
           @log="configurationLogs = $event"
           @generatedJson="generationDone"
+          @generationError="generationFailed"
           class="d-none"
         />
         <!-- Show status text and spinner when auto-processing -->
-        <div class="title mb-2">
+        <div class="text-body-1 font-weight-medium mb-2">
           {{
             isBatchMode && !isProcessingFirstDataset
               ? "Applying configuration to dataset"
@@ -221,7 +271,9 @@
         <v-card class="mt-4" v-if="configurationLogs && !pipelineError">
           <v-card-text>
             <div class="d-flex align-center mb-2">
-              <div class="text-subtitle-1 mr-3">{{ progressStatusText }}</div>
+              <div class="text-body-2 text-medium-emphasis mr-3">
+                {{ progressStatusText }}
+              </div>
               <v-spacer></v-spacer>
               <v-btn
                 size="small"
@@ -242,7 +294,7 @@
               color="primary"
             >
               <template v-slot:default>
-                <span class="text-white"
+                <span class="font-mono"
                   >{{ Math.ceil(transcodeProgress) }}%</span
                 >
               </template>
@@ -251,7 +303,9 @@
         </v-card>
       </template>
       <template v-if="creatingView">
-        <div class="title mb-2">Configuring the dataset</div>
+        <div class="text-body-1 font-weight-medium mb-2">
+          Configuring the dataset
+        </div>
         <v-progress-circular indeterminate />
         <dataset-info
           ref="viewCreation"
@@ -263,18 +317,29 @@
     <!-- Log Dialog -->
     <v-dialog v-model="showLogDialog" max-width="800px">
       <v-card>
-        <v-card-title class="headline">
+        <v-card-title>
           Transcoding Log
           <v-spacer></v-spacer>
           <v-tooltip location="bottom">
             <template v-slot:activator="{ props: activatorProps }">
-              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
+              <v-btn
+                v-bind="activatorProps"
+                variant="text"
+                icon
+                size="small"
+                @click="copyLogToClipboard"
+              >
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
             <span>Copy to clipboard</span>
           </v-tooltip>
-          <v-btn icon @click="showLogDialog = false">
+          <v-btn
+            variant="text"
+            icon
+            size="small"
+            @click="showLogDialog = false"
+          >
             <v-icon>mdi-close</v-icon>
           </v-btn>
         </v-card-title>
@@ -283,7 +348,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" variant="text" @click="showLogDialog = false"
+          <v-btn variant="text" size="small" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>
@@ -298,7 +363,7 @@
     <!-- Batch mode error dialog -->
     <v-dialog v-model="showBatchErrorDialog" persistent max-width="500">
       <v-card>
-        <v-card-title class="headline text-error">
+        <v-card-title class="text-error">
           <v-icon start color="error">mdi-alert-circle</v-icon>
           Dataset Failed
         </v-card-title>
@@ -319,12 +384,17 @@
           </p>
         </v-card-text>
         <v-card-actions>
-          <v-btn variant="text" @click="handleStopBatch">
+          <v-btn variant="text" size="small" @click="handleStopBatch">
             <v-icon start>mdi-stop</v-icon>
             Stop and Review
           </v-btn>
           <v-spacer></v-spacer>
-          <v-btn color="primary" @click="handleContinueBatch">
+          <v-btn
+            variant="flat"
+            color="primary"
+            size="small"
+            @click="handleContinueBatch"
+          >
             <v-icon start>mdi-skip-next</v-icon>
             Skip and Continue
           </v-btn>
@@ -343,11 +413,12 @@ import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import { UploadManager } from "@girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import { Upload as GirderUpload } from "@/girder/components";
-import { IDataset } from "@/store/model";
+import { IDataset, IUserStorageQuota } from "@/store/model";
 import { triggersPerCategory } from "@/utils/parsing";
 import { formatDate } from "@/utils/date";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
 import DatasetInfo from "./DatasetInfo.vue";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import { logError, logWarning } from "@/utils/log";
 import { unselectableLocations } from "@/utils/girderSelectable";
 import datasetMetadataImport from "@/store/datasetMetadataImport";
@@ -402,7 +473,7 @@ function findCommonPrefix(strings: string[]): string {
     (trigger) => `\\d${trigger}|${trigger}\\d`,
   );
   const re = new RegExp(`(.*?)(?:_|-|${triggerAndDigit.join("|")})`);
-  const matches = strings.map((s) => s.match(re)![1]);
+  const matches = strings.map((s) => s.match(re)?.[1] ?? s);
 
   const minLength = matches.reduce(
     (acc, cur) => Math.min(acc, cur.length),
@@ -483,6 +554,8 @@ const skippedDatasets = ref<number[]>([]);
 const fileSizeExceeded = ref(false);
 const fileSizeExceededMessage = ref("");
 const maxApiKeyFileSize = ref<number | null>(null);
+const processingError = ref<string | null>(null);
+const storageQuota = ref<IUserStorageQuota | null>(null);
 const allFiles = ref<File[]>([]);
 const currentDatasetIndex = ref(0);
 
@@ -574,6 +647,48 @@ const totalSizeString = computed(() => {
 const maxTotalFileSizeString = computed(() =>
   formatSize(maxTotalFileSize.value),
 );
+
+const storageUsageString = computed(() => {
+  const quotaInfo = storageQuota.value;
+  if (!quotaInfo || quotaInfo.quota == null) {
+    return null;
+  }
+  return `Storage used: ${formatSize(quotaInfo.used)} of ${formatSize(
+    quotaInfo.quota,
+  )}`;
+});
+
+// Warn ahead of the upload when the selected files won't fit in the user's
+// remaining storage quota (or when transcoding might not fit, since it
+// creates an additional optimized copy of the dataset). The actual
+// enforcement happens on the backend; this is advance feedback only.
+const storageWarningMessage = computed(() => {
+  const quotaInfo = storageQuota.value;
+  if (!quotaInfo || quotaInfo.quota == null || files.value.length === 0) {
+    return null;
+  }
+  const totalBytes = files.value.reduce((sum, file) => sum + file.size, 0);
+  const remaining = Math.max(0, quotaInfo.quota - quotaInfo.used);
+  if (totalBytes > remaining) {
+    return (
+      `The selected files (${formatSize(totalBytes)}) are larger than your ` +
+      `remaining storage (${formatSize(remaining)} of ` +
+      `${formatSize(quotaInfo.quota)}). The upload will fail unless you ` +
+      `free up space by deleting datasets you no longer need, or upgrade ` +
+      `your account for more storage.`
+    );
+  }
+  if (2 * totalBytes > remaining) {
+    return (
+      `The selected files (${formatSize(totalBytes)}) fit in your ` +
+      `remaining storage (${formatSize(remaining)}), but transcoding ` +
+      `creates an additional optimized copy of the dataset, which may ` +
+      `exceed your storage quota. If the import fails, free up space or ` +
+      `turn off the transcode option.`
+    );
+  }
+  return null;
+});
 
 const isQuickImport = computed((): boolean =>
   store.uploadWorkflow.active
@@ -870,6 +985,7 @@ async function advanceToNextDataset() {
   configuring.value = false;
   configurationLogs.value = "";
   transcodeProgress.value = undefined;
+  processingError.value = null;
 
   if (!store.uploadWorkflow.originalPath) {
     logError(
@@ -905,6 +1021,15 @@ function navigateToCollection() {
       name: "root",
     });
   }
+}
+
+// Called when MultiSourceConfiguration fails to configure/transcode the
+// dataset (e.g. the transcoding job failed because the storage quota was
+// exceeded). Stops the spinner and surfaces the reason to the user.
+function generationFailed(message: string) {
+  configuring.value = false;
+  processingError.value = message;
+  handleBatchError(message);
 }
 
 function handleBatchError(message: string) {
@@ -1046,9 +1171,9 @@ async function configureDataset() {
 
 function generationDone(jsonId: string | null) {
   if (isBatchMode.value) {
-    handleCollectionGenerationDone(jsonId);
+    return handleCollectionGenerationDone(jsonId);
   } else if (isQuickImport.value) {
-    createView(jsonId);
+    return createView(jsonId);
   } else {
     return;
   }
@@ -1179,7 +1304,24 @@ onMounted(async () => {
     if (props.initialDescription) description.value = props.initialDescription;
   }
 
+  if (!path.value) {
+    try {
+      const privateFolder = await store.api.getUserPrivateFolder();
+      if (!path.value) {
+        path.value = privateFolder;
+      }
+    } catch (error) {
+      logError(error);
+    }
+  }
+
   maxApiKeyFileSize.value = await getMaxUploadSize();
+
+  if (store.girderUser) {
+    storageQuota.value = await store.api.getUserStorageQuota(
+      store.girderUser._id,
+    );
+  }
 });
 
 // --- Expose for tests and external access ---
@@ -1216,6 +1358,11 @@ defineExpose({
   fileSizeExceeded,
   fileSizeExceededMessage,
   maxApiKeyFileSize,
+  processingError,
+  storageQuota,
+  storageUsageString,
+  storageWarningMessage,
+  generationFailed,
   allFiles,
   currentDatasetIndex,
   maxTotalFileSize,
@@ -1268,17 +1415,22 @@ defineExpose({
   max-height: 260px;
 }
 
+.new-dataset-primary-dropzone {
+  height: 100%;
+}
+
 .job-log {
   max-height: 400px;
   min-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
-  font-family: monospace;
+  font-family: var(--nimbus-font-mono);
   font-size: 12px;
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: var(--nimbus-glass);
+  border: 1px solid var(--nimbus-border);
   padding: 12px;
-  border-radius: 4px;
+  border-radius: var(--nimbus-radius-sm);
   width: 100%;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--nimbus-text-secondary);
 }
 </style>

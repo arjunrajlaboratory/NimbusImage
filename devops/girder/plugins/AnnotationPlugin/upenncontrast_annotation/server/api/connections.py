@@ -204,7 +204,7 @@ class AnnotationConnection(Resource):
         annotation_connection.update(filtered)
         self._connectionModel.save(annotation_connection)
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Search for connections")
         .responseClass("annotation_connection")
@@ -268,7 +268,7 @@ class AnnotationConnection(Resource):
             offset=offset,
         ).hint([("datasetId", 1), ("_id", 1)])
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Get connection count for a dataset")
         .param("datasetId", "Get count for this dataset", required=True)
@@ -286,7 +286,7 @@ class AnnotationConnection(Resource):
             "count": self._connectionModel.collection.count_documents(query)
         }
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Get an connection by its id.").param(
             "id", "The connection's id", paramType="path"

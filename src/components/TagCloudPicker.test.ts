@@ -8,19 +8,27 @@ vi.mock("@/store", () => ({
   },
 }));
 
-vi.mock("@/store/annotation", () => ({
-  default: {
+vi.mock("@/store/annotation", () => {
+  const annotations = [
+    { id: "a1", tags: ["t1", "t2"] },
+    { id: "a2", tags: ["t2"] },
+    { id: "a3", tags: ["t3"] },
+  ];
+  const state = {
     annotationTags: ["t2", "t3"],
-    annotations: [
-      { id: "a1", tags: ["t1", "t2"] },
-      { id: "a2", tags: ["t2"] },
-      { id: "a3", tags: ["t3"] },
-    ],
+    annotations,
     addTagsToAllAnnotations: vi.fn(),
     removeTagsFromAllAnnotations: vi.fn(),
     colorAnnotationIds: vi.fn(),
-  },
-}));
+  };
+  Object.defineProperty(state, "annotationsForIteration", {
+    get() {
+      return state.annotations;
+    },
+    enumerable: true,
+  });
+  return { default: state };
+});
 
 import TagCloudPicker from "./TagCloudPicker.vue";
 import annotationStore from "@/store/annotation";
@@ -53,15 +61,13 @@ describe("TagCloudPicker", () => {
     expect(new Set(tags).size).toBe(tags.length);
   });
 
-  it("displayedTags filters by tagSearchFilter", () => {
-    const wrapper = mountComponent();
-    wrapper.vm.tagSearchFilter = "t1";
+  it("displayedTags filters by searchText prop", () => {
+    const wrapper = mountComponent({ searchText: "t1" });
     expect(wrapper.vm.displayedTags).toEqual(["t1"]);
   });
 
-  it("displayedTags returns all when tagSearchFilter is empty", () => {
-    const wrapper = mountComponent();
-    wrapper.vm.tagSearchFilter = "";
+  it("displayedTags returns all when searchText is empty", () => {
+    const wrapper = mountComponent({ searchText: "" });
     expect(wrapper.vm.displayedTags).toEqual(wrapper.vm.availableTags);
   });
 

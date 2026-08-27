@@ -111,7 +111,10 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         from .server.api.user_colors import UserColors
         from .server.api.resource import CustomResource
         from .server.api.export import Export
+        from .server.api.dataImport import DataImport
         from .server.api.project import Project
+        from .server.api.zenodo import Zenodo
+        from .server.api.zenodo_credentials import ZenodoCredentials
 
         ModelImporter.registerModel(
             "upenn_annotation", AnnotationModel, "upenncontrast_annotation"
@@ -169,5 +172,8 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].user_assetstore = UserAssetstore()
         info["apiRoot"].user_colors = UserColors()
         info["apiRoot"].export = Export()
+        info["apiRoot"].annotation_import = DataImport()
         info["apiRoot"].project = Project()
+        info["apiRoot"].zenodo = Zenodo()
+        info["apiRoot"].zenodo_credentials = ZenodoCredentials()
         system.addSystemEndpoints(info["apiRoot"])

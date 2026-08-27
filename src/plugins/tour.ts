@@ -1,25 +1,21 @@
 import type { App } from "vue";
 import type { Router } from "vue-router";
-import Shepherd from "shepherd.js";
-import "shepherd.js/dist/css/shepherd.css";
+import { driver, type Driver, type PopoverDOM } from "driver.js";
+import "driver.js/dist/driver.css";
 import "./tour.scss";
 import { tourBus } from "./tourBus";
-import { logError } from "@/utils/log";
-import {
-  ITourConfig,
-  ITourMetadata,
-  IExtendedShepherdStep,
-} from "@/store/model";
+import { logWarning } from "@/utils/log";
+import { ITourConfig, ITourMetadata, ITourStepRuntime } from "@/store/model";
 
-interface ShepherdShowEvent {
-  step: IExtendedShepherdStep;
-}
+const DEFAULT_WAIT_MS = 8000; // datasetview loads images; give async UI room
 
 export class TourManager {
-  private shepherd!: Shepherd.Tour;
+  private driverObj: Driver | null = null;
+  private steps: ITourStepRuntime[] = [];
   private currentStepIndex = 0;
   private isActive = false;
   private tours: Record<string, ITourMetadata> = {};
+  private activeTriggerEvent: string | null = null;
 
   constructor(
     private router: Router,
@@ -30,10 +26,9 @@ export class TourManager {
     app.config.globalProperties.$loadAllTours = this.loadAllTours.bind(this);
     app.config.globalProperties.$isTourActive = this.isTourActive.bind(this);
 
-    // Watch for route changes
     this.router.afterEach(() => {
-      if (this.shepherd && this.isActive) {
-        this.checkCurrentStep();
+      if (this.isActive) {
+        this.showCurrentStep();
       }
     });
   }
@@ -42,283 +37,232 @@ export class TourManager {
     return this.isActive;
   }
 
-  private async checkCurrentStep() {
-    if (!this.isActive) {
-      return;
-    }
-
-    if (
-      !this.shepherd ||
-      !this.shepherd.steps ||
-      this.shepherd.steps.length === 0
-    ) {
-      return;
-    }
-
-    if (this.currentStepIndex >= this.shepherd.steps.length) {
-      this.isActive = false;
-      this.shepherd.complete();
-      return;
-    }
-
-    const currentStep = this.shepherd.steps[
-      this.currentStepIndex
-    ] as IExtendedShepherdStep;
-    const currentRoute = this.router.currentRoute.value.name;
-    const expectedRoute = currentStep.options.route;
-
-    if (currentRoute === expectedRoute) {
-      try {
-        // Execute beforeShow hook if it exists
-        if (currentStep.options.beforeShow) {
-          try {
-            await currentStep.options.beforeShow();
-          } catch (error) {
-            logError(`[Tour] Error in beforeShow hook:`, error);
-          }
-        }
-
-        // Wait for element to be available
-        if (currentStep.options.attachTo?.element) {
-          await this.waitForElement(
-            currentStep.options.attachTo.element.toString(),
-            currentStep.options.waitForElement,
-          );
-        }
-
-        this.shepherd.show(currentStep.id);
-      } catch (error) {
-        logError(`[Tour] Error showing step:`, error);
-        // Optionally advance to next step on error
-        this.currentStepIndex++;
-        this.checkCurrentStep();
-      }
-    }
-    // No else block - let route changes trigger new checks
-  }
-
-  private waitForElement(
-    selector: string,
-    timeout: number = 1000,
-  ): Promise<Element> {
-    return new Promise((resolve, reject) => {
-      if (document.querySelector(selector)) {
-        return resolve(document.querySelector(selector)!);
-      }
-
-      const observer = new MutationObserver(() => {
-        if (document.querySelector(selector)) {
-          observer.disconnect();
-          resolve(document.querySelector(selector)!);
-        }
-      });
-
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-      });
-
-      // Use configurable timeout
-      setTimeout(() => {
-        observer.disconnect();
-        reject(new Error(`Element ${selector} not found after ${timeout}ms`));
-      }, timeout);
-    });
-  }
-
   async startTour(tourName: string) {
     const tour = await this.loadTourConfig(tourName);
     if (!tour) {
       return;
     }
 
+    this.stopTour();
+
+    this.steps = tour.steps.map((step) => ({
+      id: step.id,
+      route: step.route,
+      element: step.element,
+      title: step.title,
+      text: step.text,
+      position: step.position ?? "bottom",
+      waitForElement: step.waitForElement ?? DEFAULT_WAIT_MS,
+      hasModalOverlay: step.modalOverlay ?? true,
+      showNextButton: step.showNextButton !== false,
+      onTriggerEvent: step.onTriggerEvent,
+    }));
     this.currentStepIndex = 0;
     this.isActive = true;
 
-    this.shepherd = new Shepherd.Tour({
-      useModalOverlay: true,
-      defaultStepOptions: {
-        classes: "shepherd-theme-custom",
-        scrollTo: false,
-        cancelIcon: {
-          enabled: true,
-        },
-        buttons: [
-          {
-            text: "Next",
-            classes: "v-btn v-btn--elevated primary",
-            action: () => {
-              const currentStep = this.shepherd.steps[
-                this.currentStepIndex
-              ] as IExtendedShepherdStep;
-              // Execute onNext hook if it exists
-              if (currentStep.options.onNext) {
-                try {
-                  // Convert string to function if necessary
-                  const onNext =
-                    typeof currentStep.options.onNext === "string"
-                      ? new Function(currentStep.options.onNext)
-                      : currentStep.options.onNext;
-                  onNext();
-                } catch (error) {
-                  logError("[Tour] Error executing onNext hook:", error);
-                }
-              }
-              this.currentStepIndex++;
-              this.shepherd.hide();
-              // Immediately check for the next step
-              this.checkCurrentStep();
-            },
-          },
-        ],
+    this.driverObj = driver({
+      stagePadding: 8,
+      stageRadius: 8,
+      popoverOffset: 12,
+      popoverClass: "tour-popover",
+      // Lighter, slightly blue-black scrim so the UI behind stays legible.
+      overlayColor: "#0a0d12",
+      overlayOpacity: 0.45,
+      // Don't dismiss on background/overlay click or Escape — accidental
+      // clicks while interacting (opening dropdowns, etc.) would strand the
+      // user mid-tour. Exit is only via the explicit Close (X) button, whose
+      // onCloseClick hook is honored regardless of allowClose.
+      allowClose: false,
+      onCloseClick: () => this.stopTour(),
+      onDestroyed: () => {
+        if (this.isActive) {
+          this.stopTour();
+        }
       },
     });
 
-    // Immediately hide the overlay if needed for the first step
-    requestAnimationFrame(() => {
-      const overlay = document.querySelector(
-        ".shepherd-modal-overlay-container",
-      );
-      if (overlay && this.shepherd.steps[0]) {
-        const firstStep = this.shepherd.steps[0] as IExtendedShepherdStep;
-        (overlay as HTMLElement).style.display =
-          firstStep.options.hasModalOverlay === false ? "none" : "block";
+    await this.showCurrentStep();
+  }
+
+  // Renders the current step IF we are on its route; otherwise navigates there.
+  private async showCurrentStep() {
+    if (!this.isActive || !this.driverObj) {
+      return;
+    }
+    if (this.currentStepIndex >= this.steps.length) {
+      return this.stopTour();
+    }
+
+    const step = this.steps[this.currentStepIndex];
+
+    const currentRoute = this.router.currentRoute.value.name;
+    if (step.route && currentRoute !== step.route) {
+      try {
+        await this.router.push({ name: step.route });
+      } catch (error) {
+        // Some routes need params we don't have (e.g. `datasetview` needs a
+        // datasetViewId). We can't navigate there by name — but the app will
+        // get there via the user's action (e.g. once a dataset import
+        // finishes). WAIT for the route to settle rather than rendering the
+        // step on the wrong screen (which showed "Welcome to your new dataset"
+        // mid-import). afterEach re-invokes this once the route changes.
+        logWarning(
+          `[Tour] Waiting for the app to reach route "${step.route}":`,
+          error,
+        );
       }
-    });
+      // Either way, wait for afterEach to re-invoke once the route settles.
+      return;
+    }
 
-    // Add a show event handler
-    this.shepherd.on("show", (event: ShepherdShowEvent) => {
-      const step = event.step;
-      const overlay = document.querySelector(
-        ".shepherd-modal-overlay-container",
-      );
-      if (overlay) {
-        (overlay as HTMLElement).style.display = step.options.hasModalOverlay
-          ? "block"
-          : "none";
+    this.clearTriggerListener();
+
+    let target: Element | null = null;
+    if (step.element) {
+      try {
+        target = await this.waitForElement(step.element, step.waitForElement);
+      } catch {
+        return this.showMissingTargetPopover(step);
       }
+    }
+
+    this.renderStep(step, target);
+
+    if (step.onTriggerEvent) {
+      this.activeTriggerEvent = step.onTriggerEvent;
+      tourBus.on(step.onTriggerEvent, this.advance);
+    }
+  }
+
+  private renderStep(step: ITourStepRuntime, target: Element | null) {
+    if (!this.driverObj) {
+      return;
+    }
+    const isLast = this.currentStepIndex === this.steps.length - 1;
+    // Element-less steps render as a CENTERED modal popover. We must omit the
+    // `element` key entirely — passing `element: "body"` anchors the popover to
+    // the page edge (bottom). We also do NOT set `disableActiveInteraction`:
+    // driver.js implements it by adding `.driver-no-interaction` to <body>,
+    // whose `* { pointer-events: none !important }` rule also disables the
+    // popover's own buttons (and the highlighted element on trigger steps),
+    // making the tour unclickable. The overlay already blocks non-highlighted
+    // page elements, so modal focus is preserved without it.
+    this.driverObj.highlight({
+      ...(target ? { element: target } : {}),
+      popover: {
+        title: step.title,
+        description: step.text,
+        side: step.position,
+        align: "center",
+        // Always include "close" so there's a visible exit (X) — overlay/Escape
+        // dismissal is disabled to prevent accidental exits.
+        showButtons: step.showNextButton ? ["next", "close"] : ["close"],
+        nextBtnText: isLast ? "Done" : "Next",
+        onNextClick: () => this.advance(),
+        onPopoverRender: (popover) => {
+          this.applyOverlayMode(step);
+          this.appendProgress(popover);
+        },
+      },
     });
+    this.applyOverlayMode(step);
+  }
 
-    // Add steps
-    this.shepherd.addSteps(
-      tour.steps.map((step, index: number) => {
-        const isLastStep = index === tour.steps.length - 1;
+  // driver.js overlay opacity is global; toggle a body class the SCSS keys off.
+  private applyOverlayMode(step: ITourStepRuntime) {
+    document.body.classList.toggle("tour-no-overlay", !step.hasModalOverlay);
+  }
 
-        // Convert hook strings to functions
-        const beforeShow = step.beforeShow
-          ? new Function(step.beforeShow)
-          : undefined;
-        const onNext = step.onNext ? new Function(step.onNext) : undefined;
+  // Insert a "N of M" progress label into the popover footer.
+  private appendProgress(popover: PopoverDOM) {
+    const footer = popover.footer;
+    if (!footer || footer.querySelector(".tour-progress")) {
+      return;
+    }
+    const progress = document.createElement("span");
+    progress.className = "tour-progress";
+    progress.innerText = `${this.currentStepIndex + 1} of ${this.steps.length}`;
+    footer.insertBefore(progress, footer.firstChild);
+  }
 
-        // Define buttons based on showNextButton option
-        const buttons =
-          step.showNextButton !== false
-            ? [
-                {
-                  text: isLastStep ? "Done" : "Next",
-                  classes: "v-btn v-btn--elevated primary",
-                  action: () => {
-                    const currentStep = this.shepherd.steps[
-                      this.currentStepIndex
-                    ] as IExtendedShepherdStep;
-                    // Execute onNext hook if it exists
-                    if (currentStep.options.onNext) {
-                      try {
-                        const onNext =
-                          typeof currentStep.options.onNext === "string"
-                            ? new Function(currentStep.options.onNext)
-                            : currentStep.options.onNext;
-                        onNext();
-                      } catch (error) {
-                        logError("[Tour] Error executing onNext hook:", error);
-                      }
-                    }
-                    this.currentStepIndex++;
-                    this.shepherd.hide();
-                    this.checkCurrentStep();
-                  },
-                },
-              ]
-            : [];
-
-        return {
-          id: step.id,
-          attachTo: step.element
-            ? {
-                element: step.element,
-                on: step.position || "bottom",
-              }
-            : undefined,
-          popperOptions: {
-            modifiers: [
-              {
-                name: "offset",
-                options: {
-                  offset: [0, 15],
-                },
-              },
-              {
-                name: "preventOverflow",
-                options: {
-                  boundary: "viewport",
-                  padding: 10,
-                },
-              },
-            ],
-          },
-          title: step.title,
-          text: step.text,
-          classes: "shepherd-theme-custom",
-          arrow: true,
-          route: step.route,
-          waitForElement: step.waitForElement,
-          beforeShow,
-          onNext,
-          hasModalOverlay: step.modalOverlay ?? true,
-          onTriggerEvent: step.onTriggerEvent,
-          buttons, // Use our conditional buttons array
-          when: {
-            show: () => {
-              // First call the existing step listeners
-              this.setupStepListeners(step);
-
-              // Then add progress indicator
-              const currentStep = this.shepherd.getCurrentStep();
-              const currentStepElement = currentStep?.getElement();
-              const footer =
-                currentStepElement?.querySelector(".shepherd-footer");
-              const progress = document.createElement("span");
-              progress.className = "shepherd-progress";
-              progress.innerText = `${this.currentStepIndex + 1} of ${this.shepherd.steps.length}`;
-              if (currentStepElement) {
-                if (footer) {
-                  // If there already is a button, insert the progress before it
-                  footer.insertBefore(
-                    progress,
-                    currentStepElement.querySelector(
-                      ".shepherd-button:last-child",
-                    ),
-                  );
-                } else {
-                  // make a footer and add the progress to it
-                  const footer = document.createElement("div");
-                  footer.className = "shepherd-footer";
-                  footer.appendChild(progress);
-                  currentStepElement.appendChild(footer);
-                }
-              }
-            },
-
-            hide: () => {
-              return this.removeStepListeners(step);
-            },
-          },
-        };
-      }),
+  private showMissingTargetPopover(step: ITourStepRuntime) {
+    if (!this.driverObj) {
+      return;
+    }
+    logWarning(
+      `[Tour] Target "${step.element}" for step "${step.id}" not found ` +
+        `after ${step.waitForElement}ms. Showing recovery popover.`,
     );
+    const isLast = this.currentStepIndex === this.steps.length - 1;
+    document.body.classList.add("tour-no-overlay");
+    this.driverObj.highlight({
+      popover: {
+        title: "This step isn't available",
+        description:
+          "The screen for this step couldn't be found. You can skip it or " +
+          "end the tour.",
+        showButtons: ["next", "close"],
+        nextBtnText: isLast ? "End tour" : "Skip",
+        onNextClick: () => this.advance(),
+      },
+    });
+  }
 
-    // Start by checking if we can show the first step
-    this.checkCurrentStep();
+  private advance = () => {
+    this.clearTriggerListener();
+    this.currentStepIndex++;
+    this.showCurrentStep();
+  };
+
+  private clearTriggerListener() {
+    if (this.activeTriggerEvent) {
+      tourBus.off(this.activeTriggerEvent, this.advance);
+      this.activeTriggerEvent = null;
+    }
+  }
+
+  // Resolve a selector to the best target. Some anchors exist in more than one
+  // place (e.g. PropertyCreation renders both inline off-screen and inside the
+  // measure dialog), so prefer a VISIBLE, in-viewport match over the first one
+  // in the DOM — otherwise the popover anchors to the hidden/off-screen copy.
+  private resolveTarget(selector: string): Element | null {
+    const all = Array.from(document.querySelectorAll(selector));
+    if (all.length <= 1) {
+      return all[0] ?? null;
+    }
+    const visible = all.find((el) => {
+      const r = el.getBoundingClientRect();
+      return (
+        r.width > 0 &&
+        r.height > 0 &&
+        r.bottom > 0 &&
+        r.right > 0 &&
+        r.top < window.innerHeight &&
+        r.left < window.innerWidth
+      );
+    });
+    return visible ?? all[0];
+  }
+
+  private waitForElement(selector: string, timeout: number): Promise<Element> {
+    return new Promise((resolve, reject) => {
+      const existing = this.resolveTarget(selector);
+      if (existing) {
+        return resolve(existing);
+      }
+      const observer = new MutationObserver(() => {
+        const el = this.resolveTarget(selector);
+        if (el) {
+          observer.disconnect();
+          resolve(el);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      setTimeout(() => {
+        observer.disconnect();
+        reject(new Error(`Element ${selector} not found after ${timeout}ms`));
+      }, timeout);
+    });
   }
 
   async loadTourConfig(tourName: string): Promise<ITourConfig> {
@@ -327,36 +271,32 @@ export class TourManager {
   }
 
   stopTour() {
-    if (this.shepherd) {
-      this.isActive = false;
-      this.shepherd.complete();
+    this.clearTriggerListener();
+    document.body.classList.remove("tour-no-overlay");
+    this.isActive = false;
+    if (this.driverObj) {
+      const obj = this.driverObj;
+      this.driverObj = null;
+      obj.destroy();
     }
   }
 
   async nextStep(targetElementId?: string) {
-    if (!this.shepherd || !this.isActive) {
+    if (!this.isActive) {
       return;
     }
-
     if (targetElementId) {
-      // Find the index of the step with the matching element
-      const targetIndex = this.shepherd.steps.findIndex(
-        (step: any) => step.options.attachTo.element === `#${targetElementId}`,
+      const targetIndex = this.steps.findIndex(
+        (s) =>
+          s.element === `#${targetElementId}` ||
+          s.element === `[data-tour="${targetElementId}"]`,
       );
-
-      if (targetIndex !== -1) {
-        this.currentStepIndex = targetIndex;
-      } else {
-        // If target not found, just go to next step
-        this.currentStepIndex++;
-      }
+      this.currentStepIndex =
+        targetIndex !== -1 ? targetIndex : this.currentStepIndex + 1;
     } else {
-      // Normal next step behavior
       this.currentStepIndex++;
     }
-
-    this.shepherd.hide();
-    await this.checkCurrentStep();
+    await this.showCurrentStep();
   }
 
   async loadAllTours(): Promise<Record<string, ITourMetadata>> {
@@ -382,24 +322,6 @@ export class TourManager {
 
     return this.tours;
   }
-
-  private setupStepListeners = (step: any) => {
-    if (step.onTriggerEvent) {
-      tourBus.on(step.onTriggerEvent, this.handleNextStep);
-    }
-  };
-
-  private removeStepListeners = (step: any) => {
-    if (step.onTriggerEvent) {
-      tourBus.off(step.onTriggerEvent, this.handleNextStep);
-    }
-  };
-
-  private handleNextStep = () => {
-    this.currentStepIndex++;
-    this.shepherd.hide();
-    this.checkCurrentStep();
-  };
 }
 
 // Vue 3: declare global properties for TypeScript

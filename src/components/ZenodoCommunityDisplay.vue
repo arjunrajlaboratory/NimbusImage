@@ -11,10 +11,10 @@
       <v-card-title
         v-if="!embedded"
         class="d-flex justify-space-between align-center"
-        id="zenodo-community-display-tourstep"
+        :data-tour="TOUR_ANCHORS.zenodoCommunityDisplay"
       >
         Sample Datasets
-        <v-btn icon @click="$emit('close')">
+        <v-btn variant="text" icon size="small" @click="$emit('close')">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </v-card-title>
@@ -45,7 +45,7 @@
                   alt="Community logo"
                 />
                 <div>
-                  <h3 class="text-h5 mb-1">{{ community.title }}</h3>
+                  <h3 class="page-title mb-1">{{ community.title }}</h3>
                   <p class="mb-0">{{ community.description }}</p>
                 </div>
               </div>
@@ -62,8 +62,8 @@
             hover
             class="sample-dataset-card mb-3"
             @click="selectDataset(dataset)"
-            :id="getTourStepId(dataset.title)"
-            v-tour-trigger="getTourTriggerId(dataset.title)"
+            :data-tour="getTourAnchorId(dataset.title)"
+            v-tour-trigger="getTourAnchorId(dataset.title)"
           >
             <v-card-title class="pb-2">{{ dataset.title }}</v-card-title>
             <v-card-subtitle class="pb-2">
@@ -119,7 +119,8 @@ import ZenodoAPI, {
   IZenodoCommunity,
 } from "@/store/ZenodoAPI";
 import { logError } from "@/utils/log";
-import { getTourStepId, getTourTriggerId } from "@/utils/strings";
+import { TOUR_ANCHORS } from "@/tours/anchors";
+import { getTourAnchorId } from "@/utils/strings";
 
 const props = withDefaults(
   defineProps<{
@@ -226,8 +227,7 @@ defineExpose({
   formatDate,
   formatSize,
   getTotalSize,
-  getTourStepId,
-  getTourTriggerId,
+  getTourAnchorId,
 });
 </script>
 
@@ -247,7 +247,8 @@ defineExpose({
 
 .sample-dataset-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  border-color: var(--nimbus-border-strong);
+  background: var(--nimbus-glass-hover);
 }
 
 .text-truncate-3 {

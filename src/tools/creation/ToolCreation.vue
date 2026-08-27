@@ -41,7 +41,7 @@
                 density="compact"
                 hide-details
                 class="tool-name-field"
-                id="tool-name-tourstep"
+                :data-tour="TOUR_ANCHORS.toolName"
               />
             </div>
             <div class="hotkey-row">
@@ -50,16 +50,20 @@
           </div>
           <v-card-actions class="tool-creation-actions">
             <v-spacer />
-            <v-btn class="mr-4" color="warning" @click="close">CANCEL</v-btn>
+            <v-btn class="mr-4" variant="text" size="small" @click="close"
+              >Cancel</v-btn
+            >
             <v-btn
               class="mr-4"
+              variant="flat"
               color="primary"
+              size="small"
               @click="createTool"
               :disabled="!selectedTemplate"
-              id="tool-creation-add-tool-button-tourstep"
-              v-tour-trigger="`tool-creation-add-tool-button-tourtrigger`"
+              :data-tour="TOUR_ANCHORS.toolCreationAddToolButton"
+              v-tour-trigger="TOUR_TRIGGERS.toolCreationAddToolButton"
             >
-              ADD TOOL TO TOOLSET
+              Add tool to toolset
             </v-btn>
           </v-card-actions>
         </div>
@@ -93,6 +97,7 @@ import { ref, watch, computed } from "vue";
 import store from "@/store";
 import propertiesStore from "@/store/properties";
 import { IToolConfiguration, IToolTemplate } from "@/store/model";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 import ToolConfiguration from "@/tools/creation/ToolConfiguration.vue";
 import ToolConfigurationItem from "@/tools/creation/ToolConfigurationItem.vue";
@@ -317,6 +322,16 @@ defineExpose({
   flex-direction: column;
   max-height: 80vh;
   width: 100%;
+  background: var(--nimbus-glass-bg);
+  backdrop-filter: var(--nimbus-glass-filter);
+  -webkit-backdrop-filter: var(--nimbus-glass-filter);
+  border: 1px solid var(--nimbus-border-strong);
+  border-radius: var(--nimbus-radius-lg);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 0.5px rgba(255, 255, 255, 0.06),
+    0 20px 40px -16px rgba(0, 0, 0, 0.7),
+    0 8px 16px -8px rgba(0, 0, 0, 0.5);
 }
 
 .tool-creation-header {

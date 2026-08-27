@@ -3,40 +3,46 @@ entryPoint: datasetview
 popular: true
 category: Tools
 steps:
+  # Interactive gating: the tool browser + its config controls only exist after
+  # the user opens it, so each step waits for the relevant action.
   - id: add-tool-tourstep
     route: datasetview
-    element: "#add-tool-tourstep"
-    title: "Add Tool"
-    text: "Click here to add a tool to the toolset."
+    element: '[data-tour="add-tool"]'
+    title: "Add a tool"
+    text: "Tools let you create and analyze objects. Click 'Add new tool' to open the tool browser."
     position: "right"
-    waitForElement: 1000
+    waitForElement: 2000
     modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "add-tool"
 
-  - id: gaussian-blur
+  - id: gaussian-blur-tourstep
     route: datasetview
-    element: "#gaussian-blur-tourstep"
-    title: "Click here to activate tool"
-    text: "This tool will perform a Gaussian blur on the image."
+    element: '[data-tour="gaussian-blur"]'
+    title: "Pick a tool type"
+    text: "Choose the 'Gaussian blur' tool — it blurs the image. Click it to configure it."
     position: "right"
-    waitForElement: 1000
+    waitForElement: 5000
     modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "gaussian-blur"
 
   - id: sigma-tourstep
     route: datasetview
-    element: "#sigma-tourstep"
+    element: '[data-tour="sigma"]'
     title: "Sigma"
-    text: "Sigma is a parameter for how much to blur the image."
+    text: "Sigma controls how much the image is blurred. Adjust it, then click Next."
     position: "bottom"
-    waitForElement: 1000
-    modalOverlay: true
+    waitForElement: 5000
+    modalOverlay: false
     showNextButton: true
 
   - id: parent-tourstep
     route: datasetview
-    element: "#parent-tag-tourstep"
+    element: '[data-tour="parent-tag"]'
     title: "Parent tag"
-    text: "Parent tag let's you set which annotations are the parents of other annotations."
+    text: "The parent tag lets you set which annotations are the parents of others. Click Next when ready."
     position: "bottom"
-    waitForElement: 1000
-    modalOverlay: true
+    waitForElement: 5000
+    modalOverlay: false
     showNextButton: true

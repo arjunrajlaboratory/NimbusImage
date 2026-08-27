@@ -34,6 +34,9 @@ import {
   TJobType,
   IDatasetConfigurationCompatibility,
   IJob,
+  IUserStorageQuota,
+  resolveVisibilityConfig,
+  resolveAnnotationOverviewConfig,
 } from "@/store/model";
 import {
   toStyle,
@@ -47,6 +50,9 @@ import { AxiosRequestConfig, AxiosResponse, isAxiosError } from "axios";
 import { fetchAllPages } from "@/utils/fetch";
 import { stringify } from "qs";
 import { logError, logWarning } from "@/utils/log";
+import { markRaw } from "vue";
+import { inferZStepFromDimensionLabelsUm } from "@/utils/dimensionLabels";
+import { IRawImageData, parseRawTiff } from "@/utils/tiff";
 
 // Modern browsers limit concurrency to a single domain at 6 requests (though
 // using HTML 2 might improve that slightly).  For a single layer, if we set
@@ -55,6 +61,16 @@ import { logError, logWarning } from "@/utils/log";
 // fail.  9 is a balance that is somewhat low but was measured as fast as
 // higher values in a limited set of tests.
 const HistogramConcurrency: number = 9;
+
+// A raw pixel region of one frame, with the mapping from image coordinates
+// to region pixels: regionX = (imageX - left) * scaleX
+export interface IRawRegion {
+  image: IRawImageData;
+  left: number;
+  top: number;
+  scaleX: number;
+  scaleY: number;
+}
 
 function toId(item: string | { _id: string }) {
   return typeof item === "string" ? item : item._id;
@@ -77,15 +93,33 @@ function itemsToResourceObject(items: IGirderSelectAble[]) {
 export default class GirderAPI {
   client: RestClientInstance;
 
-  private readonly imageCache = new Map<string, HTMLImageElement>();
-  private readonly histogramCache = new Map<string, Promise<ITileHistogram>>();
-  private readonly resolvedHistogramCache = new Map<string, ITileHistogram>();
+  // markRaw on each cache so Vue's reactive() doesn't intercept Map.get/set
+  // with track/trigger calls. Lookups happen on every tile fetch — the
+  // overhead adds up. The GirderAPI instance itself stays reactive so
+  // `histogramsLoaded` (and any future reactive fields) still work.
+  private readonly imageCache = markRaw(new Map<string, HTMLImageElement>());
+  private readonly histogramCache = markRaw(
+    new Map<string, Promise<ITileHistogram>>(),
+  );
+  private readonly resolvedHistogramCache = markRaw(
+    new Map<string, ITileHistogram>(),
+  );
+  private readonly configurationUpdateChains = markRaw(
+    new Map<string, Promise<IUPennCollection>>(),
+  );
 
   constructor(client: RestClientInstance) {
     this.client = client;
   }
 
+  // Reactive counters used by viewer getters. `histogramsLoaded` is bumped
+  // both when a histogram resolves and when caches are invalidated, so
+  // computed tile URLs re-evaluate. `histogramCacheRevision` is bumped only
+  // on cache invalidation and is recorded on each layer's `_histogram` so
+  // `getLayerHistogram` can force a refetch when the revision no longer
+  // matches.
   histogramsLoaded = 0;
+  histogramCacheRevision = 0;
 
   baseHistogramOptions: IHistogramOptions = {
     frame: 0,
@@ -389,6 +423,51 @@ export default class GirderAPI {
     return response.data;
   }
 
+  /**
+   * Fetch the raw (unstyled) pixel values of a rectangular region of one
+   * frame as a typed array, along with the mapping from image coordinates to
+   * the returned region pixels. The output is capped at maxDim pixels per
+   * side; larger regions are downsampled by the server.
+   */
+  async getRawRegion(
+    itemId: string,
+    frame: number,
+    region: { left: number; top: number; right: number; bottom: number },
+    maxDim: number,
+  ): Promise<IRawRegion | null> {
+    const regionWidth = region.right - region.left;
+    const regionHeight = region.bottom - region.top;
+    if (regionWidth <= 0 || regionHeight <= 0) {
+      return null;
+    }
+    const scale = Math.min(1, maxDim / Math.max(regionWidth, regionHeight));
+    const params: { [key: string]: number | string } = {
+      ...region,
+      units: "base_pixels",
+      frame,
+      encoding: "TIFF",
+      tiffCompression: "raw",
+    };
+    if (scale < 1) {
+      params.width = Math.round(regionWidth * scale);
+      params.height = Math.round(regionHeight * scale);
+    }
+    const response = await this.client.get(`item/${itemId}/tiles/region`, {
+      params,
+      responseType: "arraybuffer",
+    });
+    const image = parseRawTiff(response.data);
+    return {
+      image,
+      left: region.left,
+      top: region.top,
+      // Use the actual returned size: the server preserves the aspect ratio,
+      // so the effective scale can differ slightly from the requested one
+      scaleX: image.width / regionWidth,
+      scaleY: image.height / regionHeight,
+    };
+  }
+
   async getItems(folderId: string): Promise<IGirderItem[]> {
     const baseConfig: AxiosRequestConfig = {
       params: {
@@ -479,13 +558,18 @@ export default class GirderAPI {
     }
   }
 
-  async getRecentDatasetViews(limit: number, offset: number = 0) {
+  async getRecentDatasetViews(
+    limit: number,
+    offset: number = 0,
+    currentUserOnly: boolean = false,
+  ) {
     const formData: AxiosRequestConfig = {
       params: {
         limit,
         offset,
         sort: "lastViewed",
         sortdir: -1,
+        ...(currentUserOnly ? { currentUserOnly: true } : {}),
       },
     };
     const response = await this.client.get("dataset_view", formData);
@@ -806,14 +890,33 @@ export default class GirderAPI {
   async updateConfigurationKey(
     config: IDatasetConfiguration,
     key: keyof IDatasetConfigurationBase,
-  ): Promise<any> {
+  ): Promise<IUPennCollection> {
+    // Snapshot the value when the save is requested, then serialize writes for
+    // the same configuration key. Metadata updates replace the complete value
+    // for that key, so allowing an older request to finish last can discard a
+    // newer edit.
     const metadata = toConfiguationMetadata({ [key]: config[key] });
-    const data = new FormData();
-    data.set("metadata", JSON.stringify(metadata));
-    const collection: IUPennCollection = (
-      await this.client.put(`upenn_collection/${config.id}/metadata`, data)
-    ).data;
-    return collection;
+    const queueKey = `${config.id}:${key}`;
+    const previousUpdate =
+      this.configurationUpdateChains.get(queueKey) ?? Promise.resolve();
+    const update = previousUpdate
+      .catch(() => undefined)
+      .then(async () => {
+        const data = new FormData();
+        data.set("metadata", JSON.stringify(metadata));
+        return (
+          await this.client.put(`upenn_collection/${config.id}/metadata`, data)
+        ).data as IUPennCollection;
+      });
+    this.configurationUpdateChains.set(queueKey, update);
+
+    try {
+      return await update;
+    } finally {
+      if (this.configurationUpdateChains.get(queueKey) === update) {
+        this.configurationUpdateChains.delete(queueKey);
+      }
+    }
   }
 
   deleteConfiguration(
@@ -869,6 +972,17 @@ export default class GirderAPI {
     this.imageCache.clear();
     this.histogramCache.clear();
     this.resolvedHistogramCache.clear();
+    this.histogramCacheRevision = this.histogramCacheRevision + 1;
+    this.histogramsLoaded = this.histogramsLoaded + 1;
+  }
+
+  // Read-only snapshot of cache sizes for memory diagnostics.
+  getCacheSizes() {
+    return {
+      imageCache: this.imageCache.size,
+      histogramCache: this.histogramCache.size,
+      resolvedHistogramCache: this.resolvedHistogramCache.size,
+    };
   }
 
   scheduleTileFramesComputation(datasetId: string) {
@@ -1009,6 +1123,23 @@ export default class GirderAPI {
     }
   }
 
+  // Fetch the user's storage usage and quota from the girder-user-quota
+  // plugin. `quota` is null when the user has no quota (unlimited storage).
+  // Returns null if the quota information cannot be fetched (e.g. the
+  // user-quota plugin is not enabled on the backend).
+  async getUserStorageQuota(userId: string): Promise<IUserStorageQuota | null> {
+    try {
+      const response = await this.client.get(`user/${userId}/quota`);
+      return {
+        used: response.data.size ?? 0,
+        quota: response.data.quota?._currentFileSizeQuota ?? null,
+      };
+    } catch (error) {
+      logError("Failed to fetch user storage quota");
+      return null;
+    }
+  }
+
   async getUserColors(): Promise<{ [key: string]: string }> {
     const response = await this.client.get("user_colors");
     if (response.status !== 200) {
@@ -1069,6 +1200,7 @@ export function asDataset(folder: IGirderFolder): IDataset {
     name: folder.name,
     description: folder.description,
     creatorId: folder.creatorId,
+    dimensionLabels: folder.meta?.dimensionLabels,
     xy: [],
     z: [],
     width: 1,
@@ -1119,6 +1251,13 @@ export function getDatasetScales(dataset: IDataset): IScales {
       unit: "mm",
     };
   }
+  const zStepUm = inferZStepFromDimensionLabelsUm(dataset.dimensionLabels);
+  if (zStepUm !== null && zStepUm > 0) {
+    scales.zStep = {
+      value: zStepUm,
+      unit: "µm",
+    };
+  }
   return scales;
 }
 
@@ -1132,6 +1271,7 @@ function defaultConfigurationBase(
     tools: [],
     propertyIds: [],
     snapshots: [],
+    pipelines: [],
     scales: getDatasetScales(dataset),
   };
 }
@@ -1163,6 +1303,18 @@ export function setBaseCollectionValues(
     description: item.description,
   };
   for (const key of configurationBaseKeys) {
+    if (key === "visibilityConfig") {
+      config.visibilityConfig = resolveVisibilityConfig(
+        item.meta.visibilityConfig,
+      );
+      continue;
+    }
+    if (key === "overviewConfig") {
+      config.overviewConfig = resolveAnnotationOverviewConfig(
+        item.meta.overviewConfig,
+      );
+      continue;
+    }
     config[key] =
       key in item.meta ? item.meta[key] : exampleConfigurationBase()[key];
   }
@@ -1201,6 +1353,7 @@ export interface IHistogramOptions {
 
 export interface ITileMeta {
   [x: string]: any;
+  dtype?: string;
   IndexRange: any;
   levels: number;
   magnification: number;

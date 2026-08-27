@@ -1,38 +1,98 @@
 <template>
-  <v-card class="ma-1">
-    <v-card-title> Object Browser </v-card-title>
-    <v-card-text class="pa-1">
-      <v-expansion-panels hover multiple v-model="expanded">
-        <annotation-filters></annotation-filters>
-        <annotation-actions></annotation-actions>
-        <annotation-properties
-          @expand="expandProperties"
-        ></annotation-properties>
-        <annotation-list @clickedTag="clickedTag"></annotation-list>
-      </v-expansion-panels>
-    </v-card-text>
-  </v-card>
+  <div class="annotation-browser">
+    <v-tabs v-model="activeTab" density="compact" class="browser-tabs">
+      <v-tab value="objects">
+        Objects
+        <v-chip v-if="objectCount > 0" size="x-small" class="ml-2">
+          {{ objectCount.toLocaleString() }}
+        </v-chip>
+      </v-tab>
+      <v-tab value="measurements">
+        <v-icon size="16" start>mdi-ruler-square</v-icon>
+        Measurements
+      </v-tab>
+      <v-tab value="connections">
+        Connections
+        <v-chip v-if="connectionCount > 0" size="x-small" class="ml-2">
+          {{ connectionCount.toLocaleString() }}
+        </v-chip>
+      </v-tab>
+    </v-tabs>
+    <!-- Both tabs stay mounted: the Objects list holds page/scroll/sort state
+         that is expensive to rebuild, and the Connections tab is cheap. -->
+    <v-window v-model="activeTab" class="browser-window">
+      <v-window-item value="objects" class="browser-window-item">
+        <annotation-list @clickedTag="clickedTag" />
+      </v-window-item>
+      <v-window-item value="measurements" class="browser-window-item">
+        <!-- is-active gates rendering: once opened the item stays mounted
+             (hidden, not unmounted), and a hidden tab must not re-render on
+             every annotation/property change. -->
+        <measurements-tab :is-active="activeTab === 'measurements'" />
+      </v-window-item>
+      <v-window-item value="connections" class="browser-window-item">
+        <!-- is-active drives the reveal-on-show retry: this component mounts
+             lazily on first activation and is hidden (not unmounted) after, so
+             a viewer click made while the tab was never opened — or while it
+             was hidden and unlaid-out — must be re-revealed when it shows. -->
+        <connection-list
+          :is-active="activeTab === 'connections'"
+          @clickedTag="clickedTag"
+        />
+      </v-window-item>
+    </v-window>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
-import AnnotationFilters from "@/components/AnnotationBrowser/AnnotationFilters.vue";
+import { computed } from "vue";
 import AnnotationList from "@/components/AnnotationBrowser/AnnotationList.vue";
-import AnnotationActions from "@/components/AnnotationBrowser/AnnotationActions.vue";
-import AnnotationProperties from "@/components/AnnotationBrowser/AnnotationProperties.vue";
+import ConnectionList from "@/components/AnnotationBrowser/ConnectionList.vue";
+import MeasurementsTab from "@/components/AnnotationBrowser/MeasurementsTab.vue";
+import store from "@/store";
+import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
+import { TAnnotationBrowserTab } from "@/store/model";
 
-const expanded = ref<number[]>([2]);
+// In the store rather than a local ref so other panels can route here — the
+// Timelapse panel's "Show tracks" opens the browser AND picks this tab.
+const activeTab = computed({
+  get: () => store.annotationBrowserTab,
+  set: (value: TAnnotationBrowserTab) => store.setAnnotationBrowserTab(value),
+});
+
+// Both badges are dataset-wide totals, not the scoped/filtered counts shown
+// inside each tab — they answer "does this dataset have any?" at a glance.
+const objectCount = computed(() => annotationStore.annotationCount);
+const connectionCount = computed(
+  () => annotationStore.annotationConnections.length,
+);
 
 function clickedTag(tag: string) {
   filterStore.addTagToTagFilter(tag);
 }
 
-function expandProperties() {
-  if (!expanded.value.includes(1)) {
-    expanded.value.push(1);
-  }
+defineExpose({ clickedTag, activeTab, connectionCount, objectCount });
+</script>
+
+<style lang="scss" scoped>
+.annotation-browser {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
-defineExpose({ expanded, clickedTag, expandProperties });
-</script>
+.browser-tabs {
+  flex: 0 0 auto;
+}
+
+.browser-window {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.browser-window-item {
+  height: 100%;
+}
+</style>

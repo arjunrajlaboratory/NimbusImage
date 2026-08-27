@@ -1,12 +1,23 @@
 <template>
-  <v-dialog v-model="dialogInternal" scrollable width="auto">
+  <v-dialog
+    v-model="dialogInternal"
+    scrollable
+    width="70vw"
+    class="wide-dialog"
+  >
     <template
       #activator="{ props: activatorProps }"
       v-if="activatorDisabled === false"
     >
       <div class="d-flex">
         <slot name="activator" v-bind="{ props: activatorProps }">
-          <v-btn v-bind="activatorProps" :disabled="disabled">
+          <v-btn
+            v-bind="activatorProps"
+            :disabled="disabled"
+            variant="outlined"
+            color="primary"
+            size="small"
+          >
             Choose...
           </v-btn>
         </slot>
@@ -19,28 +30,33 @@
         />
       </div>
     </template>
-    <v-card class="pa-2" style="min-width: 70vh">
+    <v-card class="pa-2">
       <v-card-title>{{ title }}</v-card-title>
       <v-card-text style="height: 70vh">
         <custom-file-manager
           v-model:location="selected"
           v-bind="$attrs"
-          :initial-items-per-page="-1"
+          :items-per-page="-1"
           :items-per-page-options="[-1]"
           :menu-enabled="false"
-          :more-chips="false"
           :clickable-chips="false"
         />
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn @click.prevent="dialogInternal = false" color="warning">
+        <v-btn
+          @click.prevent="dialogInternal = false"
+          variant="text"
+          size="small"
+        >
           Cancel
         </v-btn>
         <v-btn
           @click.prevent="select"
           :disabled="!isFolderSelected"
+          variant="flat"
           color="primary"
+          size="small"
         >
           Select
         </v-btn>

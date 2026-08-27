@@ -11,17 +11,18 @@
             <v-select
               :model-value="getCurrentViewItem(item.subItems)"
               @update:model-value="onViewSelect"
+              variant="plain"
               density="compact"
               hide-details
               single-line
-              height="1em"
               :items="item.subItems"
               item-title="text"
               item-value="value"
               :menu-props="{
                 closeOnContentClick: true,
+                maxHeight: 320,
               }"
-              class="body-2 ml-2 breadcrumb-select"
+              class="body-2 ml-1 breadcrumb-select"
             >
               <template
                 #append-item
@@ -44,6 +45,7 @@
             </router-link>
             <v-btn
               v-if="item.title === 'Dataset:' && showExternalLink"
+              variant="text"
               icon
               size="x-small"
               title="Open in Girder"
@@ -64,6 +66,7 @@
             </span>
             <v-btn
               v-if="item.title === 'Dataset:' && showExternalLink"
+              variant="text"
               icon
               size="x-small"
               title="Open in Girder"
@@ -117,7 +120,7 @@
     <!-- Dialog to add a dataset to the current collection -->
     <v-dialog
       content-class="smart-overflow"
-      class="add-dataset-dialog"
+      class="wide-dialog"
       v-model="addDatasetFlag"
       width="60%"
     >
@@ -510,6 +513,42 @@ defineExpose({
   white-space: nowrap;
 }
 
+/* On the dataset view the app bar is transparent and floats over the image,
+   so the dataset name + controls need their own backing to stay legible.
+   Mirrors the glass treatment of the palette cluster in App.vue. The pill is
+   left-anchored next to the logo as a "dataset identity" lockup; the spacer
+   after it pushes every action to the right, so the pill never collides with
+   the Upload Data button. */
+.datasetview-mode .breadcrumbs {
+  height: 36px;
+  margin-left: 8px;
+  max-width: 24vw;
+  background: rgba(15, 18, 23, 0.55);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
+  border-radius: 100px;
+  padding: 0 8px;
+}
+
+/* Collapse the breadcrumb/select chrome so the pill content sits on one
+   centered line at button height, rather than the taller, top-justified
+   compact-field default. */
+.datasetview-mode .breadcrumbs :deep(.v-breadcrumbs) {
+  padding-top: 0;
+  padding-bottom: 0;
+  align-items: center;
+}
+.datasetview-mode .breadcrumbs :deep(.v-field) {
+  --v-field-padding-top: 0;
+  --v-field-padding-bottom: 0;
+}
+.datasetview-mode .breadcrumbs :deep(.v-field__field),
+.datasetview-mode .breadcrumbs :deep(.v-field__input) {
+  min-height: 24px;
+  align-items: center;
+}
+
 .info-hover-icon {
   cursor: pointer;
   opacity: 0.7;
@@ -528,8 +567,8 @@ defineExpose({
 }
 
 .breadcrumb-select {
-  min-width: 8em;
-  max-width: 20em;
+  min-width: 6em;
+  max-width: 14em;
   flex-shrink: 1;
 }
 
@@ -545,6 +584,7 @@ defineExpose({
 
 .breadcrumb-span {
   display: flex;
+  align-items: center;
   max-width: max-content;
   overflow: hidden;
 }
@@ -561,9 +601,5 @@ defineExpose({
 
 .v-alert__content {
   min-width: 0;
-}
-
-.add-dataset-dialog.v-dialog {
-  width: auto;
 }
 </style>

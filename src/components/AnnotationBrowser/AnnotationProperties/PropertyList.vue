@@ -1,45 +1,17 @@
 <template>
   <v-card class="d-flex flex-column property-list">
-    <div class="property-header">
+    <div class="property-header" :data-tour="TOUR_ANCHORS.propertiesHeader">
       <div class="d-flex align-center px-4 py-2">
-        <span class="text-subtitle-1">Object Properties</span>
+        <span class="panel-section-title">Object Properties</span>
         <v-spacer></v-spacer>
-        <template v-if="uncomputedProperties.length <= 0">
-          <span class="text-none px-2 text-success">
-            Computations done
-            <v-icon size="small" color="success">mdi-check</v-icon>
-          </span>
-        </template>
-        <v-btn
-          v-else
-          variant="text"
-          size="small"
-          color="primary"
-          class="text-none px-2"
-          @click="computeUncomputedProperties"
-          :disabled="uncomputedRunning > 0"
-        >
-          {{
-            uncomputedRunning > 0
-              ? "Running uncomputed properties"
-              : "Compute all"
-          }}
-          <template v-if="uncomputedRunning > 0">
-            <v-progress-circular
-              indeterminate
-              size="16"
-              width="2"
-              class="ml-1"
-            />
-          </template>
-          <template v-else>
-            <v-icon size="small" end>mdi-play-circle-outline</v-icon>
-          </template>
-        </v-btn>
+        <compute-all-status
+          :applyToAllDatasets="applyToAllDatasets"
+          @compute-properties-batch="$emit('compute-properties-batch', $event)"
+        />
       </div>
       <v-divider></v-divider>
     </div>
-    <div class="property-content">
+    <div class="property-content" :data-tour="TOUR_ANCHORS.propertiesContent">
       <v-expansion-panels>
         <v-expansion-panel
           v-for="(property, index) in properties"
@@ -66,9 +38,11 @@ import { computed } from "vue";
 import propertyStore from "@/store/properties";
 import AnnotationProperty from "@/components/AnnotationBrowser/AnnotationProperties/Property.vue";
 import AnnotationPropertyBody from "@/components/AnnotationBrowser/AnnotationProperties/PropertyBody.vue";
+import ComputeAllStatus from "@/components/AnnotationBrowser/AnnotationProperties/ComputeAllStatus.vue";
 import { IAnnotationProperty } from "@/store/model";
+import { TOUR_ANCHORS } from "@/tours/anchors";
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     applyToAllDatasets?: boolean;
   }>(),
@@ -77,53 +51,15 @@ const props = withDefaults(
   },
 );
 
-const emit = defineEmits<{
+defineEmits<{
   (e: "compute-properties-batch", properties: IAnnotationProperty[]): void;
   (e: "compute-property-batch", property: IAnnotationProperty): void;
 }>();
 
 const properties = computed(() => propertyStore.properties);
 
-const uncomputedProperties = computed(() => {
-  const res: IAnnotationProperty[] = [];
-  for (const property of propertyStore.properties) {
-    if (
-      propertyStore.uncomputedAnnotationsPerProperty[property.id].length > 0
-    ) {
-      res.push(property);
-    }
-  }
-  return res;
-});
-
-const uncomputedRunning = computed(() => {
-  let value = 0;
-  for (const property of uncomputedProperties.value) {
-    if (propertyStore.propertyStatuses[property.id]?.running) {
-      value++;
-    }
-  }
-  return value;
-});
-
-function computeUncomputedProperties() {
-  if (props.applyToAllDatasets) {
-    emit("compute-properties-batch", uncomputedProperties.value);
-    return;
-  }
-  for (const property of uncomputedProperties.value) {
-    propertyStore.computeProperty({
-      property,
-      errorInfo: { errors: [] },
-    });
-  }
-}
-
 defineExpose({
   properties,
-  uncomputedProperties,
-  uncomputedRunning,
-  computeUncomputedProperties,
 });
 </script>
 

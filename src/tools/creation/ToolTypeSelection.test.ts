@@ -53,8 +53,7 @@ vi.mock("@/store/properties", () => ({
 }));
 
 vi.mock("@/utils/strings", () => ({
-  getTourStepId: vi.fn((x: string) => x),
-  getTourTriggerId: vi.fn((x: string) => x),
+  getTourAnchorId: vi.fn((x: string) => x),
 }));
 
 vi.mock("@/utils/log", () => ({
@@ -172,6 +171,62 @@ describe("ToolTypeSelection", () => {
     expect(featured).toHaveLength(2);
     expect(featured[0].text).toBe("Point");
     expect(featured[1].text).toBe("Tag by click");
+  });
+
+  it("visibleGroups puts template submenus in the tools group", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+
+    const groups = vm.visibleGroups;
+    expect(groups).toHaveLength(1);
+    expect(groups[0].key).toBe("tools");
+    expect(groups[0].submenus).toHaveLength(2);
+  });
+
+  it("search filters items by name", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+
+    vm.searchQuery = "point";
+    await wrapper.vm.$nextTick();
+
+    const groups = vm.visibleGroups;
+    expect(groups).toHaveLength(1);
+    expect(groups[0].submenus).toHaveLength(1);
+    expect(groups[0].submenus[0].items).toHaveLength(1);
+    expect(groups[0].submenus[0].items[0].text).toBe("Point");
+  });
+
+  it("search matching a category name keeps all its items", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+
+    vm.searchQuery = "tagging";
+    await wrapper.vm.$nextTick();
+
+    const groups = vm.visibleGroups;
+    expect(groups).toHaveLength(1);
+    expect(groups[0].submenus).toHaveLength(1);
+    expect(groups[0].submenus[0].items).toHaveLength(2);
+  });
+
+  it("search with no matches yields no groups", async () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+
+    vm.searchQuery = "zzzznomatch";
+    await wrapper.vm.$nextTick();
+
+    expect(vm.visibleGroups).toHaveLength(0);
+  });
+
+  it("reset clears the search query", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+
+    vm.searchQuery = "point";
+    vm.reset();
+    expect(vm.searchQuery).toBe("");
   });
 
   it("featuredItems maintains order from featuredToolNames", () => {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
+import { reactive } from "vue";
 
 const mockSetXY = vi.fn();
 const mockSetZ = vi.fn();
@@ -8,11 +9,31 @@ const mockSetCameraInfo = vi.fn();
 
 vi.mock("@/store", () => ({
   default: {
+    isLoggedIn: true,
     setXY: (...args: any[]) => mockSetXY(...args),
     setZ: (...args: any[]) => mockSetZ(...args),
     setTime: (...args: any[]) => mockSetTime(...args),
     setCameraInfo: (...args: any[]) => mockSetCameraInfo(...args),
-    cameraInfo: { center: { x: 0, y: 0 } },
+    // Full ICameraInfo shape: a 20x20 viewport box centered on (0, 0).
+    cameraInfo: {
+      center: { x: 0, y: 0 },
+      zoom: 1,
+      rotate: 0,
+      gcsBounds: [
+        { x: -10, y: -10 },
+        { x: 10, y: -10 },
+        { x: 10, y: 10 },
+        { x: -10, y: 10 },
+      ],
+    },
+    // Nothing unrolled, so navigation aims at the raw centroid. The unrolled
+    // case is covered in utils/__tests__/annotationNavigation.test.ts.
+    unroll: false,
+    unrollXY: false,
+    unrollZ: false,
+    unrollT: false,
+    unrollGrid: { unrollW: 1, unrollH: 1 },
+    dataset: null,
   },
 }));
 
@@ -21,14 +42,17 @@ const mockSetSelected = vi.fn();
 const mockSetHoveredAnnotationId = vi.fn();
 const mockDeleteSelectedAnnotations = vi.fn();
 const mockDeleteUnselectedAnnotations = vi.fn();
+const mockDeleteAnnotations = vi.fn();
 const mockTagSelectedAnnotations = vi.fn();
 const mockRemoveTagsFromSelectedAnnotations = vi.fn();
 const mockColorSelectedAnnotations = vi.fn();
 const mockUpdateAnnotationName = vi.fn();
 const mockGetAnnotationFromId = vi.fn();
+const mockGetStub = vi.fn();
+const mockEnsureHydrated = vi.fn();
 
-vi.mock("@/store/annotation", () => ({
-  default: {
+vi.mock("@/store/annotation", () => {
+  const state = {
     selectedAnnotationIds: new Set<string>(),
     setSelected: (...args: any[]) => mockSetSelected(...args),
     toggleSelected: (...args: any[]) => mockToggleSelected(...args),
@@ -38,6 +62,8 @@ vi.mock("@/store/annotation", () => ({
       mockDeleteSelectedAnnotations(...args),
     deleteUnselectedAnnotations: (...args: any[]) =>
       mockDeleteUnselectedAnnotations(...args),
+    deleteAnnotations: (...args: any[]) => mockDeleteAnnotations(...args),
+    stubOnlyMode: false,
     tagSelectedAnnotations: (...args: any[]) =>
       mockTagSelectedAnnotations(...args),
     removeTagsFromSelectedAnnotations: (...args: any[]) =>
@@ -49,10 +75,25 @@ vi.mock("@/store/annotation", () => ({
     setHoveredAnnotationId: (...args: any[]) =>
       mockSetHoveredAnnotationId(...args),
     getAnnotationFromId: (...args: any[]) => mockGetAnnotationFromId(...args),
+    getStub: (...args: any[]) => mockGetStub(...args),
+    ensureHydrated: (...args: any[]) => mockEnsureHydrated(...args),
+    annotationCentroids: {} as Record<string, any>,
     annotations: [],
     annotationIdToIdx: {} as Record<string, number>,
-  },
-}));
+    // Mirrors the real store getter: server list mode in stub-only mode OR when
+    // the fully-loaded set exceeds the list threshold.
+    get isListServerMode() {
+      return this.stubOnlyMode || this.annotations.length > 20000;
+    },
+  };
+  Object.defineProperty(state, "annotationsForIteration", {
+    get() {
+      return state.annotations;
+    },
+    enumerable: true,
+  });
+  return { default: state };
+});
 
 vi.mock("@/store/properties", () => ({
   default: {
@@ -66,6 +107,35 @@ vi.mock("@/store/filters", () => ({
   default: {
     filteredAnnotations: [],
     filteredAnnotationIdToIdx: new Map(),
+    tagFilter: { enabled: false, exclusive: false, tags: [] },
+    propertyFilters: [],
+    onlyCurrentFrame: false,
+    roiFilters: [],
+  },
+}));
+
+const mockFetchPage = vi.fn();
+const mockFetchPageContaining = vi.fn<
+  (annotationId: string) => Promise<boolean>
+>(async () => true);
+const mockCancelPendingNavigation = vi.fn();
+const mockSetOptions = vi.fn();
+const mockSetIdSubstring = vi.fn();
+vi.mock("@/store/annotationListServer", () => ({
+  default: {
+    rows: [],
+    total: 0,
+    loading: false,
+    page: 1,
+    pageSize: 50,
+    sort: null,
+    setOptions: (...a: any[]) => mockSetOptions(...a),
+    fetchPage: (...a: any[]) => mockFetchPage(...a),
+    fetchPageContaining: (annotationId: string) =>
+      mockFetchPageContaining(annotationId),
+    cancelPendingNavigation: (...a: any[]) => mockCancelPendingNavigation(...a),
+    fetchMatchingIds: vi.fn(async () => []),
+    setIdSubstring: (...a: any[]) => mockSetIdSubstring(...a),
   },
 }));
 
@@ -81,6 +151,9 @@ import AnnotationList from "./AnnotationList.vue";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
+import annotationListServer from "@/store/annotationListServer";
+
+let filterSignatureState = reactive({ value: "initial-query" });
 
 function makeAnnotation(overrides: any = {}) {
   return {
@@ -132,6 +205,11 @@ describe("AnnotationList", () => {
       mockDeleteSelectedAnnotations(...args);
     (annotationStore as any).deleteUnselectedAnnotations = (...args: any[]) =>
       mockDeleteUnselectedAnnotations(...args);
+    (annotationStore as any).deleteAnnotations = (...args: any[]) =>
+      mockDeleteAnnotations(...args);
+    mockDeleteAnnotations.mockClear();
+    mockDeleteSelectedAnnotations.mockClear();
+    mockDeleteUnselectedAnnotations.mockClear();
     (annotationStore as any).tagSelectedAnnotations = (...args: any[]) =>
       mockTagSelectedAnnotations(...args);
     (annotationStore as any).removeTagsFromSelectedAnnotations = (
@@ -146,11 +224,51 @@ describe("AnnotationList", () => {
       mockSetHoveredAnnotationId(...args);
     (annotationStore as any).getAnnotationFromId = (...args: any[]) =>
       mockGetAnnotationFromId(...args);
+    (annotationStore as any).getStub = (...args: any[]) => mockGetStub(...args);
+    (annotationStore as any).annotationCentroids = {};
     (annotationStore as any).annotations = [];
     (annotationStore as any).annotationIdToIdx = {};
+    // Client mode for existing tests; server-mode tests opt in explicitly.
+    (annotationStore as any).stubOnlyMode = false;
 
-    (filterStore as any).filteredAnnotations = [];
+    // Redefine as a normal data property in case a prior test installed a
+    // throwing getter (the server-mode decoupling test does this).
+    Object.defineProperty(filterStore, "filteredAnnotations", {
+      configurable: true,
+      writable: true,
+      value: [],
+    });
     (filterStore as any).filteredAnnotationIdToIdx = new Map();
+    (filterStore as any).tagFilter = {
+      enabled: false,
+      exclusive: false,
+      tags: [],
+    };
+    (filterStore as any).propertyFilters = [];
+    (filterStore as any).onlyCurrentFrame = false;
+    (filterStore as any).roiFilters = [];
+
+    (annotationListServer as any).rows = [];
+    (annotationListServer as any).total = 0;
+    (annotationListServer as any).loading = false;
+    (annotationListServer as any).page = 1;
+    (annotationListServer as any).pageSize = 50;
+    (annotationListServer as any).sort = null;
+    filterSignatureState = reactive({ value: "initial-query" });
+    Object.defineProperty(annotationListServer, "currentFiltersSignature", {
+      configurable: true,
+      get: () => filterSignatureState.value,
+    });
+    // Reset to a controllable resolved-empty default; per-test overrides set
+    // their own resolved value. restoreAllMocks would otherwise clear the
+    // inline module-mock implementation.
+    (annotationListServer as any).fetchMatchingIds = vi.fn(async () => []);
+    mockFetchPage.mockClear();
+    mockFetchPageContaining.mockClear();
+    mockFetchPageContaining.mockResolvedValue(true);
+    mockCancelPendingNavigation.mockClear();
+    mockSetOptions.mockClear();
+    mockSetIdSubstring.mockClear();
 
     (propertyStore as any).propertyValues = {};
     (propertyStore as any).displayedPropertyPaths = [];
@@ -234,13 +352,22 @@ describe("AnnotationList", () => {
       expect(items[0].shapeName).toBe("Point"); // shape 0 = Point
     });
 
-    it("includes isSelected from annotationStore", () => {
+    it("reads selection reactively from the store rather than baking it into items (Finding 17)", () => {
       const ann = makeAnnotation({ id: "ann1" });
       (filterStore as any).filteredAnnotations = [ann];
-      (annotationStore as any).isAnnotationSelected = vi.fn(() => true);
+      (annotationStore as any).annotationIdToIdx = { ann1: 0 };
+      (annotationStore as any).isAnnotationSelected = vi.fn(
+        (id: string) => id === "ann1",
+      );
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      expect(vm.filteredItems[0].isSelected).toBe(true);
+      // Items no longer carry a baked isSelected flag (so toggling a selection
+      // doesn't re-map the page array).
+      expect(vm.filteredItems[0].isSelected).toBeUndefined();
+      // selectedItems still reflects the store's current selection.
+      expect(vm.selectedItems.map((i: any) => i.annotation.id)).toEqual([
+        "ann1",
+      ]);
     });
   });
 
@@ -304,6 +431,16 @@ describe("AnnotationList", () => {
       (annotationStore as any).isAnnotationSelected = vi.fn(() => false);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
+      expect(vm.selectAllValue).toBe(false);
+    });
+
+    it("selectAllValue is false for an empty filtered list (Finding 11)", () => {
+      (filterStore as any).filteredAnnotations = [];
+      (annotationStore as any).selectedAnnotationIds = new Set();
+      (annotationStore as any).isAnnotationSelected = vi.fn(() => false);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      // 0 === 0 must NOT read as "all selected" on an empty table.
       expect(vm.selectAllValue).toBe(false);
     });
 
@@ -377,12 +514,131 @@ describe("AnnotationList", () => {
 
     it("does nothing when annotation not found", () => {
       mockGetAnnotationFromId.mockReturnValue(null);
+      mockGetStub.mockReturnValue(undefined);
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.goToAnnotationIdLocation("nonexistent");
       expect(mockSetXY).not.toHaveBeenCalled();
     });
+
+    it("navigates using the stub when the annotation has no coordinates (stub-only mode)", () => {
+      // Non-hydrated stub: getAnnotationFromId returns undefined (annotations[]
+      // is empty in stub-only mode), but the stub carries location + centroid.
+      mockGetAnnotationFromId.mockReturnValue(undefined);
+      mockGetStub.mockReturnValue({
+        id: "stub1",
+        location: { XY: 5, Z: 6, Time: 7 },
+        centroid: { x: 55, y: 66 },
+        shape: "point",
+        channel: 0,
+        tags: [],
+        color: null,
+      });
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.goToAnnotationIdLocation("stub1");
+
+      expect(mockSetXY).toHaveBeenCalledWith(5);
+      expect(mockSetZ).toHaveBeenCalledWith(6);
+      expect(mockSetTime).toHaveBeenCalledWith(7);
+      expect(mockSetCameraInfo).toHaveBeenCalledWith(
+        expect.objectContaining({ center: { x: 55, y: 66 } }),
+      );
+      expect(mockSetHoveredAnnotationId).toHaveBeenCalledWith("stub1");
+    });
+
+    it("hydrates the navigated-to annotation (C3 guarantee)", () => {
+      const ann = makeAnnotation({
+        id: "ann1",
+        location: { XY: 0, Z: 0, Time: 0 },
+        coordinates: [{ x: 1, y: 2 }],
+      });
+      mockGetAnnotationFromId.mockReturnValue(ann);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.goToAnnotationIdLocation("ann1");
+      expect(mockEnsureHydrated).toHaveBeenCalledWith(["ann1"]);
+    });
+
+    it("translates gcsBounds with the recenter so the new viewport drives hydration", () => {
+      // This recenter bypasses the GeoJS map, so nothing else re-syncs
+      // gcsBounds. It must be translated by the same delta as the center,
+      // otherwise updateVisibilityAndHydration hydrates the stale pre-click
+      // viewport and the destination renders empty.
+      mockGetAnnotationFromId.mockReturnValue(undefined);
+      mockGetStub.mockReturnValue({
+        id: "stub1",
+        location: { XY: 0, Z: 0, Time: 0 },
+        centroid: { x: 500, y: 400 },
+        shape: "point",
+        channel: 0,
+        tags: [],
+        color: null,
+      });
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.goToAnnotationIdLocation("stub1");
+
+      // store.cameraInfo starts at center (0,0) with a 20x20 bounds box; the
+      // recenter to (500,400) shifts every corner by that same (500,400) delta.
+      expect(mockSetCameraInfo).toHaveBeenCalledWith({
+        center: { x: 500, y: 400 },
+        zoom: 1,
+        rotate: 0,
+        gcsBounds: [
+          { x: 490, y: 390 },
+          { x: 510, y: 390 },
+          { x: 510, y: 410 },
+          { x: 490, y: 410 },
+        ],
+      });
+    });
   });
+
+  describe("server mode for large fully-loaded datasets", () => {
+    it("uses the client list at or below the threshold in non-stub mode", () => {
+      (annotationStore as any).annotations = new Array(20000);
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).isServerMode).toBe(false);
+      expect(mockFetchPage).not.toHaveBeenCalled();
+    });
+
+    it("switches to the server list above the threshold in non-stub mode", () => {
+      (annotationStore as any).annotations = new Array(20001);
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).isServerMode).toBe(true);
+      // onMounted fetches the first server page.
+      expect(mockFetchPage).toHaveBeenCalled();
+    });
+  });
+
+  describe("list size guard", () => {
+    it("tooManyToList is false and items build normally under the limit", () => {
+      const ann = makeAnnotation({ id: "ann1" });
+      (filterStore as any).filteredAnnotations = [ann];
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.tooManyToList).toBe(false);
+      expect(vm.filteredItems).toHaveLength(1);
+    });
+
+    it("tooManyToList is true and filteredItems is empty over the limit", () => {
+      const many = Array.from({ length: vm_listItemLimit() + 1 }, (_, i) =>
+        makeAnnotation({ id: "a" + i }),
+      );
+      (filterStore as any).filteredAnnotations = many;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.tooManyToList).toBe(true);
+      // The expensive per-annotation item mapping is skipped entirely.
+      expect(vm.filteredItems).toHaveLength(0);
+    });
+  });
+
+  function vm_listItemLimit() {
+    const wrapper = mountComponent();
+    return (wrapper.vm as any).LIST_ITEM_LIMIT as number;
+  }
 
   describe("hover", () => {
     it("sets hoveredAnnotationId when annotations < 5000", () => {
@@ -461,6 +717,35 @@ describe("AnnotationList", () => {
         "tag1",
       ]);
     });
+
+    it("does not refresh the server page in client mode", async () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+      await vm.handleTagSubmit({
+        tags: ["tag1"],
+        addOrRemove: "add",
+        replaceExisting: false,
+      });
+      expect(mockFetchPage).not.toHaveBeenCalled();
+    });
+
+    it("tags then refreshes the server page in server mode", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+      await vm.handleTagSubmit({
+        tags: ["tag1"],
+        addOrRemove: "add",
+        replaceExisting: false,
+      });
+      expect(mockTagSelectedAnnotations).toHaveBeenCalledWith({
+        tags: ["tag1"],
+        replace: false,
+      });
+      expect(mockFetchPage).toHaveBeenCalled();
+    });
   });
 
   describe("handleColorSubmit", () => {
@@ -503,23 +788,88 @@ describe("AnnotationList", () => {
         randomize: true,
       });
     });
+
+    it("colors then refreshes the server page in server mode", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+      await vm.handleColorSubmit({
+        useColorFromLayer: false,
+        color: "#ff0000",
+      });
+      expect(mockColorSelectedAnnotations).toHaveBeenCalledWith({
+        color: "#ff0000",
+        randomize: undefined,
+      });
+      expect(mockFetchPage).toHaveBeenCalled();
+    });
   });
 
   describe("deleteSelected", () => {
-    it("calls annotationStore.deleteSelectedAnnotations", () => {
+    it("calls annotationStore.deleteSelectedAnnotations in client mode", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.deleteSelected();
+      await vm.deleteSelected();
       expect(mockDeleteSelectedAnnotations).toHaveBeenCalled();
+      // Client mode must not use the server-mode delete path.
+      expect(mockDeleteAnnotations).not.toHaveBeenCalled();
+    });
+
+    it("deletes the selected ids and refreshes the page in server mode", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).selectedAnnotationIds = new Set(["a", "b"]);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+
+      await vm.deleteSelected();
+
+      expect(mockDeleteAnnotations).toHaveBeenCalledTimes(1);
+      // Order-insensitive: deletes exactly the selected ids.
+      expect([...mockDeleteAnnotations.mock.calls[0][0]].sort()).toEqual([
+        "a",
+        "b",
+      ]);
+      expect(mockSetSelected).toHaveBeenCalledWith([]);
+      expect(mockFetchPage).toHaveBeenCalled();
+      // The client store action must not be used in server mode.
+      expect(mockDeleteSelectedAnnotations).not.toHaveBeenCalled();
     });
   });
 
   describe("deleteUnselected", () => {
-    it("calls annotationStore.deleteUnselectedAnnotations", () => {
+    it("calls annotationStore.deleteUnselectedAnnotations in client mode", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.deleteUnselected();
+      await vm.deleteUnselected();
       expect(mockDeleteUnselectedAnnotations).toHaveBeenCalled();
+      // Client mode must not use the server-mode matching-ids path.
+      expect(mockDeleteAnnotations).not.toHaveBeenCalled();
+      expect(annotationListServer.fetchMatchingIds).not.toHaveBeenCalled();
+    });
+
+    it("deletes matching-minus-selected and refreshes the page in server mode", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).fetchMatchingIds = vi.fn(async () => [
+        "a",
+        "b",
+        "c",
+        "d",
+      ]);
+      (annotationStore as any).selectedAnnotationIds = new Set(["b", "d"]);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+
+      await vm.deleteUnselected();
+
+      expect(mockDeleteAnnotations).toHaveBeenCalledTimes(1);
+      // The unselected matching ids (all matching minus the selected).
+      expect(mockDeleteAnnotations.mock.calls[0][0]).toEqual(["a", "c"]);
+      expect(mockFetchPage).toHaveBeenCalled();
+      // The client store action must not be used in server mode.
+      expect(mockDeleteUnselectedAnnotations).not.toHaveBeenCalled();
     });
   });
 
@@ -533,6 +883,19 @@ describe("AnnotationList", () => {
         id: "ann1",
       });
     });
+
+    it("renames then refreshes the server page in server mode", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockFetchPage.mockClear();
+      await vm.updateAnnotationName("New Name", "ann1");
+      expect(mockUpdateAnnotationName).toHaveBeenCalledWith({
+        name: "New Name",
+        id: "ann1",
+      });
+      expect(mockFetchPage).toHaveBeenCalled();
+    });
   });
 
   describe("getPageFromItemId", () => {
@@ -540,6 +903,29 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.getPageFromItemId("ann1")).toBe(1);
+    });
+
+    it("waits for and scrolls to a row after changing the client page", async () => {
+      (filterStore as any).filteredAnnotations = Array.from(
+        { length: 15 },
+        (_, index) => makeAnnotation({ id: `ann${index + 1}` }),
+      );
+      (annotationStore as any).hoveredAnnotationId = "ann14";
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const scrollIntoView = vi.fn();
+
+      const navigation = vm.onHoveredIdOrItemsPerPageChanged();
+      await Promise.resolve();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      vm.setAnnotationRef("ann14", { scrollIntoView });
+      await navigation;
+
+      expect(vm.page).toBe(2);
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "nearest",
+      });
     });
   });
 
@@ -565,6 +951,399 @@ describe("AnnotationList", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       expect(vm.displayedPropertyPaths).toEqual([["p1", "a"]]);
+    });
+  });
+
+  describe("server mode", () => {
+    it("renders server rows + total and fetches on mount", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).rows = [
+        {
+          id: "srv1",
+          centroid: { x: 1, y: 2 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "point",
+          channel: 0,
+          tags: [],
+          color: null,
+          values: {},
+        },
+      ];
+      (annotationListServer as any).total = 1234;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.isServerMode).toBe(true);
+      expect(vm.serverItemsLength).toBe(1234);
+      expect(vm.serverRowItems).toHaveLength(1);
+      expect(vm.serverRowItems[0].annotation.id).toBe("srv1");
+      // Exactly one fetch on mount. The table is stubbed in tests so it never
+      // emits update:options; this also locks the Fix-2 mount dedup (the real
+      // immediate-on-mount emit must not produce a second identical request).
+      expect(mockFetchPage).toHaveBeenCalledTimes(1);
+    });
+
+    it("computes absolute index for server rows across pages", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).page = 3;
+      (annotationListServer as any).pageSize = 50;
+      (annotationListServer as any).rows = [
+        {
+          id: "srv1",
+          centroid: { x: 1, y: 2 },
+          location: { XY: 0, Z: 0, Time: 0 },
+          shape: "point",
+          channel: 0,
+          tags: [],
+          color: null,
+          values: {},
+        },
+      ];
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      // (page-1)*pageSize + i = 2*50 + 0 = 100
+      expect(vm.serverRowItems[0].index).toBe(100);
+    });
+
+    it("does not invoke filterStore.filteredAnnotations in server mode", async () => {
+      // A throwing getter proves server mode never reads the client set.
+      Object.defineProperty(filterStore, "filteredAnnotations", {
+        configurable: true,
+        get() {
+          throw new Error(
+            "filteredAnnotations must not be read in server mode",
+          );
+        },
+      });
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).total = 7;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(() => vm.serverItemsLength).not.toThrow();
+      expect(() => vm.selectAllValue).not.toThrow();
+      expect(() => vm.selectAllIndeterminate).not.toThrow();
+      expect(() => vm.selectedIds).not.toThrow();
+      expect(vm.serverItemsLength).toBe(7);
+      // The hover watch must also stay off the client set: simulate an external
+      // hover (e.g. from the image viewer) and let the watcher run.
+      vm.setAnnotationRef("srv1", { scrollIntoView: vi.fn() });
+      (annotationStore as any).hoveredAnnotationId = "srv1";
+      vm.itemsPerPage = 200;
+      await expect(wrapper.vm.$nextTick()).resolves.toBeUndefined();
+      // Restore a plain data property so later tests aren't affected.
+      Object.defineProperty(filterStore, "filteredAnnotations", {
+        configurable: true,
+        writable: true,
+        value: [],
+      });
+    });
+
+    it("loads the page containing an externally hovered off-page row", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).hoveredAnnotationId = "off-page";
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const scrollIntoView = vi.fn();
+      mockFetchPageContaining.mockClear();
+
+      const navigation = vm.onHoveredIdOrItemsPerPageChanged();
+      await Promise.resolve();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      vm.setAnnotationRef("off-page", { scrollIntoView });
+      await navigation;
+
+      expect(mockFetchPageContaining).toHaveBeenCalledWith("off-page");
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
+
+    it("drops Vuetify's stale options echo while an anchor page is mounting", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).hoveredAnnotationId = "off-page";
+      let finishPageLookup!: (loaded: boolean) => void;
+      mockFetchPageContaining.mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishPageLookup = resolve;
+          }),
+      );
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const scrollIntoView = vi.fn();
+      mockSetOptions.mockClear();
+      mockFetchPage.mockClear();
+
+      const navigation = vm.onHoveredIdOrItemsPerPageChanged();
+      // The anchor result lands and moves the store to the target page...
+      finishPageLookup(true);
+      (annotationListServer as any).page = 5;
+      await Promise.resolve();
+      // ...then Vuetify re-emits the PRE-navigation options while reconciling.
+      // That stale echo must be dropped, and must not cancel the navigation.
+      vm.onServerOptions({ page: 1, itemsPerPage: 50, sortBy: [] });
+
+      expect(mockSetOptions).not.toHaveBeenCalled();
+      expect(mockFetchPage).not.toHaveBeenCalled();
+
+      vm.setAnnotationRef("off-page", { scrollIntoView });
+      await navigation;
+      expect(scrollIntoView).toHaveBeenCalled();
+      (annotationListServer as any).page = 1;
+    });
+
+    it("lets a user pagination click cancel an anchor navigation", async () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).hoveredAnnotationId = "off-page";
+      let finishPageLookup!: (loaded: boolean) => void;
+      mockFetchPageContaining.mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishPageLookup = resolve;
+          }),
+      );
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const scrollIntoView = vi.fn();
+      mockSetOptions.mockClear();
+      mockFetchPage.mockClear();
+
+      const navigation = vm.onHoveredIdOrItemsPerPageChanged();
+      mockCancelPendingNavigation.mockClear();
+      // A genuine pagination click (differs from both the pre-navigation
+      // snapshot and the store state) wins over the pending navigation.
+      vm.onServerOptions({ page: 2, itemsPerPage: 50, sortBy: [] });
+
+      expect(mockCancelPendingNavigation).toHaveBeenCalled();
+      expect(mockSetOptions).toHaveBeenCalledWith({
+        page: 2,
+        pageSize: 50,
+        sort: null,
+      });
+      expect(mockFetchPage).toHaveBeenCalled();
+
+      finishPageLookup(true);
+      vm.setAnnotationRef("off-page", { scrollIntoView });
+      await navigation;
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    });
+
+    it("selectAllValue uses server total + selectedAnnotationIds in server mode", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).total = 2;
+      (annotationStore as any).selectedAnnotationIds = new Set(["a", "b"]);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.selectAllValue).toBe(true);
+    });
+
+    it("selectAllIndeterminate uses server total in server mode", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).total = 3;
+      (annotationStore as any).selectedAnnotationIds = new Set(["a"]);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.selectAllIndeterminate).toBe(true);
+    });
+
+    it("selectedIds returns selectedAnnotationIds directly in server mode", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationStore as any).selectedAnnotationIds = new Set(["x", "y"]);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.selectedIds.sort()).toEqual(["x", "y"]);
+    });
+
+    it("roiActiveInServerMode is true when an ROI filter is enabled", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (filterStore as any).roiFilters = [{ enabled: true }];
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.roiActiveInServerMode).toBe(true);
+    });
+
+    it("roiActiveInServerMode is false in client mode", () => {
+      (annotationStore as any).stubOnlyMode = false;
+      (filterStore as any).roiFilters = [{ enabled: true }];
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.roiActiveInServerMode).toBe(false);
+    });
+
+    it("onServerOptions maps options and fetches", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockSetOptions.mockClear();
+      mockFetchPage.mockClear();
+      vm.onServerOptions({
+        page: 2,
+        itemsPerPage: 50,
+        sortBy: [{ key: "annotation.location.XY", order: "asc" }],
+      });
+      expect(mockSetOptions).toHaveBeenCalledWith({
+        page: 2,
+        pageSize: 50,
+        sort: { type: "field", key: "location.XY", order: "asc" },
+      });
+      expect(mockFetchPage).toHaveBeenCalled();
+    });
+
+    it("onServerOptions is a no-op when options match the store state (mount dedup)", () => {
+      // Store is at page:1, pageSize:50, sort:null (default mock state). The
+      // immediate-on-mount emit from Vuetify carries these same values, so it
+      // must not produce a second setOptions/fetchPage on top of onMounted.
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockSetOptions.mockClear();
+      mockFetchPage.mockClear();
+      vm.onServerOptions({ page: 1, itemsPerPage: 50, sortBy: [] });
+      expect(mockSetOptions).not.toHaveBeenCalled();
+      expect(mockFetchPage).not.toHaveBeenCalled();
+    });
+
+    it("onServerOptions fetches when options differ from the store state", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      mockSetOptions.mockClear();
+      mockFetchPage.mockClear();
+      vm.onServerOptions({ page: 2, itemsPerPage: 50, sortBy: [] });
+      expect(mockSetOptions).toHaveBeenCalledWith({
+        page: 2,
+        pageSize: 50,
+        sort: null,
+      });
+      expect(mockFetchPage).toHaveBeenCalledTimes(1);
+    });
+
+    it("debounces the server refetch when localIdFilter changes", async () => {
+      vi.useFakeTimers();
+      try {
+        (annotationStore as any).stubOnlyMode = true;
+        const wrapper = mountComponent();
+        const vm = wrapper.vm as any;
+        // onMounted fetched once; isolate the watch-driven refetch.
+        mockFetchPage.mockClear();
+        mockSetIdSubstring.mockClear();
+
+        vm.localIdFilter = "abc";
+        await wrapper.vm.$nextTick();
+
+        // State updates synchronously, but the fetch is deferred.
+        expect(mockSetIdSubstring).toHaveBeenCalledWith("abc");
+        expect(mockFetchPage).not.toHaveBeenCalled();
+
+        // After the debounce window, exactly one fetch fires.
+        vi.advanceTimersByTime(300);
+        expect(mockFetchPage).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe("selection scope", () => {
+    it("clears the global selection when an analysis gate changes in client mode", async () => {
+      // Client rows hide selected ids that no longer pass the gate, but bulk
+      // delete/tag/color actions read the global store set directly. The query
+      // change therefore has to prune the source of truth, not just the table's
+      // computed v-model.
+      (annotationStore as any).selectedAnnotationIds = new Set(["a"]);
+      (annotationStore as any).setSelected = (ids: string[]) => {
+        mockSetSelected(ids);
+        (annotationStore as any).selectedAnnotationIds = new Set(ids);
+      };
+      const wrapper = mountComponent();
+
+      filterSignatureState.value = "analysis-gate:p1:b";
+      await wrapper.vm.$nextTick();
+
+      expect(mockSetSelected).toHaveBeenCalledWith([]);
+      expect([...annotationStore.selectedAnnotationIds]).toEqual([]);
+    });
+  });
+
+  describe("mapSort", () => {
+    it("maps a property column to a property sort", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "properties.P1.Area", order: "desc" })).toEqual({
+        type: "property",
+        key: ["P1", "Area"],
+        order: "desc",
+      });
+    });
+
+    it("maps a location field column to a field sort", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(
+        vm.mapSort({ key: "annotation.location.XY", order: "asc" }),
+      ).toEqual({ type: "field", key: "location.XY", order: "asc" });
+    });
+
+    it("maps annotation.name to a name field sort", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "annotation.name", order: "asc" })).toEqual({
+        type: "field",
+        key: "name",
+        order: "asc",
+      });
+    });
+
+    it("treats index as unsortable server-side (returns null)", () => {
+      // The displayed index is just offset+rowIndex; it only matches a true
+      // ordering in the default (_id) order, so position isn't meaningfully
+      // sortable server-side (Finding #8).
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "index", order: "asc" })).toBeNull();
+    });
+
+    it("maps annotation.id to the _id field sort", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "annotation.id", order: "desc" })).toEqual({
+        type: "field",
+        key: "_id",
+        order: "desc",
+      });
+    });
+
+    it("returns null for unsupported tags column", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "annotation.tags", order: "asc" })).toBeNull();
+    });
+
+    it("returns null for unsupported shapeName column", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.mapSort({ key: "shapeName", order: "asc" })).toBeNull();
+    });
+  });
+
+  describe("server-mode unsortable columns", () => {
+    it("marks tags, shapeName, and index non-sortable in server mode", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const byKey = Object.fromEntries(vm.headers.map((h: any) => [h.key, h]));
+      expect(byKey["index"].sortable).toBe(false);
+      expect(byKey["annotation.tags"].sortable).toBe(false);
+      // annotation.id is a real, meaningfully sortable column (= _id order).
+      expect(byKey["annotation.id"]?.sortable).not.toBe(false);
+    });
+
+    it("does not mark index non-sortable in client mode", () => {
+      (annotationStore as any).stubOnlyMode = false;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      const indexHeader = vm.headers.find((h: any) => h.key === "index");
+      expect(indexHeader.sortable).not.toBe(false);
     });
   });
 

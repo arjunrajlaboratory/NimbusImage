@@ -35,6 +35,19 @@ describe("FileDropzone", () => {
     expect(wrapper.emitted("update:modelValue")![0][0]).toEqual([file]);
   });
 
+  it("emits files from a drop event", async () => {
+    const wrapper = mountComponent();
+    const file = new File(["content"], "dropped.txt");
+
+    await wrapper.vm.onDrop({
+      dataTransfer: { files: [file] },
+    } as unknown as DragEvent);
+
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0][0]).toEqual([file]);
+    expect(wrapper.vm.dropzoneClass).toBeNull();
+  });
+
   it("initializes dropzoneClass as null", () => {
     const wrapper = mountComponent();
     expect(wrapper.vm.dropzoneClass).toBeNull();

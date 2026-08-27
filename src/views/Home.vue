@@ -4,7 +4,7 @@
       <v-overlay
         :model-value="isNavigating"
         contained
-        scrim="white"
+        scrim="background"
         :opacity="0.8"
         z-index="9999"
         class="d-flex align-center justify-center"
@@ -19,13 +19,16 @@
           <div class="loading-text">Loading dataset information...</div>
         </div>
       </v-overlay>
-      <v-container class="home-container">
-        <v-row class="home-row">
+      <v-container
+        class="home-container"
+        :class="{ 'browse-expanded': fileBrowserExpanded }"
+      >
+        <v-row v-if="!fileBrowserExpanded" class="home-row">
           <v-col class="fill-height">
             <section class="mb-4 home-section">
               <!-- Upload Files -->
               <v-card
-                id="upload-files-tourstep"
+                :data-tour="TOUR_ANCHORS.uploadFiles"
                 class="upload-card fill-height"
                 :class="{ 'drag-active': isDragging }"
                 @click="openFileSelector"
@@ -47,7 +50,7 @@
                     class="text-h6 text-white text-center"
                     style="pointer-events: none"
                   >
-                    Drop files here to upload
+                    Drop files or a folder here to upload
                   </div>
                 </v-overlay>
 
@@ -60,10 +63,21 @@
                   <div class="text-center">
                     <div class="text-h6 mb-2">Upload files</div>
                     <div class="text-body-2 mb-2">
-                      Click or drag here to upload files. You can choose to
-                      accept default settings or configure advanced options
-                      after selecting files.
+                      Click or drag here to upload files. You can also drag a
+                      folder or use the button below to upload every file in a
+                      folder. You can choose to accept default settings or
+                      configure advanced options after selecting files.
                     </div>
+                    <v-btn
+                      variant="tonal"
+                      color="primary"
+                      size="small"
+                      class="mb-2"
+                      @click.stop="openFolderSelector"
+                    >
+                      <v-icon start>mdi-folder-upload</v-icon>
+                      Upload a folder
+                    </v-btn>
                     <div class="text-caption">
                       Dataset will be uploaded to folder:
                       <strong>{{ locationName }}</strong>
@@ -75,22 +89,35 @@
           </v-col>
           <v-col class="fill-height recent-dataset">
             <section class="mb-4 home-section">
-              <v-tabs v-model="datasetsTab" color="primary">
-                <v-tab>Recent Datasets</v-tab>
-                <v-tab>Recent Projects</v-tab>
-                <v-tab
-                  v-if="Boolean(zenodoCommunityId)"
-                  id="try-sample-dataset-tourstep"
-                  v-tour-trigger="'try-sample-dataset-tourtrigger'"
+              <div class="d-flex align-center">
+                <v-tabs v-model="datasetsTab" color="primary">
+                  <v-tab>Recent Datasets</v-tab>
+                  <v-tab>Recent Projects</v-tab>
+                  <v-tab
+                    v-if="Boolean(zenodoCommunityId)"
+                    :data-tour="TOUR_ANCHORS.trySampleDataset"
+                    v-tour-trigger="TOUR_TRIGGERS.trySampleDataset"
+                  >
+                    Sample Datasets
+                  </v-tab>
+                </v-tabs>
+                <v-chip
+                  v-if="datasetsTab === 0"
+                  size="small"
+                  variant="tonal"
+                  :color="recentsShowMineOnly ? 'primary' : undefined"
+                  class="ml-2"
+                  @click="recentsShowMineOnly = !recentsShowMineOnly"
                 >
-                  Sample Datasets
-                </v-tab>
-              </v-tabs>
+                  Mine only
+                </v-chip>
+              </div>
               <v-window v-model="datasetsTab" class="fill-height">
                 <v-window-item class="fill-height">
                   <recent-datasets
                     :dataset-view-items="datasetViewItems"
                     :get-user-display-name="getUserDisplayName"
+                    :get-user-short-name="getUserShortName"
                     :format-date-number="formatDateNumber"
                     @dataset-clicked="navigateToDatasetView"
                     class="fill-height"
@@ -120,12 +147,15 @@
             </section>
           </v-col>
         </v-row>
-        <v-divider class="my-4"></v-divider>
-        <v-row class="home-row">
+        <v-divider v-if="!fileBrowserExpanded" class="my-4"></v-divider>
+        <v-row
+          class="home-row"
+          :class="{ 'browse-row-expanded': fileBrowserExpanded }"
+        >
           <v-col class="fill-height">
             <section class="mb-4 home-section">
               <div class="d-flex align-center mb-4">
-                <span class="text-h6 font-weight-medium mr-4">Browse</span>
+                <span class="panel-section-title mr-4">Browse</span>
                 <v-btn-toggle
                   v-model="browseMode"
                   mandatory
@@ -145,6 +175,31 @@
                     Projects
                   </v-btn>
                 </v-btn-toggle>
+                <v-spacer />
+                <v-tooltip
+                  :text="
+                    fileBrowserExpanded
+                      ? 'Exit full screen'
+                      : 'Expand to full screen'
+                  "
+                  location="top"
+                >
+                  <template v-slot:activator="{ props: tooltipProps }">
+                    <v-btn
+                      v-bind="tooltipProps"
+                      icon
+                      size="small"
+                      variant="text"
+                      @click="toggleFileBrowserExpanded"
+                    >
+                      <v-icon>{{
+                        fileBrowserExpanded
+                          ? "mdi-arrow-collapse"
+                          : "mdi-arrow-expand"
+                      }}</v-icon>
+                    </v-btn>
+                  </template>
+                </v-tooltip>
               </div>
               <div class="scrollable">
                 <v-dialog
@@ -163,8 +218,8 @@
                   v-if="browseMode === 'files'"
                   :location="location"
                   @update:location="onLocationUpdate"
-                  :initial-items-per-page="100"
-                  :items-per-page-options="[10, 20, 50, 100, -1]"
+                  :items-per-page="25"
+                  :items-per-page-options="[10, 25, 50, 100, -1]"
                 >
                   <template #options="{ items }">
                     <!--
@@ -195,9 +250,10 @@
       <!-- Upload Choice Dialog -->
       <v-dialog v-model="showUploadDialog" max-width="800px" persistent>
         <v-card>
-          <v-card-title class="headline d-flex align-center">
+          <v-card-title class="d-flex align-center">
             Create dataset
             <v-btn
+              variant="text"
               icon
               size="small"
               class="ml-2"
@@ -321,9 +377,7 @@
             </v-alert>
 
             <v-card class="mb-4">
-              <v-card-title class="text-subtitle-1 pa-3"
-                >Location:</v-card-title
-              >
+              <div class="panel-section-title pa-3">Location</div>
               <v-card-text class="pt-0">
                 <girder-location-chooser
                   v-model="selectedLocation"
@@ -334,13 +388,16 @@
             </v-card>
           </v-card-text>
           <v-card-actions>
-            <v-btn variant="text" @click="closeUploadDialog">Cancel</v-btn>
+            <v-btn variant="text" size="small" @click="closeUploadDialog">
+              Cancel
+            </v-btn>
             <v-spacer></v-spacer>
             <v-btn
-              id="configure-dataset-button-tourstep"
+              :data-tour="TOUR_ANCHORS.configureDatasetButton"
               variant="outlined"
               color="primary"
-              v-tour-trigger="'configure-dataset-tourtrigger'"
+              size="small"
+              v-tour-trigger="TOUR_TRIGGERS.configureDataset"
               :disabled="!isFormValid"
               @click="handleConfigureDataset"
               class="mr-2"
@@ -348,9 +405,11 @@
               Advanced Import
             </v-btn>
             <v-btn
-              id="accept-defaults-button-tourstep"
+              :data-tour="TOUR_ANCHORS.acceptDefaultsButton"
+              variant="flat"
               color="primary"
-              v-tour-trigger="'accept-defaults-tourtrigger'"
+              size="small"
+              v-tour-trigger="TOUR_TRIGGERS.acceptDefaults"
               :disabled="!isFormValid"
               @click="handleAcceptDefaults"
             >
@@ -389,13 +448,14 @@ function findCommonPrefix(strings: string[]): string {
   }
 
   // For non-numeric prefixes:
-  // Extract the non-metadata prefix of each filename. Note that because of the
-  // way the regex is constructed, the first match group will never be `null`.
+  // Extract the non-metadata prefix of each filename. If a filename contains
+  // none of the delimiters or trigger patterns, fall back to the whole string
+  // so the character-by-character comparison below still runs.
   const triggerAndDigit = allTriggers.map(
     (trigger) => `\\d${trigger}|${trigger}\\d`,
   );
   const re = new RegExp(`(.*?)(?:_|-|${triggerAndDigit.join("|")})`);
-  const matches = strings.map((s) => s.match(re)![1]);
+  const matches = strings.map((s) => s.match(re)?.[1] ?? s);
 
   // Get the minimum length of all the strings; the common prefix cannot be
   // longer than this.
@@ -439,8 +499,10 @@ import {
   IUPennCollection,
 } from "@/girder";
 import girderResources from "@/store/girderResources";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import {
   IDatasetView,
+  IRecentDatasetViewItem,
   WelcomeTourNames,
   WelcomeTourTypes,
   WelcomeTourStatus,
@@ -457,6 +519,11 @@ import ZenodoImporter from "@/components/ZenodoImporter.vue";
 import ZenodoCommunityDisplay from "@/components/ZenodoCommunityDisplay.vue";
 import RecentDatasets from "@/components/RecentDatasets.vue";
 import { isConfigurationItem, isDatasetFolder } from "@/utils/girderSelectable";
+import {
+  getFilesFromDrop,
+  selectFiles,
+  selectFilesFromFolder,
+} from "@/utils/fileUpload";
 import { formatDateNumber, formatDate } from "@/utils/date";
 import { logError } from "@/utils/log";
 import Persister from "@/store/Persister";
@@ -503,8 +570,10 @@ const showZenodoImporter = ref(false);
 const showUploadDialog = ref(false);
 const showUploadInfo = ref(false);
 const browseMode = ref<"files" | "collections" | "projects">("files");
+const fileBrowserExpanded = ref(Persister.get("fileBrowserExpanded", false));
 const datasetsTab = ref(0);
 const loadingProjects = ref(false);
+const recentsShowMineOnly = ref(!store.isAdmin);
 
 const pendingFiles = ref<File[]>([]);
 const datasetName = ref("");
@@ -520,7 +589,11 @@ const nameConflicts = ref<number[]>([]);
 const validatingNames = ref(false);
 let validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-const userDisplayNames = ref<Record<string, string>>({});
+interface IUserDisplayInfo {
+  full: string; // "Name (email)" — used in tooltips and project list
+  short: string; // "Name" only — used in dense recents row
+}
+const userDisplayNames = ref<Record<string, IUserDisplayInfo>>({});
 
 const selectedZenodoDataset = ref<any>(null);
 
@@ -639,8 +712,8 @@ const configInfo = computed(() => {
   return infos;
 });
 
-const datasetViewItems = computed(() => {
-  const items = [];
+const datasetViewItems = computed<IRecentDatasetViewItem[]>(() => {
+  const items: IRecentDatasetViewItem[] = [];
   for (const datasetView of datasetViews.value) {
     const configI = configInfo.value[datasetView.configurationId];
     const datasetI = datasetInfo.value[datasetView.datasetId];
@@ -768,20 +841,31 @@ async function getUsernameFromId(
   };
 }
 
-function getUserDisplayName(creatorId: string): string {
+function ensureUserDisplayInfo(creatorId: string) {
   if (!userDisplayNames.value[creatorId]) {
     userDisplayNames.value = {
       ...userDisplayNames.value,
-      [creatorId]: "Loading...",
+      [creatorId]: { full: "Loading...", short: "Loading..." },
     };
     getUsernameFromId(creatorId).then((user) => {
       userDisplayNames.value = {
         ...userDisplayNames.value,
-        [creatorId]: `${user.fullname} (${user.username})`,
+        [creatorId]: {
+          full: `${user.fullname} (${user.username})`,
+          short: user.fullname,
+        },
       };
     });
   }
   return userDisplayNames.value[creatorId];
+}
+
+function getUserDisplayName(creatorId: string): string {
+  return ensureUserDisplayInfo(creatorId).full;
+}
+
+function getUserShortName(creatorId: string): string {
+  return ensureUserDisplayInfo(creatorId).short;
 }
 
 async function fetchUsersForDatasets() {
@@ -799,12 +883,16 @@ async function fetchUsersForDatasets() {
     });
 
     // Update display names using object spread for reactivity
-    const updates: Record<string, string> = {};
+    const updates: Record<string, IUserDisplayInfo> = {};
     for (const userId of userIds) {
       const user = girderResources.watchUser(userId);
       if (user) {
-        const fullname = `${user.firstName} ${user.lastName}`.trim();
-        updates[userId] = `${fullname || user.email} (${user.email})`;
+        const fullname =
+          `${user.firstName} ${user.lastName}`.trim() || user.email;
+        updates[userId] = {
+          full: `${fullname} (${user.email})`,
+          short: fullname,
+        };
       }
     }
     if (Object.keys(updates).length > 0) {
@@ -845,7 +933,7 @@ async function fetchDatasetsAndConfigurations() {
 
 async function initializeRecentViews() {
   try {
-    await store.fetchRecentDatasetViews();
+    await store.fetchRecentDatasetViews(recentsShowMineOnly.value);
   } catch (error) {
     logError("Failed to initialize recent views:", error);
   }
@@ -935,40 +1023,25 @@ function comprehensiveUpload(
   router.push({ name: "newdataset" });
 }
 
-function handleDrop(event: DragEvent) {
+function beginUpload(files: File[]) {
+  if (files.length > 0) {
+    pendingFiles.value = files;
+    initializeUploadDialog();
+    showUploadDialog.value = true;
+  }
+}
+
+async function handleDrop(event: DragEvent) {
   isDragging.value = false;
-  const files = Array.from(event.dataTransfer?.files || []);
-  if (files.length > 0) {
-    pendingFiles.value = files;
-    initializeUploadDialog();
-    showUploadDialog.value = true;
-  }
+  beginUpload(await getFilesFromDrop(event));
 }
 
-function openFileSelector() {
-  // Create a temporary <input type="file"> on each click.
-  // Calling .click() on a freshly-created, detached input avoids Chrome's
-  // issue where programmatic .click() on an existing DOM-attached input
-  // (inside Vuetify's <v-card>) is silently blocked.
-  const input = document.createElement("input");
-  input.type = "file";
-  input.multiple = true;
-  input.addEventListener("change", handleFileSelect);
-  input.click();
+async function openFileSelector() {
+  beginUpload(await selectFiles());
 }
 
-function handleFileSelect(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []);
-
-  if (files.length > 0) {
-    pendingFiles.value = files;
-    initializeUploadDialog();
-    showUploadDialog.value = true;
-  }
-
-  // Reset the input
-  input.value = "";
+async function openFolderSelector() {
+  beginUpload(await selectFilesFromFolder());
 }
 
 function initializeUploadDialog() {
@@ -1050,6 +1123,11 @@ function handleSampleDatasetSelected(dataset: any) {
   showZenodoImporter.value = true;
 }
 
+function toggleFileBrowserExpanded() {
+  fileBrowserExpanded.value = !fileBrowserExpanded.value;
+  Persister.set("fileBrowserExpanded", fileBrowserExpanded.value);
+}
+
 function handleProjectClicked() {
   // Switch to Projects browse mode when clicking a project
   browseMode.value = "projects";
@@ -1079,6 +1157,11 @@ async function initializeWelcomeTour() {
 
   // If it was the default value of NOT_YET_RUN, then update the status and start tour
   if (tourStatus === WelcomeTourStatus.NOT_YET_RUN) {
+    // Collapse expanded file browser so tour anchors ([data-tour="upload-files"], etc.) are mounted
+    if (fileBrowserExpanded.value) {
+      fileBrowserExpanded.value = false;
+      Persister.set("fileBrowserExpanded", false);
+    }
     Persister.set(WelcomeTourTypes.HOME, WelcomeTourStatus.ALREADY_RUN);
     startTour(WelcomeTourNames[WelcomeTourTypes.HOME]);
   }
@@ -1086,6 +1169,7 @@ async function initializeWelcomeTour() {
 
 // Watchers
 watch(datasetViews, () => fetchDatasetsAndConfigurations());
+watch(recentsShowMineOnly, () => initializeRecentViews());
 watch(
   () => girderResources.resources,
   () => fetchDatasetsAndConfigurations(),
@@ -1096,6 +1180,11 @@ watch(
   () => store.isLoggedIn,
   (val) => {
     if (val) {
+      // Auth has resolved — set the mine-only default based on the now-known
+      // admin status. Without this, an admin who reloads the page sees the
+      // chip stuck on "Mine only" because Home's setup ran before
+      // store.isAdmin was populated.
+      recentsShowMineOnly.value = !store.isAdmin;
       initializeWelcomeTour();
       fetchRecentProjects();
     }
@@ -1192,8 +1281,10 @@ defineExpose({
   showUploadDialog,
   showUploadInfo,
   browseMode,
+  fileBrowserExpanded,
   datasetsTab,
   loadingProjects,
+  recentsShowMineOnly,
   pendingFiles,
   datasetName,
   selectedLocation,
@@ -1224,17 +1315,20 @@ defineExpose({
   validateDatasetNames,
   getNameError,
   getUserDisplayName,
+  getUserShortName,
   setLocation,
   onLocationUpdate,
   handleDrop,
   openFileSelector,
-  handleFileSelect,
+  openFolderSelector,
+  beginUpload,
   initializeUploadDialog,
   handleAcceptDefaults,
   handleConfigureDataset,
   closeUploadDialog,
   toggleZenodoImporter,
   handleSampleDatasetSelected,
+  toggleFileBrowserExpanded,
   handleProjectClicked,
   navigateToDatasetView,
   quickUpload,
@@ -1261,12 +1355,19 @@ defineExpose({
   flex-wrap: nowrap;
 }
 
-.home-row:nth-of-type(1) {
+.home-container:not(.browse-expanded) > .home-row:nth-of-type(1) {
   height: 40%;
 }
 
-.home-row:nth-of-type(2) {
+.home-container:not(.browse-expanded) > .home-row:nth-of-type(2) {
   height: 60%;
+}
+
+.browse-expanded {
+  .browse-row-expanded {
+    height: 100%;
+    flex: 1 1 auto;
+  }
 }
 
 .recent-dataset {
@@ -1310,18 +1411,22 @@ defineExpose({
   min-height: 0;
 }
 
-.drag-active {
-  border: 2px dashed white;
-}
-
 .upload-card {
   cursor: pointer;
   position: relative;
-  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border: 2px dashed var(--nimbus-border-strong);
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+
+  &:hover {
+    border-color: rgba(var(--v-theme-primary), 0.5);
+    background-color: var(--nimbus-glass-hover);
+  }
 
   &.drag-active {
-    border: 2px dashed var(--v-primary-base);
-    background-color: rgba(var(--v-primary-base), 0.1);
+    border: 2px dashed rgb(var(--v-theme-primary));
+    background-color: rgba(var(--v-theme-primary), 0.1);
   }
 }
 
@@ -1333,55 +1438,6 @@ defineExpose({
   }
 }
 
-.section-title {
-  padding: 0;
-  height: auto;
-  display: block;
-}
-
-.pulse-btn {
-  animation: subtle-pulse 0.75s 1 ease-in-out;
-  transition: all 0.3s ease;
-  position: relative; /* Needed for the pseudo-element */
-}
-
-/* Use a pseudo-element for the pulsing effect to avoid affecting the button content */
-.pulse-btn::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  border-radius: inherit;
-  box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
-  animation: subtle-pulse-shadow 9s 3 ease-in-out;
-}
-
-@keyframes subtle-pulse {
-  0% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.05);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes subtle-pulse-shadow {
-  0% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
-  }
-}
-
 .loading-container {
   display: flex;
   flex-direction: column;
@@ -1390,10 +1446,10 @@ defineExpose({
 }
 
 .loading-text {
-  color: #424242; /* Dark gray text for contrast on white background */
-  font-size: 1.5rem; /* Medium weight for better visibility */
-  font-weight: 500; /* Medium weight for better visibility */
-  margin-top: 16px; /* Space between spinner and text */
+  color: rgb(var(--v-theme-on-background));
+  font-size: 1.5rem;
+  font-weight: 500;
+  margin-top: 16px;
   text-align: center;
 }
 </style>
@@ -1402,5 +1458,35 @@ defineExpose({
 .flex-window-items,
 .flex-window-items .v-window-item {
   height: inherit;
+}
+
+// Compact row padding when file browser is in expanded mode.
+// Girder's DataTable renders <tr class="v-data-table__tr"> > <td class="v-data-table__td">,
+// so targeting `table tr` / `table tr td` covers both Vuetify class names and raw elements.
+// !important is required because Girder bundles un-layered Vuetify 3 CSS.
+.browse-expanded .custom-file-manager-wrapper {
+  table tr {
+    height: 28px !important;
+  }
+
+  table tr td {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    height: 28px !important;
+  }
+
+  .itemRow {
+    padding-top: 0;
+    padding-bottom: 0;
+    min-height: 0;
+  }
+
+  .v-checkbox-btn {
+    min-height: 0 !important;
+  }
+
+  .v-icon.pr-2 {
+    padding-right: 4px !important;
+  }
 }
 </style>

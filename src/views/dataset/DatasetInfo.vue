@@ -7,19 +7,40 @@
             <v-toolbar-title> Dataset </v-toolbar-title>
             <v-spacer></v-spacer>
             <v-btn
-              color="green"
+              color="primary"
+              variant="outlined"
+              size="small"
+              class="mr-2"
+              @click="shareDatasetDialog = true"
+              :disabled="!dataset"
+            >
+              <v-icon start>mdi-share-variant</v-icon>
+              Share
+            </v-btn>
+            <copy-link-button
+              v-if="dataset"
+              :route-path="`/dataset/${dataset.id}`"
+              tooltip="Copy shareable link to this dataset"
+              label="Copy link"
+              size="small"
+              class="mr-2"
+            />
+            <v-btn
+              color="success"
+              variant="flat"
+              size="small"
               @click="goToDefaultView"
               :disabled="!dataset"
               class="pulse-btn"
-              id="view-dataset-button-tourstep"
-              v-tour-trigger="'view-dataset-button-tourtrigger'"
+              :data-tour="TOUR_ANCHORS.viewDatasetButton"
+              v-tour-trigger="TOUR_TRIGGERS.viewDatasetButton"
             >
               <v-icon start>mdi-eye</v-icon>
               View
             </v-btn>
           </v-toolbar>
           <v-card-text>
-            <v-table class="elevation-3 ma-2">
+            <v-table class="info-table ma-2">
               <tbody>
                 <tr v-for="item in report" :key="item.name">
                   <td class="text-right" width="30%">{{ item.name }}</td>
@@ -47,12 +68,12 @@
               <v-dialog v-model="removeDatasetConfirm" max-width="33vw">
                 <template #activator="{ props: activatorProps }">
                   <v-btn
+                    variant="outlined"
                     color="error"
                     size="small"
-                    variant="outlined"
                     v-bind="activatorProps"
                   >
-                    <v-icon start>mdi-close</v-icon>
+                    <v-icon start>mdi-delete</v-icon>
                     Remove Dataset
                   </v-btn>
                 </template>
@@ -61,10 +82,21 @@
                     Are you sure to remove "{{ datasetName }}"?
                   </v-card-title>
                   <v-card-actions class="button-bar">
-                    <v-btn @click="removeDatasetConfirm = false">
+                    <v-btn
+                      variant="text"
+                      size="small"
+                      @click="removeDatasetConfirm = false"
+                    >
                       Cancel
                     </v-btn>
-                    <v-btn @click="removeDataset" color="warning">Remove</v-btn>
+                    <v-btn
+                      variant="flat"
+                      color="error"
+                      size="small"
+                      @click="removeDataset"
+                    >
+                      Remove
+                    </v-btn>
                   </v-card-actions>
                 </v-card>
               </v-dialog>
@@ -101,17 +133,26 @@
                   }}"?
                 </v-card-title>
                 <v-card-actions class="button-bar">
-                  <v-btn @click="closeRemoveConfigurationDialog()">
+                  <v-btn
+                    variant="text"
+                    size="small"
+                    @click="closeRemoveConfigurationDialog()"
+                  >
                     Cancel
                   </v-btn>
-                  <v-btn @click="removeDatasetView()" color="warning">
+                  <v-btn
+                    variant="flat"
+                    color="error"
+                    size="small"
+                    @click="removeDatasetView()"
+                  >
                     Remove
                   </v-btn>
                 </v-card-actions>
               </v-card>
             </v-dialog>
             <v-card class="ma-3">
-              <v-card-title class="title">
+              <v-card-title>
                 {{
                   datasetViewItems.length > 0
                     ? "Select a collection"
@@ -223,6 +264,7 @@
                     v-bind="activatorProps"
                     class="ma-1"
                     size="small"
+                    variant="outlined"
                     color="primary"
                     :to="{
                       name: 'importconfiguration',
@@ -245,6 +287,7 @@
                     v-bind="activatorProps"
                     class="ma-1"
                     size="small"
+                    variant="outlined"
                     color="primary"
                     :to="{
                       name: 'duplicateimportconfiguration',
@@ -267,6 +310,7 @@
                     v-bind="activatorProps"
                     class="ma-1"
                     size="small"
+                    variant="outlined"
                     color="primary"
                     @click="showNewCollectionDialog = true"
                   >
@@ -289,9 +333,13 @@
                 </v-card-text>
                 <v-card-actions>
                   <v-spacer></v-spacer>
-                  <v-btn variant="text" @click="showNewCollectionDialog = false"
-                    >Cancel</v-btn
+                  <v-btn
+                    variant="text"
+                    size="small"
+                    @click="showNewCollectionDialog = false"
                   >
+                    Cancel
+                  </v-btn>
                 </v-card-actions>
               </v-card>
             </v-dialog>
@@ -313,12 +361,19 @@
                   <v-spacer></v-spacer>
                   <v-btn
                     variant="text"
+                    size="small"
                     @click="showNewCollectionNameDialog = false"
-                    >Cancel</v-btn
                   >
-                  <v-btn color="success" @click="createNewCollection"
-                    >Create</v-btn
+                    Cancel
+                  </v-btn>
+                  <v-btn
+                    variant="flat"
+                    color="success"
+                    size="small"
+                    @click="createNewCollection"
                   >
+                    Create
+                  </v-btn>
                 </v-card-actions>
               </v-card>
             </v-dialog>
@@ -335,6 +390,9 @@
       :dataset-name="datasetName"
       @added="onAddedToProject"
     />
+
+    <!-- Share Dataset Dialog -->
+    <share-dataset v-model="shareDatasetDialog" :dataset="dataset" />
   </v-container>
 </template>
 <script setup lang="ts">
@@ -355,12 +413,17 @@ import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import AddToProjectDialog from "@/components/AddToProjectDialog.vue";
 import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
 import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
+import ShareDataset from "@/components/ShareDataset.vue";
+import CopyLinkButton from "@/components/CopyLinkButton.vue";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 // Suppress unused import warnings — auto-registered in <script setup>
 void GirderLocationChooser;
 void AddToProjectDialog;
 void SharingStatusDisplay;
 void SharingStatusIcon;
+void ShareDataset;
+void CopyLinkButton;
 
 const route = useRoute();
 const router = useRouter();
@@ -376,6 +439,7 @@ const defaultConfigurationName = ref("");
 const showNewCollectionDialog = ref(false);
 const showNewCollectionNameDialog = ref(false);
 const showAddToProjectDialog = ref(false);
+const shareDatasetDialog = ref(false);
 const newCollectionName = ref("");
 const selectedFolderId = ref<string | null>(null);
 const datasetParentId = ref<string | null>(null);
@@ -491,7 +555,9 @@ async function fetchCounts() {
   const dsId = dataset.value.id;
 
   const [ac, cc, pvc] = await Promise.all([
-    store.annotationsAPI.getAnnotationCount(dsId),
+    // getAnnotationCount now rejects on failure (a silent 0 would mislead and,
+    // in the loader, trigger the OOM full-fetch path); show "unknown" here.
+    store.annotationsAPI.getAnnotationCount(dsId).catch(() => null),
     store.annotationsAPI.getConnectionCount(dsId),
     store.annotationsAPI.getPropertyValueCount(dsId),
   ]);
@@ -752,14 +818,14 @@ function onAddedToProject() {
 watch(dataset, () => {
   fetchCounts();
   fetchSharingInfoData();
-});
-
-watch(dataset, () => {
   updateDatasetViews();
+  fetchDatasetParentFolder();
 });
 
-watch(dataset, () => {
-  fetchDatasetParentFolder();
+watch(shareDatasetDialog, (open) => {
+  if (!open) {
+    fetchSharingInfoData();
+  }
 });
 
 watch(datasetName, () => {
@@ -800,6 +866,7 @@ defineExpose({
   showNewCollectionDialog,
   showNewCollectionNameDialog,
   showAddToProjectDialog,
+  shareDatasetDialog,
   newCollectionName,
   selectedFolderId,
   datasetParentId,
@@ -848,9 +915,14 @@ defineExpose({
   transition: all 0.2s ease;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: var(--nimbus-glass-hover);
     transform: scale(1.1);
   }
+}
+
+.info-table {
+  border: 1px solid var(--nimbus-border);
+  border-radius: var(--nimbus-radius);
 }
 
 .pulse-btn {
@@ -868,7 +940,7 @@ defineExpose({
   right: 0;
   bottom: 0;
   border-radius: inherit;
-  box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
+  box-shadow: 0 0 0 0 rgba(var(--v-theme-success), 0.5);
   animation: subtle-pulse-shadow 3s infinite ease-in-out;
 }
 
@@ -886,22 +958,22 @@ defineExpose({
 
 @keyframes subtle-pulse-shadow {
   0% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
+    box-shadow: 0 0 0 0 rgba(var(--v-theme-success), 0.5);
   }
   70% {
-    box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
+    box-shadow: 0 0 0 8px rgba(var(--v-theme-success), 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+    box-shadow: 0 0 0 0 rgba(var(--v-theme-success), 0);
   }
 }
 
 .selectable-list-item {
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--nimbus-radius-sm);
 
   &:hover {
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: var(--nimbus-glass-hover);
   }
 }
 </style>

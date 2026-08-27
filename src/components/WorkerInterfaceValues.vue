@@ -15,7 +15,7 @@
             <v-col class="pa-0 ma-0" cols="4">
               <v-list-subheader
                 class="font-weight-bold"
-                :id="getTourStepId(id)"
+                :data-tour="getTourAnchorId(id)"
               >
                 {{ id }}
               </v-list-subheader>
@@ -103,7 +103,7 @@ import LayerSelect from "@/components/LayerSelect.vue";
 import ChannelSelect from "@/components/ChannelSelect.vue";
 import ChannelCheckboxGroup from "@/components/ChannelCheckboxGroup.vue";
 import TagPicker from "@/components/TagPicker.vue";
-import { getTourStepId } from "@/utils/strings";
+import { getTourAnchorId } from "@/utils/strings";
 
 const props = withDefaults(
   defineProps<{

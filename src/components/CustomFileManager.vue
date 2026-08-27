@@ -37,6 +37,8 @@
               v-bind="activatorProps"
               :disabled="selected.length === 0"
               variant="outlined"
+              color="primary"
+              size="small"
               class="ghost-button"
             >
               Actions
@@ -60,6 +62,8 @@
           @click="fileInput?.click()"
           :disabled="shouldDisableSingleFileUpload"
           variant="outlined"
+          color="primary"
+          size="small"
         >
           <v-icon start>mdi-upload</v-icon>
           Upload Non-Image File
@@ -79,8 +83,13 @@
                 v-if="menuEnabled"
               >
                 <template v-slot:activator="{ props: activatorProps }">
-                  <v-btn icon v-bind="activatorProps">
-                    <v-icon>mdi-dots-vertical</v-icon>
+                  <v-btn
+                    icon
+                    v-bind="activatorProps"
+                    size="x-small"
+                    variant="text"
+                  >
+                    <v-icon size="small">mdi-dots-vertical</v-icon>
                   </v-btn>
                 </template>
                 <file-manager-options
@@ -350,7 +359,7 @@ async function itemToChips(selectable: IGirderSelectAble) {
   const chipOption = chipOptions[type];
   const headerChip: IChipAttrs = {
     text: chipOption.text,
-    color: "grey",
+    color: type === "dataset" ? "dataset" : "collection",
   };
   if (props.clickableChips) {
     headerChip.to = {
@@ -433,7 +442,7 @@ async function flushBatchResolve() {
     if (!current) return;
 
     const extra: IChipAttrs = {
-      color: type === "dataset" ? "#4baeff" : "#e57373",
+      color: type === "dataset" ? "collection" : "dataset",
       text: chipText,
       to: props.clickableChips
         ? {
@@ -617,28 +626,24 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
-// Checkbox column: narrow
-.custom-file-manager-wrapper table col:first-child {
-  width: 40px;
-}
-
-// Size column: narrow, right-aligned
+// Size column: narrow, right-aligned.
+// Checkbox column width is set inline (style="width: 65px") in the Girder
+// DataTable template, so it doesn't need CSS. Content column auto-fills
+// the remaining space.
 .custom-file-manager-wrapper table col:last-child {
-  width: 90px;
-}
-
-// Also target td directly in case <col> elements don't exist
-.custom-file-manager-wrapper table tr td:first-child {
-  width: 40px;
+  width: 100px;
 }
 
 .custom-file-manager-wrapper table tr td:last-child {
-  width: 90px;
+  width: 100px;
   text-align: right;
 }
 
-// Fix file browser rows: icon and content on same line, vertically centered
-.custom-file-manager-wrapper .select-cursor {
+// Fix file browser rows: icon and content on same line, vertically centered.
+// Scoped to td > .select-cursor so it targets the <span> inside cells,
+// NOT the <tr> elements (which also get .select-cursor from getRowClass).
+// display: flex on <tr> would break table-layout: fixed column sizing.
+.custom-file-manager-wrapper td > .select-cursor {
   display: flex !important;
   align-items: center;
 }
@@ -766,18 +771,18 @@ onBeforeUnmount(() => {
 // so we target it via the file manager wrapper, not .itemRow.
 .custom-file-manager-wrapper .v-icon.mdi-package {
   // datasets - teal to match primary theme color
-  color: #26a69a;
+  color: rgb(var(--v-theme-primary));
 }
 .custom-file-manager-wrapper .v-icon.mdi-file-tree {
   // configurations - teal to match primary theme color
-  color: #26a69a;
+  color: rgb(var(--v-theme-primary));
 }
 </style>
 
 <style lang="scss" scoped>
 .type-indicator {
   border-radius: 4px; // More rectangular
-  font-family: "Roboto Mono", monospace; // Monospace font
+  font-family: var(--nimbus-font-mono);
   font-size: 9px;
   letter-spacing: 0.5px;
   height: 16px;

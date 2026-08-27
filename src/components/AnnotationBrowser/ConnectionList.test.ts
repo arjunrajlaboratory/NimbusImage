@@ -1,0 +1,1218 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { flushPromises, shallowMount } from "@vue/test-utils";
+import {
+  AnnotationShape,
+  IAnnotation,
+  IAnnotationConnection,
+} from "@/store/model";
+
+// vi.mock factories are hoisted above every const, so the shared state has to
+// be created inside vi.hoisted. The state is a plain object (not reactive) —
+// each test sets it up and mounts fresh rather than driving updates post-mount.
+const h = vi.hoisted(() => ({
+  setSelected: vi.fn(),
+  goToConnection: vi.fn(),
+  goToTrack: vi.fn(),
+  deleteConnectionsById: vi.fn(),
+  deleteSelectedConnections: vi.fn(),
+  deleteSelectedInScopeConnections: vi.fn(),
+  connectSelectedAnnotations: vi.fn(),
+  setSelectedConnectionIds: vi.fn(),
+  getPropertyValuesForIds: vi.fn(),
+  state: {
+    scope: "all",
+    grouping: "flat",
+    page: 1,
+    itemsPerPage: 50,
+    trackLabelPath: [] as string[],
+    setTrackLabelPath: vi.fn(),
+    hoveredConnectionId: null as string | null,
+    selectedConnectionIds: new Set<string>(),
+    selectedExistingConnectionIds: [] as string[],
+    scopedConnections: [] as any[],
+    connectionRows: [] as any[],
+    trackRows: [] as any[],
+    canConnectSelected: false,
+    connectSelectedTimeTies: [] as number[],
+    // Must read the real selection: selectAllValue counts the selected rows
+    // that are actually visible, so a stub returning false would make the
+    // header checkbox look permanently unchecked.
+    isConnectionSelected(id: string) {
+      return this.selectedConnectionIds.has(id);
+    },
+    isTrackExpanded: () => false,
+    // Replaced by setRows() with a resolver over the annotations it was given.
+    // A stub resolving everything would hide the dangling-endpoint filter.
+    resolveAnnotation: () => undefined as any,
+    setScope: vi.fn(),
+    setGrouping: vi.fn(),
+    setPage: vi.fn(),
+    setItemsPerPage: vi.fn(),
+    setHoveredConnectionId: vi.fn(),
+    toggleConnectionSelection: vi.fn(),
+    toggleTrackExpanded: vi.fn(),
+  } as any,
+}));
+
+vi.mock("@/store", () => ({
+  default: { isLoggedIn: true, dataset: { id: "ds" } },
+}));
+
+// Plain-object mocks like the rest of the file: tests set the fields up and
+// mount fresh rather than driving updates post-mount.
+const propertyStoreMock = vi.hoisted(() => ({
+  propertyValues: {} as Record<string, any>,
+  computedPropertyPaths: [] as string[][],
+  propertyValuesRevision: 0,
+  propertyValuesDatasetId: "ds" as string | null,
+  getFullNameFromPath: (path: string[]) => path.join(" / "),
+  propertiesAPI: { getPropertyValuesForIds: undefined as any },
+}));
+
+vi.mock("@/store/properties", () => {
+  propertyStoreMock.propertiesAPI.getPropertyValuesForIds =
+    h.getPropertyValuesForIds;
+  return { default: propertyStoreMock };
+});
+
+// Mutable (and reset in beforeEach) because the swatch gate depends on the
+// timelapse mode as well as the colouring option, and both need to be driven.
+const timelapseStore = vi.hoisted(() => ({
+  showMode: true,
+  trackColoring: "track" as string,
+  colorSeed: 0,
+}));
+
+vi.mock("@/store/timelapse", () => ({ default: timelapseStore }));
+
+const annotationStoreMock = vi.hoisted(
+  () =>
+    ({
+      selectedAnnotationIds: new Set<string>(),
+      stubOnlyMode: false,
+    }) as any,
+);
+
+// reactive() so a test can flip stubOnlyMode post-mount and drive the
+// component's watchers (see "fetches when lazy mode is determined after the
+// tracks arrive"). Mutations through the raw annotationStoreMock (as in
+// beforeEach) stay visible but deliberately do not trigger watchers; drive
+// them through the module's default export (the proxy) instead.
+vi.mock("@/store/annotation", async () => {
+  const { reactive } = await import("vue");
+  annotationStoreMock.setSelected = h.setSelected;
+  return { default: reactive(annotationStoreMock) };
+});
+
+vi.mock("@/utils/annotationNavigation", () => ({
+  goToConnection: h.goToConnection,
+  goToTrack: h.goToTrack,
+}));
+
+vi.mock("@/store/connectionList", () => {
+  h.state.setSelectedConnectionIds = h.setSelectedConnectionIds;
+  h.state.deleteConnectionsById = h.deleteConnectionsById;
+  h.state.deleteSelectedConnections = h.deleteSelectedConnections;
+  h.state.deleteSelectedInScopeConnections = h.deleteSelectedInScopeConnections;
+  h.state.connectSelectedAnnotations = h.connectSelectedAnnotations;
+  return {
+    default: h.state,
+    CONNECTION_SCOPE_LABELS: {
+      all: "All connections",
+      location: "Current location",
+      selected: "Selected objects",
+      filtered: "Objects passing filters",
+    },
+  };
+});
+
+import ConnectionList from "./ConnectionList.vue";
+// The mocked module's default export: the reactive proxy over
+// annotationStoreMock, for driving watchers post-mount.
+import mockedAnnotationStore from "@/store/annotation";
+import { buildConnectionRows, trackColor } from "@/utils/connections";
+
+function makeConnection(
+  id: string,
+  parentId: string,
+  childId: string,
+): IAnnotationConnection {
+  return { id, parentId, childId, tags: [], label: "", datasetId: "ds" };
+}
+
+function makeAnnotation(id: string, time: number): IAnnotation {
+  return {
+    id,
+    name: null,
+    tags: [],
+    shape: AnnotationShape.Point,
+    channel: 0,
+    location: { XY: 0, Z: 0, Time: time },
+    coordinates: [{ x: 0, y: 0 }],
+    datasetId: "ds",
+    color: null,
+  };
+}
+
+function setRows(connections: IAnnotationConnection[], known: IAnnotation[]) {
+  const byId = new Map(known.map((a) => [a.id, a]));
+  h.state.scopedConnections = connections;
+  h.state.connectionRows = buildConnectionRows(connections, (id) =>
+    byId.get(id),
+  );
+  // Same source of truth the rows were built from, so an endpoint absent from
+  // `known` is dangling for both.
+  h.state.resolveAnnotation = (id: string) => byId.get(id);
+}
+
+// Default to the visible tab: rows are gated on isActive, so a default-false
+// mount would leave every list assertion looking at an empty table.
+function mountComponent(isActive = true) {
+  return shallowMount(ConnectionList, { props: { isActive } });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  timelapseStore.showMode = true;
+  timelapseStore.trackColoring = "track";
+  timelapseStore.colorSeed = 0;
+  h.state.scope = "all";
+  h.state.grouping = "flat";
+  h.state.selectedConnectionIds = new Set();
+  h.state.canConnectSelected = false;
+  h.state.connectSelectedTimeTies = [];
+  h.state.selectedInScopeConnectionIds = [];
+  h.state.selectedExistingConnectionIds = [];
+  h.state.lastConnectSkippedAsDuplicate = false;
+  h.state.hoveredConnectionId = null;
+  h.state.itemsPerPage = 50;
+  h.state.trackRows = [];
+  h.state.isTrackExpanded = () => false;
+  h.state.trackLabelPath = [];
+  annotationStoreMock.stubOnlyMode = false;
+  propertyStoreMock.propertyValues = {};
+  propertyStoreMock.computedPropertyPaths = [];
+  propertyStoreMock.propertyValuesRevision = 0;
+  propertyStoreMock.propertyValuesDatasetId = "ds";
+  h.getPropertyValuesForIds.mockResolvedValue([]);
+  h.connectSelectedAnnotations.mockResolvedValue([]);
+  setRows([], []);
+});
+
+describe("ConnectionList", () => {
+  it("reports the scoped connection count", () => {
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    expect(mountComponent().vm.scopedCount).toBe(1);
+  });
+
+  it("colors a scoped track from its dataset-wide color key", () => {
+    const wrapper = mountComponent();
+    expect(
+      wrapper.vm.swatchColor({
+        id: "b",
+        colorKey: "a",
+        annotationIds: ["b", "c"],
+        annotationCount: 2,
+        timeRange: { start: 1, end: 2 },
+        rows: [],
+      }),
+    ).toBe(trackColor("a", 0));
+  });
+
+  /**
+   * The swatch promises "this is the colour that track is drawn in", and
+   * `trackColor` is only reached from the timelapse draw path — so with the mode
+   * off it names a colour nothing on the canvas is using. Measured on a real
+   * dataset: 248 swatches in 248 hues against zero drawn connection features.
+   * Gating on the colouring option alone also made them unturnoffable, since
+   * that toggle lives in the Timelapse palette, which *is* the mode.
+   */
+  it("hides the track swatches while timelapse mode is off", () => {
+    timelapseStore.showMode = true;
+    expect(mountComponent().vm.showTrackSwatches).toBe(true);
+
+    timelapseStore.showMode = false;
+    expect(mountComponent().vm.showTrackSwatches).toBe(false);
+  });
+
+  it("still hides them in the mode when colouring is uniform", () => {
+    timelapseStore.trackColoring = "uniform";
+    expect(mountComponent().vm.showTrackSwatches).toBe(false);
+  });
+
+  // Regression: building rows depends on hydration, so it is invalidated by
+  // every pan. Reading the getter while the tab is hidden made a user who
+  // opened the tab once pay to rebuild every row on every pan for the rest of
+  // the session, with none of them rendered.
+  it("does not read the row getters while the tab is hidden", () => {
+    const conns = [makeConnection("c1", "a", "b")];
+    const anns = [makeAnnotation("a", 0), makeAnnotation("b", 1)];
+    setRows(conns, anns);
+
+    let rowReads = 0;
+    let trackReads = 0;
+    Object.defineProperty(h.state, "connectionRows", {
+      configurable: true,
+      get() {
+        rowReads++;
+        return buildConnectionRows(conns, (id) =>
+          anns.find((a) => a.id === id),
+        );
+      },
+    });
+    Object.defineProperty(h.state, "trackRows", {
+      configurable: true,
+      get() {
+        trackReads++;
+        return [];
+      },
+    });
+
+    const hidden = mountComponent(false);
+    expect(rowReads).toBe(0);
+    expect(trackReads).toBe(0);
+    expect((hidden.vm as any).rows).toEqual([]);
+    hidden.unmount();
+
+    mountComponent(true);
+    expect(rowReads).toBeGreaterThan(0);
+
+    delete (h.state as any).connectionRows;
+    delete (h.state as any).trackRows;
+    h.state.connectionRows = [];
+    h.state.trackRows = [];
+  });
+
+  // Regression: gating only the row getters left scopedCount consuming
+  // scopedConnections, whose scopeAnnotationIds scans annotationsForIteration
+  // for the dynamic scopes. On a 700K-object dataset that is a full scan on
+  // every XY/Z/Time scrub, from a tab the user is not even looking at.
+  it("does not read the scope getters while the tab is hidden", () => {
+    let scopeReads = 0;
+    Object.defineProperty(h.state, "scopedConnections", {
+      configurable: true,
+      get() {
+        scopeReads++;
+        return [];
+      },
+    });
+    Object.defineProperty(h.state, "selectedInScopeConnectionIds", {
+      configurable: true,
+      get() {
+        scopeReads++;
+        return [];
+      },
+    });
+
+    mountComponent(false);
+    expect(scopeReads).toBe(0);
+
+    mountComponent(true);
+    expect(scopeReads).toBeGreaterThan(0);
+
+    delete (h.state as any).scopedConnections;
+    delete (h.state as any).selectedInScopeConnectionIds;
+    h.state.scopedConnections = [];
+    h.state.selectedInScopeConnectionIds = [];
+  });
+
+  it("explains an empty list differently for each scope", () => {
+    expect(mountComponent().vm.emptyMessage).toContain("no connections");
+
+    h.state.scope = "selected";
+    expect(mountComponent().vm.emptyMessage).toContain("selected objects");
+
+    h.state.scope = "location";
+    expect(mountComponent().vm.emptyMessage).toContain("current location");
+
+    h.state.scope = "filtered";
+    expect(mountComponent().vm.emptyMessage).toContain("filters");
+  });
+
+  // A row click navigates and highlights; the checkbox is what selects. Mirrors
+  // the Objects tab, and avoids silently arming the bulk delete.
+  it("navigates and highlights without selecting", () => {
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    const wrapper = mountComponent();
+    wrapper.vm.navigateToConnection(wrapper.vm.rows[0]);
+
+    expect(h.state.setHoveredConnectionId).toHaveBeenCalledWith("c1");
+    expect(h.setSelectedConnectionIds).not.toHaveBeenCalled();
+    expect(h.setSelected).not.toHaveBeenCalled();
+    // Both endpoints are handed to the navigator: a connection is only drawn
+    // when both are displayed, so it must frame the pair, not one endpoint.
+    expect(h.goToConnection).toHaveBeenCalledWith("a", "b");
+  });
+
+  it("still navigates when one endpoint is dangling", () => {
+    setRows([makeConnection("c1", "a", "gone")], [makeAnnotation("a", 0)]);
+    const wrapper = mountComponent();
+    wrapper.vm.navigateToConnection(wrapper.vm.rows[0]);
+
+    // Delegated with both ids — goToConnection resolves what it can and
+    // degrades to a single-endpoint navigate (covered in its own tests).
+    expect(h.goToConnection).toHaveBeenCalledWith("a", "gone");
+  });
+
+  it("does not navigate when both endpoints are missing", () => {
+    setRows([makeConnection("c1", "gone1", "gone2")], []);
+    const wrapper = mountComponent();
+    wrapper.vm.navigateToConnection(wrapper.vm.rows[0]);
+
+    expect(h.goToConnection).not.toHaveBeenCalled();
+    // Still highlighted, so the dangling row is findable and deletable.
+    expect(h.state.setHoveredConnectionId).toHaveBeenCalledWith("c1");
+  });
+
+  // A viewer click only sets the selected id; without this the highlighted link
+  // could sit on any page with nothing indicating where.
+  it("pages to the selected connection so a viewer click is findable", async () => {
+    const conns = Array.from({ length: 120 }, (_, i) =>
+      makeConnection(`c${i}`, `a${i}`, `b${i}`),
+    );
+    const anns = conns.flatMap((c, i) => [
+      makeAnnotation(c.parentId, i),
+      makeAnnotation(c.childId, i),
+    ]);
+    setRows(conns, anns);
+    h.state.itemsPerPage = 50;
+    const wrapper = mountComponent();
+
+    // Index 60 → page 2 at 50 rows per page.
+    await wrapper.vm.revealConnection("c60");
+    expect(h.state.setPage).toHaveBeenLastCalledWith(2);
+
+    await wrapper.vm.revealConnection("c119");
+    expect(h.state.setPage).toHaveBeenLastCalledWith(3);
+
+    // Already on the right page → no redundant page write.
+    h.state.page = 1;
+    h.state.setPage.mockClear();
+    await wrapper.vm.revealConnection("c0");
+    expect(h.state.setPage).not.toHaveBeenCalled();
+  });
+
+  // The tab mounts lazily and is only hidden (not unmounted) afterwards, so a
+  // selection made while it was closed never reaches the selection watcher and
+  // one made while hidden cannot scroll. Becoming active has to retry.
+  it("reveals the current selection when the tab becomes active", async () => {
+    const conns = Array.from({ length: 120 }, (_, i) =>
+      makeConnection(`c${i}`, `a${i}`, `b${i}`),
+    );
+    setRows(
+      conns,
+      conns.flatMap((c, i) => [
+        makeAnnotation(c.parentId, i),
+        makeAnnotation(c.childId, i),
+      ]),
+    );
+    h.state.selectedConnectionIds = new Set(["c60"]);
+    h.state.selectedExistingConnectionIds = ["c60"];
+    h.state.page = 1;
+
+    // Mounted inactive: nothing revealed yet.
+    const wrapper = shallowMount(ConnectionList, {
+      props: { isActive: false },
+    });
+    await wrapper.vm.$nextTick();
+    expect(h.state.setPage).not.toHaveBeenCalled();
+
+    // Tab becomes visible → the pending selection is paged to.
+    await wrapper.setProps({ isActive: true });
+    expect(h.state.setPage).toHaveBeenCalledWith(2);
+  });
+
+  // A plain viewer click only HIGHLIGHTS, so reveal has to react to hover as
+  // well as selection — otherwise clicking a line highlights a row on another
+  // page with nothing indicating where it went.
+  it("reveals on hover, not only on selection", async () => {
+    const conns = Array.from({ length: 120 }, (_, i) =>
+      makeConnection(`c${i}`, `a${i}`, `b${i}`),
+    );
+    setRows(
+      conns,
+      conns.flatMap((c, i) => [
+        makeAnnotation(c.parentId, i),
+        makeAnnotation(c.childId, i),
+      ]),
+    );
+    h.state.selectedConnectionIds = new Set();
+    h.state.hoveredConnectionId = null;
+    h.state.page = 1;
+
+    const wrapper = shallowMount(ConnectionList, { props: { isActive: true } });
+    await wrapper.vm.$nextTick();
+    h.state.setPage.mockClear();
+
+    // Hover a row on page 2 with nothing selected. The shared mock state is
+    // intentionally non-reactive in this file, so drive the reveal directly —
+    // this pins the hover BRANCH; the watcher's source list is covered by the
+    // isActive test below.
+    h.state.hoveredConnectionId = "c60";
+    await (wrapper.vm as any).revealCurrentSelection();
+    expect(h.state.setPage).toHaveBeenCalledWith(2);
+  });
+
+  // Regression: selection deliberately keeps ids for connections deleted
+  // through other paths (existence is derived, not pruned). If the reveal
+  // priority looked at the RAW selection, one externally deleted selected
+  // connection blocked hover-based reveal permanently — every later click
+  // highlighted a row the list would never page to.
+  it("ignores a deleted selection when revealing on hover", async () => {
+    const conns = Array.from({ length: 120 }, (_, i) =>
+      makeConnection(`c${i}`, `a${i}`, `b${i}`),
+    );
+    setRows(
+      conns,
+      conns.flatMap((c, i) => [
+        makeAnnotation(c.parentId, i),
+        makeAnnotation(c.childId, i),
+      ]),
+    );
+    // Selected, but the connection itself is gone.
+    h.state.selectedConnectionIds = new Set(["deleted-elsewhere"]);
+    h.state.selectedExistingConnectionIds = [];
+    h.state.hoveredConnectionId = "c60"; // page 2
+    const wrapper = mountComponent();
+    h.state.setPage.mockClear();
+
+    await (wrapper.vm as any).revealCurrentSelection();
+    expect(h.state.setPage).toHaveBeenCalledWith(2);
+  });
+
+  it("prefers the selection over the hover when both are set", async () => {
+    const conns = Array.from({ length: 120 }, (_, i) =>
+      makeConnection(`c${i}`, `a${i}`, `b${i}`),
+    );
+    setRows(
+      conns,
+      conns.flatMap((c, i) => [
+        makeAnnotation(c.parentId, i),
+        makeAnnotation(c.childId, i),
+      ]),
+    );
+    h.state.selectedConnectionIds = new Set(["c110"]); // page 3
+    h.state.selectedExistingConnectionIds = ["c110"];
+    h.state.hoveredConnectionId = "c10"; // page 1
+    const wrapper = shallowMount(ConnectionList, { props: { isActive: true } });
+    h.state.setPage.mockClear();
+
+    await (wrapper.vm as any).revealCurrentSelection();
+    expect(h.state.setPage).toHaveBeenCalledWith(3);
+  });
+
+  it("expands the containing track when revealing in track mode", async () => {
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    h.state.grouping = "track";
+    h.state.trackRows = [
+      {
+        id: "a",
+        colorKey: "a",
+        annotationCount: 2,
+        timeRange: null,
+        rows: [],
+      },
+    ];
+    // The track holding c1 is collapsed; revealing must expand it.
+    h.state.trackRows[0].rows = [h.state.connectionRows[0]];
+    h.state.isTrackExpanded = () => false;
+    const wrapper = mountComponent();
+
+    await wrapper.vm.revealConnection("c1");
+    expect(h.state.toggleTrackExpanded).toHaveBeenCalledWith("a");
+  });
+
+  it("does nothing when the selected connection is not in the list", async () => {
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    const wrapper = mountComponent();
+    await wrapper.vm.revealConnection("not-in-list");
+    expect(h.state.setPage).not.toHaveBeenCalled();
+  });
+
+  it("deletes a single connection through the batched store action", async () => {
+    const wrapper = mountComponent();
+    await wrapper.vm.deleteOne("c1");
+    expect(h.deleteConnectionsById).toHaveBeenCalledWith(["c1"]);
+  });
+
+  it("deletes a whole track in one batched call", async () => {
+    setRows(
+      [makeConnection("c1", "a", "b"), makeConnection("c2", "b", "c")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1), makeAnnotation("c", 2)],
+    );
+    const wrapper = mountComponent();
+    await wrapper.vm.deleteTrack({
+      id: "a",
+      colorKey: "a",
+      annotationIds: ["a", "b", "c"],
+      annotationCount: 3,
+      timeRange: { start: 0, end: 2 },
+      rows: wrapper.vm.rows,
+    });
+    expect(h.deleteConnectionsById).toHaveBeenCalledTimes(1);
+    expect(h.deleteConnectionsById).toHaveBeenCalledWith(["c1", "c2"]);
+  });
+
+  /**
+   * Expanding a track is an unambiguous "show me this one", so it frames the
+   * track in the viewer. Collapsing is not — framing on both would yank the
+   * camera back every time the user tidied the list, including after they had
+   * panned away on purpose.
+   */
+  describe("track disclosure framing", () => {
+    function trackRow() {
+      return {
+        id: "a",
+        colorKey: "a",
+        annotationIds: ["a", "b"],
+        annotationCount: 2,
+        timeRange: { start: 0, end: 1 },
+        rows: [],
+      };
+    }
+
+    it("expanding a track frames it, collapsing leaves the camera alone", () => {
+      const wrapper = mountComponent();
+
+      // Collapsed -> expanding.
+      h.state.isTrackExpanded = () => false;
+      wrapper.vm.toggleTrack(trackRow());
+      expect(h.state.toggleTrackExpanded).toHaveBeenCalledWith("a");
+      expect(h.goToTrack).toHaveBeenCalledWith(["a", "b"]);
+
+      vi.clearAllMocks();
+
+      // Expanded -> collapsing.
+      h.state.isTrackExpanded = () => true;
+      wrapper.vm.toggleTrack(trackRow());
+      expect(h.state.toggleTrackExpanded).toHaveBeenCalledWith("a");
+      expect(h.goToTrack).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- Per-track Select menu ---
+  //
+  // Objects and links are SEPARATE selections feeding separate actions
+  // ("Connect selected" reads the object selection, "Delete selected" the
+  // connection one), so each menu item must touch only its own and leave the
+  // other alone.
+  describe("per-track Select menu", () => {
+    function trackFor(wrapper: any, annotationIds: string[]) {
+      return {
+        id: annotationIds[0],
+        colorKey: annotationIds[0],
+        annotationIds,
+        annotationCount: annotationIds.length,
+        timeRange: null,
+        rows: wrapper.vm.rows,
+      };
+    }
+
+    function setupTrack() {
+      setRows(
+        [makeConnection("c1", "a", "b"), makeConnection("c2", "b", "c")],
+        [
+          makeAnnotation("a", 0),
+          makeAnnotation("b", 1),
+          makeAnnotation("c", 2),
+        ],
+      );
+      return mountComponent();
+    }
+
+    it("Objects selects the track's objects and no connections", () => {
+      const wrapper = setupTrack();
+      wrapper.vm.selectTrackObjects(trackFor(wrapper, ["a", "b", "c"]));
+      expect(h.setSelected).toHaveBeenCalledWith(["a", "b", "c"]);
+      expect(h.setSelectedConnectionIds).not.toHaveBeenCalled();
+    });
+
+    it("Links selects the track's connections and no objects", () => {
+      const wrapper = setupTrack();
+      wrapper.vm.selectTrackConnections(trackFor(wrapper, ["a", "b", "c"]));
+      expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1", "c2"]);
+      expect(h.setSelected).not.toHaveBeenCalled();
+    });
+
+    it("Both selects each side exactly once", () => {
+      const wrapper = setupTrack();
+      wrapper.vm.selectTrackBoth(trackFor(wrapper, ["a", "b", "c"]));
+      expect(h.setSelected).toHaveBeenCalledTimes(1);
+      expect(h.setSelected).toHaveBeenCalledWith(["a", "b", "c"]);
+      expect(h.setSelectedConnectionIds).toHaveBeenCalledTimes(1);
+      expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1", "c2"]);
+    });
+
+    /**
+     * Connection endpoints outlive the annotation they point at — the list
+     * deliberately keeps dangling links visible so they can be deleted. Putting
+     * those ids in the selection inflates every "(N)" counter with entries
+     * nothing can ever clear, because no row or feature exists to click.
+     */
+    it("excludes endpoints that no longer resolve", () => {
+      setRows(
+        [makeConnection("c1", "a", "gone"), makeConnection("c2", "a", "b")],
+        // "gone" is deliberately absent.
+        [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+      );
+      const wrapper = mountComponent();
+      const track = trackFor(wrapper, ["a", "b", "gone"]);
+
+      expect(wrapper.vm.resolvableTrackObjectIds(track)).toEqual(["a", "b"]);
+      expect(wrapper.vm.selectableObjectCount(track)).toBe(2);
+
+      wrapper.vm.selectTrackObjects(track);
+      expect(h.setSelected).toHaveBeenCalledWith(["a", "b"]);
+    });
+
+    it("counts nothing selectable when every endpoint is dangling", () => {
+      setRows([makeConnection("c1", "x", "y")], []);
+      const wrapper = mountComponent();
+      expect(
+        wrapper.vm.selectableObjectCount(trackFor(wrapper, ["x", "y"])),
+      ).toBe(0);
+    });
+  });
+
+  it("selects every row with the header checkbox", () => {
+    setRows(
+      [makeConnection("c1", "a", "b"), makeConnection("c2", "b", "c")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1), makeAnnotation("c", 2)],
+    );
+    mountComponent().vm.toggleSelectAll();
+    expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1", "c2"]);
+  });
+
+  // A viewer click can select a connection that is outside the current scope,
+  // so the header checkbox must count the selected rows it can actually see —
+  // not compare the total selection size against the row count.
+  it("ignores selected connections that are not in the list", () => {
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    h.state.selectedConnectionIds = new Set(["out-of-scope"]);
+    const wrapper = mountComponent();
+    expect(wrapper.vm.selectedVisibleCount).toBe(0);
+    expect(wrapper.vm.selectAllValue).toBe(false);
+
+    wrapper.vm.toggleSelectAll();
+    expect(h.setSelectedConnectionIds).toHaveBeenCalledWith(["c1"]);
+  });
+
+  it("clears the selection when every row is already selected", () => {
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    h.state.selectedConnectionIds = new Set(["c1"]);
+    mountComponent().vm.toggleSelectAll();
+    expect(h.setSelectedConnectionIds).toHaveBeenCalledWith([]);
+  });
+
+  it("warns that same-frame pairs will be chained in selection order", () => {
+    h.state.canConnectSelected = true;
+    h.state.connectSelectedTimeTies = [3];
+    const wrapper = mountComponent();
+    expect(wrapper.vm.timeTies).toEqual([3]);
+    // Times are displayed 1-based, like everywhere else in the UI.
+    expect(wrapper.vm.tieMessage).toContain("T4");
+    expect(wrapper.vm.tieMessage).toContain("order you selected them");
+  });
+
+  it("reports when connecting produced nothing because links already existed", async () => {
+    h.state.canConnectSelected = true;
+    // The store flags dedupe explicitly — an empty result alone cannot mean
+    // "already connected", because the API layer turns HTTP failures into [].
+    h.state.lastConnectSkippedAsDuplicate = true;
+    h.connectSelectedAnnotations.mockResolvedValue([]);
+    const wrapper = mountComponent();
+    await wrapper.vm.connectSelected();
+    expect(wrapper.vm.connectError).toContain("already connected");
+  });
+
+  // Regression: a failed batch POST returns [] via the API layer's catch, and
+  // used to be reported to the user as successful deduplication.
+  it("reports an empty result as a failure when it was not dedupe", async () => {
+    h.state.canConnectSelected = true;
+    h.state.lastConnectSkippedAsDuplicate = false;
+    h.state.hoveredConnectionId = null;
+    h.connectSelectedAnnotations.mockResolvedValue([]);
+    const wrapper = mountComponent();
+    await wrapper.vm.connectSelected();
+    expect(wrapper.vm.connectError).toContain("Failed to create connections");
+    expect(wrapper.vm.connectError).not.toContain("already connected");
+  });
+
+  it("clears the error when connecting succeeds", async () => {
+    h.state.canConnectSelected = true;
+    h.connectSelectedAnnotations.mockResolvedValue([
+      makeConnection("new1", "a", "b"),
+    ]);
+    const wrapper = mountComponent();
+    await wrapper.vm.connectSelected();
+    expect(wrapper.vm.connectError).toBeNull();
+  });
+
+  it("surfaces a failure to create connections instead of throwing", async () => {
+    h.state.canConnectSelected = true;
+    h.connectSelectedAnnotations.mockRejectedValue(new Error("boom"));
+    const wrapper = mountComponent();
+    await wrapper.vm.connectSelected();
+    expect(wrapper.vm.connectError).toContain("Failed to create connections");
+  });
+});
+
+// --- Track labels from a property (issue #1330) ---
+//
+// The By-track view can label tracks with a worker-computed property value
+// (e.g. the Parent-Child Connection IDs worker's trackId) so a track flagged
+// during post-processing can be found here by the same id.
+describe("track labels from a property", () => {
+  const PATH = ["prop1", "trackId"];
+
+  function trackRowFor(annotationIds: string[]) {
+    return {
+      id: annotationIds[0],
+      colorKey: annotationIds[0],
+      annotationIds,
+      annotationCount: annotationIds.length,
+      timeRange: { start: 0, end: annotationIds.length - 1 },
+      rows: h.state.connectionRows,
+    };
+  }
+
+  function setupTrackView(values: Record<string, any>, path = PATH) {
+    h.state.grouping = "track";
+    h.state.trackLabelPath = path;
+    propertyStoreMock.propertyValues = values;
+    setRows(
+      [makeConnection("c1", "a", "b")],
+      [makeAnnotation("a", 0), makeAnnotation("b", 1)],
+    );
+    h.state.trackRows = [trackRowFor(["a", "b"])];
+    return mountComponent();
+  }
+
+  it("labels a track with the shared property value", () => {
+    const wrapper = setupTrackView({
+      a: { prop1: { trackId: 42 } },
+      b: { prop1: { trackId: 42 } },
+    });
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("42");
+    expect(wrapper.vm.trackBadge(track)).toBeNull();
+    // The default id moves into the tooltip so same-valued neighbours can
+    // still be told apart.
+    expect(wrapper.vm.trackTitleTooltip(track)).toContain("#");
+    expect(wrapper.text()).toContain("Track 42");
+  });
+
+  it("falls back to the short id without a chosen property", () => {
+    const wrapper = setupTrackView({ a: { prop1: { trackId: 42 } } }, []);
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("#a");
+    expect(wrapper.vm.trackBadge(track)).toBeNull();
+  });
+
+  it("keeps the shared value but badges a partially-covered track", () => {
+    const wrapper = setupTrackView({ a: { prop1: { trackId: 42 } } });
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("42");
+    expect(wrapper.vm.trackBadge(track)?.text).toBe("partial");
+  });
+
+  it("badges differing values and falls back to the short id", () => {
+    const wrapper = setupTrackView({
+      a: { prop1: { trackId: 42 } },
+      b: { prop1: { trackId: 43 } },
+    });
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("#a");
+    const badge = wrapper.vm.trackBadge(track);
+    expect(badge?.text).toBe("mixed IDs");
+    expect(badge?.tooltip).toContain("42, 43");
+  });
+
+  it("badges a track with no values at all", () => {
+    const wrapper = setupTrackView({});
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("#a");
+    expect(wrapper.vm.trackBadge(track)?.text).toBe("no ID");
+  });
+
+  it("integer floats from the worker display without decimals", () => {
+    const wrapper = setupTrackView({
+      a: { prop1: { trackId: 7.0 } },
+      b: { prop1: { trackId: 7.0 } },
+    });
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("7");
+  });
+
+  it("offers the default and every computed path in the picker", () => {
+    propertyStoreMock.computedPropertyPaths = [PATH, ["prop2"]];
+    h.state.grouping = "track";
+    const wrapper = mountComponent();
+    expect(wrapper.vm.trackLabelItems).toEqual([
+      { title: "Object ID (default)", value: "" },
+      { title: "prop1 / trackId", value: "prop1.trackId" },
+      { title: "prop2", value: "prop2" },
+    ]);
+  });
+
+  it("keeps a persisted path listed after its values disappear", () => {
+    propertyStoreMock.computedPropertyPaths = [["prop2"]];
+    h.state.grouping = "track";
+    h.state.trackLabelPath = PATH;
+    const wrapper = mountComponent();
+    expect(wrapper.vm.trackLabelItems).toContainEqual({
+      title: "prop1 / trackId",
+      value: "prop1.trackId",
+    });
+    expect(wrapper.vm.trackLabelKey).toBe("prop1.trackId");
+  });
+
+  it("maps picker selections back to store paths", () => {
+    propertyStoreMock.computedPropertyPaths = [PATH];
+    h.state.grouping = "track";
+    const wrapper = mountComponent();
+    wrapper.vm.setTrackLabelFromKey("prop1.trackId");
+    expect(h.state.setTrackLabelPath).toHaveBeenCalledWith(PATH);
+    wrapper.vm.setTrackLabelFromKey("");
+    expect(h.state.setTrackLabelPath).toHaveBeenCalledWith([]);
+  });
+
+  it("fetches member values in lazy mode with one batched request", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    h.getPropertyValuesForIds.mockResolvedValue([
+      { annotationId: "a", values: { prop1: { trackId: 42 } } },
+      // b intentionally absent: no value doc at all — a confirmed miss.
+    ]);
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledWith(
+      "ds",
+      ["a", "b"],
+      [PATH],
+    );
+    const track = wrapper.vm.tracks[0];
+    expect(wrapper.vm.trackTitle(track)).toBe("42");
+    expect(wrapper.vm.trackBadge(track)?.text).toBe("partial");
+  });
+
+  it("never fetches in wholesale mode", async () => {
+    setupTrackView({ a: { prop1: { trackId: 1 } } });
+    await flushPromises();
+    expect(h.getPropertyValuesForIds).not.toHaveBeenCalled();
+  });
+
+  // A split (a connection deleted after the worker ran) leaves two tracks
+  // whose members each unanimously carry the same old id; per-track
+  // resolution alone would mark both clean, hiding the graph change and
+  // showing duplicate "Track 42" rows.
+  it("badges tracks sharing one value after a split", () => {
+    h.state.grouping = "track";
+    h.state.trackLabelPath = PATH;
+    propertyStoreMock.propertyValues = {
+      a: { prop1: { trackId: 42 } },
+      b: { prop1: { trackId: 42 } },
+      c: { prop1: { trackId: 42 } },
+      d: { prop1: { trackId: 42 } },
+    };
+    setRows(
+      [makeConnection("c1", "a", "b"), makeConnection("c2", "c", "d")],
+      [
+        makeAnnotation("a", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("c", 0),
+        makeAnnotation("d", 1),
+      ],
+    );
+    h.state.trackRows = [trackRowFor(["a", "b"]), trackRowFor(["c", "d"])];
+    const wrapper = mountComponent();
+    for (const track of wrapper.vm.tracks) {
+      expect(wrapper.vm.trackTitle(track)).toBe("42");
+      expect(wrapper.vm.trackBadge(track)?.text).toBe("duplicate ID");
+    }
+  });
+
+  // A narrow scope can expose one intact dataset-wide track as two
+  // disconnected fragment rows; they share a value AND a colorKey (the
+  // dataset-wide track identity), so no split happened and neither badges.
+  it("does not badge scoped fragments of one dataset-wide track", () => {
+    h.state.grouping = "track";
+    h.state.trackLabelPath = PATH;
+    propertyStoreMock.propertyValues = {
+      a: { prop1: { trackId: 42 } },
+      b: { prop1: { trackId: 42 } },
+      c: { prop1: { trackId: 42 } },
+      d: { prop1: { trackId: 42 } },
+    };
+    setRows(
+      [makeConnection("c1", "a", "b"), makeConnection("c2", "c", "d")],
+      [
+        makeAnnotation("a", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("c", 5),
+        makeAnnotation("d", 6),
+      ],
+    );
+    h.state.trackRows = [
+      { ...trackRowFor(["a", "b"]), colorKey: "dataset-track-1" },
+      { ...trackRowFor(["c", "d"]), colorKey: "dataset-track-1" },
+    ];
+    const wrapper = mountComponent();
+    for (const track of wrapper.vm.tracks) {
+      expect(wrapper.vm.trackTitle(track)).toBe("42");
+      expect(wrapper.vm.trackBadge(track)).toBeNull();
+    }
+  });
+
+  // During a dataset load, stubOnlyMode flips BEFORE fetchPropertyValues
+  // bumps the revision, so a fetch launched in that gap would be superseded
+  // (and re-sent) moments later — one duplicated large batch per dataset
+  // open. The fetcher waits for the readiness signal instead.
+  it("waits for the dataset's property refresh before fetching", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    propertyStoreMock.propertyValuesDatasetId = null;
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    expect(h.getPropertyValuesForIds).not.toHaveBeenCalled();
+    // fetchPropertyValues ran for this dataset (bump + id, one watcher fire).
+    propertyStoreMock.propertyValuesDatasetId = "ds";
+    propertyStoreMock.propertyValuesRevision = 1;
+    await wrapper.vm.ensureTrackLabelValues();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+  });
+
+  // The component outlives dataset switches; a failure recorded in a lazy
+  // dataset must not survive into a wholesale one, where the fetcher (and its
+  // Retry) is out of play and could never clear it.
+  it("clears a lazy-mode failure when wholesale mode takes over", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    h.getPropertyValuesForIds.mockRejectedValue(new Error("boom"));
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(true);
+    mockedAnnotationStore.stubOnlyMode = false;
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("does not badge distinct values as duplicates", () => {
+    h.state.grouping = "track";
+    h.state.trackLabelPath = PATH;
+    propertyStoreMock.propertyValues = {
+      a: { prop1: { trackId: 42 } },
+      b: { prop1: { trackId: 42 } },
+      c: { prop1: { trackId: 43 } },
+      d: { prop1: { trackId: 43 } },
+    };
+    setRows(
+      [makeConnection("c1", "a", "b"), makeConnection("c2", "c", "d")],
+      [
+        makeAnnotation("a", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("c", 0),
+        makeAnnotation("d", 1),
+      ],
+    );
+    h.state.trackRows = [trackRowFor(["a", "b"]), trackRowFor(["c", "d"])];
+    const wrapper = mountComponent();
+    for (const track of wrapper.vm.tracks) {
+      expect(wrapper.vm.trackBadge(track)).toBeNull();
+    }
+  });
+
+  // A failed batch fetch must not read as "confirmed missing": the cache is
+  // simply not covering those members yet, and claiming "no ID" would be an
+  // authoritative-looking lie about values that exist on the server.
+  it("does not confuse a failed fetch with confirmed missing values", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    h.getPropertyValuesForIds.mockRejectedValue(new Error("boom"));
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    const track = wrapper.vm.tracks[0];
+    // Unknown, not missing: default short-id title and NO "no ID" badge.
+    expect(wrapper.vm.trackTitle(track)).toBe("#a");
+    expect(wrapper.vm.trackBadge(track)).toBeNull();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(true);
+  });
+
+  // In lazy mode the tracks rebuild on every pan, re-entering the fetcher
+  // while a request is still pending. The same missing ids must not be
+  // resent, and the original response must merge rather than be discarded —
+  // otherwise continued interaction piles up identical queries and labels
+  // never settle until the user stops panning.
+  it("coalesces fetches while one is in flight and merges its response", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    let resolveFetch: (v: unknown) => void = () => {};
+    h.getPropertyValuesForIds.mockReturnValue(
+      new Promise((r) => {
+        resolveFetch = r;
+      }),
+    );
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+    await wrapper.vm.ensureTrackLabelValues();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+    resolveFetch([
+      { annotationId: "a", values: { prop1: { trackId: 42 } } },
+      { annotationId: "b", values: { prop1: { trackId: 42 } } },
+    ]);
+    await flushPromises();
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("42");
+    wrapper.unmount();
+  });
+
+  it("retries after a failed fetch", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    h.getPropertyValuesForIds.mockRejectedValueOnce(new Error("boom"));
+    h.getPropertyValuesForIds.mockResolvedValue([
+      { annotationId: "a", values: { prop1: { trackId: 42 } } },
+      { annotationId: "b", values: { prop1: { trackId: 42 } } },
+    ]);
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(true);
+    await wrapper.vm.ensureTrackLabelValues();
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(false);
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("42");
+  });
+
+  // An obsolete request (for tracks shown before a scope change) can fail
+  // AFTER a newer request already covered everything displayed. Its failure
+  // is moot — flagging it would strand a warning that Retry cannot clear,
+  // because Retry finds nothing missing and returns early.
+  it("clears a stale failure once every displayed member is covered", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    let rejectA: (e: unknown) => void = () => {};
+    h.getPropertyValuesForIds.mockReturnValueOnce(
+      new Promise((_, rej) => {
+        rejectA = rej;
+      }),
+    );
+    h.getPropertyValuesForIds.mockResolvedValue([
+      { annotationId: "c", values: { prop1: { trackId: 7 } } },
+      { annotationId: "d", values: { prop1: { trackId: 7 } } },
+    ]);
+    const wrapper = setupTrackView({}); // tracks [a, b] — request A pending
+    await flushPromises();
+    // Scope swap to disjoint tracks while A is in flight.
+    await wrapper.setProps({ isActive: false });
+    h.state.trackRows = [trackRowFor(["c", "d"])];
+    await wrapper.setProps({ isActive: true });
+    await flushPromises(); // request B covers every displayed member
+    rejectA(new Error("obsolete"));
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(false);
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("7");
+  });
+
+  // The opposite completion order: the obsolete request fails WHILE the
+  // covering request is still pending (warning correctly set), and the
+  // covering request then succeeds. The success must clear the moot warning —
+  // clearing only at request start leaves it stranded over resolved tracks.
+  it("clears the failure when the covering request succeeds after it", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    let rejectA: (e: unknown) => void = () => {};
+    let resolveB: (v: unknown) => void = () => {};
+    h.getPropertyValuesForIds
+      .mockReturnValueOnce(
+        new Promise((_, rej) => {
+          rejectA = rej;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          resolveB = r;
+        }),
+      );
+    const wrapper = setupTrackView({}); // tracks [a, b] — request A pending
+    await flushPromises();
+    // Scope swap to disjoint tracks; request B launches and stays pending.
+    await wrapper.setProps({ isActive: false });
+    h.state.trackRows = [trackRowFor(["c", "d"])];
+    await wrapper.setProps({ isActive: true });
+    rejectA(new Error("obsolete"));
+    await flushPromises();
+    // Correct at this instant: B's members are still uncovered.
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(true);
+    resolveB([
+      { annotationId: "c", values: { prop1: { trackId: 7 } } },
+      { annotationId: "d", values: { prop1: { trackId: 7 } } },
+    ]);
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(false);
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("7");
+  });
+
+  // A path/revision change mid-flight resets the pending set, and the new
+  // request re-adds the same member ids under the new key. The old request's
+  // cleanup must release ids from ITS OWN captured set — deleting from the
+  // current one strands the new request's ids as neither cached nor pending,
+  // so the next pan resends an identical batch.
+  it("a key change mid-flight does not strand the new request's pending ids", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    let settleA: (v: unknown) => void = () => {};
+    h.getPropertyValuesForIds
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          settleA = r;
+        }),
+      )
+      .mockReturnValueOnce(new Promise(() => {}));
+    const wrapper = setupTrackView({}); // request A pending for [a, b]
+    await flushPromises();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+    // A recompute bumps the revision (new cache key); request B re-sends the
+    // same members under it and stays in flight. Not awaited — the request is
+    // issued synchronously before the await point, and B never settles.
+    propertyStoreMock.propertyValuesRevision = 1;
+    void wrapper.vm.ensureTrackLabelValues();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(2);
+    settleA([]); // the superseded request settles
+    await flushPromises();
+    // A pan re-enters while B is still pending: nothing new to send.
+    await wrapper.vm.ensureTrackLabelValues();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(2);
+  });
+
+  // stubOnlyMode is settled by the annotation fetch while the tracks are
+  // settled by the connection fetch — parallel requests with no ordering
+  // guarantee — so the fetcher must react to the mode flip itself, not only
+  // to track/path changes.
+  it("fetches when lazy mode is determined after the tracks arrive", async () => {
+    h.getPropertyValuesForIds.mockResolvedValue([
+      { annotationId: "a", values: { prop1: { trackId: 42 } } },
+      { annotationId: "b", values: { prop1: { trackId: 42 } } },
+    ]);
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    // Wholesale at mount: no fetch.
+    expect(h.getPropertyValuesForIds).not.toHaveBeenCalled();
+    mockedAnnotationStore.stubOnlyMode = true;
+    await flushPromises();
+    // At least once rather than exactly once: components mounted by earlier
+    // tests stay alive and their watchers also react to the shared proxy.
+    expect(h.getPropertyValuesForIds).toHaveBeenCalled();
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("42");
+    wrapper.unmount();
+  });
+});

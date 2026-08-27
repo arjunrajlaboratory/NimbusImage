@@ -24,23 +24,29 @@
         <template v-if="!configurationOnly">
           <div>
             <v-btn
-              class="ma-1 d-flex"
+              variant="outlined"
+              color="primary"
               size="small"
+              class="ma-1 d-flex"
               @click="resetFromDataset(item.key)"
             >
               Reset from dataset
             </v-btn>
             <v-btn
-              class="ma-1 d-flex"
+              variant="outlined"
+              color="primary"
               size="small"
+              class="ma-1 d-flex"
               :disabled="!viewScales[item.key]"
               @click="revertToCollection(item.key)"
             >
               Reset from collection
             </v-btn>
             <v-btn
-              class="ma-1 d-flex"
+              variant="outlined"
+              color="primary"
               size="small"
+              class="ma-1 d-flex"
               :disabled="!viewScales[item.key]"
               @click="saveInCollection(item.key)"
             >

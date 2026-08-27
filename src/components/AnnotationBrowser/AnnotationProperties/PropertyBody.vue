@@ -34,8 +34,10 @@
         <template v-slot:activator="{ props: activatorProps }">
           <v-btn
             v-bind="activatorProps"
+            variant="text"
+            color="error"
+            size="small"
             @click.stop="deleteComputedValues = true"
-            color="red"
           >
             Delete property
           </v-btn>
@@ -68,8 +70,13 @@
           </v-card-text>
           <v-card-actions>
             <v-spacer />
+            <v-btn variant="text" size="small" @click="deleteDialog = false"
+              >Cancel</v-btn
+            >
             <v-btn
-              color="red"
+              variant="flat"
+              color="error"
+              size="small"
               @click="
                 () => {
                   deleteProperty();
@@ -78,7 +85,6 @@
               "
               >Delete</v-btn
             >
-            <v-btn color="primary" @click="deleteDialog = false">Cancel</v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -87,18 +93,29 @@
     <!-- Log Dialog -->
     <v-dialog v-model="showLogDialog" max-width="800px">
       <v-card>
-        <v-card-title class="headline">
+        <v-card-title class="d-flex align-center">
           Job Log: {{ property.name }}
           <v-spacer></v-spacer>
           <v-tooltip location="bottom">
             <template v-slot:activator="{ props: activatorProps }">
-              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
+              <v-btn
+                v-bind="activatorProps"
+                variant="text"
+                icon
+                size="small"
+                @click="copyLogToClipboard"
+              >
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
             <span>Copy to clipboard</span>
           </v-tooltip>
-          <v-btn icon @click="showLogDialog = false">
+          <v-btn
+            variant="text"
+            icon
+            size="small"
+            @click="showLogDialog = false"
+          >
             <v-icon>mdi-close</v-icon>
           </v-btn>
         </v-card-title>
@@ -107,7 +124,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" variant="text" @click="showLogDialog = false"
+          <v-btn variant="text" size="small" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>
@@ -233,7 +250,7 @@ defineExpose({
   min-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
-  font-family: monospace;
+  font-family: var(--nimbus-font-mono, monospace);
   font-size: 12px;
   background-color: rgba(0, 0, 0, 0.05);
   padding: 12px;

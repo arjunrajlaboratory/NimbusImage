@@ -2,6 +2,7 @@ from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource
 from girder.constants import TokenScope
+from ..helpers.validation import requireObjectBody
 from ..models.workerPreviews import WorkerPreviewModel as PreviewModel
 from girder.exceptions import RestException
 
@@ -84,5 +85,8 @@ class WorkerPreviews(Resource):
                 code=400, message="Missing datasetId parameter"
             )
         return self._previewModel.requestPreviewUpdate(
-            image, datasetId, self.getBodyJson(), self.getCurrentUser()
+            image,
+            datasetId,
+            requireObjectBody(self.getBodyJson(), "Parameters"),
+            self.getCurrentUser(),
         )

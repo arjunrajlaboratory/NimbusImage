@@ -1,106 +1,115 @@
 <template>
-  <v-container v-if="propertyFullName">
-    <v-row class="title text-high-emphasis d-flex align-center">
+  <div v-if="propertyFullName" class="property-filter-histogram">
+    <div class="pfh-header">
       <v-checkbox
         v-model="propertyFilter.enabled"
-        class="ml-4"
         density="compact"
         hide-details
+        class="pfh-enable"
         @update:model-value="toggleFilterEnabled"
-      ></v-checkbox>
-      <span>{{ propertyFullName }}</span>
+      />
+      <span class="pfh-name" :title="propertyFullName">
+        {{ propertyFullName }}
+      </span>
+      <v-btn
+        variant="text"
+        size="x-small"
+        density="compact"
+        icon
+        title="Remove filter"
+        @click="removeFilter"
+      >
+        <v-icon size="16">mdi-close</v-icon>
+      </v-btn>
+    </div>
+
+    <div class="pfh-controls">
       <v-btn-toggle
         v-model="propertyFilter.valuesOrRange"
         mandatory
-        class="ml-4"
         density="compact"
+        variant="outlined"
         @update:model-value="updateViewMode"
       >
-        <v-btn value="range" size="small">Histogram</v-btn>
-        <v-btn value="values" size="small">Values</v-btn>
+        <v-btn value="range" size="x-small">Histogram</v-btn>
+        <v-btn value="values" size="x-small">Values</v-btn>
       </v-btn-toggle>
-      <v-spacer></v-spacer>
-      <v-btn icon size="small" class="mr-2" @click="removeFilter">
-        <v-icon>mdi-close</v-icon>
-      </v-btn>
-    </v-row>
+      <v-spacer />
+      <template
+        v-if="propertyFilter.valuesOrRange === PropertyFilterMode.Range"
+      >
+        <v-checkbox
+          v-model="useCDF"
+          label="CDF"
+          density="compact"
+          hide-details
+          class="pfh-flag"
+        />
+        <v-checkbox
+          v-model="useLog"
+          label="log"
+          density="compact"
+          hide-details
+          class="pfh-flag"
+        />
+      </template>
+    </div>
 
     <template v-if="propertyFilter.valuesOrRange === PropertyFilterMode.Range">
-      <v-row>
-        <v-col class="wrapper" ref="wrapper" :style="{ width: `${width}px` }">
-          <svg :width="width" :height="height" v-if="hist">
-            <path class="path" :d="area" />
-          </svg>
-          <div class="min-hint" :style="{ width: toValue(minValue) }"></div>
-          <div
-            class="max-hint"
-            :style="{ width: toValue(maxValue, true) }"
-          ></div>
-          <div ref="min" class="min" :style="{ left: toValue(minValue) }"></div>
-          <div
-            ref="max"
-            class="max"
-            :style="{ right: toValue(maxValue, true) }"
-          ></div>
-        </v-col>
-        <v-col>
-          <v-checkbox v-model="useCDF" label="CDF"></v-checkbox>
-        </v-col>
-        <v-col>
-          <v-checkbox v-model="useLog" label="log"></v-checkbox>
-        </v-col>
-      </v-row>
-      <v-row>
-        <v-col class="pa-1">
-          <v-text-field
-            density="compact"
-            hide-details
-            label="Min"
-            type="number"
-            v-model="minValue"
-          ></v-text-field>
-        </v-col>
-        <v-col class="pa-1">
-          <v-text-field
-            density="compact"
-            hide-details
-            type="number"
-            label="Max"
-            v-model="maxValue"
-          ></v-text-field>
-        </v-col>
-      </v-row>
+      <div class="wrapper" ref="wrapper" :style="{ width: `${width}px` }">
+        <svg :width="width" :height="height" v-if="hist">
+          <path class="path" :d="area" />
+        </svg>
+        <div class="min-hint" :style="{ width: toValue(minValue) }"></div>
+        <div class="max-hint" :style="{ width: toValue(maxValue, true) }"></div>
+        <div ref="min" class="min" :style="{ left: toValue(minValue) }"></div>
+        <div
+          ref="max"
+          class="max"
+          :style="{ right: toValue(maxValue, true) }"
+        ></div>
+      </div>
+      <div class="pfh-minmax">
+        <v-text-field
+          density="compact"
+          variant="outlined"
+          hide-details
+          label="Min"
+          type="number"
+          v-model="minValue"
+        />
+        <v-text-field
+          density="compact"
+          variant="outlined"
+          hide-details
+          label="Max"
+          type="number"
+          v-model="maxValue"
+        />
+      </div>
     </template>
 
     <template v-else>
-      <v-row>
-        <v-col>
-          <v-textarea
-            v-model="valuesInput"
-            density="compact"
-            rows="4"
-            hide-details
-            placeholder="Enter values separated by spaces, commas, tabs, or newlines"
-            @input="debouncedUpdateValues"
-          ></v-textarea>
-        </v-col>
-      </v-row>
+      <v-textarea
+        v-model="valuesInput"
+        density="compact"
+        variant="outlined"
+        rows="4"
+        hide-details
+        placeholder="Enter values separated by spaces, commas, tabs, or newlines"
+        class="mt-2"
+        @input="debouncedUpdateValues"
+      />
     </template>
-  </v-container>
+  </div>
 </template>
 
 <script setup lang="ts">
-import {
-  ref,
-  computed,
-  watch,
-  onMounted,
-  onBeforeUnmount,
-  nextTick,
-} from "vue";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
-import { arePathEquals, getValueFromObjectAndPath } from "@/utils/paths";
+import { arePathEquals } from "@/utils/paths";
+import { histogramBounds } from "@/utils/propertyValues";
 import { selectAll, event as d3Event } from "d3-selection";
 import { drag, D3DragEvent } from "d3-drag";
 
@@ -108,6 +117,7 @@ import { IPropertyAnnotationFilter, PropertyFilterMode } from "@/store/model";
 import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
 import { area as d3Area, curveStepBefore } from "d3-shape";
 import { v4 as uuidv4 } from "uuid";
+import { logError } from "@/utils/log";
 
 import { scaleLinear, scaleSymlog } from "d3-scale";
 import debounce from "lodash/debounce";
@@ -122,11 +132,15 @@ const wrapper = ref<HTMLElement>();
 const min = ref<HTMLElement>();
 const max = ref<HTMLElement>();
 
-const width = ref(300);
+const width = ref(400);
 const height = ref(60);
 const useLog = ref(false);
 const useCDF = ref(false);
-const defaultMinMax = ref(true);
+const defaultMinMax = ref(
+  !filterStore.propertyFilters.some((filter) =>
+    arePathEquals(filter.propertyPath, props.propertyPath),
+  ),
+);
 const valuesInput = ref("");
 
 const histToPixel = computed(() => {
@@ -176,9 +190,16 @@ const maxValue = computed({
   },
 });
 
-const defaultMin = computed(() => Math.min(...values.value));
+// Default slider extent = the authoritative full-data range from the server
+// histogram, which is complete in both wholesale and lazy (stub-only) mode.
+// Falls back to 0 before the histogram loads (the watch on `hist` below syncs
+// the stored range once it arrives). The range is deliberately NOT derived
+// from propertyStore.propertyValues: in lazy mode that map holds only the
+// visible subset, so reading it would both under-represent the range and
+// reintroduce a wholesale per-annotation read.
+const defaultMin = computed(() => histogramBounds(hist.value)?.min ?? 0);
 
-const defaultMax = computed(() => Math.max(...values.value));
+const defaultMax = computed(() => histogramBounds(hist.value)?.max ?? 0);
 
 const propertyFilters = computed(() => filterStore.propertyFilters);
 
@@ -205,22 +226,6 @@ const propertyFilter = computed(() => {
 const propertyFullName = computed(() =>
   propertyStore.getFullNameFromPath(props.propertyPath),
 );
-
-const values = computed(() => {
-  const valuesForThisProperty: number[] = [];
-  const propValues = propertyStore.propertyValues;
-  for (const annotationId in propValues) {
-    const valuesPerProperty = propValues[annotationId];
-    const value = getValueFromObjectAndPath(
-      valuesPerProperty,
-      props.propertyPath,
-    );
-    if (typeof value === "number") {
-      valuesForThisProperty.push(value);
-    }
-  }
-  return valuesForThisProperty;
-});
 
 const hist = computed(() => filterStore.getHistogram(props.propertyPath) || []);
 
@@ -299,13 +304,14 @@ function parseValuesInput(input: string): number[] {
 }
 
 function updateValuesFilter() {
-  const parsedValues = parseValuesInput(valuesInput.value);
-  if (parsedValues.length) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      values: parsedValues,
-    });
-  }
+  // Always write the parsed values, even when empty. An empty list means "do
+  // not filter" (see filters.ts). Previously an empty parse was skipped, so
+  // deleting all text from the textarea left the old values filter silently
+  // active while the UI looked cleared.
+  filterStore.updatePropertyFilter({
+    ...propertyFilter.value,
+    values: parseValuesInput(valuesInput.value),
+  });
 }
 
 const debouncedUpdateValues = debounce(updateValuesFilter, 500);
@@ -339,7 +345,20 @@ function removeFilter() {
   filterStore.togglePropertyPathFiltering(props.propertyPath);
 }
 
-watch(hist, () => initializeHandles());
+watch(hist, () => {
+  // Once the server histogram (authoritative full-data range) arrives, sync the
+  // stored default range to it — only while the user is still on defaults
+  // (hasn't dragged a handle). Without this, a filter created before the
+  // histogram loaded (e.g. in stub-only mode, where propertyValues is empty)
+  // keeps a degenerate range and would filter out everything.
+  if (defaultMinMax.value) {
+    filterStore.updatePropertyFilter({
+      ...propertyFilter.value,
+      range: { min: defaultMin.value, max: defaultMax.value },
+    });
+  }
+  initializeHandles();
+});
 
 onMounted(() => {
   if (
@@ -349,23 +368,10 @@ onMounted(() => {
     valuesInput.value = propertyFilter.value.values.join(", ");
   }
 
-  filterStore.updateHistograms();
-  if (!propertyFilter.value.enabled) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      enabled: true,
-    });
-  }
+  void filterStore
+    .updateHistograms()
+    .catch((error) => logError("Failed to refresh property histograms", error));
   initializeHandles();
-});
-
-onBeforeUnmount(() => {
-  if (propertyFilter.value.enabled) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      enabled: false,
-    });
-  }
 });
 
 defineExpose({
@@ -383,7 +389,6 @@ defineExpose({
   defaultMax,
   propertyFilter,
   propertyFullName,
-  values,
   hist,
   area,
   initializeHandles,
@@ -394,6 +399,62 @@ defineExpose({
 });
 </script>
 <style scoped lang="scss">
+.property-filter-histogram {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+
+  &:first-of-type {
+    border-top: none;
+  }
+}
+
+.pfh-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pfh-enable {
+  flex: 0 0 auto;
+}
+
+.pfh-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--nimbus-text-secondary, #d0d6e0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pfh-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pfh-flag {
+  flex: 0 0 auto;
+
+  :deep(.v-label) {
+    font-size: 12px;
+    opacity: 0.9;
+  }
+}
+
+.pfh-minmax {
+  display: flex;
+  gap: 8px;
+
+  > .v-input {
+    flex: 1 1 0;
+  }
+}
+
 .wrapper {
   margin-top: 0.5em;
   position: relative;

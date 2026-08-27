@@ -1,75 +1,59 @@
 <template>
-  <v-expansion-panel>
-    <v-expansion-panel-title>
-      Object display and selection controls
-    </v-expansion-panel-title>
-    <v-expansion-panel-text>
-      <v-list density="compact" class="py-0">
-        <v-list-item>
-          <v-checkbox
+  <section class="settings-section">
+    <h4 class="settings-section-title">Object display & selection</h4>
+    <div class="settings-section-body">
+      <v-checkbox
+        hide-details
+        v-model="drawAnnotations"
+        density="compact"
+        label="Show objects (hotkey A)"
+      />
+      <div class="settings-indent" :class="{ 'is-disabled': !drawAnnotations }">
+        <v-checkbox
+          hide-details
+          density="compact"
+          :disabled="!drawAnnotations"
+          v-model="drawConnections"
+          label="Show connections between objects"
+        />
+        <v-switch
+          hide-details
+          density="compact"
+          :disabled="!drawAnnotations"
+          v-model="filteredDraw"
+          label="Only show objects passing filters"
+        />
+        <v-checkbox
+          hide-details
+          density="compact"
+          :disabled="!drawAnnotations"
+          v-model="showTooltips"
+          label="Show object tooltips (hotkey T)"
+        />
+        <div class="settings-indent">
+          <v-switch
             hide-details
-            v-model="drawAnnotations"
             density="compact"
-            label="Show objects (hotkey A)"
-          ></v-checkbox>
-        </v-list-item>
-        <v-list-item>
-          <v-list density="compact" class="py-0">
-            <v-list-item>
-              <v-checkbox
-                hide-details
-                density="compact"
-                :disabled="!drawAnnotations"
-                v-model="drawConnections"
-                label="Show connections between objects"
-              ></v-checkbox>
-            </v-list-item>
-            <v-list-item>
-              <v-switch
-                hide-details
-                density="compact"
-                :disabled="!drawAnnotations"
-                v-model="filteredDraw"
-                label="Only show objects passing filters"
-              ></v-switch>
-            </v-list-item>
-            <v-list-item>
-              <v-checkbox
-                hide-details
-                density="compact"
-                :disabled="!drawAnnotations"
-                v-model="showTooltips"
-                label="Show object tooltips (hotkey T)"
-              ></v-checkbox>
-            </v-list-item>
-            <v-list-item>
-              <v-list density="compact" class="py-0">
-                <v-list-item>
-                  <v-switch
-                    hide-details
-                    density="compact"
-                    :disabled="!showTooltips || !drawAnnotations"
-                    v-model="filteredAnnotationTooltips"
-                    label="Show tooltips only for objects passing filters"
-                  ></v-switch>
-                </v-list-item>
-              </v-list>
-            </v-list-item>
-          </v-list>
-        </v-list-item>
-        <v-list-item>
-          <v-select
-            v-model="annotationSelectionType"
-            :items="annotationsSelectionTypeItems"
-            item-title="text"
-            item-value="value"
-            label="Object selection mode"
-            title="When adding to a selection, you can add, remove, or toggle the selection of objects"
-          ></v-select>
-        </v-list-item>
-      </v-list>
-    </v-expansion-panel-text>
-  </v-expansion-panel>
+            :disabled="!showTooltips || !drawAnnotations"
+            v-model="filteredAnnotationTooltips"
+            label="Show tooltips only for objects passing filters"
+          />
+        </div>
+      </div>
+      <v-select
+        v-model="annotationSelectionType"
+        :items="annotationsSelectionTypeItems"
+        item-title="text"
+        item-value="value"
+        label="Object selection mode"
+        title="When adding to a selection, you can add, remove, or toggle the selection of objects"
+        density="compact"
+        variant="outlined"
+        hide-details
+        class="mt-2"
+      />
+    </div>
+  </section>
 </template>
 
 <script setup lang="ts">

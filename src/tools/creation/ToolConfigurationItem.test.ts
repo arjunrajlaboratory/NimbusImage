@@ -73,6 +73,7 @@ describe("ToolConfigurationItem", () => {
       "text",
       "dockerImage",
       "tags",
+      "layerSelect",
     ];
     expect(Object.keys(map)).toEqual(expectedKeys);
     for (const key of expectedKeys) {

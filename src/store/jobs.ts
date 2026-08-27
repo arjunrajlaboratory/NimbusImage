@@ -19,6 +19,7 @@ import {
 import main from "./index";
 
 import { logError } from "@/utils/log";
+import { quotaExceededMessage } from "@/utils/quota";
 import { jobStates } from "./jobConstants";
 
 export { jobStates };
@@ -121,8 +122,13 @@ export class Jobs extends VuexModule {
 
   connectionErrors: number = 0;
 
+  // The completion promise for a tracked job, or undefined if the job is not
+  // tracked — either it was never registered with addJob, or it already
+  // settled (handleJobEventImp drops the entry once it resolves). Callers must
+  // handle undefined rather than assume a live job.
   get getPromiseForJobId() {
-    return (jobId: string) => this.jobInfoMap[jobId].successPromise;
+    return (jobId: string): Promise<boolean> | undefined =>
+      this.jobInfoMap[jobId]?.successPromise;
   }
 
   get jobIdForToolId() {
@@ -157,14 +163,17 @@ export class Jobs extends VuexModule {
     return (jobId: string) => this.jobInfoMap[jobId]?.log || "";
   }
 
+  // The job's status straight from the server, or null when it could not be
+  // read (network failure, deleted job, bad id) — a transient failure must not
+  // be mistaken for a failed job.
   @Action
-  async getJobStatus(jobId: string): Promise<number> {
+  async fetchJobStatus(jobId: string): Promise<number | null> {
     try {
       const response = await main.girderRest.get(`job/${jobId}`);
       return response.data.status;
     } catch (error) {
       logError(`Failed to get status for job ${jobId}`);
-      return jobStates.error;
+      return null;
     }
   }
 
@@ -303,6 +312,24 @@ export class Jobs extends VuexModule {
           status === jobStates.cancelled ? "cancelled" : "failed"
         }`,
       );
+      if (status === jobStates.error) {
+        // Surface the failure to the user. In particular, detect storage
+        // quota breaches: server-side uploads (transcoding jobs, worker
+        // outputs) fail with a quota message that only appears in the job
+        // log, and would otherwise be invisible to the user.
+        const jobTitle = jobEvent.title || "Job";
+        const quotaMessage = quotaExceededMessage(jobInfo.log);
+        const { default: progress } = await import("./progress");
+        progress.createNotification({
+          type: NotificationType.ERROR,
+          title: quotaMessage ? "Storage Quota Exceeded" : "Job Failed",
+          message: quotaMessage ?? `${jobTitle} failed.`,
+          info: quotaMessage
+            ? undefined
+            : "See the job log for details about the failure.",
+          timeout: 0, // Requires manual dismissal
+        });
+      }
     } else {
       // Create success notification
       const jobTitle = jobEvent.title || "Job";

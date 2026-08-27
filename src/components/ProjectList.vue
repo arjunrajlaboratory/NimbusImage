@@ -14,6 +14,7 @@
       </div>
       <v-btn
         v-if="store.isLoggedIn"
+        variant="flat"
         color="primary"
         size="small"
         class="ml-2"
@@ -31,9 +32,11 @@
         v-if="!loading && filteredProjects.length === 0"
         class="text-center pa-4"
       >
-        <v-icon size="64" color="grey">mdi-folder-star</v-icon>
-        <div class="text-h6 text-grey mt-2">No projects found</div>
-        <div class="text-body-2 text-grey">
+        <v-icon size="64" color="secondary">mdi-folder-star</v-icon>
+        <div class="text-body-1 font-weight-medium text-medium-emphasis mt-2">
+          No projects found
+        </div>
+        <div class="text-body-2 text-medium-emphasis">
           {{
             searchQuery
               ? "Try adjusting your search terms"
@@ -50,7 +53,7 @@
           @click="navigateToProject(project)"
         >
           <template #prepend>
-            <v-icon color="#8e24aa" size="24">mdi-folder-star</v-icon>
+            <v-icon color="project" size="24">mdi-folder-star</v-icon>
           </template>
 
           <v-list-item-title class="project-title">
@@ -72,20 +75,20 @@
               <v-chip
                 size="x-small"
                 variant="outlined"
-                color="grey"
+                color="secondary"
                 class="mr-1"
               >
                 {{ project.meta.datasets.length }} dataset{{
                   project.meta.datasets.length !== 1 ? "s" : ""
                 }}
               </v-chip>
-              <v-chip size="x-small" variant="outlined" color="grey">
+              <v-chip size="x-small" variant="outlined" color="secondary">
                 {{ project.meta.collections.length }} collection{{
                   project.meta.collections.length !== 1 ? "s" : ""
                 }}
               </v-chip>
               <v-spacer />
-              <span class="text-caption text-grey">
+              <span class="text-caption text-medium-emphasis">
                 Updated {{ formatDateString(project.updated) }}
               </span>
             </div>
@@ -94,7 +97,7 @@
           <template #append>
             <v-menu>
               <template #activator="{ props: activatorProps }">
-                <v-btn icon size="small" variant="text" v-bind="activatorProps">
+                <v-btn v-bind="activatorProps" variant="text" icon size="small">
                   <v-icon size="small">mdi-dots-vertical</v-icon>
                 </v-btn>
               </template>
@@ -142,9 +145,13 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="showCreateDialog = false">Cancel</v-btn>
+          <v-btn variant="text" size="small" @click="showCreateDialog = false"
+            >Cancel</v-btn
+          >
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             :disabled="!newProjectName.trim()"
             :loading="creating"
             @click="createProject"
@@ -176,9 +183,13 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="showEditDialog = false">Cancel</v-btn>
+          <v-btn variant="text" size="small" @click="showEditDialog = false"
+            >Cancel</v-btn
+          >
           <v-btn
+            variant="flat"
             color="primary"
+            size="small"
             :disabled="!editProjectName.trim()"
             :loading="saving"
             @click="saveProject"
@@ -199,8 +210,16 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="showDeleteDialog = false">Cancel</v-btn>
-          <v-btn color="error" :loading="deleting" @click="deleteProject">
+          <v-btn variant="text" size="small" @click="showDeleteDialog = false"
+            >Cancel</v-btn
+          >
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            :loading="deleting"
+            @click="deleteProject"
+          >
             Delete
           </v-btn>
         </v-card-actions>
@@ -382,6 +401,6 @@ defineExpose({
 
 .project-title {
   font-weight: 500;
-  color: #8e24aa;
+  color: rgb(var(--v-theme-project));
 }
 </style>

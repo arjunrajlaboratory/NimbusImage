@@ -198,6 +198,22 @@ export function mergeHistograms(histograms: ITileHistogram[]): ITileHistogram {
     return histograms[0];
   }
 
-  // TODO
-  return histograms[0];
+  // Merge the data range across histograms. `toStyle` only uses min/max for
+  // windowing, but the contrast UI (`ContrastHistogram`) needs `hist`/
+  // `bin_edges` to render a curve. Per-frame bin edges aren't guaranteed to
+  // align, so rather than rebin we keep the first histogram's bins (a
+  // representative shape) and widen min/max/samples to span every frame.
+  let min = Infinity;
+  let max = -Infinity;
+  let samples = 0;
+  for (const histogram of histograms) {
+    if (histogram.min < min) {
+      min = histogram.min;
+    }
+    if (histogram.max > max) {
+      max = histogram.max;
+    }
+    samples += histogram.samples ?? 0;
+  }
+  return { ...histograms[0], min, max, samples };
 }

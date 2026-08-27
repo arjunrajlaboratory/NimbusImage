@@ -1,4 +1,4 @@
-import { watch, computed } from "vue";
+import { watch, computed, onScopeDispose } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { Router, RouteLocationNormalized } from "vue-router";
 import { logError } from "./log";
@@ -13,6 +13,59 @@ export interface IMapper<T> {
 // This counter is used to avoid loops of changes to the URL and changes to the mapper values
 // It counts how many instances of syncFromRoute are being called
 let currentRouteChanges = 0;
+
+// Counts in-flight Store→URL writes. While > 0, the URL is mid-transition
+// because of our own router.replace() calls — skip URL→Store sync to avoid
+// reading a stale URL value (a previously-queued router.replace that just
+// resolved) and writing it back over a newer store value. Without this guard,
+// rapid slider scrubbing causes store.time/xy/z to ping-pong as queued URL
+// writes drain, because each fullPath change triggers syncFromRoute which
+// reads the (now-outdated) URL value and overwrites the user's latest input.
+let pendingUrlWrites = 0;
+
+// Callbacks to run when pendingUrlWrites returns to 0 AND stays there for
+// DRAIN_DEBOUNCE_MS. A syncFromRoute that is skipped because writes are
+// still in flight registers itself here and re-runs once the URL has
+// settled — without this, a real external URL change (browser back/forward,
+// manual edit) landing during the drain window is silently dropped and the
+// store stays out of sync with the URL until some unrelated future route
+// change happens.
+//
+// The debounce is critical for fast slider scrubs: each router.replace
+// resolves with the URL at *that* tick's value, while later ticks are still
+// queued behind it. If the drain fires the moment pendingUrlWrites hits 0
+// (between every queued replace), syncFromRoute reads the now-stale URL
+// value and writes it to the store via mapper.set — clobbering the user's
+// most recent input. That manifests as render stutter because every
+// scrub tick triggers two store writes (user → store, then stale URL →
+// store) and double the render churn. See PR #1129 follow-up for the log
+// trace that motivated this.
+const onDrainCallbacks: Array<() => void> = [];
+const DRAIN_DEBOUNCE_MS = 100;
+let drainTimer: ReturnType<typeof setTimeout> | null = null;
+
+function notifyDrainIfIdle() {
+  if (pendingUrlWrites !== 0 || onDrainCallbacks.length === 0) {
+    return;
+  }
+  // Debounce: each call resets the timer. Continuous router.replace
+  // activity (fast slider scrub) keeps resetting it, so the callbacks
+  // only fire once the writer has been quiet for DRAIN_DEBOUNCE_MS.
+  if (drainTimer !== null) {
+    clearTimeout(drainTimer);
+  }
+  drainTimer = setTimeout(() => {
+    drainTimer = null;
+    // Re-check: a write may have started between schedule and fire.
+    if (pendingUrlWrites !== 0 || onDrainCallbacks.length === 0) {
+      return;
+    }
+    const drained = onDrainCallbacks.splice(0);
+    for (const cb of drained) {
+      cb();
+    }
+  }, DRAIN_DEBOUNCE_MS);
+}
 
 // Avoid "navigation cancelled" errors by doing calls to router.replace() one at a time
 const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
@@ -32,7 +85,13 @@ const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
       query: { ...route.query },
     };
     replacement[type][key] = stringifiedValue;
-    await router.replace(replacement);
+    pendingUrlWrites++;
+    try {
+      await router.replace(replacement);
+    } finally {
+      pendingUrlWrites--;
+      notifyDrainIfIdle();
+    }
   },
 );
 
@@ -87,8 +146,37 @@ export function useRouteMapper(
   const route = useRoute();
   const router = useRouter();
 
+  // Per-instance flags so we can safely register a one-shot drain callback
+  // (no duplicates per instance) and skip it if the component has already
+  // unmounted by the time the drain fires.
+  let drainReplayQueued = false;
+  let isAlive = true;
+  onScopeDispose(() => {
+    isAlive = false;
+  });
+
   // URL → Store sync
   async function syncFromRoute(r: RouteLocationNormalized) {
+    // Skip if our own Store→URL writes are still draining — the URL value we
+    // would read here is stale, and writing it back to the store would clobber
+    // the user's newer input (e.g., during fast slider scrubbing). We
+    // register a one-shot replay so a real external URL change that arrives
+    // during the drain window doesn't get permanently dropped.
+    if (pendingUrlWrites > 0) {
+      if (!drainReplayQueued) {
+        drainReplayQueued = true;
+        onDrainCallbacks.push(() => {
+          drainReplayQueued = false;
+          if (isAlive) {
+            // Use the current route, not the (possibly stale) `r` from when
+            // this was originally skipped — `route` is reactive and reflects
+            // the URL state right now.
+            syncFromRoute(route);
+          }
+        });
+      }
+      return;
+    }
     currentRouteChanges++;
     try {
       const promises = [

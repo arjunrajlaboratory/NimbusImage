@@ -1,18 +1,23 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="{ props: activatorProps }">
-      <v-btn
-        v-bind="{ ...activatorProps, ...$attrs }"
-        v-description="{
-          section: 'Object list actions',
-          title: 'Export CSV',
-          description:
-            'Export the current list of annotations and associated properties to a CSV file',
-        }"
-      >
-        <v-icon>mdi-application-export</v-icon>
-        EXPORT CSV
-      </v-btn>
+    <template v-slot:activator="activatorBinding">
+      <slot name="activator" v-bind="activatorBinding">
+        <v-btn
+          variant="outlined"
+          color="primary"
+          size="small"
+          v-bind="{ ...activatorBinding.props, ...$attrs }"
+          v-description="{
+            section: 'Object list actions',
+            title: 'Export CSV',
+            description:
+              'Export the current list of annotations and associated properties to a CSV file',
+          }"
+        >
+          <v-icon>mdi-application-export</v-icon>
+          EXPORT CSV
+        </v-btn>
+      </slot>
     </template>
     <v-card>
       <v-card-title> Current Annotation List as CSV </v-card-title>
@@ -98,7 +103,7 @@
         </v-radio-group>
 
         <v-alert
-          v-if="hasCommasInPropertyNames"
+          v-if="hasCommasInPropertyNames && !sanitizeColumnNames"
           :type="fileFormat === 'csv' ? 'warning' : 'info'"
           variant="tonal"
           class="mb-4"
@@ -122,6 +127,13 @@
             value="selected"
           ></v-radio>
         </v-radio-group>
+
+        <v-checkbox
+          v-model="sanitizeColumnNames"
+          label="Replace special characters in column names"
+          class="mb-4"
+          hide-details
+        />
 
         <v-list-subheader>Undefined Value Handling</v-list-subheader>
         <v-radio-group v-model="undefinedHandling" class="mb-4">
@@ -160,7 +172,7 @@
             <v-alert type="info" variant="tonal" class="mb-4">
               Preview is not available for more than
               {{ PREVIEW_ANNOTATION_LIMIT }} annotations ({{
-                annotationsToExport.length
+                exportAnnotationCount
               }}
               annotations to export). Download will export using the server.
             </v-alert>
@@ -178,7 +190,9 @@
               {{ displayText }}
               <template v-slot:append>
                 <v-btn
+                  variant="text"
                   icon
+                  size="small"
                   title="Copy to clipboard"
                   @click="copyCSVText"
                   :disabled="!canUseClipboard"
@@ -212,7 +226,7 @@
 
         <template v-if="bulkExporting">
           <v-divider class="my-4" />
-          <div class="text-subtitle-2 mb-2">
+          <div class="panel-section-title mb-2">
             Exported {{ bulkExportProgress }} of
             {{ collectionDatasets.length }} datasets
           </div>
@@ -235,14 +249,21 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn @click="dialog = false" variant="text" :disabled="bulkExporting">
+        <v-btn
+          variant="text"
+          size="small"
+          :disabled="bulkExporting"
+          @click="dialog = false"
+        >
           Close
         </v-btn>
         <v-btn
+          variant="flat"
+          color="success"
+          size="small"
           @click="download"
           :disabled="!canDownload"
           :loading="isDownloading || bulkExporting"
-          color="success"
           :min-width="isDownloading || bulkExporting ? 260 : undefined"
         >
           <template v-slot:loader>
@@ -256,7 +277,7 @@
               bulkExporting ? "Exporting datasets..." : "Preparing download..."
             }}
           </template>
-          <v-icon> mdi-save </v-icon>
+          <v-icon> mdi-content-save </v-icon>
           {{ downloadButtonText }}
         </v-btn>
       </v-card-actions>
@@ -274,7 +295,7 @@ import { useCollectionDatasets } from "@/utils/useCollectionDatasets";
 
 import Papa from "papaparse";
 
-import { IAnnotation } from "@/store/model";
+import { TAnnotationOrStub, isHydratedAnnotation } from "@/store/model";
 import { getValueFromObjectAndPath } from "@/utils/paths";
 
 const UNDEFINED_VALUE_MAP = {
@@ -285,9 +306,36 @@ const UNDEFINED_VALUE_MAP = {
 
 const PREVIEW_ANNOTATION_LIMIT = 1000;
 const DISPLAY_CHAR_LIMIT = 10000;
+// Must stay in sync with CSV_UNSAFE_COLUMN_CHARS in
+// devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py
+// so this client-side preview matches the server-generated CSV exactly.
+const UNSAFE_CSV_COLUMN_CHARS = /[^A-Za-z0-9_]+/g;
+
+interface CsvColumn {
+  name: string;
+  // isQuoted controls value quoting, not just header quoting: Tags joins
+  // multiple tags with ", " and Name is freeform user text, so these stay
+  // quoted regardless of sanitization. Keeping the flag on the column
+  // (rather than a separate parallel array) means it cannot drift out of
+  // alignment with the name when fixed columns are added/moved/removed.
+  isQuoted: boolean;
+}
+
+// Fixed columns for CSV export. Mirrors CSV_FIXED_COLUMNS in
+// devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/api/export.py.
+const CSV_FIXED_COLUMNS: readonly CsvColumn[] = [
+  { name: "Id", isQuoted: true },
+  { name: "Channel", isQuoted: false },
+  { name: "XY", isQuoted: false },
+  { name: "Z", isQuoted: false },
+  { name: "Time", isQuoted: false },
+  { name: "Tags", isQuoted: true },
+  { name: "Shape", isQuoted: true },
+  { name: "Name", isQuoted: true },
+];
 
 const props = defineProps<{
-  annotations: IAnnotation[];
+  annotations: TAnnotationOrStub[];
   propertyPaths: string[][];
 }>();
 
@@ -302,6 +350,7 @@ const displayText = ref("");
 const propertyExportMode = ref<"all" | "selected" | "listed">("all");
 const propertyFilter = ref("");
 const selectedPropertyPaths = ref<string[]>([]);
+const sanitizeColumnNames = ref(false);
 
 const fileFormat = ref<"csv" | "tsv">("csv");
 const fileDelimiter = computed(() => (fileFormat.value === "tsv" ? "\t" : ","));
@@ -327,13 +376,17 @@ const isDownloading = ref(false);
 
 const annotationScope = ref<"all" | "filtered" | "selected">("all");
 
-const allAnnotationCount = computed(() => annotationStore.annotations.length);
+// Counts and scopes read the stub-aware store members (annotationCount,
+// annotationsForIteration): in stub-only mode annotations[] is empty by
+// design, and deriving from it would silently turn a subset export into a
+// full export.
+const allAnnotationCount = computed(() => annotationStore.annotationCount);
 const filteredAnnotationCount = computed(() => props.annotations.length);
 const selectedAnnotationCount = computed(
   () => annotationStore.selectedAnnotationIds.size,
 );
 const hasActiveFilter = computed(
-  () => props.annotations.length < annotationStore.annotations.length,
+  () => props.annotations.length < annotationStore.annotationCount,
 );
 
 const exportScope = ref<"current" | "all">("current");
@@ -341,22 +394,65 @@ const bulkExporting = ref(false);
 const bulkExportProgress = ref(0);
 const bulkExportError = ref("");
 
-const annotationsToExport = computed(() => {
+// The ids to export; null means "every annotation" (the download omits the
+// field so the backend exports all without a dataset-sized $in query). Ids
+// only — never resolves annotation objects, so a subset download costs
+// O(subset) even when the stub map holds the whole dataset.
+const exportAnnotationIds = computed((): string[] | null => {
   if (annotationScope.value === "selected") {
-    const ids = annotationStore.selectedAnnotationIds;
-    return annotationStore.annotations.filter((a) => ids.has(a.id));
+    // Drop selection ids that no longer resolve (a delete or undo can leave
+    // stale ids behind): counted against annotationCount below, a stale id
+    // could make a real subset look like the whole dataset and silently
+    // widen the export.
+    const resolve = annotationStore.getAnnotationOrStubFromId;
+    return Array.from(annotationStore.selectedAnnotationIds).filter(
+      (id) => resolve(id) !== undefined,
+    );
   }
+  if (annotationScope.value === "filtered") {
+    return props.annotations.map((annotation) => annotation.id);
+  }
+  return null;
+});
+
+// Count without building the id array: the filter can match hundreds of
+// thousands of stubs, and this drives the count label and preview-limit
+// guard on every render. Only the "selected" branch touches
+// exportAnnotationIds, whose selected path is O(selection).
+const exportAnnotationCount = computed(() => {
+  if (annotationScope.value === "filtered") {
+    return props.annotations.length;
+  }
+  if (annotationScope.value === "selected") {
+    return exportAnnotationIds.value?.length ?? 0;
+  }
+  return annotationStore.annotationCount;
+});
+
+// Annotation rows for the client-side preview. Only read when the export is
+// within PREVIEW_ANNOTATION_LIMIT (the count check above never materializes
+// anything), so the id lookups here stay bounded by the preview limit. The
+// filtered branch comes first so this never evaluates exportAnnotationIds'
+// dataset-sized filtered id array.
+const annotationsToExport = computed((): TAnnotationOrStub[] => {
   if (annotationScope.value === "filtered") {
     return props.annotations;
   }
-  return annotationStore.annotations;
+  const ids = exportAnnotationIds.value;
+  if (ids === null) {
+    return annotationStore.annotationsForIteration;
+  }
+  const resolve = annotationStore.getAnnotationOrStubFromId;
+  return ids
+    .map(resolve)
+    .filter((annotation): annotation is TAnnotationOrStub => !!annotation);
 });
 
 const { loadingDatasets, collectionDatasets, configuration, allDatasetsLabel } =
   useCollectionDatasets(dialog, exportScope);
 
 const isTooLargeForPreview = computed(() => {
-  return annotationsToExport.value.length > PREVIEW_ANNOTATION_LIMIT;
+  return exportAnnotationCount.value > PREVIEW_ANNOTATION_LIMIT;
 });
 
 const canUseClipboard = computed(() => {
@@ -415,23 +511,46 @@ function copyCSVText() {
   }
 }
 
+function sanitizeCsvColumnName(name: string): string {
+  return (
+    name.replace(UNSAFE_CSV_COLUMN_CHARS, "_").replace(/^_+|_+$/g, "") || "_"
+  );
+}
+
+function getCsvColumnName(name: string): string {
+  return sanitizeColumnNames.value ? sanitizeCsvColumnName(name) : name;
+}
+
+// Sanitization can collapse distinct names to the same token, which would
+// break R imports that rely on unique header names. Suffix repeats with
+// _2, _3, ... in order of appearance, checking each candidate against the
+// used set so ["Area", "Area_2", "Area"] becomes ["Area", "Area_2",
+// "Area_3"] rather than two "Area_2"s. Matches the backend dedup logic.
+function deduplicateColumnNames(names: string[]): string[] {
+  const used = new Set<string>();
+  return names.map((name) => {
+    let candidate = name;
+    let counter = 1;
+    while (used.has(candidate)) {
+      counter += 1;
+      candidate = `${name}_${counter}`;
+    }
+    used.add(candidate);
+    return candidate;
+  });
+}
+
 async function generateCSVStringForAnnotations() {
   isProcessing.value = true;
   processingProgress.value = 0;
 
   try {
-    // Fields
-    const fields = [
-      "Id",
-      "Channel",
-      "XY",
-      "Z",
-      "Time",
-      "Tags",
-      "Shape",
-      "Name",
-    ];
-    const quotes = [true, false, false, false, false, true, true, true];
+    // Build columns as {name, isQuoted} so the quote flag travels with its
+    // column. Fixed columns first, then one column per included property.
+    const columns: CsvColumn[] = CSV_FIXED_COLUMNS.map((col) => ({
+      name: getCsvColumnName(col.name),
+      isQuoted: col.isQuoted,
+    }));
     const usedPaths: string[][] = [];
 
     // Pre-compute included paths to avoid repeated checks
@@ -442,10 +561,21 @@ async function generateCSVStringForAnnotations() {
 
     includedPaths.forEach((path) => {
       const name = propertyStore.getFullNameFromPath(path)!;
-      fields.push(name);
-      quotes.push(name.includes(","));
+      const columnName = getCsvColumnName(name);
+      columns.push({ name: columnName, isQuoted: columnName.includes(",") });
       usedPaths.push(path);
     });
+
+    if (sanitizeColumnNames.value) {
+      // Dedup operates on names only; re-attach to the existing columns so
+      // each name keeps its isQuoted flag.
+      const uniqueNames = deduplicateColumnNames(columns.map((c) => c.name));
+      uniqueNames.forEach((name, i) => (columns[i].name = name));
+    }
+
+    // Papa.unparse takes parallel fields/quotes arrays, so split only here.
+    const fields = columns.map((c) => c.name);
+    const quotes = columns.map((c) => c.isQuoted);
 
     // Process annotations in chunks
     const CHUNK_SIZE = 100;
@@ -467,7 +597,7 @@ async function generateCSVStringForAnnotations() {
           annotation.location.Time + 1,
           annotation.tags.join(", "),
           annotation.shape,
-          annotation.name ?? "",
+          isHydratedAnnotation(annotation) ? annotation.name ?? "" : "",
         ];
 
         for (const path of usedPaths) {
@@ -548,18 +678,17 @@ async function downloadSingleDataset() {
   try {
     // Only send annotationIds when exporting a subset, to avoid
     // exceeding MongoDB's 16MB BSON query size limit.
-    const exportAnnotations = annotationsToExport.value;
+    const exportIds = exportAnnotationIds.value;
     const isSubset =
-      exportAnnotations.length < annotationStore.annotations.length;
+      exportIds !== null && exportIds.length < annotationStore.annotationCount;
 
     await store.exportAPI.exportCsv({
       datasetId: store.dataset.id,
       propertyPaths: getIncludedPropertyPaths(),
-      ...(isSubset
-        ? { annotationIds: exportAnnotations.map((a) => a.id) }
-        : {}),
+      ...(isSubset ? { annotationIds: exportIds } : {}),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
+      sanitizeColumnNames: sanitizeColumnNames.value,
       filename:
         filename.value || `upenn_annotation_export${fileExtension.value}`,
     });
@@ -581,6 +710,7 @@ async function downloadAllDatasets() {
       propertyPaths: getIncludedPropertyPaths(),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
+      sanitizeColumnNames: sanitizeColumnNames.value,
       onProgress: (completed) => {
         bulkExportProgress.value = completed;
       },
@@ -616,6 +746,7 @@ watch(
     propertyExportMode,
     selectedPropertyPaths,
     undefinedHandling,
+    sanitizeColumnNames,
     fileFormat,
     dialog,
     annotationScope,
@@ -635,6 +766,7 @@ defineExpose({
   propertyExportMode,
   fileFormat,
   undefinedHandling,
+  sanitizeColumnNames,
   processingProgress,
   isProcessing,
   isTooLargeForPreview,
@@ -643,6 +775,7 @@ defineExpose({
   propertyNamesWithCommas,
   hasCommasInPropertyNames,
   resetFilename,
+  sanitizeCsvColumnName,
   generateCSVStringForAnnotations,
   updateText,
   getIncludedPropertyPaths,

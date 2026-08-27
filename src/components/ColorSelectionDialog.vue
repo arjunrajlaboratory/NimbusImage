@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="showDialog" width="50%">
+  <v-dialog v-model="showDialog" width="50%" class="wide-dialog">
     <v-card>
       <v-card-title> Color selected annotations </v-card-title>
       <v-card-text>
@@ -15,8 +15,18 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn color="warning" @click="showDialog = false"> Cancel </v-btn>
-        <v-btn color="primary" @click="submit"> Apply color </v-btn>
+        <v-btn variant="text" size="small" @click="showDialog = false">
+          Cancel
+        </v-btn>
+        <v-btn
+          variant="flat"
+          color="primary"
+          size="small"
+          :disabled="!isLoggedIn"
+          @click="submit"
+        >
+          Apply color
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -24,6 +34,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
+import store from "@/store";
 import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 
 const props = defineProps<{
@@ -41,6 +52,8 @@ const emit = defineEmits<{
     },
   ): void;
 }>();
+
+const isLoggedIn = computed(() => store.isLoggedIn);
 
 const colorOption = ref("layer");
 const localCustomColor = ref("#FFFFFF");
@@ -61,5 +74,5 @@ function submit() {
   showDialog.value = false;
 }
 
-defineExpose({ colorOption, localCustomColor, showDialog, submit });
+defineExpose({ isLoggedIn, colorOption, localCustomColor, showDialog, submit });
 </script>

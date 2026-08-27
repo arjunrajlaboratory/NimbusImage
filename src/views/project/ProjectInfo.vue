@@ -20,7 +20,21 @@
         {{ formatSize(totalProjectSize) }} total
       </v-chip>
       <v-spacer />
-      <v-btn color="primary" class="mr-2" @click="shareDialog = true">
+      <copy-link-button
+        v-if="project"
+        :route-path="`/project/${project.id}`"
+        tooltip="Copy shareable link to this project"
+        label="Copy link"
+        size="small"
+        class="mr-2"
+      />
+      <v-btn
+        variant="outlined"
+        color="primary"
+        size="small"
+        class="mr-2"
+        @click="shareDialog = true"
+      >
         <v-icon start>mdi-share-variant</v-icon>
         Share Project
       </v-btn>
@@ -28,7 +42,9 @@
            Uncomment when Zenodo export integration is ready
       <v-btn
         v-if="canStartExport"
+        variant="flat"
         color="primary"
+        size="small"
         class="mr-2"
         @click="startExport"
       >
@@ -37,7 +53,9 @@
       </v-btn>
       <v-btn
         v-if="canMarkExported"
+        variant="flat"
         color="success"
+        size="small"
         class="mr-2"
         @click="markExported"
       >
@@ -47,7 +65,12 @@
       -->
       <v-dialog v-model="deleteConfirm" max-width="33vw">
         <template #activator="{ props: activatorProps }">
-          <v-btn color="red" v-bind="activatorProps">
+          <v-btn
+            variant="outlined"
+            color="error"
+            size="small"
+            v-bind="activatorProps"
+          >
             <v-icon start>mdi-delete</v-icon>
             Delete Project
           </v-btn>
@@ -61,8 +84,17 @@
             reference.
           </v-card-text>
           <v-card-actions class="button-bar">
-            <v-btn @click="deleteConfirm = false">Cancel</v-btn>
-            <v-btn @click="deleteProject" color="error">Delete</v-btn>
+            <v-btn variant="text" size="small" @click="deleteConfirm = false">
+              Cancel
+            </v-btn>
+            <v-btn
+              variant="flat"
+              color="error"
+              size="small"
+              @click="deleteProject"
+            >
+              Delete
+            </v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -107,8 +139,8 @@
       <v-card-text>
         <v-progress-linear v-if="loadingDatasets" indeterminate />
         <div v-else-if="allDatasetItems.length === 0" class="text-center pa-4">
-          <v-icon size="48" color="grey">mdi-folder-outline</v-icon>
-          <div class="text-body-2 text-grey mt-2">
+          <v-icon size="48" color="secondary">mdi-folder-outline</v-icon>
+          <div class="text-body-2 text-medium-emphasis mt-2">
             No datasets in this project yet.
           </div>
         </div>
@@ -116,8 +148,8 @@
           v-else-if="datasetFilter && filteredDatasetItems.length === 0"
           class="text-center pa-4"
         >
-          <v-icon size="48" color="grey">mdi-magnify</v-icon>
-          <div class="text-body-2 text-grey mt-2">
+          <v-icon size="48" color="secondary">mdi-magnify</v-icon>
+          <div class="text-body-2 text-medium-emphasis mt-2">
             No datasets match "{{ datasetFilter }}"
           </div>
         </div>
@@ -131,7 +163,10 @@
                 class="font-weight-medium d-flex align-center flex-wrap"
               >
                 <span>{{ item.info?.name || "Loading..." }}</span>
-                <span v-if="item.info?.size" class="ml-2 text-grey text-body-2">
+                <span
+                  v-if="item.info?.size"
+                  class="ml-2 text-medium-emphasis text-body-2"
+                >
                   ({{ formatSize(item.info.size) }})
                 </span>
                 <v-chip
@@ -139,8 +174,7 @@
                   :key="collId"
                   size="x-small"
                   class="ml-2"
-                  color="#4baeff"
-                  text-color="white"
+                  color="collection"
                   :to="{
                     name: 'configuration',
                     params: { configurationId: collId },
@@ -156,19 +190,25 @@
                 <span class="button-bar">
                   <v-btn
                     v-if="item.source === 'direct'"
-                    color="warning"
+                    variant="outlined"
+                    color="error"
+                    size="small"
                     @click="confirmRemoveDataset(item.datasetId)"
                   >
-                    <v-icon start>mdi-close</v-icon>remove
+                    <v-icon start>mdi-delete</v-icon>
+                    Remove
                   </v-btn>
                   <v-btn
-                    color="primary"
+                    variant="flat"
+                    color="success"
+                    size="small"
                     :to="{
                       name: 'dataset',
                       params: { datasetId: item.datasetId },
                     }"
                   >
-                    <v-icon start>mdi-eye</v-icon>view
+                    <v-icon start>mdi-eye</v-icon>
+                    View
                   </v-btn>
                 </span>
               </template>
@@ -180,12 +220,18 @@
           </template>
         </v-list>
       </v-card-text>
-      <v-card-actions>
+      <v-card-actions class="d-block">
         <v-divider />
-        <div class="clickable-flex pa-2 body" @click="addDatasetDialog = true">
-          <v-icon class="pr-2" color="primary">mdi-plus-circle</v-icon>
+        <v-btn
+          variant="text"
+          color="primary"
+          size="small"
+          class="ma-2"
+          @click="addDatasetDialog = true"
+        >
+          <v-icon start>mdi-plus-circle</v-icon>
           Add dataset to project
-        </div>
+        </v-btn>
       </v-card-actions>
     </v-card>
 
@@ -209,8 +255,10 @@
       <v-card-text>
         <v-progress-linear v-if="loadingCollections" indeterminate />
         <div v-else-if="collectionItems.length === 0" class="text-center pa-4">
-          <v-icon size="48" color="grey">mdi-folder-multiple-outline</v-icon>
-          <div class="text-body-2 text-grey mt-2">
+          <v-icon size="48" color="secondary"
+            >mdi-folder-multiple-outline</v-icon
+          >
+          <div class="text-body-2 text-medium-emphasis mt-2">
             No collections in this project yet.
           </div>
         </div>
@@ -218,8 +266,8 @@
           v-else-if="collectionFilter && filteredCollectionItems.length === 0"
           class="text-center pa-4"
         >
-          <v-icon size="48" color="grey">mdi-magnify</v-icon>
-          <div class="text-body-2 text-grey mt-2">
+          <v-icon size="48" color="secondary">mdi-magnify</v-icon>
+          <div class="text-body-2 text-medium-emphasis mt-2">
             No collections match "{{ collectionFilter }}"
           </div>
         </div>
@@ -243,16 +291,22 @@
                   <template #append>
                     <span class="button-bar">
                       <v-btn
-                        color="warning"
+                        variant="outlined"
+                        color="error"
+                        size="small"
                         @click.stop="confirmRemoveCollection(item.collectionId)"
                       >
-                        <v-icon start>mdi-close</v-icon>remove
+                        <v-icon start>mdi-delete</v-icon>
+                        Remove
                       </v-btn>
                       <v-btn
-                        color="primary"
+                        variant="flat"
+                        color="success"
+                        size="small"
                         @click.stop="navigateToCollection(item.collectionId)"
                       >
-                        <v-icon start>mdi-eye</v-icon>view
+                        <v-icon start>mdi-eye</v-icon>
+                        View
                       </v-btn>
                     </span>
                   </template>
@@ -268,7 +322,7 @@
                   {{ datasetInfoCache[dv.datasetId]?.name || "Loading..." }}
                   <span
                     v-if="datasetInfoCache[dv.datasetId]?.size"
-                    class="ml-2 text-grey"
+                    class="ml-2 text-medium-emphasis"
                   >
                     ({{
                       formatSize(datasetInfoCache[dv.datasetId]?.size || 0)
@@ -276,13 +330,16 @@
                   </span>
                 </v-list-item-title>
                 <v-btn
-                  color="primary"
+                  variant="flat"
+                  color="success"
+                  size="small"
                   :to="{
                     name: 'dataset',
                     params: { datasetId: dv.datasetId },
                   }"
                 >
-                  <v-icon start>mdi-eye</v-icon>view
+                  <v-icon start>mdi-eye</v-icon>
+                  View
                 </v-btn>
               </v-list-item>
             </v-list-group>
@@ -293,17 +350,23 @@
           </template>
         </v-list>
       </v-card-text>
-      <v-card-actions>
+      <v-card-actions class="d-block">
         <v-divider />
-        <div
-          class="clickable-flex pa-2 body"
+        <v-btn
+          variant="text"
+          color="primary"
+          size="small"
+          class="ma-2"
           @click="addCollectionDialog = true"
         >
-          <v-icon class="pr-2" color="primary">mdi-plus-circle</v-icon>
+          <v-icon start>mdi-plus-circle</v-icon>
           Add collection to project
-        </div>
+        </v-btn>
       </v-card-actions>
     </v-card>
+
+    <!-- Zenodo Publication Card -->
+    <zenodo-publish :project="project" @updated="refreshProject" />
 
     <!-- Publication Metadata Card -->
     <v-card class="mb-4">
@@ -372,7 +435,9 @@
       <v-card-actions>
         <v-spacer />
         <v-btn
+          variant="flat"
           color="primary"
+          size="small"
           :loading="savingMetadata"
           :disabled="!hasMetadataChanges"
           @click="saveMetadata"
@@ -391,8 +456,21 @@
           itself will not be deleted.
         </v-card-text>
         <v-card-actions class="button-bar">
-          <v-btn @click="removeDatasetConfirm = false">Cancel</v-btn>
-          <v-btn @click="removeDataset" color="warning">Remove</v-btn>
+          <v-btn
+            variant="text"
+            size="small"
+            @click="removeDatasetConfirm = false"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            @click="removeDataset"
+          >
+            Remove
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -406,8 +484,21 @@
           collection itself will not be deleted.
         </v-card-text>
         <v-card-actions class="button-bar">
-          <v-btn @click="removeCollectionConfirm = false">Cancel</v-btn>
-          <v-btn @click="removeCollection" color="warning">Remove</v-btn>
+          <v-btn
+            variant="text"
+            size="small"
+            @click="removeCollectionConfirm = false"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            @click="removeCollection"
+          >
+            Remove
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -466,6 +557,8 @@ import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import AddDatasetToProjectDialog from "@/components/AddDatasetToProjectDialog.vue";
 import AddCollectionToProjectFilterDialog from "@/components/AddCollectionToProjectFilterDialog.vue";
 import ShareProject from "@/components/ShareProject.vue";
+import ZenodoPublish from "@/components/ZenodoPublish.vue";
+import CopyLinkButton from "@/components/CopyLinkButton.vue";
 import { formatSize } from "@/utils/conversion";
 
 // Suppress unused import warnings — auto-registered in <script setup>
@@ -473,6 +566,8 @@ void AlertDialog;
 void AddDatasetToProjectDialog;
 void AddCollectionToProjectFilterDialog;
 void ShareProject;
+void ZenodoPublish;
+void CopyLinkButton;
 
 const router = useRouter();
 
@@ -996,6 +1091,12 @@ function onCollectionAdded() {
   fetchCollectionInfo();
 }
 
+async function refreshProject() {
+  if (project.value) {
+    await projects.fetchProject(project.value.id);
+  }
+}
+
 async function saveMetadata() {
   if (!project.value) return;
   savingMetadata.value = true;
@@ -1105,12 +1206,6 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
-.clickable-flex {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-}
-
 .button-bar {
   display: flex;
   align-items: center;
@@ -1120,7 +1215,7 @@ defineExpose({
 
 // Only add hover effect to group headers as they are clickable
 :deep(.v-list-group__header:hover) {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: var(--nimbus-glass-hover);
 }
 
 // Ensure list item actions align properly with content
@@ -1131,14 +1226,5 @@ defineExpose({
 // Fix alignment in list groups
 :deep(.v-list-group__header) {
   align-items: center;
-}
-</style>
-
-<style lang="scss">
-// Override Vuetify 3's default .v-dialog { width: 50% } on outer overlay element.
-// Without this, width="70%" on v-dialog only applies to the inner .v-overlay__content,
-// making the actual dialog 90% of 50% = 45% of viewport. (See VUE3_STEPS.md P14)
-.wide-dialog.v-dialog {
-  width: auto;
 }
 </style>

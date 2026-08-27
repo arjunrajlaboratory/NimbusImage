@@ -3,6 +3,7 @@ import {
   IAnnotation,
   IAnnotationConnection,
   IAnnotationBase,
+  IAnnotationStub,
   IToolConfiguration,
   IAnnotationConnectionBase,
   IWorkerInterfaceValues,
@@ -10,11 +11,37 @@ import {
   IDisplayLayer,
   IScales,
   IDataset,
+  IAnnotationImportPayload,
+  IAnnotationImportResult,
+  IAnnotationListQuery,
+  IAnnotationListPage,
+  IAnnotationListRow,
+  IAnnotationListFilters,
+  IColorByPropertyOptions,
+  IColorByPropertyResult,
+  TAnnotationOverviewMode,
+  IAnalysisGatePlotRequest,
+  IAnalysisHistogramRequest,
+  IAnalysisHistogramResponse,
 } from "./model";
+import type { IAnnotationRasterSelector } from "@/utils/annotationOverview";
 
+import { filtersMatchNothing } from "@/utils/annotationListFilters";
 import { logError } from "@/utils/log";
 import { fetchAllPages } from "@/utils/fetch";
 import { markRaw } from "vue";
+
+export interface IAnnotationRasterUrlOptions {
+  datasetId: string;
+  selectors: IAnnotationRasterSelector[];
+  sizeX: number;
+  sizeY: number;
+  tileSize: number;
+  maxLevel: number;
+  mode: TAnnotationOverviewMode;
+  color: string;
+  version: number;
+}
 
 export default class AnnotationsAPI {
   private readonly client: RestClientInstance;
@@ -22,8 +49,6 @@ export default class AnnotationsAPI {
   constructor(client: RestClientInstance) {
     this.client = client;
   }
-
-  histogramsLoaded = 0;
 
   undo(datasetId: string) {
     return this.client.put("history/undo", undefined, {
@@ -98,6 +123,142 @@ export default class AnnotationsAPI {
       annotations.push(...newAnnotations);
     }
     return annotations;
+  }
+
+  async getAnnotationStubs(datasetId: string): Promise<IAnnotationStub[]> {
+    const response = await this.client.get("upenn_annotation/stubs", {
+      params: { datasetId },
+    });
+    return (response.data as any[]).map(this.toStub);
+  }
+
+  annotationRasterTemplateUrl(options: IAnnotationRasterUrlOptions): string {
+    const url = new URL(`${this.client.apiRoot}/upenn_annotation/raster/0/0/0`);
+    url.searchParams.set("datasetId", options.datasetId);
+    url.searchParams.set("selectors", JSON.stringify(options.selectors));
+    url.searchParams.set("sizeX", options.sizeX.toString());
+    url.searchParams.set("sizeY", options.sizeY.toString());
+    url.searchParams.set("tileSize", options.tileSize.toString());
+    url.searchParams.set("maxLevel", options.maxLevel.toString());
+    url.searchParams.set("mode", options.mode);
+    url.searchParams.set("color", options.color);
+    url.searchParams.set("v", options.version.toString());
+    return url.href.replace(
+      "/upenn_annotation/raster/0/0/0",
+      "/upenn_annotation/raster/{z}/{x}/{y}",
+    );
+  }
+
+  toListRow = (item: any): IAnnotationListRow => {
+    const stub = this.toStub(item);
+    return markRaw({
+      ...stub,
+      name: item.name ?? null,
+      values: item.values || {},
+    });
+  };
+
+  async fetchAnnotationListPage(
+    query: IAnnotationListQuery,
+  ): Promise<IAnnotationListPage> {
+    // An id constraint that is present but empty means "nothing matches", which
+    // the API rejects rather than answering (see filtersMatchNothing). The
+    // client already knows the answer, so it answers instead of asking.
+    if (filtersMatchNothing(query.filters)) {
+      return { total: 0, rows: [], offset: null };
+    }
+    const response = await this.client.post("upenn_annotation/list", query);
+    return {
+      total: response.data.total,
+      rows: (response.data.rows as any[]).map(this.toListRow),
+      offset: response.data.offset,
+    };
+  }
+
+  async fetchAnnotationListIds(
+    datasetId: string,
+    filters: IAnnotationListFilters,
+  ): Promise<string[]> {
+    if (filtersMatchNothing(filters)) {
+      return [];
+    }
+    const response = await this.client.post("upenn_annotation/list/ids", {
+      datasetId,
+      filters,
+    });
+    return response.data.ids as string[];
+  }
+
+  /**
+   * Resolve gate polygons server-side (SERVER_GATING.md, Phase 1): each
+   * plot's answer is the pure per-annotation predicate over the whole
+   * dataset. Returns null on failure — never {} — so the caller can keep
+   * same-input gate ids on a transient error instead of resolving every
+   * gate to zero matches.
+   */
+  async fetchAnalysisGateIds(
+    datasetId: string,
+    plots: IAnalysisGatePlotRequest[],
+    // Receives the server's explanation when the request fails. The endpoint
+    // enforces id budgets (MAX_GATE_RESPONSE_IDS) that a few broad gates on a
+    // 700K dataset can genuinely exceed, and the retry under identical inputs
+    // fails identically — so without surfacing the reason, every gate simply
+    // stops filtering and the only trace is a console line.
+    onError?: (message: string) => void,
+  ): Promise<{ [plotId: string]: string[] } | null> {
+    if (plots.length === 0) {
+      return {};
+    }
+    try {
+      const response = await this.client.post(
+        "upenn_annotation/analysis/gate_ids",
+        { datasetId, plots },
+      );
+      return response.data.gateIds as { [plotId: string]: string[] };
+    } catch (error) {
+      logError("Failed to resolve analysis gates server-side:", error);
+      onError?.(
+        (error as any)?.response?.data?.message ??
+          "The server could not resolve the gates.",
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Server-binned display data for one over-cap analysis plot
+   * (SERVER_GATING.md, Phase 2). Returns null on failure so callers can
+   * distinguish "no data" from "request failed".
+   */
+  async fetchAnalysisHistogram(
+    datasetId: string,
+    request: IAnalysisHistogramRequest,
+  ): Promise<IAnalysisHistogramResponse | null> {
+    try {
+      const response = await this.client.post(
+        "upenn_annotation/analysis/histogram2d",
+        { datasetId, ...request },
+      );
+      return response.data as IAnalysisHistogramResponse;
+    } catch (error) {
+      logError("Failed to fetch analysis histogram:", error);
+      return null;
+    }
+  }
+
+  async hydrateAnnotations(
+    annotationIds: string[],
+    signal?: AbortSignal,
+  ): Promise<IAnnotation[]> {
+    if (annotationIds.length === 0) {
+      return [];
+    }
+    const response = await this.client.post(
+      "upenn_annotation/hydrate",
+      annotationIds,
+      { signal },
+    );
+    return (response.data as any[]).map(this.toAnnotation);
   }
 
   async deleteAnnotation(id: string): Promise<void> {
@@ -273,6 +434,31 @@ export default class AnnotationsAPI {
     );
   }
 
+  toStub = (item: any): IAnnotationStub => {
+    // datasetId is intentionally excluded from the stub (redundant — see
+    // ANNOTATION-STUBS.md "Resolved Design Decisions" #1).
+    const {
+      _id,
+      tags,
+      shape,
+      channel,
+      location,
+      color,
+      centroid,
+      estimatedRadius,
+    } = item;
+    return markRaw({
+      id: _id,
+      tags,
+      shape,
+      channel,
+      location,
+      color: color ?? null,
+      centroid,
+      estimatedRadius,
+    });
+  };
+
   toConnection = (item: any): IAnnotationConnection => {
     const { label, tags, _id, parentId, childId, datasetId } = item;
     return markRaw({
@@ -285,13 +471,66 @@ export default class AnnotationsAPI {
     });
   };
 
+  // Import annotations, connections and property values exported as JSON.
+  // The backend sanitizes the raw documents and remaps old ids to the newly
+  // created annotations, rolling back everything it created on failure.
+  async importAnnotationData(
+    payload: IAnnotationImportPayload,
+  ): Promise<IAnnotationImportResult> {
+    return this.client
+      .post("annotation_import", payload)
+      .then((response) => response.data);
+  }
+
+  // Color by property
+
+  async colorByProperty(params: {
+    datasetId: string;
+    propertyPath: string[];
+    mode?: "auto" | "continuous" | "categorical";
+    colormap?: string;
+    // Absolute bounds; each overrides the corresponding percentile.
+    rangeMin?: number;
+    rangeMax?: number;
+    // Percentile bounds (server defaults: 1 and 99).
+    percentileLow?: number;
+    percentileHigh?: number;
+  }): Promise<IColorByPropertyResult> {
+    return this.client
+      .post("upenn_annotation/color_by_property", {
+        ...params,
+        // Ask for the assignment so the caller can repaint in place rather
+        // than refetching every annotation.
+        returnAssignment: true,
+      })
+      .then((response) => response.data);
+  }
+
+  async clearColorByProperty(
+    datasetId: string,
+  ): Promise<IColorByPropertyResult> {
+    return this.client
+      .post("upenn_annotation/color_by_property", { datasetId, clear: true })
+      .then((response) => response.data);
+  }
+
+  async getColorByPropertyOptions(): Promise<IColorByPropertyOptions> {
+    return this.client
+      .get("upenn_annotation/color_by_property/options")
+      .then((response) => response.data);
+  }
+
   // Count endpoints
 
   async getAnnotationCount(datasetId: string): Promise<number> {
-    return this.client
-      .get("upenn_annotation/count", { params: { datasetId } })
-      .then((res) => res.data.count)
-      .catch(() => 0);
+    // Intentionally does NOT swallow errors to 0: a silent 0 is <=
+    // stubThreshold and would route a large dataset into the full-fetch (OOM)
+    // branch. Callers must handle the rejection (fetchAnnotations falls back to
+    // stub-only mode; DatasetInfo shows the count as unknown).
+    const res = await this.client.get("upenn_annotation/count", {
+      params: { datasetId },
+    });
+    return res.data.count;
   }
 
   async getConnectionCount(datasetId: string): Promise<number> {

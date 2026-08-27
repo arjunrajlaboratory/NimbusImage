@@ -1,16 +1,7 @@
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
-import {
-  IAnnotation,
-  IAnnotationBase,
-  IAnnotationConnection,
-  IAnnotationConnectionBase,
-  IAnnotationProperty,
-  IAnnotationPropertyValues,
-  ISerializedData,
-  TPropertyValue,
-} from "@/store/model";
+import { IAnnotationImportPayload, ISerializedData } from "@/store/model";
 import { logError } from "@/utils/log";
 
 export interface ImportOptions {
@@ -32,7 +23,16 @@ export const defaultImportOptions: ImportOptions = {
 };
 
 /**
- * Import annotations, connections, properties and values from serialized data
+ * Import annotations, connections, properties and values from serialized data.
+ *
+ * Annotations/connections in `serializedData` are raw documents as produced
+ * by `GET /export/json` (identified by `_id`, not `id`); this function
+ * passes them through to the backend as-is. The `annotation_import`
+ * endpoint sanitizes those documents and remaps parent/child/property ids
+ * server-side, rolling back everything it created if it fails. Only
+ * properties are still created client-side, since creating a property also
+ * needs to attach it to the current configuration via the properties store.
+ *
  * @param serializedData The parsed JSON data containing annotations, connections, properties and values
  * @param options Import configuration options
  * @returns A promise that resolves when the import is complete
@@ -54,211 +54,83 @@ export async function importAnnotationsFromData(
   if (!store.dataset) {
     throw new Error("No dataset selected");
   }
+  const datasetId = store.dataset.id;
 
-  // Prepare annotation IDs to remove (if overwriting)
-  let annotationIdsToRemove: string[] = [];
-  if (overwriteAnnotations) {
-    for (const { id } of annotationStore.annotations) {
-      annotationIdsToRemove.push(id);
-    }
-  }
+  // Snapshot ids to remove if overwriting. These are only deleted once the
+  // import has succeeded. annotationsForIteration (not annotations) so that
+  // stub-only mode, where the full annotations[] array is empty, still
+  // captures every annotation to overwrite.
+  let annotationIdsToRemove: string[] = overwriteAnnotations
+    ? annotationStore.annotationsForIteration.map(({ id }) => id)
+    : [];
+  let propertyIdsToRemove: string[] = overwriteProperties
+    ? propertyStore.properties.map(({ id }) => id)
+    : [];
 
-  // Prepare property IDs to remove (if overwriting)
-  let propertyIdsToRemove: string[] = [];
-  if (overwriteProperties) {
-    for (const { id } of propertyStore.properties) {
-      propertyIdsToRemove.push(id);
-    }
-  }
-
-  // Import annotations
-  // promise of: old annotation id -> new annotation
-  let allAnnotationsPromise: Promise<Map<string, IAnnotation>> =
-    Promise.resolve(new Map());
-  if (importAnnotations) {
-    const annotationBaseList: IAnnotationBase[] = [];
-    for (
-      let arrayIdx = 0;
-      arrayIdx < serializedData.annotations.length;
-      arrayIdx++
-    ) {
-      const oldAnnotation = serializedData.annotations[arrayIdx];
-      const newAnnotation: IAnnotationBase = {
-        tags: oldAnnotation.tags,
-        shape: oldAnnotation.shape,
-        channel: oldAnnotation.channel,
-        location: oldAnnotation.location,
-        coordinates: oldAnnotation.coordinates,
-        color: oldAnnotation.color ?? null,
-        datasetId: store.dataset.id,
-      };
-
-      // Check if the 'color' property exists in the old annotation and add it to the new annotation
-      if (oldAnnotation.color) {
-        newAnnotation.color = oldAnnotation.color;
-      }
-
-      annotationBaseList.push(newAnnotation);
-    }
-    allAnnotationsPromise = store.annotationsAPI
-      .createMultipleAnnotations(annotationBaseList)
-      .then((newAnnotations) => {
-        const oldIdToNewAnnotation: Map<string, IAnnotation> = new Map();
-        if (newAnnotations === null) {
-          return oldIdToNewAnnotation;
-        }
-        for (
-          let arrayIdx = 0;
-          arrayIdx < serializedData.annotations.length;
-          arrayIdx++
-        ) {
-          const oldAnnotation = serializedData.annotations[arrayIdx];
-          const newAnnotation = newAnnotations[arrayIdx];
-          oldIdToNewAnnotation.set(oldAnnotation.id, newAnnotation);
-        }
-        return oldIdToNewAnnotation;
-      });
-  }
-
-  // Import annotation connections
-  let allConnectionsPromise: Promise<IAnnotationConnection[] | null> =
-    Promise.resolve(null);
-  if (importAnnotations && importConnections) {
-    // Need all annotations to be sent before sending connections
-    allConnectionsPromise = allAnnotationsPromise.then(
-      (oldIdToNewAnnotation) => {
-        const annotationConnectionBaseList: IAnnotationConnectionBase[] = [];
-        for (const connection of serializedData.annotationConnections) {
-          const parent = oldIdToNewAnnotation.get(connection.parentId);
-          const child = oldIdToNewAnnotation.get(connection.childId);
-          if (parent && child) {
-            annotationConnectionBaseList.push({
-              parentId: parent.id,
-              childId: child.id,
-              label: connection.label,
-              tags: connection.tags,
-              datasetId: store.dataset!.id,
-            });
-          } else {
-            throw "Can't find the parent or the child of the connection to create";
-          }
-        }
-        return store.annotationsAPI.createMultipleConnections(
-          annotationConnectionBaseList,
-        );
-      },
-    );
-  }
-
-  // Import properties
-  const propertyPromises: Promise<IAnnotationProperty>[] = [];
-  const propertyOldIdToIdx: { [oldId: string]: number } = {};
-  if (importProperties) {
-    for (const oldProperty of serializedData.annotationProperties) {
-      // Use this function to make sure that the property is added to the configuration
-      const newPropertyPromise = propertyStore.createProperty(oldProperty);
-      const idx = propertyPromises.push(newPropertyPromise) - 1;
-      propertyOldIdToIdx[oldProperty.id] = idx;
-    }
-  }
-  const allPropertiesPromise = Promise.all(propertyPromises);
-
-  // Import annotation values for properties
-  const newValueDonePromises: Promise<any>[] = [];
-  if (importValues && importProperties && importAnnotations) {
-    // Need annotations and properties to be sent before sending values
-    const valuesPromise = Promise.all([
-      allAnnotationsPromise,
-      allPropertiesPromise,
-    ]).then(([oldIdToNewAnnotation, newProperties]) => {
-      const aggregatedPropertyValues: {
-        datasetId: string;
-        annotationId: string;
-        values: { [propertyId: string]: TPropertyValue };
-      }[] = [];
-      for (const oldAnnotationId in serializedData.annotationPropertyValues) {
-        const newAnnotation = oldIdToNewAnnotation.get(oldAnnotationId);
-        if (!newAnnotation) {
-          throw "Can't find the annotation having the values";
-        }
-        const oldAnnotationValues =
-          serializedData.annotationPropertyValues[oldAnnotationId];
-        const newValues: IAnnotationPropertyValues[string] = {};
-        for (const oldPropertyId in oldAnnotationValues) {
-          const newProperty = newProperties[propertyOldIdToIdx[oldPropertyId]];
-          const value = oldAnnotationValues[oldPropertyId];
-          newValues[newProperty.id] = value;
-        }
-        aggregatedPropertyValues.push({
-          datasetId: newAnnotation.datasetId,
-          annotationId: newAnnotation.id,
-          values: newValues,
-        });
-      }
-      return store.propertiesAPI.addAggregatedPropertyValues(
-        aggregatedPropertyValues,
-      );
-    });
-    newValueDonePromises.push(valuesPromise);
-  }
-  const allValuesDonePromise = Promise.all(newValueDonePromises);
+  // Properties created so far, tracked so they can be rolled back if the
+  // import fails partway through.
+  const createdPropertyIds: string[] = [];
 
   try {
-    // Wait for all imports to complete
-    await Promise.all([
-      allAnnotationsPromise,
-      allPropertiesPromise,
-      allConnectionsPromise,
-      allValuesDonePromise,
-    ]);
+    // Import properties client-side, since creating a property also
+    // attaches it to the current configuration.
+    const propertyIdMap: { [oldPropertyId: string]: string } = {};
+    if (importProperties) {
+      for (const oldProperty of serializedData.annotationProperties) {
+        const newProperty = await propertyStore.createProperty(oldProperty);
+        if (!newProperty) {
+          throw new Error("Failed to create property during import");
+        }
+        createdPropertyIds.push(newProperty.id);
+        const oldPropertyId = oldProperty.id ?? oldProperty._id;
+        if (oldPropertyId) {
+          propertyIdMap[oldPropertyId] = newProperty.id;
+        }
+      }
+    }
+
+    // Build the payload for the backend import endpoint, only including
+    // what was requested. Annotations/connections/values are passed through
+    // untouched; the backend sanitizes and remaps them.
+    if (importAnnotations) {
+      const payload: IAnnotationImportPayload = {
+        datasetId,
+        annotations: serializedData.annotations,
+      };
+      if (importConnections) {
+        payload.connections = serializedData.annotationConnections;
+      }
+      if (importValues && importProperties) {
+        payload.propertyValues = serializedData.annotationPropertyValues;
+        payload.propertyIdMap = propertyIdMap;
+      }
+      await store.annotationsAPI.importAnnotationData(payload);
+    }
   } catch (error) {
-    // Error recovery - don't remove existing annotations and properties
+    // The backend rolls back any annotations/connections/values it created,
+    // so only the client-created properties need cleanup here. Since the
+    // import failed, keep the pre-existing annotations/properties.
     annotationIdsToRemove = [];
     propertyIdsToRemove = [];
-
-    // Remove imported annotations if possible
-    try {
-      const oldIdToNewAnnotation = await allAnnotationsPromise;
-      for (const { id } of oldIdToNewAnnotation.values()) {
-        annotationIdsToRemove.push(id);
-      }
-    } catch (e) {
-      // Ignore errors during cleanup
-    }
-
-    // Remove imported properties if possible
     try {
       await Promise.all(
-        propertyPromises.map(async (propertyPromise) => {
-          try {
-            const { id } = await propertyPromise;
-            propertyIdsToRemove.push(id);
-          } catch (e) {
-            // Ignore errors during cleanup
-          }
-        }),
+        createdPropertyIds.map((propertyId) =>
+          propertyStore.deleteProperty(propertyId),
+        ),
       );
     } catch (e) {
-      // Ignore errors during cleanup
+      // Ignore cleanup errors so the original import error is re-thrown
     }
-
-    // Re-throw the original error
     throw error;
   } finally {
-    // Remove annotations and properties if needed
-    const finalCleanupPromises: Promise<any>[] = [];
     if (annotationIdsToRemove.length > 0) {
-      finalCleanupPromises.push(
-        store.annotationsAPI.deleteMultipleAnnotations(annotationIdsToRemove),
+      await store.annotationsAPI.deleteMultipleAnnotations(
+        annotationIdsToRemove,
       );
     }
-    if (propertyIdsToRemove.length > 0) {
-      for (const id of propertyIdsToRemove) {
-        finalCleanupPromises.push(propertyStore.deleteProperty(id));
-      }
+    for (const propertyId of propertyIdsToRemove) {
+      await propertyStore.deleteProperty(propertyId);
     }
-
-    await Promise.all(finalCleanupPromises);
 
     // Refresh data
     await Promise.all([

@@ -14,7 +14,7 @@
       v-else-if="computedChipsIds.has(item._id)"
       size="x-small"
       class="ma-1 type-indicator"
-      color="grey"
+      color="secondary"
     >
       Loading info...
     </v-chip>
@@ -23,8 +23,9 @@
         <v-btn
           v-bind="activatorProps"
           v-if="debouncedChipsPerItemId[item._id]?.type === 'dataset'"
-          size="x-small"
+          variant="text"
           icon
+          size="x-small"
           class="ml-1"
           @click.stop="shareDialogVisible = true"
         >
@@ -39,7 +40,8 @@
       <template v-slot:activator="{ props: activatorProps }">
         <span
           v-bind="activatorProps"
-          class="text-caption text-medium-emphasis mx-2"
+          class="text-caption"
+          style="margin-left: 8px; margin-right: 8px; opacity: 0.4"
         >
           Modified:
           {{ item.updated ? formatDateString(item.updated) : "Unknown" }}
@@ -76,7 +78,7 @@
         :key="'chip ' + i + ' item ' + item._id"
         class="ma-1 colored-chip"
         :style="{
-          '--chip-color': chipItem.color,
+          '--chip-color': `rgb(var(--v-theme-${chipItem.color}))`,
         }"
         :to="chipItem.to"
         @click.stop

@@ -5,8 +5,8 @@
     :active="isToolSelected"
     :color="isToolSelected ? 'primary' : undefined"
     :class="['tool-item', { 'tool-item--active': isToolSelected }]"
-    :id="getTourStepId(tool.name)"
-    v-tour-trigger="getTourTriggerId(tool.name)"
+    :data-tour="getTourAnchorId(tool.name)"
+    v-tour-trigger="getTourAnchorId(tool.name)"
     v-mousetrap="
       tool.hotkey
         ? {
@@ -62,7 +62,7 @@ import store from "@/store";
 import ToolIcon from "@/tools/ToolIcon.vue";
 import ToolEdition from "@/tools/ToolEdition.vue";
 import jobs from "@/store/jobs";
-import { getTourStepId, getTourTriggerId } from "@/utils/strings";
+import { getTourAnchorId } from "@/utils/strings";
 
 const props = defineProps<{
   tool: IToolConfiguration;
@@ -96,9 +96,11 @@ function onJobChanged() {
   if (!jobId.value) {
     return;
   }
+  // Undefined if the job already settled (the jobs store drops finished
+  // entries), in which case there is no outcome left to show an icon for.
   jobs
     .getPromiseForJobId(jobId.value)
-    .then(
+    ?.then(
       (success: boolean) =>
         (statusIcon.value = success ? "mdi-check" : "mdi-close"),
     );

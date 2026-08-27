@@ -74,6 +74,9 @@ function determineTypeAndTitle(payload: {
       case ProgressType.ANNOTATION_FETCH:
         title = "Fetching annotations";
         break;
+      case ProgressType.ANNOTATION_RASTER:
+        title = "Computing annotation overview";
+        break;
       case ProgressType.ANNOTATION_DELETE:
         title = "Deleting annotations";
         break;
@@ -267,12 +270,13 @@ class Progress extends VuexModule {
       },
     });
 
-    // Sometimes the job completes before the callback even fires (for small images)
-    // So we check the status here to make sure we don't leave a progress item hanging
-    const status = await jobs.getJobStatus(jobId);
-    if (status === undefined) {
-      this.complete(progressId);
-    } else if (
+    // Sometimes the job completes before the callback even fires (for small
+    // images), so check the status here to make sure we don't leave a progress
+    // item hanging. An unreadable status (null) is treated the same way: better
+    // to drop the bar than to leave it spinning forever.
+    const status = await jobs.fetchJobStatus(jobId);
+    if (
+      status === null ||
       [jobStates.success, jobStates.error, jobStates.inactive].includes(status)
     ) {
       this.complete(progressId);

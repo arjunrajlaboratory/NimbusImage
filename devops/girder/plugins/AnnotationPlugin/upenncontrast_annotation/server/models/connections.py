@@ -37,7 +37,9 @@ class ConnectionSchema:
     }
 
 
-class AnnotationConnection(ProxiedModel, AccessControlMixin):
+# AccessControlMixin must precede ProxiedModel so its permission-aware
+# find/load methods take MRO precedence over the unchecked base methods.
+class AnnotationConnection(AccessControlMixin, ProxiedModel):
     # TODO: write lock
 
     def __init__(self):
@@ -151,9 +153,12 @@ class AnnotationConnection(ProxiedModel, AccessControlMixin):
         return connections
 
     def create(self, connection):
+        connection.pop('_id', None)
         return self.save(connection)
 
     def createMultiple(self, connections):
+        for connection in connections:
+            connection.pop('_id', None)
         return self.saveMany(connections)
 
     def delete(self, connection):

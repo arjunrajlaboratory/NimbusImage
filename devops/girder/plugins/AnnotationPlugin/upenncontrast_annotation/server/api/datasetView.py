@@ -14,6 +14,7 @@ from girder.models.user import User
 from upenncontrast_annotation.server.helpers.access_helpers import (
     formatAccessList
 )
+from upenncontrast_annotation.server.helpers.params import getBooleanParam
 from upenncontrast_annotation.server.models.datasetView import \
     DatasetView as DatasetViewModel
 from upenncontrast_annotation.server.models.collection import \
@@ -44,7 +45,7 @@ class DatasetView(Resource):
         # Bulk mapping endpoint to resolve datasetId <-> configurationId pairs
         self.route("POST", ("map",), self.map)
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Get a dataset view by its id.").param(
             "id", "The dataset view's id", paramType="path"
@@ -129,7 +130,7 @@ class DatasetView(Resource):
         self._datasetViewModel.updateDatasetView(
             dataset_view, new_dataset_view)
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Search for dataset views.")
         .responseClass("dataset_view")
@@ -143,28 +144,47 @@ class DatasetView(Resource):
             "Get all dataset views using this configuration",
             required=False,
         )
+        .param(
+            "currentUserOnly",
+            "If true, only return views owned by the current user "
+            "(where the user has ADMIN access).",
+            required=False,
+            dataType="boolean",
+        )
         .pagingParams(defaultSort="_id")
         .errorResponse()
     )
     def find(self, params):
         limit, offset, sort = self.getPagingParameters(params, "lowerName")
         query = {}
+        user = self.getCurrentUser()
 
         # Handle single IDs from query params
         for key in ["datasetId", "configurationId"]:
             if key in params:
                 query[key] = ObjectId(params[key])
 
+        if getBooleanParam(params, "currentUserOnly") and user:
+            # Intentionally checks only direct user grants (not group-based
+            # access): "Mine only" means views the user personally owns,
+            # which corresponds to the explicit ADMIN entry creators receive.
+            query["access.users"] = {
+                "$elemMatch": {
+                    "id": user["_id"],
+                    "level": AccessType.ADMIN,
+                }
+            }
+
         return self._datasetViewModel.findWithPermissions(
             query,
             sort=sort,
-            user=self.getCurrentUser(),
+            user=user,
             level=AccessType.READ,
             limit=limit,
             offset=offset,
         )
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("""
         Bulk search for dataset views (READ OPERATION).
@@ -464,7 +484,7 @@ class DatasetView(Resource):
         result['datasets'] = datasets
         return result
 
-    @access.public
+    @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
         Description("Bulk map dataset and configuration ids")
         .notes(

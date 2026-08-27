@@ -23,10 +23,10 @@
           <template v-else> Run </template>
         </v-btn>
         <span
-          v-if="uncomputed[property.id].length > 0 && !status.running"
+          v-if="(uncomputed[property.id] ?? 0) > 0 && !status.running"
           class="uncomputed-count"
         >
-          {{ uncomputed[property.id].length }}
+          {{ uncomputed[property.id] ?? 0 }}
         </span>
       </v-col>
     </v-row>
@@ -65,11 +65,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import propertyStore, { IPropertyStatus } from "@/store/properties";
-import {
-  IAnnotationProperty,
-  IErrorInfoList,
-  MessageType,
-} from "@/store/model";
+import { IAnnotationProperty, MessageType } from "@/store/model";
+import { computePropertyWithStatus } from "@/utils/propertyCompute";
 
 const props = withDefaults(
   defineProps<{
@@ -90,7 +87,7 @@ const status = computed((): IPropertyStatus => {
 });
 
 const uncomputed = computed(() => {
-  return propertyStore.uncomputedAnnotationsPerProperty;
+  return propertyStore.uncomputedCountByProperty;
 });
 
 const filteredErrors = computed(() => {
@@ -119,26 +116,7 @@ function compute() {
     return;
   }
 
-  // Create a new error info object for this computation
-  const errorInfo: IErrorInfoList = { errors: [] };
-
-  // Ensure the property status exists
-  if (!propertyStore.propertyStatuses[props.property.id]) {
-    propertyStore.propertyStatuses[props.property.id] = {
-      running: false,
-      previousRun: null,
-      progressInfo: {},
-      errorInfo: { errors: [] },
-    };
-  }
-
-  // Update the status with the new error info
-  propertyStore.propertyStatuses[props.property.id].errorInfo = errorInfo;
-
-  propertyStore.computeProperty({
-    property: props.property,
-    errorInfo,
-  });
+  void computePropertyWithStatus(props.property);
 }
 
 defineExpose({ status, uncomputed, filteredErrors, filteredWarnings, compute });
@@ -147,8 +125,8 @@ defineExpose({ status, uncomputed, filteredErrors, filteredWarnings, compute });
 <style lang="scss">
 .text-progress {
   height: fit-content;
-  min-height: 10px;
-  padding: 4px;
+  min-height: 28px;
+  padding: 4px 8px;
 }
 
 .text-progress .v-progress-linear__content {

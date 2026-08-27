@@ -27,7 +27,7 @@
         <v-row class="my-0" v-if="!hideLayer">
           <v-col class="py-0">
             <layer-select
-              id="tool-creation-layer-select-tourstep"
+              :data-tour="TOUR_ANCHORS.toolCreationLayerSelect"
               v-model="layer"
               label="Layer"
             />
@@ -37,7 +37,7 @@
         <v-row class="my-0">
           <v-col class="py-0">
             <tag-picker
-              id="tool-creation-tag-picker-tourstep"
+              :data-tour="TOUR_ANCHORS.toolCreationTagPicker"
               v-model="tags"
               @update:model-value="useAutoTags = false"
             ></tag-picker>
@@ -108,30 +108,16 @@
 </template>
 
 <script lang="ts">
-export interface IAnnotationSetup {
-  tags: string[];
-  coordinateAssignments: {
-    layer: string | null | undefined;
-    Z: {
-      type: string;
-      value: number;
-      max: number;
-    };
-    Time: {
-      type: string;
-      value: number;
-      max: number;
-    };
-  };
-  shape: import("@/store/model").AnnotationShape;
-  color: string | undefined;
-}
+// IAnnotationSetup now lives in the canonical type home (src/store/model.ts).
+// Re-exported here so existing imports from this component keep working.
+export type { IAnnotationSetup } from "@/store/model";
 </script>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, nextTick } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import store from "@/store";
+import { TOUR_ANCHORS } from "@/tours/anchors";
 import LayerSelect from "@/components/LayerSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import Persister from "@/store/Persister";
@@ -143,6 +129,7 @@ import {
   WelcomeTourStatus,
   WelcomeTourNames,
 } from "@/store/model";
+import type { IAnnotationSetup } from "@/store/model";
 
 type VForm = ComponentPublicInstance & { validate: () => boolean };
 

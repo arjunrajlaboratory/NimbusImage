@@ -2,7 +2,12 @@
   <div>
     <v-dialog v-model="userMenu" v-if="!store.isLoggedIn" max-width="400px">
       <template #activator="{ props: activatorProps }">
-        <v-btn v-if="!store.isLoggedIn" v-bind="activatorProps" color="primary"
+        <v-btn
+          v-if="!store.isLoggedIn"
+          v-bind="activatorProps"
+          variant="flat"
+          color="primary"
+          size="small"
           >Login</v-btn
         >
       </template>
@@ -15,10 +20,8 @@
             class="mb-2 text-center"
           />
           <div class="text-center mb-8">
-            <h2 class="text-h5 font-weight-bold mb-2">
-              Welcome to NimbusImage!
-            </h2>
-            <p class="text-subtitle-1">
+            <h2 class="page-title mb-2">Welcome to NimbusImage!</h2>
+            <p class="text-body-2 text-medium-emphasis">
               A cloud-based image analysis platform from the Raj Lab at the
               University of Pennsylvania and Kitware
             </p>
@@ -51,8 +54,14 @@
       :close-on-content-click="false"
     >
       <template #activator="{ props: activatorProps }">
-        <v-btn icon v-bind="activatorProps">
-          <v-icon>mdi-account-circle</v-icon>
+        <v-btn variant="text" icon size="small" v-bind="activatorProps">
+          <v-badge
+            :model-value="store.isNearStorageLimit"
+            dot
+            :color="storageBadgeColor"
+          >
+            <v-icon>mdi-account-circle</v-icon>
+          </v-badge>
         </v-btn>
       </template>
       <v-card>
@@ -63,9 +72,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
+import { storageSeverityColor } from "@/utils/storage";
 import UserProfileSettings from "@/layout/UserProfileSettings.vue";
 import UserMenuLoginForm from "@/layout/UserMenuLoginForm.vue";
 
@@ -95,6 +105,17 @@ function loggedInOrOut() {
 
 watch(() => store.isLoggedIn, loggedInOrOut);
 watch(() => store.hasUserLoggedOut, loggedInOrOut);
+
+// Refresh storage usage each time the profile menu opens
+watch(userMenu, (isOpen) => {
+  if (isOpen && store.isLoggedIn) {
+    store.fetchUserStorageInfo();
+  }
+});
+
+const storageBadgeColor = computed(() =>
+  storageSeverityColor(store.storageSeverity),
+);
 
 defineExpose({ userMenu, isDomainLocked, domain, loggedInOrOut });
 </script>

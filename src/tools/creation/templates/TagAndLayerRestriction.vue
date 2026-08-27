@@ -10,8 +10,9 @@
           :title="`Current tags selection mode: ${
             areTagsInclusive ? 'inclusive' : 'exclusive'
           }`"
-          size="x-small"
+          variant="text"
           icon
+          size="x-small"
           @click="areTagsInclusive = !areTagsInclusive"
         >
           <v-icon>

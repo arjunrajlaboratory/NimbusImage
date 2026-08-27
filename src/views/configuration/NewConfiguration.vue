@@ -1,6 +1,6 @@
 <template>
   <v-container>
-    <div class="headline py-4">Create a new collection from a dataset</div>
+    <div class="page-title py-4">Create a new collection from a dataset</div>
     <v-form v-model="valid">
       <v-text-field v-model="name" label="Name" :rules="rules" />
       <v-textarea v-model="description" label="Description" />
@@ -11,7 +11,14 @@
       />
 
       <div class="button-bar">
-        <v-btn :disabled="!valid" color="success" class="mr-4" @click="submit">
+        <v-btn
+          :disabled="!valid"
+          variant="flat"
+          color="success"
+          size="small"
+          class="mr-4"
+          @click="submit"
+        >
           Create
         </v-btn>
       </div>

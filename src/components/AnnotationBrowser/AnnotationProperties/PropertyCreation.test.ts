@@ -29,18 +29,30 @@ vi.mock("@/store/properties", () => ({
   },
 }));
 
-vi.mock("@/store/annotation", () => ({
-  default: {
+vi.mock("@/store/annotation", () => {
+  const state = {
     annotations: [] as any[],
-  },
-}));
+  };
+  Object.defineProperty(state, "annotationsForIteration", {
+    get() {
+      return state.annotations;
+    },
+    enumerable: true,
+  });
+  return { default: state };
+});
 
 vi.mock("@/utils/annotation", () => ({
   tagFilterFunction: vi.fn(),
 }));
 
+vi.mock("@/utils/propertyCompute", () => ({
+  computePropertyWithStatus: vi.fn(),
+}));
+
 import PropertyCreation from "./PropertyCreation.vue";
 import propertyStore from "@/store/properties";
+import { computePropertyWithStatus } from "@/utils/propertyCompute";
 
 function mountComponent(props = {}) {
   return shallowMount(PropertyCreation, {
@@ -225,10 +237,11 @@ describe("PropertyCreation", () => {
         "prop1",
       ]);
     });
-    expect(propertyStore.computeProperty).toHaveBeenCalledWith({
-      property: { id: "prop1", name: "test" },
-      errorInfo: { errors: [] },
+    expect(computePropertyWithStatus).toHaveBeenCalledWith({
+      id: "prop1",
+      name: "test",
     });
+    expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 
   it("createProperty emits compute-property-batch when applyToAllDatasets is true", async () => {
@@ -248,6 +261,7 @@ describe("PropertyCreation", () => {
       id: "prop1",
       name: "test",
     });
+    expect(computePropertyWithStatus).not.toHaveBeenCalled();
     expect(propertyStore.computeProperty).not.toHaveBeenCalled();
   });
 
@@ -264,6 +278,7 @@ describe("PropertyCreation", () => {
       expect(propertyStore.togglePropertyPathVisibility).toHaveBeenCalled();
     });
     expect(propertyStore.computeProperty).not.toHaveBeenCalled();
+    expect(computePropertyWithStatus).not.toHaveBeenCalled();
   });
 
   it("shapeSelectionString returns 'Or by shape:' when no tags", () => {

@@ -1,166 +1,252 @@
 # Tour System Documentation
 
 ## Overview
-The tour system provides a declarative way to create guided tours through the application's interface. It uses YAML configuration files to define tours, making them easy to maintain and modify without changing application code.
 
-Relevant files include:
-- `src/plugins/tour.ts` - Tour plugin
-- `src/plugins/tour.scss` - Tour styles
-- `src/plugins/tour-trigger.directive.ts` - Tour trigger directive
-- `src/plugins/tourBus.ts` - Tour event bus
-- `src/main.ts` - Tour initialization; added to router
-- `src/tours/TOURS.md` - This file
-- `src/tours/testTourUpload.yaml` - Example tour
+The tour system provides a declarative way to create guided tours through the
+application's interface. Tours are defined in YAML files in `src/tours/`,
+making them easy to maintain and modify without changing application code.
 
-## Philosophy
-The tour system follows a declarative approach, where:
-- Tours are defined in YAML files rather than code
-- Components remain unaware of the tour system
-- User interactions are handled through directives rather than explicit event handling
-- Tour logic stays centralized in the tour configuration
+The engine is **driver.js** (not Shepherd.js — all Shepherd references are
+obsolete).
 
-## Creating a Tour
-Tours are defined in YAML files in the `src/tours` directory. Each tour consists of metadata and a series of steps.
+Relevant files:
 
-In your component template, you can set elements for the tour to stop at using `id="mytourstop-tourstep"`:
+| File | Purpose |
+|------|---------|
+| `src/plugins/tour.ts` | `TourManager` class — loads YAML, drives driver.js |
+| `src/plugins/tour.scss` | driver.js popover and overlay styles |
+| `src/plugins/tour-trigger.directive.ts` | `v-tour-trigger` directive |
+| `src/plugins/tourBus.ts` | Tiny event bus wiring triggers → TourManager |
+| `src/tours/anchors.ts` | Static anchor + trigger name registry (single source of truth) |
+| `src/tours/anchors.test.ts` | Static guard — fails CI if a YAML references an unknown anchor/trigger |
+| `src/tours/TOURS.md` | This file |
+
+## Anchor Convention
+
+### Static anchors (compile-time known)
+
+Bind the `data-tour` attribute in the template using the typed registry:
 
 ```vue
-<v-checkbox
-id="mytourstop-tourstep"
-/>
-``` 
+<v-btn :data-tour="TOUR_ANCHORS.helpButton">Help</v-btn>
+```
 
-To use interactions to advance the tour, use the `v-tour-trigger` directive:
+In a tour YAML step, target the element with a single-quoted `[data-tour="..."]`
+selector:
+
+```yaml
+element: '[data-tour="help-button"]'
+```
+
+All static anchor names live in `src/tours/anchors.ts` (`TOUR_ANCHORS` object).
+The values are kebab-case strings that must match what appears in the YAML.
+
+### Data-dependent anchors (runtime names)
+
+Anchors built from runtime data — e.g. a tool name, tag name, or parameter
+name — use the `getTourAnchorId` helper from `@/utils/strings`:
+
 ```vue
-<v-checkbox
-v-tour-trigger="'tour-checkbox-clicked-tourtrigger'"
-v-model="someValue"
-/>
+<div :data-tour="getTourAnchorId(tool.name)">...</div>
 ```
-
-The `-tourstep` and `-tourtrigger` suffixes are used to make the IDs easier to find in the code.
-
-### Basic Structure
 
 ```yaml
-name: My Tour # Display name of the tour
-entryPoint: root # Starting route
-popular: true # (Optional) Show in popular tours
-category: Analysis # (Optional) Group tours by category
-steps:
-  - id: step1-tourstep # Unique identifier for the step
-    route: root # Route where this step should appear
-    element: "#my-button-tourstep" # CSS selector for the target element
-    title: "Step Title" # Title shown in the popup
-    text: "Description" # Content shown in the popup
-    position: "bottom" # Popup position (top, bottom, left, right)
+element: '[data-tour="nucleus"]'
 ```
 
-### Step Options
-| Option | Type | Description |
-|--------|------|-------------|
-| `id` | string | Unique identifier for the step |
-| `route` | string | Route name where the step should be shown |
-| `element` | string | CSS selector for the target element |
-| `title` | string | Step title |
-| `text` | string | Step description |
-| `position` | string | Popup position (top, bottom, left, right) |
-| `waitForElement` | number | Timeout (ms) to wait for element to appear |
-| `modalOverlay` | boolean | Whether to show a modal overlay (default: true) |
-| `beforeShow` | string | JavaScript code to execute before showing step |
-| `onNext` | string | JavaScript code to execute before advancing |
-| `onTriggerEvent` | string | Event name to wait for before advancing |
-| `showNextButton` | boolean | Whether to show the Next button (default: true) |
+Data-dependent anchors are **NOT** listed in `anchors.ts` and are **exempt**
+from the static guard. The guard's `DATA_DEPENDENT` set in `anchors.test.ts`
+whitelists the values that YAML files are allowed to target.
 
-### Modal vs Non-Modal Steps
-Steps can be modal (with overlay) or non-modal:
-```yaml
-steps:
-id: modal-step-tourstep
-modalOverlay: true # Shows dark overlay, focuses attention
-# ... other options
-id: non-modal-step-tourstep
-modalOverlay: false # No overlay, allows interaction with UI
-# ... other options
-```
+## Trigger Convention
 
-### Event-Driven Steps
-Some steps may require user interaction before advancing. These use the `onTriggerEvent` option:
+Interactive steps that advance only after the user performs an action use
+`v-tour-trigger` on the element and `onTriggerEvent` in the YAML.
 
-```yaml
-steps:
-id: interactive-step
-element: "#some-checkbox-tourstep"
-onTriggerEvent: "tour-checkbox-clicked-tourtrigger"
-showNextButton: false # Hide the Next button, require interaction
-# ... other options
-```
+**Component template** — bind using the typed registry:
 
-In your component template, use the `v-tour-trigger` directive:
 ```vue
-<v-checkbox
-v-tour-trigger="'tour-checkbox-clicked-tourtrigger'"
-v-model="someValue"
-/>
+<v-btn
+  v-tour-trigger="TOUR_TRIGGERS.helpButton"
+  @click="openHelp"
+>
+  Help
+</v-btn>
 ```
 
-## Example Tour
-Here's a complete example of a timelapse analysis tour:
+`v-tour-trigger` emits the bare name (e.g. `"help-button"`) on the element's
+click event via the tour event bus.
+
+**YAML step** — reference the bare name (no `-tourtrigger` suffix):
 
 ```yaml
-name: Time lapse analysis
+onTriggerEvent: "help-button"
+showNextButton: false
+```
+
+All static trigger names live in `src/tours/anchors.ts` (`TOUR_TRIGGERS`
+object).
+
+> **Old convention removed:** The previous system used `id="x-tourstep"` and
+> `v-tour-trigger="'x-tourtrigger'"` with suffix-decorated strings. Both
+> suffixes (`-tourstep`, `-tourtrigger`) have been removed. Use `data-tour` +
+> the registry instead.
+
+## The Registry and Static Guard
+
+`src/tours/anchors.ts` is the **single source of truth** for all static anchor
+and trigger names. It exports:
+
+- `TOUR_ANCHORS` — typed object mapping component-local key → kebab-case anchor
+  name. Components bind `:data-tour="TOUR_ANCHORS.<key>"`.
+- `TOUR_TRIGGERS` — typed object mapping key → bare trigger name. Components
+  bind `v-tour-trigger="TOUR_TRIGGERS.<key>"`.
+- `ALL_TOUR_ANCHORS` / `ALL_TOUR_TRIGGERS` — `Set<string>` views used by the
+  static guard.
+
+`src/tours/anchors.test.ts` runs four Vitest checks on every commit:
+
+1. Every YAML `element` selector resolves to a known static anchor OR is in
+   `DATA_DEPENDENT`.
+2. Every YAML `onTriggerEvent` is a known trigger OR is in `DATA_DEPENDENT`.
+3. Every key in `TOUR_ANCHORS` is referenced by some component via
+   `TOUR_ANCHORS.<key>` (no dead registrations).
+4. Every key in `TOUR_TRIGGERS` is referenced by some component via
+   `TOUR_TRIGGERS.<key>` (no dead registrations).
+
+**Keep the guard green.** If you add a new anchor in a component, register it
+in `anchors.ts`. If you add a data-dependent anchor that YAML targets, add its
+runtime value to `DATA_DEPENDENT` in the test file.
+
+## TourManager Controller Behaviour
+
+Knowing these behaviours helps when authoring tour steps:
+
+| Behaviour | Detail |
+|-----------|--------|
+| **Auto-navigation** | If a step has a `route` that differs from the current route, the controller calls `router.push({ name: route })` and waits for `afterEach` before rendering. |
+| **Missing element recovery** | If `waitForElement` elapses before the target element appears, a "This step isn't available" recovery popover appears (Skip / End tour). Steps never silently vanish. |
+| **Non-modal / interactive steps** | `modalOverlay: false` removes the dark overlay so the user can interact with the UI normally while the popover is open. |
+| **Trigger events** | `onTriggerEvent` names a tour-bus event. The controller listens for it and calls `advance()`. It clears the listener on every step transition. |
+| **Element wait timeout** | `waitForElement` (default **8000 ms**) is per-step. Increase it for steps on slow-loading routes. |
+| **Progress indicator** | The popover footer always shows "N of M". |
+| **Overlay cleanup** | `stopTour()` removes the `tour-no-overlay` body class and destroys the driver.js instance cleanly. |
+
+## Step Options Reference
+
+These are the fields of `ITourStep` (defined in `src/store/model.ts`):
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `id` | `string` | required | Unique identifier for the step (used in logs) |
+| `route` | `string` | required | Route name where the step should appear; triggers auto-navigation |
+| `element` | `string` | — | CSS selector for the target element (`[data-tour="x"]`) |
+| `title` | `string` | required | Step title shown in the popover |
+| `text` | `string` | required | Step body text |
+| `position` | `"top"\|"bottom"\|"left"\|"right"` | `"bottom"` | Popover side |
+| `waitForElement` | `number` | `8000` | Milliseconds to wait for `element` before showing recovery popover |
+| `modalOverlay` | `boolean` | `true` | `false` → no overlay, UI is interactive |
+| `showNextButton` | `boolean` | `true` | `false` → hide the Next button (use with `onTriggerEvent`) |
+| `onTriggerEvent` | `string` | — | Bare trigger name; step advances when the bus emits this event |
+
+> **Removed hooks:** `beforeShow` and `onNext` string hooks are gone. Do not
+> add them back. Use `onTriggerEvent` for interaction-gated advancement.
+
+## Example Tour YAML
+
+```yaml
+name: My Feature Tour
 entryPoint: datasetview
-popular: true
+popular: false
 category: Analysis
 steps:
-  - id: timelapse-mode-tourstep
+  - id: intro-step
     route: datasetview
-    element: "#timelapse-mode-tourstep"
-    title: "Timelapse Mode"
-    text: "Enable timelapse mode to view the dataset as a timelapse"
+    title: "Welcome"
+    text: "Let's walk through this feature."
     position: "bottom"
-    waitForElement: 5000
     modalOverlay: true
-    beforeShow: "return console.log('About to show timelapse mode step')"
-    onTriggerEvent: "tour-timelapse-mode-clicked-tourtrigger"
-  - id: timelapse-labels-tourstep
+
+  - id: highlight-button
     route: datasetview
-    element: "#timelapse-labels-tourstep"
-    title: "Timelapse Labels"
-    text: "Enable labels for the timelapse"
+    element: '[data-tour="analyze-button"]'
+    title: "Analyze"
+    text: "Click here to open the analysis panel."
     position: "right"
     waitForElement: 5000
-    modalOverlay: false # Allow interaction with UI
-    onTriggerEvent: "timelapse-labels-tourtrigger"
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "analyze-button"
+
+  - id: interactive-step
+    route: datasetview
+    element: '[data-tour="create-property-button"]'
+    title: "Create a property"
+    text: "Now create a property. This step has no modal overlay so you can interact freely."
+    position: "left"
+    modalOverlay: false
+    showNextButton: false
+    onTriggerEvent: "create-property-button"
+
+  - id: done
+    route: datasetview
+    title: "Done!"
+    text: "You've completed the tour."
+    position: "bottom"
+    showNextButton: true
 ```
 
-This tour:
-1. Starts at the dataset view
-2. Shows a modal step highlighting the timelapse mode toggle
-3. Waits for user to click the toggle
-4. Shows a non-modal step about labels
-5. Waits for user to interact with labels before completing
+## How to Start a Tour
+
+### From a Vue component (Options API)
+
+```typescript
+this.$startTour("WelcomeTourHome");
+```
+
+### From a Vue component (Composition API)
+
+```typescript
+import { getCurrentInstance } from "vue";
+
+const instance = getCurrentInstance();
+instance?.proxy?.$startTour("WelcomeTourHome");
+```
+
+### Via the `useTour` composable (if available in your scope)
+
+```typescript
+const { startTour } = useTour();
+startTour("WelcomeTourHome");
+```
+
+The tour name must match the YAML filename (without `.yaml`) under `src/tours/`.
+The `WelcomeTourNames` map in `src/store/model.ts` provides the correct
+filenames for the four welcome-tour variants.
+
+## Creating a New Tour
+
+1. Create `src/tours/MyTour.yaml` following the structure above.
+2. For each target element that is not already anchored:
+   - Add a key + value to `TOUR_ANCHORS` in `src/tours/anchors.ts`.
+   - Bind `:data-tour="TOUR_ANCHORS.<key>"` in the component template.
+3. For each trigger:
+   - Add a key + value to `TOUR_TRIGGERS` in `src/tours/anchors.ts`.
+   - Bind `v-tour-trigger="TOUR_TRIGGERS.<key>"` in the component template.
+4. Run `pnpm exec vitest run src/tours/anchors.test.ts` to confirm the static
+   guard passes.
+5. Start the tour in a component or the browser console with `$startTour("MyTour")`.
 
 ## Best Practices
-1. Use meaningful step IDs; end with "-tourstep" to make them easier to find
-2. Keep text concise and clear
-3. Use modal overlays for important steps
-4. Use non-modal steps when users need to interact with UI
-5. Set reasonable `waitForElement` timeouts
-6. Use `beforeShow` and `onNext` hooks sparingly
-7. Prefer declarative `onTriggerEvent` over imperative hooks
-8. End trigger event names with "-tourtrigger" to make them easier to find
-9. Group related tours in the same category
-10. Test tours with both fast and slow loading conditions
 
-## Technical Details
-The tour system uses:
-- Shepherd.js for the tour UI
-- Vue directives for event handling
-- Vue Router for navigation
-- Event bus for decoupled communication
-
-Tours are loaded dynamically and can be started using:
-```typescript
-this.$startTour('tourName');
-```
+1. Use `modalOverlay: false` when the user must interact with the UI to progress.
+2. Set a generous `waitForElement` on steps that load after async data (e.g. `5000`).
+3. Pair `showNextButton: false` with `onTriggerEvent` so the user cannot bypass
+   the required interaction.
+4. Steps without an `element` render the popover centred over `body` — useful
+   for purely instructional steps.
+5. Keep step text concise; the popover is small.
+6. Group related tours under the same `category` so they appear together in the
+   tour browser.
+7. Test tours under both fast and slow network conditions (adjust
+   `waitForElement` accordingly).

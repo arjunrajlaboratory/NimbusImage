@@ -1,7 +1,18 @@
 <template>
   <v-container>
+    <v-alert
+      v-if="mixedSourceDtypeError"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="my-4"
+    >
+      {{ mixedSourceDtypeError }}
+    </v-alert>
     <v-card class="pa-4 my-4">
-      <v-list-subheader id="variables-tourstep" class="headline"
+      <v-list-subheader
+        :data-tour="TOUR_ANCHORS.variables"
+        class="panel-section-title"
         >Variables</v-list-subheader
       >
       <v-divider class="my-2" />
@@ -30,7 +41,7 @@
         v-if="highlightedFilenameSegments.length > 0"
         class="filename-highlight-container mb-4 pa-3"
       >
-        <div class="text-caption text-grey mb-1">
+        <div class="text-caption text-medium-emphasis mb-1">
           Example filename with extracted variables:
         </div>
         <div class="filename-highlight-text">
@@ -55,7 +66,7 @@
             ></span>
             <span class="text-caption">
               {{ legend.label }}
-              <span v-if="legend.showGuess" class="text-grey-darken-1">
+              <span v-if="legend.showGuess" class="text-medium-emphasis">
                 (guessed: {{ legend.guess }})
               </span>
             </span>
@@ -147,6 +158,15 @@
         density="compact"
       />
     </v-card>
+    <v-alert
+      v-if="assignmentError && !initializing"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="my-4"
+    >
+      {{ assignmentError }}
+    </v-alert>
     <v-card v-if="initializing" class="my-4">
       <v-card-title class="d-flex align-center">
         <v-progress-circular
@@ -164,7 +184,7 @@
             initProgressPercent
           }}%)
         </span>
-        <span v-else class="text-red">
+        <span v-else class="text-error">
           Failed on {{ initError.name }}: {{ initError.message }}
         </span>
       </v-card-title>
@@ -205,11 +225,15 @@
     </v-card>
     <v-card class="pa-4 my-4" v-else>
       <div class="d-flex">
-        <v-list-subheader id="assignments-tourstep" class="headline"
+        <v-list-subheader
+          :data-tour="TOUR_ANCHORS.assignments"
+          class="panel-section-title"
           >Assignments</v-list-subheader
         >
         <v-spacer />
         <v-btn
+          variant="text"
+          size="small"
           @click="resetDimensionsToDefault"
           :disabled="areDimensionsSetToDefault()"
           class="ml-4"
@@ -320,6 +344,7 @@
             >
               <template v-slot:activator="{ props: activatorProps }">
                 <v-btn
+                  variant="text"
                   icon
                   size="small"
                   v-bind="activatorProps"
@@ -343,21 +368,9 @@
       </div>
     </v-card>
     <v-row>
-      <v-col class="d-flex">
-        <v-alert
-          v-if="submitError"
-          type="error"
-          variant="tonal"
-          density="compact"
-          class="mr-4"
-        >
-          {{ submitError }}
-        </v-alert>
-        <v-spacer />
-      </v-col>
       <v-col class="d-flex justify-end">
         <v-checkbox
-          id="transcode-checkbox-tourstep"
+          :data-tour="TOUR_ANCHORS.transcodeCheckbox"
           density="compact"
           hide-details
           class="mr-8"
@@ -365,11 +378,13 @@
           label="Transcode into optimized TIFF file"
         />
         <v-btn
-          id="submit-button-tourstep"
-          v-tour-trigger="'submit-button-tourtrigger'"
+          :data-tour="TOUR_ANCHORS.submitButton"
+          v-tour-trigger="TOUR_TRIGGERS.submitButton"
+          variant="flat"
+          color="success"
+          size="small"
           @click="submit"
-          color="green"
-          :disabled="!submitEnabled() || !isRGBAssignmentValid || isUploading"
+          :disabled="!!submitError || isUploading"
         >
           <v-progress-circular size="16" v-if="isUploading" indeterminate />
           Submit
@@ -378,10 +393,24 @@
     </v-row>
 
     <!-- Progress bar and status for transcoding -->
-    <v-card class="mt-4" v-if="isUploading">
+    <v-card class="mt-4" v-if="isUploading || generationErrorMessage">
       <v-card-text>
         <div class="d-flex align-center mb-2">
-          <div class="text-subtitle-1 mr-3">{{ progressStatusText }}</div>
+          <div
+            v-if="!generationErrorMessage"
+            class="text-body-2 text-medium-emphasis mr-3"
+          >
+            {{ progressStatusText }}
+          </div>
+          <v-alert
+            v-else
+            type="error"
+            variant="tonal"
+            density="compact"
+            class="mr-3"
+          >
+            {{ generationErrorMessage }}
+          </v-alert>
           <v-spacer></v-spacer>
           <v-btn
             size="small"
@@ -395,14 +424,14 @@
           </v-btn>
         </div>
         <v-progress-linear
-          v-if="transcodeProgress !== undefined"
+          v-if="transcodeProgress !== undefined && !generationErrorMessage"
           :model-value="transcodeProgress"
           height="20"
           striped
           color="primary"
         >
           <template v-slot:default>
-            <span class="text-white">{{ Math.ceil(transcodeProgress) }}%</span>
+            <span class="font-mono">{{ Math.ceil(transcodeProgress) }}%</span>
           </template>
         </v-progress-linear>
       </v-card-text>
@@ -411,18 +440,29 @@
     <!-- Log Dialog -->
     <v-dialog v-model="showLogDialog" max-width="800px">
       <v-card>
-        <v-card-title class="headline">
+        <v-card-title>
           Transcoding Log
           <v-spacer></v-spacer>
           <v-tooltip location="bottom">
             <template v-slot:activator="{ props: activatorProps }">
-              <v-btn icon v-bind="activatorProps" @click="copyLogToClipboard">
+              <v-btn
+                variant="text"
+                icon
+                size="small"
+                v-bind="activatorProps"
+                @click="copyLogToClipboard"
+              >
                 <v-icon>mdi-content-copy</v-icon>
               </v-btn>
             </template>
             <span>Copy to clipboard</span>
           </v-tooltip>
-          <v-btn icon @click="showLogDialog = false">
+          <v-btn
+            variant="text"
+            icon
+            size="small"
+            @click="showLogDialog = false"
+          >
             <v-icon>mdi-close</v-icon>
           </v-btn>
         </v-card-title>
@@ -431,7 +471,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" variant="text" @click="showLogDialog = false"
+          <v-btn variant="text" size="small" @click="showLogDialog = false"
             >Close</v-btn
           >
         </v-card-actions>
@@ -461,6 +501,7 @@ import {
   TDimensions,
 } from "@/utils/parsing";
 import { IGirderItem } from "@/girder";
+import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import { ITileMeta } from "@/store/GirderAPI";
 import {
   IGeoJSPositionWithTransform,
@@ -584,6 +625,7 @@ const emit = defineEmits<{
   (e: "generatedJson", jsonId: string | null, config: any): void;
   (e: "configData", data: any): void;
   (e: "log", logs: string): void;
+  (e: "generationError", message: string): void;
 }>();
 
 const router = useRouter();
@@ -598,6 +640,7 @@ const transcode = ref(false);
 
 const isUploading = ref(false);
 const logs = ref("");
+const generationErrorMessage = ref<string | null>(null);
 
 const showLogDialog = ref(false);
 const showCopySnackbar = ref(false);
@@ -861,7 +904,30 @@ const assignmentItems = computed(() => {
     .map(assignmentOptionToAssignmentItem);
 });
 
-const submitError = computed((): string | null => {
+const sourceDtypes = computed(() =>
+  Array.from(
+    new Set(
+      (tilesMetadata.value ?? [])
+        .map((tile) =>
+          typeof tile.dtype === "string"
+            ? tile.dtype.trim().toLowerCase()
+            : null,
+        )
+        .filter((dtype): dtype is string => !!dtype),
+    ),
+  ),
+);
+
+const mixedSourceDtypeError = computed((): string | null => {
+  if (sourceDtypes.value.length <= 1) {
+    return null;
+  }
+  return `Source images use different pixel types (${sourceDtypes.value.join(
+    ", ",
+  )}). Convert all source images to the same pixel type before combining them. You will need to start over.`;
+});
+
+const assignmentError = computed((): string | null => {
   if (!submitEnabled()) {
     return "Not all variables are assigned";
   }
@@ -870,6 +936,10 @@ const submitError = computed((): string | null => {
   }
   return null;
 });
+
+const submitError = computed(
+  (): string | null => mixedSourceDtypeError.value ?? assignmentError.value,
+);
 
 const isRGBAssignmentValid = computed(() => {
   if (isMultiBandRGBFile.value && splitRGBBands.value) {
@@ -1074,7 +1144,7 @@ function getAssignedDimensionColor(item: TAssignmentOption): string {
   if (dim && dim in variableColors) {
     return variableColors[dim as TUpDim];
   }
-  return "rgba(255, 255, 255, 0.3)";
+  return "var(--nimbus-text-faint)";
 }
 
 function getSlotClasses(dimension: TUpDim): Record<string, boolean> {
@@ -1509,6 +1579,12 @@ async function submit() {
 }
 
 async function generateJson(): Promise<string | null> {
+  if (mixedSourceDtypeError.value) {
+    generationErrorMessage.value = mixedSourceDtypeError.value;
+    emit("generationError", generationErrorMessage.value);
+    return null;
+  }
+
   let channels: string[] | null = null;
   const channelAssignment = assignments.C?.value;
   if (channelAssignment) {
@@ -1777,6 +1853,7 @@ async function generateJson(): Promise<string | null> {
 
   logs.value = "";
   isUploading.value = true;
+  generationErrorMessage.value = null;
   transcodeProgress.value = undefined;
   if (transcode.value) {
     progressStatusText.value = "Preparing transcoding";
@@ -1833,7 +1910,14 @@ async function generateJson(): Promise<string | null> {
     return itemId;
   } catch (error) {
     logError("Failed to create multi source:", error);
+    generationErrorMessage.value =
+      error instanceof Error && error.message
+        ? error.message
+        : "Failed to configure the dataset. See the log for details.";
+    emit("generationError", generationErrorMessage.value);
     return null;
+  } finally {
+    isUploading.value = false;
   }
 }
 
@@ -1992,6 +2076,7 @@ defineExpose({
   assignmentItems,
   submitError,
   isRGBAssignmentValid,
+  generationErrorMessage,
   // Methods
   detectColorVsChannels,
   sliceAndJoin,
@@ -2054,27 +2139,28 @@ defineExpose({
   min-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
-  font-family: monospace;
+  font-family: var(--nimbus-font-mono);
   font-size: 12px;
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: var(--nimbus-glass);
+  border: 1px solid var(--nimbus-border);
   padding: 12px;
-  border-radius: 4px;
+  border-radius: var(--nimbus-radius-sm);
   width: 100%;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--nimbus-text-secondary);
 }
 
 .filename-highlight-container {
-  background-color: rgba(0, 0, 0, 0.03);
-  border-radius: 4px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  background-color: var(--nimbus-glass);
+  border-radius: var(--nimbus-radius-sm);
+  border: 1px solid var(--nimbus-border);
 }
 
 .filename-highlight-text {
-  font-family: "Roboto Mono", "Consolas", "Monaco", monospace;
+  font-family: var(--nimbus-font-mono);
   font-size: 14px;
   padding: 8px 12px;
-  background-color: rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
+  background-color: var(--nimbus-glass);
+  border-radius: var(--nimbus-radius-sm);
   overflow-x: auto;
   white-space: nowrap;
 }
@@ -2110,9 +2196,9 @@ defineExpose({
   align-items: center;
   gap: 16px;
   padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--nimbus-glass);
+  border-radius: var(--nimbus-radius-sm);
+  border: 1px solid var(--nimbus-border);
 }
 
 .variables-summary__item {
@@ -2123,23 +2209,24 @@ defineExpose({
 
 .variables-summary__item--total {
   padding-left: 8px;
-  border-left: 1px solid rgba(255, 255, 255, 0.15);
+  border-left: 1px solid var(--nimbus-border-strong);
 }
 
 .variables-summary__value {
+  font-family: var(--nimbus-font-mono);
   font-size: 20px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgb(var(--v-theme-on-surface));
 }
 
 .variables-summary__label {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--nimbus-text-muted);
 }
 
 .variables-summary__divider {
   font-size: 16px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--nimbus-text-faint);
 }
 
 /* Variables List */
@@ -2151,7 +2238,7 @@ defineExpose({
 }
 
 .variables-list-empty {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--nimbus-text-muted);
   font-style: italic;
   padding: 16px;
 }
@@ -2162,13 +2249,13 @@ defineExpose({
   align-items: center;
   gap: 16px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.02);
-  border-radius: 4px;
+  background: var(--nimbus-glass);
+  border-radius: var(--nimbus-radius-sm);
   transition: background 0.15s ease;
 }
 
 .variable-row:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--nimbus-glass-hover);
 }
 
 .variable-row__accent {
@@ -2182,14 +2269,14 @@ defineExpose({
 .variable-row__name {
   font-weight: 500;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgb(var(--v-theme-on-surface));
   min-width: 160px;
   flex-shrink: 0;
 }
 
 .variable-row__values {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--nimbus-text-secondary);
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2201,19 +2288,19 @@ defineExpose({
 }
 
 .variable-row__values-icon {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--nimbus-text-faint);
   cursor: pointer;
   flex-shrink: 0;
   transition: color 0.15s ease;
 }
 
 .variable-row__values-icon:hover {
-  color: rgba(255, 255, 255, 0.8);
+  color: rgb(var(--v-theme-on-surface));
 }
 
 .variable-row__source {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--nimbus-text-muted);
   display: flex;
   align-items: center;
   text-transform: capitalize;
@@ -2223,7 +2310,7 @@ defineExpose({
 
 .variable-row__size {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--nimbus-text-secondary);
   font-weight: 500;
   min-width: 70px;
   flex-shrink: 0;
@@ -2246,7 +2333,7 @@ defineExpose({
 
 .variable-row__unassigned {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.25);
+  color: var(--nimbus-text-faint);
 }
 
 /* Assignment Slots Container */
@@ -2268,8 +2355,8 @@ defineExpose({
   min-width: 100px;
   padding: 8px 12px;
   border-left: 4px solid;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 0 4px 4px 0;
+  background: var(--nimbus-glass);
+  border-radius: 0 var(--nimbus-radius-sm) var(--nimbus-radius-sm) 0;
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -2278,39 +2365,39 @@ defineExpose({
 .assignment-slot__dimension-name {
   font-weight: 500;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgb(var(--v-theme-on-surface));
 }
 
 .assignment-slot__dimension-code {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
-  font-family: monospace;
+  color: var(--nimbus-text-muted);
+  font-family: var(--nimbus-font-mono);
 }
 
 /* The Slot */
 .assignment-slot {
   flex: 1;
   min-height: 44px;
-  border-radius: 6px;
+  border-radius: var(--nimbus-radius-sm);
   display: flex;
   align-items: center;
   transition: all 0.2s ease;
 }
 
 .assignment-slot--filled {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--nimbus-glass);
+  border: 1px solid var(--nimbus-border-strong);
 }
 
 .assignment-slot--empty-available {
-  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border: 2px dashed rgba(var(--v-theme-on-surface), 0.3);
   background: transparent;
   cursor: pointer;
 }
 
 .assignment-slot--empty-available:hover {
-  border-color: rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(var(--v-theme-on-surface), 0.5);
+  background: var(--nimbus-glass-hover);
 }
 
 .assignment-slot--empty-none {
@@ -2319,7 +2406,7 @@ defineExpose({
 }
 
 .assignment-slot--immutable {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--nimbus-glass);
 }
 
 /* Badge inside slot */
@@ -2336,12 +2423,12 @@ defineExpose({
 .assignment-slot__badge-name {
   font-weight: 500;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgb(var(--v-theme-on-surface));
 }
 
 .assignment-slot__badge-values {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--nimbus-text-muted);
   margin-left: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2350,7 +2437,7 @@ defineExpose({
 
 .assignment-slot__badge-size {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--nimbus-text-muted);
   margin-left: 8px;
   font-weight: 500;
 }
@@ -2367,7 +2454,7 @@ defineExpose({
 
 .assignment-slot__placeholder {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--nimbus-text-faint);
   font-style: italic;
 }
 
@@ -2388,12 +2475,12 @@ defineExpose({
 .dropdown-item-name {
   font-weight: 500;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgb(var(--v-theme-on-surface));
 }
 
 .dropdown-item-values {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--nimbus-text-muted);
 }
 
 /* Values Popover */
@@ -2414,7 +2501,7 @@ defineExpose({
 .values-popover__count {
   font-size: 12px;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--nimbus-text-muted);
 }
 
 .values-popover__list {
@@ -2432,13 +2519,13 @@ defineExpose({
 
 .values-popover__index {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--nimbus-text-faint);
   min-width: 24px;
-  font-family: monospace;
+  font-family: var(--nimbus-font-mono);
 }
 
 .values-popover__value {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--nimbus-text-secondary);
 }
 </style>

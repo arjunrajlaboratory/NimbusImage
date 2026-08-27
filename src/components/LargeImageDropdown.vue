@@ -21,6 +21,7 @@
           </template>
           <template #append v-if="listItem.name !== DEFAULT_LARGE_IMAGE_SOURCE">
             <v-btn
+              variant="text"
               icon
               size="small"
               color="error"

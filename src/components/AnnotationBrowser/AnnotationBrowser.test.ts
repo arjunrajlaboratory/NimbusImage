@@ -7,17 +7,12 @@ vi.mock("@/store/filters", () => ({
   },
 }));
 
-vi.mock("@/store", () => ({
-  default: {},
+const annotationMock = vi.hoisted(() => ({
+  annotationCount: 0,
+  annotationConnections: [] as unknown[],
 }));
 
-vi.mock("@/store/annotation", () => ({
-  default: {},
-}));
-
-vi.mock("@/store/properties", () => ({
-  default: {},
-}));
+vi.mock("@/store/annotation", () => ({ default: annotationMock }));
 
 import AnnotationBrowser from "./AnnotationBrowser.vue";
 import filterStore from "@/store/filters";
@@ -27,28 +22,28 @@ function mountComponent() {
 }
 
 describe("AnnotationBrowser", () => {
-  it("default expanded is [2]", () => {
+  // Both badges are dataset-wide totals. annotationCount must come from the
+  // store getter, never annotationsForIteration.length, which materializes an
+  // array from the 700K-entry stub map just to read a length.
+  it("badges both tabs with dataset-wide totals", () => {
+    annotationMock.annotationCount = 52282;
+    annotationMock.annotationConnections = new Array(54);
     const wrapper = mountComponent();
-    expect(wrapper.vm.expanded).toEqual([2]);
+    expect(wrapper.vm.objectCount).toBe(52282);
+    expect(wrapper.vm.connectionCount).toBe(54);
+  });
+
+  it("hides a badge when the dataset has none", () => {
+    annotationMock.annotationCount = 0;
+    annotationMock.annotationConnections = [];
+    const wrapper = mountComponent();
+    expect(wrapper.vm.objectCount).toBe(0);
+    expect(wrapper.vm.connectionCount).toBe(0);
   });
 
   it("clickedTag calls filterStore.addTagToTagFilter", () => {
     const wrapper = mountComponent();
     wrapper.vm.clickedTag("myTag");
     expect(filterStore.addTagToTagFilter).toHaveBeenCalledWith("myTag");
-  });
-
-  it("expandProperties adds panel index 1 if not present", () => {
-    const wrapper = mountComponent();
-    expect(wrapper.vm.expanded).toEqual([2]);
-    wrapper.vm.expandProperties();
-    expect(wrapper.vm.expanded).toContain(1);
-  });
-
-  it("expandProperties does not duplicate panel index 1", () => {
-    const wrapper = mountComponent();
-    wrapper.vm.expandProperties();
-    wrapper.vm.expandProperties();
-    expect(wrapper.vm.expanded.filter((i: number) => i === 1)).toHaveLength(1);
   });
 });

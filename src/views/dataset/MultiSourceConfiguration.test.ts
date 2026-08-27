@@ -749,6 +749,26 @@ describe("MultiSourceConfiguration", () => {
   });
 
   describe("submitError", () => {
+    it("returns an error when source images use different pixel types", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.initializing = false;
+      vm.tilesMetadata = [{ dtype: "uint16" }, { dtype: "uint8" }];
+
+      expect(vm.submitError).toBe(
+        "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them. You will need to start over.",
+      );
+    });
+
+    it("allows source images with the same pixel type", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.initializing = false;
+      vm.tilesMetadata = [{ dtype: "uint16" }, { dtype: "UINT16" }];
+
+      expect(vm.submitError).toBeNull();
+    });
+
     it("returns error when submit not enabled", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
@@ -1811,6 +1831,29 @@ describe("MultiSourceConfiguration", () => {
       expect(result).toBeNull();
     });
 
+    it("blocks generation when source images use different pixel types", async () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      await setupForSubmit(vm);
+      vm.tilesMetadata = [
+        { dtype: "uint16", frames: [{ Index: 0 }] },
+        { dtype: "uint8", frames: [{ Index: 0 }] },
+      ];
+
+      const result = await vm.generateJson();
+
+      expect(result).toBeNull();
+      expect(mockAddMultiSourceMetadata).not.toHaveBeenCalled();
+      expect(vm.generationErrorMessage).toBe(
+        "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them. You will need to start over.",
+      );
+      expect(wrapper.emitted("generationError")).toEqual([
+        [
+          "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them. You will need to start over.",
+        ],
+      ]);
+    });
+
     it("handles channel names from filename source", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
@@ -2387,7 +2430,7 @@ describe("MultiSourceConfiguration", () => {
       const vm = wrapper.vm as any;
       const dim = { id: 0, guess: "C", size: 3, source: "file", data: {} };
       expect(vm.getAssignedDimensionColor(dim)).toBe(
-        "rgba(255, 255, 255, 0.3)",
+        "var(--nimbus-text-faint)",
       );
     });
 
