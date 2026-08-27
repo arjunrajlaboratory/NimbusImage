@@ -987,6 +987,33 @@ describe("track labels from a property", () => {
     expect(wrapper.vm.trackLabelFetchFailed).toBe(true);
   });
 
+  // In lazy mode the tracks rebuild on every pan, re-entering the fetcher
+  // while a request is still pending. The same missing ids must not be
+  // resent, and the original response must merge rather than be discarded —
+  // otherwise continued interaction piles up identical queries and labels
+  // never settle until the user stops panning.
+  it("coalesces fetches while one is in flight and merges its response", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    let resolveFetch: (v: unknown) => void = () => {};
+    h.getPropertyValuesForIds.mockReturnValue(
+      new Promise((r) => {
+        resolveFetch = r;
+      }),
+    );
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+    await wrapper.vm.ensureTrackLabelValues();
+    expect(h.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+    resolveFetch([
+      { annotationId: "a", values: { prop1: { trackId: 42 } } },
+      { annotationId: "b", values: { prop1: { trackId: 42 } } },
+    ]);
+    await flushPromises();
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("42");
+    wrapper.unmount();
+  });
+
   it("retries after a failed fetch", async () => {
     annotationStoreMock.stubOnlyMode = true;
     h.getPropertyValuesForIds.mockRejectedValueOnce(new Error("boom"));

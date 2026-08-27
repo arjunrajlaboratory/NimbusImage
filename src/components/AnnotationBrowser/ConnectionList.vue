@@ -515,8 +515,12 @@ const fetchedTrackValues = ref<Map<string, number | string | null>>(new Map());
 // Identifies what the cache was fetched FOR; a path change or a server-side
 // recompute (revision bump) invalidates it wholesale.
 let fetchedTrackValuesKey = "";
-// Stale-response guard: only the latest in-flight fetch may merge.
-let trackValueFetchToken = 0;
+// Ids already sent in an in-flight request for the current cache key. The
+// tracks rebuild on every pan in lazy mode, re-entering the fetcher while a
+// request is pending — these coalesce those re-entries instead of resending
+// the same ids (and discarding each other's responses). Reset with the cache
+// on every key change.
+let pendingTrackValueIds = new Set<string>();
 // The latest fetch failed; the uncovered members render unresolved rather
 // than "no ID", and the toolbar offers a manual retry (nothing else
 // necessarily re-fires the watcher after a failure).
@@ -576,11 +580,6 @@ const duplicateTrackLabelValues = computed(() =>
  * is cached — comparable to the per-pan row rebuild the tab already pays).
  */
 async function ensureTrackLabelValues() {
-  // Claim the token before every early return (same contract as
-  // ensureVisiblePropertyValues in the properties store): a bail-out must
-  // supersede any in-flight fetch, or its late response could merge values
-  // under a cache key it was not fetched for.
-  const token = ++trackValueFetchToken;
   if (!trackLabelActive.value || !annotationStore.stubOnlyMode) {
     return;
   }
@@ -589,13 +588,19 @@ async function ensureTrackLabelValues() {
   if (cacheKey !== fetchedTrackValuesKey) {
     fetchedTrackValuesKey = cacheKey;
     fetchedTrackValues.value = new Map();
+    pendingTrackValueIds = new Set();
   }
   const cache = fetchedTrackValues.value;
+  const pending = pendingTrackValueIds;
   const missingIds: string[] = [];
   const seen = new Set<string>();
   for (const track of tracks.value) {
     for (const annotationId of track.annotationIds) {
-      if (!cache.has(annotationId) && !seen.has(annotationId)) {
+      if (
+        !cache.has(annotationId) &&
+        !pending.has(annotationId) &&
+        !seen.has(annotationId)
+      ) {
         seen.add(annotationId);
         missingIds.push(annotationId);
       }
@@ -606,6 +611,7 @@ async function ensureTrackLabelValues() {
     return;
   }
   trackLabelFetchFailed.value = false;
+  missingIds.forEach((id) => pending.add(id));
   try {
     // Single batched request — never a fetch-per-annotation loop.
     const entries = await propertyStore.propertiesAPI.getPropertyValuesForIds(
@@ -613,7 +619,12 @@ async function ensureTrackLabelValues() {
       missingIds,
       [path],
     );
-    if (token !== trackValueFetchToken) {
+    // The response is valid exactly for the key it was fetched under: values
+    // are immutable per path/revision, so concurrent same-key responses may
+    // all merge (coverage only grows), while a response for a superseded key
+    // — the path changed or a recompute bumped the revision, which also reset
+    // the cache — must be dropped, never merged under the new key.
+    if (cacheKey !== fetchedTrackValuesKey) {
       return;
     }
     const valuesById = new Map(
@@ -632,10 +643,16 @@ async function ensureTrackLabelValues() {
     fetchedTrackValues.value = next;
   } catch (error) {
     logError("Failed to fetch track label property values", error);
-    // A superseded fetch's failure says nothing about the current one.
-    if (token === trackValueFetchToken) {
+    // A superseded key's failure says nothing about the current fetch state.
+    if (cacheKey === fetchedTrackValuesKey) {
       trackLabelFetchFailed.value = true;
     }
+  } finally {
+    // Merged, dropped, or failed — these ids are no longer in flight. After a
+    // key change the current set no longer contains them (deletes are no-ops)
+    // and a failure leaves them refetchable by the next run or the Retry
+    // button.
+    missingIds.forEach((id) => pendingTrackValueIds.delete(id));
   }
 }
 

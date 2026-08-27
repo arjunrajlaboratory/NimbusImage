@@ -15,7 +15,9 @@ invariants extracted from these rounds.
   a bail-out that reset the cache key could be followed by a late response
   merging values fetched for the previous property path under the new key.
 - **Status:** fixed adef9f64 — token claimed first, matching
-  `ensureVisiblePropertyValues` in the properties store.
+  `ensureVisiblePropertyValues` in the properties store. Superseded by C5:
+  the token is gone; each request now captures its cache key and merges only
+  while that key is current, which covers every early return by construction.
 
 ### R2 — Fetcher blind to `stubOnlyMode`
 - **Where:** `ConnectionList.vue` track-label watch sources
@@ -74,6 +76,21 @@ invariants extracted from these rounds.
   the plot reconciliation (dynamic import for the same cycle reason). Tests:
   *"clears the path and persists when its property is deleted"*, *"keeps the
   path and stays silent while its property exists"*.
+
+### C5 — Overlapping fetches resend ids and discard valid responses (P2, round 3, review 5038498551)
+- **Where:** `ConnectionList.vue:646` (`ensureTrackLabelValues`)
+- **Severity:** P2
+- **Summary:** Lazy-mode tracks rebuild on every pan, re-entering the fetcher
+  while a request is pending; each re-entry resent all still-missing ids and
+  bumped the latest-only token, discarding the earlier valid response — so
+  continued interaction piled up identical queries and labels never settled.
+- **Status:** fixed — a pending-id set coalesces re-entries (only ids in
+  neither the cache nor flight are requested), and the latest-only token is
+  replaced by captured-key matching: values are immutable per path/revision,
+  so every current-key response merges (coverage only grows) while a
+  superseded-key response is dropped. A failure releases its pending ids so
+  Retry or the next run can resend them. Test: *"coalesces fetches while one
+  is in flight and merges its response"*.
 
 ### C3 — Fetch failures indistinguishable from confirmed missing values (P2)
 - **Where:** `ConnectionList.vue:590` (lazy-mode fetch)
