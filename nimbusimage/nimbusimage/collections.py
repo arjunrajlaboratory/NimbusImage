@@ -109,7 +109,7 @@ class CollectionAccessor:
         per-user view state (last location, contrast overrides, etc.).
         """
         return self._gc.get(
-            f"/dataset_view?datasetId={self._dataset_id}"
+            f"dataset_view?datasetId={self._dataset_id}"
         )
 
     def get(self, collection_id: str | None = None) -> Collection | None:
@@ -129,7 +129,7 @@ class CollectionAccessor:
             collection_id = views[0].get("configurationId")
             if not collection_id:
                 return None
-        data = self._gc.get(f"/upenn_collection/{collection_id}")
+        data = self._gc.get(f"upenn_collection/{collection_id}")
         return Collection(self._gc, data, frontend_url=self._frontend_url)
 
     def list(self) -> list[Collection]:
@@ -146,7 +146,7 @@ class CollectionAccessor:
             cid = v.get("configurationId")
             if cid and cid not in seen:
                 seen.add(cid)
-                data = self._gc.get(f"/upenn_collection/{cid}")
+                data = self._gc.get(f"upenn_collection/{cid}")
                 collections.append(
                     Collection(self._gc, data, frontend_url=self._frontend_url)
                 )
@@ -169,7 +169,7 @@ class CollectionAccessor:
             collection_id = views[0].get("configurationId")
             if not collection_id:
                 return {}
-        return self._gc.get(f"/upenn_collection/{collection_id}")
+        return self._gc.get(f"upenn_collection/{collection_id}")
 
     def _ensure_cached(self):
         if self._cache is None:

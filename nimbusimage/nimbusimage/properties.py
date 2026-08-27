@@ -25,12 +25,12 @@ class PropertyAccessor:
 
     def list(self) -> list[Property]:
         """List all property definitions accessible to the user."""
-        data = self._gc.get("/annotation_property")
+        data = self._gc.get("annotation_property")
         return [Property.from_dict(d) for d in data]
 
     def get(self, property_id: str) -> Property:
         """Get a property definition by ID."""
-        data = self._gc.get(f"/annotation_property/{property_id}")
+        data = self._gc.get(f"annotation_property/{property_id}")
         return Property.from_dict(data)
 
     def create(
@@ -49,7 +49,7 @@ class PropertyAccessor:
             "tags": {"exclusive": False, "tags": tags or []},
             "workerInterface": worker_interface or {},
         }
-        data = self._gc.post("/annotation_property", json=body)
+        data = self._gc.post("annotation_property", json=body)
         return Property.from_dict(data)
 
     def get_or_create(
@@ -73,27 +73,27 @@ class PropertyAccessor:
         collections are only updated once.
         """
         views = self._gc.get(
-            f"/dataset_view?datasetId={self._dataset_id}"
+            f"dataset_view?datasetId={self._dataset_id}"
         )
         seen: dict[str, dict] = {}
         for view in views:
             cid = view.get("configurationId")
             if not cid or cid in seen:
                 continue
-            seen[cid] = self._gc.get(f"/upenn_collection/{cid}")
+            seen[cid] = self._gc.get(f"upenn_collection/{cid}")
 
         for cid, config in seen.items():
             prop_ids = config.get("meta", {}).get("propertyIds", [])
             if property_id not in prop_ids:
                 prop_ids.append(property_id)
                 self._gc.put(
-                    f"/upenn_collection/{cid}/metadata",
+                    f"upenn_collection/{cid}/metadata",
                     json={"propertyIds": prop_ids},
                 )
 
     def delete(self, property_id: str) -> None:
         """Delete a property definition."""
-        self._gc.delete(f"/annotation_property/{property_id}")
+        self._gc.delete(f"annotation_property/{property_id}")
 
     # --- Values ---
 
@@ -104,7 +104,7 @@ class PropertyAccessor:
             annotation_id: If provided, get values for this annotation only.
                 Otherwise, get all values for the dataset.
         """
-        url = f"/annotation_property_values?datasetId={self._dataset_id}"
+        url = f"annotation_property_values?datasetId={self._dataset_id}"
         if annotation_id:
             url += f"&annotationId={annotation_id}"
         return self._gc.get(url)
@@ -133,13 +133,13 @@ class PropertyAccessor:
         for i in range(0, len(entries), _BATCH_SIZE):
             batch = entries[i:i + _BATCH_SIZE]
             self._gc.post(
-                "/annotation_property_values/multiple", json=batch
+                "annotation_property_values/multiple", json=batch
             )
 
     def delete_values(self, property_id: str) -> None:
         """Delete all values for a property in this dataset."""
         self._gc.delete(
-            f"/annotation_property_values"
+            f"annotation_property_values"
             f"?propertyId={property_id}&datasetId={self._dataset_id}"
         )
 
@@ -148,7 +148,7 @@ class PropertyAccessor:
     ) -> list[dict]:
         """Get histogram for a property across all annotations."""
         return self._gc.get(
-            f"/annotation_property_values/histogram"
+            f"annotation_property_values/histogram"
             f"?propertyPath={property_path}"
             f"&datasetId={self._dataset_id}"
             f"&buckets={buckets}"
@@ -217,7 +217,7 @@ class PropertyAccessor:
             body["scales"] = scales
 
         resp = self._gc.post(
-            f"/annotation_property/{property.id}/compute"
+            f"annotation_property/{property.id}/compute"
             f"?datasetId={self._dataset_id}",
             json=body,
         )
