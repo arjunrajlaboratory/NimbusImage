@@ -307,6 +307,21 @@
             </v-btn>
           </template>
         </v-tooltip>
+        <v-tooltip text="Color objects by a property value">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              variant="text"
+              icon
+              size="small"
+              class="ml-1"
+              aria-label="Color objects by property"
+              @click="colorByPropertyDialogOpen = true"
+            >
+              <v-icon>mdi-palette</v-icon>
+            </v-btn>
+          </template>
+        </v-tooltip>
         <data-io-menu class="ml-1" />
       </template>
       <div class="mx-4 d-flex align-center">
@@ -523,6 +538,7 @@
 
     <analyze-dialog v-model="analyzeDialogOpen" @show-in-list="onShowInList" />
     <pipeline-dialog v-model="pipelineDialogOpen" />
+    <color-by-property-dialog v-model:show="colorByPropertyDialogOpen" />
   </v-app>
 </template>
 
@@ -550,6 +566,7 @@ import FiltersPanel from "@/components/FiltersPanel.vue";
 import AnalysisPanel from "@/components/AnalysisPanel.vue";
 import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
 import PipelineDialog from "@/components/PipelineDialog.vue";
+import ColorByPropertyDialog from "@/components/AnnotationBrowser/ColorByPropertyDialog.vue";
 import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
 import NavigatorPanel from "@/components/NavigatorPanel.vue";
 import TimelapsePanel from "@/components/TimelapsePanel.vue";
@@ -598,6 +615,7 @@ void FiltersPanel;
 void AnalysisPanel;
 void AnalyzeDialog;
 void PipelineDialog;
+void ColorByPropertyDialog;
 void UndoRedoButtons;
 void NavigatorPanel;
 void TimelapsePanel;
@@ -778,6 +796,15 @@ const analyzeDialogOpen = computed({
 const pipelineDialogOpen = computed({
   get: () => store.isPipelineDialogOpen,
   set: (value: boolean) => store.setIsPipelineDialogOpen(value),
+});
+
+// Same arrangement as the Measure dialog above: mounted once here, opened from
+// the app-bar palette button, the Object Browser toolbar and its More Actions
+// menu. A second mount would give the app two independent dialogs (and two
+// colormap-option fetches), so the open state lives in the store.
+const colorByPropertyDialogOpen = computed({
+  get: () => store.isColorByPropertyDialogOpen,
+  set: (value: boolean) => store.setIsColorByPropertyDialogOpen(value),
 });
 
 const isUploadLoading = ref(false);
@@ -1253,6 +1280,23 @@ watch(
     } else {
       annotationPanel.value = false;
     }
+  },
+);
+
+// Same escape hatch, generalized: a component with no access to the palette
+// registry (the render-coverage HUD, deep inside ImageViewer) asks for a
+// palette by id and this opens it. Cleared immediately so the next request for
+// the same palette is still seen as a change.
+watch(
+  () => store.paletteOpenRequests,
+  (requests) => {
+    if (requests.length === 0) {
+      return;
+    }
+    for (const id of requests) {
+      openPalette(id);
+    }
+    store.setPaletteOpenRequests([]);
   },
 );
 

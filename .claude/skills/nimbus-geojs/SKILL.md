@@ -23,6 +23,7 @@ GeoJS's annotation layer has several asymmetric, mutating APIs. Each trap below 
 | Clicking a list row shows no connection at high zoom | A connection draws only when BOTH endpoints are displayed; recentering on one leaves the other outside the viewport | Frame both endpoints (`frameCameraInfo`) instead of recentering on one |
 | With an axis unrolled, the camera/hit-test lands exactly one tile-width (or a multiple) away from the object | The draw path offsets each annotation by its grid cell; the other path used the raw frame-local centroid | Put both through `@/utils/unroll` — see "Unrolled coordinates are a third space" |
 | Hover/selection highlight works on one layer and does nothing on another | The second layer rebuilds its features from scratch on every draw and bakes the highlight in at build time, so only the state wired to a rebuild is ever reflected | Give the features a base-style option and restyle them in place — see "Layers that bake style at draw time" |
+| A tile layer silently loads nothing: zero network requests, no errors, later draws/toggles no-ops | `tile.catch`/`tile.then` QUEUES the tile's fetch, and the queue's `needed` predicate requires `tile === cache.get(hash)` — a handler attached inside `_getTile` (pre-`cache.add`) rejects every tile at creation; rejected tiles stay cached with `_queued=true` so nothing ever refetches them | Attach tile promise handlers only post-cache: wrap `_getTileCached`, never `_getTile` — see "Tile promise handlers queue the fetch" |
 
 ## Layers that bake style at draw time
 
@@ -128,6 +129,39 @@ selects nothing; clicking the same spot on the first tile selects it. Verified l
 ## Render gating
 
 `_update` (the WebGL feature-data rebuild) only runs when the layer's `modified()` timestamp advanced. `clearOldAnnotations` marks modified only when it *removes* something; a pure add pass with `update=false` marks nothing → invisible features. Debugging tell: run `layer.modified(); layer.draw()` in the console — if features appear instantly, it's this, not missing data. Guard the `modified()` call on "count actually grew" so pure pans keep the incremental-draw optimization.
+
+## Tile promise handlers queue the fetch — attach post-cache only
+
+GeoJS tiles have a promise-like interface, and it is not passive: `tile.catch(cb)`
+calls `tile.then`, and `then` on a pending unfetched tile runs
+`this._queue.add(this, this.fetch)` — **attaching a handler queues the fetch**.
+The fetch queue's `needed` predicate accepts a tile only if it is already the
+cache's entry for its hash (`tile === cache.get(tile.toString())`), and
+`fetchQueue.add` processes synchronously. Inside `_getTileCached`, `_getTile`
+runs BEFORE `cache.add` — so a failure hook attached in a wrapped `_getTile`
+rejects every tile the instant it is created.
+
+The symptom is total silence: zero network requests, no console errors, and the
+failure is sticky — rejected tiles stay in the cache with `_queued=true`, and
+`_update` never re-queues a tile whose queue position is `-1`, so later draws
+and visibility toggles are no-ops until `layer.reset()` or a template change.
+This shipped as a blank annotation raster overview (review R19): the retry
+subsystem's own hook killed every tile, then consumed its retry budget on
+identical deaths.
+
+Rules:
+
+- Wrap `_getTileCached` (returns only after `cache.add`), never `_getTile`,
+  when you need a per-tile failure signal (there is no tile-error event).
+- Cache hits return the same tile — guard so each tile is hooked once
+  (WeakSet).
+- Unit-test the ordering contract with a mock that mimics create-then-cache
+  and records cache membership at `catch`-attach time
+  (`ImageViewer.test.ts`, `installMockTileFactory`); a mock that just exposes
+  `_getTile` cannot fail on this bug.
+- Diagnose live: `layer.cache._cache` sizes vs `read_network_requests`; the
+  counterfactual `layer.queue._needed = () => true` + `layer.reset()` +
+  `layer.draw()` making tiles load proves this mechanism.
 
 ## Tile URL changes already reset the GeoJS cache
 

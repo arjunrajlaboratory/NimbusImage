@@ -293,9 +293,11 @@ in-process registry in `server/helpers/annotationRaster.py`:
   versions even when a mutation happened in a different server process.
 
 Bump points — override the mutating methods on the `Annotation` model
-(every plugin code path funnels through them: `create`/`createMultiple`
+(the document-at-a-time paths funnel through them: `create`/`createMultiple`
 call `save`/`saveMany`, the update endpoints call `save`/`saveMany` via
-`updateMultiple`, deletes go through `remove`/`removeWithQuery`):
+`updateMultiple`, deletes go through `remove`/`removeWithQuery`). Paths that
+write with `bulk_write`/`update` bypass these overrides and must bump
+explicitly — see the exceptions below the table:
 
 | Override                   | Bump                                                                                                                                                                                                                                         |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -304,9 +306,18 @@ call `save`/`saveMany`, the update endpoints call `save`/`saveMany` via
 | `remove(annotation, ...)`  | `datasetCounter[annotation["datasetId"]]`                                                                                                                                                                                                    |
 | `removeWithQuery(query)`   | `datasetId` when present in the query (e.g. `cleanOrphaned`); otherwise `globalEpoch` (e.g. `deleteMultiple`'s `_id $in` query — though its API layer already knows the dataset ids via `distinctDatasetIds` and may bump precisely instead) |
 
-History undo/redo is the deliberate exception to model-hook coverage: it uses
-raw collection replace/delete operations, so `History._undoOrRedo` bumps the
-affected dataset explicitly after a successful restore.
+Two families of writes sit outside model-hook coverage and bump explicitly:
+
+- **History undo/redo** uses raw collection replace/delete operations, so
+  `History._undoOrRedo` bumps the affected dataset after a successful restore.
+- **Color-by-property** (`COLOR_BY_PROPERTY.md`) writes the `color` field with
+  batched `bulk_write`/`update` for throughput, so `Annotation._writeColors`
+  and `Annotation.clearColors` bump the dataset themselves. The raster draws
+  each annotation's own `color` (§3.4), so these are as invalidating as a
+  create or delete — a recolor that skipped the bump would keep 304-ing the
+  previous colors until the TTL epoch rolled.
+
+Any future bulk write of a field the raster reads owes the same explicit bump.
 
 `ETag = W/"{processUuid}:{globalEpoch}:{datasetCounter}:{ttlEpoch}:{sha1 of
 the canonicalized query params}"`. Handle `If-None-Match` before touching the
@@ -473,7 +484,11 @@ blurb noting the overview is display-only and hides while unrolling.
 
 The annotation store keeps a monotonic `mutationCounter` incremented
 after every successful annotation create/update/delete/import affecting
-the current dataset. It feeds the `v` query param (§3.1), so the user's
+the current dataset, and by `applyColorAssignment` (color-by-property applies
+its result locally instead of refetching, so the refetch's bump is not there to
+do it — but only when a color actually moved, so a no-op re-apply doesn't
+discard every tile for an identical image). It feeds the `v` query param
+(§3.1), so the user's
 own edits immediately invalidate browser-cached tiles and force refetch
 (which the server answers freshly thanks to §3.5). Other users' edits
 surface on the next natural refetch (frame change, reload, toggle) — v1
@@ -619,10 +634,24 @@ Per `CLAUDE.md`, every item names its test:
   retemplated layers do not retry — _"retries failed overview tiles with a
   bounded delayed reset"_ and _"does not retry tiles for a hidden overview
   layer"_.
+- **Failure hook attaches only post-cache**: attaching `tile.catch` queues
+  the tile's fetch, which GeoJS's queue drops unless the tile is already the
+  cache's entry for its hash — so the hook must wrap `_getTileCached`, never
+  the pre-cache `_getTile`, or every tile is rejected at creation and the
+  raster is permanently blank (review R19) — ordering assertion in _"retries
+  failed overview tiles with a bounded delayed reset"_
+  (`catchAttachedWhileInCache`).
 - **Invalidation on every mutation verb**: create, updateMultiple,
   delete, deleteMultiple each change the ETag —
   _"testEveryModelMutationPathInvalidatesEtag"_ and
   _"testAccessAndEtagInvalidation"_.
+- **Invalidation on the bulk-write paths too**: color-by-property and its
+  clear twin write with `bulk_write`/`update`, so the model overrides above
+  never see them; both must change the ETag and repaint in the new colors —
+  _"testColorByPropertyInvalidatesEtagAndRepaints"_ — and both must
+  invalidate even when the write raises partway, since an unordered
+  bulk write can fail after applying some operations —
+  _"testFailedColorWritesStillInvalidateRaster"_.
 - **Bulk move invalidates both datasets**: an updateMultiple that changes an
   annotation's datasetId bumps the source and destination rasters (saves
   themselves bump only the saved documents' datasets; the move path bumps

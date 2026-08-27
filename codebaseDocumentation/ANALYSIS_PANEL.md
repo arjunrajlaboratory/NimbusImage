@@ -404,7 +404,9 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Gates count on the **Analysis** badge, never the Filters badge, so neither
   button claims a filter its own panel cannot show — *"stays 0 for a
   resolved, enabled gate"*, *"counts only the panel's own filters alongside a
-  gate"*, *"keeps the two badges independent"*
+  gate"*, *"keeps the two badges independent"*. Both badges and the
+  render-coverage HUD count one shared list, so a gate can never be surfaced
+  by one and missed by another — see `ACTIVE_CONSTRAINT_CUES.md`
 - A drawn but unresolved gate constrains nothing, so drawing never flashes empty — *"does not constrain a drawn gate until its ids have been resolved"*
 - Multiple enabled gates AND (not union); disabling one drops its constraint but keeps its polygon; clearing restores — *"ANDs the enabled resolved gates into filteredAnnotations"*
 - An empty resolved gate filters everything out, and is not treated as "no gate" — *"treats an empty resolved gate as filtering everything out"*

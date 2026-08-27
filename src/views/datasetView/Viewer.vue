@@ -10,6 +10,7 @@
     />
     <volume-viewer v-else class="main" />
     <tool-suggestions />
+    <annotation-color-legend v-if="volumeViewMode === '2d'" />
   </div>
 </template>
 
@@ -20,6 +21,7 @@ import filterStore from "@/store/filters";
 import ImageViewer from "@/components/ImageViewer.vue";
 import VolumeViewer from "@/components/VolumeViewer.vue";
 import ToolSuggestions from "@/components/ToolSuggestions.vue";
+import AnnotationColorLegend from "@/components/AnnotationColorLegend.vue";
 
 import store from "@/store";
 import timelapseStore from "@/store/timelapse";
