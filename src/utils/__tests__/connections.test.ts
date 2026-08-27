@@ -13,6 +13,7 @@ import {
   buildTrackRows,
   chainAnnotationsByTime,
   findConnectedComponents,
+  findDuplicateTrackLabelValues,
   findTimeTies,
   formatTrackLabelValue,
   resolveTrackLabelValue,
@@ -684,6 +685,58 @@ describe("resolveTrackLabelValue", () => {
       status: "value",
       value: 0,
     });
+  });
+});
+
+describe("findDuplicateTrackLabelValues", () => {
+  it("reports a value shared by two resolved tracks", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        { status: "value", value: 42 },
+        { status: "value", value: 42 },
+        { status: "value", value: 43 },
+      ]),
+    ).toEqual(new Set([42]));
+  });
+
+  // A split half that later gained an unvalued member resolves as partial;
+  // its value still collides with its twin.
+  it("counts partial resolutions' values too", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        { status: "partial", value: 42 },
+        { status: "value", value: 42 },
+      ]),
+    ).toEqual(new Set([42]));
+  });
+
+  it("ignores mixed and missing resolutions", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        { status: "mixed", values: [1, 2] },
+        { status: "mixed", values: [1, 2] },
+        { status: "missing" },
+        { status: "missing" },
+      ]),
+    ).toEqual(new Set());
+  });
+
+  it("treats 0 as a value", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        { status: "value", value: 0 },
+        { status: "value", value: 0 },
+      ]),
+    ).toEqual(new Set([0]));
+  });
+
+  it('distinguishes the number 42 from the string "42"', () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        { status: "value", value: 42 },
+        { status: "value", value: "42" },
+      ]),
+    ).toEqual(new Set());
   });
 });
 

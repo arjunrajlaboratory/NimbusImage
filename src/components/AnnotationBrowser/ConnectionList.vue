@@ -77,6 +77,24 @@
       />
     </div>
 
+    <!-- Lazy-mode fetch failure: the affected tracks render unresolved (plain
+         short-id titles, no badge) rather than a false "no ID", and nothing
+         else necessarily re-fires the fetch — hence the explicit retry. -->
+    <v-alert
+      v-if="trackLabelActive && trackLabelFetchFailed"
+      type="warning"
+      variant="tonal"
+      density="compact"
+      class="mb-2"
+    >
+      Couldn't load track ID values.
+      <template v-slot:append>
+        <v-btn size="x-small" variant="text" @click="ensureTrackLabelValues">
+          Retry
+        </v-btn>
+      </template>
+    </v-alert>
+
     <!-- Chaining an unbounded selection would POST tens of thousands of
          connections in one request, so the action is capped rather than left
          to fail slowly. -->
@@ -183,9 +201,10 @@
             <span class="track-title" :title="trackTitleTooltip(track)">
               Track {{ trackTitle(track) }}
             </span>
-            <!-- Staleness badges, not error states: a partial or mixed track
-                 means the connection graph changed after the property was
-                 computed — exactly the tracks worth a second look. -->
+            <!-- Staleness badges, not error states: a partial, mixed or
+                 duplicate track means the connection graph changed after the
+                 property was computed — exactly the tracks worth a second
+                 look. -->
             <v-chip
               v-if="trackBadge(track)"
               size="x-small"
@@ -296,6 +315,7 @@ import {
   IConnectionRow,
   ITrackRow,
   TTrackLabelResolution,
+  findDuplicateTrackLabelValues,
   formatTrackLabelValue,
   resolveTrackLabelValue,
   shortAnnotationId,
@@ -497,6 +517,10 @@ const fetchedTrackValues = ref<Map<string, number | string | null>>(new Map());
 let fetchedTrackValuesKey = "";
 // Stale-response guard: only the latest in-flight fetch may merge.
 let trackValueFetchToken = 0;
+// The latest fetch failed; the uncovered members render unresolved rather
+// than "no ID", and the toolbar offers a manual retry (nothing else
+// necessarily re-fires the watcher after a failure).
+const trackLabelFetchFailed = ref(false);
 
 function asLeafValue(value: unknown): number | string | null {
   return typeof value === "number" || typeof value === "string" ? value : null;
@@ -517,7 +541,18 @@ const trackLabels = computed((): Map<string, TTrackLabelResolution> => {
   if (!trackLabelActive.value) {
     return labels;
   }
+  const lazyCache = annotationStore.stubOnlyMode
+    ? fetchedTrackValues.value
+    : null;
   for (const track of tracks.value) {
+    // In lazy mode an id absent from the fetch cache is UNKNOWN (in flight or
+    // failed), not missing — leave the track unresolved (default short-id
+    // title, no badge) rather than claim "no ID" about values that may exist
+    // on the server. A successful fetch covers every requested id (confirmed
+    // misses included), so resolution resumes as soon as one lands.
+    if (lazyCache && !track.annotationIds.every((id) => lazyCache.has(id))) {
+      continue;
+    }
     labels.set(
       track.id,
       resolveTrackLabelValue(track.annotationIds, trackMemberValue),
@@ -525,6 +560,14 @@ const trackLabels = computed((): Map<string, TTrackLabelResolution> => {
   }
   return labels;
 });
+
+// A split (connection deleted after the worker ran) leaves two tracks whose
+// members each unanimously carry the same old id — per-track resolution alone
+// marks both clean. Detection is across the displayed (scope-narrowed) rows:
+// the default "All connections" scope makes that the whole dataset.
+const duplicateTrackLabelValues = computed(() =>
+  findDuplicateTrackLabelValues(trackLabels.value.values()),
+);
 
 /**
  * Lazy mode: fetch the chosen property's values for track members missing from
@@ -562,6 +605,7 @@ async function ensureTrackLabelValues() {
   if (missingIds.length === 0 || !datasetId) {
     return;
   }
+  trackLabelFetchFailed.value = false;
   try {
     // Single batched request — never a fetch-per-annotation loop.
     const entries = await propertyStore.propertiesAPI.getPropertyValuesForIds(
@@ -588,6 +632,10 @@ async function ensureTrackLabelValues() {
     fetchedTrackValues.value = next;
   } catch (error) {
     logError("Failed to fetch track label property values", error);
+    // A superseded fetch's failure says nothing about the current one.
+    if (token === trackValueFetchToken) {
+      trackLabelFetchFailed.value = true;
+    }
   }
 }
 
@@ -622,14 +670,18 @@ function trackTitle(track: ITrackRow): string {
 }
 
 // With a property label shown, the default id moves into the tooltip so the
-// track can still be told apart from a same-valued neighbour.
+// track can still be told apart from a same-valued neighbour. The full value
+// leads because the title ellipsizes when a string value outgrows its cap.
 function trackTitleTooltip(track: ITrackRow): string | undefined {
   const resolution = trackLabels.value.get(track.id);
   if (
     resolution &&
     (resolution.status === "value" || resolution.status === "partial")
   ) {
-    return `${trackLabelPropertyName.value} · ${shortId(track.id)}`;
+    return (
+      `${formatTrackLabelValue(resolution.value)} · ` +
+      `${trackLabelPropertyName.value} · ${shortId(track.id)}`
+    );
   }
   return undefined;
 }
@@ -644,6 +696,19 @@ function trackBadge(
   const propertyName = trackLabelPropertyName.value;
   switch (resolution.status) {
     case "value":
+      // Partial/mixed take precedence (already staleness warnings); a clean
+      // value shared with another displayed track means a split since the
+      // property ran.
+      if (duplicateTrackLabelValues.value.has(resolution.value)) {
+        return {
+          text: "duplicate ID",
+          color: "warning",
+          tooltip:
+            `Another displayed track carries the same "${propertyName}" ` +
+            `value — the property may predate a track split. Recompute it ` +
+            `to refresh the ids.`,
+        };
+      }
       return null;
     case "partial":
       return {
@@ -927,6 +992,7 @@ defineExpose({
   trackTitleTooltip,
   trackBadge,
   ensureTrackLabelValues,
+  trackLabelFetchFailed,
 });
 </script>
 
@@ -1010,6 +1076,16 @@ defineExpose({
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
+  /* A property label can be an arbitrary string; cap and ellipsize so it can
+     never push the badge, meta and row actions out of the panel. The full
+     value stays available in the tooltip. flex-shrink: 0 (not min-width: 0)
+     so the cap binds only the title's OWN content — row pressure keeps
+     squeezing .track-meta first, and a short title never ellipsizes just
+     because a badge tightened the row. */
+  flex-shrink: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Shrinks and truncates ahead of the title and the actions — the counts are

@@ -437,8 +437,10 @@ export type TTrackLabelResolution =
  * Resolve a track's label from its members' property values.
  *
  * `getValue` returns the member's value for the chosen property path, or null
- * when it has none (not computed, dangling endpoint, or — in lazy mode — not
- * fetched yet, which resolves once the fetch lands and this recomputes).
+ * when it is confirmed to have none (not computed, or a dangling endpoint).
+ * Callers must not pass members whose values are simply unknown — in lazy
+ * mode the component skips a track until the fetch covers all its members,
+ * so "missing" is never claimed about values that merely failed to load.
  */
 export function resolveTrackLabelValue(
   annotationIds: Iterable<string>,
@@ -463,6 +465,34 @@ export function resolveTrackLabelValue(
   return missingCount > 0
     ? { status: "partial", value: distinct[0] }
     : { status: "value", value: distinct[0] };
+}
+
+/**
+ * Values carried by more than one resolved track label.
+ *
+ * Covers the graph change per-track resolution cannot see: deleting a
+ * connection after the worker ran splits one component into two tracks whose
+ * members each still unanimously carry the same old id — both resolve as a
+ * clean `value`. Partial resolutions contribute their value too (a split half
+ * that later gained an unvalued member still collides with its twin); mixed
+ * and missing resolutions carry no single value to collide on.
+ */
+export function findDuplicateTrackLabelValues(
+  resolutions: Iterable<TTrackLabelResolution>,
+): Set<number | string> {
+  const seen = new Set<number | string>();
+  const duplicates = new Set<number | string>();
+  for (const resolution of resolutions) {
+    if (resolution.status !== "value" && resolution.status !== "partial") {
+      continue;
+    }
+    if (seen.has(resolution.value)) {
+      duplicates.add(resolution.value);
+    } else {
+      seen.add(resolution.value);
+    }
+  }
+  return duplicates;
 }
 
 /**

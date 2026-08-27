@@ -133,17 +133,23 @@ all member annotation ids:
 
 | Members' values | Title | Badge |
 |---|---|---|
-| all share one value | the value | — |
+| all share one value, unique among displayed tracks | the value | — |
+| all share one value, also on another displayed track | the value | `duplicate ID` (warning) |
 | one value, some members without | the value | `partial` (warning) |
 | differing values | short id | `mixed IDs` (warning) |
 | none | short id | `no ID` |
 
 The badges are staleness signals, not error states: the worker assigned values
 against the connection graph at compute time, so `partial` (members added
-since) and `mixed` (tracks joined since) flag exactly the tracks whose
-connections changed after the property ran — the ones worth a second look.
-Dangling endpoints count as members without values, which is deliberate for
-the same reason.
+since), `mixed` (tracks joined since) and `duplicate ID` (a track split since —
+both halves keep the old id unanimously, which per-track resolution alone
+cannot see; `findDuplicateTrackLabelValues` compares across the displayed
+rows) flag exactly the tracks whose connections changed after the property
+ran — the ones worth a second look. Dangling endpoints count as members
+without values, which is deliberate for the same reason. Duplicate detection
+runs over the displayed, scope-narrowed rows: the default "All connections"
+scope makes that the whole dataset, while a narrower scope can hide a
+duplicate's twin.
 
 Value lookup is mode-split: wholesale mode reads `propertyStore.propertyValues`
 directly; lazy (stub-only) mode fetches the members' values once per
@@ -151,6 +157,13 @@ path/revision with a single batched `getPropertyValuesForIds` call, cached in
 the component (the store's value cache is pruned to the viewport on every pan,
 so it cannot hold track members). A `propertyValuesRevision` bump — recompute
 or import — invalidates and refetches.
+
+In lazy mode, a member id absent from the fetch cache is **unknown**, not
+missing: a track with uncovered members renders unresolved (default short-id
+title, no badge) rather than claiming `no ID` about values that may exist on
+the server. Ids resolve to "confirmed missing" only from a successful
+response. A failed fetch flags a compact warning with a Retry button, since
+nothing else necessarily re-fires the watcher after a failure.
 
 The chosen path is persisted per **configuration** in
 `annotationBrowserConfig.trackLabelPath` (a property id only means something
@@ -585,6 +598,9 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **Partial coverage keeps the value AND badges it.** A member without a value means the graph changed since the property ran; folding that case into "mixed" loses the findable id, and hiding it loses the staleness signal. — *"keeps the shared value but flags partial coverage"*, *"keeps the shared value but badges a partially-covered track"*
 - [ ] **Lazy mode fetches member values itself, in ONE batched request.** The store's value cache is pruned to the viewport on every pan, so track members are structurally absent from it; and a confirmed miss (id absent from the response) must be cached as `null` or every tracks-change refetches it. The fetch claims its sequence-guard token before every early return (same contract as `ensureVisiblePropertyValues`), so a bail-out that resets the cache key can never be followed by a late response merging values fetched for the previous key. — *"fetches member values in lazy mode with one batched request"*
 - [ ] **The fetcher reacts to `stubOnlyMode` itself.** The mode is settled by the annotation fetch and the tracks by the connection fetch, in parallel; if the mode flips to lazy after the last tracks/path change, only the labels computed would notice — every track would read "no ID" with no fetch ever issued. — *"fetches when lazy mode is determined after the tracks arrive"*
+- [ ] **A failed fetch is not "confirmed missing".** Uncovered members leave their track unresolved (short-id title, no badge) — never a false `no ID` — and an error flag with a Retry button surfaces, because nothing else necessarily re-fires the watcher after a failure. — *"does not confuse a failed fetch with confirmed missing values"*, *"retries after a failed fetch"*
+- [ ] **A split's two halves badge `duplicate ID`.** Each half unanimously keeps the old id, so per-track resolution marks both clean; only comparing resolved labels across displayed tracks sees the split. Distinct values must not badge. — *"badges tracks sharing one value after a split"*, *"does not badge distinct values as duplicates"*
+- [ ] **A long string label cannot displace the row's actions — and a short one never ellipsizes.** `.track-title` caps at 200px with ellipsis via `flex-shrink: 0`, NOT `min-width: 0`: the cap must bind only the title's own content. `min-width: 0` puts the title in the flex shrink pool, so a badge tightening the row squeezed "Track 0" to "Tra…" while `.track-meta` (the designated shrinker) still had width to give — caught live on the first attempt at this fix. CSS is not unit-testable — re-verify live, both with a long string value and with a badged short one, when touching the header layout.
 - [ ] **Wholesale mode never fetches.** `propertyValues` already holds every computed value; a fetch there is a duplicate request per tracks change. — *"never fetches in wholesale mode"*
 - [ ] **The persisted path stays pickable after its values disappear**, so it can be seen and cleared instead of rendering as a raw path key. — *"keeps a persisted path listed after its values disappear"*
 - [ ] **User picks schedule a configuration save; hydration never does.** Same contract as displayedPropertyPaths — a violation makes every dataset open dirty the shared configuration. — *"schedules a configuration save when the user picks a property"*, *"does not schedule a save when hydrating from a configuration"*

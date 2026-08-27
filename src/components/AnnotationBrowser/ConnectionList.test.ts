@@ -917,6 +917,92 @@ describe("track labels from a property", () => {
     expect(h.getPropertyValuesForIds).not.toHaveBeenCalled();
   });
 
+  // A split (a connection deleted after the worker ran) leaves two tracks
+  // whose members each unanimously carry the same old id; per-track
+  // resolution alone would mark both clean, hiding the graph change and
+  // showing duplicate "Track 42" rows.
+  it("badges tracks sharing one value after a split", () => {
+    h.state.grouping = "track";
+    h.state.trackLabelPath = PATH;
+    propertyStoreMock.propertyValues = {
+      a: { prop1: { trackId: 42 } },
+      b: { prop1: { trackId: 42 } },
+      c: { prop1: { trackId: 42 } },
+      d: { prop1: { trackId: 42 } },
+    };
+    setRows(
+      [makeConnection("c1", "a", "b"), makeConnection("c2", "c", "d")],
+      [
+        makeAnnotation("a", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("c", 0),
+        makeAnnotation("d", 1),
+      ],
+    );
+    h.state.trackRows = [trackRowFor(["a", "b"]), trackRowFor(["c", "d"])];
+    const wrapper = mountComponent();
+    for (const track of wrapper.vm.tracks) {
+      expect(wrapper.vm.trackTitle(track)).toBe("42");
+      expect(wrapper.vm.trackBadge(track)?.text).toBe("duplicate ID");
+    }
+  });
+
+  it("does not badge distinct values as duplicates", () => {
+    h.state.grouping = "track";
+    h.state.trackLabelPath = PATH;
+    propertyStoreMock.propertyValues = {
+      a: { prop1: { trackId: 42 } },
+      b: { prop1: { trackId: 42 } },
+      c: { prop1: { trackId: 43 } },
+      d: { prop1: { trackId: 43 } },
+    };
+    setRows(
+      [makeConnection("c1", "a", "b"), makeConnection("c2", "c", "d")],
+      [
+        makeAnnotation("a", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("c", 0),
+        makeAnnotation("d", 1),
+      ],
+    );
+    h.state.trackRows = [trackRowFor(["a", "b"]), trackRowFor(["c", "d"])];
+    const wrapper = mountComponent();
+    for (const track of wrapper.vm.tracks) {
+      expect(wrapper.vm.trackBadge(track)).toBeNull();
+    }
+  });
+
+  // A failed batch fetch must not read as "confirmed missing": the cache is
+  // simply not covering those members yet, and claiming "no ID" would be an
+  // authoritative-looking lie about values that exist on the server.
+  it("does not confuse a failed fetch with confirmed missing values", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    h.getPropertyValuesForIds.mockRejectedValue(new Error("boom"));
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    const track = wrapper.vm.tracks[0];
+    // Unknown, not missing: default short-id title and NO "no ID" badge.
+    expect(wrapper.vm.trackTitle(track)).toBe("#a");
+    expect(wrapper.vm.trackBadge(track)).toBeNull();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(true);
+  });
+
+  it("retries after a failed fetch", async () => {
+    annotationStoreMock.stubOnlyMode = true;
+    h.getPropertyValuesForIds.mockRejectedValueOnce(new Error("boom"));
+    h.getPropertyValuesForIds.mockResolvedValue([
+      { annotationId: "a", values: { prop1: { trackId: 42 } } },
+      { annotationId: "b", values: { prop1: { trackId: 42 } } },
+    ]);
+    const wrapper = setupTrackView({});
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(true);
+    await wrapper.vm.ensureTrackLabelValues();
+    await flushPromises();
+    expect(wrapper.vm.trackLabelFetchFailed).toBe(false);
+    expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("42");
+  });
+
   // stubOnlyMode is settled by the annotation fetch while the tracks are
   // settled by the connection fetch — parallel requests with no ordering
   // guarantee — so the fetcher must react to the mode flip itself, not only
