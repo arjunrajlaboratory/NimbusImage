@@ -1119,6 +1119,11 @@ export class Properties extends VuexModule {
     await (
       await import("./filters")
     ).default.reconcileAnalysisPlotsForPropertyIds(propertyIds);
+    // Same contract for the Connections tab's track-label path (dynamic
+    // import for the same cycle reason as filters).
+    await (
+      await import("./connectionList")
+    ).default.reconcileTrackLabelPathForPropertyIds(propertyIds);
   }
 
   @Mutation

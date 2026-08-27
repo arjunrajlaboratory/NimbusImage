@@ -61,6 +61,20 @@ invariants extracted from these rounds.
   *"badges tracks sharing one value after a split"*, *"does not badge
   distinct values as duplicates"*.
 
+### C4 — Live property deletion leaves the label path orphaned (P2, round 2, review 5038415891)
+- **Where:** `ConnectionList.vue:485` / `connectionList.ts`
+- **Severity:** P2
+- **Summary:** `resolveAnnotationBrowserConfig` drops an unknown-property path
+  at hydration, but a live deletion had no twin: `setProperties` reconciled
+  analysis plots only, so the panel kept labelling from the deleted property
+  and a later browser save could persist the orphaned path until reload.
+- **Status:** fixed — `reconcileTrackLabelPathForPropertyIds` (connectionList
+  store) clears the path through the scheduling setter when its property id
+  leaves the configuration; wired into `properties.setProperties` alongside
+  the plot reconciliation (dynamic import for the same cycle reason). Tests:
+  *"clears the path and persists when its property is deleted"*, *"keeps the
+  path and stays silent while its property exists"*.
+
 ### C3 — Fetch failures indistinguishable from confirmed missing values (P2)
 - **Where:** `ConnectionList.vue:590` (lazy-mode fetch)
 - **Severity:** P2

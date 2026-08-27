@@ -170,7 +170,12 @@ The chosen path is persisted per **configuration** in
 within one configuration), hydrated through `hydrateTrackLabelPath` with the
 same schedule-on-change / silent-hydration contract as the displayed property
 columns, and validated by `resolveAnnotationBrowserConfig` so a path whose
-property left the configuration falls back to default labels.
+property left the configuration falls back to default labels. A **live**
+property deletion clears it immediately too:
+`reconcileTrackLabelPathForPropertyIds`, called from
+`properties.setProperties` alongside the analysis-plot reconciliation, drops
+the path (and persists the drop) the moment its property id leaves the
+configuration.
 
 ### Row labelling
 
@@ -605,6 +610,7 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **The persisted path stays pickable after its values disappear**, so it can be seen and cleared instead of rendering as a raw path key. — *"keeps a persisted path listed after its values disappear"*
 - [ ] **User picks schedule a configuration save; hydration never does.** Same contract as displayedPropertyPaths — a violation makes every dataset open dirty the shared configuration. — *"schedules a configuration save when the user picks a property"*, *"does not schedule a save when hydrating from a configuration"*
 - [ ] **The path resets on dataset switch and re-hydrates from the configuration** (it names a property id from the outgoing configuration), and resolve drops a path whose property left the configuration. — *"clears the path on a dataset switch"*, *"drops a path whose property left the configuration"*, *"survives a build/resolve round trip"*
+- [ ] **A live property deletion clears the path immediately and persists the drop.** The persisted resolver only runs at hydration; without the live twin (`reconcileTrackLabelPathForPropertyIds`, wired in `properties.setProperties` like the analysis-plot reconcile) the panel keeps labelling from the deleted property until reload and a later browser save persists the orphan. — *"clears the path and persists when its property is deleted"*, *"keeps the path and stays silent while its property exists"*
 
 ### Destructive actions
 

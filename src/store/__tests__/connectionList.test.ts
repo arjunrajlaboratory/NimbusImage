@@ -507,4 +507,23 @@ describe("track label path", () => {
     // hydrateAnnotationBrowserState re-seeds it after this reset.
     expect(connectionList.trackLabelPath).toEqual([]);
   });
+
+  // The persisted resolver drops a path whose property left the
+  // configuration, and a live deletion must do the same immediately (same
+  // contract as reconcileAnalysisPlotsForPropertyIds) — otherwise the panel
+  // keeps labelling from the deleted property and a later browser save can
+  // persist the orphaned path.
+  it("clears the path and persists when its property is deleted", () => {
+    connectionList.hydrateTrackLabelPath(["gone", "trackId"]);
+    connectionList.reconcileTrackLabelPathForPropertyIds(["kept"]);
+    expect(connectionList.trackLabelPath).toEqual([]);
+    expect(mainMock.scheduleAnnotationBrowserSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the path and stays silent while its property exists", () => {
+    connectionList.hydrateTrackLabelPath(["kept", "trackId"]);
+    connectionList.reconcileTrackLabelPathForPropertyIds(["kept"]);
+    expect(connectionList.trackLabelPath).toEqual(["kept", "trackId"]);
+    expect(mainMock.scheduleAnnotationBrowserSave).not.toHaveBeenCalled();
+  });
 });

@@ -311,6 +311,27 @@ export class ConnectionList extends VuexModule {
     this.setTrackLabelPathImpl(path);
   }
 
+  /**
+   * Drop the path when its property leaves the configuration. The persisted
+   * resolver (resolveAnnotationBrowserConfig) already does this at hydration,
+   * but a live deletion must do the same immediately — same contract as
+   * reconcileAnalysisPlotsForPropertyIds — or the panel keeps labelling from
+   * the deleted property and a later browser save persists the orphaned path.
+   * Called by properties.setProperties after the propertyIds write succeeds.
+   */
+  @Action
+  public reconcileTrackLabelPathForPropertyIds(propertyIds: string[]) {
+    if (
+      this.trackLabelPath.length === 0 ||
+      propertyIds.includes(this.trackLabelPath[0])
+    ) {
+      return;
+    }
+    // Through the scheduling setter: the cleared path must persist, exactly
+    // like the plot reconciliation's configuration save.
+    this.setTrackLabelPath([]);
+  }
+
   @Mutation
   public setPage(page: number) {
     this.page = page;
