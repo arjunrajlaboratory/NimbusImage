@@ -19,11 +19,13 @@ export function buildAnnotationBrowserConfig(
   filterPaths: string[][],
   propertyFilters: IPropertyAnnotationFilter[],
   analysisPlots: IAnalysisPlot[],
+  trackLabelPath: string[],
 ): IAnnotationBrowserConfig {
   const visiblePaths = new Set(filterPaths.map(createPathStringFromPathArray));
   return {
     displayedPropertyPaths: [...displayedPropertyPaths],
     filterPaths: [...filterPaths],
+    trackLabelPath: [...trackLabelPath],
     propertyFilters: propertyFilters.filter((filter) =>
       visiblePaths.has(createPathStringFromPathArray(filter.propertyPath)),
     ),
@@ -59,6 +61,7 @@ export function resolveAnnotationBrowserConfig(
   const displayedPropertyPaths = asArray(config?.displayedPropertyPaths).filter(
     isKnownPath,
   );
+  const trackLabelPathCandidate = config?.trackLabelPath;
   const filterPaths = asArray(config?.filterPaths).filter(isKnownPath);
   const visiblePaths = new Set(filterPaths.map(createPathStringFromPathArray));
   const propertyFilters = asArray(config?.propertyFilters).filter(
@@ -71,6 +74,11 @@ export function resolveAnnotationBrowserConfig(
     displayedPropertyPaths,
     filterPaths,
     propertyFilters,
+    // A path whose property left the configuration would label nothing;
+    // dropping it falls back to the default short-id labels.
+    trackLabelPath: isKnownPath(trackLabelPathCandidate)
+      ? trackLabelPathCandidate
+      : [],
     // Capped on the way in as well as at creation: the backend rejects a
     // gate request carrying more than MAX_ANALYSIS_PLOTS outright, and a
     // stored configuration is not bound by the creation guard (it can be

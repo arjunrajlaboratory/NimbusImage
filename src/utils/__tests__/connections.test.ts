@@ -13,7 +13,11 @@ import {
   buildTrackRows,
   chainAnnotationsByTime,
   findConnectedComponents,
+  TTrackLabelResolution,
+  findDuplicateTrackLabelValues,
   findTimeTies,
+  formatTrackLabelValue,
+  resolveTrackLabelValue,
   shortAnnotationId,
   trackColor,
   trackKey,
@@ -643,5 +647,140 @@ describe("findTimeTies", () => {
         makeAnnotation("e", 9),
       ]),
     ).toEqual([1, 4]);
+  });
+});
+
+describe("resolveTrackLabelValue", () => {
+  const values = (map: Record<string, number | string | null>) => {
+    return (id: string) => map[id] ?? null;
+  };
+
+  it("returns the shared value when every member agrees", () => {
+    expect(
+      resolveTrackLabelValue(["a", "b"], values({ a: 42, b: 42 })),
+    ).toEqual({ status: "value", value: 42 });
+  });
+
+  it("keeps the shared value but flags partial coverage", () => {
+    expect(
+      resolveTrackLabelValue(["a", "b"], values({ a: 42, b: null })),
+    ).toEqual({ status: "partial", value: 42 });
+  });
+
+  it("reports each differing value once", () => {
+    expect(
+      resolveTrackLabelValue(["a", "b", "c"], values({ a: 42, b: 43, c: 43 })),
+    ).toEqual({ status: "mixed", values: [42, 43] });
+  });
+
+  it("reports missing when no member has a value", () => {
+    expect(resolveTrackLabelValue(["a", "b"], () => null)).toEqual({
+      status: "missing",
+    });
+  });
+
+  // The picker offers per-annotation paths (e.g. the worker's annotationId),
+  // where every member of a large track is unique, and resolution repeats on
+  // every scoped-tracks rebuild (each pan). Collection must stay linear — a
+  // quadratic distinct-scan freezes the tab; the test's implicit 5s timeout
+  // is the cost regression guard (quadratic: minutes, linear: milliseconds).
+  it("resolves a large all-distinct track in linear time", () => {
+    const memberIds = Array.from({ length: 100_000 }, (_, i) => `m${i}`);
+    const result = resolveTrackLabelValue(memberIds, (id) => id);
+    expect(result.status).toBe("mixed");
+    expect(result.status === "mixed" && result.values.length).toBe(100_000);
+  });
+
+  // 0 is a legitimate track id (the parent_child worker starts at 0), so the
+  // resolution must never treat it as "no value".
+  it("does not confuse a value of 0 with a missing value", () => {
+    expect(resolveTrackLabelValue(["a", "b"], values({ a: 0, b: 0 }))).toEqual({
+      status: "value",
+      value: 0,
+    });
+  });
+});
+
+describe("findDuplicateTrackLabelValues", () => {
+  const track = (
+    resolution: TTrackLabelResolution,
+    datasetTrackKey: string,
+  ) => ({ resolution, datasetTrackKey });
+
+  it("reports a value shared by two distinct dataset-wide tracks", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "value", value: 42 }, "k1"),
+        track({ status: "value", value: 42 }, "k2"),
+        track({ status: "value", value: 43 }, "k3"),
+      ]),
+    ).toEqual(new Set([42]));
+  });
+
+  // A narrow scope (selected, filtered, current location) can expose one
+  // intact dataset-wide track as two disconnected fragments; both carry the
+  // same value and the same dataset track key — no split happened.
+  it("does not report fragments of one dataset-wide track", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "value", value: 42 }, "k1"),
+        track({ status: "value", value: 42 }, "k1"),
+      ]),
+    ).toEqual(new Set());
+  });
+
+  // A split half that later gained an unvalued member resolves as partial;
+  // its value still collides with its twin.
+  it("counts partial resolutions' values too", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "partial", value: 42 }, "k1"),
+        track({ status: "value", value: 42 }, "k2"),
+      ]),
+    ).toEqual(new Set([42]));
+  });
+
+  it("ignores mixed and missing resolutions", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "mixed", values: [1, 2] }, "k1"),
+        track({ status: "mixed", values: [1, 2] }, "k2"),
+        track({ status: "missing" }, "k3"),
+        track({ status: "missing" }, "k4"),
+      ]),
+    ).toEqual(new Set());
+  });
+
+  it("treats 0 as a value", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "value", value: 0 }, "k1"),
+        track({ status: "value", value: 0 }, "k2"),
+      ]),
+    ).toEqual(new Set([0]));
+  });
+
+  it('distinguishes the number 42 from the string "42"', () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "value", value: 42 }, "k1"),
+        track({ status: "value", value: "42" }, "k2"),
+      ]),
+    ).toEqual(new Set());
+  });
+});
+
+describe("formatTrackLabelValue", () => {
+  it("shows worker integer floats without decimals", () => {
+    expect(formatTrackLabelValue(42.0)).toBe("42");
+    expect(formatTrackLabelValue(0)).toBe("0");
+  });
+
+  it("keeps fractional values short", () => {
+    expect(formatTrackLabelValue(1.23456789)).toBe("1.235");
+  });
+
+  it("passes strings through", () => {
+    expect(formatTrackLabelValue("t-7")).toBe("t-7");
   });
 });

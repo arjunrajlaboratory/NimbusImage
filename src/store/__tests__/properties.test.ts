@@ -18,6 +18,7 @@ vi.mock("@/store/index", () => ({
     isLoggedIn: true,
     propertiesAPI: {
       getPropertyValuesForIds: (...a: any[]) => getPropertyValuesForIds(...a),
+      getPropertyValuesSample: async () => [],
     },
     scheduleAnnotationBrowserSave: scheduleBrowserSave,
   },
@@ -178,5 +179,29 @@ describe("ensureVisiblePropertyValues stale guard (Finding 6)", () => {
     only.resolve([{ annotationId: "a", values: { propA: 9 } }]);
     await flush();
     expect(properties.propertyValues).toEqual({ a: { propA: 9 } });
+  });
+});
+
+// The Connections tab's lazy track-label fetcher gates on this readiness
+// signal: without it, a stubOnlyMode flip during dataset load launches a
+// batch that the revision bump (fetchPropertyValues' first operation)
+// immediately supersedes — one duplicated large query per dataset open.
+describe("fetchPropertyValues readiness signal", () => {
+  it("records the dataset id alongside the revision bump", async () => {
+    const before = properties.propertyValuesRevision;
+    await properties.fetchPropertyValues();
+    expect(properties.propertyValuesRevision).toBe(before + 1);
+    expect(properties.propertyValuesDatasetId).toBe("ds1");
+  });
+
+  // refreshDataset() resets property state while the dataset id stays the
+  // same, then re-runs fetchPropertyValues. If the reset left the readiness
+  // id in place, the gate would already pass before the new revision bump —
+  // reopening the duplicate-query window the signal exists to close.
+  it("clears the readiness id on a property-state reset", async () => {
+    await properties.fetchPropertyValues();
+    expect(properties.propertyValuesDatasetId).toBe("ds1");
+    properties.resetPropertyState();
+    expect(properties.propertyValuesDatasetId).toBeNull();
   });
 });

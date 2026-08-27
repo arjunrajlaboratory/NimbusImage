@@ -54,6 +54,47 @@
       </v-btn>
     </div>
 
+    <!-- Track labels can mirror a worker-computed property (e.g. Parent-Child
+         Connection IDs' trackId), so a track flagged during post-processing
+         can be found here under the same id. Only meaningful for the By-track
+         view. -->
+    <div
+      v-if="connectionListStore.grouping === 'track'"
+      class="connection-list-toolbar"
+    >
+      <v-select
+        :model-value="trackLabelKey"
+        :items="trackLabelItems"
+        item-title="title"
+        item-value="value"
+        label="Track ID property"
+        density="compact"
+        variant="outlined"
+        hide-details
+        class="track-label-select"
+        title="Label tracks with a computed property value (e.g. the trackId from the Parent-Child Connection IDs worker) instead of the default short object id."
+        @update:model-value="setTrackLabelFromKey"
+      />
+    </div>
+
+    <!-- Lazy-mode fetch failure: the affected tracks render unresolved (plain
+         short-id titles, no badge) rather than a false "no ID", and nothing
+         else necessarily re-fires the fetch — hence the explicit retry. -->
+    <v-alert
+      v-if="trackLabelActive && trackLabelFetchFailed"
+      type="warning"
+      variant="tonal"
+      density="compact"
+      class="mb-2"
+    >
+      Couldn't load track ID values.
+      <template v-slot:append>
+        <v-btn size="x-small" variant="text" @click="ensureTrackLabelValues">
+          Retry
+        </v-btn>
+      </template>
+    </v-alert>
+
     <!-- Chaining an unbounded selection would POST tens of thousands of
          connections in one request, so the action is capped rather than left
          to fail slowly. -->
@@ -157,7 +198,23 @@
               :style="{ backgroundColor: swatchColor(track) }"
               aria-hidden="true"
             />
-            <span class="track-title">Track {{ shortId(track.id) }}</span>
+            <span class="track-title" :title="trackTitleTooltip(track)">
+              Track {{ trackTitle(track) }}
+            </span>
+            <!-- Staleness badges, not error states: a partial, mixed or
+                 duplicate track means the connection graph changed after the
+                 property was computed — exactly the tracks worth a second
+                 look. -->
+            <v-chip
+              v-if="trackBadge(track)"
+              size="x-small"
+              variant="tonal"
+              :color="trackBadge(track)?.color"
+              class="track-badge"
+              :title="trackBadge(track)?.tooltip"
+            >
+              {{ trackBadge(track)?.text }}
+            </v-chip>
             <!-- Also in the title attribute: the counts are what gets
                  ellipsized when the row is tight, and the link count is the
                  diagnostic one (it exceeds objects−1 only when a track
@@ -249,6 +306,7 @@ import connectionListStore, {
   TConnectionScope,
 } from "@/store/connectionList";
 import { MAX_CONNECT_SELECTED } from "@/store/constants";
+import propertyStore from "@/store/properties";
 import timelapseStore from "@/store/timelapse";
 import ConnectionListRow from "@/components/AnnotationBrowser/ConnectionListRow.vue";
 import { goToConnection, goToTrack } from "@/utils/annotationNavigation";
@@ -256,9 +314,17 @@ import { logError } from "@/utils/log";
 import {
   IConnectionRow,
   ITrackRow,
+  TTrackLabelResolution,
+  findDuplicateTrackLabelValues,
+  formatTrackLabelValue,
+  resolveTrackLabelValue,
   shortAnnotationId,
   trackColor,
 } from "@/utils/connections";
+import {
+  createPathStringFromPathArray,
+  getValueFromObjectAndPath,
+} from "@/utils/paths";
 
 const props = withDefaults(
   defineProps<{
@@ -388,6 +454,360 @@ function trackMeta(track: ITrackRow) {
     ? ` · T${track.timeRange.start + 1}–T${track.timeRange.end + 1}`
     : "";
   return `${track.annotationCount} objects${range} · ${track.rows.length} links`;
+}
+
+// --- Track labels from a property (issue #1330) ---
+
+const trackLabelPath = computed(() => connectionListStore.trackLabelPath);
+const trackLabelActive = computed(
+  () =>
+    props.isActive &&
+    connectionListStore.grouping === "track" &&
+    trackLabelPath.value.length > 0,
+);
+
+const trackLabelPropertyName = computed(
+  () =>
+    propertyStore.getFullNameFromPath(trackLabelPath.value) ??
+    trackLabelPath.value.join(" / "),
+);
+
+const trackLabelItems = computed(() => {
+  const items = propertyStore.computedPropertyPaths.map((path) => ({
+    title: propertyStore.getFullNameFromPath(path) ?? path.join(" / "),
+    value: createPathStringFromPathArray(path),
+  }));
+  // Keep the persisted selection listed even when its values are gone (e.g.
+  // deleted between sessions), so the select shows what is configured and the
+  // user can clear it — rather than displaying a raw path key.
+  const currentKey = createPathStringFromPathArray(trackLabelPath.value);
+  if (currentKey && !items.some((item) => item.value === currentKey)) {
+    items.push({ title: trackLabelPropertyName.value, value: currentKey });
+  }
+  return [{ title: "Object ID (default)", value: "" }, ...items];
+});
+
+const trackLabelKey = computed(() =>
+  createPathStringFromPathArray(trackLabelPath.value),
+);
+
+function setTrackLabelFromKey(key: string | null) {
+  if (!key) {
+    connectionListStore.setTrackLabelPath([]);
+    return;
+  }
+  // The only offered key outside computedPropertyPaths is the currently
+  // persisted one (see trackLabelItems), so a miss means "keep what we have".
+  const path = propertyStore.computedPropertyPaths.find(
+    (candidate) => createPathStringFromPathArray(candidate) === key,
+  );
+  if (path) {
+    connectionListStore.setTrackLabelPath(path);
+  }
+}
+
+/**
+ * Lazy (stub-only) mode only: property values for track members, which the
+ * viewport-scoped propertyValues cache does not hold. `null` marks an id that
+ * was fetched and confirmed to have no value, so it is never refetched.
+ */
+const fetchedTrackValues = ref<Map<string, number | string | null>>(new Map());
+// Identifies what the cache was fetched FOR; a path change or a server-side
+// recompute (revision bump) invalidates it wholesale.
+let fetchedTrackValuesKey = "";
+// Ids already sent in an in-flight request for the current cache key. The
+// tracks rebuild on every pan in lazy mode, re-entering the fetcher while a
+// request is pending — these coalesce those re-entries instead of resending
+// the same ids (and discarding each other's responses). Reset with the cache
+// on every key change.
+let pendingTrackValueIds = new Set<string>();
+// The latest fetch failed; the uncovered members render unresolved rather
+// than "no ID", and the toolbar offers a manual retry (nothing else
+// necessarily re-fires the watcher after a failure).
+const trackLabelFetchFailed = ref(false);
+
+function asLeafValue(value: unknown): number | string | null {
+  return typeof value === "number" || typeof value === "string" ? value : null;
+}
+
+function trackMemberValue(annotationId: string): number | string | null {
+  if (annotationStore.stubOnlyMode) {
+    return fetchedTrackValues.value.get(annotationId) ?? null;
+  }
+  const values = propertyStore.propertyValues[annotationId];
+  return values
+    ? asLeafValue(getValueFromObjectAndPath(values, trackLabelPath.value))
+    : null;
+}
+
+const trackLabels = computed((): Map<string, TTrackLabelResolution> => {
+  const labels = new Map<string, TTrackLabelResolution>();
+  if (!trackLabelActive.value) {
+    return labels;
+  }
+  const lazyCache = annotationStore.stubOnlyMode
+    ? fetchedTrackValues.value
+    : null;
+  for (const track of tracks.value) {
+    // In lazy mode an id absent from the fetch cache is UNKNOWN (in flight or
+    // failed), not missing — leave the track unresolved (default short-id
+    // title, no badge) rather than claim "no ID" about values that may exist
+    // on the server. A successful fetch covers every requested id (confirmed
+    // misses included), so resolution resumes as soon as one lands.
+    if (lazyCache && !track.annotationIds.every((id) => lazyCache.has(id))) {
+      continue;
+    }
+    labels.set(
+      track.id,
+      resolveTrackLabelValue(track.annotationIds, trackMemberValue),
+    );
+  }
+  return labels;
+});
+
+// A split (connection deleted after the worker ran) leaves two tracks whose
+// members each unanimously carry the same old id — per-track resolution alone
+// marks both clean. Detection is across the displayed (scope-narrowed) rows —
+// the default "All connections" scope makes that the whole dataset — but
+// keyed by colorKey, the DATASET-WIDE track identity: a narrow scope can
+// expose one intact track as two disconnected fragments, which share a value
+// legitimately and must not read as a split.
+const duplicateTrackLabelValues = computed(() => {
+  const labelledTracks: {
+    resolution: TTrackLabelResolution;
+    datasetTrackKey: string;
+  }[] = [];
+  for (const track of tracks.value) {
+    const resolution = trackLabels.value.get(track.id);
+    if (resolution) {
+      labelledTracks.push({ resolution, datasetTrackKey: track.colorKey });
+    }
+  }
+  return findDuplicateTrackLabelValues(labelledTracks);
+});
+
+/**
+ * Lazy mode: fetch the chosen property's values for track members missing from
+ * the local cache. Wholesale mode reads propertyValues directly and never gets
+ * here. Re-entered whenever the tracks change (cheap no-op once every member
+ * is cached — comparable to the per-pan row rebuild the tab already pays).
+ */
+// A displayed member with no cache entry (in flight or failed). The failure
+// warning keys off this, not off any individual request's fate: an obsolete
+// request can fail after a newer one already covered everything shown.
+function hasUncoveredTrackMember(): boolean {
+  const cache = fetchedTrackValues.value;
+  return tracks.value.some((track) =>
+    track.annotationIds.some((annotationId) => !cache.has(annotationId)),
+  );
+}
+
+async function ensureTrackLabelValues() {
+  if (!trackLabelActive.value || !annotationStore.stubOnlyMode) {
+    // The lazy fetcher is out of play — wholesale mode reads resident values
+    // and an inactive view shows none — so a failure it recorded (possibly
+    // for a previous dataset: this component outlives dataset switches) is
+    // obsolete. Without this, a wholesale dataset opened after a lazy-mode
+    // failure shows a permanent warning that Retry (this same early return)
+    // can never clear.
+    trackLabelFetchFailed.value = false;
+    return;
+  }
+  // Readiness gate: during a dataset load stubOnlyMode flips before
+  // fetchPropertyValues bumps the revision, and a batch launched in that gap
+  // is superseded (and re-sent) moments later — one duplicated large query
+  // per dataset open. Wait until the property refresh ran for THIS dataset;
+  // the bump that records this id is a watch source, so the fetch fires then.
+  if (propertyStore.propertyValuesDatasetId !== store.dataset?.id) {
+    return;
+  }
+  const path = trackLabelPath.value;
+  const cacheKey = `${propertyStore.propertyValuesRevision}:${createPathStringFromPathArray(path)}`;
+  if (cacheKey !== fetchedTrackValuesKey) {
+    fetchedTrackValuesKey = cacheKey;
+    fetchedTrackValues.value = new Map();
+    pendingTrackValueIds = new Set();
+  }
+  const cache = fetchedTrackValues.value;
+  const pending = pendingTrackValueIds;
+  const missingIds: string[] = [];
+  const seen = new Set<string>();
+  for (const track of tracks.value) {
+    for (const annotationId of track.annotationIds) {
+      if (
+        !cache.has(annotationId) &&
+        !pending.has(annotationId) &&
+        !seen.has(annotationId)
+      ) {
+        seen.add(annotationId);
+        missingIds.push(annotationId);
+      }
+    }
+  }
+  const datasetId = store.dataset?.id;
+  if (missingIds.length === 0 || !datasetId) {
+    // Everything displayed is covered: an earlier failure — possibly from a
+    // request for tracks shown before a scope change — is moot. Without this,
+    // Retry returns here and strands the warning forever.
+    if (!hasUncoveredTrackMember()) {
+      trackLabelFetchFailed.value = false;
+    }
+    return;
+  }
+  trackLabelFetchFailed.value = false;
+  missingIds.forEach((id) => pending.add(id));
+  try {
+    // Single batched request — never a fetch-per-annotation loop.
+    const entries = await propertyStore.propertiesAPI.getPropertyValuesForIds(
+      datasetId,
+      missingIds,
+      [path],
+    );
+    // The response is valid exactly for the key it was fetched under: values
+    // are immutable per path/revision, so concurrent same-key responses may
+    // all merge (coverage only grows), while a response for a superseded key
+    // — the path changed or a recompute bumped the revision, which also reset
+    // the cache — must be dropped, never merged under the new key.
+    if (cacheKey !== fetchedTrackValuesKey) {
+      return;
+    }
+    const valuesById = new Map(
+      entries.map(({ annotationId, values }) => [annotationId, values]),
+    );
+    const next = new Map(fetchedTrackValues.value);
+    for (const annotationId of missingIds) {
+      const values = valuesById.get(annotationId);
+      // Ids absent from the response have no value doc at all — record the
+      // confirmed miss so they are not refetched on every tracks change.
+      next.set(
+        annotationId,
+        values ? asLeafValue(getValueFromObjectAndPath(values, path)) : null,
+      );
+    }
+    fetchedTrackValues.value = next;
+    // Recompute the warning now that coverage grew: an obsolete request can
+    // fail WHILE this one is pending (warning correctly set at that instant),
+    // and this success is what makes it moot — clearing only at request start
+    // would strand it over fully resolved tracks.
+    if (!hasUncoveredTrackMember()) {
+      trackLabelFetchFailed.value = false;
+    }
+  } catch (error) {
+    logError("Failed to fetch track label property values", error);
+    // Warn only when a displayed member is actually uncovered: a superseded
+    // key's failure says nothing about the current fetch state, and even a
+    // current-key failure is moot once a newer request covered everything
+    // shown (Retry would find nothing missing and could never clear it).
+    if (cacheKey === fetchedTrackValuesKey && hasUncoveredTrackMember()) {
+      trackLabelFetchFailed.value = true;
+    }
+  } finally {
+    // Merged, dropped, or failed — these ids are no longer in flight, and a
+    // failure leaves them refetchable by the next run or the Retry button.
+    // Release them from the CAPTURED set this request added them to: after a
+    // key change, the current set belongs to the new key's request, which may
+    // have re-added the same ids — deleting from it would strand them as
+    // neither cached nor pending, and the next pan would resend the batch.
+    missingIds.forEach((id) => pending.delete(id));
+  }
+}
+
+watch(
+  [
+    trackLabelActive,
+    trackLabelPath,
+    tracks,
+    // The mode is settled by the annotation fetch while tracks are settled by
+    // the connection fetch — parallel requests with no ordering guarantee. The
+    // labels computed branches on the mode, so the fetcher must react to it
+    // too, or a late flip to lazy mode leaves every track "no ID" with no
+    // fetch ever issued.
+    () => annotationStore.stubOnlyMode,
+    // A recompute/import replaces the values server-side; refetch rather than
+    // keep labelling from the superseded run.
+    () => propertyStore.propertyValuesRevision,
+  ],
+  ensureTrackLabelValues,
+  { immediate: true },
+);
+
+function trackTitle(track: ITrackRow): string {
+  const resolution = trackLabels.value.get(track.id);
+  if (
+    resolution &&
+    (resolution.status === "value" || resolution.status === "partial")
+  ) {
+    return formatTrackLabelValue(resolution.value);
+  }
+  return shortId(track.id);
+}
+
+// With a property label shown, the default id moves into the tooltip so the
+// track can still be told apart from a same-valued neighbour. The full value
+// leads because the title ellipsizes when a string value outgrows its cap.
+function trackTitleTooltip(track: ITrackRow): string | undefined {
+  const resolution = trackLabels.value.get(track.id);
+  if (
+    resolution &&
+    (resolution.status === "value" || resolution.status === "partial")
+  ) {
+    return (
+      `${formatTrackLabelValue(resolution.value)} · ` +
+      `${trackLabelPropertyName.value} · ${shortId(track.id)}`
+    );
+  }
+  return undefined;
+}
+
+function trackBadge(
+  track: ITrackRow,
+): { text: string; color?: string; tooltip: string } | null {
+  const resolution = trackLabels.value.get(track.id);
+  if (!resolution) {
+    return null;
+  }
+  const propertyName = trackLabelPropertyName.value;
+  switch (resolution.status) {
+    case "value":
+      // Partial/mixed take precedence (already staleness warnings); a clean
+      // value shared with another displayed track means a split since the
+      // property ran.
+      if (duplicateTrackLabelValues.value.has(resolution.value)) {
+        return {
+          text: "duplicate ID",
+          color: "warning",
+          tooltip:
+            `Another displayed track carries the same "${propertyName}" ` +
+            `value — the property may predate a track split. Recompute it ` +
+            `to refresh the ids.`,
+        };
+      }
+      return null;
+    case "partial":
+      return {
+        text: "partial",
+        color: "warning",
+        tooltip:
+          `Some objects in this track have no "${propertyName}" value — ` +
+          `the property may predate the current connections. Recompute it ` +
+          `to refresh the ids.`,
+      };
+    case "mixed":
+      return {
+        text: "mixed IDs",
+        color: "warning",
+        tooltip:
+          `Objects in this track carry differing "${propertyName}" values ` +
+          `(${resolution.values.slice(0, 4).map(formatTrackLabelValue).join(", ")}` +
+          `${resolution.values.length > 4 ? ", …" : ""}) — the property may ` +
+          `predate the current connections. Recompute it to refresh the ids.`,
+      };
+    case "missing":
+      return {
+        text: "no ID",
+        tooltip: `No "${propertyName}" values on this track's objects yet.`,
+      };
+  }
 }
 
 /**
@@ -637,6 +1057,15 @@ defineExpose({
   swatchColor,
   showTrackSwatches,
   trackMeta,
+  trackLabelItems,
+  trackLabelKey,
+  setTrackLabelFromKey,
+  trackLabels,
+  trackTitle,
+  trackTitleTooltip,
+  trackBadge,
+  ensureTrackLabelValues,
+  trackLabelFetchFailed,
 });
 </script>
 
@@ -658,6 +1087,14 @@ defineExpose({
 
 .scope-select {
   max-width: 220px;
+}
+
+.track-label-select {
+  max-width: 280px;
+}
+
+.track-badge {
+  flex: 0 0 auto;
 }
 
 .connection-count {
@@ -712,6 +1149,16 @@ defineExpose({
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
+  /* A property label can be an arbitrary string; cap and ellipsize so it can
+     never push the badge, meta and row actions out of the panel. The full
+     value stays available in the tooltip. flex-shrink: 0 (not min-width: 0)
+     so the cap binds only the title's OWN content — row pressure keeps
+     squeezing .track-meta first, and a short title never ellipsizes just
+     because a badge tightened the row. */
+  flex-shrink: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Shrinks and truncates ahead of the title and the actions — the counts are
