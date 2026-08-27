@@ -200,6 +200,27 @@ invariants extracted from these rounds.
   the gate until the property refresh runs. Test: *"clears the readiness id
   on a property-state reset"*.
 
+### C14 — Sparse paths can be absent from lazy-mode discovery (P2, round 9, review 5040342678)
+- **Where:** `ConnectionList.vue:476` (picker items) / `properties.ts`
+  (`fetchPropertyPathsSample`, `PROPERTY_PATH_SAMPLE_SIZE = 512`)
+- **Severity:** P2
+- **Summary:** In lazy mode, `computedPropertyPaths` derives from a 512-doc
+  `_id`-sorted sample; a track-ID property computed only on a sparse subset
+  may not appear in that sample, so the picker never offers its path — and
+  the component only fetches values for an already-selected path.
+- **Status:** deferred — needs a design decision. This is a pre-existing
+  limitation of lazy-mode path discovery that affects every consumer the same
+  way (displayed columns, filters, and this picker all read
+  `computedPropertyPaths`); it predates this PR and fixing it only for this
+  picker would leave the siblings behind. Candidate fixes, each with real
+  trade-offs: (a) a server-side distinct-paths discovery endpoint (correct
+  and complete; backend work), (b) an unprojected `getPropertyValuesForIds`
+  over the displayed track members to union into the picker (extra batch per
+  tab open; picker-only), (c) a larger or randomized sample (moves the
+  threshold, doesn't close it). Mitigation already in place: a persisted
+  `trackLabelPath` stays selectable and functional even when discovery
+  missed it.
+
 ### C3 — Fetch failures indistinguishable from confirmed missing values (P2)
 - **Where:** `ConnectionList.vue:590` (lazy-mode fetch)
 - **Severity:** P2
