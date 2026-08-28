@@ -123,11 +123,9 @@ ann = ni.Annotation.from_polygon(poly, channel=0, tags=["cell"], dataset_id=ds.i
 ## Properties
 
 ```python
-# Create or find a property definition
+# Create or find a property definition. New properties are
+# automatically registered with the dataset's configurations.
 prop = ds.properties.get_or_create("Area", shape="polygon")
-
-# Register it with the dataset's configuration
-ds.properties.register(prop.id)
 
 # Submit computed values
 values = {}
@@ -203,9 +201,8 @@ job.wait()
 ### Run a property worker
 
 ```python
-# Create and register a property
+# Create a property (auto-registered with the dataset's configurations)
 prop = ds.properties.get_or_create("Blob Intensity", shape="polygon")
-ds.properties.register(prop.id)
 
 # Run the property worker
 job = ds.properties.compute(

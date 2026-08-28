@@ -45,10 +45,14 @@ class TestLiveProperties:
         prop1 = ds.properties.get_or_create(
             name="unique_test_prop", shape="polygon"
         )
-        prop2 = ds.properties.get_or_create(
-            name="unique_test_prop", shape="polygon"
-        )
-        assert prop1.id == prop2.id
-
-        # Cleanup
-        ds.properties.delete(prop1.id)
+        try:
+            prop2 = ds.properties.get_or_create(
+                name="unique_test_prop", shape="polygon"
+            )
+            try:
+                assert prop1.id == prop2.id
+            finally:
+                if prop2.id != prop1.id:
+                    ds.properties.delete(prop2.id)
+        finally:
+            ds.properties.delete(prop1.id)
