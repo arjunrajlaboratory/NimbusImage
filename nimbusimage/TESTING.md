@@ -252,7 +252,6 @@ ds.annotations.delete_many([a.id for a in created])
 # --- Property Worker ---
 prop = ds.properties.get_or_create("Test Blob Metrics", shape="polygon",
                                     image="properties/blob_metrics:latest")
-ds.properties.register(prop.id)
 
 scales = ds.collections.get_raw().get("meta", {}).get("scales", {})
 job = ds.properties.compute(prop, worker_interface={"Use physical units": False}, scales=scales)
