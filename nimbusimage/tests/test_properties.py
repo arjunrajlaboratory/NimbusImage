@@ -1,7 +1,24 @@
 """Tests for PropertyAccessor."""
 
+import pytest
+
 from nimbusimage.properties import PropertyAccessor
 from nimbusimage.models import Property
+
+
+def route_gets(mock_gc, routes):
+    """Configure mock_gc.get to answer by URL prefix.
+
+    Properties are only visible through the configurations that
+    reference them, so create() must hit dataset_view and
+    upenn_collection in addition to annotation_property.
+    """
+    def get(url, *args, **kwargs):
+        for prefix, value in routes.items():
+            if url.startswith(prefix):
+                return value
+        raise AssertionError(f"unexpected GET {url}")
+    mock_gc.get.side_effect = get
 
 
 class TestPropertyDefinitions:
@@ -23,12 +40,69 @@ class TestPropertyDefinitions:
 
     def test_create(self, mock_gc, sample_property_dict):
         mock_gc.post.return_value = sample_property_dict
+        route_gets(mock_gc, {
+            "dataset_view": [{"configurationId": "cfg_1"}],
+            "upenn_collection/cfg_1": {"meta": {"propertyIds": []}},
+        })
         accessor = PropertyAccessor(mock_gc, "ds_001")
 
         result = accessor.create(
             name="Blob Intensity", shape="polygon",
         )
         assert isinstance(result, Property)
+
+    def test_create_registers_in_dataset_collections(
+        self, mock_gc, sample_property_dict
+    ):
+        # An unregistered property is invisible to every user (the
+        # backend gates list/get on configuration membership), so
+        # create() must register the new property into the dataset's
+        # collections.
+        mock_gc.post.return_value = sample_property_dict
+        route_gets(mock_gc, {
+            "dataset_view": [{"configurationId": "cfg_1"}],
+            "upenn_collection/cfg_1": {"meta": {"propertyIds": []}},
+        })
+        accessor = PropertyAccessor(mock_gc, "ds_001")
+
+        accessor.create(name="Blob Intensity", shape="polygon")
+        mock_gc.put.assert_called_once_with(
+            "upenn_collection/cfg_1/metadata",
+            json={"propertyIds": ["prop_001"]},
+        )
+
+    def test_create_warns_when_dataset_has_no_collections(
+        self, mock_gc, sample_property_dict
+    ):
+        mock_gc.post.return_value = sample_property_dict
+        route_gets(mock_gc, {"dataset_view": []})
+        accessor = PropertyAccessor(mock_gc, "ds_001")
+
+        with pytest.warns(UserWarning, match="not .* visible"):
+            result = accessor.create(name="Blob Intensity")
+        assert isinstance(result, Property)
+        mock_gc.put.assert_not_called()
+
+    def test_register_returns_collection_count(self, mock_gc):
+        route_gets(mock_gc, {
+            "dataset_view": [
+                {"configurationId": "cfg_1"},
+                {"configurationId": "cfg_2"},
+                {"configurationId": "cfg_1"},  # duplicate view
+            ],
+            "upenn_collection/cfg_1": {"meta": {"propertyIds": []}},
+            "upenn_collection/cfg_2": {
+                "meta": {"propertyIds": ["prop_001"]}
+            },
+        })
+        accessor = PropertyAccessor(mock_gc, "ds_001")
+
+        assert accessor.register("prop_001") == 2
+        # cfg_2 already has the property; only cfg_1 is updated
+        mock_gc.put.assert_called_once_with(
+            "upenn_collection/cfg_1/metadata",
+            json={"propertyIds": ["prop_001"]},
+        )
 
     def test_get_or_create_existing(self, mock_gc, sample_property_dict):
         mock_gc.get.return_value = [sample_property_dict]
@@ -41,8 +115,12 @@ class TestPropertyDefinitions:
         mock_gc.post.assert_not_called()
 
     def test_get_or_create_new(self, mock_gc, sample_property_dict):
-        mock_gc.get.return_value = []  # no existing
         mock_gc.post.return_value = sample_property_dict
+        route_gets(mock_gc, {
+            "annotation_property": [],  # no existing
+            "dataset_view": [{"configurationId": "cfg_1"}],
+            "upenn_collection/cfg_1": {"meta": {"propertyIds": []}},
+        })
         accessor = PropertyAccessor(mock_gc, "ds_001")
 
         result = accessor.get_or_create(
@@ -50,6 +128,9 @@ class TestPropertyDefinitions:
         )
         assert result.id == "prop_001"
         mock_gc.post.assert_called_once()
+        # the created property must be registered so the next
+        # get_or_create can find it
+        mock_gc.put.assert_called_once()
 
     def test_delete(self, mock_gc):
         accessor = PropertyAccessor(mock_gc, "ds_001")

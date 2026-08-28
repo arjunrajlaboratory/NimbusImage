@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 from nimbusimage._workers import PROPERTY_ROLE_LABEL, check_worker_role
@@ -41,7 +42,14 @@ class PropertyAccessor:
         image: str = "properties/none:latest",
         worker_interface: dict | None = None,
     ) -> Property:
-        """Create a new property definition."""
+        """Create a new property definition.
+
+        The new property is registered into all of this dataset's
+        collections. Properties are only visible (via ``list()`` and
+        ``get()``) through collections that reference them, so an
+        unregistered property would be invisible to every user,
+        including its creator.
+        """
         body = {
             "name": name,
             "shape": shape,
@@ -49,8 +57,18 @@ class PropertyAccessor:
             "tags": {"exclusive": False, "tags": tags or []},
             "workerInterface": worker_interface or {},
         }
-        data = self._gc.post("annotation_property", json=body)
-        return Property.from_dict(data)
+        prop = Property.from_dict(
+            self._gc.post("annotation_property", json=body)
+        )
+        if self.register(prop.id) == 0:
+            warnings.warn(
+                f"Property {prop.id!r} was created, but dataset "
+                f"{self._dataset_id!r} has no collections to register "
+                "it into. The property will not be visible until "
+                "register() is called on a dataset with a collection.",
+                stacklevel=2,
+            )
+        return prop
 
     def get_or_create(
         self,
@@ -58,19 +76,29 @@ class PropertyAccessor:
         shape: str = "polygon",
         **kwargs,
     ) -> Property:
-        """Get existing property by name+shape, or create it."""
+        """Get existing property by name+shape, or create it.
+
+        Only properties registered in a collection the user can read
+        are findable, so the created property is registered into this
+        dataset's collections (see ``create()``).
+        """
         existing = self.list()
         for p in existing:
             if p.name == name and p.shape == shape:
                 return p
         return self.create(name=name, shape=shape, **kwargs)
 
-    def register(self, property_id: str) -> None:
+    def register(self, property_id: str) -> int:
         """Add property to all collections for this dataset.
 
         Fetches each unique collection, appends property_id if not
         present, and saves. Deduplicates by collection ID so shared
         collections are only updated once.
+
+        Returns:
+            The number of collections that reference the property
+            after registration. 0 means the dataset has no
+            collections and the property remains invisible.
         """
         views = self._gc.get(
             f"dataset_view?datasetId={self._dataset_id}"
@@ -90,6 +118,7 @@ class PropertyAccessor:
                     f"upenn_collection/{cid}/metadata",
                     json={"propertyIds": prop_ids},
                 )
+        return len(seen)
 
     def delete(self, property_id: str) -> None:
         """Delete a property definition."""

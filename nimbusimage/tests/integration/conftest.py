@@ -25,6 +25,11 @@ def client(api_url):
 def test_dataset(client):
     """Create a temporary test dataset folder and clean up after.
 
+    The dataset gets a collection (configuration) and a dataset_view
+    linking them, like every real dataset has. Properties are only
+    visible through the collections that reference them, so a dataset
+    without a collection can't hold visible properties at all.
+
     Note: This creates a folder with dataset metadata but no actual
     image data. Tests that need images should upload a test image.
     """
@@ -50,7 +55,44 @@ def test_dataset(client):
         },
     )
 
+    # If collection/view setup fails, delete the folder before
+    # re-raising: a stranded folder makes every later run fail with
+    # "A folder with that name already exists here."
+    try:
+        collection = gc.post(
+            "upenn_collection",
+            parameters={
+                "folderId": folder["_id"],
+                "name": "nimbusimage_test_config",
+            },
+            data={
+                "metadata": json.dumps({
+                    "subtype": "contrastConfiguration",
+                    "compatibility": {},
+                    "layers": [],
+                    "tools": [],
+                    "propertyIds": [],
+                    "snapshots": [],
+                    "scales": {},
+                })
+            },
+        )
+        view = gc.post(
+            "dataset_view",
+            json={
+                "datasetId": folder["_id"],
+                "configurationId": collection["_id"],
+                "layerContrasts": {},
+                "lastLocation": {"xy": 0, "z": 0, "time": 0},
+            },
+        )
+    except Exception:
+        gc.delete(f"folder/{folder['_id']}")
+        raise
+
     yield client.dataset(folder["_id"])
 
     # Cleanup
+    gc.delete(f"dataset_view/{view['_id']}")
+    gc.delete(f"upenn_collection/{collection['_id']}")
     gc.delete(f"folder/{folder['_id']}")
