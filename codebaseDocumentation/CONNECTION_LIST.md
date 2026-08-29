@@ -150,7 +150,13 @@ Design decisions worth knowing before changing this:
   tab, exports and analysis are untouched), unconnected objects are never
   hidden, and while it narrows, the render-coverage HUD counts it as an
   active constraint ("1 track filter hiding whole tracks' objects") whose
-  click opens the Object Browser.
+  click opens the Object Browser. It narrows both display twins — the drawn
+  set (`displayableAnnotations`) and the visibility refresh
+  (`updateVisibility`'s `filteredIds`), which drives the stub-mode budget and
+  the HUD's viewport counts. The zoomed-out **raster overview** on huge
+  datasets is exempt, exactly as it is from every client display filter
+  (`filteredDraw` included): the raster renders the complete frame by design,
+  and the lens applies where vectors take over.
 
 ### Clean up dangling connections
 
@@ -699,6 +705,7 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **Object hiding is opt-in, and the checkbox alone narrows nothing.** The default must stay "filter the list, not the canvas"; the opt-in only bites while a bound is live (`trackFilterHidesObjects` is the conjunction). — *"hides an object of a failing track only when opted in"*, *"hides nothing when the opt-in is set but no filter is active"*, *"hides a filtered-out track's objects only when opted in"*, *"resets the opt-in on a dataset switch"*
 - [ ] **Unconnected objects are never hidden.** They have no track, so a track filter says nothing about them — without this rule, any min-bound would blank every untracked object in the dataset. — *"never hides unconnected objects"*
 - [ ] **The object predicate is a stable constant while the opt-in is off**, same contract as the connection predicate: `displayableAnnotations` reads it on every rebuild, and hiding is filtered at THAT single source so every display surface (per-channel maps, layer maps, displayed ids, timelapse sets, connection gating and retention) stays symmetric by construction. — *"is a stable pass-all constant while the opt-in is off"*, *"removes drawn objects when the opt-in is switched on live"*
+- [ ] **The visibility refresh is the drawn set's twin.** `updateVisibility`'s `filteredIds` drives the stub-mode budget, hydration, and the HUD's viewport counts; the opt-in must narrow it exactly as it narrows `displayableAnnotations` (and toggling the opt-in must itself trigger a refresh), or budget slots are spent on objects the draw path then discards and the HUD counts hidden objects. Found by this feature's own branch review — the third instance of the draw↔twin shape on one branch. — *"excludes hidden-track objects from the visibility refresh"*
 - [ ] **Hidden objects register as an active constraint.** Every count the HUD shows shrinks while the opt-in narrows, and this repo's rule is that a narrowed count carries its cue — the constraint is counted in the one shared list (never on the Filters badge, whose panel can't show it) and its HUD click opens the Object Browser. — *"counts the connections tab's object hiding as a constraint"*, *"names it in the HUD summary"*, *"does not count it while the opt-in is not narrowing"*
 - [ ] **Dangling means deleted, and stubs are alive.** A connection is dangling when EITHER endpoint resolves to neither annotation nor stub; treating an unhydrated stub as dead would let lazy mode mass-delete live tracks. — *"identifies a connection as dangling when EITHER endpoint is gone"*, *"counts a stub-backed endpoint as resolvable"*
 - [ ] **Cleanup is whole-dataset, batched, confirmed, and offered only when needed.** One request, never a loop; the button appears only when something dangles; the dialog is the only path to the delete and closes even on failure (a stuck saving dialog was the connect-selected bug one feature over). — *"deletes every dangling connection in one batched request"*, *"does not call the backend when nothing dangles"*, *"offers the cleanup only when something dangles"*, *"deletes dangling connections only through the confirm"*, *"closes the dialog even when the delete rejects"*

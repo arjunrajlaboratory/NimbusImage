@@ -1594,6 +1594,34 @@ describe("AnnotationViewer", () => {
         expect(countObjects()).toBe(0);
       });
 
+      // The visibility refresh is the draw pipeline's twin: it decides the
+      // stub-mode budget, hydration, and the HUD's viewport counts. Hiding
+      // objects only at draw time would spend budget slots on annotations the
+      // draw path then discards and leave the HUD counting hidden objects.
+      it("excludes hidden-track objects from the visibility refresh", async () => {
+        setupTwoDisplayedAnnotations();
+        mockedAnnotationStore.annotations = [
+          ...mockedAnnotationStore.annotations,
+          makeAnnotation({ id: "solo", channel: 0 }),
+        ];
+        connectionListStore.setTrackFilters({
+          ...createEmptyTrackFilters(),
+          connectionCount: { min: 2, max: null },
+        });
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        (mockedAnnotationStore.updateVisibilityAndHydration as any).mockClear();
+
+        // Toggling the opt-in must itself trigger a refresh with narrowed ids.
+        connectionListStore.setHideFilteredTrackObjects(true);
+        await wrapper.vm.$nextTick();
+
+        const calls = (
+          mockedAnnotationStore.updateVisibilityAndHydration as any
+        ).mock.calls;
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls[calls.length - 1][0].filteredIds).toEqual(["solo"]);
+      });
+
       it("styles a selected connection at construction, not only on restyle", () => {
         setupTwoDisplayedAnnotations();
         (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(

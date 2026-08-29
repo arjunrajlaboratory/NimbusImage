@@ -59,11 +59,13 @@ function inRange(value: number, { min, max }: ITrackMetricRange): boolean {
 }
 
 /**
- * The endpoint fields the track-filter predicate needs. The viewer's retention
- * path only has a feature's options, not the connection document, so the
- * predicate must not demand more than it uses.
+ * The one field the track-filter predicate needs to resolve a connection's
+ * dataset-wide track (any endpoint maps to the same track; parentId is the
+ * one every caller has). The viewer's retention path only has a feature's
+ * options, not the connection document, so the predicate must not demand
+ * more than it uses.
  */
-export type TConnectionEndpoints = Pick<IAnnotationConnection, "parentId">;
+export type TConnectionTrackSource = Pick<IAnnotationConnection, "parentId">;
 
 // Stable identities so the no-filter cases add zero cost and zero reactive
 // dependencies to every draw pass that reads the predicates.
@@ -180,7 +182,7 @@ export class ConnectionList extends VuexModule {
    * annotation).
    */
   get connectionPassesTrackFilters(): (
-    connection: TConnectionEndpoints,
+    connection: TConnectionTrackSource,
   ) => boolean {
     if (!this.trackFiltersActive) {
       return PASSES_EVERY_CONNECTION;

@@ -376,6 +376,14 @@ const hoveredConnectionId = computed(
 const connectionPassesTrackFilters = computed(
   () => connectionListStore.connectionPassesTrackFilters,
 );
+// The object half of the same lens. Consumed by BOTH display twins — the
+// drawn set (displayableAnnotations) and the visibility refresh
+// (updateVisibility's filteredIds), which drives the stub-mode budget,
+// hydration, and the HUD's viewport counts. Narrowing one without the other
+// spends budget on objects the draw path then discards.
+const annotationPassesTrackFilters = computed(
+  () => connectionListStore.annotationPassesTrackFilters,
+);
 const shouldDrawAnnotations = computed(
   (): boolean =>
     store.drawAnnotations &&
@@ -538,7 +546,7 @@ const displayableAnnotations = computed(() => {
   if (!connectionListStore.trackFilterHidesObjects) {
     return base;
   }
-  const passesTrackFilters = connectionListStore.annotationPassesTrackFilters;
+  const passesTrackFilters = annotationPassesTrackFilters.value;
   return base.filter(({ id }) => passesTrackFilters(id));
 });
 
@@ -4740,9 +4748,32 @@ function updateVisibility() {
   // Only materialize an id array when a client filter is active. Without one,
   // omit it and let the store derive ids from its own stub map, avoiding a
   // full-dataset id array allocation per frame change (Finding 15).
-  const ids = store.filteredDraw
-    ? filteredAnnotations.value.map((a: TAnnotationOrStub) => a.id)
-    : undefined;
+  //
+  // The track-filter object opt-in composes here exactly as it does in
+  // displayableAnnotations — the two are twins: this id set drives the
+  // stub-mode visibility budget, hydration, and the HUD's viewport counts, so
+  // narrowing only the drawn set would spend budget slots on objects the draw
+  // path then discards and leave the HUD counting hidden objects. The
+  // full-array materialization in the opt-in-only branch is the same
+  // filteredDraw tradeoff, paid only while the opt-in narrows.
+  const passesTrackFilters = annotationPassesTrackFilters.value;
+  const trackNarrowing = connectionListStore.trackFilterHidesObjects;
+  let ids: string[] | undefined;
+  if (store.filteredDraw) {
+    const filtered = filteredAnnotations.value;
+    ids = (
+      trackNarrowing
+        ? filtered.filter((a: TAnnotationOrStub) => passesTrackFilters(a.id))
+        : filtered
+    ).map((a: TAnnotationOrStub) => a.id);
+  } else if (trackNarrowing) {
+    ids = [];
+    for (const annotation of annotationStore.annotationsForIteration) {
+      if (passesTrackFilters(annotation.id)) {
+        ids.push(annotation.id);
+      }
+    }
+  }
   // Zoom-adaptive budget (C4): render fewer objects when zoomed out (where they
   // overlap into noise and the heavy redraw briefly locks the UI), ramping up to
   // the full configured cap as the user zooms in. The zoomed-out floor is
@@ -4805,7 +4836,14 @@ watch(
 
 // Frame changes (XY, Z, Time) and annotation list changes update immediately
 // to avoid flash of empty frame while debounce waits
-watch([filteredAnnotations, xy, z, time], updateVisibility);
+// annotationPassesTrackFilters: the object opt-in narrows the visibility id
+// set (see updateVisibility), so toggling it — or a metric changing under an
+// active bound — must refresh visibility like any filter change. A stable
+// constant while the opt-in is off, so no extra firing in the common case.
+watch(
+  [filteredAnnotations, xy, z, time, annotationPassesTrackFilters],
+  updateVisibility,
+);
 
 // Camera changes (pan/zoom) are debounced since they fire rapidly. Pan refreshes
 // on any amount (a new region is revealed); zoom keeps a magnification
