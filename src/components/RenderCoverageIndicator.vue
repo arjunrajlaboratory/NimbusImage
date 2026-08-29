@@ -119,6 +119,12 @@ const constraintPalettes = computed<TRequestablePalette[]>(() => {
   ) {
     palettes.push("analysisPanel");
   }
+  if (
+    constraints.value.some((constraint) => constraint.source === "connections")
+  ) {
+    // The track filter lives in the Object Browser's Connections tab.
+    palettes.push("annotationPanel");
+  }
   if (constraints.value.some((constraint) => constraint.source === "filters")) {
     palettes.push("filtersPanel");
   }
@@ -128,6 +134,7 @@ const constraintPalettes = computed<TRequestablePalette[]>(() => {
 const PALETTE_NAMES: Record<TRequestablePalette, string> = {
   analysisPanel: "Analysis",
   filtersPanel: "Filters",
+  annotationPanel: "the Object Browser",
 };
 
 const constraintTooltip = computed(() => {

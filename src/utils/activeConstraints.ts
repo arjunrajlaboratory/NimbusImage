@@ -28,7 +28,7 @@ import { CATEGORICAL_AXES } from "@/utils/analysisAxes";
 
 // Which panel owns the constraint — the badge that counts it, and the panel
 // the HUD opens when the user clicks the suffix.
-export type TConstraintSource = "filters" | "analysis";
+export type TConstraintSource = "filters" | "analysis" | "connections";
 
 export type TConstraintKind =
   | "tag"
@@ -38,7 +38,8 @@ export type TConstraintKind =
   | "property"
   | "roi"
   | "annotationId"
-  | "gate";
+  | "gate"
+  | "trackObjects";
 
 export interface IActiveConstraint {
   source: TConstraintSource;
@@ -65,6 +66,10 @@ export interface IActiveConstraintsInput {
   // resolved constrains nothing (see activeAnalysisGateIdLists), so it is not
   // counted — the same three-way predicate the gate consumers use.
   analysisGateIds: { [plotId: string]: string[] | undefined };
+  // The Connections tab's opt-in: track filters active AND "also hide these
+  // tracks' objects" checked (connectionList.trackFilterHidesObjects). The
+  // checkbox alone narrows nothing, so only the conjunction counts.
+  trackFilterHidesObjects: boolean;
 }
 
 const isEnabled = (filter: IAnnotationFilter) => filter.enabled;
@@ -129,6 +134,9 @@ export function collectActiveConstraints(
       });
     }
   }
+  if (input.trackFilterHidesObjects) {
+    constraints.push({ source: "connections", kind: "trackObjects" });
+  }
   return constraints;
 }
 
@@ -160,6 +168,7 @@ const KIND_NOUNS: Record<TConstraintKind, string> = {
   roi: "region filter",
   annotationId: "object-list filter",
   gate: "lasso gate",
+  trackObjects: "track filter",
 };
 
 const CATEGORICAL_AXIS_TEXT = new Map(
@@ -191,6 +200,9 @@ export function describeConstraint(
       ? resolvePropertyName(constraint.propertyPath)
       : null;
     return { noun, qualifier: name ? `on ${name}` : "" };
+  }
+  if (constraint.kind === "trackObjects") {
+    return { noun, qualifier: "hiding whole tracks' objects" };
   }
   if (constraint.kind === "gate") {
     const x = describeAxis(constraint.xAxis, resolvePropertyName);

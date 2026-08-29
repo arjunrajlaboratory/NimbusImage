@@ -653,6 +653,7 @@ describe("AnnotationViewer", () => {
     // The real connectionList module is in play, so filters set by one test
     // would otherwise leak into every later draw-path assertion.
     connectionListStore.setTrackFilters(createEmptyTrackFilters());
+    connectionListStore.setHideFilteredTrackObjects(false);
 
     mockedAnnotationStore.annotations = [];
     mockedAnnotationStore.annotationConnections = [];
@@ -1532,6 +1533,65 @@ describe("AnnotationViewer", () => {
         vi.advanceTimersByTime(101);
         await wrapper.vm.$nextTick();
         expect(countLines()).toBe(0);
+      });
+
+      // Opt-in object hiding: with the checkbox on, a filtered-out track's
+      // OBJECTS leave the displayed set too — but unconnected objects stay,
+      // since a track filter says nothing about them.
+      it("hides a filtered-out track's objects only when opted in", async () => {
+        setupTwoDisplayedAnnotations();
+        mockedAnnotationStore.annotations = [
+          ...mockedAnnotationStore.annotations,
+          makeAnnotation({ id: "solo", channel: 0 }),
+        ];
+        connectionListStore.setTrackFilters({
+          ...createEmptyTrackFilters(),
+          connectionCount: { min: 2, max: null },
+        });
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const ids = () => (wrapper.vm as any).displayedAnnotationIds;
+        // Checkbox off: the filter narrows connections, never objects.
+        expect(ids().has("a1")).toBe(true);
+
+        connectionListStore.setHideFilteredTrackObjects(true);
+        await wrapper.vm.$nextTick();
+        expect(ids().has("a1")).toBe(false);
+        expect(ids().has("a2")).toBe(false);
+        expect(ids().has("solo")).toBe(true);
+      });
+
+      // End-to-end through the watchers: toggling the opt-in must remove the
+      // already-drawn features, not only stop drawing new ones.
+      it("removes drawn objects when the opt-in is switched on live", async () => {
+        setupTwoDisplayedAnnotations();
+        // The shared factory mock discards its options, leaving object
+        // features without a girderId to count — forward them.
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _coords: any, options: any) => {
+            const feature = mockGeoJSAnnotation(shape);
+            if (options) feature.options(options);
+            return feature;
+          },
+        );
+        connectionListStore.setTrackFilters({
+          ...createEmptyTrackFilters(),
+          connectionCount: { min: 2, max: null },
+        });
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        const countObjects = () =>
+          aLayer
+            .annotations()
+            .filter(
+              (f: any) => f.options().girderId && !f.options().isConnection,
+            ).length;
+        expect(countObjects()).toBeGreaterThan(0);
+
+        connectionListStore.setHideFilteredTrackObjects(true);
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        await wrapper.vm.$nextTick();
+        expect(countObjects()).toBe(0);
       });
 
       it("styles a selected connection at construction, not only on restyle", () => {

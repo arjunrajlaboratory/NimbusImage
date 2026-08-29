@@ -526,9 +526,20 @@ const displayableAnnotations = computed(() => {
   if (!props.annotationLayer || !shouldDrawAnnotations.value) {
     return [];
   }
-  return store.filteredDraw
+  const base = store.filteredDraw
     ? filteredAnnotations.value
     : annotationStore.annotationsForIteration;
+  // Opt-in track-filter object hiding. This is the single source every
+  // display surface derives from — per-channel maps, layer maps, displayed
+  // ids, the timelapse sets, connection gating AND retention — so filtering
+  // here keeps draw and removal symmetric by construction. Off (the default)
+  // returns the base array untouched; the predicate is then a stable
+  // constant, so this adds no dependency on the track metrics.
+  if (!connectionListStore.trackFilterHidesObjects) {
+    return base;
+  }
+  const passesTrackFilters = connectionListStore.annotationPassesTrackFilters;
+  return base.filter(({ id }) => passesTrackFilters(id));
 });
 
 const displayableAnnotationsByChannel = computed(() => {

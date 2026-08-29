@@ -448,7 +448,10 @@ export type TAnnotationBrowserTab = "objects" | "measurements" | "connections";
  * ask to have opened (see `paletteOpenRequests` in the main store). These are
  * a subset of App.vue's `PaletteId`, which is where opening actually happens.
  */
-export type TRequestablePalette = "filtersPanel" | "analysisPanel";
+export type TRequestablePalette =
+  | "filtersPanel"
+  | "analysisPanel"
+  | "annotationPanel";
 
 export type TVolumeViewMode = "2d" | "3d";
 

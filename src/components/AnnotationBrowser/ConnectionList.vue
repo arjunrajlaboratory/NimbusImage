@@ -97,6 +97,20 @@
                 "
               />
             </div>
+            <!-- Opt-in: a track filter narrows connections by default; this
+                 extends it to the filtered-out tracks' OBJECTS in the viewer.
+                 Unconnected objects are never hidden, and the HUD announces
+                 the narrowing (activeConstraints). -->
+            <v-checkbox
+              :model-value="connectionListStore.hideFilteredTrackObjects"
+              label="Also hide these tracks' objects in the image"
+              density="compact"
+              hide-details
+              class="track-filter-objects"
+              @update:model-value="
+                connectionListStore.setHideFilteredTrackObjects($event === true)
+              "
+            />
           </v-card-text>
         </v-card>
       </v-menu>
@@ -129,6 +143,60 @@
         Delete selected ({{ selectedInScopeCount }})
       </v-btn>
     </div>
+
+    <!-- Dangling = an endpoint pointing at a DELETED annotation (data rot),
+         common in older datasets. Whole-dataset cleanup on its own row (it
+         squeezed Delete selected down to a bare icon when inlined), and only
+         present when there is something to clean. -->
+    <div v-if="danglingCount > 0" class="connection-list-toolbar">
+      <span class="dangling-note">
+        {{ danglingCount.toLocaleString() }} connections point at deleted
+        objects.
+      </span>
+      <v-spacer />
+      <v-btn
+        variant="text"
+        color="error"
+        size="small"
+        prepend-icon="mdi-link-variant-remove"
+        :disabled="!isLoggedIn || isCleaningDangling"
+        :loading="isCleaningDangling"
+        @click="danglingDialogOpen = true"
+      >
+        Clean up
+      </v-btn>
+    </div>
+
+    <v-dialog v-model="danglingDialogOpen" max-width="500px">
+      <v-card>
+        <v-card-title>Clean up dangling connections</v-card-title>
+        <v-card-text>
+          {{ danglingCount.toLocaleString() }} connections point at objects that
+          no longer exist (deleted after the connection was made). This deletes
+          those connections from the whole dataset, regardless of the current
+          scope. It can be undone with Undo.
+        </v-card-text>
+        <v-card-actions class="button-bar">
+          <v-spacer />
+          <v-btn
+            variant="text"
+            size="small"
+            @click="danglingDialogOpen = false"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            :loading="isCleaningDangling"
+            @click="confirmCleanDangling"
+          >
+            Delete {{ danglingCount.toLocaleString() }} connections
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- Track labels can mirror a worker-computed property (e.g. Parent-Child
          Connection IDs' trackId), so a track flagged during post-processing
@@ -505,6 +573,32 @@ function updateTrackFilterBound(
 
 function clearTrackFilters() {
   connectionListStore.setTrackFilters(createEmptyTrackFilters());
+}
+
+// --- Dangling connection cleanup ---
+
+// Gated like every other scope-derived getter: danglingConnectionIds resolves
+// both endpoints of every connection and is invalidated by hydration, so a
+// hidden tab must never read it.
+const danglingCount = computed(() =>
+  props.isActive ? connectionListStore.danglingConnectionIds.length : 0,
+);
+
+const danglingDialogOpen = ref(false);
+const isCleaningDangling = ref(false);
+
+async function confirmCleanDangling() {
+  isCleaningDangling.value = true;
+  try {
+    await connectionListStore.deleteDanglingConnections();
+  } catch (error) {
+    logError("Failed to clean up dangling connections", error);
+    connectError.value =
+      "Failed to delete dangling connections. See console for details.";
+  } finally {
+    isCleaningDangling.value = false;
+    danglingDialogOpen.value = false;
+  }
 }
 const selectedCount = computed(
   () => connectionListStore.selectedConnectionIds.size,
@@ -1214,6 +1308,9 @@ defineExpose({
   countText,
   updateTrackFilterBound,
   clearTrackFilters,
+  danglingCount,
+  danglingDialogOpen,
+  confirmCleanDangling,
 });
 </script>
 
@@ -1282,6 +1379,11 @@ defineExpose({
 
 .track-filter-dash {
   opacity: 0.6;
+}
+
+.dangling-note {
+  font-size: 12px;
+  opacity: 0.7;
 }
 
 .connection-list-content {

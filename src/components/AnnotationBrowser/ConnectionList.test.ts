@@ -52,6 +52,11 @@ const h = vi.hoisted(() => ({
     trackFiltersActive: false,
     scopeOnlyConnections: [] as any[],
     setTrackFilters: vi.fn(),
+    hideFilteredTrackObjects: false,
+    trackFilterHidesObjects: false,
+    setHideFilteredTrackObjects: vi.fn(),
+    danglingConnectionIds: [] as string[],
+    deleteDanglingConnections: vi.fn(),
     setScope: vi.fn(),
     setGrouping: vi.fn(),
     setPage: vi.fn(),
@@ -210,6 +215,10 @@ beforeEach(() => {
   };
   h.state.trackFiltersActive = false;
   h.state.scopeOnlyConnections = [];
+  h.state.hideFilteredTrackObjects = false;
+  h.state.trackFilterHidesObjects = false;
+  h.state.danglingConnectionIds = [];
+  h.state.deleteDanglingConnections.mockResolvedValue(undefined);
   annotationStoreMock.stubOnlyMode = false;
   propertyStoreMock.propertyValues = {};
   propertyStoreMock.computedPropertyPaths = [];
@@ -1354,5 +1363,61 @@ describe("ConnectionList track filters", () => {
       value: [],
       writable: true,
     });
+  });
+});
+
+// --- Dangling connection cleanup ---
+describe("ConnectionList dangling cleanup", () => {
+  it("offers the cleanup only when something dangles", () => {
+    h.state.danglingConnectionIds = [];
+    expect(mountComponent().vm.danglingCount).toBe(0);
+
+    h.state.danglingConnectionIds = ["d1", "d2"];
+    expect(mountComponent().vm.danglingCount).toBe(2);
+  });
+
+  // Same cost rule as the other scope-derived getters: danglingConnectionIds
+  // resolves both endpoints of every connection and is invalidated by
+  // hydration, so a hidden tab must never read it.
+  it("does not read danglingConnectionIds while the tab is hidden", () => {
+    let reads = 0;
+    Object.defineProperty(h.state, "danglingConnectionIds", {
+      configurable: true,
+      get() {
+        reads++;
+        return ["d1"];
+      },
+    });
+    const wrapper = mountComponent(false);
+    expect(wrapper.vm.danglingCount).toBe(0);
+    expect(reads).toBe(0);
+    Object.defineProperty(h.state, "danglingConnectionIds", {
+      configurable: true,
+      value: [],
+      writable: true,
+    });
+  });
+
+  it("deletes dangling connections only through the confirm", async () => {
+    h.state.danglingConnectionIds = ["d1", "d2"];
+    const wrapper = mountComponent();
+    // Opening the dialog is not the action.
+    wrapper.vm.danglingDialogOpen = true;
+    expect(h.state.deleteDanglingConnections).not.toHaveBeenCalled();
+
+    await wrapper.vm.confirmCleanDangling();
+    expect(h.state.deleteDanglingConnections).toHaveBeenCalledTimes(1);
+    expect(wrapper.vm.danglingDialogOpen).toBe(false);
+  });
+
+  it("closes the dialog even when the delete rejects", async () => {
+    h.state.danglingConnectionIds = ["d1"];
+    h.state.deleteDanglingConnections.mockRejectedValueOnce(
+      new Error("backend said no"),
+    );
+    const wrapper = mountComponent();
+    wrapper.vm.danglingDialogOpen = true;
+    await wrapper.vm.confirmCleanDangling();
+    expect(wrapper.vm.danglingDialogOpen).toBe(false);
   });
 });

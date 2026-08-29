@@ -10,6 +10,10 @@ import store from "./root";
 
 import main from "./index";
 import annotation from "./annotation";
+// Cyclic with connectionList's own `import filters` — safe because both
+// modules only read the other inside getters/actions, never at module
+// evaluation, the same shape as the index ↔ annotation cycle.
+import connectionList from "./connectionList";
 import properties from "./properties";
 
 import {
@@ -1311,6 +1315,7 @@ export class Filters extends VuexModule {
       annotationIdFilters: this.annotationIdFilters,
       analysisPlots: this.analysisPlots,
       analysisGateIds: this.analysisGateIds,
+      trackFilterHidesObjects: connectionList.trackFilterHidesObjects,
     });
   }
 

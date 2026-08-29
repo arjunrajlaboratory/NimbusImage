@@ -65,9 +65,38 @@ function inRange(value: number, { min, max }: ITrackMetricRange): boolean {
  */
 export type TConnectionEndpoints = Pick<IAnnotationConnection, "parentId">;
 
-// Stable identity so the no-filter case adds zero cost and zero reactive
-// dependencies to every draw pass that reads the predicate.
+// Stable identities so the no-filter cases add zero cost and zero reactive
+// dependencies to every draw pass that reads the predicates.
 const PASSES_EVERY_CONNECTION = () => true;
+const PASSES_EVERY_ANNOTATION: (annotationId: string) => boolean = () => true;
+
+/**
+ * One track's metrics against the active bounds — shared by the connection
+ * predicate (list + both viewer draw paths) and the object opt-in predicate,
+ * so the two can never disagree about which tracks pass.
+ */
+function trackMetricsPassFilters(
+  metrics: ITrackMetrics,
+  filters: ITrackFilters,
+): boolean {
+  if (
+    !inRange(metrics.connectionCount, filters.connectionCount) ||
+    !inRange(metrics.memberCount, filters.memberCount)
+  ) {
+    return false;
+  }
+  // An unknown duration (every member points at a deleted annotation) is pure
+  // data rot, and "Clean up dangling" exists as the real remedy — so a
+  // duration bound excludes such ghost tracks rather than keeping rows it
+  // cannot be proven to match. The count bounds above are always known and
+  // apply either way.
+  if (rangeActive(filters.duration)) {
+    return (
+      metrics.duration !== null && inRange(metrics.duration, filters.duration)
+    );
+  }
+  return true;
+}
 
 export const CONNECTION_SCOPE_LABELS: Record<TConnectionScope, string> = {
   all: "All connections",
@@ -168,24 +197,46 @@ export class ConnectionList extends VuexModule {
         // unreachable in practice; fail open rather than hide data.
         return true;
       }
-      if (
-        !inRange(metrics.connectionCount, filters.connectionCount) ||
-        !inRange(metrics.memberCount, filters.memberCount)
-      ) {
-        return false;
+      return trackMetricsPassFilters(metrics, filters);
+    };
+  }
+
+  /**
+   * Session-only opt-in: when a track filter is narrowing, also hide the
+   * OBJECTS of the filtered-out tracks from the image viewer. Off by default
+   * — filtering the connections list must not silently make cells vanish
+   * from the canvas. Unconnected objects are never hidden (they have no
+   * track, so a track filter says nothing about them), and this is a display
+   * lens only: the Objects tab, exports and analysis are untouched.
+   */
+  hideFilteredTrackObjects: boolean = false;
+
+  /** True when the opt-in is actually narrowing (checkbox AND a live bound). */
+  get trackFilterHidesObjects(): boolean {
+    return this.trackFiltersActive && this.hideFilteredTrackObjects;
+  }
+
+  /**
+   * Predicate deciding whether ONE annotation survives the object opt-in.
+   * The viewer's displayed-set computed reads this on every rebuild, so while
+   * the opt-in is off it is the same stable always-true constant contract as
+   * `connectionPassesTrackFilters`.
+   */
+  get annotationPassesTrackFilters(): (annotationId: string) => boolean {
+    if (!this.trackFilterHidesObjects) {
+      return PASSES_EVERY_ANNOTATION;
+    }
+    const filters = this.trackFilters;
+    const metricsByTrack = this.trackMetrics;
+    const trackKeyByAnnotationId = this.trackAnalysis.trackKeyByAnnotationId;
+    return (annotationId) => {
+      const trackKey = trackKeyByAnnotationId.get(annotationId);
+      if (trackKey === undefined) {
+        // Unconnected: no track, so the filter says nothing about it.
+        return true;
       }
-      // An unknown duration (every member points at a deleted annotation)
-      // fails OPEN: hiding real rows because their endpoints rotted is worse
-      // than showing a track the bound can't be proven to match, and older
-      // datasets are full of such tracks. The count bounds above still apply
-      // to them — those are always known.
-      if (rangeActive(filters.duration)) {
-        return (
-          metrics.duration === null ||
-          inRange(metrics.duration, filters.duration)
-        );
-      }
-      return true;
+      const metrics = metricsByTrack.get(trackKey);
+      return !metrics || trackMetricsPassFilters(metrics, filters);
     };
   }
 
@@ -424,6 +475,11 @@ export class ConnectionList extends VuexModule {
     this.page = 1;
   }
 
+  @Mutation
+  public setHideFilteredTrackObjects(hide: boolean) {
+    this.hideFilteredTrackObjects = hide;
+  }
+
   // Replaces the object (never mutates in place) so watchers on
   // `trackFilters` fire by identity — the viewer redraws off exactly that.
   @Mutation
@@ -544,6 +600,8 @@ export class ConnectionList extends VuexModule {
     this.trackLabelPath = [];
     // Numeric ranges are dataset-scale-specific, unlike scope/grouping.
     this.trackFilters = createEmptyTrackFilters();
+    // Hiding objects is scoped to the filters it modifies.
+    this.hideFilteredTrackObjects = false;
   }
 
   // Clear per-dataset connection view state. Scope and grouping survive: they
@@ -572,6 +630,36 @@ export class ConnectionList extends VuexModule {
     if (this.hoveredConnectionId && deleted.has(this.hoveredConnectionId)) {
       this.setHoveredConnectionId(null);
     }
+  }
+
+  /**
+   * Connections with at least one endpoint pointing at an annotation that no
+   * longer exists (deleted after the connection was made — data rot, common
+   * in older datasets). Stubs count as resolvable, so in lazy mode an
+   * unhydrated live annotation is never mistaken for a deleted one.
+   *
+   * O(connections) with two resolves each, and invalidated by hydration
+   * changes — read it only from an active Connections tab (same gating rule
+   * as the row getters) or from the cleanup action itself.
+   */
+  get danglingConnectionIds(): string[] {
+    const resolve = this.resolveAnnotation;
+    return annotation.annotationConnections
+      .filter(
+        ({ parentId, childId }) => !resolve(parentId) || !resolve(childId),
+      )
+      .map(({ id }) => id);
+  }
+
+  /**
+   * Delete every dangling connection in the dataset — the whole dataset, not
+   * the current scope: this is cleanup of rot, not a view operation. Callers
+   * own the confirmation dialog. Recordable via the underlying batched
+   * delete, so it participates in undo.
+   */
+  @Action({ rawError: true })
+  public async deleteDanglingConnections() {
+    await this.deleteConnectionsById(this.danglingConnectionIds);
   }
 
   /**
