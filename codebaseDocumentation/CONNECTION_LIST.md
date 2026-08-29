@@ -137,9 +137,13 @@ Design decisions worth knowing before changing this:
   `trackKeyByAnnotationId`), never computed on the scoped fragment — narrowing
   the scope must not make a long track read as short. Same rule as track
   colouring and duplicate-ID detection.
-- **Unknown duration ≠ short.** A track whose every endpoint dangles has no
-  computable duration; under an active duration bound it is hidden (it cannot
-  be shown to match) rather than treated as 0. Count bounds are always known.
+- **Unknown duration fails open.** A track whose every endpoint dangles
+  (points at a *deleted* annotation — data rot, not "ends at the last
+  timepoint") has no computable duration; under an active duration bound it
+  is KEPT, because hiding real rows for having rotted endpoints is worse than
+  showing a track the bound can't be proven to match. Count bounds are always
+  known and still apply. Tracks with *some* surviving members get their
+  duration from those.
 - **With no filter active the predicate is a stable `() => true` constant**,
   so the common case adds zero cost and zero reactive dependencies to the draw
   paths. The metrics map is only ever computed when a filter is active, cached
@@ -670,7 +674,7 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **List and viewer read ONE predicate, and draw/retention stay a pair under it.** `drawNewConnections` skips failing connections and `clearOldAnnotations`' connection branch removes them by the same test — a filter added to only one path either leaves stale lines or churns them every pass. — *"skips a connection whose track fails the track filters"*, *"removes a drawn line once its track fails the track filters"*
 - [ ] **A filter change alone redraws both draw paths — assert layer CONTENT, not a draw spy.** `connectionPassesTrackFilters` sits in the primary watch list and the timelapse watch list. A draw-called spy passes vacuously here: `setTrackFilters` also clears the connection selection, whose own watcher rebuilds the timelapse layer whether or not the filter is applied. — *"redraws normal-mode connections when the track filters change"*, *"rebuilds the timelapse layer when the track filters change"*
 - [ ] **A hidden track's members do not become orphan dots.** The timelapse path skips a filtered-out component but still counts its members as connected — they vanish from the overlay entirely, since the graph didn't change, only the view. — *"hides a filtered-out track without recasting its members as orphans"*
-- [ ] **Unknown duration is neither short nor matching.** Duration comes from the members that resolve (dangling endpoints are common and must not poison it); a track where none resolve has `null` duration and is hidden under an active duration bound, while count bounds are always known. — *"derives duration from the members that still resolve"*, *"reports null duration when no member resolves"*, *"hides a track of unknown duration under an active duration bound"*, *"resolves durations from stubs, not only hydrated annotations"*
+- [ ] **Unknown duration fails open.** Duration comes from the members that resolve (dangling endpoints are common and must not poison it); a track where none resolve has `null` duration and is KEPT under an active duration bound — hiding real rows because their endpoints rotted is worse than showing a track the bound can't be proven to match (122 of 243 tracks on the verification dataset). Count bounds are always known and still apply. — *"derives duration from the members that still resolve"*, *"reports null duration when no member resolves"*, *"keeps a track of unknown duration under an active duration bound"*, *"resolves durations from stubs, not only hydrated annotations"*
 - [ ] **The narrowed count carries its cue, and the empty state names the filter.** "N of M" beside the number while filters narrow; "No connections match the track filters" instead of the scope's message when they hide every row (but the scope's own message when the scope itself is empty). — *"says how many connections the track filters are hiding"*, *"uses a filtered empty message when the filters hide every row"*, *"keeps the scope's empty message when the scope itself is empty"*
 - [ ] **Bulk delete respects the filters by construction.** `scopedConnections` applies the predicate, so `selectedInScopeConnectionIds` cannot include a filtered-out row; a bound change also clears the selection and resets the page, matching `setScope`. — *"bulk delete acts only on rows passing the filters"*, *"clears the selection and resets the page when filters change"*
 - [ ] **`scopeOnlyConnections` is gated like every other scope getter.** It filters the whole connection array per read for the dynamic scopes, and the "of M" readout is the only consumer — a hidden tab must never touch it. — *"does not read scopeOnlyConnections while the tab is hidden"*

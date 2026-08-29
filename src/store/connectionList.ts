@@ -174,11 +174,14 @@ export class ConnectionList extends VuexModule {
       ) {
         return false;
       }
-      // An unknown duration (every member dangling) cannot be shown to match
-      // an active bound — hide it rather than claim it qualifies.
+      // An unknown duration (every member points at a deleted annotation)
+      // fails OPEN: hiding real rows because their endpoints rotted is worse
+      // than showing a track the bound can't be proven to match, and older
+      // datasets are full of such tracks. The count bounds above still apply
+      // to them — those are always known.
       if (rangeActive(filters.duration)) {
         return (
-          metrics.duration !== null &&
+          metrics.duration === null ||
           inRange(metrics.duration, filters.duration)
         );
       }

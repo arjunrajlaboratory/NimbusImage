@@ -601,22 +601,29 @@ describe("track metric filters", () => {
     ]);
   });
 
-  it("hides a track of unknown duration under an active duration bound", () => {
-    // Every endpoint dangles, so the duration cannot be known — it must not
-    // be treated as matching a bound it can't be shown to match.
+  it("keeps a track of unknown duration under an active duration bound", () => {
+    // Every endpoint dangles (points at a deleted annotation), so the
+    // duration cannot be known. Unknown must fail OPEN: hiding real rows
+    // because their endpoints rotted is worse than showing a track the bound
+    // can't be proven to match — and older datasets are full of these (122 of
+    // 243 tracks on the dataset this feature was verified against).
     setAnnotations([]);
     (annotationStore as any).annotationConnections = [
       makeConnection("t1", "gone1", "gone2"),
+      makeConnection("t2", "gone3", "gone4"),
     ];
     connectionList.setTrackFilters(
-      filtersWith({ duration: { min: null, max: 100 } }),
+      filtersWith({ duration: { min: 5, max: 100 } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual([
+      "t1",
+      "t2",
+    ]);
+    // Count bounds are always known, dangling or not, so they still apply.
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
     );
     expect(connectionList.scopedConnections).toEqual([]);
-    // But count bounds are always known, dangling or not.
-    connectionList.setTrackFilters(
-      filtersWith({ connectionCount: { min: 1, max: null } }),
-    );
-    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual(["t1"]);
   });
 
   // Cost guard: the viewer reads the predicate on every draw pass, so with no
