@@ -44,6 +44,14 @@ const h = vi.hoisted(() => ({
     // Replaced by setRows() with a resolver over the annotations it was given.
     // A stub resolving everything would hide the dangling-endpoint filter.
     resolveAnnotation: () => undefined as any,
+    trackFilters: {
+      connectionCount: { min: null, max: null },
+      memberCount: { min: null, max: null },
+      duration: { min: null, max: null },
+    },
+    trackFiltersActive: false,
+    scopeOnlyConnections: [] as any[],
+    setTrackFilters: vi.fn(),
     setScope: vi.fn(),
     setGrouping: vi.fn(),
     setPage: vi.fn(),
@@ -123,6 +131,12 @@ vi.mock("@/store/connectionList", () => {
       selected: "Selected objects",
       filtered: "Objects passing filters",
     },
+    // Hand-copied from the real module (pure factory, no store state).
+    createEmptyTrackFilters: () => ({
+      connectionCount: { min: null, max: null },
+      memberCount: { min: null, max: null },
+      duration: { min: null, max: null },
+    }),
   };
 });
 
@@ -189,6 +203,13 @@ beforeEach(() => {
   h.state.trackRows = [];
   h.state.isTrackExpanded = () => false;
   h.state.trackLabelPath = [];
+  h.state.trackFilters = {
+    connectionCount: { min: null, max: null },
+    memberCount: { min: null, max: null },
+    duration: { min: null, max: null },
+  };
+  h.state.trackFiltersActive = false;
+  h.state.scopeOnlyConnections = [];
   annotationStoreMock.stubOnlyMode = false;
   propertyStoreMock.propertyValues = {};
   propertyStoreMock.computedPropertyPaths = [];
@@ -1214,5 +1235,124 @@ describe("track labels from a property", () => {
     expect(h.getPropertyValuesForIds).toHaveBeenCalled();
     expect(wrapper.vm.trackTitle(wrapper.vm.tracks[0])).toBe("42");
     wrapper.unmount();
+  });
+});
+
+// --- Track metric filters (issue: filter connections by track length) ---
+describe("ConnectionList track filters", () => {
+  const threeConnections = [
+    makeConnection("c1", "a", "b"),
+    makeConnection("c2", "b", "c"),
+    makeConnection("c3", "x", "y"),
+  ];
+  const fiveAnnotations = [
+    makeAnnotation("a", 0),
+    makeAnnotation("b", 1),
+    makeAnnotation("c", 2),
+    makeAnnotation("x", 0),
+    makeAnnotation("y", 9),
+  ];
+
+  function activateFilters() {
+    h.state.trackFilters = {
+      connectionCount: { min: 2, max: null },
+      memberCount: { min: null, max: null },
+      duration: { min: null, max: null },
+    };
+    h.state.trackFiltersActive = true;
+  }
+
+  // A filtered count printed without a cue reads as data loss — the "of M"
+  // suffix is the cue, next to the number.
+  it("says how many connections the track filters are hiding", () => {
+    activateFilters();
+    setRows([threeConnections[0]], fiveAnnotations);
+    h.state.scopeOnlyConnections = threeConnections;
+    expect(mountComponent().vm.countText).toBe("1 of 3");
+  });
+
+  it("keeps the plain count while no filter is active", () => {
+    setRows(threeConnections, fiveAnnotations);
+    h.state.scopeOnlyConnections = threeConnections;
+    expect(mountComponent().vm.countText).toBe("3");
+  });
+
+  it("parses a bound and dispatches a rebuilt filters object", () => {
+    const wrapper = mountComponent();
+    wrapper.vm.updateTrackFilterBound("duration", "min", "5");
+    expect(h.state.setTrackFilters).toHaveBeenCalledWith({
+      connectionCount: { min: null, max: null },
+      memberCount: { min: null, max: null },
+      duration: { min: 5, max: null },
+    });
+  });
+
+  it("turns an emptied field into an unbounded side", () => {
+    h.state.trackFilters = {
+      connectionCount: { min: null, max: null },
+      memberCount: { min: null, max: null },
+      duration: { min: 5, max: 10 },
+    };
+    h.state.trackFiltersActive = true;
+    const wrapper = mountComponent();
+    wrapper.vm.updateTrackFilterBound("duration", "min", "");
+    expect(h.state.setTrackFilters).toHaveBeenCalledWith({
+      connectionCount: { min: null, max: null },
+      memberCount: { min: null, max: null },
+      duration: { min: null, max: 10 },
+    });
+  });
+
+  it("clears every bound at once", () => {
+    activateFilters();
+    const wrapper = mountComponent();
+    wrapper.vm.clearTrackFilters();
+    expect(h.state.setTrackFilters).toHaveBeenCalledWith({
+      connectionCount: { min: null, max: null },
+      memberCount: { min: null, max: null },
+      duration: { min: null, max: null },
+    });
+  });
+
+  // "This dataset has no connections" would be a lie — the filters hid them.
+  it("uses a filtered empty message when the filters hide every row", () => {
+    activateFilters();
+    setRows([], fiveAnnotations);
+    h.state.scopeOnlyConnections = threeConnections;
+    expect(mountComponent().vm.emptyMessage).toBe(
+      "No connections match the track filters.",
+    );
+  });
+
+  it("keeps the scope's empty message when the scope itself is empty", () => {
+    activateFilters();
+    setRows([], []);
+    h.state.scopeOnlyConnections = [];
+    expect(mountComponent().vm.emptyMessage).toBe(
+      "This dataset has no connections.",
+    );
+  });
+
+  // Same cost rule as the row and scope getters: scopeOnlyConnections filters
+  // the connection array per read for the dynamic scopes, so a hidden tab
+  // must never touch it.
+  it("does not read scopeOnlyConnections while the tab is hidden", () => {
+    let reads = 0;
+    Object.defineProperty(h.state, "scopeOnlyConnections", {
+      configurable: true,
+      get() {
+        reads++;
+        return [];
+      },
+    });
+    h.state.trackFiltersActive = true;
+    const wrapper = mountComponent(false);
+    expect(wrapper.vm.countText).toBe("0");
+    expect(reads).toBe(0);
+    Object.defineProperty(h.state, "scopeOnlyConnections", {
+      configurable: true,
+      value: [],
+      writable: true,
+    });
   });
 });

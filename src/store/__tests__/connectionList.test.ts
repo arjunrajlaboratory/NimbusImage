@@ -53,7 +53,10 @@ vi.mock("@/store/filters", async () => {
   return { default: reactive(filtersMock) };
 });
 
-import connectionList from "@/store/connectionList";
+import connectionList, {
+  ITrackFilters,
+  createEmptyTrackFilters,
+} from "@/store/connectionList";
 // Mutate through the reactive proxies, not the raw hoisted objects, or the
 // getters won't see the change.
 import main from "@/store/index";
@@ -98,6 +101,7 @@ beforeEach(() => {
   connectionList.setScope("all");
   connectionList.setGrouping("flat");
   connectionList.setSelectedConnectionIds([]);
+  connectionList.setTrackFilters(createEmptyTrackFilters());
 });
 
 describe("connectionList scoping", () => {
@@ -525,5 +529,169 @@ describe("track label path", () => {
     connectionList.reconcileTrackLabelPathForPropertyIds(["kept"]);
     expect(connectionList.trackLabelPath).toEqual(["kept", "trackId"]);
     expect(mainMock.scheduleAnnotationBrowserSave).not.toHaveBeenCalled();
+  });
+});
+
+// --- Track metric filters ---
+//
+// Filtering is by DATASET-WIDE track metrics (keyed off the global track
+// analysis), so narrowing the scope must never make a long track read as
+// short. The predicate is shared with the viewer's draw paths.
+describe("track metric filters", () => {
+  // Track A: a→b→c (T0..T2) — 2 connections, 3 members, duration 3.
+  // Track X: x→y (T0, T9) — 1 connection, 2 members, duration 10.
+  function seedTracks() {
+    setAnnotations([
+      makeAnnotation("a", 0),
+      makeAnnotation("b", 1),
+      makeAnnotation("c", 2),
+      makeAnnotation("x", 0),
+      makeAnnotation("y", 9),
+    ]);
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "a", "b"),
+      makeConnection("t2", "b", "c"),
+      makeConnection("t3", "x", "y"),
+    ];
+  }
+
+  function filtersWith(partial: Partial<ITrackFilters>): ITrackFilters {
+    return { ...createEmptyTrackFilters(), ...partial };
+  }
+
+  it("filters by connections-in-track range", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual([
+      "t1",
+      "t2",
+    ]);
+  });
+
+  it("filters by objects-in-track range", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ memberCount: { min: null, max: 2 } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual(["t3"]);
+  });
+
+  it("filters by duration range", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 5, max: null } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual(["t3"]);
+  });
+
+  it("uses dataset-wide metrics even when the scope shows a fragment", () => {
+    seedTracks();
+    // Scope to "b" only: track A appears as a fragment, but its metrics are
+    // still the full track's (duration 3), so a min-duration of 3 keeps it.
+    (annotationStore as any).selectedAnnotationIds = new Set(["b"]);
+    connectionList.setScope("selected");
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 3, max: null } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual([
+      "t1",
+      "t2",
+    ]);
+  });
+
+  it("hides a track of unknown duration under an active duration bound", () => {
+    // Every endpoint dangles, so the duration cannot be known — it must not
+    // be treated as matching a bound it can't be shown to match.
+    setAnnotations([]);
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "gone1", "gone2"),
+    ];
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: null, max: 100 } }),
+    );
+    expect(connectionList.scopedConnections).toEqual([]);
+    // But count bounds are always known, dangling or not.
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 1, max: null } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual(["t1"]);
+  });
+
+  // Cost guard: the viewer reads the predicate on every draw pass, so with no
+  // filter active it must be a constant that never touches the track metrics
+  // (which resolve every connected annotation).
+  it("does not resolve annotations while no filter is active", () => {
+    let resolveCalls = 0;
+    (annotationStore as any).getAnnotationFromId = (id: string) => {
+      resolveCalls++;
+      return makeAnnotation(id, 0);
+    };
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "a", "b"),
+    ];
+    expect(connectionList.scopedConnections).toHaveLength(1);
+    expect(connectionList.connectionPassesTrackFilters({ parentId: "a" })).toBe(
+      true,
+    );
+    expect(resolveCalls).toBe(0);
+  });
+
+  it("returns the scope's own array identity while no filter is active", () => {
+    seedTracks();
+    expect(connectionList.scopedConnections).toBe(
+      (annotationStore as any).annotationConnections,
+    );
+  });
+
+  // Same rationale as setScope: an explicit filter change redefines what "the
+  // list" means, so a selection made under the old definition must not feed
+  // "Delete selected".
+  it("clears the selection and resets the page when filters change", () => {
+    connectionList.setPage(3);
+    connectionList.setSelectedConnectionIds(["t1"]);
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
+    );
+    expect(connectionList.selectedConnectionIds.size).toBe(0);
+    expect(connectionList.page).toBe(1);
+  });
+
+  // Belt to that clearing's braces: rows hidden by the filter must not be
+  // deletable through a selection that predates it (same intersection rule as
+  // the dynamic scopes).
+  it("bulk delete acts only on rows passing the filters", async () => {
+    seedTracks();
+    connectionList.setSelectedConnectionIds(["t1", "t3"]);
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 5, max: null } }),
+    );
+    // Re-select after the clearing to model a viewer-click selection.
+    connectionList.setSelectedConnectionIds(["t1", "t3"]);
+    expect(connectionList.selectedInScopeConnectionIds).toEqual(["t3"]);
+    await connectionList.deleteSelectedInScopeConnections();
+    expect(deleteConnections).toHaveBeenCalledWith(["t3"]);
+  });
+
+  // Numeric ranges are meaningless across datasets with different track
+  // scales, unlike the scope/grouping view preferences.
+  it("resets the filters on a dataset switch", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
+    );
+    connectionList.resetConnectionListState();
+    expect(connectionList.trackFiltersActive).toBe(false);
+    expect(connectionList.scopedConnections).toHaveLength(3);
+  });
+
+  it("exposes the pre-filter scope count for the 'N of M' readout", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 5, max: null } }),
+    );
+    expect(connectionList.scopedConnections).toHaveLength(1);
+    expect(connectionList.scopeOnlyConnections).toHaveLength(3);
   });
 });

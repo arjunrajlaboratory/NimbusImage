@@ -111,6 +111,50 @@ count plus time range on each track row makes a truncated track obvious.
 Track ids are the smallest member annotation id, so expansion state survives
 re-renders.
 
+### Track filters
+
+*User request: "Filter by track length/number of connections would be huge for me."*
+
+The toolbar's filter button opens a menu of optional min/max bounds on three
+**dataset-wide track metrics**:
+
+| Metric | Definition |
+|---|---|
+| Connections in track | `component.connections.length` over the full graph |
+| Objects in track | endpoint count, dangling endpoints included |
+| Duration (timepoints) | max member `Time` − min + 1, over the members that resolve |
+
+A connection whose track falls outside any active bound is hidden from the
+list **and from both viewer draw paths** — normal-mode lines and timelapse
+tracks — because all three read one store predicate,
+`connectionListStore.connectionPassesTrackFilters`. In timelapse mode a hidden
+track disappears entirely (segments and centroid dots); its members are *not*
+recast as gray orphan dots, since the graph didn't change, only the view.
+
+Design decisions worth knowing before changing this:
+
+- **Metrics are dataset-wide** (keyed by `colorKey` via
+  `trackKeyByAnnotationId`), never computed on the scoped fragment — narrowing
+  the scope must not make a long track read as short. Same rule as track
+  colouring and duplicate-ID detection.
+- **Unknown duration ≠ short.** A track whose every endpoint dangles has no
+  computable duration; under an active duration bound it is hidden (it cannot
+  be shown to match) rather than treated as 0. Count bounds are always known.
+- **With no filter active the predicate is a stable `() => true` constant**,
+  so the common case adds zero cost and zero reactive dependencies to the draw
+  paths. The metrics map is only ever computed when a filter is active, cached
+  against the connection graph.
+- The count readout becomes **"N of M"** while filters narrow, the empty state
+  says "No connections match the track filters", and the button carries a
+  badge — three cues that the list is narrowed (see the count-cue rule in the
+  nimbus-frontend skill).
+- Filters are **session-only view state**, reset per dataset — numeric ranges
+  don't transfer between datasets with different track scales. Scope and
+  grouping survive dataset switches; filters deliberately don't.
+- Changing a bound clears the connection selection and resets the page,
+  matching `setScope`'s rationale; the bulk-delete intersection additionally
+  picks the filter up by construction because `scopedConnections` applies it.
+
 ### Track ID property
 
 *Issue [#1330](https://github.com/arjunrajlaboratory/NimbusImage/issues/1330).*
@@ -619,6 +663,20 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **The path resets on dataset switch and re-hydrates from the configuration** (it names a property id from the outgoing configuration), and resolve drops a path whose property left the configuration. — *"clears the path on a dataset switch"*, *"drops a path whose property left the configuration"*, *"survives a build/resolve round trip"*
 - [ ] **A live property deletion clears the path immediately and persists the drop.** The persisted resolver only runs at hydration; without the live twin (`reconcileTrackLabelPathForPropertyIds`, wired in `properties.setProperties` like the analysis-plot reconcile) the panel keeps labelling from the deleted property until reload and a later browser save persists the orphan. — *"clears the path and persists when its property is deleted"*, *"keeps the path and stays silent while its property exists"*
 
+### Track metric filters
+
+- [ ] **Metrics are dataset-wide, never fragment-local.** The predicate resolves a connection's track through `trackKeyByAnnotationId` (the global analysis), so a scope-narrowed fragment is judged by its full track. — *"uses dataset-wide metrics even when the scope shows a fragment"*, *"keys each track by its dataset-wide track key"*
+- [ ] **The inactive predicate is a free constant.** The viewer reads it on every draw pass and `scopedConnections` on every list read; with no bound set it must be the stable `PASSES_EVERY_CONNECTION` and never touch `trackMetrics`, which resolves every connected annotation. — *"does not resolve annotations while no filter is active"*, *"returns the scope's own array identity while no filter is active"*
+- [ ] **List and viewer read ONE predicate, and draw/retention stay a pair under it.** `drawNewConnections` skips failing connections and `clearOldAnnotations`' connection branch removes them by the same test — a filter added to only one path either leaves stale lines or churns them every pass. — *"skips a connection whose track fails the track filters"*, *"removes a drawn line once its track fails the track filters"*
+- [ ] **A filter change alone redraws both draw paths — assert layer CONTENT, not a draw spy.** `connectionPassesTrackFilters` sits in the primary watch list and the timelapse watch list. A draw-called spy passes vacuously here: `setTrackFilters` also clears the connection selection, whose own watcher rebuilds the timelapse layer whether or not the filter is applied. — *"redraws normal-mode connections when the track filters change"*, *"rebuilds the timelapse layer when the track filters change"*
+- [ ] **A hidden track's members do not become orphan dots.** The timelapse path skips a filtered-out component but still counts its members as connected — they vanish from the overlay entirely, since the graph didn't change, only the view. — *"hides a filtered-out track without recasting its members as orphans"*
+- [ ] **Unknown duration is neither short nor matching.** Duration comes from the members that resolve (dangling endpoints are common and must not poison it); a track where none resolve has `null` duration and is hidden under an active duration bound, while count bounds are always known. — *"derives duration from the members that still resolve"*, *"reports null duration when no member resolves"*, *"hides a track of unknown duration under an active duration bound"*, *"resolves durations from stubs, not only hydrated annotations"*
+- [ ] **The narrowed count carries its cue, and the empty state names the filter.** "N of M" beside the number while filters narrow; "No connections match the track filters" instead of the scope's message when they hide every row (but the scope's own message when the scope itself is empty). — *"says how many connections the track filters are hiding"*, *"uses a filtered empty message when the filters hide every row"*, *"keeps the scope's empty message when the scope itself is empty"*
+- [ ] **Bulk delete respects the filters by construction.** `scopedConnections` applies the predicate, so `selectedInScopeConnectionIds` cannot include a filtered-out row; a bound change also clears the selection and resets the page, matching `setScope`. — *"bulk delete acts only on rows passing the filters"*, *"clears the selection and resets the page when filters change"*
+- [ ] **`scopeOnlyConnections` is gated like every other scope getter.** It filters the whole connection array per read for the dynamic scopes, and the "of M" readout is the only consumer — a hidden tab must never touch it. — *"does not read scopeOnlyConnections while the tab is hidden"*
+- [ ] **Filters reset per dataset.** Numeric ranges are dataset-scale-specific, unlike the scope/grouping view preferences that survive. — *"resets the filters on a dataset switch"*
+- [ ] **Bound parsing keeps min/max independent.** An emptied field becomes an unbounded side without touching its partner, and each change dispatches a *replaced* filters object (watchers fire by identity). — *"parses a bound and dispatches a rebuilt filters object"*, *"turns an emptied field into an unbounded side"*, *"clears every bound at once"*
+
 ### Destructive actions
 
 - [ ] **Bulk delete acts only on rows in scope.** Scope *inputs* change without `setScope` firing. — *"stale selection when scope INPUTS change"* (3 tests)
@@ -652,6 +710,8 @@ and not its twin. Before considering any change here done, check the pair.
 | the count a guard is disabled on | the set the action actually operates on |
 | a behaviour gated on timelapse mode | the same view reached with the mode off |
 | an overlay that floats over the canvas | one that shifts the layout instead |
+| the list's scoped rows | the viewer's drawn connections (one shared track-filter predicate) |
+| a control that narrows a count | the "of M" cue beside that count |
 
 - [ ] **This checklist is machine-checked, so keep it checkable.** `src/__tests__/regressionChecklist.test.ts` asserts that every test name cited below resolves in `src/` and that no two invariants share a heading. Both failure modes have already happened: a round renamed two tests and left the citations dangling, and a superseded row was added ABOVE its replacement instead of replacing it, leaving two contradictory rules for one behaviour that no change could satisfy at once. **Replace a row when you supersede it; never stack the new rule on top of the old one.** Abbreviate a long test name with a trailing `…` and cite `%s` templates verbatim — the guard understands both.
 

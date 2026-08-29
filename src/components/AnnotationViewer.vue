@@ -369,6 +369,13 @@ const selectedConnectionIds = computed(
 const hoveredConnectionId = computed(
   () => connectionListStore.hoveredConnectionId,
 );
+// The list and both draw paths share this one predicate, so what the
+// Connections tab hides under a track filter disappears from the canvas too.
+// A stable always-true constant while no filter is active, so the common case
+// adds no per-draw cost.
+const connectionPassesTrackFilters = computed(
+  () => connectionListStore.connectionPassesTrackFilters,
+);
 const shouldDrawAnnotations = computed(
   (): boolean =>
     store.drawAnnotations &&
@@ -1187,7 +1194,8 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
           !displayedAnnotationIds.value.has(parentId) ||
           !displayedAnnotationIds.value.has(childId) ||
           !centroids[parentId] ||
-          !centroids[childId]
+          !centroids[childId] ||
+          !connectionPassesTrackFilters.value({ parentId })
         ) {
           toRemove.push(geoJsAnnotation);
         }
@@ -1348,6 +1356,7 @@ function drawNewConnections(
 ) {
   const dispAnnotationIds = displayedAnnotationIds.value;
   const unrolledCentroids = unrolledCentroidCoordinates.value;
+  const passesTrackFilters = connectionPassesTrackFilters.value;
   const connections = annotationConnections.value;
   const len = connections.length;
   for (let i = 0; i < len; i++) {
@@ -1355,7 +1364,8 @@ function drawNewConnections(
     if (
       drawnGeoJSAnnotations.has(connection.id) ||
       !dispAnnotationIds.has(connection.parentId) ||
-      !dispAnnotationIds.has(connection.childId)
+      !dispAnnotationIds.has(connection.childId) ||
+      !passesTrackFilters(connection)
     ) {
       continue;
     }
@@ -1448,7 +1458,17 @@ function drawTimelapseConnectionsAndCentroids() {
       ? connectionListStore.trackAnalysis.trackKeyByAnnotationId
       : undefined;
 
+  const passesTrackFilters = connectionPassesTrackFilters.value;
+
   components.forEach((component) => {
+    // A displayed fragment's connections all belong to one dataset-wide
+    // track, so its first connection decides for the whole component. A
+    // filtered-out track is skipped here but its members stay in
+    // `connectedIds` below: they must vanish from the overlay entirely, not
+    // be recast as orphan dots — the graph didn't change, the view did.
+    if (!passesTrackFilters(component.connections[0])) {
+      return;
+    }
     const componentAnnotations: ITimelapseAnnotation[] = [];
     // Resolve the displayed fragment through the complete connection graph.
     // A hidden endpoint must not make the same track change color.
@@ -4549,8 +4569,18 @@ async function handleDragEnd(evt: IGeoJSMouseState) {
 // rendered an empty/incorrect frame momentarily and forced layerAnnotations to
 // recompute twice per frame change (the dominant residual cost of the scrub
 // freeze once feature reconstruction is cached).
+// connectionPassesTrackFilters rather than the raw trackFilters state: the
+// predicate is what the draw paths read, and watching it also covers a metric
+// changing under an active filter (e.g. a connection delete changing a track's
+// length). While no filter is active it is a stable constant, so this adds no
+// firing to the common case.
 watch(
-  [annotationConnections, shouldDrawAnnotations, shouldDrawConnections],
+  [
+    annotationConnections,
+    shouldDrawAnnotations,
+    shouldDrawConnections,
+    connectionPassesTrackFilters,
+  ],
   () => {
     onPrimaryChange();
   },
@@ -4619,6 +4649,13 @@ watch(
     showTimelapseLabels,
     () => timelapseStore.trackColoring,
     () => timelapseStore.colorSeed,
+    // Track filters bake into the layer content like the colouring controls.
+    // Watching the predicate (not the raw filter state) also re-fires when a
+    // metric changes under an active filter; it is a stable constant while no
+    // filter is set. setTrackFilters happens to trigger a rebuild through the
+    // selection-clearing watcher above too, but that is a side effect of its
+    // UX rule, not something the draw path may depend on.
+    connectionPassesTrackFilters,
   ],
   () => {
     onTimelapseModeChanged();
