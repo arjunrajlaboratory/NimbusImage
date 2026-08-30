@@ -89,6 +89,12 @@ function setAnnotations(annotations: IAnnotation[]) {
   const byId = new Map(annotations.map((a) => [a.id, a]));
   (annotationStore as any).annotationsForIteration = annotations;
   (annotationStore as any).getAnnotationFromId = (id: string) => byId.get(id);
+  // Mirror the real store's contract: the stub map is authoritative and
+  // maintained by every create/update/delete path, so an annotation that
+  // exists always has a stub. The stub-only resolver (metrics, location
+  // scope, dangling detection) reads THIS; getAnnotationFromId serves the
+  // hydrated-first paths (row labels).
+  (annotationStore as any).getStub = (id: string) => byId.get(id);
 }
 
 beforeEach(() => {
@@ -178,6 +184,7 @@ describe("connectionList cost guards", () => {
       ["there", there],
     ]);
     (annotationStore as any).getAnnotationFromId = (id: string) => byId.get(id);
+    (annotationStore as any).getStub = (id: string) => byId.get(id);
     (annotationStore as any).annotationsForIteration = [];
     (annotationStore as any).annotationConnections = [
       makeConnection("atLocation", "here", "here"),
@@ -901,6 +908,11 @@ describe("hydration-churn stability", () => {
     return { ...createEmptyTrackFilters(), ...partial };
   }
 
+  // The fixture MUST contain a dangling endpoint: a deleted annotation
+  // always misses the stub map, so a "fail-safe" hydrated fallback in the
+  // resolver is exercised on every rot-bearing dataset — reintroducing
+  // exactly the churn the resolver exists to remove. The first version of
+  // these tests had no rot and passed against that fallback (Codex round 4).
   function seedStubbed() {
     const times: Record<string, number> = { a: 0, b: 1, x: 0, y: 9 };
     (annotationStore as any).getStub = (id: string) =>
@@ -910,6 +922,7 @@ describe("hydration-churn stability", () => {
     (annotationStore as any).annotationConnections = [
       makeConnection("t1", "a", "b"),
       makeConnection("t2", "x", "y"),
+      makeConnection("rot", "a", "deleted"),
     ];
   }
 
@@ -924,7 +937,7 @@ describe("hydration-churn stability", () => {
       filtersWith({ duration: { min: 5, max: null } }),
     );
     expect(connectionList.scopedConnections.map((c) => c.id)).toEqual(["t2"]);
-    expect(connectionList.danglingConnectionIds).toEqual([]);
+    expect(connectionList.danglingConnectionIds).toEqual(["rot"]);
     expect(hydratedReads).toBe(0);
   });
 
@@ -936,7 +949,8 @@ describe("hydration-churn stability", () => {
     const metrics = connectionList.trackMetrics;
     const dangling = connectionList.danglingConnectionIds;
     // The churn analog: hydration replaces the cache map, which re-creates
-    // the hydrated resolver. Neither getter may have registered it as a dep.
+    // the hydrated resolver. Neither getter may have registered it as a dep
+    // — including through the dangling endpoint, which misses the stub map.
     (annotationStore as any).getAnnotationFromId = (id: string) =>
       makeAnnotation(id, 0);
     expect(connectionList.trackMetrics).toBe(metrics);

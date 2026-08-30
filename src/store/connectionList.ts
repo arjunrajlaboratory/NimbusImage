@@ -167,10 +167,7 @@ export class ConnectionList extends VuexModule {
    * (20 → 519), and deleting an annotation grew danglingConnectionIds.
    */
   get trackMetrics(): Map<string, ITrackMetrics> {
-    return computeTrackMetrics(
-      this.trackAnalysis.components,
-      this.resolveStubFirst,
-    );
+    return computeTrackMetrics(this.trackAnalysis.components, this.resolveStub);
   }
 
   /**
@@ -303,7 +300,7 @@ export class ConnectionList extends VuexModule {
         const { xy, z, time } = main.currentLocation;
         // Stub-first: only location is read, and the hydrated-first resolver
         // would make this predicate churn with viewport hydration.
-        const resolve = this.resolveStubFirst;
+        const resolve = this.resolveStub;
         const atLocation = (id: string): boolean => {
           const found = resolve(id);
           return (
@@ -340,21 +337,25 @@ export class ConnectionList extends VuexModule {
   }
 
   /**
-   * Stub-first resolver for location/existence reads (track metrics, the
+   * Stub-ONLY resolver for location/existence reads (track metrics, the
    * location scope, dangling detection). The stub map is authoritative in
    * both modes — every create/update/delete path maintains it — and is
    * replaced only by load/CRUD/content edits, NOT by viewport hydration,
    * which replaces `hydratedAnnotations` on every pan. Resolving
    * hydrated-first here made any active track bound recompute the
    * whole-graph metric scan and re-fire both draw watchers per pan on
-   * stub-mode datasets (PR #1340 Codex round 3). `resolveAnnotation` above
-   * stays hydrated-first for callers that need hydrated-only fields (row
-   * labels read `name`). The hydrated fallback covers a stub-map gap that
-   * should not exist; it registers the hydration dep only when taken.
+   * stub-mode datasets (PR #1340 Codex round 3).
+   *
+   * Deliberately NO hydrated fallback (round 4): a genuinely dangling
+   * endpoint always misses the stub map, so a "fail-safe" fallback was
+   * exercised on every rot-bearing dataset — re-registering the hydration
+   * dep and reintroducing exactly the churn this resolver removes. A stub
+   * miss means deleted, full stop. `resolveAnnotation` above stays
+   * hydrated-first for callers that need hydrated-only fields (row labels
+   * read `name`).
    */
-  get resolveStubFirst() {
-    return (id: string): TAnnotationOrStub | undefined =>
-      annotation.getStub(id) ?? annotation.getAnnotationFromId(id);
+  get resolveStub() {
+    return annotation.getStub;
   }
 
   get connectionRows(): IConnectionRow[] {
@@ -713,7 +714,7 @@ export class ConnectionList extends VuexModule {
    * as the row getters) or from the cleanup action itself.
    */
   get danglingConnectionIds(): string[] {
-    const resolve = this.resolveStubFirst;
+    const resolve = this.resolveStub;
     return annotation.annotationConnections
       .filter(
         ({ parentId, childId }) => !resolve(parentId) || !resolve(childId),
