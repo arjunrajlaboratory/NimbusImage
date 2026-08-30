@@ -61,6 +61,7 @@ import connectionList, {
 // getters won't see the change.
 import main from "@/store/index";
 import annotationStore from "@/store/annotation";
+import filtersStore from "@/store/filters";
 
 function makeConnection(
   id: string,
@@ -820,5 +821,50 @@ describe("dangling connection cleanup", () => {
     ];
     await connectionList.deleteDanglingConnections();
     expect(deleteConnections).not.toHaveBeenCalled();
+  });
+});
+
+// --- HUD passing count under the object lens (PR #1340 Codex P2) ---
+//
+// The render-coverage HUD prints "(N passing filters)" from this getter. It
+// must compose the object lens: with only the track constraint active, the
+// raw filteredAnnotations length claims every annotation passes while the
+// lens is hiding whole tracks.
+describe("displayedPassingCount", () => {
+  function seedTracks() {
+    setAnnotations([
+      makeAnnotation("a", 0),
+      makeAnnotation("b", 1),
+      makeAnnotation("x", 0),
+      makeAnnotation("solo", 3),
+    ]);
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "a", "b"), // track a-b: 1 connection
+    ];
+    (filtersStore as any).filteredAnnotations = [
+      makeAnnotation("a", 0),
+      makeAnnotation("b", 1),
+      makeAnnotation("solo", 3),
+    ];
+  }
+
+  it("is the plain filtered count while the lens is off", () => {
+    seedTracks();
+    connectionList.setTrackFilters({
+      ...createEmptyTrackFilters(),
+      connectionCount: { min: 2, max: null },
+    });
+    expect(connectionList.displayedPassingCount).toBe(3);
+  });
+
+  it("counts hidden-track objects out while the lens narrows", () => {
+    seedTracks();
+    connectionList.setTrackFilters({
+      ...createEmptyTrackFilters(),
+      connectionCount: { min: 2, max: null },
+    });
+    connectionList.setHideFilteredTrackObjects(true);
+    // a and b belong to the failing track; solo is unconnected and stays.
+    expect(connectionList.displayedPassingCount).toBe(1);
   });
 });

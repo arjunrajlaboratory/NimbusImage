@@ -243,6 +243,29 @@ export class ConnectionList extends VuexModule {
   }
 
   /**
+   * How many annotations survive the ordinary filters AND the object lens —
+   * the number the render-coverage HUD prints as "(N passing filters)".
+   * Reading `filteredAnnotations.length` there instead would claim every
+   * annotation passes while the lens is hiding whole tracks (PR #1340 Codex
+   * P2). While the lens is off this is a plain length read; the counting
+   * pass is paid only while the opt-in narrows, cached against both inputs.
+   */
+  get displayedPassingCount(): number {
+    const passing = filters.filteredAnnotations;
+    if (!this.trackFilterHidesObjects) {
+      return passing.length;
+    }
+    const passesTrackFilters = this.annotationPassesTrackFilters;
+    let count = 0;
+    for (const { id } of passing) {
+      if (passesTrackFilters(id)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
    * Predicate deciding whether ONE connection is in scope.
    *
    * A predicate, not a set of qualifying annotation ids: building that set

@@ -16,8 +16,9 @@ const mocks = vi.hoisted(() => ({
   viewportRenderedCount: 826,
   viewportAnnotationCount: 826,
   stubOnlyMode: true,
-  // The component only reads .length, so a real array is not needed.
-  filteredAnnotationCount: 289469,
+  // The lens-aware count the HUD prints (connectionList.displayedPassingCount)
+  // — NOT filteredAnnotations.length, which ignores the track-object lens.
+  displayedPassingCount: 289469,
 }));
 
 vi.mock("@/store", () => ({
@@ -49,8 +50,13 @@ vi.mock("@/store/filters", () => ({
     get activeConstraints() {
       return mocks.constraints;
     },
-    get filteredAnnotations() {
-      return { length: mocks.filteredAnnotationCount };
+  },
+}));
+
+vi.mock("@/store/connectionList", () => ({
+  default: {
+    get displayedPassingCount() {
+      return mocks.displayedPassingCount;
     },
   },
 }));
@@ -72,6 +78,11 @@ const GATE_CONSTRAINT: IActiveConstraint = {
 };
 
 const TAG_CONSTRAINT: IActiveConstraint = { source: "filters", kind: "tag" };
+
+const TRACK_CONSTRAINT: IActiveConstraint = {
+  source: "connections",
+  kind: "trackObjects",
+};
 
 function mountIndicator() {
   return shallowMount(RenderCoverageIndicator, {
@@ -163,6 +174,44 @@ describe("RenderCoverageIndicator", () => {
       "analysisPanel",
       "filtersPanel",
     ]);
+  });
+
+  it("opens the Object Browser for the track filter alone", async () => {
+    mocks.constraints = [TRACK_CONSTRAINT];
+    await mountIndicator()
+      .find(".render-coverage__constraints")
+      .trigger("click");
+    expect(mocks.requestPaletteOpen).toHaveBeenCalledWith(["annotationPanel"]);
+  });
+
+  // Analysis and the Object Browser are mutually-evicting right-zone
+  // primaries (App.vue paletteRoles): requesting both would open Analysis and
+  // then immediately evict it with the Object Browser — the click's outcome
+  // would contradict its own tooltip. Analysis wins; the tooltip names only
+  // what actually opens. (PR #1340 Codex P2.)
+  it("requests only one right-zone primary when analysis and track constraints coexist", async () => {
+    mocks.constraints = [GATE_CONSTRAINT, TRACK_CONSTRAINT];
+    const wrapper = mountIndicator();
+    const suffix = wrapper.find(".render-coverage__constraints");
+    expect(suffix.attributes("title")).toBe(
+      "Objects are narrowed by 1 lasso gate on Area × PECAM1; " +
+        "1 track filter hiding whole tracks' objects. Click to open Analysis.",
+    );
+    await suffix.trigger("click");
+    expect(mocks.requestPaletteOpen).toHaveBeenCalledWith(["analysisPanel"]);
+  });
+
+  // The passing figure must come from the lens-aware count: with only the
+  // track constraint active, filteredAnnotations.length would claim every
+  // annotation is "passing filters" while whole tracks are hidden.
+  it("prints the lens-aware passing count", () => {
+    mocks.constraints = [TRACK_CONSTRAINT];
+    mocks.displayedPassingCount = 1855;
+    const suffix = mountIndicator().find(".render-coverage__suffix");
+    expect(suffix.text()).toBe(
+      `0 total annotations (${(1855).toLocaleString()} passing filters)`,
+    );
+    mocks.displayedPassingCount = 289469;
   });
 
   it("shows the constraint suffix outside stub mode too", () => {
