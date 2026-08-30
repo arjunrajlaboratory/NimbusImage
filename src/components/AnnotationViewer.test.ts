@@ -5640,6 +5640,36 @@ describe("AnnotationViewer", () => {
           );
         });
 
+        // The direct rebuild path (selection changes, mode inputs) must drop a
+        // queued watcher-driven trailing rebuild: changing a track filter with
+        // a non-empty selection fires the primary watcher (queues a trailing
+        // pass) AND clears the selection (an immediate direct pass) — without
+        // the cancel, the same ~100 ms pass ran again when the timer expired.
+        it("rebuilds exactly once when a filter change also clears a selection", async () => {
+          setupOneTrack();
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+          await wrapper.vm.$nextTick();
+          connectionListStore.setSelectedConnectionIds(["c1"]);
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+          await wrapper.vm.$nextTick();
+
+          const countBefore = (wrapper.vm as any).timelapseRebuildCount;
+          connectionListStore.setTrackFilters({
+            ...createEmptyTrackFilters(),
+            connectionCount: { min: 2, max: null },
+          });
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+          await wrapper.vm.$nextTick();
+
+          expect((wrapper.vm as any).timelapseRebuildCount - countBefore).toBe(
+            1,
+          );
+        });
+
         it("paints every segment uniformly when per-track colouring is off", async () => {
           setupOneTrack();
           mockedTimelapseStore.trackColoring = "uniform";

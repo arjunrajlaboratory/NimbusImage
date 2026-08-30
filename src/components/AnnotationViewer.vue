@@ -3986,6 +3986,11 @@ function onAnnotationStateChanged() {
 }
 
 function onTimelapseModeChanged() {
+  // A watcher-driven trailing rebuild may still be queued (e.g. changing a
+  // track filter both fires the primary watcher AND clears a non-empty
+  // selection, which lands here). This direct pass renders the same final
+  // state now, so drop the queued one — otherwise the ~100 ms pass runs twice.
+  drawTimelapseThrottled.cancel();
   drawTimelapseConnectionsAndCentroids();
 }
 
