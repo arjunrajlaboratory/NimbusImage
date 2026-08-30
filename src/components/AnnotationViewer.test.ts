@@ -1858,6 +1858,10 @@ describe("AnnotationViewer", () => {
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
         const tLayer = (wrapper.vm as any).timelapseLayer;
         await wrapper.vm.$nextTick();
+        // Flush the mount-time draw's trailing timelapse rebuild so it is not
+        // misattributed to the hover below.
+        vi.advanceTimersByTime(101);
+        await wrapper.vm.$nextTick();
 
         tLayer.removeAllAnnotations.mockClear();
         connectionListStore.setHoveredConnectionId("c1");
@@ -1873,6 +1877,80 @@ describe("AnnotationViewer", () => {
 
         expect(rebuildsOnHover).toBe(0);
         expect(rebuildsOnSelect).toBeGreaterThan(0);
+      });
+
+      // Adds a third, unconnected annotation to the two-connected fixture so
+      // the orphan path has something to draw.
+      function addUnconnectedThirdAnnotation() {
+        mockedAnnotationStore.annotations = [
+          ...mockedAnnotationStore.annotations,
+          makeAnnotation({ id: "a3", channel: 0 }),
+        ];
+        mockedAnnotationStore.annotationCentroids = {
+          ...mockedAnnotationStore.annotationCentroids,
+          a3: { x: 50, y: 60 },
+        };
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+      }
+
+      // layerSliceIndexes computes a fresh result on every call and is
+      // invariant per layer; calling it per annotation measured ~67 ms of a
+      // ~490 ms timelapse rebuild at 45K annotations (time-scrub freeze at
+      // Gia-scale connection counts).
+      it("resolves layer slice indexes once per layer, not per annotation", () => {
+        mockedTimelapseStore.showMode = true;
+        setupTwoDisplayedAnnotations();
+        addUnconnectedThirdAnnotation();
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+
+        (mockedStore.layerSliceIndexes as any).mockClear();
+        const ids = (wrapper.vm as any).getDisplayedAnnotationIdsAcrossTime();
+
+        expect(ids.size).toBe(3);
+        expect(mockedStore.layerSliceIndexes).toHaveBeenCalledTimes(1);
+      });
+
+      // The orphan pass reuses the displayed-id set computed at the top of the
+      // rebuild instead of re-scanning and re-resolving EVERY displayed
+      // annotation (the second full scan measured ~86 ms per rebuild at 45K
+      // annotations). Connected members are resolved once, by the component
+      // loop; only unconnected ids reach the resolver again — and the orphan
+      // dot must still be drawn.
+      it("resolves only unconnected ids for orphan dots, and still draws them", () => {
+        mockedTimelapseStore.showMode = true;
+        setupTwoDisplayedAnnotations();
+        addUnconnectedThirdAnnotation();
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _c: any, opts: any) => {
+            const f = mockGeoJSAnnotation(shape);
+            if (opts) f.options(opts);
+            return f;
+          },
+        );
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+
+        (mockedAnnotationStore.getAnnotationFromId as any).mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const resolvedIds = (
+          mockedAnnotationStore.getAnnotationFromId as any
+        ).mock.calls.map((call: any[]) => call[0]);
+        // a1/a2 are connected: resolved once by the component loop, never by
+        // the orphan pass.
+        expect(resolvedIds.filter((id: string) => id === "a1")).toHaveLength(1);
+        expect(resolvedIds.filter((id: string) => id === "a2")).toHaveLength(1);
+        // The unconnected a3 still becomes an orphan dot.
+        const orphanDot = tLayer
+          .annotations()
+          .find(
+            (f: any) =>
+              f?.options?.().isTimelapsePoint && f.options().girderId === "a3",
+          );
+        expect(orphanDot).toBeDefined();
       });
 
       // The timelapse precedence inversion must apply to SELECTION too, not
@@ -5428,6 +5506,9 @@ describe("AnnotationViewer", () => {
             connectionCount: { min: 2, max: null },
           });
           await wrapper.vm.$nextTick();
+          // The watcher-driven timelapse rebuild is trailing-throttled.
+          vi.advanceTimersByTime(101);
+          await wrapper.vm.$nextTick();
 
           expect(countSegments()).toBe(0);
         });
@@ -6782,6 +6863,35 @@ describe("AnnotationViewer", () => {
           expect((wrapper.vm as any).handlingPrimaryChange).toBe(false);
         },
       );
+
+      // The displayedAnnotations watcher fires 2-3 times per frame change (the
+      // two-phase visibility update). drawAnnotations beside it is throttled,
+      // but the timelapse rebuild was reached DIRECTLY on each fire, bundling
+      // 2-3 full layer reconstructions into one long task per time-scrub step
+      // (measured 157 ms at 9,965 connections; a single rebuild is ~57 ms).
+      // All fires inside one throttle window must coalesce into ONE rebuild.
+      it("coalesces displayed-set changes in one throttle window into one timelapse rebuild", async () => {
+        setupTwoFrames("time");
+        mockedTimelapseStore.showMode = true;
+        mockedStore.time = 9;
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        await wrapper.vm.$nextTick();
+
+        tLayer.removeAllAnnotations.mockClear();
+        // Two displayed-set turnovers in separate ticks, both within 100 ms —
+        // the shape of the two-phase visibility update on a scrub step.
+        mockedStore.time = 0;
+        await wrapper.vm.$nextTick();
+        mockedStore.time = 1;
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        await wrapper.vm.$nextTick();
+
+        expect(tLayer.removeAllAnnotations).toHaveBeenCalledTimes(1);
+      });
     });
 
     describe("onRestyleNeeded", () => {

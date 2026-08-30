@@ -1038,7 +1038,7 @@ function drawAnnotationsAndTooltips() {
   drawAnnotations();
   drawTooltips();
   if (showTimelapseMode.value) {
-    drawTimelapseConnectionsAndCentroids();
+    drawTimelapseThrottled();
   }
 }
 
@@ -1409,17 +1409,25 @@ function drawNewConnections(
 
 function getDisplayedAnnotationIdsAcrossTime(): Set<string> {
   const totalAnnotationIdsSet: Set<string> = new Set();
+  // Hoisted out of the per-annotation loop: layerSliceIndexes computes a fresh
+  // result on every call and is invariant per layer, and the unroll flags are
+  // invariant for the whole pass. Calling the getter per annotation measured
+  // ~67 ms of a ~490 ms timelapse rebuild at 45K annotations.
+  const showHidden = showAnnotationsFromHiddenLayers.value;
+  const unrollXY = store.unrollXY;
+  const unrollZ = store.unrollZ;
   for (const layer of validLayers.value) {
-    if (layer.visible || showAnnotationsFromHiddenLayers.value) {
+    if (layer.visible || showHidden) {
+      const sliceIndexes = store.layerSliceIndexes(layer);
+      const xyIndex = sliceIndexes?.xyIndex;
+      const zIndex = sliceIndexes?.zIndex;
       const channelAnnotations =
         displayableAnnotationsByChannel.value.get(layer.channel) || [];
       for (const annotation of channelAnnotations) {
         if (annotation.channel === layer.channel) {
-          const sliceIndexes = store.layerSliceIndexes(layer);
           if (
-            (store.unrollXY ||
-              annotation.location.XY === sliceIndexes?.xyIndex) &&
-            (store.unrollZ || annotation.location.Z === sliceIndexes?.zIndex)
+            (unrollXY || annotation.location.XY === xyIndex) &&
+            (unrollZ || annotation.location.Z === zIndex)
           ) {
             totalAnnotationIdsSet.add(annotation.id);
           }
@@ -1428,15 +1436,6 @@ function getDisplayedAnnotationIdsAcrossTime(): Set<string> {
     }
   }
   return totalAnnotationIdsSet;
-}
-
-function getDisplayedAnnotationsAcrossTime(): Set<IAnnotation> {
-  const displayedIds = getDisplayedAnnotationIdsAcrossTime();
-  return new Set(
-    Array.from(displayedIds)
-      .map((id) => getAnnotationFromId.value(id))
-      .filter((a): a is IAnnotation => a !== undefined),
-  );
 }
 
 function drawTimelapseConnectionsAndCentroids() {
@@ -1464,7 +1463,6 @@ function drawTimelapseConnectionsAndCentroids() {
       filteredConnections.push(conn);
     }
   }
-
   const components = findConnectedComponents(filteredConnections);
 
   const coloring = timelapseStore.trackColoring;
@@ -1558,14 +1556,18 @@ function drawTimelapseConnectionsAndCentroids() {
     ),
   );
 
-  const displayedAnns = getDisplayedAnnotationsAcrossTime();
-
-  const annsArray = Array.from(displayedAnns);
-  const annsLen = annsArray.length;
-  for (let i = 0; i < annsLen; i++) {
-    const annotation = annsArray[i];
+  // Orphans are the displayed ids WITHOUT a connection. Reuse the id set
+  // computed above rather than re-scanning every annotation (the scan is the
+  // most expensive step of this rebuild), and resolve only the unconnected
+  // ids — on a heavily-tracked dataset that is a small fraction of the total.
+  const resolveAnnotation = getAnnotationFromId.value;
+  for (const id of displayedIds) {
+    if (connectedIds.has(id)) {
+      continue;
+    }
+    const annotation = resolveAnnotation(id);
     if (
-      !connectedIds.has(annotation.id) &&
+      annotation &&
       annotation.location.Time >= currentTime - tlModeWindow &&
       annotation.location.Time <= currentTime + tlModeWindow &&
       (timelapseTags.length === 0 ||
@@ -1585,6 +1587,20 @@ function drawTimelapseConnectionsAndCentroids() {
   props.timelapseLayer.draw();
   props.timelapseTextLayer.draw();
 }
+
+// The displayedAnnotations watcher fires 2-3 times per frame change (the
+// two-phase visibility update), and each fire reached the timelapse rebuild
+// directly while drawAnnotations right beside it was throttled — bundling 2-3
+// full layer rebuilds into ONE long main-thread task per time-scrub step
+// (measured 157 ms at 9,965 connections; a single rebuild is ~57 ms).
+// Trailing-only: every fire inside the window coalesces into one rebuild
+// against the FINAL state. A leading call would run against the mid-update
+// visible set and still pay a second rebuild at the trailing edge.
+const drawTimelapseThrottled = throttle(
+  drawTimelapseConnectionsAndCentroids,
+  THROTTLE,
+  { leading: false },
+);
 
 function drawTimelapseTrack(
   annotations: ITimelapseAnnotation[],
@@ -5109,6 +5125,7 @@ onBeforeUnmount(() => {
   updateVisibilityDebounced.cancel();
   restyleAnnotationsThrottled.cancel();
   restyleTimelapseFeaturesThrottled.cancel();
+  drawTimelapseThrottled.cancel();
   drawAnnotations.cancel();
   drawTooltips.cancel();
   handleValueOnMouseMoveDebounce.cancel();
@@ -5232,7 +5249,6 @@ defineExpose({
   drawNewConnections,
   findConnectedComponents,
   getDisplayedAnnotationIdsAcrossTime,
-  getDisplayedAnnotationsAcrossTime,
   drawTimelapseConnectionsAndCentroids,
   drawTimelapseTrack,
   drawTimelapseAnnotationCentroidsAndLabels,
