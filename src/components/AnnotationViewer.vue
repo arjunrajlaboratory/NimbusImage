@@ -1471,6 +1471,12 @@ const timelapseRebuildCount = ref(0);
 // covers in-place annotation edits); displayedIds is compared by content
 // because the second wave replaces the array identity without changing it.
 interface ITimelapsePassInputs {
+  // The OUTPUT layers, not just inputs: recreating a GeoJS map at an existing
+  // v-for index reuses this component instance with fresh, EMPTY layers, and a
+  // skip against those would leave the overlay blank until some other input
+  // changed (Codex round 4 on PR #1341).
+  layer: IGeoJSAnnotationLayer;
+  textLayer: IGeoJSFeatureLayer;
   displayedIds: Set<string>;
   connections: IAnnotationConnection[];
   mutationCounter: number;
@@ -1483,6 +1489,13 @@ interface ITimelapsePassInputs {
   resolveAnnotation: (id: string) => IAnnotation | undefined;
   unrolledCentroids: { [annotationId: string]: IGeoJSPosition };
   selectedConnections: Set<string>;
+  // Hover and object selection are usually reflected between passes by
+  // restyleTimelapseFeatures in place, so a change since the last pass defeats
+  // the skip even though the layer's PAINT already shows it. Deliberate: the
+  // extra pass is merely conservative, the cost only bites in the rare case of
+  // paint state changing between the two visibility waves of one frame change,
+  // and connection hover genuinely affects materialization (it picks the
+  // representative duplicate). Do not "optimize" these out of the snapshot.
   hoveredConnectionId: string | null;
   selectedObjects: Set<string>;
   hoveredObjectId: string | null;
@@ -1495,6 +1508,8 @@ function timelapsePassInputsEqual(
   b: ITimelapsePassInputs,
 ): boolean {
   if (
+    a.layer !== b.layer ||
+    a.textLayer !== b.textLayer ||
     a.connections !== b.connections ||
     a.mutationCounter !== b.mutationCounter ||
     a.currentTime !== b.currentTime ||
@@ -1655,6 +1670,8 @@ function drawTimelapseConnectionsAndCentroids() {
   // destructures its working values FROM this object so the snapshot cannot
   // drift from what was actually consumed.
   const inputs: ITimelapsePassInputs = {
+    layer: props.timelapseLayer,
+    textLayer: props.timelapseTextLayer,
     displayedIds: getDisplayedAnnotationIdsAcrossTime(),
     connections: annotationConnections.value,
     mutationCounter: annotationStore.mutationCounter,

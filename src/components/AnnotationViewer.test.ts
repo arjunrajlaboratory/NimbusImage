@@ -5158,6 +5158,25 @@ describe("AnnotationViewer", () => {
         expect(tLayer.annotations().length).toBeGreaterThan(0);
       });
 
+      // The layers are OUTPUT state in the snapshot: recreating a GeoJS map at
+      // an existing v-for index reuses this component instance with fresh,
+      // empty layers — a skip against those would leave the overlay blank
+      // until some other input changed (Codex round 4).
+      it("rebuilds into a replacement timelapse layer instead of skipping", async () => {
+        setupTwoTimepointTrack();
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        expect(
+          (wrapper.vm as any).timelapseLayer.annotations().length,
+        ).toBeGreaterThan(0);
+
+        const freshLayer = mockAnnotationLayer();
+        await wrapper.setProps({ timelapseLayer: freshLayer });
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        expect(freshLayer.annotations().length).toBeGreaterThan(0);
+      });
+
       // Drift guard for the snapshot: every input the pass reads must defeat
       // the skip when it changes, or a stale skip silently freezes the
       // overlay. One entry per ITimelapsePassInputs field that the harness can
