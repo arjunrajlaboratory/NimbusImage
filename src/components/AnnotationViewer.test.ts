@@ -1856,24 +1856,26 @@ describe("AnnotationViewer", () => {
             mockedAnnotationStore.annotations.find((a: any) => a.id === id),
         );
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
-        const tLayer = (wrapper.vm as any).timelapseLayer;
         await wrapper.vm.$nextTick();
         // Flush the mount-time draw's trailing timelapse rebuild so it is not
         // misattributed to the hover below.
         vi.advanceTimersByTime(101);
         await wrapper.vm.$nextTick();
 
-        tLayer.removeAllAnnotations.mockClear();
+        const countBefore = (wrapper.vm as any).timelapseRebuildCount;
         connectionListStore.setHoveredConnectionId("c1");
         await wrapper.vm.$nextTick();
         vi.advanceTimersByTime(101);
-        const rebuildsOnHover = tLayer.removeAllAnnotations.mock.calls.length;
+        const rebuildsOnHover =
+          (wrapper.vm as any).timelapseRebuildCount - countBefore;
 
-        tLayer.removeAllAnnotations.mockClear();
         connectionListStore.setSelectedConnectionIds(["c1"]);
         await wrapper.vm.$nextTick();
         vi.advanceTimersByTime(101);
-        const rebuildsOnSelect = tLayer.removeAllAnnotations.mock.calls.length;
+        const rebuildsOnSelect =
+          (wrapper.vm as any).timelapseRebuildCount -
+          countBefore -
+          rebuildsOnHover;
 
         expect(rebuildsOnHover).toBe(0);
         expect(rebuildsOnSelect).toBeGreaterThan(0);
@@ -5007,13 +5009,111 @@ describe("AnnotationViewer", () => {
         // watcher pays for produces no visible difference.
         const hoveredWidth = drawn[0].options().style.strokeWidth;
         connectionListStore.setHoveredConnectionId(null);
-        tLayer.addMultipleAnnotations.mockClear();
         (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
-        const plain = tLayer.addMultipleAnnotations.mock.calls
-          .map((call: any[]) => call[0])
-          .flat()
+        // The diff-based rebuild keeps the segment and restyles it in place,
+        // so read the layer's content rather than a fresh add batch.
+        const plain = tLayer
+          .annotations()
           .filter((f: any) => f?.options?.().isConnection)[0];
         expect(hoveredWidth).toBeGreaterThan(plain.options().style.strokeWidth);
+      });
+
+      // --- diff-based rebuild: reuse instead of reconstruction ---
+      //
+      // Tearing the layer down and reconstructing every feature cost ~250 ms
+      // per time-scrub step at Gia-scale connection counts (51,665
+      // connections → ~10K features), while a scrub step only actually
+      // changes the features entering/leaving the mode window plus the ones
+      // whose time-relative styling flips.
+      function setupTwoTimepointTrack() {
+        mockedTimelapseStore.showMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+          }),
+          makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 1 },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _c: any, options: any) => {
+            const f = mockGeoJSAnnotation(shape);
+            if (options) f.options(options);
+            return f;
+          },
+        );
+      }
+
+      it("keeps unchanged features across rebuilds instead of reconstructing them", () => {
+        setupTwoTimepointTrack();
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const before = tLayer.annotations();
+        expect(before.length).toBeGreaterThan(0);
+
+        (geojsAnnotationFactory as any).mockClear();
+        tLayer.removeAnnotation.mockClear();
+        tLayer.removeAllAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        // Identical state: the same feature OBJECTS stay on the layer — no
+        // construction, no removal, no wholesale clear.
+        expect(tLayer.annotations()).toEqual(before);
+        expect(geojsAnnotationFactory).not.toHaveBeenCalled();
+        expect(tLayer.removeAnnotation).not.toHaveBeenCalled();
+        expect(tLayer.removeAllAnnotations).not.toHaveBeenCalled();
+      });
+
+      it("restyles a kept feature in place when the current time flips its styling", () => {
+        setupTwoTimepointTrack();
+        mockedStore.time = 0;
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const segment = tLayer
+          .annotations()
+          .find((f: any) => f?.options?.().isConnection);
+        const dot = tLayer
+          .annotations()
+          .find(
+            (f: any) =>
+              f?.options?.().isTimelapsePoint && f.options().girderId === "a2",
+          );
+        // Later endpoint (T1) is ahead of the current time (T0).
+        expect(segment.options().style.strokeWidth).toBe(6);
+        expect(dot.options().style.radius).toBe(0.09);
+
+        mockedStore.time = 1;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        // The SAME feature objects were kept and their styles updated.
+        expect(tLayer.annotations()).toContain(segment);
+        expect(tLayer.annotations()).toContain(dot);
+        expect(segment.options().style.strokeWidth).toBe(3);
+        expect(dot.options().style.radius).toBe(0.16);
       });
 
       // --- hover highlighting on the timelapse layer ---
@@ -5522,12 +5622,11 @@ describe("AnnotationViewer", () => {
         it("rebuilds the timelapse layer exactly once per filter change", async () => {
           setupOneTrack();
           wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
-          const tlLayer = (wrapper.vm as any).timelapseLayer;
           await wrapper.vm.$nextTick();
           vi.advanceTimersByTime(101);
           await wrapper.vm.$nextTick();
 
-          tlLayer.removeAllAnnotations.mockClear();
+          const countBefore = (wrapper.vm as any).timelapseRebuildCount;
           connectionListStore.setTrackFilters({
             ...createEmptyTrackFilters(),
             connectionCount: { min: 2, max: null },
@@ -5536,7 +5635,9 @@ describe("AnnotationViewer", () => {
           vi.advanceTimersByTime(101);
           await wrapper.vm.$nextTick();
 
-          expect(tlLayer.removeAllAnnotations).toHaveBeenCalledTimes(1);
+          expect((wrapper.vm as any).timelapseRebuildCount - countBefore).toBe(
+            1,
+          );
         });
 
         it("paints every segment uniformly when per-track colouring is off", async () => {
@@ -6875,12 +6976,11 @@ describe("AnnotationViewer", () => {
         mockedTimelapseStore.showMode = true;
         mockedStore.time = 9;
         wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
-        const tLayer = (wrapper.vm as any).timelapseLayer;
         await wrapper.vm.$nextTick();
         vi.advanceTimersByTime(101);
         await wrapper.vm.$nextTick();
 
-        tLayer.removeAllAnnotations.mockClear();
+        const countBefore = (wrapper.vm as any).timelapseRebuildCount;
         // Two displayed-set turnovers in separate ticks, both within 100 ms —
         // the shape of the two-phase visibility update on a scrub step.
         mockedStore.time = 0;
@@ -6890,7 +6990,7 @@ describe("AnnotationViewer", () => {
         vi.advanceTimersByTime(101);
         await wrapper.vm.$nextTick();
 
-        expect(tLayer.removeAllAnnotations).toHaveBeenCalledTimes(1);
+        expect((wrapper.vm as any).timelapseRebuildCount - countBefore).toBe(1);
       });
     });
 
