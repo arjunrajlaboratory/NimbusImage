@@ -709,9 +709,12 @@ export class ConnectionList extends VuexModule {
    * in older datasets). Stubs count as resolvable, so in lazy mode an
    * unhydrated live annotation is never mistaken for a deleted one.
    *
-   * O(connections) with two resolves each, and invalidated by hydration
-   * changes — read it only from an active Connections tab (same gating rule
-   * as the row getters) or from the cleanup action itself.
+   * O(connections) with two stub resolves each, invalidated by connection
+   * or stub-map changes (creates, deletes, edits) — deliberately NOT by
+   * hydration churn, which the stub-only resolver exists to avoid. The scan
+   * itself still costs O(connections), so read it only from an active
+   * Connections tab (same gating rule as the row getters) or from the
+   * cleanup action itself.
    */
   get danglingConnectionIds(): string[] {
     const resolve = this.resolveStub;

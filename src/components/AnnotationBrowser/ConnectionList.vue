@@ -577,9 +577,10 @@ function clearTrackFilters() {
 
 // --- Dangling connection cleanup ---
 
-// Gated like every other scope-derived getter: danglingConnectionIds resolves
-// both endpoints of every connection and is invalidated by hydration, so a
-// hidden tab must never read it.
+// Gated like every other scope-derived getter: danglingConnectionIds is an
+// O(connections) scan invalidated by connection or stub-map changes (creates,
+// deletes, edits — deliberately NOT hydration churn), so a hidden tab must
+// never pay for it.
 const danglingCount = computed(() =>
   props.isActive ? connectionListStore.danglingConnectionIds.length : 0,
 );
