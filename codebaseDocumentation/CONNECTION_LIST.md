@@ -181,9 +181,12 @@ annotation for a deleted one.
   says "No connections match the track filters", and the button carries a
   badge — three cues that the list is narrowed (see the count-cue rule in the
   nimbus-frontend skill).
-- Filters are **session-only view state**, reset per dataset — numeric ranges
-  don't transfer between datasets with different track scales. Scope and
-  grouping survive dataset switches; filters deliberately don't.
+- Filters are **session-only view state**, reset when the dataset actually
+  changes — numeric ranges don't transfer between datasets with different
+  track scales, but a same-dataset refresh (e.g. an unroll toggle re-running
+  `setSelectedDataset` with the same id) keeps them, like the ordinary
+  filters. Scope and grouping survive dataset switches; filters deliberately
+  don't.
 - Changing a bound clears the connection selection and resets the page,
   matching `setScope`'s rationale; the bulk-delete intersection additionally
   picks the filter up by construction because `scopedConnections` applies it.
@@ -707,7 +710,8 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **The narrowed count carries its cue, and the empty state names the filter.** "N of M" beside the number while filters narrow; "No connections match the track filters" instead of the scope's message when they hide every row (but the scope's own message when the scope itself is empty). — *"says how many connections the track filters are hiding"*, *"uses a filtered empty message when the filters hide every row"*, *"keeps the scope's empty message when the scope itself is empty"*
 - [ ] **Bulk delete respects the filters by construction.** `scopedConnections` applies the predicate, so `selectedInScopeConnectionIds` cannot include a filtered-out row; a bound change also clears the selection and resets the page, matching `setScope`. — *"bulk delete acts only on rows passing the filters"*, *"clears the selection and resets the page when filters change"*
 - [ ] **`scopeOnlyConnections` is gated like every other scope getter.** It filters the whole connection array per read for the dynamic scopes, and the "of M" readout is the only consumer — a hidden tab must never touch it. — *"does not read scopeOnlyConnections while the tab is hidden"*
-- [ ] **Filters reset per dataset.** Numeric ranges are dataset-scale-specific, unlike the scope/grouping view preferences that survive. — *"resets the filters on a dataset switch"*
+- [ ] **Filters reset only on an ACTUAL dataset switch.** Numeric ranges are dataset-scale-specific, but the unconditional connection-list reset runs on every `setSelectedDataset` — including `refreshDataset()` with the same id (unroll toggles) — and the bounds are unrecoverable user state, so their reset (`resetConnectionTrackFilters`) is gated on `datasetChanged`, exactly like `resetFilterState`. — *"keeps the track filters through a same-dataset refresh"*, *"resets the filters on a dataset switch"*, *"resets the opt-in on a dataset switch"*
+- [ ] **Metric and dangling scans are hydration-churn stable.** They resolve STUB-FIRST (`resolveStubFirst`): the stub map is authoritative in both modes and replaced only by load/CRUD, while `hydratedAnnotations` is replaced on every pan — hydrated-first resolution made an active bound recompute the whole-graph scan and re-fire both draw watchers per pan on stub-mode datasets. The location scope uses the same resolver; row labels keep hydrated-first `resolveAnnotation` (they need `name`). — *"resolves metrics and dangling from stubs, not the hydration cache"*, *"keeps the metric scan cached when the hydration resolver churns"*
 - [ ] **Object hiding is opt-in, and the checkbox alone narrows nothing.** The default must stay "filter the list, not the canvas"; the opt-in only bites while a bound is live (`trackFilterHidesObjects` is the conjunction). — *"hides an object of a failing track only when opted in"*, *"hides nothing when the opt-in is set but no filter is active"*, *"hides a filtered-out track's objects only when opted in"*, *"resets the opt-in on a dataset switch"*
 - [ ] **Unconnected objects are never hidden.** They have no track, so a track filter says nothing about them — without this rule, any min-bound would blank every untracked object in the dataset. — *"never hides unconnected objects"*
 - [ ] **The object predicate is a stable constant while the opt-in is off**, same contract as the connection predicate: `displayableAnnotations` reads it on every rebuild, and hiding is filtered at THAT single source so every display surface (per-channel maps, layer maps, displayed ids, timelapse sets, connection gating and retention) stays symmetric by construction. — *"is a stable pass-all constant while the opt-in is off"*, *"removes drawn objects when the opt-in is switched on live"*

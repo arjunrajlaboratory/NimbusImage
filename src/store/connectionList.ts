@@ -169,7 +169,7 @@ export class ConnectionList extends VuexModule {
   get trackMetrics(): Map<string, ITrackMetrics> {
     return computeTrackMetrics(
       this.trackAnalysis.components,
-      this.resolveAnnotation,
+      this.resolveStubFirst,
     );
   }
 
@@ -301,7 +301,9 @@ export class ConnectionList extends VuexModule {
       }
       case "location": {
         const { xy, z, time } = main.currentLocation;
-        const resolve = this.resolveAnnotation;
+        // Stub-first: only location is read, and the hydrated-first resolver
+        // would make this predicate churn with viewport hydration.
+        const resolve = this.resolveStubFirst;
         const atLocation = (id: string): boolean => {
           const found = resolve(id);
           return (
@@ -335,6 +337,24 @@ export class ConnectionList extends VuexModule {
   get resolveAnnotation() {
     return (id: string): TAnnotationOrStub | undefined =>
       annotation.getAnnotationFromId(id) ?? annotation.getStub(id);
+  }
+
+  /**
+   * Stub-first resolver for location/existence reads (track metrics, the
+   * location scope, dangling detection). The stub map is authoritative in
+   * both modes — every create/update/delete path maintains it — and is
+   * replaced only by load/CRUD/content edits, NOT by viewport hydration,
+   * which replaces `hydratedAnnotations` on every pan. Resolving
+   * hydrated-first here made any active track bound recompute the
+   * whole-graph metric scan and re-fire both draw watchers per pan on
+   * stub-mode datasets (PR #1340 Codex round 3). `resolveAnnotation` above
+   * stays hydrated-first for callers that need hydrated-only fields (row
+   * labels read `name`). The hydrated fallback covers a stub-map gap that
+   * should not exist; it registers the hydration dep only when taken.
+   */
+  get resolveStubFirst() {
+    return (id: string): TAnnotationOrStub | undefined =>
+      annotation.getStub(id) ?? annotation.getAnnotationFromId(id);
   }
 
   get connectionRows(): IConnectionRow[] {
@@ -629,10 +649,29 @@ export class ConnectionList extends VuexModule {
     // hydrateAnnotationBrowserState re-seeds it after this reset (same
     // lifecycle as displayedPropertyPaths in the properties store).
     this.trackLabelPath = [];
-    // Numeric ranges are dataset-scale-specific, unlike scope/grouping.
+    // trackFilters and hideFilteredTrackObjects deliberately NOT here: this
+    // reset runs on every setSelectedDataset, including refreshDataset() with
+    // the same id (unroll toggles), and the bounds are unrecoverable user
+    // state — see resetConnectionTrackFilters, gated on an actual dataset
+    // change like resetFilterState.
+  }
+
+  @Mutation
+  protected resetTrackFiltersImpl() {
     this.trackFilters = createEmptyTrackFilters();
-    // Hiding objects is scoped to the filters it modifies.
     this.hideFilteredTrackObjects = false;
+  }
+
+  /**
+   * Clear the track bounds and the object-hiding opt-in. Dispatched by
+   * setSelectedDataset only when the dataset actually changed (numeric
+   * ranges are dataset-scale-specific), so a same-dataset refresh — e.g. a
+   * NavigatorPanel unroll toggle re-running setSelectedDataset with the same
+   * id — keeps the user's active filter (PR #1340 Codex round 3).
+   */
+  @Action
+  public resetConnectionTrackFilters() {
+    this.resetTrackFiltersImpl();
   }
 
   // Clear per-dataset connection view state. Scope and grouping survive: they
@@ -674,7 +713,7 @@ export class ConnectionList extends VuexModule {
    * as the row getters) or from the cleanup action itself.
    */
   get danglingConnectionIds(): string[] {
-    const resolve = this.resolveAnnotation;
+    const resolve = this.resolveStubFirst;
     return annotation.annotationConnections
       .filter(
         ({ parentId, childId }) => !resolve(parentId) || !resolve(childId),

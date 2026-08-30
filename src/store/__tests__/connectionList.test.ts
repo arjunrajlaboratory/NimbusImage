@@ -681,13 +681,32 @@ describe("track metric filters", () => {
 
   // Numeric ranges are meaningless across datasets with different track
   // scales, unlike the scope/grouping view preferences.
+  // Bounds are unrecoverable user state, like the ordinary filters: the
+  // id-referencing reset runs on EVERY setSelectedDataset — including
+  // refreshDataset(), which re-runs it with the same id (e.g. NavigatorPanel
+  // unroll toggles) — so it must not wipe them (PR #1340 Codex round 3).
+  it("keeps the track filters through a same-dataset refresh", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
+    );
+    connectionList.setHideFilteredTrackObjects(true);
+    connectionList.resetConnectionListState();
+    expect(connectionList.trackFiltersActive).toBe(true);
+    expect(connectionList.hideFilteredTrackObjects).toBe(true);
+  });
+
+  // The dedicated reset, dispatched by setSelectedDataset only when the
+  // dataset actually changed — same gating as resetFilterState.
   it("resets the filters on a dataset switch", () => {
     seedTracks();
     connectionList.setTrackFilters(
       filtersWith({ connectionCount: { min: 2, max: null } }),
     );
-    connectionList.resetConnectionListState();
+    connectionList.setHideFilteredTrackObjects(true);
+    connectionList.resetConnectionTrackFilters();
     expect(connectionList.trackFiltersActive).toBe(false);
+    expect(connectionList.hideFilteredTrackObjects).toBe(false);
     expect(connectionList.scopedConnections).toHaveLength(3);
   });
 
@@ -770,7 +789,7 @@ describe("track filter object hiding", () => {
 
   it("resets the opt-in on a dataset switch", () => {
     connectionList.setHideFilteredTrackObjects(true);
-    connectionList.resetConnectionListState();
+    connectionList.resetConnectionTrackFilters();
     expect(connectionList.hideFilteredTrackObjects).toBe(false);
   });
 });
@@ -866,5 +885,61 @@ describe("displayedPassingCount", () => {
     connectionList.setHideFilteredTrackObjects(true);
     // a and b belong to the failing track; solo is unconnected and stays.
     expect(connectionList.displayedPassingCount).toBe(1);
+  });
+});
+
+// --- Hydration-churn stability (PR #1340 Codex round 3) ---
+//
+// Viewport hydration replaces hydratedAnnotations on every pan; the metric
+// and dangling getters must not depend on it, or an active bound recomputes
+// the whole-graph scan and re-fires both draw watchers per pan on stub-mode
+// datasets. The stub map is authoritative in both modes (every
+// create/update/delete path maintains it) and is only replaced by load/CRUD,
+// so stub-first resolution gives the right invalidation boundary.
+describe("hydration-churn stability", () => {
+  function filtersWith(partial: Partial<ITrackFilters>): ITrackFilters {
+    return { ...createEmptyTrackFilters(), ...partial };
+  }
+
+  function seedStubbed() {
+    const times: Record<string, number> = { a: 0, b: 1, x: 0, y: 9 };
+    (annotationStore as any).getStub = (id: string) =>
+      id in times
+        ? { id, location: { XY: 0, Z: 0, Time: times[id] } }
+        : undefined;
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "a", "b"),
+      makeConnection("t2", "x", "y"),
+    ];
+  }
+
+  it("resolves metrics and dangling from stubs, not the hydration cache", () => {
+    seedStubbed();
+    let hydratedReads = 0;
+    (annotationStore as any).getAnnotationFromId = () => {
+      hydratedReads++;
+      return undefined;
+    };
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 5, max: null } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual(["t2"]);
+    expect(connectionList.danglingConnectionIds).toEqual([]);
+    expect(hydratedReads).toBe(0);
+  });
+
+  it("keeps the metric scan cached when the hydration resolver churns", () => {
+    seedStubbed();
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 5, max: null } }),
+    );
+    const metrics = connectionList.trackMetrics;
+    const dangling = connectionList.danglingConnectionIds;
+    // The churn analog: hydration replaces the cache map, which re-creates
+    // the hydrated resolver. Neither getter may have registered it as a dep.
+    (annotationStore as any).getAnnotationFromId = (id: string) =>
+      makeAnnotation(id, 0);
+    expect(connectionList.trackMetrics).toBe(metrics);
+    expect(connectionList.danglingConnectionIds).toBe(dangling);
   });
 });
