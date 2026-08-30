@@ -1038,7 +1038,7 @@ function drawAnnotationsAndTooltips() {
   drawAnnotations();
   drawTooltips();
   if (showTimelapseMode.value) {
-    drawTimelapseConnectionsAndCentroids();
+    drawTimelapseThrottled();
   }
 }
 
@@ -1409,17 +1409,25 @@ function drawNewConnections(
 
 function getDisplayedAnnotationIdsAcrossTime(): Set<string> {
   const totalAnnotationIdsSet: Set<string> = new Set();
+  // Hoisted out of the per-annotation loop: layerSliceIndexes computes a fresh
+  // result on every call and is invariant per layer, and the unroll flags are
+  // invariant for the whole pass. Calling the getter per annotation measured
+  // ~67 ms of a ~490 ms timelapse rebuild at 45K annotations.
+  const showHidden = showAnnotationsFromHiddenLayers.value;
+  const unrollXY = store.unrollXY;
+  const unrollZ = store.unrollZ;
   for (const layer of validLayers.value) {
-    if (layer.visible || showAnnotationsFromHiddenLayers.value) {
+    if (layer.visible || showHidden) {
+      const sliceIndexes = store.layerSliceIndexes(layer);
+      const xyIndex = sliceIndexes?.xyIndex;
+      const zIndex = sliceIndexes?.zIndex;
       const channelAnnotations =
         displayableAnnotationsByChannel.value.get(layer.channel) || [];
       for (const annotation of channelAnnotations) {
         if (annotation.channel === layer.channel) {
-          const sliceIndexes = store.layerSliceIndexes(layer);
           if (
-            (store.unrollXY ||
-              annotation.location.XY === sliceIndexes?.xyIndex) &&
-            (store.unrollZ || annotation.location.Z === sliceIndexes?.zIndex)
+            (unrollXY || annotation.location.XY === xyIndex) &&
+            (unrollZ || annotation.location.Z === zIndex)
           ) {
             totalAnnotationIdsSet.add(annotation.id);
           }
@@ -1430,32 +1438,298 @@ function getDisplayedAnnotationIdsAcrossTime(): Set<string> {
   return totalAnnotationIdsSet;
 }
 
-function getDisplayedAnnotationsAcrossTime(): Set<IAnnotation> {
-  const displayedIds = getDisplayedAnnotationIdsAcrossTime();
-  return new Set(
-    Array.from(displayedIds)
-      .map((id) => getAnnotationFromId.value(id))
-      .filter((a): a is IAnnotation => a !== undefined),
-  );
+// One timelapse rebuild pass. Features are keyed (`tlKey`) by what they
+// represent — `c|<pairId>` for a track segment, `p|<annotationId>` for a
+// centroid dot — and carry their raw (ingcs) geometry as `tlGeom` so a kept
+// feature is provably drawing the same thing. Anything on the layer that this
+// pass does not re-claim is removed at the end.
+interface ITimelapseDiff {
+  existingByKey: Map<string, IGeoJSAnnotation>;
+  staleFeatures: IGeoJSAnnotation[];
+  newFeatures: IGeoJSAnnotation[];
+}
+
+// Counts mode-on rebuild passes. Rebuilds used to be observable through
+// removeAllAnnotations, which the diff-based pass no longer calls; tests that
+// assert "rebuilt exactly once" / "hover never rebuilds" read this instead.
+// A pass skipped by the input snapshot below does NOT count — nothing ran.
+const timelapseRebuildCount = ref(0);
+
+// EVERY input the rebuild pass reads, snapshotted after each successful pass.
+// The two-phase visibility update re-fires the displayedAnnotations watcher
+// ~250 ms after a frame change with nothing the timelapse pass reads having
+// changed, and that zero-churn second pass still cost the full desired-set
+// computation (~500 ms at 100K connections). When every field matches, the
+// pass is skipped outright — the layer already shows exactly this state.
+//
+// THE INVARIANT THIS ENCODES: a new input read by the pass (or by
+// drawTimelapseTrack / drawTimelapseAnnotationCentroidsAndLabels) must be
+// added here AND to timelapsePassInputsEqual, or a stale skip silently freezes
+// the overlay. Same discipline as the timelapse watch list — see the
+// regression checklist's "identical-pass skip" row. Comparisons are by
+// identity/value only (all these are replaced on change, and mutationCounter
+// covers in-place annotation edits); displayedIds is compared by content
+// because the second wave replaces the array identity without changing it.
+interface ITimelapsePassInputs {
+  // The OUTPUT layers, not just inputs: recreating a GeoJS map at an existing
+  // v-for index reuses this component instance with fresh, EMPTY layers, and a
+  // skip against those would leave the overlay blank until some other input
+  // changed (Codex round 4 on PR #1341).
+  layer: IGeoJSAnnotationLayer;
+  textLayer: IGeoJSFeatureLayer;
+  displayedIds: Set<string>;
+  connections: IAnnotationConnection[];
+  mutationCounter: number;
+  currentTime: number;
+  modeWindow: number;
+  tags: string[];
+  coloring: string;
+  colorSeed: number;
+  passesTrackFilters: (connection: IAnnotationConnection) => boolean;
+  resolveAnnotation: (id: string) => IAnnotation | undefined;
+  unrolledCentroids: { [annotationId: string]: IGeoJSPosition };
+  selectedConnections: Set<string>;
+  // Hover and object selection are usually reflected between passes by
+  // restyleTimelapseFeatures in place, so a change since the last pass defeats
+  // the skip even though the layer's PAINT already shows it. Deliberate: the
+  // extra pass is merely conservative, the cost only bites in the rare case of
+  // paint state changing between the two visibility waves of one frame change,
+  // and connection hover genuinely affects materialization (it picks the
+  // representative duplicate). Do not "optimize" these out of the snapshot.
+  hoveredConnectionId: string | null;
+  selectedObjects: Set<string>;
+  hoveredObjectId: string | null;
+  showLabels: boolean;
+}
+let lastTimelapsePassInputs: ITimelapsePassInputs | null = null;
+
+function timelapsePassInputsEqual(
+  a: ITimelapsePassInputs,
+  b: ITimelapsePassInputs,
+): boolean {
+  if (
+    a.layer !== b.layer ||
+    a.textLayer !== b.textLayer ||
+    a.connections !== b.connections ||
+    a.mutationCounter !== b.mutationCounter ||
+    a.currentTime !== b.currentTime ||
+    a.modeWindow !== b.modeWindow ||
+    a.tags !== b.tags ||
+    a.coloring !== b.coloring ||
+    a.colorSeed !== b.colorSeed ||
+    a.passesTrackFilters !== b.passesTrackFilters ||
+    a.resolveAnnotation !== b.resolveAnnotation ||
+    a.unrolledCentroids !== b.unrolledCentroids ||
+    a.selectedConnections !== b.selectedConnections ||
+    a.hoveredConnectionId !== b.hoveredConnectionId ||
+    a.selectedObjects !== b.selectedObjects ||
+    a.hoveredObjectId !== b.hoveredObjectId ||
+    a.showLabels !== b.showLabels ||
+    a.displayedIds.size !== b.displayedIds.size
+  ) {
+    return false;
+  }
+  for (const id of b.displayedIds) {
+    if (!a.displayedIds.has(id)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Shallow structural equality for option values: scalars, arrays of scalars,
+// and flat objects (whose values may be scalars or arrays). Exactly the shapes
+// the timelapse features store: connectionIds, tlGeom, the two base-style
+// bags, and style fields including lineDash.
+function timelapseValueEquals(a: any, b: any): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) {
+      return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const aKeys = Object.keys(a);
+    if (aKeys.length !== Object.keys(b).length) {
+      return false;
+    }
+    for (const key of aKeys) {
+      if (!timelapseValueEquals(a[key], b[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+// The complete option bags a timelapse feature carries. These interfaces ARE
+// the enforcement of the diff's core invariant: any new option baked into a
+// segment or dot must be declared here, so the materializer's compare-and-
+// update loop (which iterates these keys) keeps it fresh on kept features. An
+// option set on a feature some other way goes stale the first time the
+// feature is reused.
+interface ITimelapseSegmentOptions {
+  style: ReturnType<typeof getTimelapseSegmentStyle>;
+  isConnection: true;
+  girderId: string;
+  timelapseBaseStyle: ITimelapseSegmentBaseStyle;
+  connectionIds: string[];
+}
+interface ITimelapsePointOptions {
+  style: ReturnType<typeof getTimelapsePointStyle>;
+  time: number;
+  girderId: string;
+  isTimelapsePoint: true;
+  timelapsePointBaseStyle: ITimelapsePointBaseStyle;
+}
+type TTimelapseFeatureOptions =
+  | ITimelapseSegmentOptions
+  | ITimelapsePointOptions;
+
+// Claim the feature for `key` if a matching one is already on the layer,
+// updating only the options that changed (options() marks the layer modified,
+// so an unchanged feature must not be touched at all); otherwise construct a
+// fresh feature and queue it for a single batched add. The desired `style` is
+// merged over the feature's current style so GeoJS's own defaults
+// (stroke/fill flags) survive — options("style", …) replaces, never merges.
+function materializeTimelapseFeature(
+  diff: ITimelapseDiff,
+  key: string,
+  shape: AnnotationShape,
+  coordinates: IGeoJSPosition[],
+  geometry: number[],
+  typedOptions: TTimelapseFeatureOptions,
+) {
+  const options = typedOptions as Record<string, any>;
+  const existing = diff.existingByKey.get(key);
+  if (existing && timelapseValueEquals(existing.options("tlGeom"), geometry)) {
+    diff.existingByKey.delete(key);
+    const current = existing.options();
+    for (const optionKey of Object.keys(options)) {
+      const desired = options[optionKey];
+      if (optionKey === "style") {
+        const currentStyle = current.style;
+        let covered = currentStyle != null;
+        if (covered) {
+          for (const styleKey of Object.keys(desired)) {
+            if (
+              !timelapseValueEquals(currentStyle[styleKey], desired[styleKey])
+            ) {
+              covered = false;
+              break;
+            }
+          }
+        }
+        if (!covered) {
+          existing.options("style", Object.assign({}, currentStyle, desired));
+        }
+      } else if (!timelapseValueEquals(current[optionKey], desired)) {
+        existing.options(optionKey, desired);
+      }
+    }
+    return;
+  }
+  // Style goes through the factory so GeoJS merges it over its own defaults
+  // at construction; the other options are set explicitly on the feature,
+  // matching how the pre-diff code tagged segments.
+  const feature = geojsAnnotationFactory(shape, coordinates, {
+    style: options.style,
+  });
+  if (feature) {
+    for (const optionKey of Object.keys(options)) {
+      if (optionKey !== "style") {
+        feature.options(optionKey, options[optionKey]);
+      }
+    }
+    feature.options("tlKey", key);
+    feature.options("tlGeom", geometry);
+    diff.newFeatures.push(feature);
+  }
 }
 
 function drawTimelapseConnectionsAndCentroids() {
-  props.timelapseLayer.removeAllAnnotations(undefined, undefined, false);
-  props.timelapseTextLayer.features([]);
-
   if (!showTimelapseMode.value) {
+    lastTimelapsePassInputs = null;
+    props.timelapseTextLayer.features([]);
+    props.timelapseLayer.removeAllAnnotations(undefined, undefined, false);
     props.timelapseLayer.draw();
     props.timelapseTextLayer.draw();
     return;
   }
 
-  const tlModeWindow = timelapseModeWindow.value;
-  const currentTime = time.value;
-  const timelapseTags = timelapseStore.tags;
+  // Gather every input the pass reads (see ITimelapsePassInputs). The pass
+  // destructures its working values FROM this object so the snapshot cannot
+  // drift from what was actually consumed.
+  const inputs: ITimelapsePassInputs = {
+    layer: props.timelapseLayer,
+    textLayer: props.timelapseTextLayer,
+    displayedIds: getDisplayedAnnotationIdsAcrossTime(),
+    connections: annotationConnections.value,
+    mutationCounter: annotationStore.mutationCounter,
+    currentTime: time.value,
+    modeWindow: timelapseModeWindow.value,
+    tags: timelapseStore.tags,
+    coloring: timelapseStore.trackColoring,
+    colorSeed: timelapseStore.colorSeed,
+    passesTrackFilters: connectionPassesTrackFilters.value,
+    resolveAnnotation: getAnnotationFromId.value,
+    unrolledCentroids: unrolledCentroidCoordinates.value,
+    selectedConnections: selectedConnectionIds.value,
+    hoveredConnectionId: hoveredConnectionId.value,
+    selectedObjects: selectedAnnotationIds.value,
+    hoveredObjectId: hoveredAnnotationId.value,
+    showLabels: showTimelapseLabels.value,
+  };
+  // Identical inputs ⇒ the layer already shows exactly this state: skip the
+  // whole pass. The displayedAnnotations watcher re-fires ~250 ms after each
+  // frame change (two-phase visibility update) with nothing this pass reads
+  // having changed, and the zero-churn pass still cost the full desired-set
+  // computation (~500 ms at 100K connections).
+  if (
+    lastTimelapsePassInputs !== null &&
+    timelapsePassInputsEqual(lastTimelapsePassInputs, inputs)
+  ) {
+    return;
+  }
+  timelapseRebuildCount.value++;
+  props.timelapseTextLayer.features([]);
 
-  const displayedIds = getDisplayedAnnotationIdsAcrossTime();
+  // Diff-based rebuild: tearing the layer down and reconstructing every
+  // feature cost ~250 ms per time-scrub step at Gia-scale connection counts
+  // (51,665 connections → ~10K features), and a scrub step actually changes
+  // only the features entering/leaving the mode window plus the ones whose
+  // time-relative styling flips. Keep every feature whose key and geometry
+  // still match, restyle the changed ones in place (options() marks the layer
+  // modified), and add/remove only the churn.
+  const diff: ITimelapseDiff = {
+    existingByKey: new Map(),
+    staleFeatures: [],
+    newFeatures: [],
+  };
+  for (const feature of props.timelapseLayer.annotations()) {
+    const key = feature.options("tlKey");
+    if (key !== undefined && !diff.existingByKey.has(key)) {
+      diff.existingByKey.set(key, feature);
+    } else {
+      diff.staleFeatures.push(feature);
+    }
+  }
 
-  const connections = annotationConnections.value;
+  const tlModeWindow = inputs.modeWindow;
+  const currentTime = inputs.currentTime;
+  const timelapseTags = inputs.tags;
+  const displayedIds = inputs.displayedIds;
+
+  const connections = inputs.connections;
   const connectionsLength = connections.length;
   const filteredConnections: IAnnotationConnection[] = [];
   for (let i = 0; i < connectionsLength; i++) {
@@ -1464,11 +1738,10 @@ function drawTimelapseConnectionsAndCentroids() {
       filteredConnections.push(conn);
     }
   }
-
   const components = findConnectedComponents(filteredConnections);
 
-  const coloring = timelapseStore.trackColoring;
-  const colorSeed = timelapseStore.colorSeed;
+  const coloring = inputs.coloring;
+  const colorSeed = inputs.colorSeed;
   // Vuex caches this global analysis against `annotationConnections`. Reads
   // during scope changes and time scrubs reuse it; only connection CRUD
   // invalidates it. Uniform coloring does not need the index at all.
@@ -1477,7 +1750,8 @@ function drawTimelapseConnectionsAndCentroids() {
       ? connectionListStore.trackAnalysis.trackKeyByAnnotationId
       : undefined;
 
-  const passesTrackFilters = connectionPassesTrackFilters.value;
+  const passesTrackFilters = inputs.passesTrackFilters;
+  const resolveAnnotation = inputs.resolveAnnotation;
 
   components.forEach((component) => {
     // A displayed fragment's connections all belong to one dataset-wide
@@ -1499,12 +1773,18 @@ function drawTimelapseConnectionsAndCentroids() {
             colorSeed,
           );
 
-    const annotations = Array.from(component.annotations);
-    const len = annotations.length;
-    for (let i = 0; i < len; i++) {
-      const id = annotations[i];
-      const annotation = getAnnotationFromId.value(id);
+    // Check the window BEFORE cloning: members outside it are dropped anyway,
+    // and spread-cloning every member of every track measured as a main cost
+    // of the rebuild at 42K tracked annotations per pass.
+    for (const id of component.annotations) {
+      const annotation = resolveAnnotation(id);
       if (!annotation) {
+        continue;
+      }
+      if (
+        annotation.location.Time < currentTime - tlModeWindow ||
+        annotation.location.Time > currentTime + tlModeWindow
+      ) {
         continue;
       }
       if (
@@ -1513,59 +1793,65 @@ function drawTimelapseConnectionsAndCentroids() {
       ) {
         continue;
       }
-      const timelapseAnnotation: ITimelapseAnnotation = {
+      componentAnnotations.push({
         ...(annotation as IAnnotation),
         trackPositionType: TrackPositionType.INTERIOR,
-      };
-      if (
-        annotation.location.Time >= currentTime - tlModeWindow &&
-        annotation.location.Time <= currentTime + tlModeWindow
-      ) {
-        componentAnnotations.push(timelapseAnnotation);
-      }
+      });
     }
 
     if (componentAnnotations.length === 0) {
       return;
     }
 
+    // One pass over the component's connections instead of two .some() scans
+    // per member (O(members × connections) — 1.75M comparisons per rebuild on
+    // the Gia-scale fixture). Self-connections don't count for either side.
+    const membersWithEarlier = new Set<string>();
+    const membersWithLater = new Set<string>();
+    for (const conn of component.connections) {
+      if (conn.parentId !== conn.childId) {
+        membersWithEarlier.add(conn.childId);
+        membersWithLater.add(conn.parentId);
+      }
+    }
     for (const annotation of componentAnnotations) {
-      const isStart = !component.connections.some(
-        (conn) =>
-          conn.childId === annotation.id && conn.parentId !== annotation.id,
-      );
-      const isEnd = !component.connections.some(
-        (conn) =>
-          conn.parentId === annotation.id && conn.childId !== annotation.id,
-      );
       if (annotation.location.Time === currentTime) {
         annotation.trackPositionType = TrackPositionType.CURRENT;
-      } else if (isStart) {
+      } else if (!membersWithEarlier.has(annotation.id)) {
         annotation.trackPositionType = TrackPositionType.START;
-      } else if (isEnd) {
+      } else if (!membersWithLater.has(annotation.id)) {
         annotation.trackPositionType = TrackPositionType.END;
       }
     }
 
-    drawTimelapseTrack(componentAnnotations, component.connections, color);
-    drawTimelapseAnnotationCentroidsAndLabels(componentAnnotations);
+    drawTimelapseTrack(
+      diff,
+      componentAnnotations,
+      component.connections,
+      color,
+    );
+    drawTimelapseAnnotationCentroidsAndLabels(diff, componentAnnotations);
   });
 
   const orphanAnnotations: ITimelapseAnnotation[] = [];
-  const connectedIds = new Set<string>(
-    Array.from(components).flatMap((component) =>
-      Array.from(component.annotations),
-    ),
-  );
+  const connectedIds = new Set<string>();
+  for (const component of components) {
+    for (const id of component.annotations) {
+      connectedIds.add(id);
+    }
+  }
 
-  const displayedAnns = getDisplayedAnnotationsAcrossTime();
-
-  const annsArray = Array.from(displayedAnns);
-  const annsLen = annsArray.length;
-  for (let i = 0; i < annsLen; i++) {
-    const annotation = annsArray[i];
+  // Orphans are the displayed ids WITHOUT a connection. Reuse the id set
+  // computed above rather than re-scanning every annotation (the scan is the
+  // most expensive step of this rebuild), and resolve only the unconnected
+  // ids — on a heavily-tracked dataset that is a small fraction of the total.
+  for (const id of displayedIds) {
+    if (connectedIds.has(id)) {
+      continue;
+    }
+    const annotation = resolveAnnotation(id);
     if (
-      !connectedIds.has(annotation.id) &&
+      annotation &&
       annotation.location.Time >= currentTime - tlModeWindow &&
       annotation.location.Time <= currentTime + tlModeWindow &&
       (timelapseTags.length === 0 ||
@@ -1579,14 +1865,56 @@ function drawTimelapseConnectionsAndCentroids() {
   }
 
   if (orphanAnnotations.length > 0) {
-    drawTimelapseAnnotationCentroidsAndLabels(orphanAnnotations);
+    drawTimelapseAnnotationCentroidsAndLabels(diff, orphanAnnotations);
+  }
+
+  // Sweep: whatever was on the layer and was not re-claimed by this pass is
+  // stale. Adds and removals with update=false do not bump the layer's
+  // modified timestamp, so mark it ourselves when the feature set changed —
+  // in-place restyles already marked it through options().
+  let removedCount = 0;
+  for (const staleFeature of diff.staleFeatures) {
+    props.timelapseLayer.removeAnnotation(staleFeature, false);
+    removedCount++;
+  }
+  for (const staleFeature of diff.existingByKey.values()) {
+    props.timelapseLayer.removeAnnotation(staleFeature, false);
+    removedCount++;
+  }
+  if (diff.newFeatures.length > 0) {
+    props.timelapseLayer.addMultipleAnnotations(
+      diff.newFeatures,
+      undefined,
+      false,
+    );
+  }
+  if (removedCount > 0 || diff.newFeatures.length > 0) {
+    props.timelapseLayer.modified();
   }
 
   props.timelapseLayer.draw();
   props.timelapseTextLayer.draw();
+  // Snapshot only after a completed pass, so an exception can never leave a
+  // half-updated layer marked as current.
+  lastTimelapsePassInputs = inputs;
 }
 
+// The displayedAnnotations watcher fires 2-3 times per frame change (the
+// two-phase visibility update), and each fire reached the timelapse rebuild
+// directly while drawAnnotations right beside it was throttled — bundling 2-3
+// full layer rebuilds into ONE long main-thread task per time-scrub step
+// (measured 157 ms at 9,965 connections; a single rebuild is ~57 ms).
+// Trailing-only: every fire inside the window coalesces into one rebuild
+// against the FINAL state. A leading call would run against the mid-update
+// visible set and still pay a second rebuild at the trailing edge.
+const drawTimelapseThrottled = throttle(
+  drawTimelapseConnectionsAndCentroids,
+  THROTTLE,
+  { leading: false },
+);
+
 function drawTimelapseTrack(
+  diff: ITimelapseDiff,
   annotations: ITimelapseAnnotation[],
   connections: IAnnotationConnection[],
   color?: string,
@@ -1596,6 +1924,10 @@ function drawTimelapseTrack(
   const currentTime = time.value;
   const drawnLines = new Set<string>();
   const unrolledCentroids = unrolledCentroidCoordinates.value;
+  // Hoisted: these are Vuex getter reads, paid per segment otherwise (several
+  // per segment across ~5K segments per rebuild at Gia scale).
+  const isConnectionSelected = connectionListStore.isConnectionSelected;
+  const hoveredConnectionId = connectionListStore.hoveredConnectionId;
   const annotationsById = new Map<string, ITimelapseAnnotation>();
   const connectionsByAnnotationId = new Map<string, IAnnotationConnection[]>();
 
@@ -1617,7 +1949,6 @@ function drawTimelapseTrack(
     connectionsByAnnotationId.set(connection.childId, childConnections);
   }
 
-  let lines: IGeoJSAnnotation[] = [];
   for (const annotation of annotations) {
     const relevantConnections =
       connectionsByAnnotationId.get(annotation.id) || [];
@@ -1666,18 +1997,15 @@ function drawTimelapseTrack(
       // branch, hovering a later duplicate's row triggered a full redraw whose
       // segment neither widened nor carried that connection's id.
       const representative =
-        pairConnections.find(({ id }) =>
-          connectionListStore.isConnectionSelected(id),
-        ) ??
-        pairConnections.find(
-          ({ id }) => id === connectionListStore.hoveredConnectionId,
-        ) ??
+        pairConnections.find(({ id }) => isConnectionSelected(id)) ??
+        pairConnections.find(({ id }) => id === hoveredConnectionId) ??
         connection;
 
-      const points = [
-        unrolledCentroids[annotation.id],
-        unrolledCentroids[otherId],
-      ];
+      const pointA = unrolledCentroids[annotation.id];
+      const pointB = unrolledCentroids[otherId];
+      if (!pointA || !pointB) {
+        continue;
+      }
 
       const timeDiff = annotation.location.Time - otherAnnotation.location.Time;
       const isTimeJump = timeDiff > 1;
@@ -1703,33 +2031,38 @@ function drawTimelapseTrack(
         lineDash: isTimeJump ? [5, 5] : undefined,
       };
       const pairIds = pairConnections.map(({ id }) => id);
-      const line = geojsAnnotationFactory(AnnotationShape.Line, points, {
-        style: getTimelapseSegmentStyle(
-          baseStyle,
-          pairIds.some(connectionListStore.isConnectionSelected),
-          pairIds.includes(connectionListStore.hoveredConnectionId ?? ""),
-        ),
-      });
-
-      if (line) {
-        // Tag the segment with its connection so a click resolves to exactly
-        // that link (the timelapse layer draws one line per connection, not one
-        // polyline per track). Without this, track segments are unclickable.
-        line.options("isConnection", true);
-        line.options("girderId", representative.id);
-        // Restyling in place needs both: the base to rebuild the unhighlighted
-        // appearance from, and EVERY id sharing this pair — a duplicate that is
-        // not the representative must still light its segment up.
-        line.options("timelapseBaseStyle", baseStyle);
-        line.options("connectionIds", pairIds);
-        lines.push(line);
-      }
+      // Options a kept segment must stay in sync on:
+      // - isConnection + girderId tag the segment with its representative so a
+      //   click resolves to exactly that link (the layer draws one line per
+      //   connection, not one polyline per track);
+      // - timelapseBaseStyle and connectionIds let a hover/selection change be
+      //   restyled in place — the base to rebuild the unhighlighted appearance
+      //   from, and EVERY id sharing this pair, so a duplicate that is not the
+      //   representative still lights its segment up.
+      materializeTimelapseFeature(
+        diff,
+        "c|" + lineId,
+        AnnotationShape.Line,
+        [pointA, pointB],
+        [pointA.x, pointA.y, pointB.x, pointB.y],
+        {
+          style: getTimelapseSegmentStyle(
+            baseStyle,
+            pairIds.some(isConnectionSelected),
+            pairIds.includes(hoveredConnectionId ?? ""),
+          ),
+          isConnection: true,
+          girderId: representative.id,
+          timelapseBaseStyle: baseStyle,
+          connectionIds: pairIds,
+        },
+      );
     }
   }
-  props.timelapseLayer.addMultipleAnnotations(lines, undefined, false);
 }
 
 function drawTimelapseAnnotationCentroidsAndLabels(
+  diff: ITimelapseDiff,
   annotations: ITimelapseAnnotation[],
 ) {
   const currentTime = time.value;
@@ -1745,7 +2078,7 @@ function drawTimelapseAnnotationCentroidsAndLabels(
     strokeOpacity: 1,
     radius: 0.09,
   };
-  let points: IGeoJSAnnotation[] = [];
+  const unrolledCentroids = unrolledCentroidCoordinates.value;
   const len = annotations.length;
   for (let i = 0; i < len; i++) {
     const annotation = annotations[i];
@@ -1759,9 +2092,16 @@ function drawTimelapseAnnotationCentroidsAndLabels(
     baseStyle.strokeOpacity = locationTime < currentTime ? 0.5 : 1;
     baseStyle.radius = locationTime === currentTime ? 0.16 : 0.09;
 
-    const pointAnnotation = geojsAnnotationFactory(
+    const centroid = unrolledCentroids[annotation.id];
+    if (!centroid) {
+      continue;
+    }
+    materializeTimelapseFeature(
+      diff,
+      "p|" + annotation.id,
       AnnotationShape.Point,
-      [unrolledCentroidCoordinates.value[annotation.id]],
+      [centroid],
+      [centroid.x, centroid.y],
       {
         time: annotation.location.Time,
         girderId: annotation.id,
@@ -1777,12 +2117,7 @@ function drawTimelapseAnnotationCentroidsAndLabels(
         ),
       },
     );
-
-    if (pointAnnotation) {
-      points.push(pointAnnotation);
-    }
   }
-  props.timelapseLayer.addMultipleAnnotations(points, undefined, false);
 
   if (showTimelapseLabels.value) {
     const textPoints: IGeoJSPosition[] = [];
@@ -2147,12 +2482,13 @@ function getTimelapseSegmentStyle(
 // The timelapse counterpart of restyleAnnotations, covering BOTH kinds of
 // feature the layer holds: track segments and centroid dots.
 //
-// Connection selection additionally rebuilds the layer (it decides which
-// duplicate represents a pair), but hover changes continuously as the pointer
-// runs down the connection list, and rebuilding ~2,500 line features per row
-// made the list feel sluggish — so hover repaints in place. Not a cosmetic
-// nicety: clicking a row HIGHLIGHTS rather than selects, so without it the main
-// way of finding a connection has no visible effect at all in timelapse mode.
+// Connection selection additionally runs the diff-based rebuild pass (it
+// decides which duplicate represents a pair, a materialization-time choice),
+// but hover changes continuously as the pointer runs down the connection list,
+// and running the full desired-set computation per row made the list feel
+// sluggish — so hover repaints in place. Not a cosmetic nicety: clicking a row
+// HIGHLIGHTS rather than selects, so without it the main way of finding a
+// connection has no visible effect at all in timelapse mode.
 //
 // Dots go through the same in-place path. `restyleAnnotations` only ever
 // touches `annotationLayer`, so before this the timelapse dots had no restyle
@@ -3796,6 +4132,11 @@ function onAnnotationStateChanged() {
 }
 
 function onTimelapseModeChanged() {
+  // A watcher-driven trailing rebuild may still be queued (e.g. changing a
+  // track filter both fires the primary watcher AND clears a non-empty
+  // selection, which lands here). This direct pass renders the same final
+  // state now, so drop the queued one — otherwise the ~100 ms pass runs twice.
+  drawTimelapseThrottled.cancel();
   drawTimelapseConnectionsAndCentroids();
 }
 
@@ -4630,14 +4971,15 @@ watch([selectedConnectionIds, hoveredConnectionId], () => {
   onAnnotationStateChanged();
 });
 
-// The timelapse layer bakes styling in at draw time, so the two highlight
-// channels are reflected differently there. SELECTION rebuilds: it also decides
-// which duplicate represents an endpoint pair, which is a draw-time choice.
-// HOVER restyles the drawn segments in place — it changes continuously while
-// the pointer moves down the connection list, and rebuilding ~2,500 line
-// features per row made the list feel sluggish. Both must do something: a row
-// click highlights via hover, so leaving hover unhandled made clicking a
-// connection look broken in timelapse mode while it worked everywhere else.
+// The timelapse layer's styling is decided during its rebuild pass, so the two
+// highlight channels are reflected differently there. SELECTION runs the
+// (diff-based) rebuild pass: it also decides which duplicate represents an
+// endpoint pair, which is a materialization-time choice. HOVER restyles the
+// drawn segments in place — it changes continuously while the pointer moves
+// down the connection list, and running the full desired-set computation per
+// row made the list feel sluggish. Both must do something: a row click
+// highlights via hover, so leaving hover unhandled made clicking a connection
+// look broken in timelapse mode while it worked everywhere else.
 watch(selectedConnectionIds, () => {
   if (showTimelapseMode.value) {
     onTimelapseModeChanged();
@@ -5109,6 +5451,7 @@ onBeforeUnmount(() => {
   updateVisibilityDebounced.cancel();
   restyleAnnotationsThrottled.cancel();
   restyleTimelapseFeaturesThrottled.cancel();
+  drawTimelapseThrottled.cancel();
   drawAnnotations.cancel();
   drawTooltips.cancel();
   handleValueOnMouseMoveDebounce.cancel();
@@ -5232,8 +5575,8 @@ defineExpose({
   drawNewConnections,
   findConnectedComponents,
   getDisplayedAnnotationIdsAcrossTime,
-  getDisplayedAnnotationsAcrossTime,
   drawTimelapseConnectionsAndCentroids,
+  timelapseRebuildCount,
   drawTimelapseTrack,
   drawTimelapseAnnotationCentroidsAndLabels,
   createGeoJSAnnotation,

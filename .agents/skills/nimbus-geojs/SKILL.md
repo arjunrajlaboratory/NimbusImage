@@ -22,20 +22,29 @@ GeoJS's annotation layer has several asymmetric, mutating APIs. Each trap below 
 | Feature is in `layer.annotations()`, on-screen, right colour — and paints nothing | `options("style", {...})` **replaces** the style, dropping GeoJS's default `stroke: true` / `fill: true` | Include `stroke: true` explicitly, and merge: `options("style", {...a.options("style"), ...next})` |
 | Clicking a list row shows no connection at high zoom | A connection draws only when BOTH endpoints are displayed; recentering on one leaves the other outside the viewport | Frame both endpoints (`frameCameraInfo`) instead of recentering on one |
 | With an axis unrolled, the camera/hit-test lands exactly one tile-width (or a multiple) away from the object | The draw path offsets each annotation by its grid cell; the other path used the raw frame-local centroid | Put both through `@/utils/unroll` — see "Unrolled coordinates are a third space" |
-| Hover/selection highlight works on one layer and does nothing on another | The second layer rebuilds its features from scratch on every draw and bakes the highlight in at build time, so only the state wired to a rebuild is ever reflected | Give the features a base-style option and restyle them in place — see "Layers that bake style at draw time" |
+| Hover/selection highlight works on one layer and does nothing on another | The second layer decides its styling during a rebuild pass, so only the state wired to that pass is ever reflected | Give the features a base-style option and restyle them in place — see "Layers that bake style at draw time" |
 | A tile layer silently loads nothing: zero network requests, no errors, later draws/toggles no-ops | `tile.catch`/`tile.then` QUEUES the tile's fetch, and the queue's `needed` predicate requires `tile === cache.get(hash)` — a handler attached inside `_getTile` (pre-`cache.add`) rejects every tile at creation; rejected tiles stay cached with `_queued=true` so nothing ever refetches them | Attach tile promise handlers only post-cache: wrap `_getTileCached`, never `_getTile` — see "Tile promise handlers queue the fetch" |
 
 ## Layers that bake style at draw time
 
-A layer that is torn down and rebuilt on every draw (the timelapse track layer:
-`removeAllAnnotations` then one fresh line feature per connection) reflects a state
-change only if something triggers a rebuild. That makes it tempting to skip cheap-looking
-state — rebuilding ~2,500 features per hover genuinely is sluggish — but **skipping the
-repaint is only safe if that state is not a user-facing gesture.** It was: a connection-list
-row click *highlights* (sets hover) rather than selects, so the highlight silently did nothing
-in timelapse mode while working everywhere else.
+A layer whose styling is decided during a rebuild pass (the timelapse track layer)
+reflects a state change only if something triggers that pass. That makes it tempting to
+skip cheap-looking state — running the full desired-set computation per hover genuinely
+is sluggish — but **skipping the repaint is only safe if that state is not a user-facing
+gesture.** It was: a connection-list row click *highlights* (sets hover) rather than
+selects, so the highlight silently did nothing in timelapse mode while working everywhere
+else.
 
-Restyle in place instead, and give the features what that needs at build time:
+The rebuild pass itself is a keyed **diff**, not a teardown (PR #1341): each feature
+carries `tlKey` (`c|<pairId>` / `p|<annotationId>`) and its raw geometry (`tlGeom`); a
+pass claims matching features, updates only the options that changed, and adds/removes
+only the churn — full reconstruction (`removeAllAnnotations` + fresh features) measured
+~250 ms per time-scrub step at 51,665 connections. Consequence: any NEW option baked
+into a segment or dot must also be in the materializer's desired-options object, or kept
+features silently go stale on it.
+
+For hover, restyle in place instead of running the pass, and give the features what
+that needs at build time:
 
 - **A base-style option** (`timelapseBaseStyle`) holding the appearance minus the highlight,
   so the unhighlighted look can be recomputed without knowing which track built it.
@@ -46,8 +55,8 @@ Restyle in place instead, and give the features what that needs at build time:
 - **Skip features whose style is unchanged.** Setting a style calls `annotation.modified()`
   → `layer.modified()`, so touching all N features forces a full `_update`; touching only the
   two that changed (and skipping `draw()` entirely when none did) keeps it cheap.
-- Keep the rebuild for state that changes *which* feature is built (which duplicate
-  represents a pair), and restyle for state that only changes paint.
+- Keep the rebuild pass for state that changes *which* feature represents a group (which
+  duplicate represents a pair), and restyle for state that only changes paint.
 
 Measured on 2,364 segments: 0.8 ms to scan them all, 6.6 ms median for the redraw
 (GeoJS aggregates every line annotation into ONE webgl `lineFeature`, so any style change
