@@ -170,6 +170,55 @@ export function analyzeTracks(
   return { components, trackKeyByAnnotationId };
 }
 
+/** Size and extent of one dataset-wide track, for track-metric filtering. */
+export interface ITrackMetrics {
+  connectionCount: number;
+  /** Endpoint count, dangling endpoints included. */
+  memberCount: number;
+  /**
+   * Timepoints spanned (max member Time − min + 1) over the members that
+   * resolve — dangling endpoints are common in real datasets and must not
+   * poison the answer. Null when no member resolves at all: unknown, which is
+   * not the same as short.
+   */
+  duration: number | null;
+}
+
+/**
+ * Per-track metrics over the COMPLETE connection graph, keyed by the
+ * dataset-wide track key (`trackKey`). Metrics are deliberately dataset-wide:
+ * narrowing the list's scope must not make a long track read as short.
+ */
+export function computeTrackMetrics(
+  components: IConnectedComponent[],
+  resolveAnnotation: (id: string) => TAnnotationOrStub | undefined,
+): Map<string, ITrackMetrics> {
+  const metrics = new Map<string, ITrackMetrics>();
+  for (const component of components) {
+    let minTime: number | null = null;
+    let maxTime: number | null = null;
+    for (const annotationId of component.annotations) {
+      const time = resolveAnnotation(annotationId)?.location.Time;
+      if (time === undefined) {
+        continue;
+      }
+      if (minTime === null || time < minTime) {
+        minTime = time;
+      }
+      if (maxTime === null || time > maxTime) {
+        maxTime = time;
+      }
+    }
+    metrics.set(trackKey(component.annotations), {
+      connectionCount: component.connections.length,
+      memberCount: component.annotations.size,
+      duration:
+        minTime === null || maxTime === null ? null : maxTime - minTime + 1,
+    });
+  }
+  return metrics;
+}
+
 /** The colour every track is drawn in when per-track colouring is off. */
 export const TRACK_UNIFORM_COLOR = "#FFFFFF";
 

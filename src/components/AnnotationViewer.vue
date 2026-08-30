@@ -369,6 +369,21 @@ const selectedConnectionIds = computed(
 const hoveredConnectionId = computed(
   () => connectionListStore.hoveredConnectionId,
 );
+// The list and both draw paths share this one predicate, so what the
+// Connections tab hides under a track filter disappears from the canvas too.
+// A stable always-true constant while no filter is active, so the common case
+// adds no per-draw cost.
+const connectionPassesTrackFilters = computed(
+  () => connectionListStore.connectionPassesTrackFilters,
+);
+// The object half of the same lens. Consumed by BOTH display twins — the
+// drawn set (displayableAnnotations) and the visibility refresh
+// (updateVisibility's filteredIds), which drives the stub-mode budget,
+// hydration, and the HUD's viewport counts. Narrowing one without the other
+// spends budget on objects the draw path then discards.
+const annotationPassesTrackFilters = computed(
+  () => connectionListStore.annotationPassesTrackFilters,
+);
 const shouldDrawAnnotations = computed(
   (): boolean =>
     store.drawAnnotations &&
@@ -519,9 +534,20 @@ const displayableAnnotations = computed(() => {
   if (!props.annotationLayer || !shouldDrawAnnotations.value) {
     return [];
   }
-  return store.filteredDraw
+  const base = store.filteredDraw
     ? filteredAnnotations.value
     : annotationStore.annotationsForIteration;
+  // Opt-in track-filter object hiding. This is the single source every
+  // display surface derives from — per-channel maps, layer maps, displayed
+  // ids, the timelapse sets, connection gating AND retention — so filtering
+  // here keeps draw and removal symmetric by construction. Off (the default)
+  // returns the base array untouched; the predicate is then a stable
+  // constant, so this adds no dependency on the track metrics.
+  if (!connectionListStore.trackFilterHidesObjects) {
+    return base;
+  }
+  const passesTrackFilters = annotationPassesTrackFilters.value;
+  return base.filter(({ id }) => passesTrackFilters(id));
 });
 
 const displayableAnnotationsByChannel = computed(() => {
@@ -1187,7 +1213,8 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
           !displayedAnnotationIds.value.has(parentId) ||
           !displayedAnnotationIds.value.has(childId) ||
           !centroids[parentId] ||
-          !centroids[childId]
+          !centroids[childId] ||
+          !connectionPassesTrackFilters.value({ parentId })
         ) {
           toRemove.push(geoJsAnnotation);
         }
@@ -1348,6 +1375,7 @@ function drawNewConnections(
 ) {
   const dispAnnotationIds = displayedAnnotationIds.value;
   const unrolledCentroids = unrolledCentroidCoordinates.value;
+  const passesTrackFilters = connectionPassesTrackFilters.value;
   const connections = annotationConnections.value;
   const len = connections.length;
   for (let i = 0; i < len; i++) {
@@ -1355,7 +1383,8 @@ function drawNewConnections(
     if (
       drawnGeoJSAnnotations.has(connection.id) ||
       !dispAnnotationIds.has(connection.parentId) ||
-      !dispAnnotationIds.has(connection.childId)
+      !dispAnnotationIds.has(connection.childId) ||
+      !passesTrackFilters(connection)
     ) {
       continue;
     }
@@ -1448,7 +1477,17 @@ function drawTimelapseConnectionsAndCentroids() {
       ? connectionListStore.trackAnalysis.trackKeyByAnnotationId
       : undefined;
 
+  const passesTrackFilters = connectionPassesTrackFilters.value;
+
   components.forEach((component) => {
+    // A displayed fragment's connections all belong to one dataset-wide
+    // track, so its first connection decides for the whole component. A
+    // filtered-out track is skipped here but its members stay in
+    // `connectedIds` below: they must vanish from the overlay entirely, not
+    // be recast as orphan dots — the graph didn't change, the view did.
+    if (!passesTrackFilters(component.connections[0])) {
+      return;
+    }
     const componentAnnotations: ITimelapseAnnotation[] = [];
     // Resolve the displayed fragment through the complete connection graph.
     // A hidden endpoint must not make the same track change color.
@@ -4549,8 +4588,18 @@ async function handleDragEnd(evt: IGeoJSMouseState) {
 // rendered an empty/incorrect frame momentarily and forced layerAnnotations to
 // recompute twice per frame change (the dominant residual cost of the scrub
 // freeze once feature reconstruction is cached).
+// connectionPassesTrackFilters rather than the raw trackFilters state: the
+// predicate is what the draw paths read, and watching it also covers a metric
+// changing under an active filter (e.g. a connection delete changing a track's
+// length). While no filter is active it is a stable constant, so this adds no
+// firing to the common case.
 watch(
-  [annotationConnections, shouldDrawAnnotations, shouldDrawConnections],
+  [
+    annotationConnections,
+    shouldDrawAnnotations,
+    shouldDrawConnections,
+    connectionPassesTrackFilters,
+  ],
   () => {
     onPrimaryChange();
   },
@@ -4619,6 +4668,12 @@ watch(
     showTimelapseLabels,
     () => timelapseStore.trackColoring,
     () => timelapseStore.colorSeed,
+    // connectionPassesTrackFilters is deliberately NOT here: the PRIMARY
+    // watcher observes it, and its drawAnnotationsAndTooltips already
+    // rebuilds the timelapse layer directly — a second entry here made every
+    // filter keystroke reconstruct all track features twice (three times with
+    // the selection-clearing watcher). This list is for inputs the primary
+    // watcher does NOT observe.
   ],
   () => {
     onTimelapseModeChanged();
@@ -4692,9 +4747,32 @@ function updateVisibility() {
   // Only materialize an id array when a client filter is active. Without one,
   // omit it and let the store derive ids from its own stub map, avoiding a
   // full-dataset id array allocation per frame change (Finding 15).
-  const ids = store.filteredDraw
-    ? filteredAnnotations.value.map((a: TAnnotationOrStub) => a.id)
-    : undefined;
+  //
+  // The track-filter object opt-in composes here exactly as it does in
+  // displayableAnnotations — the two are twins: this id set drives the
+  // stub-mode visibility budget, hydration, and the HUD's viewport counts, so
+  // narrowing only the drawn set would spend budget slots on objects the draw
+  // path then discards and leave the HUD counting hidden objects. The
+  // full-array materialization in the opt-in-only branch is the same
+  // filteredDraw tradeoff, paid only while the opt-in narrows.
+  const passesTrackFilters = annotationPassesTrackFilters.value;
+  const trackNarrowing = connectionListStore.trackFilterHidesObjects;
+  let ids: string[] | undefined;
+  if (store.filteredDraw) {
+    const filtered = filteredAnnotations.value;
+    ids = (
+      trackNarrowing
+        ? filtered.filter((a: TAnnotationOrStub) => passesTrackFilters(a.id))
+        : filtered
+    ).map((a: TAnnotationOrStub) => a.id);
+  } else if (trackNarrowing) {
+    ids = [];
+    for (const annotation of annotationStore.annotationsForIteration) {
+      if (passesTrackFilters(annotation.id)) {
+        ids.push(annotation.id);
+      }
+    }
+  }
   // Zoom-adaptive budget (C4): render fewer objects when zoomed out (where they
   // overlap into noise and the heavy redraw briefly locks the UI), ramping up to
   // the full configured cap as the user zooms in. The zoomed-out floor is
@@ -4757,7 +4835,14 @@ watch(
 
 // Frame changes (XY, Z, Time) and annotation list changes update immediately
 // to avoid flash of empty frame while debounce waits
-watch([filteredAnnotations, xy, z, time], updateVisibility);
+// annotationPassesTrackFilters: the object opt-in narrows the visibility id
+// set (see updateVisibility), so toggling it — or a metric changing under an
+// active bound — must refresh visibility like any filter change. A stable
+// constant while the opt-in is off, so no extra firing in the common case.
+watch(
+  [filteredAnnotations, xy, z, time, annotationPassesTrackFilters],
+  updateVisibility,
+);
 
 // Camera changes (pan/zoom) are debounced since they fire rapidly. Pan refreshes
 // on any amount (a new region is revealed); zoom keeps a magnification

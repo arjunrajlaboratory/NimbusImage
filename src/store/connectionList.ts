@@ -17,16 +17,88 @@ import { IAnnotationConnection, TAnnotationOrStub } from "./model";
 import {
   IConnectionRow,
   ITrackAnalysis,
+  ITrackMetrics,
   ITrackRow,
   analyzeTracks,
   buildConnectionRows,
   buildTrackRows,
   chainAnnotationsByTime,
+  computeTrackMetrics,
   findTimeTies,
 } from "@/utils/connections";
 
 export type TConnectionScope = "all" | "location" | "selected" | "filtered";
 export type TConnectionGrouping = "flat" | "track";
+
+export interface ITrackMetricRange {
+  min: number | null;
+  max: number | null;
+}
+
+/** Optional bounds on the dataset-wide track metrics (null = unbounded). */
+export interface ITrackFilters {
+  connectionCount: ITrackMetricRange;
+  memberCount: ITrackMetricRange;
+  duration: ITrackMetricRange;
+}
+
+export function createEmptyTrackFilters(): ITrackFilters {
+  return {
+    connectionCount: { min: null, max: null },
+    memberCount: { min: null, max: null },
+    duration: { min: null, max: null },
+  };
+}
+
+function rangeActive({ min, max }: ITrackMetricRange): boolean {
+  return min !== null || max !== null;
+}
+
+function inRange(value: number, { min, max }: ITrackMetricRange): boolean {
+  return (min === null || value >= min) && (max === null || value <= max);
+}
+
+/**
+ * The one field the track-filter predicate needs to resolve a connection's
+ * dataset-wide track (any endpoint maps to the same track; parentId is the
+ * one every caller has). The viewer's retention path only has a feature's
+ * options, not the connection document, so the predicate must not demand
+ * more than it uses.
+ */
+export type TConnectionTrackSource = Pick<IAnnotationConnection, "parentId">;
+
+// Stable identities so the no-filter cases add zero cost and zero reactive
+// dependencies to every draw pass that reads the predicates.
+const PASSES_EVERY_CONNECTION = () => true;
+const PASSES_EVERY_ANNOTATION: (annotationId: string) => boolean = () => true;
+
+/**
+ * One track's metrics against the active bounds — shared by the connection
+ * predicate (list + both viewer draw paths) and the object opt-in predicate,
+ * so the two can never disagree about which tracks pass.
+ */
+function trackMetricsPassFilters(
+  metrics: ITrackMetrics,
+  filters: ITrackFilters,
+): boolean {
+  if (
+    !inRange(metrics.connectionCount, filters.connectionCount) ||
+    !inRange(metrics.memberCount, filters.memberCount)
+  ) {
+    return false;
+  }
+  // An unknown duration (every member points at a deleted annotation) is pure
+  // data rot, and "Clean up dangling" exists as the real remedy — so a
+  // duration bound excludes such ghost tracks rather than keeping rows it
+  // cannot be proven to match. The count bounds above are always known and
+  // apply either way.
+  if (rangeActive(filters.duration)) {
+    return (
+      metrics.duration !== null && inRange(metrics.duration, filters.duration)
+    );
+  }
+  return true;
+}
 
 export const CONNECTION_SCOPE_LABELS: Record<TConnectionScope, string> = {
   all: "All connections",
@@ -67,6 +139,136 @@ export class ConnectionList extends VuexModule {
   trackLabelPath: string[] = [];
 
   /**
+   * Bounds on the dataset-wide track metrics; connections whose track falls
+   * outside them are hidden from the list AND from both viewer draw paths.
+   * Session-only and reset per dataset — numeric ranges are meaningless
+   * across datasets with different track scales, unlike scope/grouping.
+   */
+  trackFilters: ITrackFilters = createEmptyTrackFilters();
+
+  get trackFiltersActive(): boolean {
+    return (
+      rangeActive(this.trackFilters.connectionCount) ||
+      rangeActive(this.trackFilters.memberCount) ||
+      rangeActive(this.trackFilters.duration)
+    );
+  }
+
+  /**
+   * Metrics per dataset-wide track. Only read while a track filter is active
+   * — it resolves every connected annotation, so the inactive path must never
+   * touch it. Cached against the connection graph and the annotation maps the
+   * resolver reads: the resolver's closures read those (markRaw'd, always
+   * REPLACED — rawStateMaps.test.ts) maps at invocation time, inside this
+   * getter's own effect, so a map replacement invalidates this getter even
+   * though the maps are reached through function-returning getters. Verified
+   * live (PR #1340 Codex round 2 flagged the opposite): editing a member's
+   * Time via setAnnotations changed the cached identity and the duration
+   * (20 → 519), and deleting an annotation grew danglingConnectionIds.
+   */
+  get trackMetrics(): Map<string, ITrackMetrics> {
+    return computeTrackMetrics(this.trackAnalysis.components, this.resolveStub);
+  }
+
+  /**
+   * Predicate deciding whether ONE connection passes the track filters.
+   *
+   * Shared by the list (via `scopedConnections`) and the viewer's two draw
+   * paths, so what the list shows and what the canvas draws cannot drift.
+   * Keyed off the DATASET-WIDE track (via `trackKeyByAnnotationId`), so a
+   * scope- or display-narrowed fragment is judged by its full track's
+   * metrics, the same rule track colouring and duplicate-ID detection follow.
+   *
+   * With no filter active this is a stable always-true constant: the viewer
+   * reads it on every draw pass, and the inactive case must cost nothing and
+   * register no dependency on the metrics (which resolve every connected
+   * annotation).
+   */
+  get connectionPassesTrackFilters(): (
+    connection: TConnectionTrackSource,
+  ) => boolean {
+    if (!this.trackFiltersActive) {
+      return PASSES_EVERY_CONNECTION;
+    }
+    const filters = this.trackFilters;
+    const metricsByTrack = this.trackMetrics;
+    const trackKeyByAnnotationId = this.trackAnalysis.trackKeyByAnnotationId;
+    return ({ parentId }) => {
+      const trackKey = trackKeyByAnnotationId.get(parentId);
+      const metrics =
+        trackKey === undefined ? undefined : metricsByTrack.get(trackKey);
+      if (!metrics) {
+        // Every connection's endpoints are in the analysis, so this is
+        // unreachable in practice; fail open rather than hide data.
+        return true;
+      }
+      return trackMetricsPassFilters(metrics, filters);
+    };
+  }
+
+  /**
+   * Session-only opt-in: when a track filter is narrowing, also hide the
+   * OBJECTS of the filtered-out tracks from the image viewer. Off by default
+   * — filtering the connections list must not silently make cells vanish
+   * from the canvas. Unconnected objects are never hidden (they have no
+   * track, so a track filter says nothing about them), and this is a display
+   * lens only: the Objects tab, exports and analysis are untouched.
+   */
+  hideFilteredTrackObjects: boolean = false;
+
+  /** True when the opt-in is actually narrowing (checkbox AND a live bound). */
+  get trackFilterHidesObjects(): boolean {
+    return this.trackFiltersActive && this.hideFilteredTrackObjects;
+  }
+
+  /**
+   * Predicate deciding whether ONE annotation survives the object opt-in.
+   * The viewer's displayed-set computed reads this on every rebuild, so while
+   * the opt-in is off it is the same stable always-true constant contract as
+   * `connectionPassesTrackFilters`.
+   */
+  get annotationPassesTrackFilters(): (annotationId: string) => boolean {
+    if (!this.trackFilterHidesObjects) {
+      return PASSES_EVERY_ANNOTATION;
+    }
+    const filters = this.trackFilters;
+    const metricsByTrack = this.trackMetrics;
+    const trackKeyByAnnotationId = this.trackAnalysis.trackKeyByAnnotationId;
+    return (annotationId) => {
+      const trackKey = trackKeyByAnnotationId.get(annotationId);
+      if (trackKey === undefined) {
+        // Unconnected: no track, so the filter says nothing about it.
+        return true;
+      }
+      const metrics = metricsByTrack.get(trackKey);
+      return !metrics || trackMetricsPassFilters(metrics, filters);
+    };
+  }
+
+  /**
+   * How many annotations survive the ordinary filters AND the object lens —
+   * the number the render-coverage HUD prints as "(N passing filters)".
+   * Reading `filteredAnnotations.length` there instead would claim every
+   * annotation passes while the lens is hiding whole tracks (PR #1340 Codex
+   * P2). While the lens is off this is a plain length read; the counting
+   * pass is paid only while the opt-in narrows, cached against both inputs.
+   */
+  get displayedPassingCount(): number {
+    const passing = filters.filteredAnnotations;
+    if (!this.trackFilterHidesObjects) {
+      return passing.length;
+    }
+    const passesTrackFilters = this.annotationPassesTrackFilters;
+    let count = 0;
+    for (const { id } of passing) {
+      if (passesTrackFilters(id)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
    * Predicate deciding whether ONE connection is in scope.
    *
    * A predicate, not a set of qualifying annotation ids: building that set
@@ -96,7 +298,9 @@ export class ConnectionList extends VuexModule {
       }
       case "location": {
         const { xy, z, time } = main.currentLocation;
-        const resolve = this.resolveAnnotation;
+        // Stub-first: only location is read, and the hydrated-first resolver
+        // would make this predicate churn with viewport hydration.
+        const resolve = this.resolveStub;
         const atLocation = (id: string): boolean => {
           const found = resolve(id);
           return (
@@ -112,16 +316,46 @@ export class ConnectionList extends VuexModule {
     }
   }
 
-  get scopedConnections(): IAnnotationConnection[] {
+  /** The scope's connections BEFORE track filters — the "M" in "N of M". */
+  get scopeOnlyConnections(): IAnnotationConnection[] {
     if (this.scope === "all") {
       return annotation.annotationConnections;
     }
     return annotation.annotationConnections.filter(this.connectionInScope);
   }
 
+  get scopedConnections(): IAnnotationConnection[] {
+    if (!this.trackFiltersActive) {
+      return this.scopeOnlyConnections;
+    }
+    return this.scopeOnlyConnections.filter(this.connectionPassesTrackFilters);
+  }
+
   get resolveAnnotation() {
     return (id: string): TAnnotationOrStub | undefined =>
       annotation.getAnnotationFromId(id) ?? annotation.getStub(id);
+  }
+
+  /**
+   * Stub-ONLY resolver for location/existence reads (track metrics, the
+   * location scope, dangling detection). The stub map is authoritative in
+   * both modes — every create/update/delete path maintains it — and is
+   * replaced only by load/CRUD/content edits, NOT by viewport hydration,
+   * which replaces `hydratedAnnotations` on every pan. Resolving
+   * hydrated-first here made any active track bound recompute the
+   * whole-graph metric scan and re-fire both draw watchers per pan on
+   * stub-mode datasets (PR #1340 Codex round 3).
+   *
+   * Deliberately NO hydrated fallback (round 4): a genuinely dangling
+   * endpoint always misses the stub map, so a "fail-safe" fallback was
+   * exercised on every rot-bearing dataset — re-registering the hydration
+   * dep and reintroducing exactly the churn this resolver removes. A stub
+   * miss means deleted, full stop. `resolveAnnotation` above stays
+   * hydrated-first for callers that need hydrated-only fields (row labels
+   * read `name`).
+   */
+  get resolveStub() {
+    return annotation.getStub;
   }
 
   get connectionRows(): IConnectionRow[] {
@@ -283,14 +517,42 @@ export class ConnectionList extends VuexModule {
     // under the old scope must not survive to feed "Delete selected" — that
     // would delete connections the user can no longer see. Grouping is left
     // alone deliberately: it re-arranges the same set rather than redefining
-    // it, so a selection stays meaningful across a flat/track toggle.
-    this.selectedConnectionIds = markRaw(new Set());
+    // it, so a selection stays meaningful across a flat/track toggle. Only
+    // when non-empty, for the same reason as setTrackFilters below: the Set's
+    // identity is a viewer watcher source, and a scope change repaints
+    // nothing on the canvas.
+    if (this.selectedConnectionIds.size > 0) {
+      this.selectedConnectionIds = markRaw(new Set());
+    }
   }
 
   @Mutation
   public setGrouping(grouping: TConnectionGrouping) {
     this.grouping = grouping;
     this.page = 1;
+  }
+
+  @Mutation
+  public setHideFilteredTrackObjects(hide: boolean) {
+    this.hideFilteredTrackObjects = hide;
+  }
+
+  // Replaces the object (never mutates in place) so watchers on
+  // `trackFilters` fire by identity — the viewer redraws off exactly that.
+  @Mutation
+  public setTrackFilters(trackFilters: ITrackFilters) {
+    this.trackFilters = trackFilters;
+    this.page = 1;
+    // Same rationale as setScope: an explicit filter change redefines what
+    // "the list" means, so a selection made under the old definition must not
+    // survive to feed "Delete selected". The in-scope intersection is the
+    // structural guard; this is the belt to its braces. Only when non-empty:
+    // the Set's identity is a viewer watcher source (a selection change
+    // rebuilds the timelapse layer to re-pick duplicate representatives), so
+    // replacing empty-with-empty fired a full rebuild per filter keystroke.
+    if (this.selectedConnectionIds.size > 0) {
+      this.selectedConnectionIds = markRaw(new Set());
+    }
   }
 
   @Mutation
@@ -398,6 +660,29 @@ export class ConnectionList extends VuexModule {
     // hydrateAnnotationBrowserState re-seeds it after this reset (same
     // lifecycle as displayedPropertyPaths in the properties store).
     this.trackLabelPath = [];
+    // trackFilters and hideFilteredTrackObjects deliberately NOT here: this
+    // reset runs on every setSelectedDataset, including refreshDataset() with
+    // the same id (unroll toggles), and the bounds are unrecoverable user
+    // state — see resetConnectionTrackFilters, gated on an actual dataset
+    // change like resetFilterState.
+  }
+
+  @Mutation
+  protected resetTrackFiltersImpl() {
+    this.trackFilters = createEmptyTrackFilters();
+    this.hideFilteredTrackObjects = false;
+  }
+
+  /**
+   * Clear the track bounds and the object-hiding opt-in. Dispatched by
+   * setSelectedDataset only when the dataset actually changed (numeric
+   * ranges are dataset-scale-specific), so a same-dataset refresh — e.g. a
+   * NavigatorPanel unroll toggle re-running setSelectedDataset with the same
+   * id — keeps the user's active filter (PR #1340 Codex round 3).
+   */
+  @Action
+  public resetConnectionTrackFilters() {
+    this.resetTrackFiltersImpl();
   }
 
   // Clear per-dataset connection view state. Scope and grouping survive: they
@@ -426,6 +711,39 @@ export class ConnectionList extends VuexModule {
     if (this.hoveredConnectionId && deleted.has(this.hoveredConnectionId)) {
       this.setHoveredConnectionId(null);
     }
+  }
+
+  /**
+   * Connections with at least one endpoint pointing at an annotation that no
+   * longer exists (deleted after the connection was made — data rot, common
+   * in older datasets). Stubs count as resolvable, so in lazy mode an
+   * unhydrated live annotation is never mistaken for a deleted one.
+   *
+   * O(connections) with two stub resolves each, invalidated by connection
+   * or stub-map changes (creates, deletes, edits) — deliberately NOT by
+   * hydration churn, which the stub-only resolver exists to avoid. The scan
+   * itself still costs O(connections), so read it only from an active
+   * Connections tab (same gating rule as the row getters) or from the
+   * cleanup action itself.
+   */
+  get danglingConnectionIds(): string[] {
+    const resolve = this.resolveStub;
+    return annotation.annotationConnections
+      .filter(
+        ({ parentId, childId }) => !resolve(parentId) || !resolve(childId),
+      )
+      .map(({ id }) => id);
+  }
+
+  /**
+   * Delete every dangling connection in the dataset — the whole dataset, not
+   * the current scope: this is cleanup of rot, not a view operation. Callers
+   * own the confirmation dialog. Recordable via the underlying batched
+   * delete, so it participates in undo.
+   */
+  @Action({ rawError: true })
+  public async deleteDanglingConnections() {
+    await this.deleteConnectionsById(this.danglingConnectionIds);
   }
 
   /**

@@ -1632,6 +1632,10 @@ export class Main extends VuexModule {
     // are repopulated by the reload that follows.
     if (datasetChanged) {
       this.context.dispatch("resetFilterState");
+      // Track bounds and the object-hiding opt-in are unrecoverable user
+      // state like the filters above; the unconditional connection-list reset
+      // deliberately leaves them alone.
+      this.context.dispatch("resetConnectionTrackFilters");
     }
     if (!id) {
       this.setDataset({ id, data: null });

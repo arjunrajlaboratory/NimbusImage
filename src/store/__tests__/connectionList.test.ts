@@ -53,11 +53,15 @@ vi.mock("@/store/filters", async () => {
   return { default: reactive(filtersMock) };
 });
 
-import connectionList from "@/store/connectionList";
+import connectionList, {
+  ITrackFilters,
+  createEmptyTrackFilters,
+} from "@/store/connectionList";
 // Mutate through the reactive proxies, not the raw hoisted objects, or the
 // getters won't see the change.
 import main from "@/store/index";
 import annotationStore from "@/store/annotation";
+import filtersStore from "@/store/filters";
 
 function makeConnection(
   id: string,
@@ -85,6 +89,12 @@ function setAnnotations(annotations: IAnnotation[]) {
   const byId = new Map(annotations.map((a) => [a.id, a]));
   (annotationStore as any).annotationsForIteration = annotations;
   (annotationStore as any).getAnnotationFromId = (id: string) => byId.get(id);
+  // Mirror the real store's contract: the stub map is authoritative and
+  // maintained by every create/update/delete path, so an annotation that
+  // exists always has a stub. The stub-only resolver (metrics, location
+  // scope, dangling detection) reads THIS; getAnnotationFromId serves the
+  // hydrated-first paths (row labels).
+  (annotationStore as any).getStub = (id: string) => byId.get(id);
 }
 
 beforeEach(() => {
@@ -98,6 +108,8 @@ beforeEach(() => {
   connectionList.setScope("all");
   connectionList.setGrouping("flat");
   connectionList.setSelectedConnectionIds([]);
+  connectionList.setTrackFilters(createEmptyTrackFilters());
+  connectionList.setHideFilteredTrackObjects(false);
 });
 
 describe("connectionList scoping", () => {
@@ -172,6 +184,7 @@ describe("connectionList cost guards", () => {
       ["there", there],
     ]);
     (annotationStore as any).getAnnotationFromId = (id: string) => byId.get(id);
+    (annotationStore as any).getStub = (id: string) => byId.get(id);
     (annotationStore as any).annotationsForIteration = [];
     (annotationStore as any).annotationConnections = [
       makeConnection("atLocation", "here", "here"),
@@ -525,5 +538,436 @@ describe("track label path", () => {
     connectionList.reconcileTrackLabelPathForPropertyIds(["kept"]);
     expect(connectionList.trackLabelPath).toEqual(["kept", "trackId"]);
     expect(mainMock.scheduleAnnotationBrowserSave).not.toHaveBeenCalled();
+  });
+});
+
+// --- Track metric filters ---
+//
+// Filtering is by DATASET-WIDE track metrics (keyed off the global track
+// analysis), so narrowing the scope must never make a long track read as
+// short. The predicate is shared with the viewer's draw paths.
+describe("track metric filters", () => {
+  // Track A: a→b→c (T0..T2) — 2 connections, 3 members, duration 3.
+  // Track X: x→y (T0, T9) — 1 connection, 2 members, duration 10.
+  function seedTracks() {
+    setAnnotations([
+      makeAnnotation("a", 0),
+      makeAnnotation("b", 1),
+      makeAnnotation("c", 2),
+      makeAnnotation("x", 0),
+      makeAnnotation("y", 9),
+    ]);
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "a", "b"),
+      makeConnection("t2", "b", "c"),
+      makeConnection("t3", "x", "y"),
+    ];
+  }
+
+  function filtersWith(partial: Partial<ITrackFilters>): ITrackFilters {
+    return { ...createEmptyTrackFilters(), ...partial };
+  }
+
+  it("filters by connections-in-track range", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual([
+      "t1",
+      "t2",
+    ]);
+  });
+
+  it("filters by objects-in-track range", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ memberCount: { min: null, max: 2 } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual(["t3"]);
+  });
+
+  it("filters by duration range", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 5, max: null } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual(["t3"]);
+  });
+
+  it("uses dataset-wide metrics even when the scope shows a fragment", () => {
+    seedTracks();
+    // Scope to "b" only: track A appears as a fragment, but its metrics are
+    // still the full track's (duration 3), so a min-duration of 3 keeps it.
+    (annotationStore as any).selectedAnnotationIds = new Set(["b"]);
+    connectionList.setScope("selected");
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 3, max: null } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual([
+      "t1",
+      "t2",
+    ]);
+  });
+
+  it("hides a track of unknown duration under an active duration bound", () => {
+    // Every endpoint dangles (points at a deleted annotation), so the
+    // duration cannot be known and the track is pure data rot. Excluding it
+    // was first flipped to fail-open ("hiding real rows is worse"), then
+    // flipped back once the clean-up-dangling action existed: with a real
+    // remedy available, a duration filter should not keep ghost tracks.
+    setAnnotations([]);
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "gone1", "gone2"),
+    ];
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: null, max: 100 } }),
+    );
+    expect(connectionList.scopedConnections).toEqual([]);
+    // Count bounds are always known, dangling or not.
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 1, max: null } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual(["t1"]);
+  });
+
+  // Cost guard: the viewer reads the predicate on every draw pass, so with no
+  // filter active it must be a constant that never touches the track metrics
+  // (which resolve every connected annotation).
+  it("does not resolve annotations while no filter is active", () => {
+    let resolveCalls = 0;
+    (annotationStore as any).getAnnotationFromId = (id: string) => {
+      resolveCalls++;
+      return makeAnnotation(id, 0);
+    };
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "a", "b"),
+    ];
+    expect(connectionList.scopedConnections).toHaveLength(1);
+    expect(connectionList.connectionPassesTrackFilters({ parentId: "a" })).toBe(
+      true,
+    );
+    expect(resolveCalls).toBe(0);
+  });
+
+  it("returns the scope's own array identity while no filter is active", () => {
+    seedTracks();
+    expect(connectionList.scopedConnections).toBe(
+      (annotationStore as any).annotationConnections,
+    );
+  });
+
+  // Same rationale as setScope: an explicit filter change redefines what "the
+  // list" means, so a selection made under the old definition must not feed
+  // "Delete selected".
+  it("clears the selection and resets the page when filters change", () => {
+    connectionList.setPage(3);
+    connectionList.setSelectedConnectionIds(["t1"]);
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
+    );
+    expect(connectionList.selectedConnectionIds.size).toBe(0);
+    expect(connectionList.page).toBe(1);
+  });
+
+  // An already-empty selection must not be REPLACED: the Set's identity is a
+  // watcher source in the viewer (a selection change rebuilds the timelapse
+  // layer to re-pick duplicate representatives), so replacing empty-with-empty
+  // on every filter keystroke fired a pointless full rebuild alongside the
+  // primary watcher's own redraw (PR #1340 Codex round 6).
+  it("keeps the empty selection's identity when filters change", () => {
+    const before = connectionList.selectedConnectionIds;
+    expect(before.size).toBe(0);
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
+    );
+    expect(connectionList.selectedConnectionIds).toBe(before);
+  });
+
+  // Belt to that clearing's braces: rows hidden by the filter must not be
+  // deletable through a selection that predates it (same intersection rule as
+  // the dynamic scopes).
+  it("bulk delete acts only on rows passing the filters", async () => {
+    seedTracks();
+    connectionList.setSelectedConnectionIds(["t1", "t3"]);
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 5, max: null } }),
+    );
+    // Re-select after the clearing to model a viewer-click selection.
+    connectionList.setSelectedConnectionIds(["t1", "t3"]);
+    expect(connectionList.selectedInScopeConnectionIds).toEqual(["t3"]);
+    await connectionList.deleteSelectedInScopeConnections();
+    expect(deleteConnections).toHaveBeenCalledWith(["t3"]);
+  });
+
+  // Numeric ranges are meaningless across datasets with different track
+  // scales, unlike the scope/grouping view preferences.
+  // Bounds are unrecoverable user state, like the ordinary filters: the
+  // id-referencing reset runs on EVERY setSelectedDataset — including
+  // refreshDataset(), which re-runs it with the same id (e.g. NavigatorPanel
+  // unroll toggles) — so it must not wipe them (PR #1340 Codex round 3).
+  it("keeps the track filters through a same-dataset refresh", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
+    );
+    connectionList.setHideFilteredTrackObjects(true);
+    connectionList.resetConnectionListState();
+    expect(connectionList.trackFiltersActive).toBe(true);
+    expect(connectionList.hideFilteredTrackObjects).toBe(true);
+  });
+
+  // The dedicated reset, dispatched by setSelectedDataset only when the
+  // dataset actually changed — same gating as resetFilterState.
+  it("resets the filters on a dataset switch", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
+    );
+    connectionList.setHideFilteredTrackObjects(true);
+    connectionList.resetConnectionTrackFilters();
+    expect(connectionList.trackFiltersActive).toBe(false);
+    expect(connectionList.hideFilteredTrackObjects).toBe(false);
+    expect(connectionList.scopedConnections).toHaveLength(3);
+  });
+
+  it("exposes the pre-filter scope count for the 'N of M' readout", () => {
+    seedTracks();
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 5, max: null } }),
+    );
+    expect(connectionList.scopedConnections).toHaveLength(1);
+    expect(connectionList.scopeOnlyConnections).toHaveLength(3);
+  });
+});
+
+// --- Hiding filtered-out tracks' objects (opt-in) ---
+describe("track filter object hiding", () => {
+  // Track A: a→b→c (2 connections). Track X: x→y (1). "solo" is unconnected.
+  function seedTracks() {
+    setAnnotations([
+      makeAnnotation("a", 0),
+      makeAnnotation("b", 1),
+      makeAnnotation("c", 2),
+      makeAnnotation("x", 0),
+      makeAnnotation("y", 9),
+      makeAnnotation("solo", 3),
+    ]);
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "a", "b"),
+      makeConnection("t2", "b", "c"),
+      makeConnection("t3", "x", "y"),
+    ];
+  }
+
+  function minTwoConnections(): ITrackFilters {
+    return {
+      ...createEmptyTrackFilters(),
+      connectionCount: { min: 2, max: null },
+    };
+  }
+
+  it("hides an object of a failing track only when opted in", () => {
+    seedTracks();
+    connectionList.setTrackFilters(minTwoConnections());
+    // Checkbox off: the track filter narrows connections, never objects.
+    expect(connectionList.annotationPassesTrackFilters("x")).toBe(true);
+
+    connectionList.setHideFilteredTrackObjects(true);
+    expect(connectionList.annotationPassesTrackFilters("x")).toBe(false);
+    expect(connectionList.annotationPassesTrackFilters("y")).toBe(false);
+    expect(connectionList.annotationPassesTrackFilters("a")).toBe(true);
+  });
+
+  it("never hides unconnected objects", () => {
+    seedTracks();
+    connectionList.setTrackFilters(minTwoConnections());
+    connectionList.setHideFilteredTrackObjects(true);
+    // "solo" has no track, so a track filter says nothing about it.
+    expect(connectionList.annotationPassesTrackFilters("solo")).toBe(true);
+  });
+
+  // The viewer's displayed-set computed reads this on every rebuild, so the
+  // common case (checkbox off) must be a stable constant that costs nothing
+  // and registers no dependency on the track metrics.
+  it("is a stable pass-all constant while the opt-in is off", () => {
+    seedTracks();
+    connectionList.setTrackFilters(minTwoConnections());
+    const first = connectionList.annotationPassesTrackFilters;
+    expect(connectionList.annotationPassesTrackFilters).toBe(first);
+    connectionList.setHideFilteredTrackObjects(true);
+    expect(connectionList.annotationPassesTrackFilters).not.toBe(first);
+    connectionList.setHideFilteredTrackObjects(false);
+    expect(connectionList.annotationPassesTrackFilters).toBe(first);
+  });
+
+  it("hides nothing when the opt-in is set but no filter is active", () => {
+    seedTracks();
+    connectionList.setHideFilteredTrackObjects(true);
+    expect(connectionList.trackFilterHidesObjects).toBe(false);
+    expect(connectionList.annotationPassesTrackFilters("x")).toBe(true);
+  });
+
+  it("resets the opt-in on a dataset switch", () => {
+    connectionList.setHideFilteredTrackObjects(true);
+    connectionList.resetConnectionTrackFilters();
+    expect(connectionList.hideFilteredTrackObjects).toBe(false);
+  });
+});
+
+// --- Dangling connection cleanup ---
+describe("dangling connection cleanup", () => {
+  it("identifies a connection as dangling when EITHER endpoint is gone", () => {
+    setAnnotations([makeAnnotation("a", 0), makeAnnotation("b", 1)]);
+    (annotationStore as any).annotationConnections = [
+      makeConnection("ok", "a", "b"),
+      makeConnection("halfGone", "a", "deleted1"),
+      makeConnection("allGone", "deleted2", "deleted3"),
+    ];
+    expect(connectionList.danglingConnectionIds).toEqual([
+      "halfGone",
+      "allGone",
+    ]);
+  });
+
+  it("counts a stub-backed endpoint as resolvable", () => {
+    // Lazy mode: getAnnotationFromId misses, the stub is the ground truth.
+    (annotationStore as any).getAnnotationFromId = () => undefined;
+    (annotationStore as any).getStub = (id: string) =>
+      id === "stubbed" ? { id } : undefined;
+    (annotationStore as any).annotationConnections = [
+      makeConnection("ok", "stubbed", "stubbed"),
+      makeConnection("gone", "stubbed", "deleted"),
+    ];
+    expect(connectionList.danglingConnectionIds).toEqual(["gone"]);
+  });
+
+  it("deletes every dangling connection in one batched request", async () => {
+    setAnnotations([makeAnnotation("a", 0)]);
+    (annotationStore as any).annotationConnections = [
+      makeConnection("ok", "a", "a"),
+      makeConnection("d1", "a", "gone1"),
+      makeConnection("d2", "gone2", "a"),
+    ];
+    await connectionList.deleteDanglingConnections();
+    expect(deleteConnections).toHaveBeenCalledTimes(1);
+    expect(deleteConnections).toHaveBeenCalledWith(["d1", "d2"]);
+  });
+
+  it("does not call the backend when nothing dangles", async () => {
+    setAnnotations([makeAnnotation("a", 0)]);
+    (annotationStore as any).annotationConnections = [
+      makeConnection("ok", "a", "a"),
+    ];
+    await connectionList.deleteDanglingConnections();
+    expect(deleteConnections).not.toHaveBeenCalled();
+  });
+});
+
+// --- HUD passing count under the object lens (PR #1340 Codex P2) ---
+//
+// The render-coverage HUD prints "(N passing filters)" from this getter. It
+// must compose the object lens: with only the track constraint active, the
+// raw filteredAnnotations length claims every annotation passes while the
+// lens is hiding whole tracks.
+describe("displayedPassingCount", () => {
+  function seedTracks() {
+    setAnnotations([
+      makeAnnotation("a", 0),
+      makeAnnotation("b", 1),
+      makeAnnotation("x", 0),
+      makeAnnotation("solo", 3),
+    ]);
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "a", "b"), // track a-b: 1 connection
+    ];
+    (filtersStore as any).filteredAnnotations = [
+      makeAnnotation("a", 0),
+      makeAnnotation("b", 1),
+      makeAnnotation("solo", 3),
+    ];
+  }
+
+  it("is the plain filtered count while the lens is off", () => {
+    seedTracks();
+    connectionList.setTrackFilters({
+      ...createEmptyTrackFilters(),
+      connectionCount: { min: 2, max: null },
+    });
+    expect(connectionList.displayedPassingCount).toBe(3);
+  });
+
+  it("counts hidden-track objects out while the lens narrows", () => {
+    seedTracks();
+    connectionList.setTrackFilters({
+      ...createEmptyTrackFilters(),
+      connectionCount: { min: 2, max: null },
+    });
+    connectionList.setHideFilteredTrackObjects(true);
+    // a and b belong to the failing track; solo is unconnected and stays.
+    expect(connectionList.displayedPassingCount).toBe(1);
+  });
+});
+
+// --- Hydration-churn stability (PR #1340 Codex round 3) ---
+//
+// Viewport hydration replaces hydratedAnnotations on every pan; the metric
+// and dangling getters must not depend on it, or an active bound recomputes
+// the whole-graph scan and re-fires both draw watchers per pan on stub-mode
+// datasets. The stub map is authoritative in both modes (every
+// create/update/delete path maintains it) and is only replaced by load/CRUD,
+// so stub-first resolution gives the right invalidation boundary.
+describe("hydration-churn stability", () => {
+  function filtersWith(partial: Partial<ITrackFilters>): ITrackFilters {
+    return { ...createEmptyTrackFilters(), ...partial };
+  }
+
+  // The fixture MUST contain a dangling endpoint: a deleted annotation
+  // always misses the stub map, so a "fail-safe" hydrated fallback in the
+  // resolver is exercised on every rot-bearing dataset — reintroducing
+  // exactly the churn the resolver exists to remove. The first version of
+  // these tests had no rot and passed against that fallback (Codex round 4).
+  function seedStubbed() {
+    const times: Record<string, number> = { a: 0, b: 1, x: 0, y: 9 };
+    (annotationStore as any).getStub = (id: string) =>
+      id in times
+        ? { id, location: { XY: 0, Z: 0, Time: times[id] } }
+        : undefined;
+    (annotationStore as any).annotationConnections = [
+      makeConnection("t1", "a", "b"),
+      makeConnection("t2", "x", "y"),
+      makeConnection("rot", "a", "deleted"),
+    ];
+  }
+
+  it("resolves metrics and dangling from stubs, not the hydration cache", () => {
+    seedStubbed();
+    let hydratedReads = 0;
+    (annotationStore as any).getAnnotationFromId = () => {
+      hydratedReads++;
+      return undefined;
+    };
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 5, max: null } }),
+    );
+    expect(connectionList.scopedConnections.map((c) => c.id)).toEqual(["t2"]);
+    expect(connectionList.danglingConnectionIds).toEqual(["rot"]);
+    expect(hydratedReads).toBe(0);
+  });
+
+  it("keeps the metric scan cached when the hydration resolver churns", () => {
+    seedStubbed();
+    connectionList.setTrackFilters(
+      filtersWith({ duration: { min: 5, max: null } }),
+    );
+    const metrics = connectionList.trackMetrics;
+    const dangling = connectionList.danglingConnectionIds;
+    // The churn analog: hydration replaces the cache map, which re-creates
+    // the hydrated resolver. Neither getter may have registered it as a dep
+    // — including through the dangling endpoint, which misses the stub map.
+    (annotationStore as any).getAnnotationFromId = (id: string) =>
+      makeAnnotation(id, 0);
+    expect(connectionList.trackMetrics).toBe(metrics);
+    expect(connectionList.danglingConnectionIds).toBe(dangling);
   });
 });

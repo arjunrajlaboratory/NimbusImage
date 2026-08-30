@@ -487,7 +487,9 @@ import {
 } from "@/store/model";
 import { samPromptToAnnotation } from "@/pipelines/samPipeline";
 import { NoOutput } from "@/pipelines/computePipeline";
-import connectionListStore from "@/store/connectionList";
+import connectionListStore, {
+  createEmptyTrackFilters,
+} from "@/store/connectionList";
 import timelapseStore from "@/store/timelapse";
 import { TRACK_UNIFORM_COLOR, trackColor, trackKey } from "@/utils/connections";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
@@ -647,6 +649,11 @@ describe("AnnotationViewer", () => {
     mockedStore.showAnnotationsFromHiddenLayers = false;
     mockedStore.valueOnHover = false;
     mockedStore.cameraInfo = { gcsBounds: [] } as any;
+
+    // The real connectionList module is in play, so filters set by one test
+    // would otherwise leak into every later draw-path assertion.
+    connectionListStore.setTrackFilters(createEmptyTrackFilters());
+    connectionListStore.setHideFilteredTrackObjects(false);
 
     mockedAnnotationStore.annotations = [];
     mockedAnnotationStore.annotationConnections = [];
@@ -1467,6 +1474,152 @@ describe("AnnotationViewer", () => {
 
         (wrapper.vm as any).clearOldAnnotations(false, false);
         expect(countLines()).toBe(before);
+      });
+
+      // The list and the canvas share one predicate, so what the Connections
+      // tab hides under a track filter must disappear from the viewer too.
+      it("skips a connection whose track fails the track filters", () => {
+        setupTwoDisplayedAnnotations();
+        // The a1→a2 track has exactly 1 connection.
+        connectionListStore.setTrackFilters({
+          ...createEmptyTrackFilters(),
+          connectionCount: { min: 2, max: null },
+        });
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        aLayer.addAnnotation.mockClear();
+        (wrapper.vm as any).drawNewConnections(new Map());
+        const added = aLayer.addAnnotation.mock.calls
+          .map((call: any[]) => call[0])
+          .filter((f: any) => f?.options?.().isConnection);
+        expect(added).toHaveLength(0);
+      });
+
+      // Draw and retention are a pair: a filter added only to the draw path
+      // would leave already-drawn lines on screen until an unrelated removal.
+      it("removes a drawn line once its track fails the track filters", () => {
+        setupTwoDisplayedAnnotations();
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        const countLines = () =>
+          aLayer.annotations().filter((f: any) => f.options().isConnection)
+            .length;
+        expect(countLines()).toBeGreaterThan(0);
+
+        connectionListStore.setTrackFilters({
+          ...createEmptyTrackFilters(),
+          connectionCount: { min: 2, max: null },
+        });
+        (wrapper.vm as any).clearOldAnnotations(false, false);
+        expect(countLines()).toBe(0);
+      });
+
+      // End-to-end through the watcher: a filter change alone must redraw, or
+      // it changes nothing until the next unrelated redraw.
+      it("redraws normal-mode connections when the track filters change", async () => {
+        setupTwoDisplayedAnnotations();
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        const countLines = () =>
+          aLayer.annotations().filter((f: any) => f.options().isConnection)
+            .length;
+        expect(countLines()).toBeGreaterThan(0);
+
+        connectionListStore.setTrackFilters({
+          ...createEmptyTrackFilters(),
+          connectionCount: { min: 2, max: null },
+        });
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        await wrapper.vm.$nextTick();
+        expect(countLines()).toBe(0);
+      });
+
+      // Opt-in object hiding: with the checkbox on, a filtered-out track's
+      // OBJECTS leave the displayed set too — but unconnected objects stay,
+      // since a track filter says nothing about them.
+      it("hides a filtered-out track's objects only when opted in", async () => {
+        setupTwoDisplayedAnnotations();
+        mockedAnnotationStore.annotations = [
+          ...mockedAnnotationStore.annotations,
+          makeAnnotation({ id: "solo", channel: 0 }),
+        ];
+        connectionListStore.setTrackFilters({
+          ...createEmptyTrackFilters(),
+          connectionCount: { min: 2, max: null },
+        });
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const ids = () => (wrapper.vm as any).displayedAnnotationIds;
+        // Checkbox off: the filter narrows connections, never objects.
+        expect(ids().has("a1")).toBe(true);
+
+        connectionListStore.setHideFilteredTrackObjects(true);
+        await wrapper.vm.$nextTick();
+        expect(ids().has("a1")).toBe(false);
+        expect(ids().has("a2")).toBe(false);
+        expect(ids().has("solo")).toBe(true);
+      });
+
+      // End-to-end through the watchers: toggling the opt-in must remove the
+      // already-drawn features, not only stop drawing new ones.
+      it("removes drawn objects when the opt-in is switched on live", async () => {
+        setupTwoDisplayedAnnotations();
+        // The shared factory mock discards its options, leaving object
+        // features without a girderId to count — forward them.
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _coords: any, options: any) => {
+            const feature = mockGeoJSAnnotation(shape);
+            if (options) feature.options(options);
+            return feature;
+          },
+        );
+        connectionListStore.setTrackFilters({
+          ...createEmptyTrackFilters(),
+          connectionCount: { min: 2, max: null },
+        });
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const aLayer = (wrapper.vm as any).annotationLayer;
+        const countObjects = () =>
+          aLayer
+            .annotations()
+            .filter(
+              (f: any) => f.options().girderId && !f.options().isConnection,
+            ).length;
+        expect(countObjects()).toBeGreaterThan(0);
+
+        connectionListStore.setHideFilteredTrackObjects(true);
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(101);
+        await wrapper.vm.$nextTick();
+        expect(countObjects()).toBe(0);
+      });
+
+      // The visibility refresh is the draw pipeline's twin: it decides the
+      // stub-mode budget, hydration, and the HUD's viewport counts. Hiding
+      // objects only at draw time would spend budget slots on annotations the
+      // draw path then discards and leave the HUD counting hidden objects.
+      it("excludes hidden-track objects from the visibility refresh", async () => {
+        setupTwoDisplayedAnnotations();
+        mockedAnnotationStore.annotations = [
+          ...mockedAnnotationStore.annotations,
+          makeAnnotation({ id: "solo", channel: 0 }),
+        ];
+        connectionListStore.setTrackFilters({
+          ...createEmptyTrackFilters(),
+          connectionCount: { min: 2, max: null },
+        });
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        (mockedAnnotationStore.updateVisibilityAndHydration as any).mockClear();
+
+        // Toggling the opt-in must itself trigger a refresh with narrowed ids.
+        connectionListStore.setHideFilteredTrackObjects(true);
+        await wrapper.vm.$nextTick();
+
+        const calls = (
+          mockedAnnotationStore.updateVisibilityAndHydration as any
+        ).mock.calls;
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls[calls.length - 1][0].filteredIds).toEqual(["solo"]);
       });
 
       it("styles a selected connection at construction, not only on restyle", () => {
@@ -4491,6 +4644,70 @@ describe("AnnotationViewer", () => {
         expect(tagged[0].options().girderId).toBe("c1");
       });
 
+      // A track hidden by the track filters must vanish from the overlay
+      // entirely: no segments, and its members must NOT be recast as orphan
+      // dots (they are still connected — the graph didn't change, the view
+      // did). Same predicate as the list and the normal-mode draw path.
+      it("hides a filtered-out track without recasting its members as orphans", async () => {
+        mockedTimelapseStore.showMode = true;
+        const layer = makeLayer({ id: "l1", channel: 0, visible: true });
+        mockedStore.layers = [layer];
+        (mockedStore.layerSliceIndexes as any).mockReturnValue({
+          xyIndex: 0,
+          zIndex: 0,
+          tIndex: 0,
+        });
+        mockedAnnotationStore.annotations = [
+          makeAnnotation({
+            id: "a1",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 0 },
+          }),
+          makeAnnotation({
+            id: "a2",
+            channel: 0,
+            location: { XY: 0, Z: 0, Time: 1 },
+          }),
+        ];
+        mockedAnnotationStore.annotationConnections = [
+          makeConnection({ id: "c1", parentId: "a1", childId: "a2" }),
+        ];
+        (mockedAnnotationStore.getAnnotationFromId as any).mockImplementation(
+          (id: string) =>
+            mockedAnnotationStore.annotations.find((a: any) => a.id === id),
+        );
+        mockedAnnotationStore.annotationCentroids = {
+          a1: { x: 10, y: 20 },
+          a2: { x: 30, y: 40 },
+        };
+        (geojsAnnotationFactory as any).mockImplementation(
+          (shape: string, _coords: any, options: any) => {
+            const feature = mockGeoJSAnnotation(shape);
+            if (options) feature.options(options);
+            return feature;
+          },
+        );
+
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        tLayer.addMultipleAnnotations.mockClear();
+        connectionListStore.setTrackFilters({
+          ...createEmptyTrackFilters(),
+          connectionCount: { min: 2, max: null },
+        });
+        await wrapper.vm.$nextTick();
+        tLayer.addMultipleAnnotations.mockClear();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        const added = tLayer.addMultipleAnnotations.mock.calls
+          .map((call: any[]) => call[0])
+          .flat();
+        expect(added.filter((f: any) => f.options().isConnection)).toEqual([]);
+        expect(added.filter((f: any) => f.options().isTimelapsePoint)).toEqual(
+          [],
+        );
+      });
+
       // Regression: drawTimelapseTrack skipped a segment whenever the other
       // endpoint's time was >= this one's, so an equal-time link was skipped
       // from BOTH endpoints and never drawn — while Connect selected
@@ -5188,6 +5405,58 @@ describe("AnnotationViewer", () => {
             expect(tlLayer.draw).toHaveBeenCalled();
           },
         );
+
+        // Track filters are a timelapse draw input like the colouring
+        // controls: the layer bakes its content in at draw time, so a filter
+        // change that is not in the watch list changes nothing until an
+        // unrelated redraw.
+        it("rebuilds the timelapse layer when the track filters change", async () => {
+          setupOneTrack();
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          const tlLayer = (wrapper.vm as any).timelapseLayer;
+          (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+          const countSegments = () =>
+            tlLayer.annotations().filter((f: any) => f.options().isConnection)
+              .length;
+          expect(countSegments()).toBeGreaterThan(0);
+
+          // Content, not draw-called: setTrackFilters also clears the
+          // connection selection, whose own watcher rebuilds the layer — a
+          // draw spy passes without the filter being applied at all.
+          connectionListStore.setTrackFilters({
+            ...createEmptyTrackFilters(),
+            connectionCount: { min: 2, max: null },
+          });
+          await wrapper.vm.$nextTick();
+
+          expect(countSegments()).toBe(0);
+        });
+
+        // One rebuild per keystroke, not three: the primary watcher's
+        // drawAnnotationsAndTooltips already rebuilds the timelapse layer
+        // directly, so a second predicate entry in the timelapse watch list
+        // and the empty-selection replacement in setTrackFilters each fired a
+        // redundant full reconstruction of every track feature (PR #1340
+        // Codex round 6). removeAllAnnotations counts the rebuilds.
+        it("rebuilds the timelapse layer exactly once per filter change", async () => {
+          setupOneTrack();
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          const tlLayer = (wrapper.vm as any).timelapseLayer;
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+          await wrapper.vm.$nextTick();
+
+          tlLayer.removeAllAnnotations.mockClear();
+          connectionListStore.setTrackFilters({
+            ...createEmptyTrackFilters(),
+            connectionCount: { min: 2, max: null },
+          });
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+          await wrapper.vm.$nextTick();
+
+          expect(tlLayer.removeAllAnnotations).toHaveBeenCalledTimes(1);
+        });
 
         it("paints every segment uniformly when per-track colouring is off", async () => {
           setupOneTrack();

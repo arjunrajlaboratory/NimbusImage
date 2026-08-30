@@ -66,6 +66,7 @@
 import { computed } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
+import connectionListStore from "@/store/connectionList";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 import { TRequestablePalette } from "@/store/model";
@@ -102,10 +103,11 @@ const coverage = computed(() =>
     viewportTotal: annotationStore.viewportAnnotationCount,
     loaded: annotationStore.annotationStubs.size,
     constraintCount: constraints.value.length,
-    // Already computed by the drawing path (AnnotationViewer renders from this
-    // getter), so reading its length here is a cached-getter lookup, not a new
-    // pass over the dataset.
-    passingCount: filterStore.filteredAnnotations.length,
+    // The lens-aware count, NOT filteredAnnotations.length: the track-object
+    // opt-in hides whole tracks after the ordinary filters run, and the raw
+    // length would claim they all "pass filters" while they are hidden. A
+    // plain cached length read while the lens is off.
+    passingCount: connectionListStore.displayedPassingCount,
   }),
 );
 
@@ -119,6 +121,17 @@ const constraintPalettes = computed<TRequestablePalette[]>(() => {
   ) {
     palettes.push("analysisPanel");
   }
+  // The track filter lives in the Object Browser's Connections tab — but the
+  // Object Browser and Analysis are mutually-evicting right-zone primaries
+  // (App.vue paletteRoles), so requesting both would open Analysis and then
+  // immediately evict it. When both constraint sources are active, Analysis
+  // wins the click; the tooltip derives from this list, so it names only what
+  // actually opens. (PR #1340 Codex P2.)
+  else if (
+    constraints.value.some((constraint) => constraint.source === "connections")
+  ) {
+    palettes.push("annotationPanel");
+  }
   if (constraints.value.some((constraint) => constraint.source === "filters")) {
     palettes.push("filtersPanel");
   }
@@ -128,6 +141,7 @@ const constraintPalettes = computed<TRequestablePalette[]>(() => {
 const PALETTE_NAMES: Record<TRequestablePalette, string> = {
   analysisPanel: "Analysis",
   filtersPanel: "Filters",
+  annotationPanel: "the Object Browser",
 };
 
 const constraintTooltip = computed(() => {
@@ -139,7 +153,19 @@ const constraintTooltip = computed(() => {
 });
 
 function openConstraintPanels() {
-  store.requestPaletteOpen(constraintPalettes.value);
+  const palettes = constraintPalettes.value;
+  // The track constraint's controls live in the Connections tab, and the
+  // Object Browser reopens on whatever tab it last showed — so open it
+  // through the open-on-a-tab mechanism ("Show tracks" uses the same one).
+  // It opens the palette itself, so it is removed from the plain request
+  // rather than double-opened.
+  if (palettes.includes("annotationPanel")) {
+    store.openAnnotationBrowserTab("connections");
+  }
+  const requested = palettes.filter((id) => id !== "annotationPanel");
+  if (requested.length > 0) {
+    store.requestPaletteOpen(requested);
+  }
 }
 </script>
 

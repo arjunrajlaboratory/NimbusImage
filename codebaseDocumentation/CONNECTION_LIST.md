@@ -111,6 +111,86 @@ count plus time range on each track row makes a truncated track obvious.
 Track ids are the smallest member annotation id, so expansion state survives
 re-renders.
 
+### Track filters
+
+*User request: "Filter by track length/number of connections would be huge for me."*
+
+The toolbar's filter button opens a menu of optional min/max bounds on three
+**dataset-wide track metrics**:
+
+| Metric | Definition |
+|---|---|
+| Connections in track | `component.connections.length` over the full graph |
+| Objects in track | endpoint count, dangling endpoints included |
+| Duration (timepoints) | max member `Time` − min + 1, over the members that resolve |
+
+A connection whose track falls outside any active bound is hidden from the
+list **and from both viewer draw paths** — normal-mode lines and timelapse
+tracks — because all three read one store predicate,
+`connectionListStore.connectionPassesTrackFilters`. In timelapse mode a hidden
+track disappears entirely (segments and centroid dots); its members are *not*
+recast as gray orphan dots, since the graph didn't change, only the view.
+
+Design decisions worth knowing before changing this:
+
+- **Metrics are dataset-wide** (keyed by `colorKey` via
+  `trackKeyByAnnotationId`), never computed on the scoped fragment — narrowing
+  the scope must not make a long track read as short. Same rule as track
+  colouring and duplicate-ID detection.
+- **Unknown duration is excluded.** A track whose every endpoint dangles
+  (points at a *deleted* annotation — data rot, not "ends at the last
+  timepoint") has no computable duration; under an active duration bound it
+  is hidden, and **Clean up dangling** (below) is the remedy for the rot
+  itself. Count bounds are always known and still apply. Tracks with *some*
+  surviving members get their duration from those.
+- **"Also hide these tracks' objects in the image"** extends the filter to
+  the filtered-out tracks' objects — an opt-in checkbox in the same menu,
+  off by default, because filtering the connections list must not silently
+  make cells vanish from the canvas. It is a display lens only (the Objects
+  tab, exports and analysis are untouched), unconnected objects are never
+  hidden, and while it narrows, the render-coverage HUD counts it as an
+  active constraint ("1 track filter hiding whole tracks' objects") whose
+  click opens the Object Browser directly on the Connections tab (via
+  `openAnnotationBrowserTab`, the "Show tracks" mechanism — the browser
+  otherwise reopens on whatever tab it last showed) — unless an Analysis gate
+  is also active: those two are mutually-evicting right-zone primaries, so
+  Analysis wins the click and the tooltip names only what actually opens. The HUD's "passing
+  filters" figure reads `displayedPassingCount` (filters ∩ lens), never the
+  raw `filteredAnnotations.length`. It narrows both display twins — the drawn
+  set (`displayableAnnotations`) and the visibility refresh
+  (`updateVisibility`'s `filteredIds`), which drives the stub-mode budget and
+  the HUD's viewport counts. The zoomed-out **raster overview** on huge
+  datasets is exempt, exactly as it is from every client display filter
+  (`filteredDraw` included): the raster renders the complete frame by design,
+  and the lens applies where vectors take over.
+
+### Clean up dangling connections
+
+When the dataset contains connections whose endpoints point at deleted
+annotations, the Connections tab toolbar shows **Clean up dangling (N)** —
+hidden entirely on healthy datasets. It deletes those connections from the
+whole dataset (not the current scope) behind a confirm dialog, in one batched
+request, and participates in undo like every other connection delete. Stubs
+count as resolvable endpoints, so lazy mode never mistakes an unhydrated live
+annotation for a deleted one.
+- **With no filter active the predicate is a stable `() => true` constant**,
+  so the common case adds zero cost and zero reactive dependencies to the draw
+  paths. The metrics map is only ever computed when a filter is active, cached
+  against the connection graph.
+- The count readout becomes **"N of M"** while filters narrow, the empty state
+  says "No connections match the track filters", and the button carries a
+  badge — three cues that the list is narrowed (see the count-cue rule in the
+  nimbus-frontend skill).
+- Filters are **session-only view state**, reset when the dataset actually
+  changes — numeric ranges don't transfer between datasets with different
+  track scales, but a same-dataset refresh (e.g. an unroll toggle re-running
+  `setSelectedDataset` with the same id) keeps them, like the ordinary
+  filters. Scope and grouping survive dataset switches; filters deliberately
+  don't.
+- Changing a bound clears the connection selection and resets the page,
+  matching `setScope`'s rationale; the bulk-delete intersection additionally
+  picks the filter up by construction because `scopedConnections` applies it.
+
 ### Track ID property
 
 *Issue [#1330](https://github.com/arjunrajlaboratory/NimbusImage/issues/1330).*
@@ -619,6 +699,31 @@ Run `pnpm test src/utils/__tests__/connections.test.ts src/utils/__tests__/camer
 - [ ] **The path resets on dataset switch and re-hydrates from the configuration** (it names a property id from the outgoing configuration), and resolve drops a path whose property left the configuration. — *"clears the path on a dataset switch"*, *"drops a path whose property left the configuration"*, *"survives a build/resolve round trip"*
 - [ ] **A live property deletion clears the path immediately and persists the drop.** The persisted resolver only runs at hydration; without the live twin (`reconcileTrackLabelPathForPropertyIds`, wired in `properties.setProperties` like the analysis-plot reconcile) the panel keeps labelling from the deleted property until reload and a later browser save persists the orphan. — *"clears the path and persists when its property is deleted"*, *"keeps the path and stays silent while its property exists"*
 
+### Track metric filters
+
+- [ ] **Metrics are dataset-wide, never fragment-local.** The predicate resolves a connection's track through `trackKeyByAnnotationId` (the global analysis), so a scope-narrowed fragment is judged by its full track. — *"uses dataset-wide metrics even when the scope shows a fragment"*, *"keys each track by its dataset-wide track key"*
+- [ ] **The inactive predicate is a free constant.** The viewer reads it on every draw pass and `scopedConnections` on every list read; with no bound set it must be the stable `PASSES_EVERY_CONNECTION` and never touch `trackMetrics`, which resolves every connected annotation. — *"does not resolve annotations while no filter is active"*, *"returns the scope's own array identity while no filter is active"*
+- [ ] **List and viewer read ONE predicate, and draw/retention stay a pair under it.** `drawNewConnections` skips failing connections and `clearOldAnnotations`' connection branch removes them by the same test — a filter added to only one path either leaves stale lines or churns them every pass. — *"skips a connection whose track fails the track filters"*, *"removes a drawn line once its track fails the track filters"*
+- [ ] **A filter change alone redraws both draw paths — via the PRIMARY watcher only, exactly once — and tests assert layer CONTENT, not a draw spy.** `connectionPassesTrackFilters` sits in the primary watch list alone: `drawAnnotationsAndTooltips` already rebuilds the timelapse layer directly, so a second entry in the timelapse watch list reconstructed every track feature twice per filter keystroke — three times with the selection-clearing watcher, which is why `setTrackFilters` and `setScope` replace the selection Set only when it is non-empty (the Set's identity is a viewer watcher source). A draw-called spy still passes vacuously when a selection exists, so assert content. — *"redraws normal-mode connections when the track filters change"*, *"rebuilds the timelapse layer when the track filters change"*, *"rebuilds the timelapse layer exactly once per filter change"*, *"keeps the empty selection's identity when filters change"*
+- [ ] **A hidden track's members do not become orphan dots.** The timelapse path skips a filtered-out component but still counts its members as connected — they vanish from the overlay entirely, since the graph didn't change, only the view. — *"hides a filtered-out track without recasting its members as orphans"*
+- [ ] **Unknown duration is excluded, because a remedy exists.** Duration comes from the members that resolve (dangling endpoints must not poison it); a track where NONE resolve is pure data rot with `null` duration and is hidden under an active duration bound. This flipped twice: first to fail-open ("hiding real rows is worse"), then back once "Clean up dangling" gave the rot an actual fix — do not flip it again without moving that remedy. Count bounds are always known and apply either way. — *"derives duration from the members that still resolve"*, *"reports null duration when no member resolves"*, *"hides a track of unknown duration under an active duration bound"*, *"resolves durations from stubs, not only hydrated annotations"*
+- [ ] **The narrowed count carries its cue, and the empty state names the filter.** "N of M" beside the number while filters narrow; "No connections match the track filters" instead of the scope's message when they hide every row (but the scope's own message when the scope itself is empty). — *"says how many connections the track filters are hiding"*, *"uses a filtered empty message when the filters hide every row"*, *"keeps the scope's empty message when the scope itself is empty"*
+- [ ] **Bulk delete respects the filters by construction.** `scopedConnections` applies the predicate, so `selectedInScopeConnectionIds` cannot include a filtered-out row; a bound change also clears the selection and resets the page, matching `setScope`. — *"bulk delete acts only on rows passing the filters"*, *"clears the selection and resets the page when filters change"*
+- [ ] **`scopeOnlyConnections` is gated like every other scope getter.** It filters the whole connection array per read for the dynamic scopes, and the "of M" readout is the only consumer — a hidden tab must never touch it. — *"does not read scopeOnlyConnections while the tab is hidden"*
+- [ ] **Filters reset only on an ACTUAL dataset switch.** Numeric ranges are dataset-scale-specific, but the unconditional connection-list reset runs on every `setSelectedDataset` — including `refreshDataset()` with the same id (unroll toggles) — and the bounds are unrecoverable user state, so their reset (`resetConnectionTrackFilters`) is gated on `datasetChanged`, exactly like `resetFilterState`. — *"keeps the track filters through a same-dataset refresh"*, *"resets the filters on a dataset switch"*, *"resets the opt-in on a dataset switch"*
+- [ ] **Metric and dangling scans are hydration-churn stable — with NO hydrated fallback.** They resolve STUB-ONLY (`resolveStub`): the stub map is authoritative in both modes and replaced only by load/CRUD, while `hydratedAnnotations` is replaced on every pan. A "fail-safe" hydrated fallback is self-defeating here: a genuinely dangling endpoint always misses the stub map, so the fallback fires on every rot-bearing dataset and re-registers exactly the churn dep the resolver removes — and a churn test whose fixture has no rot passes against it, which is why the fixture MUST contain a dangling endpoint. The location scope uses the same resolver; row labels keep hydrated-first `resolveAnnotation` (they need `name`). — *"resolves metrics and dangling from stubs, not the hydration cache"*, *"keeps the metric scan cached when the hydration resolver churns"*
+- [ ] **Object hiding is opt-in, and the checkbox alone narrows nothing.** The default must stay "filter the list, not the canvas"; the opt-in only bites while a bound is live (`trackFilterHidesObjects` is the conjunction). — *"hides an object of a failing track only when opted in"*, *"hides nothing when the opt-in is set but no filter is active"*, *"hides a filtered-out track's objects only when opted in"*, *"resets the opt-in on a dataset switch"*
+- [ ] **Unconnected objects are never hidden.** They have no track, so a track filter says nothing about them — without this rule, any min-bound would blank every untracked object in the dataset. — *"never hides unconnected objects"*
+- [ ] **The object predicate is a stable constant while the opt-in is off**, same contract as the connection predicate: `displayableAnnotations` reads it on every rebuild, and hiding is filtered at THAT single source so every display surface (per-channel maps, layer maps, displayed ids, timelapse sets, connection gating and retention) stays symmetric by construction. — *"is a stable pass-all constant while the opt-in is off"*, *"removes drawn objects when the opt-in is switched on live"*
+- [ ] **The visibility refresh is the drawn set's twin.** `updateVisibility`'s `filteredIds` drives the stub-mode budget, hydration, and the HUD's viewport counts; the opt-in must narrow it exactly as it narrows `displayableAnnotations` (and toggling the opt-in must itself trigger a refresh), or budget slots are spent on objects the draw path then discards and the HUD counts hidden objects. Found by this feature's own branch review — the third instance of the draw↔twin shape on one branch. — *"excludes hidden-track objects from the visibility refresh"*
+- [ ] **Hidden objects register as an active constraint.** Every count the HUD shows shrinks while the opt-in narrows, and this repo's rule is that a narrowed count carries its cue — the constraint is counted in the one shared list (never on the Filters badge, whose panel can't show it), and its HUD click opens the Object Browser ON THE CONNECTIONS TAB when no Analysis gate is active — a palette-only open lands on whatever tab the browser last showed, which does not expose the constraint's controls. — *"counts the connections tab's object hiding as a constraint"*, *"names it in the HUD summary"*, *"does not count it while the opt-in is not narrowing"*, *"opens the Object Browser for the track filter alone"*, *"keeps the Filters companion alongside the Connections tab"*
+- [ ] **The HUD's passing count composes the lens.** `displayedPassingCount` (filters ∩ object lens), never `filteredAnnotations.length` — with only the track constraint active the raw length claims every annotation "passes filters" while whole tracks are hidden. A plain length read while the lens is off. — *"counts hidden-track objects out while the lens narrows"*, *"is the plain filtered count while the lens is off"*, *"prints the lens-aware passing count"*
+- [ ] **The HUD click requests at most one right-zone primary.** Analysis and the Object Browser evict each other (`App.vue` paletteRoles), so requesting both opens the first and immediately evicts it — the click's outcome would contradict its own tooltip. Analysis wins; the tooltip derives from the request list, so it stays honest by construction. — *"requests only one right-zone primary when analysis and track constraints coexist"*
+- [ ] **Dangling means deleted, and stubs are alive.** A connection is dangling when EITHER endpoint misses the stub map — the map every create/update/delete path maintains; treating an unhydrated annotation as dead would let lazy mode mass-delete live tracks. — *"identifies a connection as dangling when EITHER endpoint is gone"*, *"counts a stub-backed endpoint as resolvable"*
+- [ ] **Cleanup is whole-dataset, batched, confirmed, and offered only when needed.** One request, never a loop; the button appears only when something dangles; the dialog is the only path to the delete and closes even on failure (a stuck saving dialog was the connect-selected bug one feature over). — *"deletes every dangling connection in one batched request"*, *"does not call the backend when nothing dangles"*, *"offers the cleanup only when something dangles"*, *"deletes dangling connections only through the confirm"*, *"closes the dialog even when the delete rejects"*
+- [ ] **`danglingConnectionIds` is gated like every other scope-derived getter.** It resolves both endpoints of every connection, invalidated by connection or stub-map changes (deliberately not hydration churn — see the stub-only row above); the scan is still O(connections) per recompute, so a hidden tab must never read it. — *"does not read danglingConnectionIds while the tab is hidden"*
+- [ ] **Bound parsing keeps min/max independent.** An emptied field becomes an unbounded side without touching its partner, and each change dispatches a *replaced* filters object (watchers fire by identity). — *"parses a bound and dispatches a rebuilt filters object"*, *"turns an emptied field into an unbounded side"*, *"clears every bound at once"*
+
 ### Destructive actions
 
 - [ ] **Bulk delete acts only on rows in scope.** Scope *inputs* change without `setScope` firing. — *"stale selection when scope INPUTS change"* (3 tests)
@@ -652,6 +757,8 @@ and not its twin. Before considering any change here done, check the pair.
 | the count a guard is disabled on | the set the action actually operates on |
 | a behaviour gated on timelapse mode | the same view reached with the mode off |
 | an overlay that floats over the canvas | one that shifts the layout instead |
+| the list's scoped rows | the viewer's drawn connections (one shared track-filter predicate) |
+| a control that narrows a count | the "of M" cue beside that count |
 
 - [ ] **This checklist is machine-checked, so keep it checkable.** `src/__tests__/regressionChecklist.test.ts` asserts that every test name cited below resolves in `src/` and that no two invariants share a heading. Both failure modes have already happened: a round renamed two tests and left the citations dangling, and a superseded row was added ABOVE its replacement instead of replacing it, leaving two contradictory rules for one behaviour that no change could satisfy at once. **Replace a row when you supersede it; never stack the new rule on top of the old one.** Abbreviate a long test name with a trailing `…` and cite `%s` templates verbatim — the guard understands both.
 

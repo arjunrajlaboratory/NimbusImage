@@ -44,6 +44,7 @@ function input(
     annotationIdFilters: [],
     analysisPlots: [],
     analysisGateIds: {},
+    trackFilterHidesObjects: false,
     ...overrides,
   };
 }
@@ -311,6 +312,35 @@ describe("summarizeActiveConstraints", () => {
     );
     expect(summarizeActiveConstraints(constraints, resolveName)).toBe(
       "1 property filter",
+    );
+  });
+});
+
+describe("track filter object hiding constraint", () => {
+  it("counts the connections tab's object hiding as a constraint", () => {
+    const constraints = collectActiveConstraints(
+      input({ trackFilterHidesObjects: true }),
+    );
+    expect(constraints).toEqual([
+      { source: "connections", kind: "trackObjects" },
+    ]);
+    // The Filters badge counts only what its own panel can show.
+    expect(countActiveConstraints(constraints, "filters")).toBe(0);
+    expect(countActiveConstraints(constraints)).toBe(1);
+  });
+
+  it("does not count it while the opt-in is not narrowing", () => {
+    expect(
+      collectActiveConstraints(input({ trackFilterHidesObjects: false })),
+    ).toEqual([]);
+  });
+
+  it("names it in the HUD summary", () => {
+    const constraints = collectActiveConstraints(
+      input({ trackFilterHidesObjects: true }),
+    );
+    expect(summarizeActiveConstraints(constraints, resolveName)).toBe(
+      "1 track filter hiding whole tracks' objects",
     );
   });
 });

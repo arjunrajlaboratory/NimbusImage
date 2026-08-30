@@ -24,8 +24,98 @@
         <v-btn value="flat" size="small">Flat</v-btn>
         <v-btn value="track" size="small">By track</v-btn>
       </v-btn-toggle>
+      <!-- Track-metric filters: bounds on track size hide whole tracks from
+           the list AND from the image viewer (both read one store predicate).
+           The badge is the "something is narrowing this" cue when the menu is
+           closed; the count's "of M" suffix is the cue next to the number. -->
+      <v-menu :close-on-content-click="false" location="bottom">
+        <template v-slot:activator="{ props: menuProps }">
+          <v-btn
+            v-bind="menuProps"
+            variant="text"
+            icon
+            size="small"
+            title="Track filters"
+          >
+            <v-badge :model-value="trackFiltersActive" dot color="primary">
+              <v-icon>mdi-filter-variant</v-icon>
+            </v-badge>
+          </v-btn>
+        </template>
+        <v-card class="track-filter-menu">
+          <v-card-title class="track-filter-title">
+            Track filters
+            <v-spacer />
+            <v-btn
+              variant="text"
+              size="small"
+              :disabled="!trackFiltersActive"
+              @click="clearTrackFilters"
+            >
+              Clear
+            </v-btn>
+          </v-card-title>
+          <v-card-text>
+            <div class="text-caption mb-2">
+              Hide tracks outside these ranges — from the list and the image.
+            </div>
+            <div
+              v-for="metric in TRACK_FILTER_METRICS"
+              :key="metric.key"
+              class="track-filter-row"
+            >
+              <span class="track-filter-label">{{ metric.label }}</span>
+              <v-text-field
+                :model-value="
+                  connectionListStore.trackFilters[metric.key].min ?? ''
+                "
+                type="number"
+                min="0"
+                placeholder="min"
+                density="compact"
+                variant="outlined"
+                hide-details
+                class="track-filter-bound"
+                @update:model-value="
+                  updateTrackFilterBound(metric.key, 'min', $event)
+                "
+              />
+              <span class="track-filter-dash">–</span>
+              <v-text-field
+                :model-value="
+                  connectionListStore.trackFilters[metric.key].max ?? ''
+                "
+                type="number"
+                min="0"
+                placeholder="max"
+                density="compact"
+                variant="outlined"
+                hide-details
+                class="track-filter-bound"
+                @update:model-value="
+                  updateTrackFilterBound(metric.key, 'max', $event)
+                "
+              />
+            </div>
+            <!-- Opt-in: a track filter narrows connections by default; this
+                 extends it to the filtered-out tracks' OBJECTS in the viewer.
+                 Unconnected objects are never hidden, and the HUD announces
+                 the narrowing (activeConstraints). -->
+            <v-checkbox
+              :model-value="connectionListStore.hideFilteredTrackObjects"
+              label="Also hide these tracks' objects in the image"
+              density="compact"
+              hide-details
+              class="track-filter-objects"
+              @update:model-value="
+                connectionListStore.setHideFilteredTrackObjects($event === true)
+              "
+            />
+          </v-card-text>
+        </v-card>
+      </v-menu>
       <v-spacer />
-      <span class="connection-count">{{ scopedCount.toLocaleString() }}</span>
+      <span class="connection-count">{{ countText }}</span>
     </div>
 
     <div class="connection-list-toolbar">
@@ -53,6 +143,60 @@
         Delete selected ({{ selectedInScopeCount }})
       </v-btn>
     </div>
+
+    <!-- Dangling = an endpoint pointing at a DELETED annotation (data rot),
+         common in older datasets. Whole-dataset cleanup on its own row (it
+         squeezed Delete selected down to a bare icon when inlined), and only
+         present when there is something to clean. -->
+    <div v-if="danglingCount > 0" class="connection-list-toolbar">
+      <span class="dangling-note">
+        {{ danglingCount.toLocaleString() }} connections point at deleted
+        objects.
+      </span>
+      <v-spacer />
+      <v-btn
+        variant="text"
+        color="error"
+        size="small"
+        prepend-icon="mdi-link-variant-remove"
+        :disabled="!isLoggedIn || isCleaningDangling"
+        :loading="isCleaningDangling"
+        @click="danglingDialogOpen = true"
+      >
+        Clean up
+      </v-btn>
+    </div>
+
+    <v-dialog v-model="danglingDialogOpen" max-width="500px">
+      <v-card>
+        <v-card-title>Clean up dangling connections</v-card-title>
+        <v-card-text>
+          {{ danglingCount.toLocaleString() }} connections point at objects that
+          no longer exist (deleted after the connection was made). This deletes
+          those connections from the whole dataset, regardless of the current
+          scope. It can be undone with Undo.
+        </v-card-text>
+        <v-card-actions class="button-bar">
+          <v-spacer />
+          <v-btn
+            variant="text"
+            size="small"
+            @click="danglingDialogOpen = false"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            :loading="isCleaningDangling"
+            @click="confirmCleanDangling"
+          >
+            Delete {{ danglingCount.toLocaleString() }} connections
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- Track labels can mirror a worker-computed property (e.g. Parent-Child
          Connection IDs' trackId), so a track flagged during post-processing
@@ -303,7 +447,9 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import connectionListStore, {
   CONNECTION_SCOPE_LABELS,
+  ITrackFilters,
   TConnectionScope,
+  createEmptyTrackFilters,
 } from "@/store/connectionList";
 import { MAX_CONNECT_SELECTED } from "@/store/constants";
 import propertyStore from "@/store/properties";
@@ -376,6 +522,85 @@ const scopedCount = computed(() =>
   props.isActive ? connectionListStore.scopedConnections.length : 0,
 );
 const hoveredId = computed(() => connectionListStore.hoveredConnectionId);
+
+// --- Track metric filters ---
+
+const TRACK_FILTER_METRICS: {
+  key: keyof ITrackFilters;
+  label: string;
+}[] = [
+  { key: "connectionCount", label: "Connections in track" },
+  { key: "memberCount", label: "Objects in track" },
+  { key: "duration", label: "Duration (timepoints)" },
+];
+
+const trackFiltersActive = computed(
+  () => connectionListStore.trackFiltersActive,
+);
+
+// Gated like scopedCount: for the dynamic scopes scopeOnlyConnections filters
+// the whole connection array per read, and this component stays mounted (and
+// rendering) while the tab is hidden.
+const scopeOnlyCount = computed(() =>
+  props.isActive && trackFiltersActive.value
+    ? connectionListStore.scopeOnlyConnections.length
+    : 0,
+);
+
+// "N of M" whenever the track filters are narrowing — a filtered count
+// printed without a cue reads as data loss.
+const countText = computed(() => {
+  const count = scopedCount.value.toLocaleString();
+  if (!props.isActive || !trackFiltersActive.value) {
+    return count;
+  }
+  return `${count} of ${scopeOnlyCount.value.toLocaleString()}`;
+});
+
+function updateTrackFilterBound(
+  metric: keyof ITrackFilters,
+  bound: "min" | "max",
+  raw: string | number | null,
+) {
+  const parsed =
+    raw == null || raw === "" || Number.isNaN(Number(raw)) ? null : Number(raw);
+  const current = connectionListStore.trackFilters;
+  connectionListStore.setTrackFilters({
+    ...current,
+    [metric]: { ...current[metric], [bound]: parsed },
+  });
+}
+
+function clearTrackFilters() {
+  connectionListStore.setTrackFilters(createEmptyTrackFilters());
+}
+
+// --- Dangling connection cleanup ---
+
+// Gated like every other scope-derived getter: danglingConnectionIds is an
+// O(connections) scan invalidated by connection or stub-map changes (creates,
+// deletes, edits — deliberately NOT hydration churn), so a hidden tab must
+// never pay for it.
+const danglingCount = computed(() =>
+  props.isActive ? connectionListStore.danglingConnectionIds.length : 0,
+);
+
+const danglingDialogOpen = ref(false);
+const isCleaningDangling = ref(false);
+
+async function confirmCleanDangling() {
+  isCleaningDangling.value = true;
+  try {
+    await connectionListStore.deleteDanglingConnections();
+  } catch (error) {
+    logError("Failed to clean up dangling connections", error);
+    connectError.value =
+      "Failed to delete dangling connections. See console for details.";
+  } finally {
+    isCleaningDangling.value = false;
+    danglingDialogOpen.value = false;
+  }
+}
 const selectedCount = computed(
   () => connectionListStore.selectedConnectionIds.size,
 );
@@ -407,7 +632,20 @@ const EMPTY_MESSAGES: Record<TConnectionScope, string> = {
   filtered: "No connections touch an object passing the current filters.",
 };
 
-const emptyMessage = computed(() => EMPTY_MESSAGES[connectionListStore.scope]);
+const emptyMessage = computed(() => {
+  // "This dataset has no connections" would be a lie when the track filters
+  // are what hid them. isActive first: scopeOnlyConnections must never be
+  // read from a hidden tab (this branch renders whenever the list is empty,
+  // which includes the gated-to-empty hidden state).
+  if (
+    props.isActive &&
+    trackFiltersActive.value &&
+    connectionListStore.scopeOnlyConnections.length > 0
+  ) {
+    return "No connections match the track filters.";
+  }
+  return EMPTY_MESSAGES[connectionListStore.scope];
+});
 
 // Count only the selected rows that are actually in the list. A connection can
 // be selected from the viewer while out of the current scope, so comparing the
@@ -1066,6 +1304,14 @@ defineExpose({
   trackBadge,
   ensureTrackLabelValues,
   trackLabelFetchFailed,
+  trackFiltersActive,
+  scopeOnlyCount,
+  countText,
+  updateTrackFilterBound,
+  clearTrackFilters,
+  danglingCount,
+  danglingDialogOpen,
+  confirmCleanDangling,
 });
 </script>
 
@@ -1098,6 +1344,45 @@ defineExpose({
 }
 
 .connection-count {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.track-filter-menu {
+  min-width: 340px;
+}
+
+.track-filter-title {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+}
+
+.track-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.track-filter-label {
+  flex: 1 1 auto;
+  font-size: 13px;
+}
+
+.track-filter-bound {
+  flex: 0 0 72px;
+}
+
+.track-filter-dash {
+  opacity: 0.6;
+}
+
+.dangling-note {
   font-size: 12px;
   opacity: 0.7;
 }

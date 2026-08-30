@@ -12,6 +12,7 @@ import {
   buildConnectionRows,
   buildTrackRows,
   chainAnnotationsByTime,
+  computeTrackMetrics,
   findConnectedComponents,
   TTrackLabelResolution,
   findDuplicateTrackLabelValues,
@@ -782,5 +783,105 @@ describe("formatTrackLabelValue", () => {
 
   it("passes strings through", () => {
     expect(formatTrackLabelValue("t-7")).toBe("t-7");
+  });
+});
+
+describe("computeTrackMetrics", () => {
+  it("computes connection count, member count and duration for a linear track", () => {
+    const components = findConnectedComponents([
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+    ]);
+    const metrics = computeTrackMetrics(
+      components,
+      resolverFor([
+        makeAnnotation("a", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("c", 2),
+      ]),
+    );
+    expect(metrics.get("a")).toEqual({
+      connectionCount: 2,
+      memberCount: 3,
+      duration: 3,
+    });
+  });
+
+  it("keys each track by its dataset-wide track key", () => {
+    const components = findConnectedComponents([
+      makeConnection("c1", "m", "b"),
+      makeConnection("c2", "x", "y"),
+    ]);
+    const metrics = computeTrackMetrics(
+      components,
+      resolverFor([
+        makeAnnotation("m", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("x", 0),
+        makeAnnotation("y", 1),
+      ]),
+    );
+    expect([...metrics.keys()].sort()).toEqual(["b", "x"]);
+  });
+
+  it("counts a branching track's members and connections separately", () => {
+    const components = findConnectedComponents([
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "a", "c"),
+    ]);
+    const metrics = computeTrackMetrics(
+      components,
+      resolverFor([
+        makeAnnotation("a", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("c", 1),
+      ]),
+    );
+    expect(metrics.get("a")).toEqual({
+      connectionCount: 2,
+      memberCount: 3,
+      duration: 2,
+    });
+  });
+
+  it("derives duration from the members that still resolve", () => {
+    // "gone" is a dangling endpoint — common in real datasets and must not
+    // poison the duration of the members that do resolve.
+    const components = findConnectedComponents([
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "gone"),
+    ]);
+    const metrics = computeTrackMetrics(
+      components,
+      resolverFor([makeAnnotation("a", 0), makeAnnotation("b", 5)]),
+    );
+    expect(metrics.get("a")).toEqual({
+      connectionCount: 2,
+      memberCount: 3,
+      duration: 6,
+    });
+  });
+
+  it("reports null duration when no member resolves", () => {
+    const components = findConnectedComponents([
+      makeConnection("c1", "gone1", "gone2"),
+    ]);
+    const metrics = computeTrackMetrics(components, resolverFor([]));
+    expect(metrics.get("gone1")).toEqual({
+      connectionCount: 1,
+      memberCount: 2,
+      duration: null,
+    });
+  });
+
+  it("resolves durations from stubs, not only hydrated annotations", () => {
+    const components = findConnectedComponents([
+      makeConnection("c1", "s1", "s2"),
+    ]);
+    const metrics = computeTrackMetrics(
+      components,
+      resolverFor([makeStub("s1", 2), makeStub("s2", 9)]),
+    );
+    expect(metrics.get("s1")?.duration).toBe(8);
   });
 });
