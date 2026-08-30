@@ -2336,12 +2336,13 @@ function getTimelapseSegmentStyle(
 // The timelapse counterpart of restyleAnnotations, covering BOTH kinds of
 // feature the layer holds: track segments and centroid dots.
 //
-// Connection selection additionally rebuilds the layer (it decides which
-// duplicate represents a pair), but hover changes continuously as the pointer
-// runs down the connection list, and rebuilding ~2,500 line features per row
-// made the list feel sluggish — so hover repaints in place. Not a cosmetic
-// nicety: clicking a row HIGHLIGHTS rather than selects, so without it the main
-// way of finding a connection has no visible effect at all in timelapse mode.
+// Connection selection additionally runs the diff-based rebuild pass (it
+// decides which duplicate represents a pair, a materialization-time choice),
+// but hover changes continuously as the pointer runs down the connection list,
+// and running the full desired-set computation per row made the list feel
+// sluggish — so hover repaints in place. Not a cosmetic nicety: clicking a row
+// HIGHLIGHTS rather than selects, so without it the main way of finding a
+// connection has no visible effect at all in timelapse mode.
 //
 // Dots go through the same in-place path. `restyleAnnotations` only ever
 // touches `annotationLayer`, so before this the timelapse dots had no restyle
@@ -4819,14 +4820,15 @@ watch([selectedConnectionIds, hoveredConnectionId], () => {
   onAnnotationStateChanged();
 });
 
-// The timelapse layer bakes styling in at draw time, so the two highlight
-// channels are reflected differently there. SELECTION rebuilds: it also decides
-// which duplicate represents an endpoint pair, which is a draw-time choice.
-// HOVER restyles the drawn segments in place — it changes continuously while
-// the pointer moves down the connection list, and rebuilding ~2,500 line
-// features per row made the list feel sluggish. Both must do something: a row
-// click highlights via hover, so leaving hover unhandled made clicking a
-// connection look broken in timelapse mode while it worked everywhere else.
+// The timelapse layer's styling is decided during its rebuild pass, so the two
+// highlight channels are reflected differently there. SELECTION runs the
+// (diff-based) rebuild pass: it also decides which duplicate represents an
+// endpoint pair, which is a materialization-time choice. HOVER restyles the
+// drawn segments in place — it changes continuously while the pointer moves
+// down the connection list, and running the full desired-set computation per
+// row made the list feel sluggish. Both must do something: a row click
+// highlights via hover, so leaving hover unhandled made clicking a connection
+// look broken in timelapse mode while it worked everywhere else.
 watch(selectedConnectionIds, () => {
   if (showTimelapseMode.value) {
     onTimelapseModeChanged();

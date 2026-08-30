@@ -554,8 +554,10 @@ next selection or hover event, because the restyle watcher only fires on *change
 
 `restyleAnnotations` (`:1774`) grows a connection branch: selected → cyan
 (`CONNECTION_SELECTED_COLOR`) at width 6, hovered → width 5, otherwise
-`CONNECTION_BASE_STYLE`. The timelapse layer rebuilds its lines on every draw, so it
-reads `selectedConnectionIds` at build time instead of being restyled in place.
+`CONNECTION_BASE_STYLE`. The timelapse layer's rebuild pass reads
+`selectedConnectionIds` while computing each segment's desired state; the pass
+is a keyed **diff** (see the Cost checklist), so a kept feature is updated in
+place when its desired style changed and left untouched when it didn't.
 
 Two traps worth keeping in mind if you touch `getConnectionStyle`:
 
@@ -749,7 +751,7 @@ and not its twin. Before considering any change here done, check the pair.
 | styling at construction | the retained-feature restyle loop in `drawNewAnnotations` |
 | `setHoveredAnnotationFromCoordinates` (highlight) | `selectAnnotations` (select) |
 | `selectedConnectionIds` pruning | `hoveredConnectionId` pruning |
-| timelapse **selection** (rebuilds the layer) | timelapse **hover** (restyles in place) |
+| timelapse **selection** (runs the diff rebuild pass) | timelapse **hover** (restyles in place) |
 | normal-mode restyle (`restyleAnnotations`) | timelapse restyle (`restyleTimelapseConnections`) |
 | creating a throttled/debounced callback | cancelling it in `onBeforeUnmount` |
 | flat rendering | track/grouped rendering |
