@@ -153,7 +153,19 @@ const constraintTooltip = computed(() => {
 });
 
 function openConstraintPanels() {
-  store.requestPaletteOpen(constraintPalettes.value);
+  const palettes = constraintPalettes.value;
+  // The track constraint's controls live in the Connections tab, and the
+  // Object Browser reopens on whatever tab it last showed — so open it
+  // through the open-on-a-tab mechanism ("Show tracks" uses the same one).
+  // It opens the palette itself, so it is removed from the plain request
+  // rather than double-opened.
+  if (palettes.includes("annotationPanel")) {
+    store.openAnnotationBrowserTab("connections");
+  }
+  const requested = palettes.filter((id) => id !== "annotationPanel");
+  if (requested.length > 0) {
+    store.requestPaletteOpen(requested);
+  }
 }
 </script>
 

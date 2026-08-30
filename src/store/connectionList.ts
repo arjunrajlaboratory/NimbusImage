@@ -158,7 +158,13 @@ export class ConnectionList extends VuexModule {
    * Metrics per dataset-wide track. Only read while a track filter is active
    * — it resolves every connected annotation, so the inactive path must never
    * touch it. Cached against the connection graph and the annotation maps the
-   * resolver reads.
+   * resolver reads: the resolver's closures read those (markRaw'd, always
+   * REPLACED — rawStateMaps.test.ts) maps at invocation time, inside this
+   * getter's own effect, so a map replacement invalidates this getter even
+   * though the maps are reached through function-returning getters. Verified
+   * live (PR #1340 Codex round 2 flagged the opposite): editing a member's
+   * Time via setAnnotations changed the cached identity and the duration
+   * (20 → 519), and deleting an annotation grew danglingConnectionIds.
    */
   get trackMetrics(): Map<string, ITrackMetrics> {
     return computeTrackMetrics(

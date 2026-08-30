@@ -11,6 +11,7 @@ import { IActiveConstraint } from "@/utils/activeConstraints";
 
 const mocks = vi.hoisted(() => ({
   requestPaletteOpen: vi.fn(),
+  openAnnotationBrowserTab: vi.fn(),
   constraints: [] as IActiveConstraint[],
   stubs: new Map<string, unknown>(),
   viewportRenderedCount: 826,
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/store", () => ({
   default: {
     requestPaletteOpen: mocks.requestPaletteOpen,
+    openAnnotationBrowserTab: mocks.openAnnotationBrowserTab,
   },
 }));
 
@@ -104,6 +106,7 @@ describe("RenderCoverageIndicator", () => {
     // Cleared, never reassigned: the module factory captured this very spy,
     // so a fresh vi.fn() here would leave the component calling the old one.
     mocks.requestPaletteOpen.mockClear();
+    mocks.openAnnotationBrowserTab.mockClear();
     mocks.constraints = [];
     mocks.stubOnlyMode = true;
     mocks.viewportRenderedCount = 826;
@@ -176,12 +179,27 @@ describe("RenderCoverageIndicator", () => {
     ]);
   });
 
+  // The track constraint's controls live in the CONNECTIONS tab; opening the
+  // Object Browser on whatever tab it last showed would not expose them
+  // (PR #1340 Codex round 2). openAnnotationBrowserTab is the existing
+  // open-on-a-tab mechanism ("Show tracks" uses it), and it opens the palette
+  // itself, so the plain palette request must not double-open it.
   it("opens the Object Browser for the track filter alone", async () => {
     mocks.constraints = [TRACK_CONSTRAINT];
     await mountIndicator()
       .find(".render-coverage__constraints")
       .trigger("click");
-    expect(mocks.requestPaletteOpen).toHaveBeenCalledWith(["annotationPanel"]);
+    expect(mocks.openAnnotationBrowserTab).toHaveBeenCalledWith("connections");
+    expect(mocks.requestPaletteOpen).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Filters companion alongside the Connections tab", async () => {
+    mocks.constraints = [TRACK_CONSTRAINT, TAG_CONSTRAINT];
+    await mountIndicator()
+      .find(".render-coverage__constraints")
+      .trigger("click");
+    expect(mocks.openAnnotationBrowserTab).toHaveBeenCalledWith("connections");
+    expect(mocks.requestPaletteOpen).toHaveBeenCalledWith(["filtersPanel"]);
   });
 
   // Analysis and the Object Browser are mutually-evicting right-zone
