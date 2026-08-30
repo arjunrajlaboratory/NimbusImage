@@ -1452,7 +1452,75 @@ interface ITimelapseDiff {
 // Counts mode-on rebuild passes. Rebuilds used to be observable through
 // removeAllAnnotations, which the diff-based pass no longer calls; tests that
 // assert "rebuilt exactly once" / "hover never rebuilds" read this instead.
+// A pass skipped by the input snapshot below does NOT count — nothing ran.
 const timelapseRebuildCount = ref(0);
+
+// EVERY input the rebuild pass reads, snapshotted after each successful pass.
+// The two-phase visibility update re-fires the displayedAnnotations watcher
+// ~250 ms after a frame change with nothing the timelapse pass reads having
+// changed, and that zero-churn second pass still cost the full desired-set
+// computation (~500 ms at 100K connections). When every field matches, the
+// pass is skipped outright — the layer already shows exactly this state.
+//
+// THE INVARIANT THIS ENCODES: a new input read by the pass (or by
+// drawTimelapseTrack / drawTimelapseAnnotationCentroidsAndLabels) must be
+// added here AND to timelapsePassInputsEqual, or a stale skip silently freezes
+// the overlay. Same discipline as the timelapse watch list — see the
+// regression checklist's "identical-pass skip" row. Comparisons are by
+// identity/value only (all these are replaced on change, and mutationCounter
+// covers in-place annotation edits); displayedIds is compared by content
+// because the second wave replaces the array identity without changing it.
+interface ITimelapsePassInputs {
+  displayedIds: Set<string>;
+  connections: IAnnotationConnection[];
+  mutationCounter: number;
+  currentTime: number;
+  modeWindow: number;
+  tags: string[];
+  coloring: string;
+  colorSeed: number;
+  passesTrackFilters: (connection: IAnnotationConnection) => boolean;
+  resolveAnnotation: (id: string) => IAnnotation | undefined;
+  unrolledCentroids: { [annotationId: string]: IGeoJSPosition };
+  selectedConnections: Set<string>;
+  hoveredConnectionId: string | null;
+  selectedObjects: Set<string>;
+  hoveredObjectId: string | null;
+  showLabels: boolean;
+}
+let lastTimelapsePassInputs: ITimelapsePassInputs | null = null;
+
+function timelapsePassInputsEqual(
+  a: ITimelapsePassInputs,
+  b: ITimelapsePassInputs,
+): boolean {
+  if (
+    a.connections !== b.connections ||
+    a.mutationCounter !== b.mutationCounter ||
+    a.currentTime !== b.currentTime ||
+    a.modeWindow !== b.modeWindow ||
+    a.tags !== b.tags ||
+    a.coloring !== b.coloring ||
+    a.colorSeed !== b.colorSeed ||
+    a.passesTrackFilters !== b.passesTrackFilters ||
+    a.resolveAnnotation !== b.resolveAnnotation ||
+    a.unrolledCentroids !== b.unrolledCentroids ||
+    a.selectedConnections !== b.selectedConnections ||
+    a.hoveredConnectionId !== b.hoveredConnectionId ||
+    a.selectedObjects !== b.selectedObjects ||
+    a.hoveredObjectId !== b.hoveredObjectId ||
+    a.showLabels !== b.showLabels ||
+    a.displayedIds.size !== b.displayedIds.size
+  ) {
+    return false;
+  }
+  for (const id of b.displayedIds) {
+    if (!a.displayedIds.has(id)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 // Shallow structural equality for option values: scalars, arrays of scalars,
 // and flat objects (whose values may be scalars or arrays). Exactly the shapes
@@ -1488,6 +1556,30 @@ function timelapseValueEquals(a: any, b: any): boolean {
   return false;
 }
 
+// The complete option bags a timelapse feature carries. These interfaces ARE
+// the enforcement of the diff's core invariant: any new option baked into a
+// segment or dot must be declared here, so the materializer's compare-and-
+// update loop (which iterates these keys) keeps it fresh on kept features. An
+// option set on a feature some other way goes stale the first time the
+// feature is reused.
+interface ITimelapseSegmentOptions {
+  style: ReturnType<typeof getTimelapseSegmentStyle>;
+  isConnection: true;
+  girderId: string;
+  timelapseBaseStyle: ITimelapseSegmentBaseStyle;
+  connectionIds: string[];
+}
+interface ITimelapsePointOptions {
+  style: ReturnType<typeof getTimelapsePointStyle>;
+  time: number;
+  girderId: string;
+  isTimelapsePoint: true;
+  timelapsePointBaseStyle: ITimelapsePointBaseStyle;
+}
+type TTimelapseFeatureOptions =
+  | ITimelapseSegmentOptions
+  | ITimelapsePointOptions;
+
 // Claim the feature for `key` if a matching one is already on the layer,
 // updating only the options that changed (options() marks the layer modified,
 // so an unchanged feature must not be touched at all); otherwise construct a
@@ -1500,8 +1592,9 @@ function materializeTimelapseFeature(
   shape: AnnotationShape,
   coordinates: IGeoJSPosition[],
   geometry: number[],
-  options: Record<string, any>,
+  typedOptions: TTimelapseFeatureOptions,
 ) {
+  const options = typedOptions as Record<string, any>;
   const existing = diff.existingByKey.get(key);
   if (existing && timelapseValueEquals(existing.options("tlGeom"), geometry)) {
     diff.existingByKey.delete(key);
@@ -1549,15 +1642,49 @@ function materializeTimelapseFeature(
 }
 
 function drawTimelapseConnectionsAndCentroids() {
-  props.timelapseTextLayer.features([]);
-
   if (!showTimelapseMode.value) {
+    lastTimelapsePassInputs = null;
+    props.timelapseTextLayer.features([]);
     props.timelapseLayer.removeAllAnnotations(undefined, undefined, false);
     props.timelapseLayer.draw();
     props.timelapseTextLayer.draw();
     return;
   }
+
+  // Gather every input the pass reads (see ITimelapsePassInputs). The pass
+  // destructures its working values FROM this object so the snapshot cannot
+  // drift from what was actually consumed.
+  const inputs: ITimelapsePassInputs = {
+    displayedIds: getDisplayedAnnotationIdsAcrossTime(),
+    connections: annotationConnections.value,
+    mutationCounter: annotationStore.mutationCounter,
+    currentTime: time.value,
+    modeWindow: timelapseModeWindow.value,
+    tags: timelapseStore.tags,
+    coloring: timelapseStore.trackColoring,
+    colorSeed: timelapseStore.colorSeed,
+    passesTrackFilters: connectionPassesTrackFilters.value,
+    resolveAnnotation: getAnnotationFromId.value,
+    unrolledCentroids: unrolledCentroidCoordinates.value,
+    selectedConnections: selectedConnectionIds.value,
+    hoveredConnectionId: hoveredConnectionId.value,
+    selectedObjects: selectedAnnotationIds.value,
+    hoveredObjectId: hoveredAnnotationId.value,
+    showLabels: showTimelapseLabels.value,
+  };
+  // Identical inputs ⇒ the layer already shows exactly this state: skip the
+  // whole pass. The displayedAnnotations watcher re-fires ~250 ms after each
+  // frame change (two-phase visibility update) with nothing this pass reads
+  // having changed, and the zero-churn pass still cost the full desired-set
+  // computation (~500 ms at 100K connections).
+  if (
+    lastTimelapsePassInputs !== null &&
+    timelapsePassInputsEqual(lastTimelapsePassInputs, inputs)
+  ) {
+    return;
+  }
   timelapseRebuildCount.value++;
+  props.timelapseTextLayer.features([]);
 
   // Diff-based rebuild: tearing the layer down and reconstructing every
   // feature cost ~250 ms per time-scrub step at Gia-scale connection counts
@@ -1580,13 +1707,12 @@ function drawTimelapseConnectionsAndCentroids() {
     }
   }
 
-  const tlModeWindow = timelapseModeWindow.value;
-  const currentTime = time.value;
-  const timelapseTags = timelapseStore.tags;
+  const tlModeWindow = inputs.modeWindow;
+  const currentTime = inputs.currentTime;
+  const timelapseTags = inputs.tags;
+  const displayedIds = inputs.displayedIds;
 
-  const displayedIds = getDisplayedAnnotationIdsAcrossTime();
-
-  const connections = annotationConnections.value;
+  const connections = inputs.connections;
   const connectionsLength = connections.length;
   const filteredConnections: IAnnotationConnection[] = [];
   for (let i = 0; i < connectionsLength; i++) {
@@ -1597,8 +1723,8 @@ function drawTimelapseConnectionsAndCentroids() {
   }
   const components = findConnectedComponents(filteredConnections);
 
-  const coloring = timelapseStore.trackColoring;
-  const colorSeed = timelapseStore.colorSeed;
+  const coloring = inputs.coloring;
+  const colorSeed = inputs.colorSeed;
   // Vuex caches this global analysis against `annotationConnections`. Reads
   // during scope changes and time scrubs reuse it; only connection CRUD
   // invalidates it. Uniform coloring does not need the index at all.
@@ -1607,8 +1733,8 @@ function drawTimelapseConnectionsAndCentroids() {
       ? connectionListStore.trackAnalysis.trackKeyByAnnotationId
       : undefined;
 
-  const passesTrackFilters = connectionPassesTrackFilters.value;
-  const resolveAnnotation = getAnnotationFromId.value;
+  const passesTrackFilters = inputs.passesTrackFilters;
+  const resolveAnnotation = inputs.resolveAnnotation;
 
   components.forEach((component) => {
     // A displayed fragment's connections all belong to one dataset-wide
@@ -1751,6 +1877,9 @@ function drawTimelapseConnectionsAndCentroids() {
 
   props.timelapseLayer.draw();
   props.timelapseTextLayer.draw();
+  // Snapshot only after a completed pass, so an exception can never leave a
+  // half-updated layer marked as current.
+  lastTimelapsePassInputs = inputs;
 }
 
 // The displayedAnnotations watcher fires 2-3 times per frame change (the

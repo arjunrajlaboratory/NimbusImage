@@ -5116,6 +5116,134 @@ describe("AnnotationViewer", () => {
         expect(dot.options().style.radius).toBe(0.16);
       });
 
+      // --- identical-pass skip ---
+      //
+      // The two-phase visibility update re-fires the displayedAnnotations
+      // watcher ~250 ms after a frame change with nothing the timelapse pass
+      // reads having changed; the zero-churn pass still cost the full
+      // desired-set computation (~500 ms at 100K connections). When every
+      // snapshotted input matches the last completed pass, the pass skips.
+      it("skips a pass whose inputs are identical to the last completed pass", () => {
+        setupTwoTimepointTrack();
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const afterFirst = (wrapper.vm as any).timelapseRebuildCount;
+        const contentAfterFirst = tLayer.annotations();
+        expect(contentAfterFirst.length).toBeGreaterThan(0);
+
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        expect((wrapper.vm as any).timelapseRebuildCount).toBe(afterFirst);
+        // The skip leaves the layer exactly as the last pass left it.
+        expect(tLayer.annotations()).toEqual(contentAfterFirst);
+      });
+
+      // The stale-skip hazard: mode off clears the layer, so the snapshot must
+      // clear with it — otherwise re-enabling with unchanged inputs would skip
+      // against an EMPTY layer and the overlay would never come back.
+      it("rebuilds after a mode off/on cycle even when nothing else changed", () => {
+        setupTwoTimepointTrack();
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        const tLayer = (wrapper.vm as any).timelapseLayer;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        expect(tLayer.annotations().length).toBeGreaterThan(0);
+
+        mockedTimelapseStore.showMode = false;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        expect(tLayer.annotations()).toHaveLength(0);
+
+        mockedTimelapseStore.showMode = true;
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        expect(tLayer.annotations().length).toBeGreaterThan(0);
+      });
+
+      // Drift guard for the snapshot: every input the pass reads must defeat
+      // the skip when it changes, or a stale skip silently freezes the
+      // overlay. One entry per ITimelapsePassInputs field that the harness can
+      // drive (resolveAnnotation's identity is constant in the mocks;
+      // mutationCounter covers annotation edits in its place).
+      it.each([
+        ["currentTime", () => (mockedStore.time = 1)],
+        ["modeWindow", () => (mockedTimelapseStore.modeWindow = 7)],
+        ["tags identity", () => (mockedTimelapseStore.tags = [])],
+        ["coloring", () => (mockedTimelapseStore.trackColoring = "uniform")],
+        ["colorSeed", () => (mockedTimelapseStore.colorSeed = 3)],
+        [
+          "connections identity",
+          () =>
+            (mockedAnnotationStore.annotationConnections = [
+              ...mockedAnnotationStore.annotationConnections,
+            ]),
+        ],
+        [
+          "mutationCounter",
+          () =>
+            (mockedAnnotationStore.mutationCounter =
+              (mockedAnnotationStore.mutationCounter ?? 0) + 1),
+        ],
+        [
+          "connection selection",
+          () => connectionListStore.setSelectedConnectionIds(["c1"]),
+        ],
+        [
+          "hovered connection",
+          () => connectionListStore.setHoveredConnectionId("c1"),
+        ],
+        [
+          "object selection",
+          () => (mockedAnnotationStore.selectedAnnotationIds = new Set(["a1"])),
+        ],
+        [
+          "hovered object",
+          () => (mockedAnnotationStore.hoveredAnnotationId = "a1"),
+        ],
+        ["showLabels", () => (mockedTimelapseStore.showLabels = true)],
+        [
+          "displayed set content",
+          () => {
+            mockedAnnotationStore.annotations = [
+              ...mockedAnnotationStore.annotations,
+              makeAnnotation({
+                id: "a9",
+                channel: 0,
+                location: { XY: 0, Z: 0, Time: 0 },
+              }),
+            ];
+            mockedAnnotationStore.annotationCentroids = {
+              ...mockedAnnotationStore.annotationCentroids,
+              a9: { x: 70, y: 80 },
+            };
+          },
+        ],
+        [
+          "track filters",
+          () =>
+            connectionListStore.setTrackFilters({
+              ...createEmptyTrackFilters(),
+              connectionCount: { min: 99, max: null },
+            }),
+        ],
+        [
+          "centroids identity",
+          () =>
+            (mockedAnnotationStore.annotationCentroids = {
+              ...mockedAnnotationStore.annotationCentroids,
+            }),
+        ],
+      ])("a change to %s defeats the identical-pass skip", (_name, mutate) => {
+        setupTwoTimepointTrack();
+        mockedStore.time = 0;
+        wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+        const afterFirst = (wrapper.vm as any).timelapseRebuildCount;
+
+        mutate();
+        (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
+
+        expect((wrapper.vm as any).timelapseRebuildCount).toBe(afterFirst + 1);
+      });
+
       // --- hover highlighting on the timelapse layer ---
       //
       // Clicking a row in the connection list HIGHLIGHTS (sets hover) rather
