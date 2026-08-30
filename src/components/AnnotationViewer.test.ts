@@ -5432,6 +5432,32 @@ describe("AnnotationViewer", () => {
           expect(countSegments()).toBe(0);
         });
 
+        // One rebuild per keystroke, not three: the primary watcher's
+        // drawAnnotationsAndTooltips already rebuilds the timelapse layer
+        // directly, so a second predicate entry in the timelapse watch list
+        // and the empty-selection replacement in setTrackFilters each fired a
+        // redundant full reconstruction of every track feature (PR #1340
+        // Codex round 6). removeAllAnnotations counts the rebuilds.
+        it("rebuilds the timelapse layer exactly once per filter change", async () => {
+          setupOneTrack();
+          wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
+          const tlLayer = (wrapper.vm as any).timelapseLayer;
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+          await wrapper.vm.$nextTick();
+
+          tlLayer.removeAllAnnotations.mockClear();
+          connectionListStore.setTrackFilters({
+            ...createEmptyTrackFilters(),
+            connectionCount: { min: 2, max: null },
+          });
+          await wrapper.vm.$nextTick();
+          vi.advanceTimersByTime(101);
+          await wrapper.vm.$nextTick();
+
+          expect(tlLayer.removeAllAnnotations).toHaveBeenCalledTimes(1);
+        });
+
         it("paints every segment uniformly when per-track colouring is off", async () => {
           setupOneTrack();
           mockedTimelapseStore.trackColoring = "uniform";

@@ -517,8 +517,13 @@ export class ConnectionList extends VuexModule {
     // under the old scope must not survive to feed "Delete selected" — that
     // would delete connections the user can no longer see. Grouping is left
     // alone deliberately: it re-arranges the same set rather than redefining
-    // it, so a selection stays meaningful across a flat/track toggle.
-    this.selectedConnectionIds = markRaw(new Set());
+    // it, so a selection stays meaningful across a flat/track toggle. Only
+    // when non-empty, for the same reason as setTrackFilters below: the Set's
+    // identity is a viewer watcher source, and a scope change repaints
+    // nothing on the canvas.
+    if (this.selectedConnectionIds.size > 0) {
+      this.selectedConnectionIds = markRaw(new Set());
+    }
   }
 
   @Mutation
@@ -541,8 +546,13 @@ export class ConnectionList extends VuexModule {
     // Same rationale as setScope: an explicit filter change redefines what
     // "the list" means, so a selection made under the old definition must not
     // survive to feed "Delete selected". The in-scope intersection is the
-    // structural guard; this is the belt to its braces.
-    this.selectedConnectionIds = markRaw(new Set());
+    // structural guard; this is the belt to its braces. Only when non-empty:
+    // the Set's identity is a viewer watcher source (a selection change
+    // rebuilds the timelapse layer to re-pick duplicate representatives), so
+    // replacing empty-with-empty fired a full rebuild per filter keystroke.
+    if (this.selectedConnectionIds.size > 0) {
+      this.selectedConnectionIds = markRaw(new Set());
+    }
   }
 
   @Mutation

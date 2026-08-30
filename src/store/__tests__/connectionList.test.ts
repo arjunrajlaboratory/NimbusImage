@@ -670,6 +670,20 @@ describe("track metric filters", () => {
     expect(connectionList.page).toBe(1);
   });
 
+  // An already-empty selection must not be REPLACED: the Set's identity is a
+  // watcher source in the viewer (a selection change rebuilds the timelapse
+  // layer to re-pick duplicate representatives), so replacing empty-with-empty
+  // on every filter keystroke fired a pointless full rebuild alongside the
+  // primary watcher's own redraw (PR #1340 Codex round 6).
+  it("keeps the empty selection's identity when filters change", () => {
+    const before = connectionList.selectedConnectionIds;
+    expect(before.size).toBe(0);
+    connectionList.setTrackFilters(
+      filtersWith({ connectionCount: { min: 2, max: null } }),
+    );
+    expect(connectionList.selectedConnectionIds).toBe(before);
+  });
+
   // Belt to that clearing's braces: rows hidden by the filter must not be
   // deletable through a selection that predates it (same intersection rule as
   // the dynamic scopes).

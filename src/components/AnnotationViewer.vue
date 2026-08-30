@@ -4668,13 +4668,12 @@ watch(
     showTimelapseLabels,
     () => timelapseStore.trackColoring,
     () => timelapseStore.colorSeed,
-    // Track filters bake into the layer content like the colouring controls.
-    // Watching the predicate (not the raw filter state) also re-fires when a
-    // metric changes under an active filter; it is a stable constant while no
-    // filter is set. setTrackFilters happens to trigger a rebuild through the
-    // selection-clearing watcher above too, but that is a side effect of its
-    // UX rule, not something the draw path may depend on.
-    connectionPassesTrackFilters,
+    // connectionPassesTrackFilters is deliberately NOT here: the PRIMARY
+    // watcher observes it, and its drawAnnotationsAndTooltips already
+    // rebuilds the timelapse layer directly — a second entry here made every
+    // filter keystroke reconstruct all track features twice (three times with
+    // the selection-clearing watcher). This list is for inputs the primary
+    // watcher does NOT observe.
   ],
   () => {
     onTimelapseModeChanged();
