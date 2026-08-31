@@ -104,6 +104,19 @@ function formatName(name: string): string {
   return name.replace(/^(.+)\.[^.\s(]+(.*)$/, "$1$2");
 }
 
+function formatMetaValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(formatMetaValue).join(", ")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, nested]) => `${key}: ${formatMetaValue(nested)}`)
+      .join(", ")}}`;
+  }
+  return String(value);
+}
+
 function formatMeta(meta: Record<string, any>): string {
   const pairs: string[] = [];
   if (meta.tool) {
@@ -113,7 +126,7 @@ function formatMeta(meta: Record<string, any>): string {
     .filter(([key]) => key !== "tool")
     .sort(([a], [b]) => a.localeCompare(b))
     .forEach(([key, value]) => {
-      pairs.push(`${key}: ${value}`);
+      pairs.push(`${key}: ${formatMetaValue(value)}`);
     });
   return pairs.join("; ");
 }

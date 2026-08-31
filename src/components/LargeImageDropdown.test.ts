@@ -68,6 +68,31 @@ describe("LargeImageDropdown", () => {
     );
   });
 
+  it("formatMeta renders nested objects instead of [object Object]", () => {
+    const wrapper = mountComponent();
+    expect(
+      wrapper.vm.formatMeta({
+        tool: "Stitch Refinement",
+        worker_version: "1.0.0",
+        refinement: { method: "cross-correlation", overlap: 0.1 },
+      }),
+    ).toBe(
+      "tool: Stitch Refinement; " +
+        "refinement: {method: cross-correlation, overlap: 0.1}; " +
+        "worker_version: 1.0.0",
+    );
+  });
+
+  it("formatMeta renders arrays and deep nesting", () => {
+    const wrapper = mountComponent();
+    expect(
+      wrapper.vm.formatMeta({
+        channels: [0, 1],
+        source: { item: { name: "Well_2" } },
+      }),
+    ).toBe("channels: [0, 1]; source: {item: {name: Well_2}}");
+  });
+
   it("mounted sets previousNumberOfImages", () => {
     const wrapper = mountComponent();
     expect(wrapper.vm.previousNumberOfImages).toBe(store.allLargeImages.length);
