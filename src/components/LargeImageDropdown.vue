@@ -14,9 +14,9 @@
       <template v-slot:item="{ item: listItem, props: itemProps }">
         <v-list-item v-bind="itemProps">
           <template #title>{{ listItem.displayName }}</template>
-          <template #subtitle v-if="listItem.meta">
+          <template #subtitle v-if="listItem.metaText">
             <span style="font-size: 0.875rem; opacity: 0.7">{{
-              formatMeta(listItem.meta)
+              listItem.metaText
             }}</span>
           </template>
           <template #append v-if="listItem.name !== DEFAULT_LARGE_IMAGE_SOURCE">
@@ -38,10 +38,10 @@
         <div style="flex: 1 1 auto; min-width: 0; white-space: normal">
           <v-list-item-title>{{ listItem.displayName }}</v-list-item-title>
           <v-list-item-subtitle
-            v-if="listItem.meta"
+            v-if="listItem.metaText"
             class="text-medium-emphasis"
             style="white-space: normal; font-size: 0.875rem; opacity: 0.7"
-            >{{ formatMeta(listItem.meta) }}</v-list-item-subtitle
+            >{{ listItem.metaText }}</v-list-item-subtitle
           >
         </div>
       </template>
@@ -94,6 +94,7 @@ const formattedLargeImages = computed(() =>
   largeImages.value.map((img: IGirderLargeImage) => ({
     ...img,
     displayName: formatName(img.name),
+    metaText: img.meta ? formatMeta(img.meta) : "",
   })),
 );
 
@@ -120,7 +121,7 @@ function formatMetaValue(value: unknown): string {
 function formatMeta(meta: Record<string, any>): string {
   const pairs: string[] = [];
   if (meta.tool) {
-    pairs.push(`tool: ${meta.tool}`);
+    pairs.push(`tool: ${formatMetaValue(meta.tool)}`);
   }
   Object.entries(meta)
     .filter(([key]) => key !== "tool")

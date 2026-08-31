@@ -83,6 +83,13 @@ describe("LargeImageDropdown", () => {
     );
   });
 
+  it("formatMeta renders an object-valued tool key without [object Object]", () => {
+    const wrapper = mountComponent();
+    expect(wrapper.vm.formatMeta({ tool: { name: "SAM", version: 2 } })).toBe(
+      "tool: {name: SAM, version: 2}",
+    );
+  });
+
   it("formatMeta renders arrays and deep nesting", () => {
     const wrapper = mountComponent();
     expect(
@@ -91,6 +98,11 @@ describe("LargeImageDropdown", () => {
         source: { item: { name: "Well_2" } },
       }),
     ).toBe("channels: [0, 1]; source: {item: {name: Well_2}}");
+  });
+
+  it("formatMeta returns an empty string for empty meta, hiding the subtitle", () => {
+    const wrapper = mountComponent();
+    expect(wrapper.vm.formatMeta({})).toBe("");
   });
 
   it("mounted sets previousNumberOfImages", () => {
