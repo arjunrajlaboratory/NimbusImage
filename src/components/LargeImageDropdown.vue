@@ -7,6 +7,7 @@
       item-title="displayName"
       item-value="_id"
       label="Select Image"
+      :menu-props="{ maxWidth: 560 }"
       density="compact"
       style="width: auto; padding: 4px 0"
       hide-details
