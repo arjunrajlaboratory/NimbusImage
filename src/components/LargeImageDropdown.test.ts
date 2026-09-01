@@ -1,5 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
+
+vi.mock("@/utils/log", () => ({
+  logError: vi.fn(),
+  logWarning: vi.fn(),
+}));
 
 vi.mock("@/store", () => ({
   default: {
@@ -19,10 +24,16 @@ vi.mock("@/girder/index", () => ({
 
 import LargeImageDropdown from "./LargeImageDropdown.vue";
 import store from "@/store";
+import { logError } from "@/utils/log";
 
 function mountComponent() {
   return shallowMount(LargeImageDropdown, {});
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("LargeImageDropdown", () => {
   it("shouldShow is true when largeImages.length > 1", () => {
@@ -103,6 +114,35 @@ describe("LargeImageDropdown", () => {
   it("formatMeta returns an empty string for empty meta, hiding the subtitle", () => {
     const wrapper = mountComponent();
     expect(wrapper.vm.formatMeta({})).toBe("");
+  });
+
+  it("formattedLargeImages precomputes metaText per image", () => {
+    const wrapper = mountComponent();
+    const [original, output] = wrapper.vm.formattedLargeImages;
+    expect(original.metaText).toBe("");
+    expect(output.metaText).toBe("tool: SAM");
+  });
+
+  it("copyMetaText copies the full text and shows transient feedback", async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const wrapper = mountComponent();
+    await wrapper.vm.copyMetaText({ _id: "img2", metaText: "tool: SAM" });
+    expect(writeText).toHaveBeenCalledWith("tool: SAM");
+    expect(wrapper.vm.copiedImageId).toBe("img2");
+    vi.advanceTimersByTime(2000);
+    expect(wrapper.vm.copiedImageId).toBe(null);
+  });
+
+  it("copyMetaText logs and shows no feedback when the clipboard fails", async () => {
+    vi.stubGlobal("navigator", {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    const wrapper = mountComponent();
+    await wrapper.vm.copyMetaText({ _id: "img2", metaText: "tool: SAM" });
+    expect(logError).toHaveBeenCalled();
+    expect(wrapper.vm.copiedImageId).toBe(null);
   });
 
   it("mounted sets previousNumberOfImages", () => {

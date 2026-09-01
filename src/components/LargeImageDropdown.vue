@@ -12,15 +12,31 @@
       hide-details
     >
       <template v-slot:item="{ item: listItem, props: itemProps }">
-        <v-list-item v-bind="itemProps">
+        <v-list-item
+          v-bind="itemProps"
+          :lines="listItem.metaText ? 'two' : 'one'"
+        >
           <template #title>{{ listItem.displayName }}</template>
           <template #subtitle v-if="listItem.metaText">
-            <span style="font-size: 0.875rem; opacity: 0.7">{{
-              listItem.metaText
-            }}</span>
+            <span class="meta-text">{{ listItem.metaText }}</span>
           </template>
-          <template #append v-if="listItem.name !== DEFAULT_LARGE_IMAGE_SOURCE">
+          <template #append>
             <v-btn
+              v-if="listItem.metaText"
+              variant="text"
+              icon
+              size="small"
+              class="ml-2"
+              @click.stop="copyMetaText(listItem)"
+            >
+              <v-icon size="small">{{
+                copiedImageId === listItem._id
+                  ? "mdi-check"
+                  : "mdi-content-copy"
+              }}</v-icon>
+            </v-btn>
+            <v-btn
+              v-if="listItem.name !== DEFAULT_LARGE_IMAGE_SOURCE"
               variant="text"
               icon
               size="small"
@@ -37,12 +53,25 @@
       <template v-slot:selection="{ item: listItem }">
         <div style="flex: 1 1 auto; min-width: 0; white-space: normal">
           <v-list-item-title>{{ listItem.displayName }}</v-list-item-title>
-          <v-list-item-subtitle
-            v-if="listItem.metaText"
-            class="text-medium-emphasis"
-            style="white-space: normal; font-size: 0.875rem; opacity: 0.7"
-            >{{ listItem.metaText }}</v-list-item-subtitle
-          >
+          <div v-if="listItem.metaText" class="d-flex align-start">
+            <v-list-item-subtitle class="text-medium-emphasis meta-text">{{
+              listItem.metaText
+            }}</v-list-item-subtitle>
+            <v-btn
+              variant="text"
+              icon
+              size="x-small"
+              class="ml-1 flex-shrink-0"
+              @mousedown.stop
+              @click.stop="copyMetaText(listItem)"
+            >
+              <v-icon size="small">{{
+                copiedImageId === listItem._id
+                  ? "mdi-check"
+                  : "mdi-content-copy"
+              }}</v-icon>
+            </v-btn>
+          </div>
         </div>
       </template>
     </v-select>
@@ -60,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import store from "@/store";
 import { IGirderLargeImage } from "@/girder";
 import { DEFAULT_LARGE_IMAGE_SOURCE } from "@/girder/index";
@@ -132,6 +161,31 @@ function formatMeta(meta: Record<string, any>): string {
   return pairs.join("; ");
 }
 
+const copiedImageId = ref<string | null>(null);
+let copyResetTimeout: ReturnType<typeof setTimeout> | null = null;
+
+async function copyMetaText(image: { _id: string; metaText: string }) {
+  try {
+    await navigator.clipboard.writeText(image.metaText);
+  } catch {
+    logError("LargeImageDropdown", "Failed to copy metadata to clipboard");
+    return;
+  }
+  copiedImageId.value = image._id;
+  if (copyResetTimeout !== null) {
+    clearTimeout(copyResetTimeout);
+  }
+  copyResetTimeout = setTimeout(() => {
+    copiedImageId.value = null;
+  }, 1500);
+}
+
+onBeforeUnmount(() => {
+  if (copyResetTimeout !== null) {
+    clearTimeout(copyResetTimeout);
+  }
+});
+
 async function deleteImage(image: IGirderLargeImage) {
   deletingImageId.value = image._id;
   try {
@@ -164,6 +218,24 @@ defineExpose({
   formatName,
   currentLargeImage,
   formatMeta,
+  formattedLargeImages,
+  copyMetaText,
+  copiedImageId,
   previousNumberOfImages,
 });
 </script>
+
+<style lang="scss" scoped>
+// Worker metadata can be arbitrarily long — clamp it to two lines with an
+// ellipsis; the copy button next to it provides the full text.
+.meta-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  font-size: 0.875rem;
+  opacity: 0.7;
+}
+</style>
