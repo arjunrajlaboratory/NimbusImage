@@ -215,6 +215,7 @@ Reversibility notes:
 | `run_worker` | `{image, channel?, tags?, location scope, workerInterface values}` | `annotation.computeAnnotationsWithWorker` (+ `jobs.addJob` for progress) | compute cost, creates many annotations |
 | `compute_property` | `{propertyId \| create: {...}}` | `properties.computeProperty` | compute cost |
 | `add_tool` | `{templateId \| catalogEntry, name, channel/layer targeting, values}` | `main.addToolToConfiguration` (reuse `buildToolConfiguration` from PR #1224's `toolSuggestions.ts`) | mutates shared configuration |
+| `color_annotations_by_property` | `{propertyPath \| clear: true, mode?, colormap?, rangeMin/Max?, percentileLow/High?}` | `annotation.applyColorByProperty` / `removeColorByProperty` (server-side bulk color write + legend persisted in the configuration) | recolors every annotation in the dataset; not on the undo stack |
 | `create_annotations` | `{annotations: [...]}` (bulk) | annotation store bulk create | data mutation (undoable, but bulk) |
 | `delete_annotations` | `{target: selection\|query}` | bulk delete | destructive (undoable, but scary) |
 | `edit_layers` | `{add?, remove?, group?}` | `main.addLayer/removeLayer/groupLayers` | mutates shared configuration |

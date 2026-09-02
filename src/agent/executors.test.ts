@@ -139,6 +139,8 @@ vi.mock("@/store/annotation", () => ({
     selectAnnotations: vi.fn(),
     unselectAnnotations: vi.fn(),
     colorAnnotationIds: vi.fn(),
+    applyColorByProperty: vi.fn(),
+    removeColorByProperty: vi.fn(),
     addTagsByAnnotationIds: vi.fn(),
     removeTagsByAnnotationIds: vi.fn(),
     replaceTagsByAnnotationIds: vi.fn(),
@@ -616,6 +618,131 @@ describe("executeAgentTool", () => {
     expect(mockAnnotations.colorAnnotationIds).toHaveBeenLastCalledWith(
       expect.objectContaining({ annotationIds: ["a1", "a2"] }),
     );
+  });
+
+  it("color_annotations_by_property is gated and validates its input", async () => {
+    expect(isGatedTool("color_annotations_by_property")).toBe(true);
+    // Missing propertyPath (and no clear).
+    await expect(
+      executeAgentTool("color_annotations_by_property", {}, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // A bare string instead of a path array.
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: "p1.Area" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // An unknown mode.
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: ["p1", "Area"], mode: "rainbow" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // A non-numeric bound.
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: ["p1", "Area"], rangeMin: "0" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockAnnotations.applyColorByProperty).not.toHaveBeenCalled();
+
+    mockMain.isLoggedIn = false;
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: ["p1", "Area"] },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockAnnotations.applyColorByProperty).not.toHaveBeenCalled();
+  });
+
+  it("color_annotations_by_property applies and summarizes the legend", async () => {
+    mockAnnotations.applyColorByProperty.mockResolvedValue({
+      colored: 120,
+      uncolored: 3,
+      legend: {
+        type: "continuous",
+        propertyPath: ["p1", "Area"],
+        colormap: "viridis",
+        stops: ["#000000", "#ffffff"],
+        min: 10,
+        max: 90,
+        dataMin: 1,
+        dataMax: 400,
+        clippedLow: true,
+        clippedHigh: true,
+      },
+      assignment: [],
+    });
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { propertyPath: ["p1", "Area"], colormap: "viridis" },
+      context,
+    );
+    expect(mockAnnotations.applyColorByProperty).toHaveBeenCalledWith(
+      expect.objectContaining({
+        propertyPath: ["p1", "Area"],
+        // getFullNameFromPath is mocked to null, so the label falls back to
+        // the dotted path.
+        propertyName: "p1.Area",
+        colormap: "viridis",
+      }),
+    );
+    expect(out.result.colored).toBe(120);
+    expect(out.result.uncolored).toBe(3);
+    // The legend is summarized: bounds and clipping, no raw stops.
+    expect(out.result.legend).toEqual({
+      type: "continuous",
+      colormap: "viridis",
+      min: 10,
+      max: 90,
+      dataMin: 1,
+      dataMax: 400,
+      clippedLow: true,
+      clippedHigh: true,
+    });
+  });
+
+  it("color_annotations_by_property caps echoed categories", async () => {
+    mockAnnotations.applyColorByProperty.mockResolvedValue({
+      colored: 40,
+      uncolored: 0,
+      legend: {
+        type: "categorical",
+        propertyPath: ["p1", "Cluster"],
+        categories: Array.from({ length: 30 }, (_, i) => ({
+          value: `${i}`,
+          color: "#112233",
+          count: 1,
+        })),
+      },
+    });
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { propertyPath: ["p1", "Cluster"], mode: "categorical" },
+      context,
+    );
+    expect(out.result.legend.categoryCount).toBe(30);
+    expect(out.result.legend.categories).toHaveLength(25);
+    expect(out.result.legend.categoriesTruncated).toBe(true);
+  });
+
+  it("color_annotations_by_property clears via the store twin", async () => {
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { clear: true },
+      context,
+    );
+    expect(mockAnnotations.removeColorByProperty).toHaveBeenCalled();
+    expect(mockAnnotations.applyColorByProperty).not.toHaveBeenCalled();
+    expect(out.result.cleared).toBe(true);
   });
 
   it("validates select_annotations queries but allows omitting for all", async () => {
@@ -2847,6 +2974,31 @@ describe("analysis panel tools", () => {
       type: "categorical",
       key: "tags",
     });
+  });
+
+  it("reports the color-by-property legend in the interface state", () => {
+    // Absent (mock without the getter) reads as null.
+    expect((buildInterfaceState() as any).colorByProperty).toBeNull();
+    mockMain.colorByPropertyForCurrentDataset = {
+      propertyName: "Area",
+      propertyPath: ["p1", "Area"],
+      type: "continuous",
+      colormap: "viridis",
+      stops: ["#000000", "#ffffff"],
+      min: 10,
+      max: 90,
+      showLegend: true,
+    };
+    expect((buildInterfaceState() as any).colorByProperty).toEqual({
+      propertyName: "Area",
+      propertyPath: ["p1", "Area"],
+      type: "continuous",
+      colormap: "viridis",
+      min: 10,
+      max: 90,
+      categoryCount: null,
+    });
+    mockMain.colorByPropertyForCurrentDataset = null;
   });
 });
 

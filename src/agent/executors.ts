@@ -11,6 +11,7 @@ import {
   IAnalysisPlot,
   IAnnotation,
   IChatImage,
+  IColorByPropertyLegend,
   IContrast,
   IDisplayLayer,
   IErrorInfoList,
@@ -353,6 +354,44 @@ function propertyPathLabel(path: string[]): string {
   return propertyStore.getFullNameFromPath(path) ?? path.join(".");
 }
 
+// Cap on categorical legend entries echoed back to the model — a categorical
+// coloring can have dozens of categories, and the counts matter more than an
+// exhaustive value→color table.
+const MAX_LEGEND_CATEGORIES = 25;
+
+// Compact tool-result form of the legend color_by_property returns: the ramp
+// bounds / clipping for a continuous mapping, the value→color table (capped)
+// for a categorical one. The full stop list is rendering detail the model
+// doesn't need.
+function summarizeColorLegend(legend: IColorByPropertyLegend | null) {
+  if (!legend) {
+    return null;
+  }
+  if (legend.type === "continuous") {
+    return {
+      type: legend.type,
+      colormap: legend.colormap ?? null,
+      // Bounds the ramp spans (default: 1st..99th percentile).
+      min: legend.min ?? null,
+      max: legend.max ?? null,
+      // True data extent, and whether the ramp clipped it.
+      dataMin: legend.dataMin ?? null,
+      dataMax: legend.dataMax ?? null,
+      clippedLow: legend.clippedLow ?? false,
+      clippedHigh: legend.clippedHigh ?? false,
+    };
+  }
+  const categories = legend.categories ?? [];
+  return {
+    type: legend.type,
+    categoryCount: categories.length,
+    categories: categories
+      .slice(0, MAX_LEGEND_CATEGORIES)
+      .map(({ value, color, count }) => ({ value, color, count })),
+    categoriesTruncated: categories.length > MAX_LEGEND_CATEGORIES,
+  };
+}
+
 // A model-supplied plot title must be a non-empty string.
 function requirePlotTitle(value: unknown): string {
   if (typeof value !== "string" || value.trim() === "") {
@@ -596,6 +635,29 @@ export function buildInterfaceState() {
       // until then.
       gatedCount: filterStore.analysisGateIds[plot.id]?.length ?? null,
     })),
+    // Record of the last color-by-property apply for this dataset (null when
+    // annotation colors are plain). Lets the model explain why annotations
+    // are colored the way they are without a tool call.
+    colorByProperty: describeColorByPropertyState(),
+  };
+}
+
+function describeColorByPropertyState() {
+  // `?? null` also covers test mocks that don't define the getter.
+  const state = main.colorByPropertyForCurrentDataset ?? null;
+  if (!state) {
+    return null;
+  }
+  return {
+    propertyName: state.propertyName,
+    propertyPath: state.propertyPath,
+    type: state.type,
+    colormap: state.colormap ?? null,
+    // Ramp bounds (continuous only) — usually the 1st..99th percentile, so
+    // narrower than the data extent.
+    min: state.min ?? null,
+    max: state.max ?? null,
+    categoryCount: state.categories?.length ?? null,
   };
 }
 
@@ -1853,6 +1915,89 @@ const registry: { [name: string]: IAgentToolEntry } = {
     },
   },
 
+  color_annotations_by_property: {
+    // Bulk-writes every annotation color in the dataset on the backend and
+    // replaces any previous coloring. Unlike color_annotations it is NOT
+    // covered by the undo history, so it is gated.
+    gated: true,
+    execute: async (input: {
+      propertyPath?: string[];
+      clear?: boolean;
+      mode?: "auto" | "continuous" | "categorical";
+      colormap?: string;
+      rangeMin?: number;
+      rangeMax?: number;
+      percentileLow?: number;
+      percentileHigh?: number;
+    }) => {
+      requireLogin();
+      requireDataset();
+      if (input.clear) {
+        await annotationStore.removeColorByProperty();
+        return { result: { cleared: true } };
+      }
+      const propertyPath = validatePropertyPath(
+        input.propertyPath,
+        "propertyPath",
+      );
+      if (
+        input.mode !== undefined &&
+        !["auto", "continuous", "categorical"].includes(input.mode)
+      ) {
+        throw new ToolExecutionError(
+          'mode must be "auto", "continuous" or "categorical"',
+        );
+      }
+      for (const key of [
+        "rangeMin",
+        "rangeMax",
+        "percentileLow",
+        "percentileHigh",
+      ] as const) {
+        if (input[key] !== undefined && typeof input[key] !== "number") {
+          throw new ToolExecutionError(`${key} must be a number`);
+        }
+      }
+      if (input.colormap !== undefined && typeof input.colormap !== "string") {
+        throw new ToolExecutionError("colormap must be a string");
+      }
+      let result;
+      try {
+        result = await annotationStore.applyColorByProperty({
+          propertyPath,
+          propertyName: propertyPathLabel(propertyPath),
+          mode: input.mode,
+          colormap: input.colormap,
+          rangeMin: input.rangeMin,
+          rangeMax: input.rangeMax,
+          percentileLow: input.percentileLow,
+          percentileHigh: input.percentileHigh,
+        });
+      } catch (error: any) {
+        // rawError action: surface the backend's real 400 message (unknown
+        // colormap, non-numeric property, bad range) so the model can correct
+        // its call instead of getting a generic wrapper.
+        throw new ToolExecutionError(
+          error?.response?.data?.message ??
+            error?.message ??
+            "Coloring by property failed",
+        );
+      }
+      if (!result) {
+        throw new ToolExecutionError(
+          "No dataset is currently open in the viewer",
+        );
+      }
+      return {
+        result: {
+          colored: result.colored,
+          uncolored: result.uncolored,
+          legend: summarizeColorLegend(result.legend),
+        },
+      };
+    },
+  },
+
   tag_annotations: {
     execute: async (input: {
       target: TAnnotationTarget;
@@ -2973,6 +3118,26 @@ export function describeAgentToolCall(name: string, input: any): string {
       return `Color ${query(input?.target)} ${
         input?.randomize ? "randomly" : input?.color ?? "by layer color"
       }`;
+    case "color_annotations_by_property": {
+      if (input?.clear) {
+        return "Remove the property-based coloring";
+      }
+      // Prefer the human-facing property name over raw path segments (the
+      // first segment is a property id); never throw on malformed input.
+      let label = "";
+      const path = input?.propertyPath;
+      if (
+        Array.isArray(path) &&
+        path.every((segment: unknown) => typeof segment === "string")
+      ) {
+        try {
+          label = propertyStore.getFullNameFromPath(path) ?? path.join(" / ");
+        } catch {
+          label = path.join(" / ");
+        }
+      }
+      return `Color all annotations by ${label || "a property"}`;
+    }
     case "tag_annotations":
       return `${
         input?.mode === "remove" ? "Untag" : "Tag"

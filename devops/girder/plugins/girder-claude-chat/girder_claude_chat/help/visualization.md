@@ -96,6 +96,25 @@ NimbusImage can render your image stack as an interactive 3D volume instead of a
 - This means the 3D view may show lower resolution than the full-resolution 2D view for very large datasets—this is expected, not an error
 - 3D rendering relies on the browser's WebGL support; use Chrome for best compatibility
 
+## Coloring Objects by a Property Value
+Give every object in the dataset a color derived from a computed property — e.g. a heatmap of cell areas, or one color per cluster from a clustering property:
+
+**Applying**:
+1. Open the Object list and click **More Actions → Color by Property…**
+2. Pick a computed property; nested values (e.g. `Intensity / Mean / Ch1`) are selectable down to the leaf
+3. Choose the mapping: **auto** picks categorical for a small set of discrete values and a continuous colormap ramp otherwise; you can force either mode and pick the colormap
+4. Apply — the coloring is computed on the server for the whole dataset (a few seconds on very large datasets), so it works the same on datasets far too large to load fully in the browser
+
+**The legend**:
+- A legend appears in the viewer explaining the mapping (colormap ramp with its bounds, or per-category swatches with object counts); it can be collapsed
+- The legend is saved with the collection per dataset, so it survives reloads
+- Continuous ramps default to spanning the 1st–99th percentile of the values, not the full extent — otherwise a few outliers compress nearly all objects into one color. Clipped ends are marked "≤"/"≥" in the legend; absolute bounds can be set in the dialog
+
+**Things to know**:
+- Applying replaces every object's existing display color, and any later manual coloring ("Color selected", the context menu, tag-cloud coloring) retires the legend, since the colors no longer come from the property
+- The coloring is a snapshot: objects created afterwards and re-computed property values keep their old colors — re-apply the coloring to refresh
+- **Remove property coloring** (same menu) resets all colors back to the layer colors
+
 ## Line Scan Intensity Profiles
 Draw a line across the image to see a live plot of raw pixel intensity along it — without creating any stored annotation. Useful for inspecting signal profiles, comparing channels, checking colocalization, or finding edges and peaks.
 - Add a **line scan tool** from the tool menu. Two variants: **Freehand** (drag to draw a freeform line; the scan completes on release) and **Segment** (click once to start and once to end a straight segment).

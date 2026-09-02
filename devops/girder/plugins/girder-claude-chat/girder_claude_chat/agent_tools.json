@@ -575,6 +575,56 @@
     }
   },
   {
+    "name": "color_annotations_by_property",
+    "description": "Color EVERY annotation in the dataset by a computed property value (server-side): continuous values get a colormap ramp, discrete values get a categorical palette, and a legend explaining the mapping appears in the viewer and persists with the collection. Pass clear true to remove the property coloring (colors fall back to layer colors). Replaces all existing annotation colors and is NOT undoable; gated, so the user approves first. Ramps default to the 1st-99th percentile of the values so outliers don't collapse the ramp; override with rangeMin/rangeMax or percentileLow/percentileHigh. Any later manual color assignment (color_annotations, or the user coloring by hand) retires the legend. Annotations created after the apply and re-computed values do not re-color automatically; re-apply to refresh.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "propertyPath": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Full property value path from get_property_values (e.g. a nested path like [propertyId, 'Mean', 'Ch1']). Required unless clear is true."
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "Remove the property-based coloring and legend instead of applying one."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "continuous",
+            "categorical"
+          ],
+          "description": "How to map values to colors. Default 'auto' picks categorical for a small set of discrete values, continuous otherwise."
+        },
+        "colormap": {
+          "type": "string",
+          "description": "Continuous colormap name (e.g. 'viridis'). Omit for the server default; an unknown name fails with the list of valid ones."
+        },
+        "rangeMin": {
+          "type": "number",
+          "description": "Absolute lower bound of the ramp; overrides percentileLow."
+        },
+        "rangeMax": {
+          "type": "number",
+          "description": "Absolute upper bound of the ramp; overrides percentileHigh."
+        },
+        "percentileLow": {
+          "type": "number",
+          "description": "Lower percentile bound of the ramp (default 1)."
+        },
+        "percentileHigh": {
+          "type": "number",
+          "description": "Upper percentile bound of the ramp (default 99)."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "tag_annotations",
     "description": "Add, remove or replace tags on annotations (current selection or a query). This edits stored annotations; undoable with the undo tool.",
     "input_schema": {
