@@ -29,7 +29,7 @@ from .recompute import _rectangleCorners
 
 DEFAULT_EXCLUDED_TAGS = ("cell",)
 DEFAULT_PROPERTY_NAME = "Neighborhood"
-NEIGHBOUR_COUNT_KEY = "neighbors"
+NEIGHBOR_COUNT_KEY = "neighbors"
 CELL_SHAPES = ("polygon", "rectangle")
 MAX_REGIONS = 50
 # Pseudocount in the enrichment log ratio, so an empty pair is finite.
@@ -161,7 +161,7 @@ def compute(datasetId, radius, excludeTags, propertyId, onProgress):
         chunk = []
         for row in range(start, stop):
             total = int(totals[row])
-            values = {NEIGHBOUR_COUNT_KEY: total}
+            values = {NEIGHBOR_COUNT_KEY: total}
             for column, name in enumerate(names):
                 values[name] = (
                     float(counts[row, column]) / total if total else 0.0
