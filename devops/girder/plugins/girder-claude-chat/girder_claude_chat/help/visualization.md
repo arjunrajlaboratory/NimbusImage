@@ -102,7 +102,7 @@ Give every object in the dataset a color derived from a computed property — e.
 **Applying**:
 1. Open the Object list and click **More Actions → Color by Property…**
 2. Pick a computed property; nested values (e.g. `Intensity / Mean / Ch1`) are selectable down to the leaf
-3. Choose the mapping: **auto** picks categorical for a small set of discrete values and a continuous colormap ramp otherwise; you can force either mode and pick the colormap
+3. Choose the mapping: **auto** picks a continuous colormap ramp whenever the values are mostly numeric (at least 90% of them), however many distinct values there are, and categorical otherwise. Numeric labels such as cluster IDs therefore get a gradient under auto — force **categorical** for those; you can also force **continuous** and pick the colormap
 4. Apply — the coloring is computed on the server for the whole dataset (a few seconds on very large datasets), so it works the same on datasets far too large to load fully in the browser
 
 **The legend**:

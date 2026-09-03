@@ -576,7 +576,7 @@
   },
   {
     "name": "color_annotations_by_property",
-    "description": "Color EVERY annotation in the dataset by a computed property value (server-side): continuous values get a colormap ramp, discrete values get a categorical palette, and a legend explaining the mapping appears in the viewer and persists with the collection. Pass clear true to remove the property coloring (colors fall back to layer colors); clearing is refused as a no-op when no property coloring is active, since it would reset manual colors too. Replaces all existing annotation colors and is NOT undoable; gated, so the user approves first. Ramps default to the 1st-99th percentile of the values so outliers don't collapse the ramp; override with rangeMin/rangeMax or percentileLow/percentileHigh. Any later manual color assignment (color_annotations, or the user coloring by hand) retires the legend. Annotations created after the apply and re-computed values do not re-color automatically; re-apply to refresh.",
+    "description": "Color EVERY annotation in the dataset by a computed property value (server-side): numeric values get a colormap ramp, non-numeric values get a categorical palette (see mode for numeric labels like cluster IDs), and a legend explaining the mapping appears in the viewer and persists with the collection. Pass clear true to remove the property coloring (colors fall back to layer colors); clearing is refused as a no-op when no property coloring is active, since it would reset manual colors too. Replaces all existing annotation colors and is NOT undoable; gated, so the user approves first. Ramps default to the 1st-99th percentile of the values so outliers don't collapse the ramp; override with rangeMin/rangeMax or percentileLow/percentileHigh. Any later manual color assignment (color_annotations, or the user coloring by hand) retires the legend. Annotations created after the apply and re-computed values do not re-color automatically; re-apply to refresh.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -598,7 +598,7 @@
             "continuous",
             "categorical"
           ],
-          "description": "How to map values to colors. Default 'auto' picks categorical for a small set of discrete values, continuous otherwise."
+          "description": "How to map values to colors. Default 'auto' picks continuous whenever at least 90% of the values are numeric, REGARDLESS of how many distinct values there are \u2014 so integer-coded labels like cluster IDs get a misleading gradient under auto. Pass 'categorical' explicitly for numeric labels/IDs; 'continuous' forces a ramp."
         },
         "colormap": {
           "type": "string",

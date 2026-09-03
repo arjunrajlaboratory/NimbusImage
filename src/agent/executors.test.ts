@@ -1295,6 +1295,45 @@ describe("tool schema parity with the backend", () => {
   });
 });
 
+// The auto-approve switch's tooltip is the only place a user learns what
+// enabling it stops confirming. A gated tool missing from it (found in
+// review on PR #1345: the property recoloring, and clear_analysis_plots
+// before it) means users opt into bypassing an action they were never
+// warned about — and nothing else keeps the tooltip and the gated registry
+// in step.
+describe("auto-approve warning coverage", () => {
+  // The phrase in AiPanel.vue's tooltip that names each gated tool. Adding
+  // a gated tool without mapping it here fails this test: extend the
+  // tooltip text in AiPanel.vue first, then map the phrase.
+  const TOOLTIP_PHRASE_BY_GATED_TOOL: { [name: string]: string } = {
+    run_worker: "worker runs",
+    compute_property: "property computation",
+    create_tool: "tool / property / scale creation",
+    create_property: "tool / property / scale creation",
+    set_scale: "tool / property / scale creation",
+    color_annotations_by_property: "recoloring the whole dataset by a property",
+    clear_analysis_plots: "removing analysis plots",
+  };
+
+  it("names every gated tool in AiPanel.vue's auto-approve tooltip", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/AiPanel.vue"),
+      "utf8",
+    );
+    const tooltip = source.match(/text="(Skip the confirmation[^"]*)"/)?.[1];
+    expect(tooltip).toBeTruthy();
+    for (const name of AGENT_TOOL_NAMES.filter(isGatedTool)) {
+      const phrase = TOOLTIP_PHRASE_BY_GATED_TOOL[name];
+      expect(
+        phrase,
+        `gated tool "${name}" has no auto-approve tooltip phrase — name it ` +
+          "in AiPanel.vue's tooltip and map the phrase here",
+      ).toBeTruthy();
+      expect(tooltip).toContain(phrase);
+    }
+  });
+});
+
 describe("read_help_topic", () => {
   it("returns a topic's markdown", async () => {
     mockMain.agentAPI = {

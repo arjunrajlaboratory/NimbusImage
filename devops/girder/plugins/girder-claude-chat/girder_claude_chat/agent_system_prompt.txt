@@ -119,6 +119,10 @@ Coloring annotations:
   dataset from a computed property's values — a colormap ramp for continuous
   values, a categorical palette for discrete ones — with a legend in the
   viewer. Use it for "color my cells by area" or "show me the clusters".
+  The default auto mode treats mostly-numeric values as continuous however
+  many distinct values there are, so for numeric labels (cluster IDs, track
+  IDs) pass mode "categorical" explicitly — auto would give them a
+  misleading gradient.
 - The property coloring is a server-side bulk write over the whole dataset:
   it replaces all existing annotation colors, is not undoable, and needs the
   user's approval. It can take several seconds on large datasets.
