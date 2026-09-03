@@ -107,18 +107,26 @@ Quantify spatial relationships:
 ## Viewing and Filtering Results
 Access and interact with your measurements:
 
-**Viewing Properties**:
-1. Open "Object list" tab
-2. Expand "Properties" dropdown
-3. Select property and check specific measurements
-4. Values appear in the object list
-5. Press "t" to display values directly on image
+**Measurements chip strip** (Objects tab of the Object list):
+- One chip per computed property sits above the object list, showing an eye icon and shown/total value counts
+- Click a single-value property's chip to toggle its column in the list; multi-value properties open a per-value checklist with Show all / Hide all
+- A pinned "+ New measurement…" chip creates a property, and a filter box narrows the chips by property **and** value name — typing a gene name surfaces it directly
+- Press "t" to display shown values directly on the image
+
+**Measurements tab** (Objects | Measurements | Connections):
+- Lists every property — including not-yet-computed ones — with value counts, "N shown" badges, per-value show/hide checkboxes, and per-property Run buttons with uncomputed-count badges
+- Compute errors and warnings appear as alerts here
+- A "Compute all" header runs everything that still needs computing
 
 **Filtering by Properties**:
-1. Click "Use as filter" in Properties panel
+1. In the Filters panel, expand "Property values" and click "Add property filter"
 2. Adjust histogram sliders to set range
 3. Only objects within range will be displayed
 4. Creates dynamic selections based on measurements
+5. For two-property gating on a scatter plot, use the Analysis panel instead (see the analysis-panel-gating topic)
+
+**Coloring by Properties**:
+- Object list → More Actions → Color by Property… colors every object by a computed value, with a legend in the viewer (see the visualization topic)
 
 **Exporting Results**:
 - Export to CSV: click the Import / export data icon in the top app bar → Export CSV
