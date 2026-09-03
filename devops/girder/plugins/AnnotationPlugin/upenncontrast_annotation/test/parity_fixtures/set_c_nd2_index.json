@@ -1,0 +1,468 @@
+{
+  "name": "set_c_nd2_index",
+  "description": "Single experiment.nd2 with IndexRange C3/Z5/T4/XY1 (60 frames) and named channels. Exercises file-source dimensions and stride math. ND2 => transcode default false.",
+  "input": {
+    "itemNames": [
+      "experiment.nd2"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 1,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 1,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 1,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 2,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 2,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 2,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 3,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 3,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 3,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 4,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 4,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 4,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 0,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 1,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 1,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 1,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 2,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 2,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 2,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 3,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 3,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 3,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 4,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 4,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 4,
+            "IndexT": 1,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 0,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 1,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 1,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 1,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 2,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 2,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 2,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 3,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 3,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 3,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 4,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 4,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 4,
+            "IndexT": 2,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 0,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 1,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 1,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 1,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 2,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 2,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 2,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 3,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 3,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 3,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 4,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 4,
+            "IndexT": 3,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 2,
+            "IndexZ": 4,
+            "IndexT": 3,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "DAPI",
+          "GFP",
+          "Cy3"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 3,
+          "IndexZ": 5,
+          "IndexT": 4,
+          "IndexXY": 1
+        },
+        "IndexStride": {
+          "IndexC": 1,
+          "IndexZ": 3,
+          "IndexT": 15,
+          "IndexXY": 60
+        }
+      }
+    ],
+    "tilesInternalMetadata": [
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [],
+    "defaultAssignments": {
+      "XY": {
+        "source": "file",
+        "guess": "XY"
+      },
+      "Z": {
+        "source": "file",
+        "guess": "Z"
+      },
+      "T": {
+        "source": "file",
+        "guess": "T"
+      },
+      "C": {
+        "source": "file",
+        "guess": "C"
+      }
+    },
+    "transcodeDefault": false,
+    "config": {
+      "channels": [
+        "DAPI",
+        "GFP",
+        "Cy3"
+      ],
+      "sources": [
+        {
+          "path": "experiment.nd2",
+          "framesAsAxes": {
+            "xy": 60,
+            "z": 3,
+            "t": 15,
+            "c": 1
+          },
+          "xyValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            0
+          ],
+          "cValues": [
+            0
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": [],
+      "z": [],
+      "t": []
+    }
+  }
+}

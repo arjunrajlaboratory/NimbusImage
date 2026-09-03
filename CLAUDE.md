@@ -147,6 +147,7 @@ Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names
 | `/api/v1/annotation_property` | `server/api/property.py` | Property definitions |
 | `/api/v1/worker_interface` | `server/api/workerInterfaces.py` | Docker worker registration |
 | `/api/v1/worker_preview` | `server/api/workerPreviews.py` | Worker preview images |
+| `/api/v1/dataset` | `server/api/dataset.py` | Multi-source dataset configuration via API |
 | `/api/v1/dataset_view` | `server/api/datasetView.py` | Per-user view state |
 | `/api/v1/history` | `server/api/history.py` | Undo/redo history |
 | `/api/v1/user_assetstore` | `server/api/user_assetstore.py` | Per-user storage |

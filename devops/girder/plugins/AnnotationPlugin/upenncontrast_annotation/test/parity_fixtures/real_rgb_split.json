@@ -1,0 +1,132 @@
+{
+  "name": "real_rgb_split",
+  "description": "A real RGB TIFF as uploaded (bandCount 3, no photometricInterpretation key at all, so detection falls to the band-count branch). Splits into three channels.",
+  "input": {
+    "itemNames": [
+      "Hair sample image.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "bandCount": 3,
+        "dtype": "uint8",
+        "levels": 3,
+        "magnification": null,
+        "mm_x": null,
+        "mm_y": null,
+        "sizeX": 844,
+        "sizeY": 868,
+        "tileHeight": 258,
+        "tileWidth": 844
+      }
+    ],
+    "tilesInternalMetadata": [
+      {
+        "iccprofiles": [
+          "sRGB IEC61966-2.1\r\n\r\nCopyright (c) 1998 Hewlett-Packard Company"
+        ],
+        "populatedLevels": 1,
+        "tiff": {
+          "datetime": "2024:12:05 14:40:48",
+          "software": "Adobe Photoshop CS6 (Windows)"
+        },
+        "tilesource": "tiff"
+      }
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": {
+        "source": "images",
+        "guess": "Z"
+      },
+      "T": null,
+      "C": null
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "Default - Red",
+        "Default - Green",
+        "Default - Blue"
+      ],
+      "sources": [
+        {
+          "path": "Hair sample image.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 1
+              }
+            ]
+          },
+          "c": 0,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "Hair sample image.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 2
+              }
+            ]
+          },
+          "c": 1,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "Hair sample image.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 3
+              }
+            ]
+          },
+          "c": 2,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": true
+    },
+    "dimensionLabels": {
+      "xy": null,
+      "z": [
+        "1"
+      ],
+      "t": null
+    }
+  }
+}

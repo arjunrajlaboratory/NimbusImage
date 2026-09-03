@@ -1,0 +1,154 @@
+{
+  "name": "strategy_override",
+  "description": "set_d input with an assignment strategy forcing XY to the filename variable via source-only fallback (the filename variable's guess is not XY). Other dimensions keep their defaults.",
+  "input": {
+    "itemNames": [
+      "slide1.tif",
+      "slide2.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      }
+    ],
+    "tilesInternalMetadata": [
+      {},
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": {
+        "XY": {
+          "source": "filename",
+          "guess": "XY"
+        }
+      }
+    }
+  },
+  "expected": {
+    "filenameVariables": [
+      {
+        "guess": "T",
+        "valueIdxPerFilename": {
+          "slide1.tif": 0,
+          "slide2.tif": 1
+        },
+        "values": [
+          "slide1",
+          "slide2"
+        ]
+      }
+    ],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": {
+        "source": "images",
+        "guess": "Z"
+      },
+      "T": {
+        "source": "filename",
+        "guess": "T"
+      },
+      "C": null
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "Default"
+      ],
+      "sources": [
+        {
+          "path": "slide1.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "xyValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            0
+          ]
+        },
+        {
+          "path": "slide2.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "xyValues": [
+            1
+          ],
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            1
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": [
+        "slide1",
+        "slide2"
+      ],
+      "z": [
+        "1"
+      ],
+      "t": [
+        "slide1",
+        "slide2"
+      ]
+    }
+  }
+}

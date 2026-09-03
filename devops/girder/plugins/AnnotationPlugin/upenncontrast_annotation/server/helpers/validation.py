@@ -132,6 +132,18 @@ def requireFloat(value, field):
     return parsed
 
 
+def optionalBoolean(body, name, default):
+    """Return an optional JSON boolean body field, or `default` when absent.
+    Rejects non-booleans instead of truthy-coercing them: "false", 1 and []
+    would all silently read as True under Python truthiness."""
+    if name not in body:
+        return default
+    value = body[name]
+    if not isinstance(value, bool):
+        raise RestException("%s must be a boolean." % name, code=400)
+    return value
+
+
 def isFiniteNumber(value):
     """True for an int/float usable in float arithmetic; False for
     everything else — including bool (a JSON true parses as int-like) and

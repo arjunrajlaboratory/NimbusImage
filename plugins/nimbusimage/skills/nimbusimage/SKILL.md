@@ -142,6 +142,118 @@ ds = client.dataset("64a1b2c3d4e5f6a7b8c9d0e1")
 ds = client.dataset(name="My Experiment")
 ```
 
+## Creating a dataset from image files
+
+Uploading files does not by itself make a dataset — the files are just items in
+a folder until they are **configured** into one multi-dimensional image. Three
+steps:
+
+```python
+ds = client.create_dataset("My Experiment")   # empty; goes in your Private folder
+ds.upload("path/to/images/")                  # a file, a directory, or a list
+ds.configure()                                # works out XY / Z / Time / Channel
+ds.open()                                     # opens it in the browser
+```
+
+`upload()` is not recursive and raises if the directory contains
+subdirectories, so a partial upload can't be mistaken for a complete one.
+
+`configure()` is the API equivalent of the web UI's configuration screen: it
+derives the dimensions from filename tokens and file metadata, writes the
+multi-source configuration, and (unless every file is `.nd2`) schedules a
+transcode job.
+
+### Always dry-run first
+
+`configure(dry_run=True)` computes everything and writes nothing. Do this
+before a real run — when the configuration is not valid, a real run **raises**,
+and the exception does not carry the variable list you need to fix it:
+
+```python
+plan = ds.configure(dry_run=True)
+if not plan.is_valid:
+    print(plan.validation_error)        # e.g. "Not all variables are assigned"
+    for v in plan.unassigned_variables:
+        print(v["name"], v["source"], v["guess"], v["size"])
+```
+
+The common case is more variables than the four dimensions' defaults fill —
+typically a filename variable left over once file metadata has claimed Z and C.
+Assign it by copying the variable's `source`/`guess` onto the dimension you
+want:
+
+```python
+# dry run reported: Filename variable 1 (source='filename', guess='C', size=2)
+result = ds.configure(
+    assignments={"XY": {"source": "filename", "guess": "C"}},
+    transcode=False,
+)
+print(result.item_id, result.job_id)
+```
+
+Each `assignments` entry is `{"source", "guess"}` or `None` (leave the
+dimension unassigned); omitted dimensions keep their default. `source` is one
+of `filename`, `file` (embedded metadata such as ND2 IndexRange), or `images`
+(raw frame order).
+
+### Other options and failures
+
+| Argument | Meaning |
+|---|---|
+| `transcode` | Convert to one tiled TIFF. Omit to use the UI's rule (on unless every file is `.nd2`); pass `False` to skip. |
+| `split_rgb_bands` | Split an RGB image into three channels (default `True`). |
+| `enable_compositing` | Lay out a single multi-position ND2 by stage coordinates rather than as separate XY positions. Only applies to a single source with ND2 frame metadata — read `result.compositing` for what actually happened, and expect XY to collapse to one position when it does. |
+| `create_view` | Also create the collection and dataset view the web UI needs (default `True`). Turn it off only if you are going to create your own. |
+
+Failures come back as `girder_client.HttpError`: 400 for an invalid
+configuration — unassigned variables, **sources with different pixel types**
+(every file must share a `dtype`), an item with zero or several files, and
+filenames whose parts do not line up (`a.tif` alongside `b_x_0.tif`: the web UI
+cannot configure that folder either) — and 409
+if the dataset is already configured. Reconfiguring means starting from a new
+dataset.
+
+When `transcode` is on, `configure()` returns as soon as the job is **queued**,
+so checking it is your job — and a failure is not self-healing:
+
+```python
+result = ds.configure()
+if result.job_id and not client.job(result.job_id).wait():
+    # The dataset is configured but its image is unusable. Configuring
+    # again raises 409 because the configuration item exists; delete
+    # result.item_id, or start from a new dataset.
+    ...
+```
+
+### Opening it in the UI
+
+`configure()` creates a collection and dataset view by default, so the dataset
+behaves like one made through the web UI — it appears in
+`client.list_datasets()` (which enumerates views) and opens straight away:
+
+```python
+result = ds.configure()
+print(result.collection_id, result.view_id)
+ds.open()            # opens the viewer in a browser
+print(ds.view_url()) # or just the URL
+```
+
+The collection gets the same defaults the UI would create: one layer per
+channel (up to six), named after the channel and coloured from the shared
+channel-colour table, with percentile contrast, plus pixel size from the tile
+metadata and z-step inferred from the dimension labels.
+
+With `create_view=False` none of that is created. The dataset is still fully
+readable through the API (`ds.channels`, `ds.images`, annotations), but
+`ds.open()` and `ds.view_url()` raise `No dataset view found`, and
+`client.list_datasets()` will not list it.
+
+### One thing this does not do
+
+- **Caches are not warmed.** The web UI additionally precomputes tile frames,
+  max-merge and histograms after configuring, so the first open of an
+  API-created dataset is slower than one made through the UI.
+
 ## Dataset metadata
 
 ```python

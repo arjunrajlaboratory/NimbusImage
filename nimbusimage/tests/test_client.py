@@ -140,6 +140,59 @@ class TestNimbusClientDataset:
             client.dataset(name="Nonexistent")
 
 
+class TestNimbusClientCreateDataset:
+    def _client(self, mock_gc):
+        client = NimbusClient.__new__(NimbusClient)
+        client._gc = mock_gc
+        client._api_url = "http://localhost:8080/api/v1"
+        client._frontend_url = "http://localhost:5173"
+        return client
+
+    def test_create_dataset_uses_createFolder(self, mock_gc):
+        """girder_client's createFolder (which JSON-encodes metadata itself)
+        is used rather than a hand-rolled POST."""
+        mock_gc.createFolder.return_value = {"_id": "newfolder"}
+        client = self._client(mock_gc)
+
+        ds = client.create_dataset(
+            "My Experiment", description="desc", parent_folder_id="parent1"
+        )
+        assert ds.id == "newfolder"
+        mock_gc.createFolder.assert_called_once_with(
+            "parent1",
+            "My Experiment",
+            description="desc",
+            metadata={
+                "subtype": "contrastDataset",
+                "selectedLargeImageId": None,
+            },
+        )
+
+    def test_create_dataset_defaults_to_private_folder(self, mock_gc):
+        """The Private folder is found with listFolder(name=...), not by
+        fetching every top-level folder and scanning client-side."""
+        mock_gc.get.return_value = {"_id": "user123", "login": "admin"}
+        mock_gc.listFolder.return_value = iter(
+            [{"_id": "privfolder", "name": "Private"}]
+        )
+        mock_gc.createFolder.return_value = {"_id": "newfolder"}
+        client = self._client(mock_gc)
+
+        client.create_dataset("My Experiment")
+        mock_gc.listFolder.assert_called_once_with(
+            "user123", parentFolderType="user", name="Private"
+        )
+        assert mock_gc.createFolder.call_args[0][0] == "privfolder"
+
+    def test_create_dataset_no_private_folder_raises(self, mock_gc):
+        mock_gc.get.return_value = {"_id": "user123", "login": "admin"}
+        mock_gc.listFolder.return_value = iter([])
+        client = self._client(mock_gc)
+
+        with pytest.raises(ValueError, match="No Private folder"):
+            client.create_dataset("My Experiment")
+
+
 class TestNimbusClientListDatasets:
     def test_list_datasets(self, mock_gc):
         # list_datasets now uses dataset_view to discover datasets
@@ -168,3 +221,37 @@ class TestNimbusClientListDatasets:
         datasets = client.list_datasets()
         assert len(datasets) == 2
         assert datasets[0]["name"] == "Dataset A"
+
+    def test_list_datasets_skips_only_http_errors(self, mock_gc):
+        """A view whose folder 403s (shared view, private folder) is skipped;
+        anything else must propagate, not be silently swallowed."""
+        import girder_client
+
+        mock_gc.get.side_effect = [
+            [
+                {"_id": "v1", "datasetId": "f1"},
+                {"_id": "v2", "datasetId": "f2"},
+            ],
+            girder_client.HttpError(403, "denied", "url", "GET"),
+            {"_id": "f2", "name": "Dataset B", "meta": {}},
+        ]
+        client = NimbusClient.__new__(NimbusClient)
+        client._gc = mock_gc
+        client._api_url = "http://localhost:8080/api/v1"
+        client._frontend_url = "http://localhost:5173"
+
+        datasets = client.list_datasets()
+        assert [d["name"] for d in datasets] == ["Dataset B"]
+
+    def test_list_datasets_propagates_unexpected_errors(self, mock_gc):
+        mock_gc.get.side_effect = [
+            [{"_id": "v1", "datasetId": "f1"}],
+            RuntimeError("boom"),
+        ]
+        client = NimbusClient.__new__(NimbusClient)
+        client._gc = mock_gc
+        client._api_url = "http://localhost:8080/api/v1"
+        client._frontend_url = "http://localhost:5173"
+
+        with pytest.raises(RuntimeError, match="boom"):
+            client.list_datasets()
