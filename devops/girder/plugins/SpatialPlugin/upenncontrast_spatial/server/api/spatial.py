@@ -466,13 +466,14 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
         Description("Rank features by differential expression between two "
                     "groups of cells (Welch t-test), as a job")
         .notes("Groups are list-filter objects (gates included). `filtersB` "
-               "omitted means every cell not in A. The ranked table lands "
-               "on the job document as `spatialResult` "
+               "omitted means every cell not in A. `method` is welch "
+               "(default, t-test on means) or wilcoxon (Mann-Whitney U). "
+               "The ranked table lands on the job document as `spatialResult` "
                "({nA, nB, featuresTested, features: [{symbol, meanA, "
                "meanB, fractionA, fractionB, log2FoldChange, t, "
                "pValue}]}); poll GET job/{jobId}.")
         .param("datasetId", "The dataset (folder) id", paramType="path")
-        .param("body", "JSON: {filtersA, filtersB?, maxFeatures?}",
+        .param("body", "JSON: {filtersA, filtersB?, maxFeatures?, method?}",
                paramType="body")
         .errorResponse()
     )
@@ -489,6 +490,12 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
                 "maxFeatures",
             )),
         )
+        method = body.get("method", "welch")
+        if method not in differential.METHODS:
+            raise RestException(
+                "method must be one of %s" % ", ".join(differential.METHODS),
+                code=400,
+            )
         # Validate and resolve both groups now (gates and virtual filters
         # become id clauses inside the filter objects), so the job carries
         # two small filter objects rather than hundreds of thousands of row
@@ -518,6 +525,7 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
                 "filtersA": filtersA,
                 "filtersB": filtersB,
                 "maxFeatures": maxFeatures,
+                "method": method,
             },
             asynchronous=True,
         )

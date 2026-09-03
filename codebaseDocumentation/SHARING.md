@@ -182,11 +182,13 @@ the owner would read everything the owner can), so each link creates a hidden Gi
 the dataset view and its configuration through the same `setUserAccess` calls the named
 sharing uses, and mints a Girder token for *that* user scoped to `DATA_READ` plus
 `USER_INFO_READ` (the client's `user/me` bootstrap; nothing else). The bearer sees
-exactly this dataset (ACL) and cannot write (scope: write endpoints answer 401). **Read means
-read**: with `DATA_READ` the bearer can also download the dataset's files (Girder's
-`folder/{id}/download`, `item/{id}/download`, the plugin's `/export` routes) — the images and
-the multi-GB spatial stores included; a link is a download capability for that dataset, not
-only a viewer, and the Share dialog says so. Revoking
+exactly this dataset (ACL) and cannot write (scope: write endpoints answer 401). Girder has no
+view-only scope — `DATA_READ` would also open `folder/{id}/download`, `item/{id}/download`,
+`file/{id}/download`, `resource/download` and the plugin's `/export` routes — so
+`server/helpers/shareLinkGuards.py` binds `rest.<method>.<route>.before` on those routes and
+refuses a link user (403) before the handler runs; the same module drops link users from
+`GET user` listings. Tiles, annotations, properties and the spatial routes stay open: a link
+shows a view, it does not hand out the files. Revoking
 deletes the user — Girder's `cleanupDeletedEntity` drops its ACL entries — and its tokens.
 The link user is `public: False` but does exist in the user collection; it never receives
 storage and cannot be signed into (nobody knows its password).
@@ -194,7 +196,7 @@ storage and cannot be signed into (nobody knows its password).
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
 | `POST` | `/api/v1/share_link` `{datasetViewId, days? (0 = never, ≤ 3650), label?}` | ADMIN on the dataset, WRITE on the view and its configuration (as named sharing) | Create; the response carries `token` **once** |
-| `GET` | `/api/v1/share_link?datasetId=` | READ on the dataset (deliberately: readers may see who shared what, tokens never appear) | Live links (no tokens) |
+| `GET` | `/api/v1/share_link?datasetId=` | WRITE on the dataset | Live links (no tokens) |
 | `GET` | `/api/v1/share_link/me` | the bearer | Which view the request's token opens; 404 for an ordinary login or an expired link. Also sets the `girderToken` cookie to the link token **when the browser has none** — `<img>`-loaded tiles (images, annotation raster, density) authenticate by cookie only — and leaves an existing cookie (someone's own login) alone |
 | `DELETE` | `/api/v1/share_link/{id}` | ADMIN on the dataset | Revoke (idempotent) |
 

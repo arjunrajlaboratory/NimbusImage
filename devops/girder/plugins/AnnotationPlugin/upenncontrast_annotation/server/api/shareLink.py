@@ -81,16 +81,18 @@ class ShareLink(Resource):
         )
         return {**self._model.serialize(document), "token": token}
 
-    @access.user(scope=TokenScope.DATA_READ)
+    @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
         Description("List a dataset's live share links (without tokens)")
+        .notes("Needs WRITE on the dataset: who shared it and until when is "
+               "the sharers' business, not every reader's.")
         .param("datasetId", "The dataset (folder) id", required=True)
-        .errorResponse("Read access denied.", 403)
+        .errorResponse("Write access denied.", 403)
     )
     def find(self, datasetId):
         datasetId = requireObjectId(datasetId, "datasetId")
         Folder().load(
-            datasetId, user=self.getCurrentUser(), level=AccessType.READ,
+            datasetId, user=self.getCurrentUser(), level=AccessType.WRITE,
             exc=True,
         )
         return [

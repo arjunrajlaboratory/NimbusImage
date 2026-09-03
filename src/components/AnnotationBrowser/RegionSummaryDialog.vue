@@ -7,12 +7,21 @@
       <v-card-title>Region statistics</v-card-title>
       <v-card-text>
         <p class="text-body-2 mb-3">
-          Draw regions as polygons and tag them; each region's cells are the
-          cell polygons whose centre lies inside it.
+          Regions are polygons: the ones carrying a tag, or the ones selected in
+          the viewer. Each region's cells are the cell polygons whose centre
+          lies inside it.
         </p>
+        <v-radio-group v-model="source" inline hide-details class="mb-2">
+          <v-radio value="tag" label="Polygons with a tag" />
+          <v-radio
+            value="selection"
+            :label="`Selected polygons (${selectedCount})`"
+          />
+        </v-radio-group>
         <v-row align="center">
           <v-col cols="5">
             <v-combobox
+              v-if="source === 'tag'"
               v-model="regionTag"
               :items="tagOptions"
               label="Region tag"
@@ -20,6 +29,9 @@
               variant="outlined"
               hide-details
             />
+            <div v-else class="text-caption text-medium-emphasis">
+              Up to {{ MAX_REGIONS }} selected polygons are summarized.
+            </div>
           </v-col>
           <v-col cols="7">
             <spatial-feature-picker
@@ -35,7 +47,7 @@
             variant="flat"
             size="small"
             :loading="loading"
-            :disabled="!regionTag || loading"
+            :disabled="!canSummarize || loading"
             @click="refresh"
           >
             Summarize
@@ -55,7 +67,11 @@
           {{ error }}
         </v-alert>
         <div v-else-if="loaded && rows.length === 0" class="text-caption">
-          No polygon carries that tag.
+          {{
+            source === "tag"
+              ? "No polygon carries that tag."
+              : "None of the selected objects is a polygon."
+          }}
         </div>
         <v-table v-if="rows.length" density="compact">
           <thead>
@@ -111,7 +127,10 @@ import SpatialFeaturePicker from "@/components/AnnotationBrowser/SpatialFeatureP
 /** Composition (and expression) of the cells inside tagged region polygons
  * (SPATIAL_PLUGIN.md "Phase 6"). */
 
+const MAX_REGIONS = 50;
+
 const dialog = ref(false);
+const source = ref<"tag" | "selection">("tag");
 const regionTag = ref<string | null>(null);
 const symbols = ref<string[]>([]);
 const rows = ref<ISpatialRegionSummary[]>([]);
@@ -121,6 +140,16 @@ const error = ref<string | null>(null);
 // The genes the current table was computed with, so a picker change does not
 // desynchronize the columns from the rows until Summarize is pressed again.
 const symbolsShown = ref<string[]>([]);
+
+const selectedCount = computed(
+  () => annotationStore.selectedAnnotationIds.size,
+);
+
+const canSummarize = computed(() =>
+  source.value === "tag"
+    ? !!regionTag.value
+    : selectedCount.value > 0 && selectedCount.value <= MAX_REGIONS,
+);
 
 // annotationTags covers stub-only mode, where `annotations` holds only the
 // hydrated objects and would hide a tag carried by unhydrated polygons.
@@ -139,7 +168,7 @@ function meanOf(row: ISpatialRegionSummary, symbol: string): string {
 
 async function refresh() {
   const datasetId = store.dataset?.id;
-  if (!datasetId || !regionTag.value) {
+  if (!datasetId || !canSummarize.value) {
     return;
   }
   loading.value = true;
@@ -147,7 +176,9 @@ async function refresh() {
   try {
     rows.value = await store.spatialAPI.regionSummary(
       datasetId,
-      regionTag.value,
+      source.value === "tag"
+        ? { regionTag: regionTag.value! }
+        : { regionIds: Array.from(annotationStore.selectedAnnotationIds) },
       spatialStore.hasTable ? symbols.value : [],
     );
     symbolsShown.value = spatialStore.hasTable ? [...symbols.value] : [];
@@ -192,7 +223,17 @@ watch(dialog, (open) => {
   }
 });
 
-defineExpose({ dialog, regionTag, symbols, rows, refresh, buildCsv, error });
+defineExpose({
+  dialog,
+  source,
+  regionTag,
+  symbols,
+  rows,
+  refresh,
+  buildCsv,
+  error,
+  canSummarize,
+});
 </script>
 
 <style lang="scss" scoped>

@@ -18,7 +18,10 @@ vi.mock("@/store/spatial", async () => {
   return { default: reactive({ hasTable: true }) };
 });
 vi.mock("@/store/annotation", () => ({
-  default: { annotationTags: ["cell", "T", "region", "B"] },
+  default: {
+    annotationTags: ["cell", "T", "region", "B"],
+    selectedAnnotationIds: new Set(["r1", "r2"]),
+  },
 }));
 vi.mock("@/utils/download", () => ({
   downloadToClient: mocks.downloadToClient,
@@ -81,7 +84,11 @@ describe("RegionSummaryDialog", () => {
     vm.regionTag = "region";
     vm.symbols = ["CD3E"];
     await vm.refresh();
-    expect(mocks.regionSummary).toHaveBeenCalledWith("ds1", "region", ["CD3E"]);
+    expect(mocks.regionSummary).toHaveBeenCalledWith(
+      "ds1",
+      { regionTag: "region" },
+      ["CD3E"],
+    );
     expect(vm.rows).toEqual(ROWS);
     expect(vm.buildCsv().split("\n")).toEqual([
       "region,cells,B,T,CD3E",
@@ -98,7 +105,21 @@ describe("RegionSummaryDialog", () => {
     vm.symbols = ["CD3E"];
     await nextTick();
     await vm.refresh();
-    expect(mocks.regionSummary).toHaveBeenCalledWith("ds1", "region", []);
+    expect(mocks.regionSummary).toHaveBeenCalledWith(
+      "ds1",
+      { regionTag: "region" },
+      [],
+    );
+    // The current selection can be the regions instead of a tag.
+    vm.source = "selection";
+    await nextTick();
+    expect(vm.canSummarize).toBe(true);
+    await vm.refresh();
+    expect(mocks.regionSummary).toHaveBeenLastCalledWith(
+      "ds1",
+      { regionIds: ["r1", "r2"] },
+      [],
+    );
     mocks.regionSummary.mockRejectedValue(new Error("offline"));
     await vm.refresh();
     expect(vm.error).toBe("offline");

@@ -160,8 +160,10 @@ class SpatialAccessor:
         filters_b: dict | None = None,
         max_features: int = 50,
         wait: bool = True,
+        method: str = "welch",
     ) -> dict:
-        """Rank features by differential expression (Welch t-test) between
+        """Rank features by differential expression (``method`` "welch",
+        a t-test on means, or "wilcoxon", Mann-Whitney U) between
         the cells matching ``filters_a`` and those matching ``filters_b``
         (``None`` = every other cell). Runs as a server job; with ``wait``
         the ranked table is returned (``{nA, nB, featuresTested,
@@ -171,6 +173,7 @@ class SpatialAccessor:
             json={
                 "filtersA": filters_a, "filtersB": filters_b,
                 "maxFeatures": max_features,
+                "method": method,
             },
         )
         if not wait:

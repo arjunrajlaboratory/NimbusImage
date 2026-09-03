@@ -133,6 +133,11 @@ genes dialog has three modes: **live columns** (default), **copy into a measurem
 
 ### Score and differential expression
 
+`differential` takes `method`: `welch` (default, t-test on means from sums) or `wilcoxon`
+(Mann-Whitney U on the dense count distributions, `scipy.stats.mannwhitneyu`; the statistic
+is the signed z so ranking by |statistic| works the same). Pinned by
+*"testDifferentialRanksAndSchedules"*.
+
 - `POST spatial/{datasetId}/score {features, name, method?: mean|sum, propertyName?}` —
   one sub-value `values[property][name]` per cell (default property `Gene set scores`),
   through the Phase 1 writer (`materialize.scoreColumn`, `columnsFor`).
@@ -191,8 +196,10 @@ enter the store. `TranscriptOverlay.vue` (one per viewer, mounted by `ImageViewe
 pyramid level per view from the schema alone (`src/utils/transcriptTiles.ts`: the finest
 level whose intersecting tiles fit `MAX_TRANSCRIPT_TILES_PER_REQUEST` and whose estimated
 points fit the budget), fetches the binary body into a GeoJS point feature, steps coarser
-on 413, and switches to the density OSM layer in "auto" mode from `AUTO_DENSITY_LEVEL`
-(1 mm tiles) or when nothing fits. `TranscriptsPanel.vue` is a right-zone palette
+on 413, and switches to the density heat map in "auto" mode from `AUTO_DENSITY_LEVEL`
+(1 mm tiles) or when nothing fits — one OSM layer per gene in that gene's color, so a mix
+stays readable. Opacity (points and heat maps) is a palette slider and a restyle, never a
+refetch. `TranscriptsPanel.vue` is a right-zone palette
 (`transcriptsPanel`), shown only for datasets with a registered store.
 
 ## Phase 4: recompute and table versions
@@ -208,11 +215,13 @@ Closing the loop (plan §13): edited cell polygons → a corrected count matrix,
   non-active one. Every consumer reads the active table, so a switch re-points virtual
   paths, aggregate, score and DE with no other state (gates are shapes in value space).
 - **Staleness is computed, not tracked** (`server/recompute.py`): a recomputed table stores
-  `obs.geometry_hash` (sha1 of the polygon vertices) beside `annotation_id`, and
-  `GET …/staleness` compares the live polygons: **added** (cell without a row), **changed**
-  (hash differs), **removed** (row without a cell). Cached on the dataset's annotation
-  raster version, which bumps on every annotation save/delete. An imported table has no
-  hashes and reports added/removed only.
+  `obs.geometry_hash` — a fingerprint `count:Σx:Σy:Σxy` of the polygon vertices, rounded to
+  0.01 px — beside `annotation_id`, and `GET …/staleness` compares the live polygons:
+  **added** (cell without a row), **changed** (fingerprint differs), **removed** (row without
+  a cell). The live fingerprints come from one Mongo aggregation (`$size`/`$sum`), so no
+  coordinates are downloaded (the earlier sha1-of-vertices scan cost a minute at 700K
+  cells). Cached on the dataset's annotation raster version, which bumps on every annotation
+  save/delete. An imported table has no fingerprints and reports added/removed only.
 - **Assignment: smallest polygon wins.** Per level-0 transcript tile the intersecting
   polygons are rasterized largest-first (`skimage.draw.polygon`) into an int32 label image
   at image resolution; molecules with quality ≥ `minQv` of a real gene look up their
@@ -274,8 +283,9 @@ cells); a cell's **type** is its first tag not in `excludeTags` (default `["cell
 - The chunked property writer materialize used is now `materialize.writeCellValues`,
   shared with the neighbourhood job.
 - **Client**: `NeighbourhoodDialog.vue` (radius in µm → pixels via the configuration's
-  scale, job polling, colored matrix, CSV) and `RegionSummaryDialog.vue` (region tag,
-  genes, table, CSV), both from the Selection summary's **Spatial statistics** row.
+  scale, job polling, colored matrix, CSV) and `RegionSummaryDialog.vue` (regions by tag
+  or the polygons currently selected in the viewer, genes, table, CSV), both from the
+  Selection summary's **Spatial statistics** row.
   Python: `ds.spatial.neighbourhood()`, `compute_neighbourhood(radius_pixels, …)`,
   `region_summary(region_tag | region_ids, features)`.
 

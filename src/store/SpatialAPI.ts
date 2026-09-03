@@ -14,6 +14,7 @@ import {
   ISpatialTranscriptsSchema,
   ISpatialVersions,
   ITranscriptPoints,
+  TDifferentialMethod,
 } from "./model";
 import { decodeTranscriptPoints } from "@/utils/transcriptPoints";
 
@@ -111,10 +112,11 @@ export default class SpatialAPI {
     filtersA: IAnnotationListFilters,
     filtersB: IAnnotationListFilters | null,
     maxFeatures: number,
+    method: TDifferentialMethod = "welch",
   ): Promise<{ jobId: string; nA: number }> {
     const response = await this.client.post(
       `spatial/${datasetId}/differential`,
-      { filtersA, filtersB, maxFeatures },
+      { filtersA, filtersB, maxFeatures, method },
     );
     return response.data as { jobId: string; nA: number };
   }
@@ -253,12 +255,12 @@ export default class SpatialAPI {
 
   async regionSummary(
     datasetId: string,
-    regionTag: string,
+    regions: { regionTag: string } | { regionIds: string[] },
     features: string[],
   ): Promise<ISpatialRegionSummary[]> {
     const response = await this.client.post(
       `spatial/${datasetId}/regions/summary`,
-      { regionTag, features },
+      { ...regions, features },
     );
     return response.data as ISpatialRegionSummary[];
   }

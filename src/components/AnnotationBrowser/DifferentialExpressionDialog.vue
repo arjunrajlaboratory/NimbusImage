@@ -28,6 +28,17 @@
           <v-radio value="tag" label="B: objects with any of these tags" />
         </v-radio-group>
         <tag-picker v-if="groupB === 'tag'" v-model="groupBTags" class="mb-3" />
+        <v-btn-toggle
+          v-model="method"
+          mandatory
+          density="compact"
+          variant="outlined"
+          divided
+          class="mb-3"
+        >
+          <v-btn value="welch" size="small">Welch t-test</v-btn>
+          <v-btn value="wilcoxon" size="small">Wilcoxon (Mann-Whitney)</v-btn>
+        </v-btn-toggle>
         <div class="d-flex align-center mb-3">
           <v-text-field
             v-model.number="maxFeatures"
@@ -123,6 +134,7 @@ import TagPicker from "@/components/TagPicker.vue";
 import {
   IAnnotationListFilters,
   ISpatialDifferentialResult,
+  TDifferentialMethod,
 } from "@/store/model";
 import { jobStates } from "@/store/jobConstants";
 import { downloadToClient } from "@/utils/download";
@@ -142,6 +154,7 @@ const dialog = ref(false);
 const groupB = ref<"rest" | "tag">("rest");
 const groupBTags = ref<string[]>([]);
 const maxFeatures = ref(50);
+const method = ref<TDifferentialMethod>("welch");
 const running = ref(false);
 const runningMessage = ref("");
 const error = ref("");
@@ -232,6 +245,7 @@ async function run() {
       props.filtersA,
       filtersB(),
       Math.min(MAX_FEATURES, Math.max(1, Math.round(maxFeatures.value))),
+      method.value,
     );
     if (sequence === requestSequence) {
       pollJob(jobId, sequence);

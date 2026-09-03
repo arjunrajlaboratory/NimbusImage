@@ -81,6 +81,7 @@ describe("SpatialAPI", () => {
       filtersA,
       filtersB: null,
       maxFeatures: 50,
+      method: "welch",
     });
     expect((await api.fetchJob("j1")).status).toBe(3);
     expect(client.get).toHaveBeenCalledWith("job/j1");
@@ -191,10 +192,15 @@ describe("SpatialAPI neighbourhood and regions", () => {
       excludeTags: ["cell"],
       propertyName: "Neighbourhood",
     });
-    await api.regionSummary("ds", "region", ["CD3E"]);
+    await api.regionSummary("ds", { regionTag: "region" }, ["CD3E"]);
     expect(client.post).toHaveBeenCalledWith("spatial/ds/regions/summary", {
       regionTag: "region",
       features: ["CD3E"],
+    });
+    await api.regionSummary("ds", { regionIds: ["r1"] }, []);
+    expect(client.post).toHaveBeenCalledWith("spatial/ds/regions/summary", {
+      regionIds: ["r1"],
+      features: [],
     });
   });
 });

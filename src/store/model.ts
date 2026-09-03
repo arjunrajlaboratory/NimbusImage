@@ -1817,6 +1817,8 @@ export interface ISpatialInfo {
   datasetId: string;
   itemId: string;
   fileId: string;
+  // The active table's version label ("Imported table", a recompute label).
+  label?: string;
   schemaVersion: number;
   nObs: number;
   nVar: number;
@@ -1920,6 +1922,7 @@ export interface ISpatialDifferentialFeature {
 }
 
 export interface ISpatialDifferentialResult {
+  method?: TDifferentialMethod;
   nA: number;
   nB: number;
   featuresTested: number;
@@ -1929,6 +1932,9 @@ export interface ISpatialDifferentialResult {
 
 // GET job/{id} for a spatial job: status plus, once finished, the result the
 // differential job stores on the document.
+/** welch: t-test on means; wilcoxon: Mann-Whitney U on the distributions. */
+export type TDifferentialMethod = "welch" | "wilcoxon";
+
 export interface ISpatialJob {
   _id: string;
   status: number;

@@ -32,6 +32,7 @@ vi.mock("@/store/transcripts", async () => {
     minQv: 20,
     mode: "auto",
     pointBudget: 300000,
+    opacity: 0.85,
     setStatus: mocks.setStatus,
     setReadout: mocks.setReadout,
     get symbols() {
@@ -116,18 +117,24 @@ function makeMap(bounds = { left: 0, top: 0, right: 600, bottom: 300 }) {
     geoOff: vi.fn(),
   };
   const featureLayer = { createFeature: vi.fn(() => feature) };
-  const osmLayer = {
-    visible: vi.fn(function (this: any, value?: boolean) {
-      if (value === undefined) {
-        return osmLayer._visible;
-      }
-      osmLayer._visible = value;
-      return osmLayer;
-    }),
-    _visible: false,
-    url: vi.fn(),
-    zIndex: vi.fn(),
-    node: () => ({ css: vi.fn() }),
+  const osmLayers: any[] = [];
+  const makeOsm = () => {
+    const osmLayer: any = {
+      _visible: false,
+      visible: vi.fn((value?: boolean) => {
+        if (value === undefined) {
+          return osmLayer._visible;
+        }
+        osmLayer._visible = value;
+        return osmLayer;
+      }),
+      url: vi.fn(),
+      zIndex: vi.fn(),
+      opacity: vi.fn(),
+      node: () => ({ css: vi.fn() }),
+    };
+    osmLayers.push(osmLayer);
+    return osmLayer;
   };
   const map = {
     bounds: vi.fn(() => bounds),
@@ -136,10 +143,18 @@ function makeMap(bounds = { left: 0, top: 0, right: 600, bottom: 300 }) {
     deleteLayer: vi.fn(),
     node: () => [document.createElement("div")],
     createLayer: vi.fn((kind: string) =>
-      kind === "osm" ? osmLayer : featureLayer,
+      kind === "osm" ? makeOsm() : featureLayer,
     ),
   };
-  return { map, feature, featureLayer, osmLayer };
+  return {
+    map,
+    feature,
+    featureLayer,
+    osmLayers,
+    get osmLayer() {
+      return osmLayers[0];
+    },
+  };
 }
 
 function points(count: number, level0 = true) {
@@ -240,13 +255,15 @@ describe("TranscriptOverlay", () => {
   it("shows the density heat map when zoomed far out in auto mode, and when asked", async () => {
     const parts = makeMap({ left: 0, top: 0, right: 4000, bottom: 2000 });
     (transcriptsStore as any).pointBudget = 100;
-    const { osmLayer } = mount(parts);
+    mount(parts);
     await vi.advanceTimersByTimeAsync(250);
+    const osmLayer = parts.osmLayer;
     expect(mocks.fetchTranscriptPoints).not.toHaveBeenCalled();
     expect(osmLayer.url).toHaveBeenCalledWith(
       "density?genes=CD3E&color=#FF0000",
     );
     expect(osmLayer.visible()).toBe(true);
+    expect(osmLayer.opacity).toHaveBeenCalledWith(0.85);
     expect(mocks.setStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({ rendering: "density" }),
     );
@@ -258,15 +275,41 @@ describe("TranscriptOverlay", () => {
     expect(osmLayer.visible()).toBe(false);
   });
 
+  it("draws one heat map per gene in its own color and hides removed ones", async () => {
+    const parts = makeMap({ left: 0, top: 0, right: 4000, bottom: 2000 });
+    (transcriptsStore as any).mode = "density";
+    (transcriptsStore as any).genes = [
+      { symbol: "CD3E", color: "#FF0000" },
+      { symbol: "MS4A1", color: "#00FF00" },
+    ];
+    mount(parts);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(parts.osmLayers).toHaveLength(2);
+    expect(parts.osmLayers[1].url).toHaveBeenCalledWith(
+      "density?genes=MS4A1&color=#00FF00",
+    );
+    expect(parts.osmLayers.every((l) => l.visible())).toBe(true);
+    (transcriptsStore as any).genes = [{ symbol: "MS4A1", color: "#00FF00" }];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(parts.osmLayers[0].visible()).toBe(false);
+    expect(parts.osmLayers[1].visible()).toBe(true);
+    // Opacity is a restyle: every layer follows, no refetch.
+    (transcriptsStore as any).opacity = 0.4;
+    await nextTick();
+    expect(parts.osmLayers[1].opacity).toHaveBeenLastCalledWith(0.4);
+  });
+
   it("clears everything when disabled, turned off, or without genes", async () => {
-    const { feature, osmLayer } = mount();
+    const parts = makeMap();
+    const { feature } = mount(parts);
     await vi.advanceTimersByTimeAsync(250);
     feature.data.mockClear();
     (transcriptsStore as any).enabled = false;
     await nextTick();
     await vi.advanceTimersByTimeAsync(250);
     expect(feature.data).toHaveBeenCalledWith([]);
-    expect(osmLayer.visible()).toBe(false);
+    expect(parts.osmLayers.some((l) => l.visible())).toBe(false);
     expect(mocks.setStatus).toHaveBeenLastCalledWith(null);
   });
 
@@ -293,7 +336,8 @@ describe("TranscriptOverlay", () => {
   });
 
   it("reports the clicked molecule and tears down on unmount", async () => {
-    const { wrapper, feature, map, osmLayer } = mount();
+    const parts = makeMap();
+    const { wrapper, feature, map } = mount(parts);
     await vi.advanceTimersByTimeAsync(250);
     const onClick = feature.geoOn.mock.calls.find(
       ([event]) => event === "geo_feature_click",
@@ -312,8 +356,8 @@ describe("TranscriptOverlay", () => {
     );
     wrapper.unmount();
     expect(map.geoOff).toHaveBeenCalledWith("geo_pan", expect.any(Function));
-    expect(map.deleteLayer).toHaveBeenCalled();
-    expect(osmLayer.visible()).toBe(false);
+    // The point layer and every heat-map layer go.
+    expect(map.deleteLayer).toHaveBeenCalledTimes(1 + parts.osmLayers.length);
   });
 
   it("does nothing while unrolled", async () => {

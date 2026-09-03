@@ -49,9 +49,33 @@ def welch(sumA, sumSqA, nA, sumB, sumSqB, nB):
     return float(t), p, meanA, meanB
 
 
-def differential(store, rowsA, rowsB, maxFeatures, onProgress=None):
+METHODS = ("welch", "wilcoxon")
+
+
+def wilcoxon(valuesA, valuesB, nA, nB):
+    """(U-derived z, p) for the Mann-Whitney U test on the dense values of
+    both groups (zeros for cells without the gene); z is signed like a
+    t-statistic so the ranking by |statistic| works the same way."""
+    denseA = np.zeros(nA, dtype=np.float64)
+    denseA[:len(valuesA)] = valuesA
+    denseB = np.zeros(nB, dtype=np.float64)
+    denseB[:len(valuesB)] = valuesB
+    if not denseA.any() and not denseB.any():
+        return 0.0, 1.0
+    result = stats.mannwhitneyu(denseA, denseB, alternative="two-sided")
+    meanU = nA * nB / 2.0
+    z = float(result.statistic - meanU)
+    scale = math.sqrt(nA * nB * (nA + nB + 1) / 12.0)
+    return (z / scale if scale else 0.0), float(result.pvalue)
+
+
+def differential(store, rowsA, rowsB, maxFeatures, onProgress=None,
+                 method="welch"):
     """Ranked table for group A (row indices) vs group B (row indices, or
-    None for every other row)."""
+    None for every other row). `method` is "welch" (t-test on means) or
+    "wilcoxon" (Mann-Whitney U on the count distributions)."""
+    if method not in METHODS:
+        raise ValueError("method must be one of %s" % ", ".join(METHODS))
     maskA = np.zeros(store.nObs, dtype=bool)
     maskA[rowsA] = True
     if rowsB is None:
@@ -76,6 +100,8 @@ def differential(store, rowsA, rowsB, maxFeatures, onProgress=None):
             float(valuesA.sum()), float((valuesA * valuesA).sum()), nA,
             float(valuesB.sum()), float((valuesB * valuesB).sum()), nB,
         )
+        if method == "wilcoxon":
+            t, p = wilcoxon(valuesA, valuesB, nA, nB)
         table.append({
             "symbol": symbol,
             "meanA": meanA,
@@ -95,6 +121,7 @@ def differential(store, rowsA, rowsB, maxFeatures, onProgress=None):
         "nA": nA,
         "nB": nB,
         "featuresTested": store.nVar,
+        "method": method,
         "features": table[:maxFeatures],
     }
 
@@ -136,6 +163,7 @@ def run(job):
             ),
             kwargs["maxFeatures"],
             onProgress,
+            method=kwargs.get("method", "welch"),
         )
     except Exception as exc:
         # The job boundary: any failure must land in the job's status/log,

@@ -187,7 +187,8 @@ filters, analysis gates and axes, color-by, the object list and the summary
 (`ds.spatial.virtual_path("CD3E")`; e.g. `ds.annotations.list(filters={"propertyFilters":
 [{"path": ["spatial", "CD3E"], "mode": "range", "min": 3}]})`). Gene-set scores:
 `ds.spatial.score(["CD3E", "CD2"], "T cell")`. Differential expression between two filter
-objects (Welch t, a server job): `ds.spatial.differential(filters_a, filters_b=None)`.
+objects (a server job; `method="welch"` t-test or `"wilcoxon"` Mann-Whitney):
+`ds.spatial.differential(filters_a, filters_b=None)`.
 
 In the app: Measurements tab → **Genes from spatial table** (live columns, copy into a
 measurement, or a gene-set score), and the Selection summary's **Expression** section

@@ -121,7 +121,8 @@ class TestSpatialAccessor:
         result = SpatialAccessor(mock_gc, "ds_001").differential(filters)
         mock_gc.post.assert_called_with(
             "spatial/ds_001/differential",
-            json={"filtersA": filters, "filtersB": None, "maxFeatures": 50},
+            json={"filtersA": filters, "filtersB": None, "maxFeatures": 50,
+                  "method": "welch"},
         )
         assert result == table
         assert SpatialAccessor(mock_gc, "ds_001").virtual_path("CD3E") == [

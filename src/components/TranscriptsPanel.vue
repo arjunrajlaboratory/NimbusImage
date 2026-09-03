@@ -85,6 +85,19 @@
         @update:model-value="transcriptsStore.setMinQv($event)"
       />
 
+      <div class="text-caption mt-2">
+        Opacity {{ Math.round(transcriptsStore.opacity * 100) }}%
+      </div>
+      <v-slider
+        :model-value="transcriptsStore.opacity"
+        :min="0.05"
+        :max="1"
+        :step="0.05"
+        density="compact"
+        hide-details
+        @update:model-value="transcriptsStore.setOpacity($event)"
+      />
+
       <div class="text-caption mt-2">Rendering</div>
       <v-btn-toggle
         :model-value="transcriptsStore.mode"

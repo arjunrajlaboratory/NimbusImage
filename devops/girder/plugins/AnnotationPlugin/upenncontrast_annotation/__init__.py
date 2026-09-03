@@ -32,6 +32,7 @@ from .server.models.history import History as HistoryModel
 from .server.models.documentChange import DocumentChange as DocumentChangeModel
 from .server.models.project import Project as ProjectModel
 from .server.models.shareLink import ShareLink as ShareLinkModel
+from .server.helpers import shareLinkGuards
 
 
 # Taken from HistomicsUI
@@ -182,4 +183,5 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].zenodo = Zenodo()
         info["apiRoot"].zenodo_credentials = ZenodoCredentials()
         info["apiRoot"].share_link = ShareLink()
+        shareLinkGuards.bind()
         system.addSystemEndpoints(info["apiRoot"])

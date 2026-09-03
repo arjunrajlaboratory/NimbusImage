@@ -16,7 +16,6 @@ over from the active table by annotation id.
 """
 
 import datetime
-import hashlib
 import os
 import tempfile
 import threading
@@ -74,14 +73,52 @@ class Cell:
 
 
 def geometryHash(coordinates):
-    """A stable digest of a polygon's vertices, so an edited cell can be told
-    from an unedited one without timestamps."""
-    digest = hashlib.sha1()
-    for point in coordinates:
-        digest.update(
-            ("%.3f,%.3f;" % (float(point["x"]), float(point["y"]))).encode()
+    """A fingerprint of a polygon's vertices, so an edited cell can be told
+    from an unedited one without timestamps: vertex count and the sums of
+    x, y and x*y, rounded to a hundredth of a pixel. Chosen so Mongo can
+    compute the same value with $size/$sum (see `polygonFingerprints`), which
+    keeps staleness from downloading 700K coordinate arrays; a moved vertex
+    changes at least one sum."""
+    xs = [float(point["x"]) for point in coordinates]
+    ys = [float(point["y"]) for point in coordinates]
+    return fingerprint(
+        len(xs), sum(xs), sum(ys), sum(x * y for x, y in zip(xs, ys))
+    )
+
+
+def fingerprint(count, sumX, sumY, sumXY):
+    return "%d:%.2f:%.2f:%.2f" % (count, sumX, sumY, sumXY)
+
+
+def isFingerprint(value):
+    return isinstance(value, str) and value.count(":") == 3
+
+
+def polygonFingerprints(datasetId):
+    """{annotation id: fingerprint} for every polygon of the dataset, from
+    one aggregation — no coordinates leave Mongo."""
+    pipeline = [
+        {"$match": {
+            "datasetId": ObjectId(str(datasetId)),
+            "shape": {"$in": list(CELL_SHAPES)},
+        }},
+        {"$project": {
+            "n": {"$size": "$coordinates"},
+            "sx": {"$sum": "$coordinates.x"},
+            "sy": {"$sum": "$coordinates.y"},
+            "sxy": {"$sum": {"$map": {
+                "input": "$coordinates", "as": "p",
+                "in": {"$multiply": ["$$p.x", "$$p.y"]},
+            }}},
+        }},
+    ]
+    return {
+        str(doc["_id"]): fingerprint(
+            int(doc["n"]), float(doc["sx"]), float(doc["sy"]),
+            float(doc["sxy"]),
         )
-    return digest.hexdigest()[:16]
+        for doc in Annotation().collection.aggregate(pipeline)
+    }
 
 
 def _polygonArea(xy):
@@ -157,13 +194,18 @@ def staleness(datasetId, store, fileId, cells=None):
             store.annotationIds.tolist(),
             (str(h) for h in readStringColumn(obs, "geometry_hash")),
         ))
+        # Tables written before the fingerprint format (sha1 digests) cannot
+        # be compared; treat them as hash-less rather than "all changed".
+        if hashes and not any(
+            isFingerprint(value) for value in list(hashes.values())[:10]
+        ):
+            hashes = None
     if cells is not None:
         live = [(cell.annotationId, cell.geometryHash) for cell in cells]
     elif hashes is not None:
-        live = [
-            (cell.annotationId, cell.geometryHash)
-            for cell in cellPolygons(datasetId)
-        ]
+        # Fingerprints straight from Mongo: seconds, not a coordinate
+        # download (the old sha1 of every vertex cost a minute at 700K).
+        live = list(polygonFingerprints(datasetId).items())
     else:
         # Without hashes only membership matters: skip the coordinates,
         # which are most of the bytes of 700K polygons.

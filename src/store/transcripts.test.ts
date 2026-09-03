@@ -152,6 +152,11 @@ describe("transcripts store", () => {
       note: null,
     });
     expect(transcriptsStore.requestSignature).toBe(before);
+    transcriptsStore.setOpacity(0.5);
+    expect(transcriptsStore.requestSignature).toBe(before);
+    expect(transcriptsStore.opacity).toBe(0.5);
+    transcriptsStore.setOpacity(2);
+    expect(transcriptsStore.opacity).toBe(1);
     transcriptsStore.setMinQv(25);
     expect(transcriptsStore.requestSignature).not.toBe(before);
   });

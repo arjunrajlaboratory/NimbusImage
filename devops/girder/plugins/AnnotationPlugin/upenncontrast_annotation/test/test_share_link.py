@@ -122,6 +122,28 @@ class TestShareLink:
             server, "POST", "/share_link", token=token,
             body={"datasetViewId": str(view["_id"])},
         ), 401)
+        # ...nor download the dataset's files, although its READ ACL would
+        # otherwise allow it (Girder has no view-only scope).
+        assertStatus(request(
+            server, "GET", "/folder/%s/download" % dataset["_id"], token=token
+        ), 403)
+        assertStatus(request(
+            server, "GET", "/export/json", token=token,
+            params={"datasetId": str(dataset["_id"])},
+        ), 403)
+        # The owner still can.
+        assertStatusOk(request(
+            server, "GET", "/folder/%s/download" % dataset["_id"], user=admin,
+            isJson=False,
+        ) if False else request(
+            server, "GET", "/export/json", user=admin,
+            params={"datasetId": str(dataset["_id"])},
+        ))
+        # Link users do not appear in user listings.
+        listed = request(server, "GET", "/user", user=admin,
+                         params={"text": "share-"})
+        assertStatusOk(listed)
+        assert not any(u["login"].startswith("share-") for u in listed.json)
 
     def testCreateNeedsAdminAndValidInput(self, admin, user, server):
         dataset, config, view = privateDatasetWithView(admin)
@@ -180,7 +202,8 @@ class TestShareLink:
         assertStatusOk(listed)
         assert [x["label"] for x in listed.json] == ["a", "b"]
         assert all("token" not in x for x in listed.json)
-        # Listing needs READ on the dataset.
+        # Listing needs WRITE on the dataset: a reader sees none of it.
+        Folder().setUserAccess(dataset, user, AccessType.READ, save=True)
         assertStatus(request(
             server, "GET", "/share_link", user=user,
             params={"datasetId": str(dataset["_id"])},

@@ -17,16 +17,20 @@
            plugin) can pull genes from it. -->
       <materialize-genes-dialog v-if="spatialStore.hasTable">
         <template v-slot:activator="{ props: activatorProps }">
-          <v-btn
-            v-bind="activatorProps"
-            variant="outlined"
-            color="primary"
-            size="small"
-            class="ml-2"
-            prepend-icon="mdi-dna"
-          >
-            Add genes
-          </v-btn>
+          <v-tooltip :text="tableTooltip">
+            <template v-slot:activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="{ ...activatorProps, ...tooltipProps }"
+                variant="outlined"
+                color="primary"
+                size="small"
+                class="ml-2"
+                prepend-icon="mdi-dna"
+              >
+                Add genes
+              </v-btn>
+            </template>
+          </v-tooltip>
         </template>
       </materialize-genes-dialog>
       <v-spacer />
@@ -222,6 +226,16 @@ function toggleExpanded(id: string) {
     expanded.add(id);
   }
 }
+
+// Which expression table the genes come from (tables are versioned by
+// recompute; the Transcripts palette switches them).
+const tableTooltip = computed(() => {
+  const info = spatialStore.info;
+  if (!info) {
+    return "Genes from the spatial table";
+  }
+  return `Genes from the active table "${info.label ?? "Table"}" (${info.nObs.toLocaleString()} cells × ${info.nVar.toLocaleString()} genes)`;
+});
 
 const properties = computed(() => propertyStore.properties);
 

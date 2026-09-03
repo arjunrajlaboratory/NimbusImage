@@ -1058,8 +1058,13 @@ export class Main extends VuexModule {
         this.loadUserColors().catch((error) => {
           logError("Failed to load user colors during login:", error);
         }),
-        this.fetchUserStorageInfo(),
       );
+      // A share link's bearer has no storage and runs no jobs: skip the
+      // quota lookup (a logged error otherwise) and the notification socket
+      // (which its read-only token cannot open).
+      if (!user.shareLink) {
+        promises.push(this.fetchUserStorageInfo());
+      }
     } else {
       this.setAssetstores([]);
     }
@@ -1070,7 +1075,9 @@ export class Main extends VuexModule {
     );
     // Initialize notification websocket as soon as the user has logged in because
     // any notification sent without would be lost.
-    jobs.initializeNotificationSubscription();
+    if (!user?.shareLink) {
+      jobs.initializeNotificationSubscription();
+    }
     await Promise.allSettled(promises);
   }
 

@@ -12,7 +12,7 @@ Branch `xenium-phase0`, self-review before the commit (independent reviewer unav
 | 8 | Low | `server/neighbourhood.py` `regionPolygons` | Independent review (symmetric path): two-corner rectangles were expanded for cells (`recompute._rectangleCorners`) but skipped as regions. | fixed — shared helper. |
 | 9 | Low | `RegionSummaryDialog.vue` | Independent review: region tags came from `annotations`, which in stub-only mode holds only hydrated objects. | fixed — `annotationStore.annotationTags`. |
 | 5 | Deferred | plan §15 | Cohort summaries across configurations. | deferred — needs a project-level surface; `regions/summary` is the per-dataset building block. |
-| 6 | Deferred | `RegionSummaryDialog.vue` | Regions are picked by tag only (ids are API-only). | deferred — selecting polygons in the viewer and summarizing them is a natural next step. |
+| 6 | Low | `RegionSummaryDialog.vue` | Regions were picked by tag only. | fixed — "Selected polygons" summarizes the viewer's current selection through `regionIds`. |
 
 ## Live verification (2026-09-03)
 

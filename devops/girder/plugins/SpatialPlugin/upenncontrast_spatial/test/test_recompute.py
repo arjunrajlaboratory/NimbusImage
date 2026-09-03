@@ -170,6 +170,11 @@ class TestRecompute(TestTranscripts):
             server, admin, "GET", "/spatial/%s/staleness" % folder["_id"]
         ).json
         assert stale["upToDate"] is True and stale["hasGeometryHashes"]
+        # Mongo's fingerprints equal the ones the job wrote from Python.
+        prints = recomputeModule.polygonFingerprints(folder["_id"])
+        assert prints[str(cells["B"]["_id"])] == recomputeModule.geometryHash(
+            Annotation().load(cells["B"]["_id"], force=True)["coordinates"]
+        )
 
         # Edit B (shrink it away from its molecule), add D over the CCL19
         # molecule, delete A.
@@ -304,6 +309,11 @@ class TestRecompute(TestTranscripts):
         assert recomputeModule.geometryHash(coordinates) != (
             recomputeModule.geometryHash(coordinates[:2] + [{"x": 6, "y": 0}])
         )
+        # Reordering vertices keeps the sums but is not an edit anyone makes;
+        # a moved vertex is caught.
+        assert recomputeModule.geometryHash(coordinates) == "3:9.00:6.00:14.00"
+        assert recomputeModule.isFingerprint("3:9.00:6.00:14.00")
+        assert not recomputeModule.isFingerprint("0123456789abcdef")
         big = recomputeModule.Cell(
             "a", np.array([[0, 0], [10, 0], [10, 10], [0, 10]], float),
             [], (0, 0, 10, 10), 100.0, "h",

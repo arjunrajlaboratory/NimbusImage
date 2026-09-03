@@ -210,6 +210,29 @@ class TestSpatialProvider(TestSpatial):
         assert table["nA"] == 2 and table["nB"] == 3
         assert len(table["features"]) == 2
         assert {f["symbol"] for f in table["features"]} <= set(SYMBOLS)
+        assert table["method"] == "welch"
+        # The Mann-Whitney variant ranks by a signed z and reports itself.
+        resp = request(
+            server, admin, "POST", "/spatial/%s/differential" % folder["_id"],
+            body={
+                "filtersA": {"tags": {"values": ["T"], "exclusive": False}},
+                "filtersB": {"tags": {"values": ["B"], "exclusive": False}},
+                "maxFeatures": 2, "method": "wilcoxon",
+            },
+        )
+        assertStatusOk(resp)
+        job = Job().load(resp.json["jobId"], force=True)
+        differentialModule.run(job)
+        table = Job().load(resp.json["jobId"], force=True)["spatialResult"]
+        assert table["method"] == "wilcoxon"
+        assert all(0 <= f["pValue"] <= 1 for f in table["features"])
+        assertStatus(request(
+            server, admin, "POST", "/spatial/%s/differential" % folder["_id"],
+            body={
+                "filtersA": {"tags": {"values": ["T"], "exclusive": False}},
+                "method": "anova",
+            },
+        ), 400)
         assert ids  # ids resolved through the store, not carried in the job
         assert "rowsA" not in job["kwargs"]
         # The table survives the job model's field whitelist (what GET

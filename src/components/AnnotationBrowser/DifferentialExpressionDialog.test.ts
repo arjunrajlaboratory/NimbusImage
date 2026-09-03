@@ -82,7 +82,13 @@ describe("DifferentialExpressionDialog", () => {
     const wrapper = await openDialog();
     const vm = wrapper.vm as any;
     await vm.run();
-    expect(mocks.differential).toHaveBeenCalledWith("ds1", FILTERS_A, null, 50);
+    expect(mocks.differential).toHaveBeenCalledWith(
+      "ds1",
+      FILTERS_A,
+      null,
+      50,
+      "welch",
+    );
     expect(vm.running).toBe(true);
     await vi.advanceTimersByTimeAsync(2000);
     expect(vm.result).toBeNull();
@@ -101,12 +107,14 @@ describe("DifferentialExpressionDialog", () => {
     expect(mocks.differential).not.toHaveBeenCalled();
     vm.groupBTags = ["Endothelial Cell"];
     vm.maxFeatures = 900;
+    vm.method = "wilcoxon";
     await vm.run();
     expect(mocks.differential).toHaveBeenCalledWith(
       "ds1",
       FILTERS_A,
       { tags: { values: ["Endothelial Cell"], exclusive: false } },
       500,
+      "wilcoxon",
     );
   });
 

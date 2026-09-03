@@ -32,6 +32,7 @@ export const TRANSCRIPT_GENE_COLORS = [
 export const MAX_TRANSCRIPT_GENES = TRANSCRIPT_GENE_COLORS.length;
 export const DEFAULT_TRANSCRIPT_MIN_QV = 20;
 export const DEFAULT_TRANSCRIPT_POINT_BUDGET = 300_000;
+export const DEFAULT_TRANSCRIPT_OPACITY = 0.85;
 export const TRANSCRIPT_POINT_BUDGETS = [100_000, 300_000, 1_000_000];
 
 /**
@@ -57,6 +58,8 @@ export class Transcripts extends VuexModule {
   minQv = DEFAULT_TRANSCRIPT_MIN_QV;
   mode: TTranscriptRenderMode = "auto";
   pointBudget = DEFAULT_TRANSCRIPT_POINT_BUDGET;
+  // Applies to points and heat maps alike; a restyle, not a refetch.
+  opacity = DEFAULT_TRANSCRIPT_OPACITY;
   status: ITranscriptOverlayStatus | null = null;
   readout: ITranscriptReadout | null = null;
 
@@ -167,6 +170,11 @@ export class Transcripts extends VuexModule {
   @Mutation
   setPointBudget(pointBudget: number) {
     this.pointBudget = pointBudget;
+  }
+
+  @Mutation
+  setOpacity(opacity: number) {
+    this.opacity = Math.min(1, Math.max(0.05, opacity));
   }
 
   @Mutation

@@ -60,8 +60,12 @@ const BLANK_TILE_URL =
 
 let pointLayer: IGeoJSFeatureLayer | null = null;
 let pointFeature: IGeoJSPointFeature | null = null;
-let densityLayer: IGeoJSOsmLayer | null = null;
-let densityTemplate: string | null = null;
+// One heat-map layer per gene, so a mix keeps each gene's color instead of
+// summing into one white sheet. Keyed by symbol; unused layers are hidden.
+const densityLayers = new Map<
+  string,
+  { layer: IGeoJSOsmLayer; template: string | null }
+>();
 
 // What the point feature currently draws.
 let points: ITranscriptPoints | null = null;
@@ -91,7 +95,7 @@ function ensurePointLayer(): IGeoJSPointFeature {
     style: {
       stroke: false,
       fill: true,
-      fillOpacity: 0.85,
+      fillOpacity: () => transcriptsStore.opacity,
       scaled: false,
       // Clustered points stand for many molecules; drawing them larger only
       // fuses them into a sheet, so coarser levels get the smaller dot.
@@ -108,10 +112,7 @@ function ensurePointLayer(): IGeoJSPointFeature {
   return pointFeature;
 }
 
-function ensureDensityLayer(): IGeoJSOsmLayer {
-  if (densityLayer) {
-    return densityLayer;
-  }
+function createDensityLayer(): IGeoJSOsmLayer {
   const params = geojs.util.pixelCoordinateParams(
     props.map.node()[0],
     props.sizeX,
@@ -142,19 +143,26 @@ function ensureDensityLayer(): IGeoJSOsmLayer {
   params.layer.nearestPixel = maxLevel;
   params.layer.url = BLANK_TILE_URL;
   params.layer.visible = false;
-  densityLayer = props.map.createLayer("osm", params.layer);
+  const layer = props.map.createLayer("osm", params.layer);
   // Beneath the cell outlines, which stay legible over the heat map.
-  densityLayer.zIndex(props.annotationLayer.zIndex() as number);
-  densityLayer.node().css({ "mix-blend-mode": "unset" });
-  return densityLayer;
+  layer.zIndex(props.annotationLayer.zIndex() as number);
+  layer.node().css({ "mix-blend-mode": "unset" });
+  layer.opacity(transcriptsStore.opacity);
+  return layer;
 }
 
-function dropDensityLayer() {
-  if (densityLayer) {
-    props.map.deleteLayer(densityLayer);
-    densityLayer = null;
-    densityTemplate = null;
+function ensureDensityLayer(symbol: string) {
+  let entry = densityLayers.get(symbol);
+  if (!entry) {
+    entry = { layer: createDensityLayer(), template: null };
+    densityLayers.set(symbol, entry);
   }
+  return entry;
+}
+
+function dropDensityLayers() {
+  densityLayers.forEach(({ layer }) => props.map.deleteLayer(layer));
+  densityLayers.clear();
 }
 
 function hidePoints() {
@@ -165,10 +173,20 @@ function hidePoints() {
   }
 }
 
-function hideDensity() {
-  if (densityLayer?.visible()) {
-    densityLayer.visible(false);
-  }
+function hideDensity(except: Set<string> = new Set()) {
+  densityLayers.forEach(({ layer }, symbol) => {
+    if (!except.has(symbol) && layer.visible()) {
+      layer.visible(false);
+    }
+  });
+}
+
+function densityShown(): boolean {
+  let shown = false;
+  densityLayers.forEach(({ layer }) => {
+    shown = shown || layer.visible() === true;
+  });
+  return shown;
 }
 
 function showPoints(
@@ -192,26 +210,30 @@ function restylePoints() {
   }
 }
 
-function showDensity(datasetId: string, symbols: string[]) {
-  const layer = ensureDensityLayer();
-  const template = store.spatialAPI.transcriptDensityTemplateUrl({
-    datasetId,
-    genes: symbols,
-    sizeX: props.sizeX,
-    sizeY: props.sizeY,
-    tileSize: DENSITY_TILE_SIZE,
-    maxLevel: props.maxLevel,
-    // One heat map for the whole set: a single gene keeps its color, a mix
-    // is drawn white since summed counts belong to no one gene.
-    color: symbols.length === 1 ? transcriptsStore.genes[0].color : "#FFFFFF",
-  });
-  if (template !== densityTemplate) {
-    densityTemplate = template;
-    layer.url(template);
+function showDensity(datasetId: string) {
+  const shown = new Set<string>();
+  for (const gene of transcriptsStore.genes) {
+    const entry = ensureDensityLayer(gene.symbol);
+    const template = store.spatialAPI.transcriptDensityTemplateUrl({
+      datasetId,
+      genes: [gene.symbol],
+      sizeX: props.sizeX,
+      sizeY: props.sizeY,
+      tileSize: DENSITY_TILE_SIZE,
+      maxLevel: props.maxLevel,
+      color: gene.color,
+    });
+    if (template !== entry.template) {
+      entry.template = template;
+      entry.layer.url(template);
+    }
+    entry.layer.opacity(transcriptsStore.opacity);
+    if (!entry.layer.visible()) {
+      entry.layer.visible(true);
+    }
+    shown.add(gene.symbol);
   }
-  if (!layer.visible()) {
-    layer.visible(true);
-  }
+  hideDensity(shown);
 }
 
 function onPointClick(event: { index: number }) {
@@ -272,7 +294,7 @@ async function refresh() {
     (mode === "auto" && (!plan.fits || plan.level >= AUTO_DENSITY_LEVEL));
   if (wantDensity) {
     hidePoints();
-    showDensity(datasetId, symbols);
+    showDensity(datasetId);
     setStatus({
       rendering: "density",
       level: plan.level,
@@ -354,17 +376,26 @@ watch(
   () => transcriptsStore.genes.map((gene) => gene.color).join(","),
   () => {
     restylePoints();
-    if (densityLayer?.visible() && transcriptsStore.genes.length === 1) {
+    // A heat map's color is baked into its tiles: re-plan to refresh URLs.
+    if (densityShown()) {
       scheduleRefresh();
     }
   },
 );
 
-// The density pyramid is sized to the image; a new image needs a new layer.
+watch(
+  () => transcriptsStore.opacity,
+  (opacity) => {
+    restylePoints();
+    densityLayers.forEach(({ layer }) => layer.opacity(opacity));
+  },
+);
+
+// The density pyramid is sized to the image; a new image needs new layers.
 watch(
   () => [props.sizeX, props.sizeY, props.maxLevel],
   () => {
-    dropDensityLayer();
+    dropDensityLayers();
     scheduleRefresh();
   },
 );
@@ -386,7 +417,7 @@ onBeforeUnmount(() => {
     pointLayer = null;
     pointFeature = null;
   }
-  dropDensityLayer();
+  dropDensityLayers();
 });
 
 defineExpose({ refresh, scheduleRefresh });

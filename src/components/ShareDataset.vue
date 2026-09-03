@@ -225,8 +225,8 @@
                 <div class="subtitle-2 mb-1">Share links</div>
                 <div class="text-caption text-medium-emphasis mb-2">
                   A link opens exactly one collection (select one above),
-                  read-only, for anyone who has it — no sign-in needed. Read
-                  access includes downloading the dataset's files. Links can
+                  read-only, for anyone who has it — no sign-in needed; the
+                  files themselves cannot be downloaded through it. Links can
                   expire and can be revoked here.
                 </div>
                 <v-table v-if="shareLinks.length > 0" density="compact">
