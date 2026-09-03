@@ -122,11 +122,9 @@ const error = ref<string | null>(null);
 // desynchronize the columns from the rows until Summarize is pressed again.
 const symbolsShown = ref<string[]>([]);
 
-const tagOptions = computed(() =>
-  Array.from(
-    new Set(annotationStore.annotations.flatMap((a) => a.tags)),
-  ).sort(),
-);
+// annotationTags covers stub-only mode, where `annotations` holds only the
+// hydrated objects and would hide a tag carried by unhydrated polygons.
+const tagOptions = computed(() => [...annotationStore.annotationTags].sort());
 
 function compositionText(row: ISpatialRegionSummary): string {
   return row.composition

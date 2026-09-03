@@ -6,6 +6,7 @@ import json
 import pytest
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
+from girder.constants import AccessType
 from girder.models.folder import Folder
 from girder.models.token import Token
 from girder.models.user import User
@@ -62,6 +63,36 @@ class TestShareLink:
         me = request(server, "GET", "/share_link/me", token=token)
         assertStatusOk(me)
         assert me.json["datasetViewId"] == str(view["_id"])
+        # The cookie <img> tile requests need, set to the link token.
+        assert me.cookie["girderToken"].value == token
+        assert me.cookie["girderToken"]["httponly"]
+        assert User().findOne({"login": {"$regex": "^share-"}})["status"] == (
+            "enabled"
+        )
+        # A browser that already has a cookie (a user's own login) keeps it.
+        kept = server.request(
+            path="/share_link/me", method="GET", token=token,
+            cookie="girderToken=someoneelse",
+        )
+        assertStatusOk(kept)
+        assert "girderToken" not in kept.cookie
+        # The cookie alone authenticates a cookie route for the bearer.
+        cookieOnly = server.request(
+            path="/folder/%s" % dataset["_id"], method="GET",
+            cookie="girderToken=%s" % token,
+        )
+        # /folder is not a cookie route, so this must be refused...
+        assertStatus(cookieOnly, 401)
+        # ...while the annotation raster route (cookie=True) accepts it.
+        raster = server.request(
+            path="/upenn_annotation/raster/0/0/0", method="GET",
+            cookie="girderToken=%s" % token,
+            params={"datasetId": str(dataset["_id"]), "selectors": "[]",
+                    "sizeX": 256, "sizeY": 256, "maxLevel": 0},
+        )
+        assert raster.output_status.startswith(b"200") or (
+            raster.output_status.startswith(b"400")
+        ), raster.output_status
         assert me.json["label"] == "reviewers"
         assert "token" not in me.json
 
@@ -98,6 +129,30 @@ class TestShareLink:
             server, "POST", "/share_link", user=user,
             body={"datasetViewId": str(view["_id"])},
         ), 403)
+        # ADMIN on the folder but only READ on the configuration is not
+        # enough: a link would hand out READ on a configuration the caller
+        # may not share.
+        from girder.models.folder import Folder as FolderModel
+        from upenncontrast_annotation.server.models.collection import (
+            Collection,
+        )
+        from upenncontrast_annotation.server.models.datasetView import (
+            DatasetView,
+        )
+        FolderModel().setUserAccess(
+            dataset, user, AccessType.ADMIN, save=True
+        )
+        DatasetView().setUserAccess(view, user, AccessType.WRITE, save=True)
+        Collection().setUserAccess(config, user, AccessType.READ, save=True)
+        assertStatus(request(
+            server, "POST", "/share_link", user=user,
+            body={"datasetViewId": str(view["_id"])},
+        ), 403)
+        Collection().setUserAccess(config, user, AccessType.WRITE, save=True)
+        assertStatusOk(request(
+            server, "POST", "/share_link", user=user,
+            body={"datasetViewId": str(view["_id"])},
+        ))
         for body in (
             {},
             {"datasetViewId": "nope"},

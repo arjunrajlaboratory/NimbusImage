@@ -264,7 +264,7 @@ class TranscriptRoutes:
         return encodePoints(
             store.toPixels(np.concatenate(xys)),
             np.concatenate(slots),
-            np.concatenate(qvs) if level == 0 else None,
+            np.concatenate(qvs) if qvs else None,
         )
 
     # GeoJS loads OSM tiles through <img> requests, which cannot attach the

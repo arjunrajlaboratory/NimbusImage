@@ -143,10 +143,13 @@ def staleness(datasetId, store, fileId, cells=None):
     cached on the dataset's annotation raster version (which bumps on every
     annotation save or delete)."""
     key = (str(datasetId), str(fileId), getRasterVersion(datasetId))
-    with _stalenessLock:
-        cached = _stalenessCache.get(key)
-        if cached is not None:
-            return cached
+    # A caller-supplied cell list (the job's tag-filtered polygons) is not
+    # the endpoint's whole-dataset answer: neither reads nor writes the cache.
+    if cells is None:
+        with _stalenessLock:
+            cached = _stalenessCache.get(key)
+            if cached is not None:
+                return cached
     hashes = None
     obs = store.root["obs"]
     if "geometry_hash" in obs:
@@ -184,10 +187,11 @@ def staleness(datasetId, store, fileId, cells=None):
         "hasGeometryHashes": hashes is not None,
         "cells": len(live), "rows": int(store.nObs),
     }
-    with _stalenessLock:
-        _stalenessCache[key] = result
-        while len(_stalenessCache) > MAX_STALENESS_CACHE:
-            _stalenessCache.popitem(last=False)
+    if cells is None:
+        with _stalenessLock:
+            _stalenessCache[key] = result
+            while len(_stalenessCache) > MAX_STALENESS_CACHE:
+                _stalenessCache.popitem(last=False)
     return result
 
 
@@ -501,15 +505,25 @@ def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
         # A removed cell has no polygon left to locate its molecules; they
         # stay unassigned unless a neighbour grew over them, in which case
         # that neighbour is itself "changed" and its tile is redone.
-        tileKeys = tilesForBoxes(transcripts, boxes)
         # Every cell overlapping a dirty tile is re-assigned (its molecules
-        # may have moved to a neighbour); everyone else is carried over.
+        # may have moved to a neighbour), and a re-assigned cell needs every
+        # tile IT touches, so the tile set and the touched set grow together
+        # until stable — a cell straddling into a quiet tile would otherwise
+        # lose the molecules on the far side.
         touched = set(dirtyIndices)
-        for key in tileKeys:
-            bounds = tilePixelBounds(transcripts, key)
-            for i, cell in enumerate(cells):
-                if _boxesIntersect(cell.bbox, bounds):
-                    touched.add(i)
+        tileKeys = []
+        while True:
+            tileKeys = tilesForBoxes(
+                transcripts, [cells[i].bbox for i in touched]
+            )
+            before = len(touched)
+            for key in tileKeys:
+                bounds = tilePixelBounds(transcripts, key)
+                for i, cell in enumerate(cells):
+                    if _boxesIntersect(cell.bbox, bounds):
+                        touched.add(i)
+            if len(touched) == before:
+                break
         dirtyIndices = touched
         carriedIndex = [
             i for i in range(len(cells)) if i not in dirtyIndices
@@ -657,10 +671,10 @@ def run(job):
         entry = registryEntry(datasetId, item, fileDoc, store)
         DatasetSpatial().registerVersion(
             entry, kwargs.get("label") or DEFAULT_LABEL,
-            {k: v for k, v in stats.items()},
+            stats.copy(),
         )
         result = {"itemId": str(item["_id"]), **stats}
-    except Exception as exc:
+    except Exception as exc:  # job boundary: recorded, then re-raised
         jobModel.updateJob(
             job, status=JobStatus.ERROR,
             log="Recompute failed: %s\n" % exc,

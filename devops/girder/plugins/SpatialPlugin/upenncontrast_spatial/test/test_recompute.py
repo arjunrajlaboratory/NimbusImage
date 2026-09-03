@@ -66,6 +66,9 @@ class TestRecompute(TestTranscripts):
             "C": cellPolygon(folder["_id"], 5, 15, 15, 25, ["cell", "T"]),
             "B": cellPolygon(folder["_id"], 90, 90, 110, 110, ["cell", "B"]),
             "E": cellPolygon(folder["_id"], 295, 5, 305, 15, ["cell"]),
+            # F straddles the 0,0 / 1,0 tile boundary (250 um); it holds no
+            # molecule, but its footprint pulls tile 1,0 into a dirty run.
+            "F": cellPolygon(folder["_id"], 240, 100, 260, 110, ["cell"]),
         }
         return folder, annotations, tableItem, cells
 
@@ -89,7 +92,7 @@ class TestRecompute(TestTranscripts):
         )
         assertStatusOk(resp)
         result = runJob(resp.json["jobId"])
-        assert result["nObs"] == 10 and result["nVar"] == 3
+        assert result["nObs"] == 11 and result["nVar"] == 3
         # qv >= 20 genes: CD3E(10,20), MS4A1, CCL19, CD3E(300,10) considered;
         # CCL19 lies in no cell.
         assert result["considered"] == 4
@@ -98,7 +101,7 @@ class TestRecompute(TestTranscripts):
 
         info = request(server, admin, "GET", "/spatial/%s" % folder["_id"])
         assertStatusOk(info)
-        assert info.json["nObs"] == 10
+        assert info.json["nObs"] == 11
         assert info.json["itemId"] == result["itemId"]
         assert "geometry_hash" in info.json["obsColumns"]
         assert "cell_type" in info.json["obsColumns"]
@@ -131,7 +134,7 @@ class TestRecompute(TestTranscripts):
         )
         assertStatusOk(versions)
         assert versions.json["active"]["label"] == "v2"
-        assert versions.json["active"]["nObs"] == 10
+        assert versions.json["active"]["nObs"] == 11
         assert [v["itemId"] for v in versions.json["versions"]] == [
             str(tableItem["_id"])
         ]
@@ -149,7 +152,7 @@ class TestRecompute(TestTranscripts):
         )
         assertStatusOk(stale)
         assert stale.json["hasGeometryHashes"] is False
-        assert stale.json["added"] == 4 and stale.json["removed"] == 0
+        assert stale.json["added"] == 5 and stale.json["removed"] == 0
         assert stale.json["upToDate"] is False
 
         resp = request(
@@ -195,9 +198,11 @@ class TestRecompute(TestTranscripts):
         )
         assertStatusOk(resp)
         result = runJob(resp.json["jobId"])
-        # Only tile 0,0 was touched; E's row in tile 1,0 was carried over.
-        assert result["tilesProcessed"] == 1
-        assert result["nObs"] == 10  # triangles + B, C, E, D; A is gone
+        # Tile 0,0 held the edits; F straddles into 1,0, so once F is
+        # re-assigned its far tile is processed too (closure), while E's row
+        # is still carried over untouched.
+        assert result["tilesProcessed"] == 2
+        assert result["nObs"] == 11  # triangles + B, C, E, F, D; A is gone
         assert self._row(server, admin, folder, cells["B"]["_id"]) == {}
         assert self._row(server, admin, folder, d["_id"]) == {"CCL19": 1.0}
         assert self._row(server, admin, folder, cells["C"]["_id"]) == {
@@ -276,6 +281,9 @@ class TestRecompute(TestTranscripts):
             {"scope": "all", "minQv": "high"},
             {"scope": "all", "tags": "cell"},
             {"scope": "all", "tags": [1]},
+            {"scope": "all", "tags": []},
+            {"scope": "all", "tags": [""]},
+            {"scope": "all", "recomputeEmbeddings": "false"},
         ):
             assertStatus(request(server, admin, "POST", path, body=body), 400)
         self._registerTranscripts(

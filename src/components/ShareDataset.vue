@@ -224,13 +224,16 @@
               <v-col cols="12">
                 <div class="subtitle-2 mb-1">Share links</div>
                 <div class="text-caption text-medium-emphasis mb-2">
-                  Anyone with a link can view the selected collection read-only,
-                  without signing in. Links can expire and can be revoked here.
+                  A link opens exactly one collection (select one above),
+                  read-only, for anyone who has it — no sign-in needed. Read
+                  access includes downloading the dataset's files. Links can
+                  expire and can be revoked here.
                 </div>
                 <v-table v-if="shareLinks.length > 0" density="compact">
                   <thead>
                     <tr>
                       <th>Label</th>
+                      <th>Collection</th>
                       <th>Created</th>
                       <th>Expires</th>
                       <th></th>
@@ -239,6 +242,7 @@
                   <tbody>
                     <tr v-for="link in shareLinks" :key="link._id">
                       <td>{{ link.label || "—" }}</td>
+                      <td>{{ configurationName(link.configurationId) }}</td>
                       <td>{{ formatDate(link.created) }}</td>
                       <td>
                         {{
@@ -291,7 +295,7 @@
                       color="primary"
                       size="small"
                       :loading="creatingLink"
-                      :disabled="creatingLink"
+                      :disabled="creatingLink || selectedConfigIds.length !== 1"
                       @click="createLink"
                     >
                       <v-icon start size="small">mdi-link-plus</v-icon>
@@ -640,17 +644,23 @@ async function fetchShareLinks(id: string) {
   }
 }
 
+function configurationName(configurationId: string): string {
+  return (
+    configurations.value.find((c) => c.id === configurationId)?.name ??
+    configurationId
+  );
+}
+
 async function createLink() {
   const selectedViews = getSelectedViews();
-  if (selectedViews.length === 0) {
-    errorString.value = "Please select a collection to share";
+  if (selectedViews.length !== 1) {
+    errorString.value = "Select exactly one collection for the link";
     showError.value = true;
     return;
   }
   creatingLink.value = true;
   showError.value = false;
   try {
-    // One link opens one view: the first selected collection's.
     const link = await store.shareLinkAPI.create(
       selectedViews[0].id,
       newLinkDays.value,

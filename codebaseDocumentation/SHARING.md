@@ -180,23 +180,33 @@ not make the dataset public and does not require the recipient to have an accoun
 the owner would read everything the owner can), so each link creates a hidden Girder user
 `share-<hex>` (random password, `shareLink` marker), grants it READ on the dataset folder,
 the dataset view and its configuration through the same `setUserAccess` calls the named
-sharing uses, and mints a `DATA_READ`-scoped Girder token for *that* user. The bearer sees
-exactly this dataset (ACL) and cannot write (scope: write endpoints answer 401). Revoking
+sharing uses, and mints a Girder token for *that* user scoped to `DATA_READ` plus
+`USER_INFO_READ` (the client's `user/me` bootstrap; nothing else). The bearer sees
+exactly this dataset (ACL) and cannot write (scope: write endpoints answer 401). **Read means
+read**: with `DATA_READ` the bearer can also download the dataset's files (Girder's
+`folder/{id}/download`, `item/{id}/download`, the plugin's `/export` routes) — the images and
+the multi-GB spatial stores included; a link is a download capability for that dataset, not
+only a viewer, and the Share dialog says so. Revoking
 deletes the user — Girder's `cleanupDeletedEntity` drops its ACL entries — and its tokens.
 The link user is `public: False` but does exist in the user collection; it never receives
 storage and cannot be signed into (nobody knows its password).
 
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
-| `POST` | `/api/v1/share_link` `{datasetViewId, days? (0 = never, ≤ 3650), label?}` | ADMIN on the dataset | Create; the response carries `token` **once** |
-| `GET` | `/api/v1/share_link?datasetId=` | READ on the dataset | Live links (no tokens) |
-| `GET` | `/api/v1/share_link/me` | the bearer | Which view the request's token opens; 404 for an ordinary login or an expired link |
+| `POST` | `/api/v1/share_link` `{datasetViewId, days? (0 = never, ≤ 3650), label?}` | ADMIN on the dataset, WRITE on the view and its configuration (as named sharing) | Create; the response carries `token` **once** |
+| `GET` | `/api/v1/share_link?datasetId=` | READ on the dataset (deliberately: readers may see who shared what, tokens never appear) | Live links (no tokens) |
+| `GET` | `/api/v1/share_link/me` | the bearer | Which view the request's token opens; 404 for an ordinary login or an expired link. Also sets the `girderToken` cookie to the link token **when the browser has none** — `<img>`-loaded tiles (images, annotation raster, density) authenticate by cookie only — and leaves an existing cookie (someone's own login) alone |
 | `DELETE` | `/api/v1/share_link/{id}` | ADMIN on the dataset | Revoke (idempotent) |
 
 Model: `server/models/shareLink.py` (`share_link` collection: `datasetId, datasetViewId,
 configurationId, linkUserId, tokenId, label, createdBy, created, expiresAt, revoked`).
 Expiry is enforced by Girder on the token and reported by `/me`; datetimes are compared as
-aware UTC (Girder's token expiry is aware, Mongo's round trip may be naive).
+aware UTC (Girder's token expiry is aware, Mongo's round trip may be naive). The link user
+is saved `status: enabled` so a registration policy of "approve" does not e-mail the admins
+for every link; it still gets Girder's default Public/Private folders (empty, no quota).
+A recipient who is signed in to this Girder on the same browser keeps their own cookie, so
+tiles then load with *their* access — a private dataset they cannot read shows a blank
+canvas until they sign out or use another browser profile.
 
 **Client.** `src/store/ShareLinkAPI.ts`; `store.openShareLink(token)` sets the token on
 the REST client **in memory only** (the client persists a token solely on its own login

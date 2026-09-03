@@ -1484,19 +1484,23 @@ export class Main extends VuexModule {
    */
   @Action({ rawError: true })
   async openShareLink(token: string): Promise<IShareLink> {
+    // Raised for the duration of the attempt (the handlers fire during
+    // fetchUser) and kept only once the link is confirmed live; a dead link
+    // must leave this tab behaving like any other.
     sharedSession = true;
-    this.girderRest.token = token;
-    const user = await this.girderRest.fetchUser();
-    if (!user) {
-      throw new Error("This share link is no longer valid.");
+    try {
+      this.girderRest.token = token;
+      const user = await this.girderRest.fetchUser();
+      if (!user) {
+        throw new Error("This share link is no longer valid.");
+      }
+      await this.loggedIn(this.girderRest);
+      return await this.shareLinkAPI.me();
+    } catch (error) {
+      sharedSession = false;
+      this.girderRest.token = "";
+      throw error;
     }
-    await this.loggedIn(this.girderRest);
-    return await this.shareLinkAPI.me();
-  }
-
-  /** True once this page acts as a share link's bearer. */
-  get isSharedSession(): boolean {
-    return sharedSession;
   }
 
   @Action

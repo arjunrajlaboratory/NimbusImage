@@ -18,13 +18,7 @@ vi.mock("@/store/spatial", async () => {
   return { default: reactive({ hasTable: true }) };
 });
 vi.mock("@/store/annotation", () => ({
-  default: {
-    annotations: [
-      { tags: ["cell", "T"] },
-      { tags: ["region"] },
-      { tags: ["cell", "B"] },
-    ],
-  },
+  default: { annotationTags: ["cell", "T", "region", "B"] },
 }));
 vi.mock("@/utils/download", () => ({
   downloadToClient: mocks.downloadToClient,

@@ -171,7 +171,7 @@ transcripts) may be absent, and each is forgotten independently.
 
 | Route | Body / params | Returns |
 |---|---|---|
-| `GET spatial/{datasetId}/transcripts` | — | levels, `pixelSize`, `transform`, `genes`, `totalPoints`, per-level `tiles` (`keys`, `counts`), `hasCellIds`; 404 when none |
+| `GET spatial/{datasetId}/transcripts` | — | levels, `pixelSize`, `transform`, `genes`, `totalPoints`, per-level `tiles` (`keys`, `counts`); 404 when none |
 | `POST spatial/{datasetId}/transcripts/register` (WRITE) | `{itemId, pixelSize, transform?}` | the schema above |
 | `DELETE spatial/{datasetId}/transcripts` (WRITE) | — | forgets the store; the item stays |
 | `GET spatial/{datasetId}/transcripts/genes` | `search`, `limit` (≤ 200) | `[symbol]`, prefix matches first, no control codewords |

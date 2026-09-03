@@ -85,6 +85,10 @@ class ShareLink(Model):
         linkUser["shareLink"] = {
             "datasetId": dataset["_id"], "createdBy": creator["_id"],
         }
+        # A registration policy of "approve" would create the user pending
+        # and e-mail every admin; the link user is ours, so it is enabled
+        # outright (token auth ignores status anyway — this is about noise).
+        linkUser["status"] = "enabled"
         User().save(linkUser, validate=False)
         CollectionModel().setUserAccess(
             configuration, linkUser, AccessType.READ, save=True

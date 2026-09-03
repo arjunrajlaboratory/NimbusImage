@@ -8,6 +8,8 @@ Phase 0 made canonical.
 
 import datetime
 import math
+import threading
+from collections import OrderedDict
 
 import numpy as np
 from bson.objectid import ObjectId
@@ -16,10 +18,14 @@ from girder_jobs.models.job import Job
 from scipy.spatial import cKDTree
 from skimage.measure import points_in_poly
 
+from upenncontrast_annotation.server.helpers.annotationRaster import (
+    getRasterVersion,
+)
 from upenncontrast_annotation.server.models.annotation import Annotation
 
 from .materialize import writeCellValues
 from .models.registry import DatasetSpatial
+from .recompute import _rectangleCorners
 
 DEFAULT_EXCLUDED_TAGS = ("cell",)
 DEFAULT_PROPERTY_NAME = "Neighbourhood"
@@ -30,10 +36,35 @@ MAX_REGIONS = 50
 ENRICHMENT_PSEUDOCOUNT = 1.0
 
 
+_centroidLock = threading.Lock()
+_centroidCache = OrderedDict()
+MAX_CENTROID_CACHE = 8
+
+
 def cellCentroids(datasetId, excludeTags=DEFAULT_EXCLUDED_TAGS,
                   excludeIds=()):
     """(annotation ids [n] str, centroids [n, 2] float64, types [n] object)
-    of the dataset's polygon annotations; type None when no tag remains."""
+    of the dataset's polygon annotations; type None when no tag remains.
+    Cached on the annotation raster version (bumped by every polygon edit),
+    since the 700K-document pass is what a public region summary pays."""
+    key = (
+        str(datasetId), tuple(sorted(excludeTags)),
+        tuple(sorted(str(i) for i in excludeIds)), getRasterVersion(datasetId),
+    )
+    with _centroidLock:
+        cached = _centroidCache.get(key)
+        if cached is not None:
+            _centroidCache.move_to_end(key)
+            return cached
+    result = _cellCentroids(datasetId, excludeTags, excludeIds)
+    with _centroidLock:
+        _centroidCache[key] = result
+        while len(_centroidCache) > MAX_CENTROID_CACHE:
+            _centroidCache.popitem(last=False)
+    return result
+
+
+def _cellCentroids(datasetId, excludeTags, excludeIds):
     excluded = set(excludeTags)
     pipeline = [
         {"$match": {
@@ -184,7 +215,7 @@ def run(job):
             ObjectId(kwargs["propertyId"]), onProgress,
         )
         DatasetSpatial().setNeighbourhood(datasetId, result)
-    except Exception as exc:
+    except Exception as exc:  # job boundary: recorded, then re-raised
         jobModel.updateJob(
             job, status=JobStatus.ERROR,
             log="Neighbourhood failed: %s\n" % exc,
@@ -220,6 +251,8 @@ def regionPolygons(datasetId, regionTag=None, regionIds=None):
             [[p["x"], p["y"]] for p in document["coordinates"]],
             dtype=np.float64,
         )
+        if document.get("shape") == "rectangle":
+            xy = _rectangleCorners(xy)
         if len(xy) < 3:
             continue
         regions.append({

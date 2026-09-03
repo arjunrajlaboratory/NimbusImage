@@ -155,7 +155,7 @@ Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names
 | `/api/v1/annotation_import` | `server/api/dataImport.py` | Server-side JSON import (annotations, connections, property values) |
 | `/api/v1/project` | `server/api/project.py` | Project management |
 | `/api/v1/resource` | `server/api/resource.py` | Custom resource search |
-| `/api/v1/share_link` | `server/api/shareLink.py` | Share-view links: a hidden read-only Girder user + `DATA_READ` token per link (create/list/me/revoke). See `codebaseDocumentation/SHARING.md` "Share links". |
+| `/api/v1/share_link` | `server/api/shareLink.py` | Share-view links: a hidden read-only Girder user + `DATA_READ`/`USER_INFO_READ` token per link (create/list/me/revoke). See `codebaseDocumentation/SHARING.md` "Share links". |
 | `/api/v1/spatial` | `SpatialPlugin/upenncontrast_spatial/server/api/spatial.py` | **Separate plugin** (`upenncontrast_spatial`): a dataset's spatial-transcriptomics expression table (`spatial.zarr.zip` item) — register, schema, feature search, column/row, aggregate over a list-filter object, materialize a gene panel into a property. See `codebaseDocumentation/SPATIAL_PLUGIN.md`. |
 | `/api/v1/system/authenticated_users` | `system.py` | Admin-only usage metric: count of distinct users who obtained an auth token within a look-back `window` (default `1d`). Added to Girder's core `system` route via `addSystemEndpoints`, not a plugin resource. |
 

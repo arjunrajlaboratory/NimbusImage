@@ -57,7 +57,9 @@ class VersionRoutes:
     )
     def versions(self, datasetId, params):
         datasetId = self._loadDataset(datasetId, AccessType.READ)
-        entry = self._registered(datasetId)
+        return self._versionsPayload(self._registered(datasetId))
+
+    def _versionsPayload(self, entry):
         return {
             "active": _serializeVersion(self._registry._versionOf(entry)),
             "versions": [
@@ -79,7 +81,7 @@ class VersionRoutes:
         document = self._registry.activateVersion(datasetId, itemId)
         if document is None:
             raise RestException("Unknown table version.", code=404)
-        return self.versions(str(datasetId), params)
+        return self._versionsPayload(document)
 
     @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
@@ -99,7 +101,7 @@ class VersionRoutes:
                 "forgotten this way).", code=404,
             )
         invalidateStore(version["fileId"])
-        return self.versions(str(datasetId), params)
+        return self._versionsPayload(self._registry.forDataset(datasetId))
 
     # ---- staleness and recompute -------------------------------------------
 
@@ -167,13 +169,18 @@ class VersionRoutes:
         tags = body.get("tags")
         if tags is not None:
             tags = requireList(tags, "tags")
-            if len(tags) > MAX_TAGS or not all(
-                isinstance(t, str) for t in tags
+            # `null`/absent = every polygon; `[]` would silently mean the
+            # same, so it is refused rather than merged into "no filter".
+            if not tags or len(tags) > MAX_TAGS or not all(
+                isinstance(t, str) and t for t in tags
             ):
                 raise RestException(
-                    "tags must be at most %d strings" % MAX_TAGS, code=400
+                    "tags must be 1-%d non-empty strings (omit it for every "
+                    "polygon)" % MAX_TAGS, code=400,
                 )
-        withEmbeddings = bool(body.get("recomputeEmbeddings", False))
+        withEmbeddings = body.get("recomputeEmbeddings", False)
+        if not isinstance(withEmbeddings, bool):
+            raise RestException("recomputeEmbeddings must be a boolean", 400)
         activeFileId = transcriptsEntry.get("fileId")
         if scope == "dirty" and activeFileId is None:
             raise RestException(

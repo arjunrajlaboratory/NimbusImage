@@ -8,6 +8,9 @@ Branch `xenium-phase0`, self-review before the commit (independent reviewer unav
 | 2 | Low | `server/neighbourhood.py` `cellCentroids` | Coordinates of 700K polygons are not downloaded: Mongo computes the centroid (`$avg`), the one place `collection.aggregate` is the right tool (CLAUDE.md exception). | by-design. |
 | 3 | Low | `server/neighbourhood.py` `neighbourhood` | `query_pairs` materializes every pair (≈ 7 M for the lymph node at 30 µm, two int64 columns). | by-design — ~110 MB, one pass; radius is capped at 100K px. |
 | 4 | Low | `materialize.py` | The chunked property writer was inlined in `writeValues`; the neighbourhood job needed it too. | fixed — extracted as `writeCellValues`, `writeValues` delegates. |
+| 7 | Low | `server/neighbourhood.py` `cellCentroids` | Independent review: a public route ran the 700K-document centroid pass on every call. | fixed — cached per (dataset, excluded tags, excluded ids, annotation raster version); the neighbourhood job shares it. |
+| 8 | Low | `server/neighbourhood.py` `regionPolygons` | Independent review (symmetric path): two-corner rectangles were expanded for cells (`recompute._rectangleCorners`) but skipped as regions. | fixed — shared helper. |
+| 9 | Low | `RegionSummaryDialog.vue` | Independent review: region tags came from `annotations`, which in stub-only mode holds only hydrated objects. | fixed — `annotationStore.annotationTags`. |
 | 5 | Deferred | plan §15 | Cohort summaries across configurations. | deferred — needs a project-level surface; `regions/summary` is the per-dataset building block. |
 | 6 | Deferred | `RegionSummaryDialog.vue` | Regions are picked by tag only (ids are API-only). | deferred — selecting polygons in the viewer and summarizing them is a natural next step. |
 
