@@ -101,7 +101,7 @@
           <div class="d-flex align-center">
             <v-list-subheader>Spatial statistics</v-list-subheader>
             <v-spacer />
-            <neighbourhood-dialog>
+            <neighborhood-dialog>
               <template v-slot:activator="{ props: activatorProps }">
                 <v-btn
                   v-bind="activatorProps"
@@ -110,10 +110,10 @@
                   size="small"
                   prepend-icon="mdi-graph-outline"
                 >
-                  Neighbourhood…
+                  Neighborhood…
                 </v-btn>
               </template>
-            </neighbourhood-dialog>
+            </neighborhood-dialog>
             <region-summary-dialog>
               <template v-slot:activator="{ props: activatorProps }">
                 <v-btn
@@ -272,7 +272,7 @@ import annotationListServer from "@/store/annotationListServer";
 import spatialStore from "@/store/spatial";
 import SpatialFeaturePicker from "@/components/AnnotationBrowser/SpatialFeaturePicker.vue";
 import DifferentialExpressionDialog from "@/components/AnnotationBrowser/DifferentialExpressionDialog.vue";
-import NeighbourhoodDialog from "@/components/AnnotationBrowser/NeighbourhoodDialog.vue";
+import NeighborhoodDialog from "@/components/AnnotationBrowser/NeighborhoodDialog.vue";
 import RegionSummaryDialog from "@/components/AnnotationBrowser/RegionSummaryDialog.vue";
 import {
   IAnnotationListFilters,

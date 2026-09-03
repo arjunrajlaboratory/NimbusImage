@@ -8,7 +8,7 @@
       <v-card-text>
         <p class="text-body-2 mb-3">
           Regions are polygons: the ones carrying a tag, or the ones selected in
-          the viewer. Each region's cells are the cell polygons whose centre
+          the viewer. Each region's cells are the cell polygons whose center
           lies inside it.
         </p>
         <v-radio-group v-model="source" inline hide-details class="mb-2">

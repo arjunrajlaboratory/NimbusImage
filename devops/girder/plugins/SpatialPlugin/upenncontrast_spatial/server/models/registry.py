@@ -161,15 +161,15 @@ class DatasetSpatial(Model):
         self.save(document)
         return match[0]
 
-    # ---- neighbourhood (Phase 6) -------------------------------------------
+    # ---- neighborhood (Phase 6) -------------------------------------------
 
-    def setNeighbourhood(self, datasetId, result):
-        """Store the last neighbourhood enrichment summary; the document may
+    def setNeighborhood(self, datasetId, result):
+        """Store the last neighborhood enrichment summary; the document may
         hold nothing else (a dataset with tags but no table)."""
         now = datetime.datetime.utcnow()
         document = self.forDataset(datasetId) or {
             "datasetId": datasetId, "created": now,
         }
-        document["neighbourhood"] = result
+        document["neighborhood"] = result
         document["updated"] = now
         return self.save(document)

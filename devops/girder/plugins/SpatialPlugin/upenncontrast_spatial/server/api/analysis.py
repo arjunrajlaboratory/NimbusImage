@@ -1,4 +1,4 @@
-"""Neighbourhood and region statistics routes (plan §15), mixed into the
+"""Neighborhood and region statistics routes (plan §15), mixed into the
 Spatial resource."""
 
 from girder.api import access
@@ -15,9 +15,9 @@ from upenncontrast_annotation.server.helpers.validation import (
     requireObjectId,
 )
 
-# Aliased: the class below has a route method named `neighbourhood`, which
+# Aliased: the class below has a route method named `neighborhood`, which
 # would shadow the module inside the class body.
-from .. import neighbourhood as analysis
+from .. import neighborhood as analysis
 
 MAX_EXCLUDED_TAGS = 32
 MAX_RADIUS_PIXELS = 100_000
@@ -33,9 +33,9 @@ def _requireTagList(value, name, limit):
 
 class AnalysisRoutes:
     def _addAnalysisRoutes(self):
-        self.route("GET", (":datasetId", "neighbourhood"), self.neighbourhood)
+        self.route("GET", (":datasetId", "neighborhood"), self.neighborhood)
         self.route(
-            "POST", (":datasetId", "neighbourhood"), self.computeNeighbourhood
+            "POST", (":datasetId", "neighborhood"), self.computeNeighborhood
         )
         self.route(
             "POST", (":datasetId", "regions", "summary"), self.regionSummary
@@ -43,31 +43,31 @@ class AnalysisRoutes:
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
-        Description("The dataset's last neighbourhood enrichment")
+        Description("The dataset's last neighborhood enrichment")
         .notes("{radius, excludeTags, types, counts, pairs, matrix "
                "(log2 observed/expected), cells, typed, propertyId, "
                "computed}; 404 until computed.")
         .param("datasetId", "The dataset (folder) id", paramType="path")
         .errorResponse("Not computed yet.", 404)
     )
-    def neighbourhood(self, datasetId, params):
+    def neighborhood(self, datasetId, params):
         datasetId = self._loadDataset(datasetId, AccessType.READ)
         entry = self._registry.forDataset(datasetId)
-        if entry is None or "neighbourhood" not in entry:
+        if entry is None or "neighborhood" not in entry:
             raise RestException(
-                "No neighbourhood has been computed for this dataset.",
+                "No neighborhood has been computed for this dataset.",
                 code=404,
             )
-        return entry["neighbourhood"]
+        return entry["neighborhood"]
 
     @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
-        Description("Compute every cell's neighbourhood composition and the "
+        Description("Compute every cell's neighborhood composition and the "
                     "type enrichment matrix, as a job")
         .notes("Body: {radius (image pixels, > 0), excludeTags? (default "
                "['cell']: tags that are not cell types), propertyName? "
-               "(default 'Neighbourhood')}. Writes per-cell fractions of "
-               "each neighbour type and the neighbour count as sub-values "
+               "(default 'Neighborhood')}. Writes per-cell fractions of "
+               "each neighbor type and the neighbor count as sub-values "
                "of the property; the enrichment matrix is stored and served "
                "by GET. The job's `spatialResult` carries the same summary.")
         .param("datasetId", "The dataset (folder) id", paramType="path")
@@ -75,7 +75,7 @@ class AnalysisRoutes:
         .errorResponse()
         .errorResponse("Write access denied.", 403)
     )
-    def computeNeighbourhood(self, datasetId, params):
+    def computeNeighborhood(self, datasetId, params):
         datasetId = self._loadDataset(datasetId, AccessType.WRITE)
         body = requireObjectBody(self.getBodyJson())
         radius = requireFloat(body.get("radius"), "radius")
@@ -97,9 +97,9 @@ class AnalysisRoutes:
         except ValueError as exc:
             raise RestException(str(exc), code=400)
         job = Job().createLocalJob(
-            module="upenncontrast_spatial.server.neighbourhood",
-            title="Neighbourhood composition (%g px)" % radius,
-            type="spatial_neighbourhood",
+            module="upenncontrast_spatial.server.neighborhood",
+            title="Neighborhood composition (%g px)" % radius,
+            type="spatial_neighborhood",
             user=user,
             kwargs={
                 "datasetId": str(datasetId),

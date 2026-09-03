@@ -1,4 +1,4 @@
-"""Neighbourhood composition, enrichment and region statistics (plan §15).
+"""Neighborhood composition, enrichment and region statistics (plan §15).
 
 Cells are their polygon centroids, computed by Mongo (`$avg` over the
 coordinates) so 700K cells cost seconds, not a coordinate download; a cell's
@@ -28,8 +28,8 @@ from .models.registry import DatasetSpatial
 from .recompute import _rectangleCorners
 
 DEFAULT_EXCLUDED_TAGS = ("cell",)
-DEFAULT_PROPERTY_NAME = "Neighbourhood"
-NEIGHBOUR_COUNT_KEY = "neighbours"
+DEFAULT_PROPERTY_NAME = "Neighborhood"
+NEIGHBOUR_COUNT_KEY = "neighbors"
 CELL_SHAPES = ("polygon", "rectangle")
 MAX_REGIONS = 50
 # Pseudocount in the enrichment log ratio, so an empty pair is finite.
@@ -107,8 +107,8 @@ def typeIndex(types):
     return names, codes
 
 
-def neighbourhood(centroids, codes, nTypes, radius):
-    """Per-cell neighbour type counts [n, nTypes] and the pair matrix
+def neighborhood(centroids, codes, nTypes, radius):
+    """Per-cell neighbor type counts [n, nTypes] and the pair matrix
     [nTypes, nTypes] (observed pairs with type i around type j, symmetric)
     for all pairs closer than `radius`."""
     n = len(centroids)
@@ -123,7 +123,7 @@ def neighbourhood(centroids, codes, nTypes, radius):
     i, j = close[:, 0], close[:, 1]
     typedJ = codes[j] >= 0
     typedI = codes[i] >= 0
-    # Each pair counts once in each direction: j is a neighbour of i and
+    # Each pair counts once in each direction: j is a neighbor of i and
     # i of j.
     np.add.at(counts, (i[typedJ], codes[j][typedJ]), 1)
     np.add.at(counts, (j[typedI], codes[i][typedI]), 1)
@@ -148,13 +148,13 @@ def enrichment(pairs):
 
 
 def compute(datasetId, radius, excludeTags, propertyId, onProgress):
-    """Neighbourhood of every cell; writes the property values and returns
+    """Neighborhood of every cell; writes the property values and returns
     the enrichment summary to store on the registry."""
     onProgress("centroids", 0, 1)
     ids, centroids, types = cellCentroids(datasetId, excludeTags)
     names, codes = typeIndex(types)
-    onProgress("neighbours", 0, 1)
-    counts, pairs = neighbourhood(centroids, codes, len(names), radius)
+    onProgress("neighbors", 0, 1)
+    counts, pairs = neighborhood(centroids, codes, len(names), radius)
     totals = counts.sum(axis=1)
 
     def subValuesFor(start, stop):
@@ -200,7 +200,7 @@ def run(job):
     kwargs = job["kwargs"]
     jobModel.updateJob(
         job, status=JobStatus.RUNNING,
-        log="Computing neighbourhoods within %s px...\n" % kwargs["radius"],
+        log="Computing neighborhoods within %s px...\n" % kwargs["radius"],
     )
     try:
         def onProgress(stage, current, total):
@@ -214,16 +214,16 @@ def run(job):
             datasetId, float(kwargs["radius"]), tuple(kwargs["excludeTags"]),
             ObjectId(kwargs["propertyId"]), onProgress,
         )
-        DatasetSpatial().setNeighbourhood(datasetId, result)
+        DatasetSpatial().setNeighborhood(datasetId, result)
     except Exception as exc:  # job boundary: recorded, then re-raised
         jobModel.updateJob(
             job, status=JobStatus.ERROR,
-            log="Neighbourhood failed: %s\n" % exc,
+            log="Neighborhood failed: %s\n" % exc,
         )
         raise
     jobModel.updateJob(
         job, status=JobStatus.SUCCESS,
-        log="Wrote neighbourhoods for %d cells (%d types).\n"
+        log="Wrote neighborhoods for %d cells (%d types).\n"
             % (result["written"], len(result["types"])),
         otherFields={"spatialResult": result},
     )

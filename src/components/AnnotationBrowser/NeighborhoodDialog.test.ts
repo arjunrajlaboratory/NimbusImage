@@ -3,8 +3,8 @@ import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
 
 const mocks = vi.hoisted(() => ({
-  fetchNeighbourhood: vi.fn(),
-  computeNeighbourhood: vi.fn(),
+  fetchNeighborhood: vi.fn(),
+  computeNeighborhood: vi.fn(),
   fetchJob: vi.fn(),
   fetchProperties: vi.fn(),
   fetchPropertyPathsSample: vi.fn(),
@@ -20,8 +20,8 @@ vi.mock("@/store", async () => {
       dataset: { id: "ds1", name: "Lymph" },
       scales: mocks.scales,
       spatialAPI: {
-        fetchNeighbourhood: mocks.fetchNeighbourhood,
-        computeNeighbourhood: mocks.computeNeighbourhood,
+        fetchNeighborhood: mocks.fetchNeighborhood,
+        computeNeighborhood: mocks.computeNeighborhood,
         fetchJob: mocks.fetchJob,
       },
     }),
@@ -47,7 +47,7 @@ vi.mock("papaparse", () => ({
   },
 }));
 
-import NeighbourhoodDialog from "./NeighbourhoodDialog.vue";
+import NeighborhoodDialog from "./NeighborhoodDialog.vue";
 import store from "@/store";
 
 const RESULT = {
@@ -71,7 +71,7 @@ const RESULT = {
 };
 
 async function open() {
-  const wrapper = shallowMount(NeighbourhoodDialog);
+  const wrapper = shallowMount(NeighborhoodDialog);
   (wrapper.vm as any).dialog = true;
   // Fake timers are on: flush the load() promise chain with ticks, not a
   // setTimeout that would never fire.
@@ -81,11 +81,11 @@ async function open() {
   return wrapper;
 }
 
-describe("NeighbourhoodDialog", () => {
+describe("NeighborhoodDialog", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    mocks.fetchNeighbourhood.mockReset().mockResolvedValue(null);
-    mocks.computeNeighbourhood.mockReset().mockResolvedValue({
+    mocks.fetchNeighborhood.mockReset().mockResolvedValue(null);
+    mocks.computeNeighborhood.mockReset().mockResolvedValue({
       jobId: "j1",
       propertyId: "p1",
     });
@@ -112,9 +112,9 @@ describe("NeighbourhoodDialog", () => {
   });
 
   it("loads the stored enrichment when opened", async () => {
-    mocks.fetchNeighbourhood.mockResolvedValue(RESULT);
+    mocks.fetchNeighborhood.mockResolvedValue(RESULT);
     const wrapper = await open();
-    expect(mocks.fetchNeighbourhood).toHaveBeenCalledWith("ds1");
+    expect(mocks.fetchNeighborhood).toHaveBeenCalledWith("ds1");
     expect((wrapper.vm as any).result).toEqual(RESULT);
   });
 
@@ -126,11 +126,11 @@ describe("NeighbourhoodDialog", () => {
     const vm = wrapper.vm as any;
     vm.radiusMicrons = 30;
     await vm.run();
-    expect(mocks.computeNeighbourhood).toHaveBeenCalledWith(
+    expect(mocks.computeNeighborhood).toHaveBeenCalledWith(
       "ds1",
       60,
       ["cell"],
-      "Neighbourhood",
+      "Neighborhood",
     );
     await vi.advanceTimersByTimeAsync(2000);
     expect(vm.running).toBe(true);
@@ -155,7 +155,7 @@ describe("NeighbourhoodDialog", () => {
     vm.result = RESULT;
     vm.download();
     expect(mocks.downloadToClient).toHaveBeenCalledWith(
-      expect.objectContaining({ download: "Lymph-neighbourhood.csv" }),
+      expect.objectContaining({ download: "Lymph-neighborhood.csv" }),
     );
   });
 });

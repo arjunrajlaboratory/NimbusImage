@@ -229,7 +229,7 @@ Closing the loop (plan §13): edited cell polygons → a corrected count matrix,
   ignored. Cell types transfer through **tags**: a cell's tag among the previous table's
   `cell_type` categories.
 - **`scope: "dirty"`** reassigns only the tiles touched by added/changed cells (every cell
-  overlapping such a tile is redone, since molecules may have moved to a neighbour) and
+  overlapping such a tile is redone, since molecules may have moved to a neighbor) and
   carries the other rows over from the active table by `annotation_id`. `scope: "all"`
   rasterizes every tile. Both write a complete new `spatial.zarr.zip` (zarr 2, AnnData
   layout: `X` csc, `layers/X_csr`, `obs` with `annotation_id`, `cell_index`,
@@ -260,33 +260,33 @@ full, quality threshold, tag filter, embeddings) polling the job. Python:
 `ds.spatial.versions()`, `activate_version()`, `forget_version()`, `staleness()`,
 `recompute(label, scope, min_qv, tags, embeddings, wait)`.
 
-## Phase 6: neighbourhood and region statistics
+## Phase 6: neighborhood and region statistics
 
-`server/neighbourhood.py` + the `AnalysisRoutes` mixin (`api/analysis.py`). Cells are their
+`server/neighborhood.py` + the `AnalysisRoutes` mixin (`api/analysis.py`). Cells are their
 polygon **centroids**, computed by Mongo (`$avg` over `coordinates.x/y`, seconds for 700K
 cells); a cell's **type** is its first tag not in `excludeTags` (default `["cell"]`).
 
 | Route | Body / params | Returns |
 |---|---|---|
-| `POST spatial/{datasetId}/neighbourhood` (WRITE) | `{radius (image px), excludeTags?, propertyName? ("Neighbourhood")}` | `{jobId, propertyId}`; the local job (`neighbourhood.run`) writes per-cell neighbour-type fractions + `neighbours` as sub-values of the property and stores the enrichment on the registry |
-| `GET spatial/{datasetId}/neighbourhood` | — | `{radius, excludeTags, types, counts, pairs, matrix, cells, typed, written, propertyId, computed}`; 404 until computed |
+| `POST spatial/{datasetId}/neighborhood` (WRITE) | `{radius (image px), excludeTags?, propertyName? ("Neighborhood")}` | `{jobId, propertyId}`; the local job (`neighborhood.run`) writes per-cell neighbor-type fractions + `neighbors` as sub-values of the property and stores the enrichment on the registry |
+| `GET spatial/{datasetId}/neighborhood` | — | `{radius, excludeTags, types, counts, pairs, matrix, cells, typed, written, propertyId, computed}`; 404 until computed |
 | `POST spatial/{datasetId}/regions/summary` | `{regionTag? \| regionIds? (≤ 50), excludeTags?, features? (≤ 64, needs a table)}` | `[{id, name, tags, cells, composition: [{type, count}], expression: [{symbol, mean, fractionExpressing, expressing}], rows}]` |
 
-- **Neighbours**: `cKDTree.query_pairs(radius)`; each pair counts once in each direction.
-  `pairs[i][j]` = observed neighbours of type j around cells of type i (symmetric);
+- **Neighbors**: `cKDTree.query_pairs(radius)`; each pair counts once in each direction.
+  `pairs[i][j]` = observed neighbors of type j around cells of type i (symmetric);
   `matrix = log2((pairs + 1) / (expected + 1))` with `expected_ij = row_i × col_j / total`,
-  i.e. the counts under a label shuffle. Untyped cells count neighbours but join no pair.
+  i.e. the counts under a label shuffle. Untyped cells count neighbors but join no pair.
 - **Regions**: polygon annotations carrying the tag (or the ids); cells inside =
   `skimage.measure.points_in_poly` after a bounding-box prefilter; the region polygons are
   excluded from the cells and the region tag from the type tags. Expression per region is
   the table's `aggregate` over the region's rows.
 - The chunked property writer materialize used is now `materialize.writeCellValues`,
-  shared with the neighbourhood job.
-- **Client**: `NeighbourhoodDialog.vue` (radius in µm → pixels via the configuration's
+  shared with the neighborhood job.
+- **Client**: `NeighborhoodDialog.vue` (radius in µm → pixels via the configuration's
   scale, job polling, colored matrix, CSV) and `RegionSummaryDialog.vue` (regions by tag
   or the polygons currently selected in the viewer, genes, table, CSV), both from the
   Selection summary's **Spatial statistics** row.
-  Python: `ds.spatial.neighbourhood()`, `compute_neighbourhood(radius_pixels, …)`,
+  Python: `ds.spatial.neighborhood()`, `compute_neighborhood(radius_pixels, …)`,
   `region_summary(region_tag | region_ids, features)`.
 
 ## Client
@@ -326,7 +326,7 @@ Each line names the test that holds it.
 - An item outside the dataset folder and a corrupt zip are 400s — *"testRegisterRejectsForeignItemAndBadStore"*.
 - Registration needs WRITE, reads need READ — *"testRegisterRequiresWrite"*, *"testReadRequiresAccess"*.
 - Unregistering keeps the item — *"testUnregisterForgetsButKeepsItem"*.
-- Feature search orders prefix matches first and honours limit — *"testFeatureSearch"*.
+- Feature search orders prefix matches first and honors limit — *"testFeatureSearch"*.
 - Column and row reads return non-zero entries; a cell without a row is a 404; an unknown
   feature a 400 — *"testColumnAndRow"*; a store without the CSR layer refuses row reads —
   *"testRowNeedsCsrLayer"*.
@@ -399,7 +399,7 @@ Each line names the test that holds it.
   *"testGeneSearchSkipsControls"*.
 - Level-0 points arrive in image pixels with quality — *"testPointsAtLevelZeroCarryQuality"*;
   the quality threshold selects the runs and filters within them, unknown tiles are empty —
-  *"testPointsHonourQualityAndUnknownTiles"*; coarser levels carry no quality —
+  *"testPointsHonorQualityAndUnknownTiles"*; coarser levels carry no quality —
   *"testPointsAtCoarserLevelsHaveNoQuality"*.
 - Malformed bodies (an empty tile list included) are 400s and too many points a 413 —
   *"testPointsRejectBadInputAndTooMany"*;
@@ -425,7 +425,7 @@ Each line names the test that holds it.
 - View → microns clamps, scales, and undoes the transform — *"clamps to the image and scales by the pixel size"*,
   *"returns null when the image is off screen"*, *"undoes the registration transform before scaling"*;
   tiles only where the pyramid has them — *"lists only tiles the pyramid has"*; the plan takes
-  the finest fitting level and honours the tile cap — *"takes the finest level that fits the budget"*,
+  the finest fitting level and honors the tile cap — *"takes the finest level that fits the budget"*,
   *"respects the tile cap even under budget"*.
 - Store: registration is per dataset and stale answers are discarded — *"knows the store only for the dataset it was fetched for"*,
   *"discards a stale answer after a dataset switch"*; "could not ask" ≠ "no store" —
@@ -480,20 +480,20 @@ Each line names the test that holds it.
   *"reports a failed job and a rejected request, and stops polling on close"*.
 - API routes — *"uses the documented routes"*.
 
-**Neighbourhood and regions (`test/test_analysis.py`)**
-- Neighbour counts, pair matrix, enrichment sign and untyped handling by hand —
-  *"testNeighbourhoodUnits"*.
-- The job writes per-cell fractions and `neighbours`, stores and serves the matrix —
-  *"testNeighbourhoodJobWritesFractionsAndMatrix"*; radius/tags/property validation, 404
-  before computing, WRITE required — *"testNeighbourhoodValidation"*.
+**Neighborhood and regions (`test/test_analysis.py`)**
+- Neighbor counts, pair matrix, enrichment sign and untyped handling by hand —
+  *"testNeighborhoodUnits"*.
+- The job writes per-cell fractions and `neighbors`, stores and serves the matrix —
+  *"testNeighborhoodJobWritesFractionsAndMatrix"*; radius/tags/property validation, 404
+  before computing, WRITE required — *"testNeighborhoodValidation"*.
 - Region composition and per-gene means for cells inside tagged polygons, by tag and by id
   — *"testRegionSummary"*; bad bodies, features without a table, unknown tag → empty —
   *"testRegionSummaryValidation"*.
 
-**Neighbourhood and regions, Python** — *"test_neighbourhood_none_until_computed"*,
-*"test_compute_neighbourhood_posts_and_waits"*, *"test_region_summary_bodies"*.
+**Neighborhood and regions, Python** — *"test_neighborhood_none_until_computed"*,
+*"test_compute_neighborhood_posts_and_waits"*, *"test_region_summary_bodies"*.
 
-**Neighbourhood and regions, frontend**
+**Neighborhood and regions, frontend**
 - Microns → pixels via the scale, refused without one —
   *"converts microns to pixels with the dataset scale and refuses without one"*; stored
   result loaded on open — *"loads the stored enrichment when opened"*; job in pixels,

@@ -13,7 +13,7 @@ Self-review round on the Phase 2 diff (`xenium-phase0`, 2026-09-02). Feature rec
 | 6 | Low | `PropertyChipStrip.test.ts` | Mock of `@/store/properties` lacked the new named exports `propertyEntries.ts` imports | fixed |
 | 7 | Low | `differential.py` | Welch t on raw counts; Wilcoxon/Mann-Whitney deferred | by-design — per-gene rank sums over 700K cells belong in a worker (plan §11.3); stated in the dialog subtitle and the doc |
 | 8 | Low | CSV export / list sort | Virtual columns export empty and cannot sort | by-design for this phase — documented in the genes dialog's mode hint and `SPATIAL_PLUGIN.md`; the stored copy covers both |
-| 9 | Nit | Girder local jobs | `createLocalJob(asynchronous=True)` sometimes ran inside the request (score 43 s, differential 14 s observed live) | noted — Girder's local-job daemon behaviour, not this plugin's; the clients poll either way |
+| 9 | Nit | Girder local jobs | `createLocalJob(asynchronous=True)` sometimes ran inside the request (score 43 s, differential 14 s observed live) | noted — Girder's local-job daemon behavior, not this plugin's; the clients poll either way |
 
 Blast-radius notes:
 - *"`_propertyStats` took a selector; now also the matching ids."* Only `summarize` calls it; the fallback `stats is None` path now fills every stored path with the empty record (before: an early return of empties), same result.

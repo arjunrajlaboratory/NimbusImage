@@ -7,7 +7,7 @@ import {
   ISpatialInfo,
   ISpatialJob,
   ISpatialMaterializeResult,
-  ISpatialNeighbourhood,
+  ISpatialNeighborhood,
   ISpatialRecomputeRequest,
   ISpatialRegionSummary,
   ISpatialStaleness,
@@ -88,7 +88,7 @@ export default class SpatialAPI {
   }
 
   /** Gene-set score (mean or sum of the features per cell) as one sub-value
-   * `name` of a property; same job behaviour as materialize. */
+   * `name` of a property; same job behavior as materialize. */
   async score(
     datasetId: string,
     features: string[],
@@ -220,17 +220,17 @@ export default class SpatialAPI {
     return response.data as { jobId: string };
   }
 
-  // ---- neighbourhood and regions (Phase 6) ----
+  // ---- neighborhood and regions (Phase 6) ----
 
-  /** The last neighbourhood enrichment, or null until one was computed. */
-  async fetchNeighbourhood(
+  /** The last neighborhood enrichment, or null until one was computed. */
+  async fetchNeighborhood(
     datasetId: string,
-  ): Promise<ISpatialNeighbourhood | null> {
+  ): Promise<ISpatialNeighborhood | null> {
     try {
       const response = await this.client.get(
-        `spatial/${datasetId}/neighbourhood`,
+        `spatial/${datasetId}/neighborhood`,
       );
-      return response.data as ISpatialNeighbourhood;
+      return response.data as ISpatialNeighborhood;
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 404) {
         return null;
@@ -239,15 +239,15 @@ export default class SpatialAPI {
     }
   }
 
-  /** Schedule the neighbourhood job; `radius` in image pixels. */
-  async computeNeighbourhood(
+  /** Schedule the neighborhood job; `radius` in image pixels. */
+  async computeNeighborhood(
     datasetId: string,
     radius: number,
     excludeTags: string[],
     propertyName: string,
   ): Promise<{ jobId: string; propertyId: string }> {
     const response = await this.client.post(
-      `spatial/${datasetId}/neighbourhood`,
+      `spatial/${datasetId}/neighborhood`,
       { radius, excludeTags, propertyName },
     );
     return response.data as { jobId: string; propertyId: string };

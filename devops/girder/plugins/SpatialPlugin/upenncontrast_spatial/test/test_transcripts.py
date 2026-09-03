@@ -311,7 +311,7 @@ class TestTranscripts(TestSpatial):
         assert sorted(slots.tolist()) == [0, 0, 0, 1, 1]
         assert sorted(quality.tolist()) == [12.5, 15.0, 22.0, 25.0, 30.0]
 
-    def testPointsHonourQualityAndUnknownTiles(
+    def testPointsHonorQualityAndUnknownTiles(
         self, admin, server, tmp_path, fsAssetstore
     ):
         folder, _, _, item = self._setupTranscripts(admin, tmp_path)
@@ -425,7 +425,7 @@ class TestTranscripts(TestSpatial):
         assert len(lit) > 0
         rows, cols = lit[:, 0], lit[:, 1]
         scale = 16 * PIXEL_SIZE  # um per tile pixel
-        # Each output pixel samples the bin under its centre.
+        # Each output pixel samples the bin under its center.
         binsHit = set(zip(((rows + 0.5) * scale // 10).astype(int),
                           ((cols + 0.5) * scale // 10).astype(int)))
         assert binsHit == {(2, 1), (1, 30)}

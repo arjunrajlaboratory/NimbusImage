@@ -227,28 +227,28 @@ class TestVersions:
             accessor.recompute()
 
 
-class TestNeighbourhoodAndRegions:
-    def test_neighbourhood_none_until_computed(self, mock_gc):
+class TestNeighborhoodAndRegions:
+    def test_neighborhood_none_until_computed(self, mock_gc):
         mock_gc.get.side_effect = girder_client.HttpError(
             404, "none", "url", "GET"
         )
-        assert SpatialAccessor(mock_gc, "ds_001").neighbourhood() is None
+        assert SpatialAccessor(mock_gc, "ds_001").neighborhood() is None
 
-    def test_compute_neighbourhood_posts_and_waits(self, mock_gc):
+    def test_compute_neighborhood_posts_and_waits(self, mock_gc):
         accessor = SpatialAccessor(mock_gc, "ds_001")
         mock_gc.post.return_value = {"jobId": "j1", "propertyId": "p1"}
         mock_gc.get.return_value = {
             "_id": "j1", "status": 3, "spatialResult": {"types": ["B"]},
         }
-        assert accessor.compute_neighbourhood(141, exclude_tags=["cell"]) == {
+        assert accessor.compute_neighborhood(141, exclude_tags=["cell"]) == {
             "types": ["B"]
         }
         mock_gc.post.assert_called_with(
-            "spatial/ds_001/neighbourhood",
-            json={"radius": 141, "propertyName": "Neighbourhood",
+            "spatial/ds_001/neighborhood",
+            json={"radius": 141, "propertyName": "Neighborhood",
                   "excludeTags": ["cell"]},
         )
-        assert accessor.compute_neighbourhood(10, wait=False) == {
+        assert accessor.compute_neighborhood(10, wait=False) == {
             "jobId": "j1", "propertyId": "p1"
         }
 

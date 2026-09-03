@@ -545,10 +545,10 @@ def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
         }
         boxes = [cells[i].bbox for i in dirtyIndices]
         # A removed cell has no polygon left to locate its molecules; they
-        # stay unassigned unless a neighbour grew over them, in which case
-        # that neighbour is itself "changed" and its tile is redone.
+        # stay unassigned unless a neighbor grew over them, in which case
+        # that neighbor is itself "changed" and its tile is redone.
         # Every cell overlapping a dirty tile is re-assigned (its molecules
-        # may have moved to a neighbour), and a re-assigned cell needs every
+        # may have moved to a neighbor), and a re-assigned cell needs every
         # tile IT touches, so the tile set and the touched set grow together
         # until stable — a cell straddling into a quiet tile would otherwise
         # lose the molecules on the far side.

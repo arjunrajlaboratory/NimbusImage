@@ -68,7 +68,7 @@ def writeValues(store, datasetId, propertyId, columns, onProgress=None):
 
 def writeCellValues(datasetId, propertyId, annotationIds, subValuesFor,
                     onProgress=None):
-    """Chunked writer shared by materialize, score and the neighbourhood
+    """Chunked writer shared by materialize, score and the neighborhood
     job: `subValuesFor(start, stop)` returns one {subKey: number} dict per
     cell of the chunk, merged into the cells' property-value documents.
     Returns the number of cells written."""

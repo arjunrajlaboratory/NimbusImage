@@ -373,7 +373,7 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
     @describeRoute(
         Description("Write a gene-set score (mean or sum of the features' "
                     "counts per cell) as one sub-value of a property")
-        .notes("Same writer and job behaviour as materialize; the property "
+        .notes("Same writer and job behavior as materialize; the property "
                "defaults to '%s' and the sub-value is `name`."
                % DEFAULT_SCORE_PROPERTY_NAME)
         .param("datasetId", "The dataset (folder) id", paramType="path")

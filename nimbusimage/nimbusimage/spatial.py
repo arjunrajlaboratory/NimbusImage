@@ -142,7 +142,7 @@ class SpatialAccessor:
     ) -> dict:
         """Write a gene-set score (``mean`` or ``sum`` of the features'
         counts per cell) as sub-value ``name`` of a property. Same job
-        behaviour as ``materialize``."""
+        behavior as ``materialize``."""
         result = self._gc.post(
             f"{self._base}/score",
             json={
@@ -327,28 +327,28 @@ class SpatialAccessor:
             )
         return self._gc.get(f"job/{response['jobId']}")["spatialResult"]
 
-    # --- neighbourhood and regions (Phase 6) ---
+    # --- neighborhood and regions (Phase 6) ---
 
-    def neighbourhood(self) -> dict | None:
-        """The last neighbourhood enrichment (``types``, ``counts``,
+    def neighborhood(self) -> dict | None:
+        """The last neighborhood enrichment (``types``, ``counts``,
         ``pairs``, ``matrix`` = log2 observed/expected, ``radius``), or None
         when none was computed."""
         try:
-            return self._gc.get(f"{self._base}/neighbourhood")
+            return self._gc.get(f"{self._base}/neighborhood")
         except girder_client.HttpError as exc:
             if exc.status == 404:
                 return None
             raise
 
-    def compute_neighbourhood(
+    def compute_neighborhood(
         self,
         radius_pixels: float,
         exclude_tags: list[str] | None = None,
-        property_name: str = "Neighbourhood",
+        property_name: str = "Neighborhood",
         wait: bool = True,
         timeout: float = 3600,
     ) -> dict:
-        """Compute every cell's neighbour-type fractions (written as
+        """Compute every cell's neighbor-type fractions (written as
         sub-values of ``property_name``) and the type enrichment matrix, as
         a server job. ``radius_pixels`` is in image pixels (microns /
         pixel size). Cell type = the first tag not in ``exclude_tags``
@@ -356,13 +356,13 @@ class SpatialAccessor:
         body: dict = {"radius": radius_pixels, "propertyName": property_name}
         if exclude_tags is not None:
             body["excludeTags"] = list(exclude_tags)
-        response = self._gc.post(f"{self._base}/neighbourhood", json=body)
+        response = self._gc.post(f"{self._base}/neighborhood", json=body)
         if not wait:
             return response
         job = Job(self._gc, self._gc.get(f"job/{response['jobId']}"))
         if not job.wait(timeout=timeout):
             raise RuntimeError(
-                "neighbourhood job %s failed" % response["jobId"]
+                "neighborhood job %s failed" % response["jobId"]
             )
         return self._gc.get(f"job/{response['jobId']}")["spatialResult"]
 

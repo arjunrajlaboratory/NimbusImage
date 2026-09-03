@@ -4,14 +4,14 @@
       <slot name="activator" :props="activatorProps" />
     </template>
     <v-card>
-      <v-card-title>Neighbourhood enrichment</v-card-title>
+      <v-card-title>Neighborhood enrichment</v-card-title>
       <v-card-text>
         <p class="text-body-2 mb-3">
-          Which cell types sit next to which. Every cell's neighbours within the
+          Which cell types sit next to which. Every cell's neighbors within the
           radius are counted by type (the cells' tags); the matrix is log<sub
             >2</sub
           >
-          of observed over expected pairs, and each cell's neighbour fractions
+          of observed over expected pairs, and each cell's neighbor fractions
           are written as a measurement.
         </p>
         <v-row align="center" class="mb-1">
@@ -118,7 +118,7 @@ import { computed, ref, watch } from "vue";
 import Papa from "papaparse";
 import store from "@/store";
 import propertyStore from "@/store/properties";
-import { ISpatialNeighbourhood } from "@/store/model";
+import { ISpatialNeighborhood } from "@/store/model";
 import { jobStates } from "@/store/jobConstants";
 import { convertLength } from "@/utils/conversion";
 import { downloadToClient } from "@/utils/download";
@@ -126,7 +126,7 @@ import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
 
 /**
- * Neighbourhood composition and enrichment (SPATIAL_PLUGIN.md "Phase 6").
+ * Neighborhood composition and enrichment (SPATIAL_PLUGIN.md "Phase 6").
  * The server works in image pixels; the dialog takes microns and converts
  * with the configuration's pixel size.
  */
@@ -140,7 +140,7 @@ const excludeTagsText = ref("cell");
 const running = ref(false);
 const loaded = ref(false);
 const error = ref<string | null>(null);
-const result = ref<ISpatialNeighbourhood | null>(null);
+const result = ref<ISpatialNeighborhood | null>(null);
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Image pixels per micron from the configuration's scale, or null when
@@ -201,9 +201,9 @@ async function load() {
     return;
   }
   try {
-    result.value = await store.spatialAPI.fetchNeighbourhood(datasetId);
+    result.value = await store.spatialAPI.fetchNeighborhood(datasetId);
   } catch (caught) {
-    logError("Failed to read the neighbourhood enrichment:", caught);
+    logError("Failed to read the neighborhood enrichment:", caught);
     error.value = extractErrorMessage(caught);
   } finally {
     loaded.value = true;
@@ -218,15 +218,15 @@ async function run() {
   running.value = true;
   error.value = null;
   try {
-    const { jobId } = await store.spatialAPI.computeNeighbourhood(
+    const { jobId } = await store.spatialAPI.computeNeighborhood(
       datasetId,
       radiusPixels.value,
       excludeTags(),
-      "Neighbourhood",
+      "Neighborhood",
     );
     poll(jobId);
   } catch (caught) {
-    logError("Neighbourhood request failed:", caught);
+    logError("Neighborhood request failed:", caught);
     error.value = extractErrorMessage(caught);
     running.value = false;
   }
@@ -249,7 +249,7 @@ function poll(jobId: string) {
     try {
       const job = await store.spatialAPI.fetchJob(jobId);
       if (job.status === jobStates.success) {
-        result.value = (job.spatialResult as ISpatialNeighbourhood) ?? null;
+        result.value = (job.spatialResult as ISpatialNeighborhood) ?? null;
         running.value = false;
         // The fractions are a new measurement: make it show up.
         await propertyStore.fetchProperties();
@@ -260,20 +260,20 @@ function poll(jobId: string) {
         job.status === jobStates.error ||
         job.status === jobStates.cancelled
       ) {
-        error.value = "The neighbourhood job failed; see the job log.";
+        error.value = "The neighborhood job failed; see the job log.";
         running.value = false;
         return;
       }
       poll(jobId);
     } catch (caught) {
-      logError("Neighbourhood job poll failed:", caught);
+      logError("Neighborhood job poll failed:", caught);
       error.value = extractErrorMessage(caught);
       running.value = false;
     }
   }, POLL_MS);
 }
 
-function buildCsv(summary: ISpatialNeighbourhood): string {
+function buildCsv(summary: ISpatialNeighborhood): string {
   return Papa.unparse({
     fields: ["type", "cells", ...summary.types],
     data: summary.types.map((type, i) => [
@@ -292,7 +292,7 @@ function download() {
     href:
       "data:text/csv;charset=utf-8," +
       encodeURIComponent(buildCsv(result.value)),
-    download: `${store.dataset?.name ?? "dataset"}-neighbourhood.csv`,
+    download: `${store.dataset?.name ?? "dataset"}-neighborhood.csv`,
   });
 }
 

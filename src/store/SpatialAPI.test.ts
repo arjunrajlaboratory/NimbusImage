@@ -178,19 +178,19 @@ describe("SpatialAPI table versions", () => {
   });
 });
 
-describe("SpatialAPI neighbourhood and regions", () => {
+describe("SpatialAPI neighborhood and regions", () => {
   it("uses the documented routes and maps 404 to null", async () => {
     const client = {
       get: vi.fn(async () => Promise.reject(axios404())),
       post: vi.fn(async () => ({ data: { jobId: "j1", propertyId: "p1" } })),
     } as any;
     const api = new SpatialAPI(client);
-    expect(await api.fetchNeighbourhood("ds")).toBeNull();
-    await api.computeNeighbourhood("ds", 60, ["cell"], "Neighbourhood");
-    expect(client.post).toHaveBeenCalledWith("spatial/ds/neighbourhood", {
+    expect(await api.fetchNeighborhood("ds")).toBeNull();
+    await api.computeNeighborhood("ds", 60, ["cell"], "Neighborhood");
+    expect(client.post).toHaveBeenCalledWith("spatial/ds/neighborhood", {
       radius: 60,
       excludeTags: ["cell"],
-      propertyName: "Neighbourhood",
+      propertyName: "Neighborhood",
     });
     await api.regionSummary("ds", { regionTag: "region" }, ["CD3E"]);
     expect(client.post).toHaveBeenCalledWith("spatial/ds/regions/summary", {

@@ -17,7 +17,7 @@ is unavailable: API spend limit). Status: `fixed` / `by-design` / `deferred — 
 | 12 | Medium | `api/shareLink.py` `create` | Branch review: the creator needed only READ on the dataset view and configuration (ADMIN on the folder), so a folder admin could hand out READ on a configuration they may not share; the named-share endpoint demands WRITE on both. | fixed — WRITE on the view and configuration; pinned in *"testCreateNeedsAdminAndValidInput"*. |
 | 13 | High | `api/shareLink.py` `me`, `src/store/index.ts` | Independent review: `<img>`-loaded tile routes (image tiles, annotation raster, density) authenticate from the HttpOnly `girderToken` cookie alone, and the client only set the header — a recipient with no session of their own would see annotations over a blank canvas. The live check passed only because it ran in the owner's browser (own cookie). | fixed — `share_link/me` sets the cookie to the link token when the browser has none (never over an existing login), for the token's lifetime; pinned in *"testBearerReadsOnlyTheSharedDataset"*. |
 | 14 | Medium | `SHARING.md`, `ShareDataset.vue`, `helpers/shareLinkGuards.py` | Independent review: a link was also a download capability (`folder/{id}/download`, `/export`). | fixed — route `before` hooks refuse link users on every download/export route (403); pinned in *"testBearerReadsOnlyTheSharedDataset"*. |
-| 15 | Low | `models/shareLink.py` | Independent review: `createUser` honours the registration policy — with "approve", every link e-mails the admins and creates a pending user. | fixed — the link user is saved `status: enabled`; folders noted in SHARING.md. |
+| 15 | Low | `models/shareLink.py` | Independent review: `createUser` honors the registration policy — with "approve", every link e-mails the admins and creates a pending user. | fixed — the link user is saved `status: enabled`; folders noted in SHARING.md. |
 | 16 | Low | `src/store/index.ts` `openShareLink` | Independent review: the shared-session flag was raised before the token was validated (a dead link left the tab in shared mode) and exposed through a Vuex getter over a non-reactive variable. | fixed — the flag is reset and the token cleared when the attempt fails; the unused getter is removed. |
 | 17 | Low | `ShareDataset.vue` | Independent review: the link silently opened the first checked collection and the table did not say which. | fixed — Create needs exactly one selected collection; a Collection column names it. |
 | 18 | Low | `api/shareLink.py` `find` | Independent review: listing a dataset's links needed only READ. | fixed — WRITE on the dataset. |
@@ -34,7 +34,7 @@ is unavailable: API spend limit). Status: `fixed` / `by-design` / `deferred — 
   annotations, saved filter and the Transcripts button; `#/embed/<token>` the same without
   the toolbar. Revoking the link (`DELETE share_link/{id}`) kills the token immediately.
 - Finding 10 was found this way: the very first attempt (token without `USER_INFO_READ`)
-  signed the owner out of the neighbouring tab.
+  signed the owner out of the neighboring tab.
 - After the branch review (finding 13): `share_link/me` without a cookie answers
   `Set-Cookie: girderToken=<link token>; HttpOnly; Path=/` expiring with the token; a density
   tile and an image tile fetched with only that cookie are 200; `me` with an existing

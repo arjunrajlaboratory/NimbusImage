@@ -1941,7 +1941,7 @@ export interface ISpatialJob {
   spatialResult?:
     | ISpatialDifferentialResult
     | ISpatialRecomputeResult
-    | ISpatialNeighbourhood;
+    | ISpatialNeighborhood;
 }
 
 /** One expression-table version (GET spatial/{datasetId}/versions). */
@@ -1976,12 +1976,12 @@ export interface ISpatialStaleness {
   upToDate: boolean;
 }
 
-/** GET spatial/{datasetId}/neighbourhood (Phase 6). */
-export interface ISpatialNeighbourhood {
+/** GET spatial/{datasetId}/neighborhood (Phase 6). */
+export interface ISpatialNeighborhood {
   radius: number;
   excludeTags: string[];
   // Sorted type names; `counts` are cells per type, `pairs` observed
-  // neighbour pairs (type i around type j), `matrix` log2 observed/expected.
+  // neighbor pairs (type i around type j), `matrix` log2 observed/expected.
   types: string[];
   counts: number[];
   pairs: number[][];
