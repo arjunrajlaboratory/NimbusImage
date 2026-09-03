@@ -14,6 +14,8 @@ from bson.objectid import ObjectId
 
 from girder.exceptions import RestException
 
+from . import valueProviders
+
 from . import analysis
 
 # Request-size sanity ceilings: reject only degenerate/garbage payloads that
@@ -578,6 +580,16 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
         ):
             raise RestException(
                 "sort.type must be 'field' or 'property'", code=400
+            )
+        if sort["type"] == "property" and valueProviders.isVirtualPath(
+            sort.get("key")
+        ):
+            # A virtual column has no Mongo field to sort on; the provider
+            # would have to rank every row per page. Refuse rather than sort
+            # by nothing.
+            raise RestException(
+                "sorting by a virtual (provider) column is not supported",
+                code=400,
             )
         if sort["type"] == "property" and not isValidPropertyPath(
             sort.get("key")

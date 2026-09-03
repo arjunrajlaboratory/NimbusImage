@@ -35,7 +35,7 @@ from upenncontrast_annotation.server.models.property import (
     AnnotationProperty as PropertyModel,
 )
 
-from .. import materialize
+from .. import differential, materialize
 from ..models.registry import DatasetSpatial
 from ..store import (
     invalidateStore,
@@ -54,6 +54,8 @@ DEFAULT_FEATURE_SEARCH_RESULTS = 25
 # cells — the same sentinel the Python client uses for client-computed values.
 MATERIALIZED_PROPERTY_IMAGE = "properties/none:latest"
 DEFAULT_PROPERTY_NAME = "Gene Expression"
+DEFAULT_SCORE_PROPERTY_NAME = "Gene set scores"
+SCORE_METHODS = ("mean", "sum")
 
 
 def _serialize(document):
@@ -78,6 +80,10 @@ class Spatial(Resource):
         self.route("GET", (":datasetId", "row"), self.row)
         self.route("POST", (":datasetId", "aggregate"), self.aggregate)
         self.route("POST", (":datasetId", "materialize"), self.materialize)
+        self.route("POST", (":datasetId", "score"), self.score)
+        self.route(
+            "POST", (":datasetId", "differential"), self.differential
+        )
 
     # ---- helpers --------------------------------------------------------
 
@@ -131,6 +137,7 @@ class Spatial(Resource):
             self._annotationModel.resolveListGateConstraints(
                 datasetId, filters
             )
+            self._annotationModel.resolveProviderFilters(datasetId, filters)
         except ValueError as exc:
             raise RestException(str(exc), code=400)
         if not self._annotationModel.narrowsPopulation(filters):
@@ -342,18 +349,81 @@ class Spatial(Resource):
         entry, store = self._openStore(datasetId)
         body = requireObjectBody(self.getBodyJson())
         symbols = self._requireSymbols(store, body.get("features"))
-        propertyName = body.get("propertyName") or DEFAULT_PROPERTY_NAME
-        if not isinstance(propertyName, str):
-            raise RestException("propertyName must be a string", code=400)
+        propertyName = self._requirePropertyName(
+            body.get("propertyName"), DEFAULT_PROPERTY_NAME
+        )
+        return self._writeOrSchedule(
+            datasetId, entry, store, propertyName,
+            {"symbols": symbols},
+            "Materialize %d features into %s" % (len(symbols), propertyName),
+        )
+
+    @access.user(scope=TokenScope.DATA_WRITE)
+    @describeRoute(
+        Description("Write a gene-set score (mean or sum of the features' "
+                    "counts per cell) as one sub-value of a property")
+        .notes("Same writer and job behaviour as materialize; the property "
+               "defaults to '%s' and the sub-value is `name`."
+               % DEFAULT_SCORE_PROPERTY_NAME)
+        .param("datasetId", "The dataset (folder) id", paramType="path")
+        .param("body", "JSON: {features, name, method?: mean|sum, "
+               "propertyName?}", paramType="body")
+        .errorResponse()
+        .errorResponse("Write access denied.", 403)
+    )
+    def score(self, datasetId, params):
+        datasetId = self._loadDataset(datasetId, AccessType.WRITE)
+        entry, store = self._openStore(datasetId)
+        body = requireObjectBody(self.getBodyJson())
+        symbols = self._requireSymbols(store, body.get("features"))
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip() or "." in name \
+                or "$" in name:
+            raise RestException(
+                "name must be a non-empty string without '.' or '$'",
+                code=400,
+            )
+        method = body.get("method", "mean")
+        if method not in SCORE_METHODS:
+            raise RestException(
+                "method must be one of %s" % ", ".join(SCORE_METHODS),
+                code=400,
+            )
+        propertyName = self._requirePropertyName(
+            body.get("propertyName"), DEFAULT_SCORE_PROPERTY_NAME
+        )
+        return self._writeOrSchedule(
+            datasetId, entry, store, propertyName,
+            {
+                "symbols": symbols, "scoreName": name.strip(),
+                "scoreMethod": method,
+            },
+            "Score %s (%s of %d features) into %s"
+            % (name.strip(), method, len(symbols), propertyName),
+        )
+
+    def _requirePropertyName(self, value, default):
+        propertyName = value or default
+        if not isinstance(propertyName, str) or not propertyName.strip():
+            raise RestException(
+                "propertyName must be a non-empty string", code=400
+            )
+        return propertyName.strip()
+
+    def _writeOrSchedule(self, datasetId, entry, store, propertyName,
+                         columnSpec, title):
+        """Write the columns inline for small stores, else schedule the
+        materialize job; either way the property exists and is registered
+        first."""
         user = self.getCurrentUser()
         try:
             prop = self._materializedProperty(datasetId, user, propertyName)
         except ValueError as exc:
             raise RestException(str(exc), code=400)
-
         if store.nObs <= materialize.MATERIALIZE_INLINE_MAX_ROWS:
             written = materialize.writeValues(
-                store, datasetId, prop["_id"], symbols
+                store, datasetId, prop["_id"],
+                materialize.columnsFor(store, columnSpec),
             )
             return {
                 "propertyId": str(prop["_id"]), "written": written,
@@ -361,17 +431,14 @@ class Spatial(Resource):
             }
         job = Job().createLocalJob(
             module="upenncontrast_spatial.server.materialize",
-            title=(
-                "Materialize %d features into %s"
-                % (len(symbols), propertyName)
-            ),
+            title=title,
             type="spatial_materialize",
             user=user,
             kwargs={
                 "datasetId": str(datasetId),
                 "fileId": str(entry["fileId"]),
                 "propertyId": str(prop["_id"]),
-                "symbols": symbols,
+                **columnSpec,
             },
             asynchronous=True,
         )
@@ -380,6 +447,71 @@ class Spatial(Resource):
             "propertyId": str(prop["_id"]), "written": 0,
             "jobId": str(job["_id"]),
         }
+
+    # ---- differential expression -----------------------------------------
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Rank features by differential expression between two "
+                    "groups of cells (Welch t-test), as a job")
+        .notes("Groups are list-filter objects (gates included). `filtersB` "
+               "omitted means every cell not in A. The ranked table lands "
+               "on the job document as `spatialResult` "
+               "({nA, nB, featuresTested, features: [{symbol, meanA, "
+               "meanB, fractionA, fractionB, log2FoldChange, t, "
+               "pValue}]}); poll GET job/{jobId}.")
+        .param("datasetId", "The dataset (folder) id", paramType="path")
+        .param("body", "JSON: {filtersA, filtersB?, maxFeatures?}",
+               paramType="body")
+        .errorResponse()
+    )
+    def differential(self, datasetId, params):
+        datasetId = self._loadDataset(datasetId, AccessType.READ)
+        entry, store = self._openStore(datasetId)
+        body = requireObjectBody(self.getBodyJson())
+        maxFeatures = min(
+            differential.MAX_RESULT_FEATURES,
+            max(1, requireInt(
+                body.get(
+                    "maxFeatures", differential.DEFAULT_RESULT_FEATURES
+                ),
+                "maxFeatures",
+            )),
+        )
+        # Validate and resolve both groups now (gates and virtual filters
+        # become id clauses inside the filter objects), so the job carries
+        # two small filter objects rather than hundreds of thousands of row
+        # indices, and a bad request fails here as a 400.
+        filtersA = body.get("filtersA") or {}
+        rowsA, _ = self._rowsForFilters(datasetId, store, filtersA)
+        if rowsA is None:
+            raise RestException(
+                "filtersA must narrow the dataset: group A cannot be every "
+                "cell", code=400,
+            )
+        filtersB = None
+        if body.get("filtersB") is not None:
+            filtersB = requireObjectBody(body["filtersB"], "filtersB")
+            self._rowsForFilters(datasetId, store, filtersB)
+        job = Job().createLocalJob(
+            module="upenncontrast_spatial.server.differential",
+            title=(
+                "Differential expression (%d cells vs %s)"
+                % (len(rowsA), "the rest" if filtersB is None else "B")
+            ),
+            type="spatial_differential",
+            user=self.getCurrentUser(),
+            kwargs={
+                "datasetId": str(datasetId),
+                "fileId": str(entry["fileId"]),
+                "filtersA": filtersA,
+                "filtersB": filtersB,
+                "maxFeatures": maxFeatures,
+            },
+            asynchronous=True,
+        )
+        Job().scheduleJob(job)
+        return {"jobId": str(job["_id"]), "nA": int(len(rowsA))}
 
     def _materializedProperty(self, datasetId, user, propertyName):
         """The polygon property named `propertyName` among the dataset's

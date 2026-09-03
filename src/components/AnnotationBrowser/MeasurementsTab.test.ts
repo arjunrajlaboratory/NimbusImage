@@ -12,6 +12,8 @@ vi.mock("@/store/annotation", () => ({
 }));
 
 vi.mock("@/store/properties", () => ({
+  SPATIAL_PROPERTY_ID: "spatial",
+  SPATIAL_PSEUDO_PROPERTY: { id: "spatial", name: "Spatial table" },
   default: {
     properties: [],
     computedPropertyPaths: [],
@@ -227,5 +229,29 @@ describe("MeasurementsTab spatial table", () => {
     (spatialStore as any).hasTable = true;
     await wrapper.vm.$nextTick();
     expect(wrapper.text()).toContain("Add genes");
+  });
+});
+
+describe("MeasurementsTab live gene columns", () => {
+  it("lists virtual spatial columns under one group without a Run button", async () => {
+    (propertyStore as any).properties = [{ id: "area", name: "Area" }];
+    (propertyStore as any).computedPropertyPaths = [
+      ["area"],
+      ["spatial", "CD3E"],
+      ["spatial", "MS4A1"],
+    ];
+    (propertyStore as any).displayedPropertyPaths = [["spatial", "CD3E"]];
+    (propertyStore as any).uncomputedCountByProperty = { area: 0 };
+    (propertyStore as any).propertyStatuses = { area: { running: false } };
+    const wrapper = mountComponent();
+    const groups = wrapper.findAll(".measurement-group");
+    const spatial = groups.find((g) => g.text().includes("Spatial table"));
+    expect(spatial).toBeDefined();
+    expect(spatial!.text()).toContain("2 live columns");
+    expect(spatial!.text()).toContain("1 shown");
+    expect(spatial!.find(".run-property").exists()).toBe(false);
+    // Real properties keep theirs.
+    const area = groups.find((g) => g.text().includes("Area"));
+    expect(area!.find(".run-property").exists()).toBe(true);
   });
 });

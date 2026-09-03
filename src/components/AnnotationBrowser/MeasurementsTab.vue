@@ -88,13 +88,14 @@
           <span class="group-count">
             {{
               entry.paths.length > 0
-                ? `${entry.paths.length} value${
-                    entry.paths.length === 1 ? "" : "s"
-                  }`
+                ? `${entry.paths.length} ${
+                    isVirtualPropertyEntry(entry) ? "live column" : "value"
+                  }${entry.paths.length === 1 ? "" : "s"}`
                 : "not computed"
             }}
           </span>
           <v-btn
+            v-if="!isVirtualPropertyEntry(entry)"
             size="x-small"
             variant="tonal"
             color="primary"
@@ -189,6 +190,7 @@ import {
   togglePathVisibility,
   propertyValueName,
   propertyColumnActionLabel,
+  isVirtualPropertyEntry,
 } from "@/utils/propertyEntries";
 import { computePropertyWithStatus } from "@/utils/propertyCompute";
 
@@ -273,6 +275,7 @@ defineExpose({
   togglePath,
   subName,
   columnActionLabel,
+  isVirtualPropertyEntry,
 });
 </script>
 

@@ -46,6 +46,25 @@ import jobs, {
 } from "./jobs";
 import { logError, logWarning } from "@/utils/log";
 import { findIndexOfPath, serializePropertyPath } from "@/utils/paths";
+import type { TPropertyValueEntry } from "./PropertiesAPI";
+
+// Virtual property paths (server-side value providers, SPATIAL_PLUGIN.md
+// "Phase 2"): a path whose first segment is SPATIAL_PROPERTY_ID is a column of
+// the dataset's spatial table, read straight from it wherever the app reads a
+// property path. It has no property document, so the store answers for it.
+export const SPATIAL_PROPERTY_ID = "spatial";
+export const SPATIAL_PSEUDO_PROPERTY: IAnnotationProperty = Object.freeze({
+  id: SPATIAL_PROPERTY_ID,
+  name: "Spatial table",
+  image: "",
+  tags: { tags: [], exclusive: false },
+  shape: "polygon",
+  workerInterface: {},
+}) as IAnnotationProperty;
+
+export function isVirtualPropertyPath(path: string[]): boolean {
+  return path[0] === SPATIAL_PROPERTY_ID;
+}
 import progress from "./progress";
 import {
   MAX_DISPLAYED_PROPERTY_PATHS,
@@ -70,6 +89,20 @@ const defaultStatus: () => IPropertyStatus = () => ({
   progressInfo: {},
   errorInfo: { errors: [] },
 });
+
+// Order-preserving dedupe with no cap (the displayed-column cap below is a
+// separate concern).
+function dedupePropertyPaths(paths: string[][]): string[][] {
+  const seen = new Set<string>();
+  return paths.filter((path) => {
+    const key = serializePropertyPath(path);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
 
 function uniquePropertyPaths(paths: string[][]): string[][] {
   const pathsByKey = new Map<string, string[]>();
@@ -194,6 +227,10 @@ export class Properties extends VuexModule {
   properties: IAnnotationProperty[] = [];
 
   displayedPropertyPaths: string[][] = [];
+  // Virtual (spatial-table) paths the user has added as live columns this
+  // session. Displayed virtual paths are also kept (they persist with the
+  // configuration), so the union below survives a reload.
+  virtualPropertyPaths: string[][] = [];
 
   // Largest mutable structure in the app (annotations × properties). The
   // mutation that replaces it already wraps with markRaw, but the initial
@@ -336,6 +373,7 @@ export class Properties extends VuexModule {
     // would prune them once new property values arrive, but resetting here
     // releases the references immediately and avoids a UI flash.
     this.displayedPropertyPaths = [];
+    this.virtualPropertyPaths = [];
     // Sibling lazy-mode field: also references the previous dataset's property
     // ids and is meaningless in the new dataset, so reset it here too (it is
     // otherwise only refreshed on the next fetchPropertyPathsSample).
@@ -442,9 +480,80 @@ export class Properties extends VuexModule {
 
   get getPropertyById() {
     return (id: string) => {
+      if (id === SPATIAL_PROPERTY_ID) {
+        return SPATIAL_PSEUDO_PROPERTY;
+      }
       const find = (prop: IAnnotationProperty) => prop.id === id;
       return this.properties.find(find) || null;
     };
+  }
+
+  // Every virtual path in play: added this session or displayed as a column.
+  get allVirtualPropertyPaths(): string[][] {
+    return dedupePropertyPaths([
+      ...this.virtualPropertyPaths,
+      ...this.displayedPropertyPaths.filter(isVirtualPropertyPath),
+    ]);
+  }
+
+  @Mutation
+  setVirtualPropertyPaths(paths: string[][]) {
+    this.virtualPropertyPaths = dedupePropertyPaths(paths);
+  }
+
+  // Merge fetched value documents into the cache without dropping what is
+  // already there (the wholesale fetch REPLACES; this is for adding virtual
+  // columns to an existing map).
+  @Mutation
+  mergePropertyValueEntries(entries: TPropertyValueEntry[]) {
+    const next: IAnnotationPropertyValues = { ...this.propertyValues };
+    for (const entry of entries) {
+      next[entry.annotationId] = {
+        ...(next[entry.annotationId] ?? {}),
+        ...entry.values,
+      };
+    }
+    this.propertyValues = markRaw(next);
+  }
+
+  /**
+   * Add spatial-table columns as live (virtual) paths and show them. In
+   * stub-only mode the visible-value fetch picks them up like any displayed
+   * path; below the threshold the wholesale value map is loaded once from
+   * the find endpoint, which knows nothing about virtual paths, so their
+   * values are fetched for every annotation here.
+   */
+  @Action({ rawError: true })
+  async addVirtualPropertyPaths(paths: string[][]) {
+    this.setVirtualPropertyPaths([...this.virtualPropertyPaths, ...paths]);
+    this.setPropertyPathsVisibility({ paths, visible: true });
+    await this.fetchVirtualPropertyValues(paths);
+  }
+
+  @Action
+  removeVirtualPropertyPath(path: string[]) {
+    this.setVirtualPropertyPaths(
+      this.virtualPropertyPaths.filter(
+        (candidate) => findIndexOfPath(candidate, [path]) < 0,
+      ),
+    );
+    this.setPropertyPathsVisibility({ paths: [path], visible: false });
+  }
+
+  @Action({ rawError: true })
+  async fetchVirtualPropertyValues(paths?: string[][]) {
+    const datasetId = main.dataset?.id;
+    const virtualPaths = paths ?? this.allVirtualPropertyPaths;
+    if (!datasetId || annotations.stubOnlyMode || virtualPaths.length === 0) {
+      return;
+    }
+    this.mergePropertyValueEntries(
+      await this.propertiesAPI.getPropertyValuesForIds(
+        datasetId,
+        annotations.allAnnotationIds,
+        virtualPaths,
+      ),
+    );
   }
 
   @Mutation
@@ -615,13 +724,16 @@ export class Properties extends VuexModule {
       ? this.discoveredPropertyPaths
       : collectLeafPaths(Object.values(this.propertyValues));
 
-    return leafPaths.filter((path) => {
+    const stored = leafPaths.filter((path) => {
       // Check that the values have a corresponding property
       if (path.length < 1) {
         return false;
       }
       return this.getPropertyById(path[0]) !== null;
     });
+    // Virtual paths are not discoverable from value documents in stub mode
+    // (the sample endpoint reads stored values), so they are added here.
+    return dedupePropertyPaths([...stored, ...this.allVirtualPropertyPaths]);
   }
 
   @Mutation
@@ -1224,6 +1336,7 @@ export class Properties extends VuexModule {
     }
     const values = await this.propertiesAPI.getPropertyValues(main.dataset.id);
     this.updatePropertyValues(values);
+    await this.fetchVirtualPropertyValues();
   }
 
   @Action({ rawError: true })

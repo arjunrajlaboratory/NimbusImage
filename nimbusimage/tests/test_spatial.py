@@ -95,3 +95,36 @@ class TestSpatialAccessor:
             json={"features": ["CD3E"], "propertyName": "Panel"},
         )
         mock_gc.get.assert_any_call("job/job_1")
+
+    def test_score_posts_name_and_method(self, mock_gc):
+        mock_gc.post.return_value = {
+            "propertyId": "p1", "written": 6, "jobId": None,
+        }
+        SpatialAccessor(mock_gc, "ds_001").score(
+            ["CD3E", "CD2"], "T cell", method="sum"
+        )
+        mock_gc.post.assert_called_with(
+            "spatial/ds_001/score",
+            json={
+                "features": ["CD3E", "CD2"], "name": "T cell",
+                "method": "sum", "propertyName": "Gene set scores",
+            },
+        )
+
+    def test_differential_waits_and_returns_the_ranked_table(self, mock_gc):
+        mock_gc.post.return_value = {"jobId": "job_1", "nA": 3}
+        table = {"nA": 3, "nB": 3, "featuresTested": 4, "features": []}
+        mock_gc.get.return_value = {
+            "_id": "job_1", "status": 3, "spatialResult": table,
+        }
+        filters = {"tags": {"values": ["B"], "exclusive": False}}
+        result = SpatialAccessor(mock_gc, "ds_001").differential(filters)
+        mock_gc.post.assert_called_with(
+            "spatial/ds_001/differential",
+            json={"filtersA": filters, "filtersB": None, "maxFeatures": 50},
+        )
+        assert result == table
+        assert SpatialAccessor(mock_gc, "ds_001").virtual_path("CD3E") == [
+            "spatial", "CD3E",
+        ]
+

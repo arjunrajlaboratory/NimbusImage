@@ -196,3 +196,9 @@ ds.spatial.materialize(["CD3E", "MS4A1"], property_name="Gene Expression")
 `materialize` writes dense sub-values into a property and waits for the server job on
 large tables.
 
+Any gene is also usable as a virtual property path, `ds.spatial.virtual_path("CD3E")` →
+`["spatial", "CD3E"]`, wherever a property path is accepted (filters, gates, color-by,
+list columns, summary). `ds.spatial.score(symbols, name, method="mean")` writes a
+gene-set score; `ds.spatial.differential(filters_a, filters_b=None, max_features=50)`
+returns the Welch-t ranked table from a server job.
+

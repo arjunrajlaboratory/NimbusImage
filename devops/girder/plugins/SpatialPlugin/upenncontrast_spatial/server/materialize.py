@@ -33,12 +33,26 @@ CHUNK_ROWS = 20_000
 MATERIALIZE_INLINE_MAX_ROWS = 50_000
 
 
-def writeValues(store, datasetId, propertyId, symbols, onProgress=None):
-    """Write `symbols` for every row of `store` as sub-values of the
-    property. Returns the number of rows written."""
+def scoreColumn(store, symbols, method):
+    """(rows, values) of a gene-set score per cell: the mean (or sum) of the
+    given features' counts, sparse like a column (zero rows omitted)."""
+    dense = np.zeros(store.nObs, dtype=np.float64)
+    for symbol in symbols:
+        rows, values = store.column(symbol)
+        dense[rows] += values
+    if method == "mean":
+        dense /= len(symbols)
+    nonzero = np.flatnonzero(dense)
+    return nonzero, dense[nonzero]
+
+
+def writeValues(store, datasetId, propertyId, columns, onProgress=None):
+    """Write `columns` ({subKey: (rows, values)}, e.g. from store.column or
+    scoreColumn) for every row of `store` as sub-values of the property.
+    Returns the number of rows written."""
     valuesModel = AnnotationPropertyValues()
     propertyKey = str(propertyId)
-    columns = {symbol: store.column(symbol) for symbol in symbols}
+    symbols = list(columns)
     written = 0
     for start in range(0, store.nObs, CHUNK_ROWS):
         stop = min(start + CHUNK_ROWS, store.nObs)
@@ -86,10 +100,24 @@ def writeValues(store, datasetId, propertyId, symbols, onProgress=None):
     return written
 
 
+def columnsFor(store, kwargs):
+    """The columns a materialize/score request writes: one per symbol, or
+    one score column named kwargs["scoreName"] over the symbols."""
+    symbols = kwargs["symbols"]
+    if kwargs.get("scoreName"):
+        return {
+            kwargs["scoreName"]: scoreColumn(
+                store, symbols, kwargs.get("scoreMethod", "mean")
+            )
+        }
+    return {symbol: store.column(symbol) for symbol in symbols}
+
+
 def run(job):
     """Girder local-job entry point. kwargs: datasetId, fileId, propertyId,
-    symbols. Access was checked by the endpoint that scheduled the job, so
-    the file is loaded without a user here."""
+    symbols, and for a score scoreName + scoreMethod. Access was checked by
+    the endpoint that scheduled the job, so the file is loaded without a
+    user here."""
     jobModel = Job()
     kwargs = job["kwargs"]
     symbols = kwargs["symbols"]
@@ -99,6 +127,7 @@ def run(job):
     )
     try:
         store = openStore(File().load(kwargs["fileId"], force=True))
+        columns = columnsFor(store, kwargs)
 
         def onProgress(current, total):
             jobModel.updateJob(
@@ -108,7 +137,7 @@ def run(job):
 
         written = writeValues(
             store, ObjectId(kwargs["datasetId"]),
-            ObjectId(kwargs["propertyId"]), symbols, onProgress,
+            ObjectId(kwargs["propertyId"]), columns, onProgress,
         )
     except Exception as exc:
         jobModel.updateJob(
@@ -118,5 +147,5 @@ def run(job):
         raise
     jobModel.updateJob(
         job, status=JobStatus.SUCCESS,
-        log="Wrote %d features for %d cells.\n" % (len(symbols), written),
+        log="Wrote %d values for %d cells.\n" % (len(columns), written),
     )

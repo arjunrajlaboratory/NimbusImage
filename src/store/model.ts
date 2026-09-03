@@ -1812,6 +1812,33 @@ export interface ISpatialAggregate {
   features: ISpatialFeatureAggregate[];
 }
 
+export interface ISpatialDifferentialFeature {
+  symbol: string;
+  meanA: number;
+  meanB: number;
+  fractionA: number;
+  fractionB: number;
+  log2FoldChange: number;
+  t: number;
+  pValue: number;
+}
+
+export interface ISpatialDifferentialResult {
+  nA: number;
+  nB: number;
+  featuresTested: number;
+  // Ranked by |t|, truncated to the requested maxFeatures.
+  features: ISpatialDifferentialFeature[];
+}
+
+// GET job/{id} for a spatial job: status plus, once finished, the result the
+// differential job stores on the document.
+export interface ISpatialJob {
+  _id: string;
+  status: number;
+  spatialResult?: ISpatialDifferentialResult;
+}
+
 export interface ISpatialMaterializeResult {
   propertyId: string;
   written: number;

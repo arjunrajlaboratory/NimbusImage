@@ -4,6 +4,8 @@ import { shallowMount } from "@vue/test-utils";
 
 const mocks = vi.hoisted(() => ({
   materialize: vi.fn(),
+  score: vi.fn(),
+  addVirtualPropertyPaths: vi.fn(),
   fetchProperties: vi.fn(),
   fetchPropertyPathsSample: vi.fn(),
   fetchJobStatus: vi.fn(),
@@ -13,14 +15,16 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/store", () => ({
   default: {
     dataset: { id: "ds1", name: "Lymph" },
-    spatialAPI: { materialize: mocks.materialize },
+    spatialAPI: { materialize: mocks.materialize, score: mocks.score },
   },
 }));
 
 vi.mock("@/store/properties", () => ({
+  SPATIAL_PROPERTY_ID: "spatial",
   default: {
     fetchProperties: mocks.fetchProperties,
     fetchPropertyPathsSample: mocks.fetchPropertyPathsSample,
+    addVirtualPropertyPaths: mocks.addVirtualPropertyPaths,
   },
 }));
 
@@ -46,9 +50,10 @@ vi.mock("@/utils/errors", () => ({
 
 import MaterializeGenesDialog from "./MaterializeGenesDialog.vue";
 
-async function openDialog() {
+async function openDialog(mode: "live" | "copy" | "score" = "copy") {
   const wrapper = shallowMount(MaterializeGenesDialog);
   (wrapper.vm as any).dialog = true;
+  (wrapper.vm as any).mode = mode;
   await nextTick();
   return wrapper;
 }
@@ -60,7 +65,49 @@ describe("MaterializeGenesDialog", () => {
     mocks.fetchProperties.mockReset().mockResolvedValue(undefined);
     mocks.fetchPropertyPathsSample.mockReset().mockResolvedValue(undefined);
     mocks.fetchJobStatus.mockReset();
+    mocks.score.mockReset();
+    mocks.addVirtualPropertyPaths.mockReset().mockResolvedValue(undefined);
     mocks.ensureInfo.mockClear();
+  });
+
+  it("adds live columns by default, with no server write", async () => {
+    const wrapper = await openDialog("live");
+    const vm = wrapper.vm as any;
+    vm.symbols = ["CD3E", "MS4A1"];
+    await vm.submit();
+    expect(mocks.addVirtualPropertyPaths).toHaveBeenCalledWith([
+      ["spatial", "CD3E"],
+      ["spatial", "MS4A1"],
+    ]);
+    expect(mocks.materialize).not.toHaveBeenCalled();
+    expect(vm.done).toContain("live columns");
+    expect(vm.running).toBe(false);
+  });
+
+  it("scores a gene set into its own measurement", async () => {
+    mocks.score.mockResolvedValue({
+      propertyId: "p2",
+      written: 6,
+      jobId: null,
+    });
+    const wrapper = await openDialog("score");
+    const vm = wrapper.vm as any;
+    vm.symbols = ["CD3E", "CD2"];
+    // Switching to score mode moved the default measurement name.
+    expect(vm.propertyName).toBe("Gene set scores");
+    expect(vm.canSubmit).toBe(false);
+    vm.scoreName = "T cell";
+    vm.scoreMethod = "sum";
+    expect(vm.canSubmit).toBe(true);
+    await vm.submit();
+    expect(mocks.score).toHaveBeenCalledWith(
+      "ds1",
+      ["CD3E", "CD2"],
+      "T cell",
+      "sum",
+      "Gene set scores",
+    );
+    expect(vm.done).toContain("sum of 2 genes");
   });
 
   afterEach(() => {

@@ -1,6 +1,6 @@
 # Spatial plugin (`upenncontrast_spatial`)
 
-**Status: Phase 1 of the spatial-transcriptomics platform plan, implemented on
+**Status: Phases 1 and 2 of the spatial-transcriptomics platform plan, implemented on
 `xenium-phase0` (2026-09-02). Plugin, Python accessor and frontend suites green; verified
 live on the 708,983-cell × 4,624-gene Xenium lymph-node store.**
 
@@ -94,6 +94,58 @@ is a no-op. Adding genes to a property that already has values therefore updates
 stored documents in place and saves them with `validate=False`; new documents validate as
 usual. Pinned by *"testMaterializeWritesRegistersAndMerges"*.
 
+## Phase 2: any gene as a property path (value providers)
+
+The annotation plugin gained one extension point,
+`server/helpers/valueProviders.py`: `registerValueProvider(prefix, provider)`. A property
+path whose first segment is a registered prefix is **virtual** — answered by the provider
+instead of Mongo. This plugin registers `spatial` at load (`server/provider.py`), so
+`["spatial", "CD3E"]` is the CD3E column of the dataset's store.
+
+A provider answers three questions: `values(datasetId, path)` (dense, every row it knows),
+`valuesForIds(datasetId, path, ids)` (None where the annotation has no row) and
+`matchingIds(datasetId, path, propertyFilter)` (a range/values filter as an id set). It
+raises `ValueError` for an unknown sub key, which every consumer maps to a 400.
+
+Consumers that ask the provider, all in the annotation plugin:
+
+| Consumer | How |
+|---|---|
+| analysis axes (`_analysisData`) | provider values nested as `{prefix: {sub: v}}` beside stored values, so gates and histograms on a gene axis need no other change |
+| property filters | `Annotation.resolveProviderFilters` turns a virtual filter into an id clause (`_idSelector`, the gate rule) before the pipelines run; called from `_loadListRequest` and the spatial `aggregate`/`differential` |
+| color-by-property | provider values keyed by ObjectId feed the same membership guard and writes |
+| list page | `listPage` fills virtual values per page row (`_fillVirtualValues`); sorting by a virtual column is a 400 |
+| batch value fetch (`findByAnnotationIds`) | merged into the returned documents, so sub-threshold datasets see the values client-side too |
+| selection summary | statistics computed in numpy from the provider's dense answer over the matched ids (`analysis.describe_values`) |
+
+Not covered, deliberately: CSV export leaves virtual columns empty (a stored copy via
+*Copy into a measurement* exports), and the Objects tab cannot sort by one.
+
+Frontend: `spatial` is a pseudo-property (`getPropertyById("spatial")` → "Spatial table",
+`SPATIAL_PSEUDO_PROPERTY` in `properties.ts`); gene paths the user adds
+(`addVirtualPropertyPaths`) join `computedPropertyPaths`, so every picker — analysis
+axes, color-by, filters, displayed columns — offers them unchanged, and displayed virtual
+columns survive a reload through the persisted displayed paths. Below the stub threshold
+the wholesale value map is filled from the batch endpoint for the virtual paths. The
+Measurements tab lists them under one "Spatial table" group without a Run button. The
+genes dialog has three modes: **live columns** (default), **copy into a measurement**
+(Phase 1 materialize), **gene-set score**.
+
+### Score and differential expression
+
+- `POST spatial/{datasetId}/score {features, name, method?: mean|sum, propertyName?}` —
+  one sub-value `values[property][name]` per cell (default property `Gene set scores`),
+  through the Phase 1 writer (`materialize.scoreColumn`, `columnsFor`).
+- `POST spatial/{datasetId}/differential {filtersA, filtersB?, maxFeatures?}` — a local
+  job (`server/differential.py`) ranking every feature by Welch's t between the cells
+  matching A and those matching B (omitted = every other cell): mean, fraction
+  expressing, log2 fold change (pseudocount 0.01), t, p. The validated filter objects,
+  not row indices, ride in the job kwargs; the table lands on the job document as
+  `spatialResult`. Wilcoxon is deferred to a worker (plan §11.3). UI: **Compare
+  expression…** in the selection summary's Expression section (group A = the summarized
+  scope, B = the rest or objects with picked tags), ranked table, CSV download. Python:
+  `ds.spatial.score()`, `ds.spatial.differential()`, `ds.spatial.virtual_path()`.
+
 ## Client
 
 - `nimbusimage`: `ds.spatial` — `info()`, `upload()`, `register()`, `upload_and_register()`,
@@ -135,11 +187,46 @@ Each line names the test that holds it.
   *"testMaterializeSchedulesJobAboveInlineLimit"*.
 - `rowsForAnnotationIds` handles missing ids, empty input, and an empty store — *"testRowsForAnnotationIdsHandlesMissingAndEmpty"*.
 
+**Value providers (annotation plugin `test/test_value_providers.py`, with a fake provider)**
+- A virtual property filter resolves like a gate, combines with stored filters, and an
+  unknown key is a 400 — *"testVirtualPropertyFilterResolvesLikeAGate"*.
+- The list page carries virtual values for rows with and without a value document, and
+  refuses to sort by one — *"testListPageCarriesVirtualValues"*.
+- Gates take a virtual axis — *"testAnalysisGateOnVirtualAxis"*; color-by takes a virtual
+  path — *"testColorByVirtualPath"*; summary statistics too —
+  *"testSummaryStatisticsOnVirtualPath"*; the batch fetch merges them —
+  *"testBatchValuesIncludeVirtualPath"*; with no provider every path is stored —
+  *"testStoredPathsUntouchedWithoutProviders"*.
+
+**Spatial provider, score, differential (`test/test_phase2.py`)**
+- `["spatial", gene]` filters, gates, list values and summary statistics through the real
+  store; unknown gene 400 — *"testVirtualPathFilterAndGate"*, *"testVirtualPathInListPageAndSummary"*.
+- A dataset without a store answers nothing — *"testProviderWithoutStoreAnswersNothing"*.
+- Score writes one sub-value (dense, mean by default) and rejects bad names/methods —
+  *"testScoreWritesOneSubValue"*.
+- Differential ranks correctly, refuses tiny groups, schedules a job that stores the table
+  and carries filters not rows — *"testDifferentialRanksAndSchedules"*.
+
 **Python (`nimbusimage/tests/test_spatial.py`)**
 - 404 → None, other errors propagate — *"test_info_returns_none_when_unregistered"*, *"test_info_reraises_other_errors"*.
 - Upload + register, route shapes, filters default, job wait only when scheduled —
   *"test_upload_and_register"*, *"test_reads_hit_the_expected_routes"*,
   *"test_aggregate_sends_filters_or_empty_object"*, *"test_materialize_waits_for_job_only_when_scheduled"*.
+
+**Frontend, Phase 2**
+- The store answers for the pseudo-property and names virtual paths — *"answers for the spatial pseudo-property and names its paths"*.
+- Adding live columns shows them, lists them, and fetches values below the stub threshold —
+  *"adds live columns: shown, listed among computed paths, and fetched below the stub threshold"*; not wholesale in stub mode —
+  *"does not fetch wholesale in stub-only mode (the visible fetch handles it)"*; a displayed
+  virtual column survives reload and can be removed — *"keeps a displayed virtual column across a reload and can remove it"*.
+- Measurements groups virtual columns without a Run button — *"lists virtual spatial columns under one group without a Run button"*.
+- Genes dialog: live mode writes nothing server-side — *"adds live columns by default, with no server write"*; score mode —
+  *"scores a gene set into its own measurement"*.
+- Compare dialog: polls the job for the table — *"compares A against everything else and polls the job for the table"*;
+  group B tags and the cap — *"sends the picked tags as group B and refuses to run without any"*; failures and close —
+  *"reports a failed job and a rejected request, and stops polling on close"*; CSV —
+  *"downloads the ranked table as CSV"*.
+- API routes — *"score, differential and fetchJob use the documented routes"*.
 
 **Frontend**
 - 404 → null, other errors rethrown; request bodies — *"fetchInfo returns null for 404 and rethrows anything else"*, *"searchFeatures passes search and limit as query params"*, *"aggregate and materialize post the documented bodies"*.

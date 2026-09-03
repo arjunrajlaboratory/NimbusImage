@@ -19,6 +19,7 @@ if TYPE_CHECKING:  # pragma: no cover
     pass
 
 DEFAULT_PROPERTY_NAME = "Gene Expression"
+DEFAULT_SCORE_PROPERTY_NAME = "Gene set scores"
 
 
 class SpatialAccessor:
@@ -128,3 +129,57 @@ class SpatialAccessor:
         if wait and result.get("jobId"):
             Job(self._gc, self._gc.get(f"job/{result['jobId']}")).wait()
         return result
+
+    def score(
+        self,
+        symbols: list[str],
+        name: str,
+        method: str = "mean",
+        property_name: str = DEFAULT_SCORE_PROPERTY_NAME,
+        wait: bool = True,
+    ) -> dict:
+        """Write a gene-set score (``mean`` or ``sum`` of the features'
+        counts per cell) as sub-value ``name`` of a property. Same job
+        behaviour as ``materialize``."""
+        result = self._gc.post(
+            f"{self._base}/score",
+            json={
+                "features": symbols, "name": name, "method": method,
+                "propertyName": property_name,
+            },
+        )
+        if wait and result.get("jobId"):
+            Job(self._gc, self._gc.get(f"job/{result['jobId']}")).wait()
+        return result
+
+    def differential(
+        self,
+        filters_a: dict,
+        filters_b: dict | None = None,
+        max_features: int = 50,
+        wait: bool = True,
+    ) -> dict:
+        """Rank features by differential expression (Welch t-test) between
+        the cells matching ``filters_a`` and those matching ``filters_b``
+        (``None`` = every other cell). Runs as a server job; with ``wait``
+        the ranked table is returned (``{nA, nB, featuresTested,
+        features: [...]}``), otherwise ``{jobId, nA}``."""
+        result = self._gc.post(
+            f"{self._base}/differential",
+            json={
+                "filtersA": filters_a, "filtersB": filters_b,
+                "maxFeatures": max_features,
+            },
+        )
+        if not wait:
+            return result
+        job = Job(self._gc, self._gc.get(f"job/{result['jobId']}"))
+        job.wait()
+        return self._gc.get(f"job/{result['jobId']}")["spatialResult"]
+
+    def virtual_path(self, symbol: str) -> list[str]:
+        """The property path that reads ``symbol`` straight from the table
+        (no materialization): usable wherever a property path is accepted —
+        filters, analysis axes, color-by, export columns."""
+        return ["spatial", symbol]
+

@@ -5,6 +5,7 @@ import {
   ISpatialAggregate,
   ISpatialFeature,
   ISpatialInfo,
+  ISpatialJob,
   ISpatialMaterializeResult,
 } from "./model";
 
@@ -65,5 +66,43 @@ export default class SpatialAPI {
       { features, propertyName },
     );
     return response.data as ISpatialMaterializeResult;
+  }
+
+  /** Gene-set score (mean or sum of the features per cell) as one sub-value
+   * `name` of a property; same job behaviour as materialize. */
+  async score(
+    datasetId: string,
+    features: string[],
+    name: string,
+    method: "mean" | "sum",
+    propertyName: string,
+  ): Promise<ISpatialMaterializeResult> {
+    const response = await this.client.post(`spatial/${datasetId}/score`, {
+      features,
+      name,
+      method,
+      propertyName,
+    });
+    return response.data as ISpatialMaterializeResult;
+  }
+
+  /** Schedule a differential-expression job; the table arrives on the job
+   * (`fetchJob`). `filtersB` null means every cell not in A. */
+  async differential(
+    datasetId: string,
+    filtersA: IAnnotationListFilters,
+    filtersB: IAnnotationListFilters | null,
+    maxFeatures: number,
+  ): Promise<{ jobId: string; nA: number }> {
+    const response = await this.client.post(
+      `spatial/${datasetId}/differential`,
+      { filtersA, filtersB, maxFeatures },
+    );
+    return response.data as { jobId: string; nA: number };
+  }
+
+  async fetchJob(jobId: string): Promise<ISpatialJob> {
+    const response = await this.client.get(`job/${jobId}`);
+    return response.data as ISpatialJob;
   }
 }

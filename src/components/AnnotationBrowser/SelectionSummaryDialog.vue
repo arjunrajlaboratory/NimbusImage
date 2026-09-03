@@ -99,7 +99,27 @@
           </v-table>
 
           <template v-if="spatialStore.hasTable">
-            <v-list-subheader>Expression</v-list-subheader>
+            <div class="d-flex align-center">
+              <v-list-subheader>Expression</v-list-subheader>
+              <v-spacer />
+              <differential-expression-dialog
+                :filters-a="requestFilters"
+                :group-a-label="scopeLabel"
+              >
+                <template v-slot:activator="{ props: activatorProps }">
+                  <v-btn
+                    v-bind="activatorProps"
+                    variant="text"
+                    color="primary"
+                    size="small"
+                    prepend-icon="mdi-scale-balance"
+                    :disabled="scope === 'all'"
+                  >
+                    Compare expression…
+                  </v-btn>
+                </template>
+              </differential-expression-dialog>
+            </div>
             <spatial-feature-picker
               v-model="expressionSymbols"
               label="Genes from the spatial table"
@@ -220,6 +240,7 @@ import propertyStore from "@/store/properties";
 import annotationListServer from "@/store/annotationListServer";
 import spatialStore from "@/store/spatial";
 import SpatialFeaturePicker from "@/components/AnnotationBrowser/SpatialFeaturePicker.vue";
+import DifferentialExpressionDialog from "@/components/AnnotationBrowser/DifferentialExpressionDialog.vue";
 import {
   IAnnotationListFilters,
   IAnnotationSummary,
@@ -256,6 +277,17 @@ const propertyItems = computed(() =>
     value: serializePropertyPath(path),
   })),
 );
+
+// Human name of the summarized scope, for the comparison dialog.
+const scopeLabel = computed(() => {
+  if (scope.value === "selected") {
+    return `the ${selectedCount.value.toLocaleString()} selected objects`;
+  }
+  if (scope.value === "filtered") {
+    return "the filtered objects";
+  }
+  return "all objects";
+});
 
 const selectedPaths = computed(() =>
   selectedPathStrings.value.map(deserializePropertyPath),

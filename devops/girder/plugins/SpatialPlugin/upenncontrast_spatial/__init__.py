@@ -9,11 +9,18 @@ property. See ``codebaseDocumentation/SPATIAL_PLUGIN.md``.
 
 __version__ = "0.0.0"
 
+from girder.constants import AccessType
 from girder.plugin import GirderPlugin, getPlugin
 from girder.utility.model_importer import ModelImporter
+from girder_jobs.models.job import Job
+
+from upenncontrast_annotation.server.helpers.valueProviders import (
+    registerValueProvider,
+)
 
 from .server.api.spatial import Spatial
 from .server.models.registry import DatasetSpatial
+from .server.provider import PREFIX, SpatialValueProvider
 
 
 class UPennContrastSpatialPlugin(GirderPlugin):
@@ -27,3 +34,10 @@ class UPennContrastSpatialPlugin(GirderPlugin):
             "dataset_spatial", DatasetSpatial, plugin="upenncontrast_spatial"
         )
         info["apiRoot"].spatial = Spatial()
+        # ["spatial", "<symbol>"] becomes a property path everywhere the
+        # annotation plugin reads one (analysis axes, filters, color-by, the
+        # list page, batch values, the selection summary).
+        registerValueProvider(PREFIX, SpatialValueProvider())
+        # The differential job stores its ranked table on the job document;
+        # Girder's job model only returns whitelisted fields over REST.
+        Job().exposeFields(level=AccessType.READ, fields={"spatialResult"})

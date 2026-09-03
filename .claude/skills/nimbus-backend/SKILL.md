@@ -410,6 +410,20 @@ return orjson.dumps(
 )
 ```
 
+## Virtual property paths (`helpers/valueProviders.py`)
+
+A property path whose first segment is a registered prefix is answered by another
+plugin's provider, not Mongo. If you add a new consumer of property paths (anything that
+reads `values.<path>` or filters/sorts on one), route it through the hook or refuse
+virtual paths explicitly — the six existing consumers are listed in
+`codebaseDocumentation/SPATIAL_PLUGIN.md` "Phase 2". Two traps from wiring them:
+
+- Providers key by id **string**; Mongo paths yield ObjectIds. `colorByProperty`'s
+  membership guard compared the two and silently emptied the map ("No values found").
+  Convert at the boundary.
+- `validateMultiple` in the property-values model lets the STORED sub-dict win on merge,
+  so a virtual path must never be persisted through it — providers are read-only.
+
 ## A second plugin next to `upenncontrast_annotation`
 
 `upenncontrast_spatial` (`devops/girder/plugins/SpatialPlugin/`) is the template:

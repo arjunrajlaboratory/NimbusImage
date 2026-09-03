@@ -1030,6 +1030,9 @@ class Annotation(Resource):
             self._annotationModel.resolveListGateConstraints(
                 datasetId, filters
             )
+            # Property filters on virtual paths (valueProviders) resolve to
+            # id clauses the same way; an unknown virtual key is a 400.
+            self._annotationModel.resolveProviderFilters(datasetId, filters)
         except ValueError as exc:
             raise RestException(str(exc), code=400)
         return bodyJson, datasetId, filters

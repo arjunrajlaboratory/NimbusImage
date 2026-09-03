@@ -10,6 +10,7 @@ from girder.utility.acl_mixin import AccessControlMixin
 from ..helpers.aggregation import AGGREGATION_MAX_TIME_MS
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
+from ..helpers import valueProviders
 
 
 class PropertySchema:
@@ -146,7 +147,11 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
         # Dict projection so _id is explicitly excluded: a list (inclusion)
         # projection leaves Mongo's default _id:1 in place, leaking the value
         # doc's id the docstring promises not to return.
+        virtualPaths = []
         if propertyPaths:
+            propertyPaths, virtualPaths = valueProviders.splitPaths(
+                propertyPaths
+            )
             fields = {"_id": 0, "annotationId": 1}
             for path in propertyPaths:
                 fields["values." + ".".join(path)] = 1
@@ -161,7 +166,29 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
                 "datasetId": datasetId,
                 "annotationId": {"$in": chunk},
             }
-            results.extend(self.find(query, fields=fields))
+            if propertyPaths or not virtualPaths:
+                results.extend(self.find(query, fields=fields))
+        # Virtual paths (valueProviders): merged into the returned documents
+        # so a client working from this fetch sees a gene column exactly like
+        # a stored value; an annotation without a value document gets one.
+        if virtualPaths:
+            byAnnotation = {doc["annotationId"]: doc for doc in results}
+            for path in virtualPaths:
+                provider = valueProviders.providerFor(path)
+                values = provider.valuesForIds(
+                    datasetId, path, [str(i) for i in annotationIds]
+                )
+                for annotationId, value in zip(annotationIds, values):
+                    if value is None:
+                        continue
+                    doc = byAnnotation.get(annotationId)
+                    if doc is None:
+                        doc = {"annotationId": annotationId, "values": {}}
+                        byAnnotation[annotationId] = doc
+                        results.append(doc)
+                    valueProviders.nestValue(
+                        doc.setdefault("values", {}), path, value
+                    )
         return results
 
     def valuesForPath(self, datasetId, propertyPath):

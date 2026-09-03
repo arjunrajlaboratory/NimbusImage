@@ -59,4 +59,30 @@ describe("SpatialAPI", () => {
       propertyName: "Panel",
     });
   });
+
+  it("score, differential and fetchJob use the documented routes", async () => {
+    const { api, client } = makeApi({
+      post: async () => ({ data: { jobId: "j1", nA: 3 } }),
+      get: async () => ({ data: { _id: "j1", status: 3, spatialResult: {} } }),
+    });
+    await api.score("ds", ["CD3E"], "T", "mean", "Gene set scores");
+    expect(client.post).toHaveBeenCalledWith("spatial/ds/score", {
+      features: ["CD3E"],
+      name: "T",
+      method: "mean",
+      propertyName: "Gene set scores",
+    });
+    const filtersA = { tags: { values: ["B"], exclusive: false } };
+    expect(await api.differential("ds", filtersA, null, 50)).toEqual({
+      jobId: "j1",
+      nA: 3,
+    });
+    expect(client.post).toHaveBeenCalledWith("spatial/ds/differential", {
+      filtersA,
+      filtersB: null,
+      maxFeatures: 50,
+    });
+    expect((await api.fetchJob("j1")).status).toBe(3);
+    expect(client.get).toHaveBeenCalledWith("job/j1");
+  });
 });

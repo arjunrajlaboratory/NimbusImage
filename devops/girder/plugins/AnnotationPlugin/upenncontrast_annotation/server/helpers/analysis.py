@@ -436,3 +436,26 @@ def resolve_gate_ids(docs, values_by_id, plot):
     )
     inside = points_in_polygon(xs, ys, gate["vertices"])
     return [docs[i]["id"] for i in np.flatnonzero(inside)]
+
+
+def describe_values(values):
+    """count/mean/std/min/max of the finite numeric entries of `values`, with
+    the selection summary's reading: non-numbers and NaN are missing, `std` is
+    the sample standard deviation (None below two values), everything None at
+    count 0."""
+    numbers = np.array([
+        float(value) for value in values
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        and not math.isnan(value)
+    ], dtype=np.float64)
+    count = int(len(numbers))
+    if count == 0:
+        return {"count": 0, "mean": None, "std": None,
+                "min": None, "max": None}
+    return {
+        "count": count,
+        "mean": float(numbers.mean()),
+        "std": float(numbers.std(ddof=1)) if count > 1 else None,
+        "min": float(numbers.min()),
+        "max": float(numbers.max()),
+    }

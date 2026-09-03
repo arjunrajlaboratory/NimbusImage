@@ -32,6 +32,8 @@ setup(
         "upenncontrast_annotation",
         "numpy",
         "orjson",
+        # Welch t-test p-values (differential.py); already in the Girder image.
+        "scipy",
         # zarr 2 reads the zarr v2 stores anndata writes; large_image already
         # pins this major in the Girder image.
         "zarr>=2.18,<3",

@@ -27,6 +27,7 @@ from ..helpers.colormaps import (
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
+from ..helpers import valueProviders
 from ..helpers.annotationRaster import (
     bumpDatasetRasterVersion,
     bumpGlobalRasterVersion,
@@ -489,12 +490,15 @@ class Annotation(AccessControlMixin, ProxiedModel):
         the property-values collection when any axis is a property axis.
         """
         propertyPaths = {}
+        virtualPaths = {}
         categoricalKeys = set()
         for axis in axes:
-            if axis["type"] == "property":
-                propertyPaths[".".join(axis["path"])] = axis["path"]
-            else:
+            if axis["type"] != "property":
                 categoricalKeys.add(axis["key"])
+            elif valueProviders.isVirtualPath(axis["path"]):
+                virtualPaths[".".join(axis["path"])] = axis["path"]
+            else:
+                propertyPaths[".".join(axis["path"])] = axis["path"]
 
         fields = {"_id": 1}
         if "tags" in categoricalKeys:
@@ -530,7 +534,69 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 valuesById[str(doc["annotationId"])] = (
                     doc.get("values") or {}
                 )
+        # Virtual axes (valueProviders): the provider's dense answer is nested
+        # under the same {prefix: {sub: value}} shape the pure helpers read,
+        # so a gene axis and a property axis are indistinguishable downstream.
+        for path in virtualPaths.values():
+            provider = valueProviders.providerFor(path)
+            for annotationId, value in provider.values(
+                datasetId, path
+            ).items():
+                valueProviders.nestValue(
+                    valuesById.setdefault(annotationId, {}), path, value
+                )
         return docs, valuesById
+
+    def resolveProviderFilters(self, datasetId, filters):
+        """Turn property filters on VIRTUAL paths (valueProviders) into
+        `gateMatchClauses`, in place, leaving the stored-path filters for the
+        Mongo pipelines. Same treatment as gate definitions: the provider
+        resolves the predicate to an id set once per request, and the clause
+        is the smaller of the set and its complement (_idSelector). A filter
+        matching nothing becomes a match-none clause, deliberately."""
+        propertyFilters = filters.get("propertyFilters")
+        if not propertyFilters:
+            return filters
+        stored = []
+        for propertyFilter in propertyFilters:
+            provider = valueProviders.providerFor(propertyFilter["path"])
+            if provider is None:
+                stored.append(propertyFilter)
+                continue
+            matching = [
+                ObjectId(i) for i in provider.matchingIds(
+                    datasetId, propertyFilter["path"], propertyFilter
+                )
+            ]
+            selector = self._idSelector(datasetId, matching)
+            if selector is None:
+                continue  # every annotation matches: no constraint
+            filters.setdefault("gateMatchClauses", []).append(
+                {"_id": selector}
+            )
+        if stored:
+            filters["propertyFilters"] = stored
+        else:
+            del filters["propertyFilters"]
+        return filters
+
+    def _fillVirtualValues(self, datasetId, rows, propertyPaths):
+        """Add the virtual-path values to page rows (list of documents with
+        an `_id`), one provider call per path for the whole page."""
+        _, virtualPaths = valueProviders.splitPaths(propertyPaths or [])
+        if not virtualPaths:
+            return rows
+        rows = list(rows)
+        annotationIds = [str(row["_id"]) for row in rows]
+        for path in virtualPaths:
+            provider = valueProviders.providerFor(path)
+            values = provider.valuesForIds(datasetId, path, annotationIds)
+            for row, value in zip(rows, values):
+                if value is not None:
+                    valueProviders.nestValue(
+                        row.setdefault("values", {}), path, value
+                    )
+        return rows
 
     def resolveListGateConstraints(self, datasetId, filters):
         """Convert `filters['analysisGates']` (gate DEFINITIONS, validated at
@@ -971,18 +1037,17 @@ class Annotation(AccessControlMixin, ProxiedModel):
         would cost a second full scan per request).
         """
         selector = None
+        matchingIds = None
         facetFilters = filters
         if filters.get("propertyFilters"):
-            selector = self._idSelector(
-                datasetId, self._matchingObjectIds(datasetId, filters)
-            )
+            matchingIds = self._matchingObjectIds(datasetId, filters)
+            selector = self._idSelector(datasetId, matchingIds)
             facetFilters = (
                 {"gateMatchClauses": [{"_id": selector}]} if selector else {}
             )
         elif self._hasAnnotationFieldFilters(filters):
-            selector = self._idSelector(
-                datasetId, self._matchingObjectIds(datasetId, filters)
-            )
+            matchingIds = self._matchingObjectIds(datasetId, filters)
+            selector = self._idSelector(datasetId, matchingIds)
 
         pipeline = self._buildListMatchStages(datasetId, facetFilters)
         pipeline.append({"$facet": {
@@ -1002,7 +1067,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 for doc in facets["tags"]
             ],
             "properties": self._propertyStats(
-                datasetId, selector, propertyPaths, total
+                datasetId, selector, matchingIds, propertyPaths, total
             ),
         }
 
@@ -1062,20 +1127,45 @@ class Annotation(AccessControlMixin, ProxiedModel):
             )
         return {operator: selected}
 
-    def _propertyStats(self, datasetId, selector, propertyPaths, total):
+    def _propertyStats(self, datasetId, selector, matchingIds, propertyPaths,
+                       total):
         """Per-path statistics over the property values of the annotations
         `selector` picks (an `$in`/`$nin` clause from _idSelector; None =
-        every annotation in the dataset)."""
+        every annotation in the dataset). Virtual paths (valueProviders) are
+        computed in numpy from the provider's dense answer, restricted to
+        `matchingIds` (the same set the selector expresses)."""
         empty = {"count": 0, "mean": None, "std": None,
                  "min": None, "max": None}
         if not propertyPaths or total == 0:
             return [{"path": path, **empty} for path in propertyPaths]
+
+        statsByKey = {}
+        storedPaths, virtualPaths = valueProviders.splitPaths(propertyPaths)
+        if virtualPaths:
+            selected = (
+                None if matchingIds is None
+                else {str(i) for i in matchingIds}
+            )
+            for path in virtualPaths:
+                values = valueProviders.providerFor(path).values(
+                    datasetId, path
+                )
+                statsByKey[".".join(path)] = analysis.describe_values(
+                    value for annotationId, value in values.items()
+                    if selected is None or annotationId in selected
+                )
+        if not storedPaths:
+            return [
+                {"path": path, **statsByKey[".".join(path)]}
+                for path in propertyPaths
+            ]
 
         match = {"datasetId": datasetId}
         if selector is not None:
             match["annotationId"] = selector
 
         group = {"_id": None}
+        propertyPaths, requestedPaths = storedPaths, propertyPaths
         for index, path in enumerate(propertyPaths):
             ref = "$values." + ".".join(path)
             # $avg/$min/$max/$stdDevSamp skip nulls, so mapping every
@@ -1097,19 +1187,18 @@ class Annotation(AccessControlMixin, ProxiedModel):
             self._pvModel.collection,
             [{"$match": match}, {"$group": group}],
         ))
-        if not result:
-            return [{"path": path, **empty} for path in propertyPaths]
-        stats = result[0]
-        return [
-            {
-                "path": path,
+        stats = result[0] if result else None
+        for index, path in enumerate(propertyPaths):
+            statsByKey[".".join(path)] = empty if stats is None else {
                 "count": stats[f"count{index}"],
                 "mean": stats[f"mean{index}"],
                 "std": stats[f"std{index}"],
                 "min": stats[f"min{index}"],
                 "max": stats[f"max{index}"],
             }
-            for index, path in enumerate(propertyPaths)
+        return [
+            {"path": path, **statsByKey[".".join(path)]}
+            for path in requestedPaths
         ]
 
     def listPosition(self, datasetId, filters, sort, annotationId):
@@ -1339,6 +1428,14 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def listPage(self, datasetId, filters, sort, propertyPaths,
                  offset, limit):
+        storedPaths, _ = valueProviders.splitPaths(propertyPaths or [])
+        rows = self._listPageRows(
+            datasetId, filters, sort, storedPaths, offset, limit
+        )
+        return self._fillVirtualValues(datasetId, rows, propertyPaths)
+
+    def _listPageRows(self, datasetId, filters, sort, propertyPaths,
+                      offset, limit):
         skip = max(0, offset)
         if not self._needsPropertyBeforePage(filters, sort):
             # Sort by an annotation field (the {datasetId,_id} index orders
@@ -1489,9 +1586,19 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # the clearing pass can be skipped, hiding an uncovered annotation's
         # stale color. Last value wins, deterministically by cursor order.
         valueByAnnotation = {}
-        for annotationId, value in self._pvModel.valuesForPath(
-            datasetId, propertyPath
-        ):
+        provider = valueProviders.providerFor(propertyPath)
+        if provider is not None:
+            # Providers key by id STRING; the membership guard and the color
+            # writes below work in ObjectIds like the stored-value path.
+            pairs = (
+                (ObjectId(annotationId), value)
+                for annotationId, value in provider.values(
+                    datasetId, propertyPath
+                ).items()
+            )
+        else:
+            pairs = self._pvModel.valuesForPath(datasetId, propertyPath)
+        for annotationId, value in pairs:
             valueByAnnotation[annotationId] = value
 
         # Membership guard: drop values whose annotation is not (or is no

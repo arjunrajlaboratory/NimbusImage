@@ -205,3 +205,62 @@ describe("fetchPropertyValues readiness signal", () => {
     expect(properties.propertyValuesDatasetId).toBeNull();
   });
 });
+
+describe("virtual (spatial table) property paths", () => {
+  beforeEach(() => {
+    getPropertyValuesForIds.mockReset().mockResolvedValue([]);
+    properties.resetPropertyState();
+    properties.hydrateDisplayedPropertyPaths([]);
+    properties.setVirtualPropertyPaths([]);
+    annotationMock.stubOnlyMode = true;
+    (annotationMock as any).allAnnotationIds = ["a1", "a2"];
+  });
+
+  it("answers for the spatial pseudo-property and names its paths", () => {
+    const pseudo = properties.getPropertyById("spatial");
+    expect(pseudo?.name).toBe("Spatial table");
+    expect(properties.getFullNameFromPath(["spatial", "CD3E"])).toBe(
+      "Spatial table / CD3E",
+    );
+    expect(properties.getPropertyById("nope")).toBeNull();
+  });
+
+  it("adds live columns: shown, listed among computed paths, and fetched below the stub threshold", async () => {
+    annotationMock.stubOnlyMode = false;
+    getPropertyValuesForIds.mockResolvedValue([
+      { annotationId: "a1", values: { spatial: { CD3E: 3 } } },
+    ]);
+    await properties.addVirtualPropertyPaths([["spatial", "CD3E"]]);
+    expect(properties.displayedPropertyPaths).toEqual([["spatial", "CD3E"]]);
+    expect(properties.computedPropertyPaths).toContainEqual([
+      "spatial",
+      "CD3E",
+    ]);
+    expect(getPropertyValuesForIds).toHaveBeenCalledWith(
+      "ds1",
+      ["a1", "a2"],
+      [["spatial", "CD3E"]],
+    );
+    expect(properties.propertyValues.a1).toEqual({ spatial: { CD3E: 3 } });
+  });
+
+  it("does not fetch wholesale in stub-only mode (the visible fetch handles it)", async () => {
+    await properties.addVirtualPropertyPaths([["spatial", "MS4A1"]]);
+    expect(getPropertyValuesForIds).not.toHaveBeenCalled();
+    expect(properties.allVirtualPropertyPaths).toEqual([["spatial", "MS4A1"]]);
+  });
+
+  it("keeps a displayed virtual column across a reload and can remove it", async () => {
+    // A persisted configuration restores displayed paths; the virtual set
+    // starts empty but the union still lists the column.
+    properties.hydrateDisplayedPropertyPaths([["spatial", "CD19"]]);
+    expect(properties.allVirtualPropertyPaths).toEqual([["spatial", "CD19"]]);
+    expect(properties.computedPropertyPaths).toContainEqual([
+      "spatial",
+      "CD19",
+    ]);
+    properties.removeVirtualPropertyPath(["spatial", "CD19"]);
+    expect(properties.displayedPropertyPaths).toEqual([]);
+    expect(properties.allVirtualPropertyPaths).toEqual([]);
+  });
+});

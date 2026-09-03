@@ -179,8 +179,16 @@ ds.spatial.aggregate(["CD3E", "MS4A1"],
 ds.spatial.materialize(["CD3E", "MS4A1", "CD19"])     # -> dense sub-values of a property
 ```
 
-In the app: Measurements tab → **Add genes** (materialize a panel), and the Selection
-summary's **Expression** section (mean and % expressing for picked genes over the current
+Any gene is also a **property path** without copying: `["spatial", "CD3E"]` works in
+filters, analysis gates and axes, color-by, the object list and the summary
+(`ds.spatial.virtual_path("CD3E")`; e.g. `ds.annotations.list(filters={"propertyFilters":
+[{"path": ["spatial", "CD3E"], "mode": "range", "min": 3}]})`). Gene-set scores:
+`ds.spatial.score(["CD3E", "CD2"], "T cell")`. Differential expression between two filter
+objects (Welch t, a server job): `ds.spatial.differential(filters_a, filters_b=None)`.
+
+In the app: Measurements tab → **Genes from spatial table** (live columns, copy into a
+measurement, or a gene-set score), and the Selection summary's **Expression** section
+with **Compare expression…** (mean and % expressing for picked genes over the current
 selection, filter, or gate). `--no-upload` builds the file only. Requires `anndata`.
 
 ## 8. Traps (each cost real time)
