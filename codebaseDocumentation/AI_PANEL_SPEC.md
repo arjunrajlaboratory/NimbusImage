@@ -733,6 +733,9 @@ Destructive paths:
   active coloring".
 - The tool is gated and validates its input before any backend call —
   "color_annotations_by_property is gated and validates its input".
+- The approval card's one-liner carries the irreversibility warning (it is
+  all the user sees before approving; the dialog says as much) —
+  "warns that property recoloring is irreversible on the approval card".
 
 Approval surface:
 

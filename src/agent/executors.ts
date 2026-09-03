@@ -3135,8 +3135,14 @@ export function describeAgentToolCall(name: string, input: any): string {
         input?.randomize ? "randomly" : input?.color ?? "by layer color"
       }`;
     case "color_annotations_by_property": {
+      // This line is all the approval card shows, so it must carry the
+      // warning the Color by Property dialog gives: the write replaces
+      // every annotation color and is not on the undo stack.
       if (input?.clear) {
-        return "Remove the property-based coloring";
+        return (
+          "Remove the property-based coloring — resets every annotation " +
+          "to its layer color; cannot be undone"
+        );
       }
       // Prefer the human-facing property name over raw path segments (the
       // first segment is a property id); never throw on malformed input.
@@ -3152,7 +3158,10 @@ export function describeAgentToolCall(name: string, input: any): string {
           label = path.join(" / ");
         }
       }
-      return `Color all annotations by ${label || "a property"}`;
+      return (
+        `Color all annotations by ${label || "a property"} — overwrites ` +
+        "every existing annotation color; cannot be undone"
+      );
     }
     case "tag_annotations":
       return `${

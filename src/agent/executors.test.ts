@@ -352,6 +352,20 @@ describe("describeAgentToolCall", () => {
       "Zoom to level 3",
     );
   });
+
+  it("warns that property recoloring is irreversible on the approval card", () => {
+    // This line is all the gated approval card shows; without the warning
+    // the user gets less than the Color by Property dialog tells them
+    // (review finding, PR #1345 round 4).
+    expect(
+      describeAgentToolCall("color_annotations_by_property", {
+        propertyPath: ["p1", "Area"],
+      }),
+    ).toMatch(/overwrites every existing annotation color; cannot be undone/);
+    expect(
+      describeAgentToolCall("color_annotations_by_property", { clear: true }),
+    ).toMatch(/cannot be undone/);
+  });
 });
 
 describe("isGatedTool", () => {
