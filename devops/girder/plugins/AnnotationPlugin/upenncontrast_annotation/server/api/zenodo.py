@@ -94,7 +94,13 @@ class Zenodo(Resource):
                     files.append({
                         'name': f['name'],
                         'size': f.get('size', 0),
-                        'type': 'image',
+                        # The spatial plugin's stores live in the dataset
+                        # folder too, so the record carries the matrix and
+                        # the molecules along with the images.
+                        'type': (
+                            'spatial' if f['name'].endswith('.zarr.zip')
+                            else 'image'
+                        ),
                     })
 
             files.append({

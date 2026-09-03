@@ -453,6 +453,21 @@ export type TRequestablePalette =
   | "analysisPanel"
   | "annotationPanel";
 
+/** A share-view link (GET share_link). The token is only present on the
+ * create response. */
+export interface IShareLink {
+  _id: string;
+  datasetId: string;
+  datasetViewId: string;
+  configurationId: string;
+  label: string;
+  created: string;
+  expiresAt: string | null;
+  expired: boolean;
+  createdBy: string;
+  token?: string;
+}
+
 export type TVolumeViewMode = "2d" | "3d";
 
 export type TVolumeBlendMode = "composite" | "mip";

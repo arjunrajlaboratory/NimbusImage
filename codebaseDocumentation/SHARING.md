@@ -170,6 +170,47 @@ Makes a dataset and all associated resources public or private.
 - All DatasetViews for the dataset
 - All Configurations used by those DatasetViews
 
+## Share links (share a view without making the dataset public)
+
+A **share link** is a capability URL — `#/shared/<token>` (or `#/embed/<token>` for the
+chrome-less viewer) — that opens one dataset view read-only for anyone who has it. It does
+not make the dataset public and does not require the recipient to have an account.
+
+**How the bearer is bounded.** A Girder token's scope is global (a `DATA_READ` token for
+the owner would read everything the owner can), so each link creates a hidden Girder user
+`share-<hex>` (random password, `shareLink` marker), grants it READ on the dataset folder,
+the dataset view and its configuration through the same `setUserAccess` calls the named
+sharing uses, and mints a `DATA_READ`-scoped Girder token for *that* user. The bearer sees
+exactly this dataset (ACL) and cannot write (scope: write endpoints answer 401). Revoking
+deletes the user — Girder's `cleanupDeletedEntity` drops its ACL entries — and its tokens.
+The link user is `public: False` but does exist in the user collection; it never receives
+storage and cannot be signed into (nobody knows its password).
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| `POST` | `/api/v1/share_link` `{datasetViewId, days? (0 = never, ≤ 3650), label?}` | ADMIN on the dataset | Create; the response carries `token` **once** |
+| `GET` | `/api/v1/share_link?datasetId=` | READ on the dataset | Live links (no tokens) |
+| `GET` | `/api/v1/share_link/me` | the bearer | Which view the request's token opens; 404 for an ordinary login or an expired link |
+| `DELETE` | `/api/v1/share_link/{id}` | ADMIN on the dataset | Revoke (idempotent) |
+
+Model: `server/models/shareLink.py` (`share_link` collection: `datasetId, datasetViewId,
+configurationId, linkUserId, tokenId, label, createdBy, created, expiresAt, revoked`).
+Expiry is enforced by Girder on the token and reported by `/me`; datetimes are compared as
+aware UTC (Girder's token expiry is aware, Mongo's round trip may be naive).
+
+**Client.** `src/store/ShareLinkAPI.ts`; `store.openShareLink(token)` sets the token on
+the REST client **in memory only** (the client persists a token solely on its own login
+event, so a signed-in user's stored login survives a visit), fetches the link user and asks
+`/me`; `src/views/SharedView.vue` then navigates to the dataset view, with `?embed=1` on
+the embed route, which App.vue reads to hide the toolbar (`embedMode`). The Share dialog's
+**Share links** section (admins) lists, creates (label, 7/30/90 days/never) and revokes
+links; the URL is shown once with its embed variant.
+
+Tests: `test/test_share_link.py` (bearer reads only the shared dataset and cannot write or
+mint links; create needs ADMIN and valid input; list/revoke; ordinary login is not a link;
+expired links refused), `ShareLinkAPI.test.ts`, `SharedView.test.ts`,
+`ShareDataset.test.ts`.
+
 ## Frontend Implementation
 
 ### Component: `ShareDataset.vue`

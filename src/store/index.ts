@@ -24,6 +24,7 @@ import { v4 as uuidv4 } from "uuid";
 
 import AnnotationsAPI from "./AnnotationsAPI";
 import SpatialAPI from "./SpatialAPI";
+import ShareLinkAPI from "./ShareLinkAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ToolSuggestionsAPI from "./ToolSuggestionsAPI";
 import AgentAPI from "./AgentAPI";
@@ -80,6 +81,7 @@ import {
   IUserStorageQuota,
   TAnnotationBrowserTab,
   TRequestablePalette,
+  IShareLink,
 } from "./model";
 import {
   buildAnnotationBrowserConfig,
@@ -180,7 +182,17 @@ function storeToken(apiRoot: string, token: string) {
   localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(value));
 }
 
+// While a share link's token is on the client (SHARING.md "Share links"),
+// the client's own bookkeeping must leave the stored login alone: a `user/me`
+// that comes back anonymous, or any 401, would otherwise wipe the token of a
+// user who is signed in on this browser — a visit to a dead link signed the
+// owner out of every other tab once.
+let sharedSession = false;
+
 function clearStoredToken() {
+  if (sharedSession) {
+    return;
+  }
   localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
@@ -268,6 +280,7 @@ export class Main extends VuexModule {
   api = new GirderAPI(this.girderRestProxy);
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
   spatialAPI = new SpatialAPI(this.girderRestProxy);
+  shareLinkAPI = new ShareLinkAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
   toolSuggestionsAPI = new ToolSuggestionsAPI(this.girderRestProxy);
   agentAPI = new AgentAPI(this.girderRestProxy);
@@ -1461,6 +1474,29 @@ export class Main extends VuexModule {
       }
       this.setRecentDatasetViewsImpl([]);
     }
+  }
+
+  /**
+   * Open the app as the bearer of a share link (SHARING.md "Share links").
+   * The token is set on the REST client in memory only: the client persists
+   * a token solely on its own login event, so a user who is signed in on this
+   * browser keeps their stored login for the next reload.
+   */
+  @Action({ rawError: true })
+  async openShareLink(token: string): Promise<IShareLink> {
+    sharedSession = true;
+    this.girderRest.token = token;
+    const user = await this.girderRest.fetchUser();
+    if (!user) {
+      throw new Error("This share link is no longer valid.");
+    }
+    await this.loggedIn(this.girderRest);
+    return await this.shareLinkAPI.me();
+  }
+
+  /** True once this page acts as a share link's bearer. */
+  get isSharedSession(): boolean {
+    return sharedSession;
   }
 
   @Action

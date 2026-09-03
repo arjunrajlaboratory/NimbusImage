@@ -23,7 +23,8 @@
     >
       <help-panel @close="helpPanelIsOpen = false" />
     </v-dialog>
-    <v-app-bar>
+    <!-- The embed route (a share link in an iframe) shows only the canvas. -->
+    <v-app-bar v-if="!embedMode">
       <v-tooltip text="NimbusImage home" :open-delay="500">
         <template v-slot:activator="{ props: activatorProps }">
           <v-toolbar-title v-bind="activatorProps" @click="goHome" class="logo">
@@ -1166,6 +1167,20 @@ function onShowInList() {
 }
 
 const routeName = computed(() => route.name);
+const embedMode = computed(() => route.query.embed === "1");
+
+// An embedded share link shows the canvas alone: no palettes either.
+watch(
+  embedMode,
+  (embedded) => {
+    if (embedded) {
+      paletteIds.forEach((id) => {
+        paletteOpen[id].value = false;
+      });
+    }
+  },
+  { immediate: true },
+);
 const isDatasetView = computed(() => routeName.value === "datasetview");
 
 const activeFilterCount = computed(() => filterStore.activeFilterCount);

@@ -1,0 +1,185 @@
+"""Share-view links: a hidden link user with READ on one dataset view and a
+DATA_READ token; bearers read that dataset and nothing else."""
+
+import json
+
+import pytest
+from pytest_girder.assertions import assertStatus, assertStatusOk
+
+from girder.models.folder import Folder
+from girder.models.token import Token
+from girder.models.user import User
+
+from upenncontrast_annotation.server.models.shareLink import (
+    ShareLink as ShareLinkModel,
+)
+
+from .test_sharing import createDatasetWithView
+
+
+def privateDatasetWithView(creator):
+    """createDatasetWithView puts the folder under the creator's Public
+    folder; sharing tests need it private."""
+    dataset, config, view = createDatasetWithView(creator)
+    return Folder().setPublic(dataset, False, save=True), config, view
+
+
+def request(server, method, path, user=None, token=None, body=None,
+            params=None):
+    kwargs = {"path": path, "method": method}
+    if user is not None:
+        kwargs["user"] = user
+    if token is not None:
+        kwargs["token"] = token
+    if body is not None:
+        kwargs.update(body=json.dumps(body), type="application/json")
+    if params is not None:
+        kwargs["params"] = params
+    return server.request(**kwargs)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestShareLink:
+    def _link(self, server, admin, view, **extra):
+        resp = request(server, "POST", "/share_link", user=admin,
+                       body={"datasetViewId": str(view["_id"]), **extra})
+        assertStatusOk(resp)
+        return resp.json
+
+    def testBearerReadsOnlyTheSharedDataset(self, admin, server):
+        dataset, config, view = privateDatasetWithView(admin)
+        other, _, otherView = privateDatasetWithView(admin)
+        link = self._link(server, admin, view, days=30, label="reviewers")
+        assert link["expiresAt"] is not None and link["expired"] is False
+        token = link["token"]
+        assert len(token) == 64
+
+        # The client bootstraps with user/me, which needs USER_INFO_READ.
+        whoami = request(server, "GET", "/user/me", token=token)
+        assertStatusOk(whoami)
+        assert whoami.json["login"].startswith("share-")
+        me = request(server, "GET", "/share_link/me", token=token)
+        assertStatusOk(me)
+        assert me.json["datasetViewId"] == str(view["_id"])
+        assert me.json["label"] == "reviewers"
+        assert "token" not in me.json
+
+        # The shared dataset, view and configuration read; the other dataset
+        # does not; writing is refused by the token's scope.
+        assertStatusOk(request(
+            server, "GET", "/folder/%s" % dataset["_id"], token=token
+        ))
+        assertStatusOk(request(
+            server, "GET", "/dataset_view/%s" % view["_id"], token=token
+        ))
+        assertStatusOk(request(
+            server, "GET", "/upenn_collection/%s" % config["_id"], token=token
+        ))
+        assertStatus(request(
+            server, "GET", "/folder/%s" % other["_id"], token=token
+        ), 403)
+        assertStatus(request(
+            server, "GET", "/dataset_view/%s" % otherView["_id"], token=token
+        ), 403)
+        assertStatus(request(
+            server, "PUT", "/folder/%s" % dataset["_id"], token=token,
+            params={"name": "renamed"},
+        ), 401)
+        # A share link cannot mint more links.
+        assertStatus(request(
+            server, "POST", "/share_link", token=token,
+            body={"datasetViewId": str(view["_id"])},
+        ), 401)
+
+    def testCreateNeedsAdminAndValidInput(self, admin, user, server):
+        dataset, config, view = privateDatasetWithView(admin)
+        assertStatus(request(
+            server, "POST", "/share_link", user=user,
+            body={"datasetViewId": str(view["_id"])},
+        ), 403)
+        for body in (
+            {},
+            {"datasetViewId": "nope"},
+            {"datasetViewId": str(view["_id"]), "days": -1},
+            {"datasetViewId": str(view["_id"]), "days": 99999},
+            {"datasetViewId": str(view["_id"]), "days": "soon"},
+            {"datasetViewId": str(view["_id"]), "label": "x" * 121},
+        ):
+            assertStatus(
+                request(server, "POST", "/share_link", user=admin, body=body),
+                400,
+            )
+        # No expiry: expiresAt is null but the token still has a lifetime.
+        link = self._link(server, admin, view)
+        assert link["expiresAt"] is None
+
+    def testListAndRevoke(self, admin, user, server):
+        dataset, config, view = privateDatasetWithView(admin)
+        first = self._link(server, admin, view, label="a")
+        second = self._link(server, admin, view, label="b")
+        listed = request(
+            server, "GET", "/share_link", user=admin,
+            params={"datasetId": str(dataset["_id"])},
+        )
+        assertStatusOk(listed)
+        assert [x["label"] for x in listed.json] == ["a", "b"]
+        assert all("token" not in x for x in listed.json)
+        # Listing needs READ on the dataset.
+        assertStatus(request(
+            server, "GET", "/share_link", user=user,
+            params={"datasetId": str(dataset["_id"])},
+        ), 403)
+
+        # Revoking needs ADMIN; afterwards the token is dead and the link
+        # user gone, and the link leaves the listing.
+        assertStatus(request(
+            server, "DELETE", "/share_link/%s" % first["_id"], user=user
+        ), 403)
+        assertStatusOk(request(
+            server, "DELETE", "/share_link/%s" % first["_id"], user=admin
+        ))
+        assertStatus(request(
+            server, "GET", "/share_link/me", token=first["token"]
+        ), 401)
+        assertStatus(request(
+            server, "GET", "/folder/%s" % dataset["_id"], token=first["token"]
+        ), 401)
+        assert User().findOne({"login": {"$regex": "^share-"}}) is not None
+        assert User().find({"login": {"$regex": "^share-"}}).count() == 1
+        listed = request(
+            server, "GET", "/share_link", user=admin,
+            params={"datasetId": str(dataset["_id"])},
+        )
+        assert [x["label"] for x in listed.json] == ["b"]
+        # Revoking twice is idempotent; an unknown id is a 404.
+        assertStatusOk(request(
+            server, "DELETE", "/share_link/%s" % first["_id"], user=admin
+        ))
+        assertStatus(request(
+            server, "DELETE", "/share_link/%s" % ("0" * 24), user=admin
+        ), 404)
+        assert second["token"]
+
+    def testOrdinaryLoginIsNotALink(self, admin, server):
+        resp = request(server, "GET", "/share_link/me", user=admin)
+        assertStatus(resp, 404)
+
+    def testExpiredLinkIsRefused(self, admin, server):
+        dataset, config, view = privateDatasetWithView(admin)
+        link = self._link(server, admin, view, days=1)
+        model = ShareLinkModel()
+        document = model.load(link["_id"])
+        import datetime
+        document["expiresAt"] = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(minutes=1)
+        )
+        model.save(document, validate=False)
+        assertStatus(request(
+            server, "GET", "/share_link/me", token=link["token"]
+        ), 404)
+        assert model.serialize(document)["expired"] is True
+        # The Girder token's own expiry is what Girder enforces on reads;
+        # revoke drops it regardless.
+        assert Token().load(link["token"], force=True, objectId=False)
