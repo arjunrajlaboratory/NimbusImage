@@ -554,16 +554,23 @@ def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
         # lose the molecules on the far side.
         touched = set(dirtyIndices)
         tileKeys = []
+        allBoxes = np.array(
+            [cell.bbox for cell in cells], dtype=np.float64
+        ).reshape(-1, 4)
         while True:
             tileKeys = tilesForBoxes(
                 transcripts, [cells[i].bbox for i in touched]
             )
             before = len(touched)
             for key in tileKeys:
-                bounds = tilePixelBounds(transcripts, key)
-                for i, cell in enumerate(cells):
-                    if _boxesIntersect(cell.bbox, bounds):
-                        touched.add(i)
+                left, top, right, bottom = tilePixelBounds(transcripts, key)
+                hits = np.nonzero(
+                    (allBoxes[:, 0] <= right) & (allBoxes[:, 2] >= left)
+                    & (allBoxes[:, 1] <= bottom) & (allBoxes[:, 3] >= top)
+                )[0]
+                touched.update(int(i) for i in hits)
+            # Each round only adds cells, so this terminates; in practice
+            # it stabilizes after one or two rounds.
             if len(touched) == before:
                 break
         dirtyIndices = touched

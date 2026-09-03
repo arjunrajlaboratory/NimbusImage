@@ -60,6 +60,8 @@ class TestShareLink:
         whoami = request(server, "GET", "/user/me", token=token)
         assertStatusOk(whoami)
         assert whoami.json["login"].startswith("share-")
+        # The marker the client keys its bearer-session behavior on.
+        assert whoami.json["shareLink"]["datasetId"] == str(dataset["_id"])
         me = request(server, "GET", "/share_link/me", token=token)
         assertStatusOk(me)
         assert me.json["datasetViewId"] == str(view["_id"])

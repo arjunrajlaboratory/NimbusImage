@@ -11,7 +11,9 @@ from `GET user` listings; they are plumbing, not people.
 
 from girder import events
 from girder.api.rest import getCurrentUser
+from girder.constants import AccessType
 from girder.exceptions import AccessException
+from girder.models.user import User
 
 DOWNLOAD_ROUTES = (
     "rest.get.folder/:id/download.before",
@@ -51,3 +53,6 @@ def bind():
     for name in DOWNLOAD_ROUTES:
         events.bind(name, HANDLER_NAME, refuseDownloadForLinkUsers)
     events.bind("rest.get.user.after", HANDLER_NAME, hideLinkUsersFromListing)
+    # Girder strips fields it does not know from user documents; the client
+    # reads `shareLink` off `user/me` to tell a bearer session from a login.
+    User().exposeFields(level=AccessType.READ, fields={"shareLink"})
