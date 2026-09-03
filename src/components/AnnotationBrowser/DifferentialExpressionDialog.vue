@@ -194,7 +194,9 @@ function pollJob(jobId: string, sequence: number) {
         return;
       }
       if (job.status === jobStates.success && job.spatialResult) {
-        result.value = job.spatialResult;
+        // The job document is shared with the recompute job; this dialog
+        // only ever polls jobs it scheduled, so the table is the DE one.
+        result.value = job.spatialResult as ISpatialDifferentialResult;
         running.value = false;
         return;
       }

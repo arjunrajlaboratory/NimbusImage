@@ -148,3 +148,31 @@ describe("SpatialAPI transcripts", () => {
     );
   });
 });
+
+describe("SpatialAPI table versions", () => {
+  it("uses the documented routes", async () => {
+    const client = {
+      get: vi.fn(async () => ({ data: { ok: 1 } })),
+      post: vi.fn(async () => ({ data: { ok: 2 } })),
+      delete: vi.fn(async () => ({ data: { ok: 3 } })),
+    } as any;
+    const api = new SpatialAPI(client);
+    await api.fetchVersions("ds");
+    expect(client.get).toHaveBeenCalledWith("spatial/ds/versions");
+    await api.fetchStaleness("ds");
+    expect(client.get).toHaveBeenCalledWith("spatial/ds/staleness");
+    await api.activateVersion("ds", "i1");
+    expect(client.post).toHaveBeenCalledWith("spatial/ds/versions/i1/activate");
+    await api.forgetVersion("ds", "i1");
+    expect(client.delete).toHaveBeenCalledWith("spatial/ds/versions/i1");
+    const request = {
+      label: "v2",
+      scope: "dirty" as const,
+      minQv: 20,
+      tags: ["cell"],
+      recomputeEmbeddings: false,
+    };
+    expect(await api.recompute("ds", request)).toEqual({ ok: 2 });
+    expect(client.post).toHaveBeenCalledWith("spatial/ds/recompute", request);
+  });
+});

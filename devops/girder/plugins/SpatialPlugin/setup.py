@@ -32,6 +32,11 @@ setup(
         "upenncontrast_annotation",
         "numpy",
         "orjson",
+        # Phase 4 recompute: polygon rasterization and the optional
+        # PCA/UMAP/k-means embeddings (all already in the Girder image).
+        "scikit-image",
+        "scikit-learn",
+        "umap-learn",
         # Welch t-test p-values (differential.py); already in the Girder image.
         "scipy",
         # zarr 2 reads the zarr v2 stores anndata writes; large_image already

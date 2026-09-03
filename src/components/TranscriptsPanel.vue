@@ -116,6 +116,8 @@
         {{ statusText }}
       </div>
 
+      <cell-table-card :visible="visible" />
+
       <v-card v-if="readout" variant="tonal" class="mt-3 pa-2 readout">
         <div class="d-flex align-center">
           <span
@@ -163,12 +165,14 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { debounce } from "lodash";
 import store from "@/store";
+import spatialStore from "@/store/spatial";
 import transcriptsStore, {
   DEFAULT_TRANSCRIPT_MIN_QV,
   MAX_TRANSCRIPT_GENES,
   TRANSCRIPT_POINT_BUDGETS,
 } from "@/store/transcripts";
 import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
+import CellTableCard from "@/components/CellTableCard.vue";
 import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
 
@@ -294,6 +298,7 @@ watch(
   () => {
     if (props.visible) {
       transcriptsStore.ensureSchema();
+      spatialStore.ensureInfo();
       if (results.value.length === 0) {
         runSearch("");
       }

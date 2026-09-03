@@ -215,6 +215,17 @@ so the cell is found geometrically). From Python: `ds.spatial.transcripts()`,
 `ds.spatial.transcript_genes("cd")`, `ds.spatial.transcript_points(["CD3E"], ["12,7"],
 level=0, min_qv=20)`.
 
+## 7d. Recompute counts after editing cells (`ds.spatial.recompute`)
+
+With both the table (§7b) and the transcripts (§7c) registered, edited polygons can be
+turned into a corrected matrix: in the Transcripts palette, **Cell table → Recompute
+counts…** (edited cells only, or a full rebuild; the previous table stays as a version
+you can switch back to). From Python: `ds.spatial.staleness()` (added / edited / removed
+cells since the table was built), `ds.spatial.recompute("v2", scope="dirty")`,
+`ds.spatial.versions()`, `ds.spatial.activate_version(item_id)`. Assignment is
+smallest-polygon-wins at image resolution, quality ≥ 20, genes only; cell types follow
+the cells' tags.
+
 ## 8. Traps (each cost real time)
 
 1. **`submit_values` does not overwrite.** Re-submitting an existing value is a silent

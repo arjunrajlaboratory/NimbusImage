@@ -35,6 +35,7 @@ class DatasetSpatial(Model):
 
     TABLE_FIELDS = (
         "itemId", "fileId", "schemaVersion", "nObs", "nVar", "obsColumns",
+        "label", "provenance", "activated",
     )
 
     def unregister(self, datasetId):
@@ -48,6 +49,7 @@ class DatasetSpatial(Model):
             return document
         for key in self.TABLE_FIELDS:
             document.pop(key, None)
+        document.pop("versions", None)
         return self.save(document)
 
     TRANSCRIPT_FIELDS = (
@@ -76,3 +78,85 @@ class DatasetSpatial(Model):
             self.remove(document)
             return document
         return self.save(document)
+
+    # ---- versions (Phase 4) ------------------------------------------------
+
+    VERSION_FIELDS = ("itemId", "fileId", "schemaVersion", "nObs", "nVar",
+                      "obsColumns")
+
+    def registerVersion(self, entry, label, provenance=None):
+        """Make `entry` the active table and keep the previous active table
+        (if any, and if it is a different item) as a version."""
+        now = datetime.datetime.utcnow()
+        document = self.forDataset(entry["datasetId"]) or {
+            "datasetId": entry["datasetId"], "created": now,
+        }
+        versions = list(document.get("versions", []))
+        if "fileId" in document and document["itemId"] != entry["itemId"]:
+            versions = [
+                v for v in versions if v["itemId"] != document["itemId"]
+            ] + [self._versionOf(document)]
+        versions = [v for v in versions if v["itemId"] != entry["itemId"]]
+        document.update(entry)
+        document["label"] = label
+        document["provenance"] = provenance or {}
+        document["activated"] = now
+        document["versions"] = versions
+        document["updated"] = now
+        return self.save(document)
+
+    def _versionOf(self, document):
+        return {
+            **{key: document[key] for key in self.VERSION_FIELDS
+               if key in document},
+            "label": document.get("label", "Table"),
+            "provenance": document.get("provenance", {}),
+            "created": document.get("activated", document.get("updated")),
+        }
+
+    def activateVersion(self, datasetId, itemId):
+        """Swap the active table with the version `itemId`; the active one
+        joins the versions. Returns the document, or None if unknown."""
+        document = self.forDataset(datasetId)
+        if document is None:
+            return None
+        if document.get("itemId") == itemId:
+            return document
+        match = [
+            v for v in document.get("versions", []) if v["itemId"] == itemId
+        ]
+        if not match:
+            return None
+        version = match[0]
+        others = [
+            v for v in document.get("versions", []) if v["itemId"] != itemId
+        ]
+        if "fileId" in document:
+            others.append(self._versionOf(document))
+        for key in self.TABLE_FIELDS:
+            document.pop(key, None)
+        document.update({key: version[key] for key in self.VERSION_FIELDS
+                         if key in version})
+        document["label"] = version.get("label", "Table")
+        document["provenance"] = version.get("provenance", {})
+        document["activated"] = datetime.datetime.utcnow()
+        document["versions"] = others
+        document["updated"] = document["activated"]
+        return self.save(document)
+
+    def forgetVersion(self, datasetId, itemId):
+        """Drop a non-active version. Returns the dropped version or None."""
+        document = self.forDataset(datasetId)
+        if document is None:
+            return None
+        match = [
+            v for v in document.get("versions", []) if v["itemId"] == itemId
+        ]
+        if not match:
+            return None
+        document["versions"] = [
+            v for v in document["versions"] if v["itemId"] != itemId
+        ]
+        document["updated"] = datetime.datetime.utcnow()
+        self.save(document)
+        return match[0]

@@ -269,3 +269,58 @@ class SpatialAccessor:
             )
         return result
 
+    # --- table versions and recompute (Phase 4) ---
+
+    def versions(self) -> dict:
+        """``{"active": {...}, "versions": [...]}``: the table every read
+        uses and the others kept beside it (itemId, label, provenance, nObs,
+        nVar, created)."""
+        return self._gc.get(f"{self._base}/versions")
+
+    def activate_version(self, item_id: str) -> dict:
+        """Make a kept version the active table; the active one is kept."""
+        return self._gc.post(f"{self._base}/versions/{item_id}/activate")
+
+    def forget_version(self, item_id: str) -> dict:
+        """Drop a non-active version from the registry (the item stays)."""
+        return self._gc.delete(f"{self._base}/versions/{item_id}")
+
+    def staleness(self) -> dict:
+        """How the live cell polygons differ from the active table: counts
+        and ids of ``added``, ``changed`` and ``removed`` cells, and
+        ``upToDate``."""
+        return self._gc.get(f"{self._base}/staleness")
+
+    def recompute(
+        self,
+        label: str = "Recomputed",
+        scope: str = "all",
+        min_qv: float = 20,
+        tags: list[str] | None = None,
+        embeddings: bool = False,
+        wait: bool = True,
+        timeout: float = 7200,
+    ) -> dict:
+        """Rebuild the expression table from the current cell polygons and
+        the transcript store (a server job). ``scope="dirty"`` reassigns only
+        the tiles touched by edited cells and carries the other rows over.
+        With ``wait`` (default) returns the job's result ``{itemId, nObs,
+        nVar, assigned, unassigned, tilesProcessed, seconds}``; otherwise
+        ``{"jobId"}``.
+        """
+        body: dict = {
+            "label": label, "scope": scope, "minQv": min_qv,
+            "recomputeEmbeddings": embeddings,
+        }
+        if tags is not None:
+            body["tags"] = list(tags)
+        response = self._gc.post(f"{self._base}/recompute", json=body)
+        if not wait:
+            return response
+        job = Job(self._gc, self._gc.get(f"job/{response['jobId']}"))
+        if not job.wait(timeout=timeout):
+            raise RuntimeError(
+                "recompute job %s failed" % response["jobId"]
+            )
+        return self._gc.get(f"job/{response['jobId']}")["spatialResult"]
+

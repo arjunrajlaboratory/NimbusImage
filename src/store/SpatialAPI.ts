@@ -7,7 +7,10 @@ import {
   ISpatialInfo,
   ISpatialJob,
   ISpatialMaterializeResult,
+  ISpatialRecomputeRequest,
+  ISpatialStaleness,
   ISpatialTranscriptsSchema,
+  ISpatialVersions,
   ITranscriptPoints,
 } from "./model";
 import { decodeTranscriptPoints } from "@/utils/transcriptPoints";
@@ -166,6 +169,51 @@ export default class SpatialAPI {
       { responseType: "arraybuffer" },
     );
     return decodeTranscriptPoints(response.data as ArrayBuffer);
+  }
+
+  // ---- table versions and recompute (Phase 4) ----
+
+  async fetchVersions(datasetId: string): Promise<ISpatialVersions> {
+    const response = await this.client.get(`spatial/${datasetId}/versions`);
+    return response.data as ISpatialVersions;
+  }
+
+  async activateVersion(
+    datasetId: string,
+    itemId: string,
+  ): Promise<ISpatialVersions> {
+    const response = await this.client.post(
+      `spatial/${datasetId}/versions/${itemId}/activate`,
+    );
+    return response.data as ISpatialVersions;
+  }
+
+  async forgetVersion(
+    datasetId: string,
+    itemId: string,
+  ): Promise<ISpatialVersions> {
+    const response = await this.client.delete(
+      `spatial/${datasetId}/versions/${itemId}`,
+    );
+    return response.data as ISpatialVersions;
+  }
+
+  async fetchStaleness(datasetId: string): Promise<ISpatialStaleness> {
+    const response = await this.client.get(`spatial/${datasetId}/staleness`);
+    return response.data as ISpatialStaleness;
+  }
+
+  /** Schedule a rebuild of the expression table from the current cell
+   * polygons; the result lands on the job (`fetchJob`). */
+  async recompute(
+    datasetId: string,
+    request: ISpatialRecomputeRequest,
+  ): Promise<{ jobId: string }> {
+    const response = await this.client.post(
+      `spatial/${datasetId}/recompute`,
+      request,
+    );
+    return response.data as { jobId: string };
   }
 
   /** GeoJS tile URL template for the density heat map, on the annotation

@@ -195,13 +195,71 @@ on 413, and switches to the density OSM layer in "auto" mode from `AUTO_DENSITY_
 (1 mm tiles) or when nothing fits. `TranscriptsPanel.vue` is a right-zone palette
 (`transcriptsPanel`), shown only for datasets with a registered store.
 
+## Phase 4: recompute and table versions
+
+Closing the loop (plan §13): edited cell polygons → a corrected count matrix, kept as a
+**version** of the expression table beside the vendor one.
+
+- **A version is an expression table.** The registry document keeps the active table in
+  place and gains `versions: [{itemId, fileId, label, provenance, nObs, nVar, created}]`,
+  plus `label`, `provenance`, `activated` on the active one. `register` and the recompute
+  job go through `DatasetSpatial.registerVersion`, which pushes the previous active table
+  (if another item) into `versions`; `activateVersion` swaps; `forgetVersion` drops a
+  non-active one. Every consumer reads the active table, so a switch re-points virtual
+  paths, aggregate, score and DE with no other state (gates are shapes in value space).
+- **Staleness is computed, not tracked** (`server/recompute.py`): a recomputed table stores
+  `obs.geometry_hash` (sha1 of the polygon vertices) beside `annotation_id`, and
+  `GET …/staleness` compares the live polygons: **added** (cell without a row), **changed**
+  (hash differs), **removed** (row without a cell). Cached on the dataset's annotation
+  raster version, which bumps on every annotation save/delete. An imported table has no
+  hashes and reports added/removed only.
+- **Assignment: smallest polygon wins.** Per level-0 transcript tile the intersecting
+  polygons are rasterized largest-first (`skimage.draw.polygon`) into an int32 label image
+  at image resolution; molecules with quality ≥ `minQv` of a real gene look up their
+  label; (cell, gene) pairs are summed via a COO → CSR build (duplicates sum). 2D, z
+  ignored. Cell types transfer through **tags**: a cell's tag among the previous table's
+  `cell_type` categories.
+- **`scope: "dirty"`** reassigns only the tiles touched by added/changed cells (every cell
+  overlapping such a tile is redone, since molecules may have moved to a neighbour) and
+  carries the other rows over from the active table by `annotation_id`. `scope: "all"`
+  rasterizes every tile. Both write a complete new `spatial.zarr.zip` (zarr 2, AnnData
+  layout: `X` csc, `layers/X_csr`, `obs` with `annotation_id`, `cell_index`,
+  `geometry_hash`, `area`, `transcript_count`, `cell_type`, `var`, optional
+  `obsm/X_umap` + `obs.kmeans`, `uns.attrs.nimbus` provenance), upload it into the dataset
+  folder and register it as active.
+- **Embeddings are opt-in** (`recomputeEmbeddings`): normalize → log1p → TruncatedSVD(50)
+  → UMAP → k-means(10), scikit-learn and umap-learn (already in the Girder image; now
+  declared in `setup.py`).
+- **The job runs in Girder** as a local job (`upenncontrast_spatial.server.recompute.run`),
+  since the plugin already opens both stores from the assetstore; tiles are independent,
+  so a process pool is the escape hatch if a full rebuild is too slow.
+
+| Route | Body / params | Returns |
+|---|---|---|
+| `GET spatial/{datasetId}/versions` | — | `{active, versions}` (itemId, label, provenance, nObs, nVar, created) |
+| `POST spatial/{datasetId}/versions/{itemId}/activate` (WRITE) | — | the swapped `{active, versions}`; 404 unknown |
+| `DELETE spatial/{datasetId}/versions/{itemId}` (WRITE) | — | forgets a non-active version (item stays); 404 for the active one |
+| `GET spatial/{datasetId}/staleness` | — | counts + up to 10K ids each of added/changed/removed, `hasGeometryHashes`, `upToDate` |
+| `POST spatial/{datasetId}/recompute` (WRITE) | `{label?, scope: all\|dirty, minQv? (20), tags?, recomputeEmbeddings?}` | `{jobId}`; the job's `spatialResult` is `{itemId, nObs, nVar, assigned, unassigned, tilesProcessed, seconds}`; 404 without a transcript store, 400 for a transformed registration or `dirty` without a table |
+
+`POST …/register` accepts an optional `label` (default "Imported table").
+
+**Client.** `CellTableCard.vue` (in the Transcripts palette, since recomputing needs the
+transcript store): active version select (switching re-reads the registration and every
+live gene column), staleness line, and `RecomputeTableDialog.vue` (label, edited-only /
+full, quality threshold, tag filter, embeddings) polling the job. Python:
+`ds.spatial.versions()`, `activate_version()`, `forget_version()`, `staleness()`,
+`recompute(label, scope, min_qv, tags, embeddings, wait)`.
+
 ## Client
 
 - `nimbusimage`: `ds.spatial` — `info()`, `upload()`, `register()`, `upload_and_register()`,
   `unregister()`, `features()`, `column()`, `row()`, `aggregate()`, `materialize()`;
   transcripts: `transcripts()`, `upload_transcripts()`, `register_transcripts(item_id,
   pixel_size, transform=None)`, `unregister_transcripts()`, `transcript_genes()`,
-  `transcript_points(genes, tiles, level, min_qv)` (decodes the binary body into numpy).
+  `transcript_points(genes, tiles, level, min_qv)` (decodes the binary body into numpy);
+  versions: `versions()`, `activate_version()`, `forget_version()`, `staleness()`,
+  `recompute()`.
 - Frontend: `src/store/SpatialAPI.ts`, `src/store/spatial.ts` (registration per dataset;
   `hasTable` is false for a stale answer from another dataset; "no table" and "could not
   ask" are distinct), `SpatialFeaturePicker.vue` (server-side search, debounced),
@@ -354,6 +412,36 @@ Each line names the test that holds it.
   *"gene search uses the documented route"*; density template —
   *"builds a density template on the overview pyramid"*.
 
+**Recompute and versions (`test/test_recompute.py`, synthetic pyramid + rectangular cells)**
+- A full rebuild counts each molecule in the smallest polygon containing it, applies the
+  quality threshold, skips control codewords, transfers cell types from tags, and keeps the
+  previous table as a version — *"testRecomputeAllAssignsAndVersions"*.
+- Staleness reports added/removed for an imported table and added/changed/removed for a
+  recomputed one; `dirty` scope touches only the affected tile and carries the other rows
+  over; versions keep their order — *"testStalenessAndDirtyScope"*.
+- Versions activate (WRITE) and can be forgotten once; the active one cannot —
+  *"testActivateAndForgetVersions"*.
+- Bad scope/label/minQv/tags, `dirty` without a table, a transformed registration and a
+  missing transcript store are 400/404 — *"testRecomputeValidation"*.
+- Units: geometry hash, largest-first label image, COO → CSR duplicate summing, the written
+  zarr layout — *"testUnits"*; embeddings shapes — *"testEmbeddingsShapes"*.
+
+**Recompute, Python (`nimbusimage/tests/test_spatial.py`)**
+- Routes — *"test_version_routes"*; recompute waits for the job and raises on failure —
+  *"test_recompute_waits_for_the_job_result"*.
+
+**Recompute, frontend**
+- Card reads versions/staleness only when shown and describes them —
+  *"reads versions and staleness only when shown"*, *"explains that an imported table cannot report edits, and up to date"*;
+  switching re-reads the table and live gene columns —
+  *"switching the version re-reads the table and the live gene columns"*; errors surface —
+  *"shows the error when the registry cannot be read"*.
+- Dialog offers edited-only only when something changed and a table exists —
+  *"offers edited-only when something changed, full rebuild otherwise"*; posts, polls, re-reads —
+  *"posts the request and polls the job, then re-reads the table"*; failures and close —
+  *"reports a failed job and a rejected request, and stops polling on close"*.
+- API routes — *"uses the documented routes"*.
+
 **Process**
 - Backend edits need `docker compose build girder && docker compose up -d girder`.
 - Verify live on the lymph node: register, `GET spatial/{id}` shows 708,983 live rows,
@@ -362,3 +450,6 @@ Each line names the test that holds it.
 - Transcripts live: register the 4.7 GB store, `GET .../transcripts` reports 232,650,139
   molecules over 7 levels; a level-0 request for one gene in the visible tiles returns in
   well under a second; clicking a molecule inside a drawn cell offers "Go to cell".
+- Recompute live: a full rebuild of the lymph node from the vendor polygons should agree
+  closely with the vendor matrix (10x assigns in 3D with its own QV handling, so not
+  exactly); then edit one cell and rebuild in `dirty` scope — one tile, seconds.

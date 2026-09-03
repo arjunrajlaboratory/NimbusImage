@@ -188,3 +188,39 @@ class TestTranscripts:
             "spatial/ds_001/transcripts/genes",
             parameters={"search": "cd", "limit": 3},
         )
+
+
+class TestVersions:
+    def test_version_routes(self, mock_gc):
+        accessor = SpatialAccessor(mock_gc, "ds_001")
+        mock_gc.get.return_value = {"active": {}, "versions": []}
+        assert accessor.versions() == {"active": {}, "versions": []}
+        mock_gc.get.assert_called_with("spatial/ds_001/versions")
+        accessor.activate_version("item_9")
+        mock_gc.post.assert_called_with(
+            "spatial/ds_001/versions/item_9/activate"
+        )
+        accessor.forget_version("item_9")
+        mock_gc.delete.assert_called_with("spatial/ds_001/versions/item_9")
+        accessor.staleness()
+        mock_gc.get.assert_called_with("spatial/ds_001/staleness")
+
+    def test_recompute_waits_for_the_job_result(self, mock_gc):
+        accessor = SpatialAccessor(mock_gc, "ds_001")
+        mock_gc.post.return_value = {"jobId": "j1"}
+        assert accessor.recompute(scope="dirty", wait=False) == {
+            "jobId": "j1"
+        }
+        mock_gc.post.assert_called_with(
+            "spatial/ds_001/recompute",
+            json={"label": "Recomputed", "scope": "dirty", "minQv": 20,
+                  "recomputeEmbeddings": False},
+        )
+        mock_gc.get.return_value = {
+            "_id": "j1", "status": 3, "spatialResult": {"nObs": 4},
+        }
+        assert accessor.recompute(tags=["cell"]) == {"nObs": 4}
+        assert mock_gc.post.call_args.kwargs["json"]["tags"] == ["cell"]
+        mock_gc.get.return_value = {"_id": "j1", "status": 4}
+        with pytest.raises(RuntimeError):
+            accessor.recompute()

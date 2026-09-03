@@ -1917,7 +1917,59 @@ export interface ISpatialDifferentialResult {
 export interface ISpatialJob {
   _id: string;
   status: number;
-  spatialResult?: ISpatialDifferentialResult;
+  spatialResult?: ISpatialDifferentialResult | ISpatialRecomputeResult;
+}
+
+/** One expression-table version (GET spatial/{datasetId}/versions). */
+export interface ISpatialTableVersion {
+  itemId: string;
+  label: string;
+  nObs: number;
+  nVar: number;
+  created: string | null;
+  provenance: Record<string, unknown>;
+}
+
+export interface ISpatialVersions {
+  active: ISpatialTableVersion;
+  versions: ISpatialTableVersion[];
+}
+
+/** GET spatial/{datasetId}/staleness: how the live cell polygons differ
+ * from the active table. */
+export interface ISpatialStaleness {
+  added: number;
+  changed: number;
+  removed: number;
+  addedIds: string[];
+  changedIds: string[];
+  removedIds: string[];
+  // Only a table this plugin recomputed carries polygon hashes; an imported
+  // one can report added/removed but never "changed".
+  hasGeometryHashes: boolean;
+  cells: number;
+  rows: number;
+  upToDate: boolean;
+}
+
+export type TSpatialRecomputeScope = "all" | "dirty";
+
+export interface ISpatialRecomputeRequest {
+  label: string;
+  scope: TSpatialRecomputeScope;
+  minQv: number;
+  tags: string[] | null;
+  recomputeEmbeddings: boolean;
+}
+
+export interface ISpatialRecomputeResult {
+  itemId: string;
+  nObs: number;
+  nVar: number;
+  assigned: number;
+  unassigned: number;
+  tilesProcessed: number;
+  seconds: number;
 }
 
 export interface ISpatialMaterializeResult {

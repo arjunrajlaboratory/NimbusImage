@@ -37,6 +37,7 @@ from upenncontrast_annotation.server.models.property import (
 
 from .. import differential, materialize
 from .transcripts import TranscriptRoutes
+from .versions import VersionRoutes
 from ..models.registry import DatasetSpatial
 from ..store import (
     invalidateStore,
@@ -66,7 +67,7 @@ def _serialize(document):
     }
 
 
-class Spatial(TranscriptRoutes, Resource):
+class Spatial(TranscriptRoutes, VersionRoutes, Resource):
     def __init__(self):
         super().__init__()
         self.resourceName = "spatial"
@@ -86,6 +87,7 @@ class Spatial(TranscriptRoutes, Resource):
             "POST", (":datasetId", "differential"), self.differential
         )
         self._addTranscriptRoutes()
+        self._addVersionRoutes()
 
     # ---- helpers --------------------------------------------------------
 
@@ -182,7 +184,7 @@ class Spatial(TranscriptRoutes, Resource):
                "AnnData layout with obs.annotation_id. Replaces any earlier "
                "registration for the dataset.")
         .param("datasetId", "The dataset (folder) id", paramType="path")
-        .param("body", "JSON: {itemId}", paramType="body")
+        .param("body", "JSON: {itemId, label?}", paramType="body")
         .errorResponse()
         .errorResponse("Write access denied.", 403)
     )
@@ -209,8 +211,12 @@ class Spatial(TranscriptRoutes, Resource):
             raise RestException(
                 "Not a readable spatial store: %s" % exc, code=400
             )
-        return _serialize(self._registry.register(
-            registryEntry(datasetId, item, files[0], store)
+        label = body.get("label", "Imported table")
+        if not isinstance(label, str) or not 0 < len(label) <= 80:
+            raise RestException("label must be 1-80 characters", code=400)
+        # The previous active table (if another item) becomes a version.
+        return _serialize(self._registry.registerVersion(
+            registryEntry(datasetId, item, files[0], store), label
         ))
 
     @access.user(scope=TokenScope.DATA_WRITE)
