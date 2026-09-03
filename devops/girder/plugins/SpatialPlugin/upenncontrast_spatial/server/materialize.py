@@ -50,31 +50,47 @@ def writeValues(store, datasetId, propertyId, columns, onProgress=None):
     """Write `columns` ({subKey: (rows, values)}, e.g. from store.column or
     scoreColumn) for every row of `store` as sub-values of the property.
     Returns the number of rows written."""
-    valuesModel = AnnotationPropertyValues()
-    propertyKey = str(propertyId)
     symbols = list(columns)
-    written = 0
-    for start in range(0, store.nObs, CHUNK_ROWS):
-        stop = min(start + CHUNK_ROWS, store.nObs)
+
+    def subValuesFor(start, stop):
         subValues = [dict.fromkeys(symbols, 0) for _ in range(stop - start)]
         for symbol, (rows, values) in columns.items():
             # CSC row indices are ascending, so the chunk is one slice.
             low, high = np.searchsorted(rows, [start, stop])
             for row, value in zip(rows[low:high], values[low:high]):
                 subValues[int(row) - start][symbol] = numberFromNumpy(value)
+        return subValues
 
-        annotationIds = [
-            ObjectId(str(value)) for value in store.annotationIds[start:stop]
+    return writeCellValues(
+        datasetId, propertyId, store.annotationIds, subValuesFor, onProgress
+    )
+
+
+def writeCellValues(datasetId, propertyId, annotationIds, subValuesFor,
+                    onProgress=None):
+    """Chunked writer shared by materialize, score and the neighbourhood
+    job: `subValuesFor(start, stop)` returns one {subKey: number} dict per
+    cell of the chunk, merged into the cells' property-value documents.
+    Returns the number of cells written."""
+    valuesModel = AnnotationPropertyValues()
+    propertyKey = str(propertyId)
+    total = len(annotationIds)
+    written = 0
+    for start in range(0, total, CHUNK_ROWS):
+        stop = min(start + CHUNK_ROWS, total)
+        subValues = subValuesFor(start, stop)
+        chunkIds = [
+            ObjectId(str(value)) for value in annotationIds[start:stop]
         ]
         existing = {
             document["annotationId"]: document
             for document in valuesModel.find({
                 "datasetId": datasetId,
-                "annotationId": {"$in": annotationIds},
+                "annotationId": {"$in": chunkIds},
             })
         }
         updated, fresh = [], []
-        for annotationId, values in zip(annotationIds, subValues):
+        for annotationId, values in zip(chunkIds, subValues):
             document = existing.get(annotationId)
             if document is None:
                 fresh.append({
@@ -96,7 +112,7 @@ def writeValues(store, datasetId, propertyId, columns, onProgress=None):
         valuesModel.saveMany(fresh)
         written = stop
         if onProgress is not None:
-            onProgress(written, store.nObs)
+            onProgress(written, total)
     return written
 
 

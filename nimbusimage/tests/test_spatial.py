@@ -224,3 +224,42 @@ class TestVersions:
         mock_gc.get.return_value = {"_id": "j1", "status": 4}
         with pytest.raises(RuntimeError):
             accessor.recompute()
+
+
+class TestNeighbourhoodAndRegions:
+    def test_neighbourhood_none_until_computed(self, mock_gc):
+        mock_gc.get.side_effect = girder_client.HttpError(
+            404, "none", "url", "GET"
+        )
+        assert SpatialAccessor(mock_gc, "ds_001").neighbourhood() is None
+
+    def test_compute_neighbourhood_posts_and_waits(self, mock_gc):
+        accessor = SpatialAccessor(mock_gc, "ds_001")
+        mock_gc.post.return_value = {"jobId": "j1", "propertyId": "p1"}
+        mock_gc.get.return_value = {
+            "_id": "j1", "status": 3, "spatialResult": {"types": ["B"]},
+        }
+        assert accessor.compute_neighbourhood(141, exclude_tags=["cell"]) == {
+            "types": ["B"]
+        }
+        mock_gc.post.assert_called_with(
+            "spatial/ds_001/neighbourhood",
+            json={"radius": 141, "propertyName": "Neighbourhood",
+                  "excludeTags": ["cell"]},
+        )
+        assert accessor.compute_neighbourhood(10, wait=False) == {
+            "jobId": "j1", "propertyId": "p1"
+        }
+
+    def test_region_summary_bodies(self, mock_gc):
+        accessor = SpatialAccessor(mock_gc, "ds_001")
+        mock_gc.post.return_value = []
+        accessor.region_summary("region", features=["CD3E"])
+        mock_gc.post.assert_called_with(
+            "spatial/ds_001/regions/summary",
+            json={"regionTag": "region", "features": ["CD3E"]},
+        )
+        accessor.region_summary(region_ids=["r1"])
+        mock_gc.post.assert_called_with(
+            "spatial/ds_001/regions/summary", json={"regionIds": ["r1"]},
+        )

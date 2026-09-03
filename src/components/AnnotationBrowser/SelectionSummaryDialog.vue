@@ -98,6 +98,37 @@
             </tbody>
           </v-table>
 
+          <div class="d-flex align-center">
+            <v-list-subheader>Spatial statistics</v-list-subheader>
+            <v-spacer />
+            <neighbourhood-dialog>
+              <template v-slot:activator="{ props: activatorProps }">
+                <v-btn
+                  v-bind="activatorProps"
+                  variant="text"
+                  color="primary"
+                  size="small"
+                  prepend-icon="mdi-graph-outline"
+                >
+                  Neighbourhood…
+                </v-btn>
+              </template>
+            </neighbourhood-dialog>
+            <region-summary-dialog>
+              <template v-slot:activator="{ props: activatorProps }">
+                <v-btn
+                  v-bind="activatorProps"
+                  variant="text"
+                  color="primary"
+                  size="small"
+                  prepend-icon="mdi-vector-polygon"
+                >
+                  Regions…
+                </v-btn>
+              </template>
+            </region-summary-dialog>
+          </div>
+
           <template v-if="spatialStore.hasTable">
             <div class="d-flex align-center">
               <v-list-subheader>Expression</v-list-subheader>
@@ -241,6 +272,8 @@ import annotationListServer from "@/store/annotationListServer";
 import spatialStore from "@/store/spatial";
 import SpatialFeaturePicker from "@/components/AnnotationBrowser/SpatialFeaturePicker.vue";
 import DifferentialExpressionDialog from "@/components/AnnotationBrowser/DifferentialExpressionDialog.vue";
+import NeighbourhoodDialog from "@/components/AnnotationBrowser/NeighbourhoodDialog.vue";
+import RegionSummaryDialog from "@/components/AnnotationBrowser/RegionSummaryDialog.vue";
 import {
   IAnnotationListFilters,
   IAnnotationSummary,

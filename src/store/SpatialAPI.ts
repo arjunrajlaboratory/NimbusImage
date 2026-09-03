@@ -7,7 +7,9 @@ import {
   ISpatialInfo,
   ISpatialJob,
   ISpatialMaterializeResult,
+  ISpatialNeighbourhood,
   ISpatialRecomputeRequest,
+  ISpatialRegionSummary,
   ISpatialStaleness,
   ISpatialTranscriptsSchema,
   ISpatialVersions,
@@ -214,6 +216,51 @@ export default class SpatialAPI {
       request,
     );
     return response.data as { jobId: string };
+  }
+
+  // ---- neighbourhood and regions (Phase 6) ----
+
+  /** The last neighbourhood enrichment, or null until one was computed. */
+  async fetchNeighbourhood(
+    datasetId: string,
+  ): Promise<ISpatialNeighbourhood | null> {
+    try {
+      const response = await this.client.get(
+        `spatial/${datasetId}/neighbourhood`,
+      );
+      return response.data as ISpatialNeighbourhood;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /** Schedule the neighbourhood job; `radius` in image pixels. */
+  async computeNeighbourhood(
+    datasetId: string,
+    radius: number,
+    excludeTags: string[],
+    propertyName: string,
+  ): Promise<{ jobId: string; propertyId: string }> {
+    const response = await this.client.post(
+      `spatial/${datasetId}/neighbourhood`,
+      { radius, excludeTags, propertyName },
+    );
+    return response.data as { jobId: string; propertyId: string };
+  }
+
+  async regionSummary(
+    datasetId: string,
+    regionTag: string,
+    features: string[],
+  ): Promise<ISpatialRegionSummary[]> {
+    const response = await this.client.post(
+      `spatial/${datasetId}/regions/summary`,
+      { regionTag, features },
+    );
+    return response.data as ISpatialRegionSummary[];
   }
 
   /** GeoJS tile URL template for the density heat map, on the annotation

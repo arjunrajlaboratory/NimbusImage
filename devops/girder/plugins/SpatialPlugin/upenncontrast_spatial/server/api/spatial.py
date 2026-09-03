@@ -38,6 +38,7 @@ from upenncontrast_annotation.server.models.property import (
 from .. import differential, materialize
 from .transcripts import TranscriptRoutes
 from .versions import VersionRoutes
+from .analysis import AnalysisRoutes
 from ..models.registry import DatasetSpatial
 from ..store import (
     invalidateStore,
@@ -67,7 +68,7 @@ def _serialize(document):
     }
 
 
-class Spatial(TranscriptRoutes, VersionRoutes, Resource):
+class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
     def __init__(self):
         super().__init__()
         self.resourceName = "spatial"
@@ -88,6 +89,7 @@ class Spatial(TranscriptRoutes, VersionRoutes, Resource):
         )
         self._addTranscriptRoutes()
         self._addVersionRoutes()
+        self._addAnalysisRoutes()
 
     # ---- helpers --------------------------------------------------------
 

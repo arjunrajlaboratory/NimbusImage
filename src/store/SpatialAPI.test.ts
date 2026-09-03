@@ -176,3 +176,25 @@ describe("SpatialAPI table versions", () => {
     expect(client.post).toHaveBeenCalledWith("spatial/ds/recompute", request);
   });
 });
+
+describe("SpatialAPI neighbourhood and regions", () => {
+  it("uses the documented routes and maps 404 to null", async () => {
+    const client = {
+      get: vi.fn(async () => Promise.reject(axios404())),
+      post: vi.fn(async () => ({ data: { jobId: "j1", propertyId: "p1" } })),
+    } as any;
+    const api = new SpatialAPI(client);
+    expect(await api.fetchNeighbourhood("ds")).toBeNull();
+    await api.computeNeighbourhood("ds", 60, ["cell"], "Neighbourhood");
+    expect(client.post).toHaveBeenCalledWith("spatial/ds/neighbourhood", {
+      radius: 60,
+      excludeTags: ["cell"],
+      propertyName: "Neighbourhood",
+    });
+    await api.regionSummary("ds", "region", ["CD3E"]);
+    expect(client.post).toHaveBeenCalledWith("spatial/ds/regions/summary", {
+      regionTag: "region",
+      features: ["CD3E"],
+    });
+  });
+});

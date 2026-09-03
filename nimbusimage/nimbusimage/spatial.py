@@ -324,3 +324,63 @@ class SpatialAccessor:
             )
         return self._gc.get(f"job/{response['jobId']}")["spatialResult"]
 
+    # --- neighbourhood and regions (Phase 6) ---
+
+    def neighbourhood(self) -> dict | None:
+        """The last neighbourhood enrichment (``types``, ``counts``,
+        ``pairs``, ``matrix`` = log2 observed/expected, ``radius``), or None
+        when none was computed."""
+        try:
+            return self._gc.get(f"{self._base}/neighbourhood")
+        except girder_client.HttpError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def compute_neighbourhood(
+        self,
+        radius_pixels: float,
+        exclude_tags: list[str] | None = None,
+        property_name: str = "Neighbourhood",
+        wait: bool = True,
+        timeout: float = 3600,
+    ) -> dict:
+        """Compute every cell's neighbour-type fractions (written as
+        sub-values of ``property_name``) and the type enrichment matrix, as
+        a server job. ``radius_pixels`` is in image pixels (microns /
+        pixel size). Cell type = the first tag not in ``exclude_tags``
+        (default ``["cell"]``)."""
+        body: dict = {"radius": radius_pixels, "propertyName": property_name}
+        if exclude_tags is not None:
+            body["excludeTags"] = list(exclude_tags)
+        response = self._gc.post(f"{self._base}/neighbourhood", json=body)
+        if not wait:
+            return response
+        job = Job(self._gc, self._gc.get(f"job/{response['jobId']}"))
+        if not job.wait(timeout=timeout):
+            raise RuntimeError(
+                "neighbourhood job %s failed" % response["jobId"]
+            )
+        return self._gc.get(f"job/{response['jobId']}")["spatialResult"]
+
+    def region_summary(
+        self,
+        region_tag: str | None = None,
+        region_ids: list[str] | None = None,
+        features: list[str] | None = None,
+        exclude_tags: list[str] | None = None,
+    ) -> list[dict]:
+        """Cells, composition by type and (with ``features``) expression of
+        the cells inside each region polygon — regions being the annotations
+        tagged ``region_tag`` or listed in ``region_ids`` (at most 50)."""
+        body: dict = {}
+        if region_ids is not None:
+            body["regionIds"] = list(region_ids)
+        else:
+            body["regionTag"] = region_tag
+        if features:
+            body["features"] = list(features)
+        if exclude_tags is not None:
+            body["excludeTags"] = list(exclude_tags)
+        return self._gc.post(f"{self._base}/regions/summary", json=body)
+

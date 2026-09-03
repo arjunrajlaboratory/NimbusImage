@@ -1932,7 +1932,10 @@ export interface ISpatialDifferentialResult {
 export interface ISpatialJob {
   _id: string;
   status: number;
-  spatialResult?: ISpatialDifferentialResult | ISpatialRecomputeResult;
+  spatialResult?:
+    | ISpatialDifferentialResult
+    | ISpatialRecomputeResult
+    | ISpatialNeighbourhood;
 }
 
 /** One expression-table version (GET spatial/{datasetId}/versions). */
@@ -1965,6 +1968,34 @@ export interface ISpatialStaleness {
   cells: number;
   rows: number;
   upToDate: boolean;
+}
+
+/** GET spatial/{datasetId}/neighbourhood (Phase 6). */
+export interface ISpatialNeighbourhood {
+  radius: number;
+  excludeTags: string[];
+  // Sorted type names; `counts` are cells per type, `pairs` observed
+  // neighbour pairs (type i around type j), `matrix` log2 observed/expected.
+  types: string[];
+  counts: number[];
+  pairs: number[][];
+  matrix: (number | null)[][];
+  cells: number;
+  typed: number;
+  written: number;
+  propertyId: string;
+  computed: string;
+}
+
+/** One row of POST spatial/{datasetId}/regions/summary. */
+export interface ISpatialRegionSummary {
+  id: string;
+  name: string;
+  tags: string[];
+  cells: number;
+  composition: { type: string; count: number }[];
+  expression: ISpatialFeatureAggregate[];
+  rows?: number;
 }
 
 export type TSpatialRecomputeScope = "all" | "dirty";

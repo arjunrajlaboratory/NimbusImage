@@ -251,6 +251,34 @@ full, quality threshold, tag filter, embeddings) polling the job. Python:
 `ds.spatial.versions()`, `activate_version()`, `forget_version()`, `staleness()`,
 `recompute(label, scope, min_qv, tags, embeddings, wait)`.
 
+## Phase 6: neighbourhood and region statistics
+
+`server/neighbourhood.py` + the `AnalysisRoutes` mixin (`api/analysis.py`). Cells are their
+polygon **centroids**, computed by Mongo (`$avg` over `coordinates.x/y`, seconds for 700K
+cells); a cell's **type** is its first tag not in `excludeTags` (default `["cell"]`).
+
+| Route | Body / params | Returns |
+|---|---|---|
+| `POST spatial/{datasetId}/neighbourhood` (WRITE) | `{radius (image px), excludeTags?, propertyName? ("Neighbourhood")}` | `{jobId, propertyId}`; the local job (`neighbourhood.run`) writes per-cell neighbour-type fractions + `neighbours` as sub-values of the property and stores the enrichment on the registry |
+| `GET spatial/{datasetId}/neighbourhood` | — | `{radius, excludeTags, types, counts, pairs, matrix, cells, typed, written, propertyId, computed}`; 404 until computed |
+| `POST spatial/{datasetId}/regions/summary` | `{regionTag? \| regionIds? (≤ 50), excludeTags?, features? (≤ 64, needs a table)}` | `[{id, name, tags, cells, composition: [{type, count}], expression: [{symbol, mean, fractionExpressing, expressing}], rows}]` |
+
+- **Neighbours**: `cKDTree.query_pairs(radius)`; each pair counts once in each direction.
+  `pairs[i][j]` = observed neighbours of type j around cells of type i (symmetric);
+  `matrix = log2((pairs + 1) / (expected + 1))` with `expected_ij = row_i × col_j / total`,
+  i.e. the counts under a label shuffle. Untyped cells count neighbours but join no pair.
+- **Regions**: polygon annotations carrying the tag (or the ids); cells inside =
+  `skimage.measure.points_in_poly` after a bounding-box prefilter; the region polygons are
+  excluded from the cells and the region tag from the type tags. Expression per region is
+  the table's `aggregate` over the region's rows.
+- The chunked property writer materialize used is now `materialize.writeCellValues`,
+  shared with the neighbourhood job.
+- **Client**: `NeighbourhoodDialog.vue` (radius in µm → pixels via the configuration's
+  scale, job polling, colored matrix, CSV) and `RegionSummaryDialog.vue` (region tag,
+  genes, table, CSV), both from the Selection summary's **Spatial statistics** row.
+  Python: `ds.spatial.neighbourhood()`, `compute_neighbourhood(radius_pixels, …)`,
+  `region_summary(region_tag | region_ids, features)`.
+
 ## Client
 
 - `nimbusimage`: `ds.spatial` — `info()`, `upload()`, `register()`, `upload_and_register()`,
@@ -441,6 +469,30 @@ Each line names the test that holds it.
   *"posts the request and polls the job, then re-reads the table"*; failures and close —
   *"reports a failed job and a rejected request, and stops polling on close"*.
 - API routes — *"uses the documented routes"*.
+
+**Neighbourhood and regions (`test/test_analysis.py`)**
+- Neighbour counts, pair matrix, enrichment sign and untyped handling by hand —
+  *"testNeighbourhoodUnits"*.
+- The job writes per-cell fractions and `neighbours`, stores and serves the matrix —
+  *"testNeighbourhoodJobWritesFractionsAndMatrix"*; radius/tags/property validation, 404
+  before computing, WRITE required — *"testNeighbourhoodValidation"*.
+- Region composition and per-gene means for cells inside tagged polygons, by tag and by id
+  — *"testRegionSummary"*; bad bodies, features without a table, unknown tag → empty —
+  *"testRegionSummaryValidation"*.
+
+**Neighbourhood and regions, Python** — *"test_neighbourhood_none_until_computed"*,
+*"test_compute_neighbourhood_posts_and_waits"*, *"test_region_summary_bodies"*.
+
+**Neighbourhood and regions, frontend**
+- Microns → pixels via the scale, refused without one —
+  *"converts microns to pixels with the dataset scale and refuses without one"*; stored
+  result loaded on open — *"loads the stored enrichment when opened"*; job in pixels,
+  polling, property reload — *"schedules the job in pixels, polls it, and reloads the properties"*;
+  failures and CSV — *"reports failures and exports the matrix as CSV"*.
+- Regions: tags offered, genes sent only with a table, CSV —
+  *"offers the dataset's tags and summarizes the chosen one with genes"*,
+  *"asks for no genes without a table and surfaces errors"*.
+- API — *"uses the documented routes and maps 404 to null"*.
 
 **Process**
 - Backend edits need `docker compose build girder && docker compose up -d girder`.

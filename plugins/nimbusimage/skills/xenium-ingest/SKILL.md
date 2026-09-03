@@ -226,6 +226,17 @@ cells since the table was built), `ds.spatial.recompute("v2", scope="dirty")`,
 smallest-polygon-wins at image resolution, quality ≥ 20, genes only; cell types follow
 the cells' tags.
 
+## 7e. Neighbourhoods and regions (`ds.spatial.compute_neighbourhood`, `region_summary`)
+
+Selection summary → **Spatial statistics**: **Neighbourhood…** counts each cell's
+neighbours by type within a radius (30 µm default; converted to pixels with the dataset's
+scale) and shows the type-by-type enrichment matrix; the fractions become a
+`Neighbourhood` measurement usable in filters, gates and color-by. **Regions…** takes a
+tag you put on hand-drawn (or imported) polygons and tabulates the cells inside each:
+composition by type and mean expression of picked genes. From Python:
+`ds.spatial.compute_neighbourhood(radius_pixels=141)`, `ds.spatial.neighbourhood()`,
+`ds.spatial.region_summary("region", features=["CD3E"])`.
+
 ## 8. Traps (each cost real time)
 
 1. **`submit_values` does not overwrite.** Re-submitting an existing value is a silent
