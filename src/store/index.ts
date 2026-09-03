@@ -23,6 +23,7 @@ import { markRaw } from "vue";
 import { v4 as uuidv4 } from "uuid";
 
 import AnnotationsAPI from "./AnnotationsAPI";
+import SpatialAPI from "./SpatialAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ToolSuggestionsAPI from "./ToolSuggestionsAPI";
 import AgentAPI from "./AgentAPI";
@@ -266,6 +267,7 @@ export class Main extends VuexModule {
   // without breaking field-level reactivity on the API instance itself.
   api = new GirderAPI(this.girderRestProxy);
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
+  spatialAPI = new SpatialAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
   toolSuggestionsAPI = new ToolSuggestionsAPI(this.girderRestProxy);
   agentAPI = new AgentAPI(this.girderRestProxy);

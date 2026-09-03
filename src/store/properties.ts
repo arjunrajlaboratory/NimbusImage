@@ -45,7 +45,7 @@ import jobs, {
   createErrorEventCallback,
 } from "./jobs";
 import { logError, logWarning } from "@/utils/log";
-import { findIndexOfPath } from "@/utils/paths";
+import { findIndexOfPath, serializePropertyPath } from "@/utils/paths";
 import progress from "./progress";
 import {
   MAX_DISPLAYED_PROPERTY_PATHS,
@@ -70,10 +70,6 @@ const defaultStatus: () => IPropertyStatus = () => ({
   progressInfo: {},
   errorInfo: { errors: [] },
 });
-
-function serializePropertyPath(path: string[]) {
-  return path.join("\u0000");
-}
 
 function uniquePropertyPaths(paths: string[][]): string[][] {
   const pathsByKey = new Map<string, string[]>();

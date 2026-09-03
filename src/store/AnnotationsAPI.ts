@@ -17,6 +17,7 @@ import {
   IAnnotationListPage,
   IAnnotationListRow,
   IAnnotationListFilters,
+  IAnnotationSummary,
   IColorByPropertyOptions,
   IColorByPropertyResult,
   TAnnotationOverviewMode,
@@ -187,6 +188,38 @@ export default class AnnotationsAPI {
       filters,
     });
     return response.data.ids as string[];
+  }
+
+  /**
+   * Total, tag composition, and per-path statistics for the annotations
+   * matching `filters` — resolved server-side over the whole population, so
+   * it holds at any dataset size and under active gates.
+   */
+  async fetchAnnotationSummary(
+    datasetId: string,
+    filters: IAnnotationListFilters,
+    propertyPaths: string[][],
+  ): Promise<IAnnotationSummary> {
+    if (filtersMatchNothing(filters)) {
+      return {
+        total: 0,
+        tags: [],
+        properties: propertyPaths.map((path) => ({
+          path,
+          count: 0,
+          mean: null,
+          std: null,
+          min: null,
+          max: null,
+        })),
+      };
+    }
+    const response = await this.client.post("upenn_annotation/summary", {
+      datasetId,
+      filters,
+      propertyPaths,
+    });
+    return response.data as IAnnotationSummary;
   }
 
   /**

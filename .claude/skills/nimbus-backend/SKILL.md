@@ -386,6 +386,49 @@ Rules:
    were applied — otherwise "stripped" and "applied but harmless" look the
    same.
 
+## Returning a large JSON body from numpy (orjson + raw response)
+
+Two traps, both hit by the spatial plugin's `column` endpoint (hundreds of thousands
+of `(annotationId, value)` pairs):
+
+- **Girder JSON-encodes whatever the handler returns.** Returning `orjson.dumps(...)`
+  bytes without marking the response raw ships a JSON *string* containing JSON — the
+  client's `resp.json` is a `str`. Call `setRawResponse()` (from `girder.api.rest`)
+  and set the `Content-Type` header yourself, or return a generator (the annotation
+  plugin's `_streamJsonArray` pattern).
+- **`orjson.OPT_SERIALIZE_NUMPY` takes numeric and bool arrays only.** A unicode
+  (`U24`) array of ids raises `TypeError: unsupported datatype in numpy array`;
+  `.tolist()` the string array, keep the numeric one as numpy. Cast integral floats
+  to `int64` first if the sibling endpoint returns ints, so the two agree.
+
+```python
+setRawResponse()
+setResponseHeader("Content-Type", "application/json")
+return orjson.dumps(
+    {"annotationIds": ids.tolist(), "values": values},
+    option=orjson.OPT_SERIALIZE_NUMPY,
+)
+```
+
+## A second plugin next to `upenncontrast_annotation`
+
+`upenncontrast_spatial` (`devops/girder/plugins/SpatialPlugin/`) is the template:
+
+- Declare the dependency by calling `getPlugin("upenncontrast_annotation").load(info)`
+  first thing in `load()` — Girder 5 has no `dependencies` attribute; the wrapper makes
+  the second load a no-op.
+- The annotation plugin's `server/` tree has no `__init__.py`, so its sdist/wheel does
+  **not** ship it (its own tests import from the source tree). A sibling plugin's tox must
+  install it **editable**: `deps = -e {toxinidir}/../AnnotationPlugin`. That install
+  leaves `AnnotationPlugin/build/` behind — gitignored.
+- Import the annotation plugin's `validation.py` helpers, access helpers and models;
+  never mirror a private method's field list. When you need one (the spatial API needed
+  `_hasAnnotationFieldFilters`), add a public method on the annotation model
+  (`narrowsPopulation`) and call that.
+- `@pytest.mark.plugin("upenncontrast_spatial")` loads both plugins; the "Event binding
+  already exists" warnings in the test log are the annotation plugin's handlers being
+  bound once per plugin load and are harmless.
+
 ## Loading Plugin Changes Into the Running Backend
 
 The `girder` container bakes the plugin into its image (no source mount). After editing backend plugin code:

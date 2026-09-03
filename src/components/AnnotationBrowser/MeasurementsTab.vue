@@ -13,6 +13,22 @@
       >
         New measurement
       </v-btn>
+      <!-- Only datasets with a registered spatial table (upenncontrast_spatial
+           plugin) can pull genes from it. -->
+      <materialize-genes-dialog v-if="spatialStore.hasTable">
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-btn
+            v-bind="activatorProps"
+            variant="outlined"
+            color="primary"
+            size="small"
+            class="ml-2"
+            prepend-icon="mdi-dna"
+          >
+            Add genes
+          </v-btn>
+        </template>
+      </materialize-genes-dialog>
       <v-spacer />
       <compute-all-status v-if="properties.length > 0" />
     </div>
@@ -160,10 +176,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive } from "vue";
+import { computed, reactive, watch } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
+import spatialStore from "@/store/spatial";
 import ComputeAllStatus from "@/components/AnnotationBrowser/AnnotationProperties/ComputeAllStatus.vue";
+import MaterializeGenesDialog from "@/components/AnnotationBrowser/MaterializeGenesDialog.vue";
 import { IAnnotationProperty, MessageType } from "@/store/model";
 import {
   usePropertyEntries,
@@ -174,9 +192,22 @@ import {
 } from "@/utils/propertyEntries";
 import { computePropertyWithStatus } from "@/utils/propertyCompute";
 
-defineProps<{
+const props = defineProps<{
   isActive: boolean;
 }>();
+
+// One registry lookup per dataset, made when the tab is actually shown — a
+// hidden tab must not ask on every dataset load (FloatingPalette keeps its
+// content mounted).
+watch(
+  () => [props.isActive, store.dataset?.id],
+  ([isActive]) => {
+    if (isActive) {
+      spatialStore.ensureInfo();
+    }
+  },
+  { immediate: true },
+);
 
 // Survives tab switches: the component stays mounted, only the template is
 // gated on isActive.

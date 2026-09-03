@@ -40,6 +40,11 @@ from .propertyValues import AnnotationPropertyValues
 # `$nin` of its complement (see resolveListGateConstraints) already halves
 # the worst case; this is the backstop past that.
 MAX_GATE_CONSTRAINT_IDS = 400_000
+# One selection-summary request carries a single id clause (the smaller of
+# the matched set and its complement), so it can hold more than a gate's
+# share of MAX_GATE_CONSTRAINT_IDS; 1M ObjectIds is ~12 MB, under Mongo's
+# 16 MB command limit with room for the rest of the pipeline.
+MAX_SUMMARY_CONSTRAINT_IDS = 1_000_000
 
 # Ceiling on ids returned by one gate-resolution response, across all plots.
 # A single gate legitimately matches most of a large dataset (708K ids is
@@ -763,6 +768,14 @@ class Annotation(AccessControlMixin, ProxiedModel):
             return {"$sort": {key: direction, "_id": 1}}
         return {"$sort": {"_id": 1}}
 
+    def narrowsPopulation(self, filters):
+        """True when a list-filter object constrains the dataset at all —
+        annotation-document fields, id constraints, resolved gate clauses,
+        or property filters. The one place other plugins should ask this,
+        rather than mirroring the field list."""
+        return bool(filters.get("propertyFilters")) or \
+            self._hasAnnotationFieldFilters(filters)
+
     def _hasAnnotationFieldFilters(self, filters):
         """True if any filter constrains annotation-document fields.
 
@@ -932,6 +945,172 @@ class Annotation(AccessControlMixin, ProxiedModel):
         pipeline.append({"$count": "n"})
         result = list(self._aggregate(self.collection, pipeline))
         return result[0]["n"] if result else 0
+
+    def summarize(self, datasetId, filters, propertyPaths):
+        """Aggregate statistics over the annotations matching `filters`.
+
+        Returns {total, tags: [{tag, count}] (count desc, then tag), and
+        properties: [{path, count, mean, std, min, max}]} — one entry per
+        requested path, in request order. `count` is the number of matching
+        annotations holding a NUMERIC value at the path; non-numeric, NaN
+        and missing values are skipped, matching the analysis axes' reading
+        of a property value (Infinity is a number and is kept). `std` is the
+        sample standard deviation (null below two values).
+
+        The matching id set is resolved at most once, and the id clause
+        both aggregations share is the SMALLER of the matched set and its
+        complement (`_idSelector`), as the gate resolver does: a broad
+        filter that keeps most of a 700K dataset would otherwise ship a
+        dataset-sized `$in` twice. Annotation-field-only filters skip the
+        property-value join, so the tag facet runs on them directly and only
+        the statistics need the ids.
+
+        Without any filter the statistics run over every property-value
+        document of the dataset, so a value document orphaned by a deleted
+        annotation counts until the removal hook cleans it (excluding them
+        would cost a second full scan per request).
+        """
+        selector = None
+        facetFilters = filters
+        if filters.get("propertyFilters"):
+            selector = self._idSelector(
+                datasetId, self._matchingObjectIds(datasetId, filters)
+            )
+            facetFilters = (
+                {"gateMatchClauses": [{"_id": selector}]} if selector else {}
+            )
+        elif self._hasAnnotationFieldFilters(filters):
+            selector = self._idSelector(
+                datasetId, self._matchingObjectIds(datasetId, filters)
+            )
+
+        pipeline = self._buildListMatchStages(datasetId, facetFilters)
+        pipeline.append({"$facet": {
+            "total": [{"$count": "count"}],
+            "tags": [
+                {"$unwind": "$tags"},
+                {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
+                {"$sort": {"count": -1, "_id": 1}},
+            ],
+        }})
+        facets = next(self._aggregate(self.collection, pipeline))
+        total = facets["total"][0]["count"] if facets["total"] else 0
+        return {
+            "total": total,
+            "tags": [
+                {"tag": doc["_id"], "count": doc["count"]}
+                for doc in facets["tags"]
+            ],
+            "properties": self._propertyStats(
+                datasetId, selector, propertyPaths, total
+            ),
+        }
+
+    def _matchingObjectIds(self, datasetId, filters):
+        """ObjectIds of the annotations matching `filters`; the same two
+        pipelines as listIds, without the string round trip."""
+        if (filters.get("propertyFilters")
+                and not self._hasAnnotationFieldFilters(filters)):
+            pipeline = [{"$match": {"datasetId": datasetId}}]
+            pipeline += self._propertyFilterStages(
+                filters, valueBase="values.")
+            pipeline.append({"$project": {"annotationId": 1, "_id": 0}})
+            return [
+                doc["annotationId"]
+                for doc in self._aggregate(self._pvModel.collection, pipeline)
+            ]
+        pipeline = self._annotationDrivenStages(datasetId, filters)
+        pipeline.append({"$project": {"_id": 1}})
+        return [
+            doc["_id"] for doc in self._aggregate(self.collection, pipeline)
+        ]
+
+    def _idSelector(self, datasetId, matchingIds):
+        """The cheaper id clause for `matchingIds` within this dataset:
+        `{"$in": matched}` or `{"$nin": complement}`, or None when every
+        annotation matches (no clause needed).
+
+        Same 2x rule as resolveListGateConstraints, whose measurements it
+        relies on: `$nin` costs ~1.4x per element, so the complement only
+        wins once it is at most half the matched set.
+        """
+        counted = list(self._aggregate(self.collection, [
+            {"$match": {"datasetId": datasetId}}, {"$count": "count"},
+        ]))
+        datasetSize = counted[0]["count"] if counted else 0
+        complementSize = datasetSize - len(matchingIds)
+        if complementSize <= 0:
+            return None
+        if complementSize * 2 <= len(matchingIds):
+            matched = set(matchingIds)
+            complement = [
+                doc["_id"]
+                for doc in self._aggregate(self.collection, [
+                    {"$match": {"datasetId": datasetId}},
+                    {"$project": {"_id": 1}},
+                ])
+                if doc["_id"] not in matched
+            ]
+            operator, selected = "$nin", complement
+        else:
+            operator, selected = "$in", matchingIds
+        if len(selected) > MAX_SUMMARY_CONSTRAINT_IDS:
+            raise ValueError(
+                "the filters match a set the summary query cannot carry "
+                "(more than %d ids on either side); narrow the filters or "
+                "summarize the whole dataset" % MAX_SUMMARY_CONSTRAINT_IDS
+            )
+        return {operator: selected}
+
+    def _propertyStats(self, datasetId, selector, propertyPaths, total):
+        """Per-path statistics over the property values of the annotations
+        `selector` picks (an `$in`/`$nin` clause from _idSelector; None =
+        every annotation in the dataset)."""
+        empty = {"count": 0, "mean": None, "std": None,
+                 "min": None, "max": None}
+        if not propertyPaths or total == 0:
+            return [{"path": path, **empty} for path in propertyPaths]
+
+        match = {"datasetId": datasetId}
+        if selector is not None:
+            match["annotationId"] = selector
+
+        group = {"_id": None}
+        for index, path in enumerate(propertyPaths):
+            ref = "$values." + ".".join(path)
+            # $avg/$min/$max/$stdDevSamp skip nulls, so mapping every
+            # non-number to null excludes strings and nested objects from
+            # the statistics while $sum counts exactly the values used. NaN
+            # is a number to $isNumber and would poison the mean, so it is
+            # treated as missing too (BSON compares NaN equal to NaN, which
+            # is what makes the $ne test work); Infinity stays a value.
+            usable = {"$and": [
+                {"$isNumber": ref}, {"$ne": [ref, float("nan")]},
+            ]}
+            numeric = {"$cond": [usable, ref, None]}
+            group[f"count{index}"] = {"$sum": {"$cond": [usable, 1, 0]}}
+            group[f"mean{index}"] = {"$avg": numeric}
+            group[f"std{index}"] = {"$stdDevSamp": numeric}
+            group[f"min{index}"] = {"$min": numeric}
+            group[f"max{index}"] = {"$max": numeric}
+        result = list(self._aggregate(
+            self._pvModel.collection,
+            [{"$match": match}, {"$group": group}],
+        ))
+        if not result:
+            return [{"path": path, **empty} for path in propertyPaths]
+        stats = result[0]
+        return [
+            {
+                "path": path,
+                "count": stats[f"count{index}"],
+                "mean": stats[f"mean{index}"],
+                "std": stats[f"std{index}"],
+                "min": stats[f"min{index}"],
+                "max": stats[f"max{index}"],
+            }
+            for index, path in enumerate(propertyPaths)
+        ]
 
     def listPosition(self, datasetId, filters, sort, annotationId):
         """Zero-based position of an annotation in a filtered/sorted list.

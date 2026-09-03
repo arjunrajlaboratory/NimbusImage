@@ -27,6 +27,7 @@ from ..helpers.colormaps import (
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.validation import (
     MAX_LIST_LIMIT,
+    MAX_SUMMARY_PROPERTY_PATHS,
     dropNoOpPropertyFilters,
     isFiniteNumber,
     isValidPropertyPath,
@@ -40,6 +41,7 @@ from ..helpers.validation import (
     validateAnalysisHistogramRequest,
     validateAnnotationIdCount,
     validateListInputs,
+    validatePropertyPaths,
     validateUncomputedCountsProperties,
 )
 from ..models.annotation import Annotation as AnnotationModel
@@ -216,6 +218,7 @@ class Annotation(Resource):
         self.route("POST", ("hydrate",), self.hydrate)
         self.route("POST", ("list",), self.listAnnotations)
         self.route("POST", ("list", "ids"), self.listAnnotationIds)
+        self.route("POST", ("summary",), self.summary)
         self.route(
             "POST", ("analysis", "gate_ids"), self.analysisGateIds
         )
@@ -999,6 +1002,38 @@ class Annotation(Resource):
         setResponseHeader("Content-Type", "application/json")
         return _streamJsonArray(cursor, default=orJsonDefaults)
 
+    def _loadListRequest(self, withSortAndPaths=False):
+        """Shared prologue of the filter-driven POST endpoints (list,
+        list/ids, summary): parse the body, require READ on the dataset,
+        validate the filter object (plus sort and propertyPaths for the
+        paged list), drop no-op property filters, and resolve gate
+        definitions ONCE so every aggregation in the request reuses the
+        same constraints (SERVER_GATING.md, Phase 3). Over-budget gates
+        raise ValueError -> 400. Returns (bodyJson, datasetId, filters).
+        """
+        bodyJson = requireObjectBody(self.getBodyJson())
+        datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetId, user=self.getCurrentUser(),
+            level=AccessType.READ, exc=True,
+        )
+        filters = bodyJson.get("filters") or {}
+        if withSortAndPaths:
+            validateListInputs(
+                filters, bodyJson.get("sort"),
+                bodyJson.get("propertyPaths") or [],
+            )
+        else:
+            validateListInputs(filters)
+        dropNoOpPropertyFilters(filters)
+        try:
+            self._annotationModel.resolveListGateConstraints(
+                datasetId, filters
+            )
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
+        return bodyJson, datasetId, filters
+
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Annotation IDs matching list filters")
@@ -1007,26 +1042,48 @@ class Annotation(Resource):
         .errorResponse("Read access denied.", 403)
     )
     def listAnnotationIds(self, params):
-        bodyJson = requireObjectBody(self.getBodyJson())
-        datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
-        Folder().load(
-            datasetId, user=self.getCurrentUser(),
-            level=AccessType.READ, exc=True,
-        )
-        filters = bodyJson.get("filters") or {}
-        validateListInputs(filters)
-        dropNoOpPropertyFilters(filters)
-        try:
-            self._annotationModel.resolveListGateConstraints(
-                datasetId, filters
-            )
-        except ValueError as exc:
-            raise RestException(str(exc), code=400)
+        _, datasetId, filters = self._loadListRequest()
         ids = self._annotationModel.listIds(datasetId, filters)
 
         prefix = b'{"total":' + str(len(ids)).encode() + b',"ids":['
         setResponseHeader("Content-Type", "application/json")
         return _streamJsonArray(ids, prefix=prefix, suffix=b"]}")
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Summary statistics for the annotations matching filters")
+        .notes(
+            "Total count, tag composition, and per-property-path count/"
+            "mean/std/min/max over the annotations matching the same "
+            "`filters` object the list endpoints accept (including "
+            "analysis gate definitions). Non-numeric property values are "
+            "skipped. Body: {datasetId, filters, propertyPaths}."
+        )
+        .param(
+            "body", "JSON: {datasetId, filters, propertyPaths}",
+            paramType="body",
+        )
+        .errorResponse()
+        .errorResponse("Read access denied.", 403)
+    )
+    def summary(self, params):
+        bodyJson, datasetId, filters = self._loadListRequest()
+        propertyPaths = requireList(
+            bodyJson.get("propertyPaths") or [], "propertyPaths"
+        )
+        # Cap before the per-path walk so an oversized payload is refused
+        # before any O(n) work.
+        requireCountWithin(
+            len(propertyPaths), MAX_SUMMARY_PROPERTY_PATHS, "propertyPaths"
+        )
+        validatePropertyPaths(propertyPaths)
+        try:
+            return self._annotationModel.summarize(
+                datasetId, filters, propertyPaths
+            )
+        except ValueError as exc:
+            # Over-budget id clause (MAX_SUMMARY_CONSTRAINT_IDS).
+            raise RestException(str(exc), code=400)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -1101,13 +1158,9 @@ class Annotation(Resource):
         .errorResponse("Read access denied.", 403)
     )
     def listAnnotations(self, params):
-        bodyJson = requireObjectBody(self.getBodyJson())
-        datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
-        Folder().load(
-            datasetId, user=self.getCurrentUser(),
-            level=AccessType.READ, exc=True,
+        bodyJson, datasetId, filters = self._loadListRequest(
+            withSortAndPaths=True
         )
-        filters = bodyJson.get("filters") or {}
         sort = bodyJson.get("sort")
         propertyPaths = bodyJson.get("propertyPaths") or []
         anchorIdValue = bodyJson.get("anchorId")
@@ -1125,19 +1178,6 @@ class Annotation(Resource):
             MAX_LIST_LIMIT,
             max(1, requireInt(bodyJson.get("limit", 50), "limit")),
         )
-
-        validateListInputs(filters, sort, propertyPaths)
-        dropNoOpPropertyFilters(filters)
-        # Resolve gate definitions ONCE here, so the page, count, and anchor
-        # position below all reuse the same constraints (SERVER_GATING.md,
-        # Phase 3). Over-budget gates raise ValueError -> 400, like a bad
-        # sort key below.
-        try:
-            self._annotationModel.resolveListGateConstraints(
-                datasetId, filters
-            )
-        except ValueError as exc:
-            raise RestException(str(exc), code=400)
 
         # Build the page first: its pipeline construction validates the sort
         # field (ValueError -> 400) before the expensive count aggregation

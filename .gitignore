@@ -50,3 +50,5 @@ src/**/*.js
 *.egg-info
 *.tox
 CLAUDE.local.md
+# setuptools build output from installing a sibling plugin in tox
+devops/girder/plugins/*/build/

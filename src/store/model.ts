@@ -1758,6 +1758,67 @@ export interface IAnnotationListPage {
   offset?: number | null;
 }
 
+// POST upenn_annotation/summary: aggregate statistics over the annotations
+// matching a list filter object. `count` is the number of matching annotations
+// with a numeric value at the path; the statistics are null when it is 0 (std
+// also below two values).
+export interface IAnnotationSummaryPropertyStats {
+  path: string[];
+  count: number;
+  mean: number | null;
+  std: number | null;
+  min: number | null;
+  max: number | null;
+}
+
+export interface IAnnotationSummary {
+  total: number;
+  tags: { tag: string; count: number }[];
+  properties: IAnnotationSummaryPropertyStats[];
+}
+
+// upenncontrast_spatial plugin (SPATIAL_PLUGIN.md): a dataset's registered
+// expression table and what the endpoints return.
+export interface ISpatialInfo {
+  datasetId: string;
+  itemId: string;
+  fileId: string;
+  schemaVersion: number;
+  nObs: number;
+  nVar: number;
+  obsColumns: string[];
+  // Rows that still join to a live annotation of the dataset; present only
+  // when the request asked for it (`verify`), since it scans the dataset.
+  liveAnnotations?: number;
+}
+
+export interface ISpatialFeature {
+  symbol: string;
+  featureType: string | null;
+}
+
+export interface ISpatialFeatureAggregate {
+  symbol: string;
+  // Mean over the selected cells, zeros included; null when none selected.
+  mean: number | null;
+  fractionExpressing: number | null;
+  expressing: number;
+}
+
+export interface ISpatialAggregate {
+  total: number;
+  // Matching annotations with no row in the table.
+  unmatched: number;
+  features: ISpatialFeatureAggregate[];
+}
+
+export interface ISpatialMaterializeResult {
+  propertyId: string;
+  written: number;
+  // Set when the write runs as a job (large tables); null when done inline.
+  jobId: string | null;
+}
+
 export type THydrationMode = "shapes" | "dots";
 
 export interface IVisibilityConfig {

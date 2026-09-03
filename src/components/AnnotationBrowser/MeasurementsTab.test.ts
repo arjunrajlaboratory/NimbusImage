@@ -29,8 +29,24 @@ vi.mock("@/store/filters", () => ({
   default: {},
 }));
 
+vi.mock("@/store/spatial", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      hasTable: false,
+      info: null,
+      ensureInfo: vi.fn(),
+    }),
+  };
+});
+
+vi.mock("@/store/jobs", () => ({
+  default: { fetchJobStatus: vi.fn() },
+}));
+
 import store from "@/store";
 import propertyStore from "@/store/properties";
+import spatialStore from "@/store/spatial";
 import MeasurementsTab from "./MeasurementsTab.vue";
 
 function mountComponent(props: { isActive: boolean } = { isActive: true }) {
@@ -189,5 +205,27 @@ describe("MeasurementsTab", () => {
     expect(alerts).toHaveLength(2);
     expect(wrapper.text()).toContain("Compute failed: boom");
     expect(wrapper.text()).toContain("Heads up: slow");
+  });
+});
+
+describe("MeasurementsTab spatial table", () => {
+  beforeEach(() => {
+    (spatialStore as any).hasTable = false;
+    (spatialStore as any).ensureInfo.mockClear();
+  });
+
+  it("asks for the table registration when shown, not when hidden", async () => {
+    mountComponent({ isActive: false });
+    expect(spatialStore.ensureInfo).not.toHaveBeenCalled();
+    mountComponent({ isActive: true });
+    expect(spatialStore.ensureInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Add genes only when the dataset has a spatial table", async () => {
+    const wrapper = mountComponent();
+    expect(wrapper.text()).not.toContain("Add genes");
+    (spatialStore as any).hasTable = true;
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("Add genes");
   });
 });
