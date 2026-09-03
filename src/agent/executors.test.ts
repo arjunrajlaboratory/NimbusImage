@@ -735,6 +735,12 @@ describe("executeAgentTool", () => {
   });
 
   it("color_annotations_by_property clears via the store twin", async () => {
+    mockMain.colorByPropertyForCurrentDataset = {
+      propertyName: "Area",
+      propertyPath: ["p1", "Area"],
+      type: "continuous",
+      showLegend: true,
+    };
     const out = await executeAgentTool(
       "color_annotations_by_property",
       { clear: true },
@@ -743,6 +749,23 @@ describe("executeAgentTool", () => {
     expect(mockAnnotations.removeColorByProperty).toHaveBeenCalled();
     expect(mockAnnotations.applyColorByProperty).not.toHaveBeenCalled();
     expect(out.result.cleared).toBe(true);
+    mockMain.colorByPropertyForCurrentDataset = null;
+  });
+
+  it("color_annotations_by_property refuses clear with no active coloring", async () => {
+    // Review finding (Codex, PR #1345): the backend's clear resets EVERY
+    // annotation color, not just property-assigned ones, and is not
+    // undoable — so with no active legend the clear must be a no-op, like
+    // the dialog's hasActiveColoring-gated Remove button.
+    mockMain.colorByPropertyForCurrentDataset = null;
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { clear: true },
+      context,
+    );
+    expect(mockAnnotations.removeColorByProperty).not.toHaveBeenCalled();
+    expect(out.result.cleared).toBe(false);
+    expect(out.result.note).toMatch(/no property-based coloring/i);
   });
 
   it("validates select_annotations queries but allows omitting for all", async () => {

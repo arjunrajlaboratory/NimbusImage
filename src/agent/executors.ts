@@ -1933,6 +1933,22 @@ const registry: { [name: string]: IAgentToolEntry } = {
       requireLogin();
       requireDataset();
       if (input.clear) {
+        // Mirror the dialog's hasActiveColoring gate (ColorByPropertyDialog):
+        // the backend's clear resets EVERY annotation color to the layer
+        // color, not just property-assigned ones, and is not undoable — so
+        // without an active legend a "clear" would silently erase unrelated
+        // manual colors under approval text that promises less.
+        if (!main.colorByPropertyForCurrentDataset) {
+          return {
+            result: {
+              cleared: false,
+              note:
+                "No property-based coloring is active on this dataset, so " +
+                "there is nothing to remove. Clearing anyway would reset " +
+                "every annotation to its layer color, so it was skipped.",
+            },
+          };
+        }
         await annotationStore.removeColorByProperty();
         return { result: { cleared: true } };
       }
