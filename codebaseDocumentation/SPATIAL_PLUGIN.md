@@ -146,10 +146,62 @@ genes dialog has three modes: **live columns** (default), **copy into a measurem
   scope, B = the rest or objects with picked tags), ranked table, CSV download. Python:
   `ds.spatial.score()`, `ds.spatial.differential()`, `ds.spatial.virtual_path()`.
 
+## Phase 3: the transcript layer
+
+The per-molecule store is the 10x `transcripts.zarr.zip`, registered **as shipped**: it is
+already a level-of-detail pyramid, so nothing is rebuilt (plan §4, §12).
+
+```
+grids/{level}/{gx},{gy}   250 um * 2**level squares from the origin; each tile sorted by
+                          gene in two runs (quality >= 20 first, then the rest), with
+                          gene_offset[g] = [lowStart, lowEnd, highStart, highEnd]
+level 0                   location (x, y, z um), quality_score, id (the transcript's own id)
+levels 1..6               location, gene_identity, cluster_count (merged molecules)
+density/gene              CSR over (gene, row) of a 10 um grid — a heat map per gene
+```
+
+`server/transcripts.py` — `TranscriptStore` (schema, gene search that skips control
+codewords, `tilePoints` slicing the two runs per gene with the quality threshold,
+microns → image pixels through `pixelSize` and the optional 3×3 `transform`,
+`densityGrid`/`densityTile` on the annotation overview's pyramid), an LRU of
+`MAX_OPEN_TRANSCRIPT_STORES` open stores, and `encodePoints`. `server/api/transcripts.py`
+is a mixin the `Spatial` resource inherits. The registry document gains
+`{transcriptsItemId, transcriptsFileId, pixelSize, transform}`; either half (table,
+transcripts) may be absent, and each is forgotten independently.
+
+| Route | Body / params | Returns |
+|---|---|---|
+| `GET spatial/{datasetId}/transcripts` | — | levels, `pixelSize`, `transform`, `genes`, `totalPoints`, per-level `tiles` (`keys`, `counts`), `hasCellIds`; 404 when none |
+| `POST spatial/{datasetId}/transcripts/register` (WRITE) | `{itemId, pixelSize, transform?}` | the schema above |
+| `DELETE spatial/{datasetId}/transcripts` (WRITE) | — | forgets the store; the item stays |
+| `GET spatial/{datasetId}/transcripts/genes` | `search`, `limit` (≤ 200) | `[symbol]`, prefix matches first, no control codewords |
+| `POST spatial/{datasetId}/transcripts/points` | `{genes (≤ 8), level, tiles (≤ 256 keys, non-empty), minQv?}` | **binary**: `uint32 n, uint8 hasQuality, float32[n*2] x,y (image px), uint8[n] gene slot`, then at level 0 `float32[n] quality`; 413 above `MAX_POINTS_PER_RESPONSE` (2M) |
+| `GET spatial/{datasetId}/transcripts/density/{z}/{x}/{y}` (cookie auth) | `genes`, `sizeX`, `sizeY`, `tileSize`, `maxLevel`, `color` | PNG, alpha = sqrt of the genes' count per 10 um bin relative to the 99.5th percentile of their occupied bins (a ubiquitous gene keeps its gradient); a tile outside the pyramid is a 400, as is a transformed registration (the grid is only rendered on the transcripts' own pixel grid) |
+
+**Molecule → cell is geometric.** The zarr's level-0 `id` is the *transcript's* id (unique
+per molecule; the bundle ships no per-molecule cell reference — that lives only in
+`transcripts.parquet`, which the viewer bundle omits). So the overlay answers "which cell"
+by point-in-polygon against the cell outlines already drawn on the annotation layer
+(`src/utils/annotationAtPoint.ts`, bbox prefilter then `geo.util.pointInPolygon`), and
+"Go to cell" navigates to that annotation. No id column, no server lookup.
+
+**Client.** `src/store/transcripts.ts` holds the selection (genes with colors, quality
+threshold, rendering mode, point budget) and what the overlay last did; the molecules never
+enter the store. `TranscriptOverlay.vue` (one per viewer, mounted by `ImageViewer`) plans a
+pyramid level per view from the schema alone (`src/utils/transcriptTiles.ts`: the finest
+level whose intersecting tiles fit `MAX_TRANSCRIPT_TILES_PER_REQUEST` and whose estimated
+points fit the budget), fetches the binary body into a GeoJS point feature, steps coarser
+on 413, and switches to the density OSM layer in "auto" mode from `AUTO_DENSITY_LEVEL`
+(1 mm tiles) or when nothing fits. `TranscriptsPanel.vue` is a right-zone palette
+(`transcriptsPanel`), shown only for datasets with a registered store.
+
 ## Client
 
 - `nimbusimage`: `ds.spatial` — `info()`, `upload()`, `register()`, `upload_and_register()`,
-  `unregister()`, `features()`, `column()`, `row()`, `aggregate()`, `materialize()`.
+  `unregister()`, `features()`, `column()`, `row()`, `aggregate()`, `materialize()`;
+  transcripts: `transcripts()`, `upload_transcripts()`, `register_transcripts(item_id,
+  pixel_size, transform=None)`, `unregister_transcripts()`, `transcript_genes()`,
+  `transcript_points(genes, tiles, level, min_qv)` (decodes the binary body into numpy).
 - Frontend: `src/store/SpatialAPI.ts`, `src/store/spatial.ts` (registration per dataset;
   `hasTable` is false for a stale answer from another dataset; "no table" and "could not
   ask" are distinct), `SpatialFeaturePicker.vue` (server-side search, debounced),
@@ -164,6 +216,9 @@ store from a Xenium bundle and the verified annotation-id map, uploads it, regis
 The 10x matrix is gene-major CSR, which read as `(data, indices, indptr)` with shape
 `(cells, genes)` **is** the cells × genes CSC — no transpose is materialized. The Girder
 worker form of the import wraps this script once the format has settled.
+`xenium_register_transcripts.py` uploads the bundle's `transcripts.zarr.zip` unchanged and
+registers it with the bundle's `pixel_size` (and the inverse H&E alignment as `transform`
+for the H&E dataset).
 
 ## Regression checklist
 
@@ -238,8 +293,72 @@ Each line names the test that holds it.
 - Summary expression: only with a table and picked genes, same scope, in the CSV —
   *"aggregates expression over the same scope only when a table exists and genes are picked"*.
 
+**Transcripts (`test/test_transcripts.py`, synthetic two-level pyramid)**
+- Registration describes the pyramid, skips control codewords in the gene count, and
+  leaves the table routes a 404 — *"testRegisterDescribesPyramid"*; bad pixel size,
+  transform, or a foreign/non-store item are 400s — *"testRegisterValidatesInput"*.
+- Registration needs WRITE; table and transcripts are forgotten independently —
+  *"testRegisterRequiresWriteAndKeepsTable"*.
+- Gene search skips controls, orders prefix matches first, rejects limit 0 —
+  *"testGeneSearchSkipsControls"*.
+- Level-0 points arrive in image pixels with quality — *"testPointsAtLevelZeroCarryQuality"*;
+  the quality threshold selects the runs and filters within them, unknown tiles are empty —
+  *"testPointsHonourQualityAndUnknownTiles"*; coarser levels carry no quality —
+  *"testPointsAtCoarserLevelsHaveNoQuality"*.
+- Malformed bodies (an empty tile list included) are 400s and too many points a 413 —
+  *"testPointsRejectBadInputAndTooMany"*;
+  private datasets refuse reads, density tiles need the cookie — *"testPointsRequireReadAccess"*.
+- Density tiles light exactly the bins holding molecules, in the requested color, on the
+  overview pyramid — *"testDensityTileMatchesBins"*; parameters and the tile range validated —
+  *"testDensityTileValidatesParams"*; a transformed registration transforms points and
+  refuses density — *"testDensityRefusesTransformedRegistrations"*.
+- Store units: tile bounds, unknown keys, density grid, transform parsing, empty encoding —
+  *"testStoreUnits"*.
+
+**Transcripts, Python (`nimbusimage/tests/test_spatial.py`)**
+- 404 → None — *"test_transcripts_none_when_unregistered"*; registration body —
+  *"test_register_sends_pixel_size_and_transform"*; binary decode —
+  *"test_points_decode_the_binary_body"*; routes — *"test_gene_search_route"*.
+
+**Transcripts, frontend**
+- Binary decode round-trips, coarser levels null, truncation refused —
+  *"round-trips level-0 points with quality"*, *"leaves quality null at coarser levels"*,
+  *"decodes an empty body and rejects a truncated one"*.
+- Which cell a molecule is in: the containing polygon, bbox first —
+  *"returns the polygon containing the point and skips the rest"*, *"uses the bounding box before the polygon test"*.
+- View → microns clamps, scales, and undoes the transform — *"clamps to the image and scales by the pixel size"*,
+  *"returns null when the image is off screen"*, *"undoes the registration transform before scaling"*;
+  tiles only where the pyramid has them — *"lists only tiles the pyramid has"*; the plan takes
+  the finest fitting level and honours the tile cap — *"takes the finest level that fits the budget"*,
+  *"respects the tile cap even under budget"*.
+- Store: registration is per dataset and stale answers are discarded — *"knows the store only for the dataset it was fetched for"*,
+  *"discards a stale answer after a dataset switch"*; "could not ask" ≠ "no store" —
+  *"keeps 'could not ask' distinct from 'no store'"*; colors assigned and kept, selection
+  reset with the dataset — *"assigns and keeps gene colors, and resets with the dataset"*; the
+  readout follows its gene — *"drops the readout when its gene is removed or the overlay is turned off"*;
+  colors do not refetch — *"changes the request signature for refetch inputs only"*; cell
+  navigation — *"navigates to a molecule's cell by annotation id"*.
+- Overlay: fetches the view's tiles at the planned level — *"fetches the view's tiles at the finest fitting level and draws them"*;
+  413 steps coarser — *"steps one level coarser when the server answers 413"*; density in auto
+  when zoomed out and on demand — *"shows the density heat map when zoomed far out in auto mode, and when asked"*;
+  clears when off — *"clears everything when disabled, turned off, or without genes"*; stale
+  fetch ignored — *"ignores a fetch that finishes after a newer one started"*; click readout
+  and teardown — *"reports the clicked molecule and tears down on unmount"*; unrolled views —
+  *"does nothing while unrolled"*.
+- Panel: registration looked up only when shown — *"looks the registration up only when shown"*;
+  status text — *"describes what the overlay is doing"*; cell text and navigation —
+  *"explains the clicked molecule's cell and navigates to it"*; symbols and debounced search —
+  *"hands picked symbols to the store and debounces the search"*.
+- API: 404 → null — *"fetchTranscriptsSchema returns null for 404 and rethrows other errors"*;
+  binary request — *"decodes the binary points body and passes the request as JSON"*; routes —
+  *"gene search uses the documented route"*; density template —
+  *"builds a density template on the overview pyramid"*.
+
 **Process**
 - Backend edits need `docker compose build girder && docker compose up -d girder`.
 - Verify live on the lymph node: register, `GET spatial/{id}` shows 708,983 live rows,
   aggregate under a tag matches the Phase 0 `Gene Expression` property's mean for the same
   gene, materialize a small panel and compare a few cells' values.
+- Transcripts live: register the 4.7 GB store, `GET .../transcripts` reports 232,650,139
+  molecules over 7 levels; a level-0 request for one gene in the visible tiles returns in
+  well under a second; clicking a molecule inside a drawn cell offers "Go to cell".

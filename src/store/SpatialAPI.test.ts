@@ -86,3 +86,65 @@ describe("SpatialAPI", () => {
     expect(client.get).toHaveBeenCalledWith("job/j1");
   });
 });
+
+describe("SpatialAPI transcripts", () => {
+  it("fetchTranscriptsSchema returns null for 404 and rethrows other errors", async () => {
+    const { api } = makeApi({ get: async () => Promise.reject(axios404()) });
+    expect(await api.fetchTranscriptsSchema("ds")).toBeNull();
+    const { api: failing } = makeApi({
+      get: async () => Promise.reject(new Error("network")),
+    });
+    await expect(failing.fetchTranscriptsSchema("ds")).rejects.toThrow(
+      "network",
+    );
+  });
+
+  it("decodes the binary points body and passes the request as JSON", async () => {
+    const { encodeTranscriptPoints } = await import("@/utils/transcriptPoints");
+    const body = encodeTranscriptPoints({
+      x: [1],
+      y: [2],
+      gene: [0],
+      quality: [30],
+    });
+    const { api, client } = makeApi({ post: async () => ({ data: body }) });
+    const points = await api.fetchTranscriptPoints(
+      "ds",
+      ["CD3E"],
+      0,
+      ["0,0", "1,0"],
+      20,
+    );
+    expect(client.post).toHaveBeenCalledWith(
+      "spatial/ds/transcripts/points",
+      { genes: ["CD3E"], level: 0, tiles: ["0,0", "1,0"], minQv: 20 },
+      { responseType: "arraybuffer" },
+    );
+    expect(points.count).toBe(1);
+    expect(points.quality![0]).toBe(30);
+  });
+
+  it("gene search uses the documented route", async () => {
+    const { api, client } = makeApi({ get: async () => ({ data: ["CD3E"] }) });
+    expect(await api.searchTranscriptGenes("ds", "cd", 5)).toEqual(["CD3E"]);
+    expect(client.get).toHaveBeenCalledWith("spatial/ds/transcripts/genes", {
+      params: { search: "cd", limit: 5 },
+    });
+  });
+
+  it("builds a density template on the overview pyramid", () => {
+    const client = { apiRoot: "http://h/api/v1" } as any;
+    const template = new SpatialAPI(client).transcriptDensityTemplateUrl({
+      datasetId: "ds",
+      genes: ["CD3E", "MS4A1"],
+      sizeX: 100,
+      sizeY: 50,
+      tileSize: 512,
+      maxLevel: 7,
+      color: "#FF0000",
+    });
+    expect(template).toBe(
+      "http://h/api/v1/spatial/ds/transcripts/density/{z}/{x}/{y}?genes=CD3E%2CMS4A1&sizeX=100&sizeY=50&tileSize=512&maxLevel=7&color=%23FF0000",
+    );
+  });
+});

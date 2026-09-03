@@ -7,7 +7,20 @@ import {
   ISpatialInfo,
   ISpatialJob,
   ISpatialMaterializeResult,
+  ISpatialTranscriptsSchema,
+  ITranscriptPoints,
 } from "./model";
+import { decodeTranscriptPoints } from "@/utils/transcriptPoints";
+
+export interface ITranscriptDensityUrlOptions {
+  datasetId: string;
+  genes: string[];
+  sizeX: number;
+  sizeY: number;
+  tileSize: number;
+  maxLevel: number;
+  color: string;
+}
 
 // Client for the upenncontrast_spatial plugin: a dataset's expression table
 // (SPATIAL_PLUGIN.md). Filters are the list-filter object the Objects tab
@@ -104,5 +117,69 @@ export default class SpatialAPI {
   async fetchJob(jobId: string): Promise<ISpatialJob> {
     const response = await this.client.get(`job/${jobId}`);
     return response.data as ISpatialJob;
+  }
+
+  // ---- transcripts (per-molecule store) ----
+
+  /** The transcript pyramid, or null when the dataset has none (404). */
+  async fetchTranscriptsSchema(
+    datasetId: string,
+  ): Promise<ISpatialTranscriptsSchema | null> {
+    try {
+      const response = await this.client.get(
+        `spatial/${datasetId}/transcripts`,
+      );
+      return response.data as ISpatialTranscriptsSchema;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async searchTranscriptGenes(
+    datasetId: string,
+    search: string,
+    limit = 25,
+  ): Promise<string[]> {
+    const response = await this.client.get(
+      `spatial/${datasetId}/transcripts/genes`,
+      { params: { search, limit } },
+    );
+    return response.data as string[];
+  }
+
+  /** Molecules of `genes` in the given pyramid tiles, in image pixels. A
+   * 413 (too many points) propagates as an axios error for the caller to
+   * step to a coarser level. */
+  async fetchTranscriptPoints(
+    datasetId: string,
+    genes: string[],
+    level: number,
+    tiles: string[],
+    minQv: number,
+  ): Promise<ITranscriptPoints> {
+    const response = await this.client.post(
+      `spatial/${datasetId}/transcripts/points`,
+      { genes, level, tiles, minQv },
+      { responseType: "arraybuffer" },
+    );
+    return decodeTranscriptPoints(response.data as ArrayBuffer);
+  }
+
+  /** GeoJS tile URL template for the density heat map, on the annotation
+   * overview's pyramid. */
+  transcriptDensityTemplateUrl(options: ITranscriptDensityUrlOptions): string {
+    const url = new URL(
+      `${this.client.apiRoot}/spatial/${options.datasetId}/transcripts/density/0/0/0`,
+    );
+    url.searchParams.set("genes", options.genes.join(","));
+    url.searchParams.set("sizeX", options.sizeX.toString());
+    url.searchParams.set("sizeY", options.sizeY.toString());
+    url.searchParams.set("tileSize", options.tileSize.toString());
+    url.searchParams.set("maxLevel", options.maxLevel.toString());
+    url.searchParams.set("color", options.color);
+    return url.href.replace("/density/0/0/0", "/density/{z}/{x}/{y}");
   }
 }

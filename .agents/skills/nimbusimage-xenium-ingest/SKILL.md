@@ -53,6 +53,9 @@ python $S/xenium_upload_properties.py --bundle-dir extracted --dataset $MORPH --
 # 8. Cell types as tags
 python $S/xenium_upload_cell_types.py --bundle-dir extracted --cell-types cell_types.csv \
        --dataset $MORPH --ids ids_morph.npy
+# 9. Whole matrix as a spatial table, and the molecules as an overlay (§7b, §7c)
+python $S/xenium_build_spatial_store.py --bundle-dir extracted --dataset $MORPH --ids ids_morph.npy
+python $S/xenium_register_transcripts.py --bundle-dir extracted --dataset $MORPH
 ```
 
 Run every upload script with `--limit 2000` first and look at the result in the viewer.
@@ -190,6 +193,27 @@ In the app: Measurements tab → **Genes from spatial table** (live columns, cop
 measurement, or a gene-set score), and the Selection summary's **Expression** section
 with **Compare expression…** (mean and % expressing for picked genes over the current
 selection, filter, or gate). `--no-upload` builds the file only. Requires `anndata`.
+
+## 7c. Molecules as an overlay (`xenium_register_transcripts.py`)
+
+`transcripts.zarr.zip` is registered **as shipped**: it is already a tile pyramid
+(`grids/{level}/{gx},{gy}`, 250 µm × 2^level) with a per-gene 10 µm density grid. Upload is
+the slow part (4.7 GB for the lymph node); registration only records the scale:
+
+```bash
+python $S/xenium_register_transcripts.py --bundle-dir extracted --dataset $MORPH
+python $S/xenium_register_transcripts.py --bundle-dir extracted --dataset $HE \
+       --alignment he_align.csv          # H&E: the inverse alignment as the transform
+```
+
+In the app a **Transcripts** palette appears for such datasets: pick up to 8 genes, set the
+quality threshold (20 is Xenium's own cut), and the viewer draws molecules as points at the
+finest pyramid level that fits the budget, or the density heat map when zoomed out.
+Clicking a molecule shows its gene and quality, and **Go to cell** when it sits inside a
+drawn cell outline (the zarr carries no cell reference — its `id` is the transcript's own —
+so the cell is found geometrically). From Python: `ds.spatial.transcripts()`,
+`ds.spatial.transcript_genes("cd")`, `ds.spatial.transcript_points(["CD3E"], ["12,7"],
+level=0, min_qv=20)`.
 
 ## 8. Traps (each cost real time)
 

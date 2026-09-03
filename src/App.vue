@@ -253,6 +253,20 @@
               </button>
             </template>
           </v-tooltip>
+          <v-tooltip v-if="transcriptsStore.hasTranscripts" text="Transcripts">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: transcriptsPanel }"
+                aria-label="Transcripts"
+                @click.stop="togglePalette('transcriptsPanel')"
+              >
+                <v-icon size="18">mdi-dots-hexagon</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
           <v-tooltip
             text="Snapshots for bookmarking and downloading cropped regions in your dataset"
           >
@@ -487,6 +501,14 @@
       <analysis-panel :visible="analysisPanel" />
     </floating-palette>
 
+    <floating-palette
+      v-model="transcriptsPanel"
+      title="Transcripts"
+      :width="RIGHT_PALETTE_WIDTHS.transcripts"
+    >
+      <transcripts-panel :visible="transcriptsPanel" />
+    </floating-palette>
+
     <template v-if="store.dataset && routeName === 'datasetview'">
       <floating-palette
         ref="navigatorPaletteRef"
@@ -564,6 +586,8 @@ import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.
 import DataIoMenu from "@/components/DataIOMenu.vue";
 import FiltersPanel from "@/components/FiltersPanel.vue";
 import AnalysisPanel from "@/components/AnalysisPanel.vue";
+import TranscriptsPanel from "@/components/TranscriptsPanel.vue";
+import transcriptsStore from "@/store/transcripts";
 import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
 import PipelineDialog from "@/components/PipelineDialog.vue";
 import ColorByPropertyDialog from "@/components/AnnotationBrowser/ColorByPropertyDialog.vue";
@@ -613,6 +637,7 @@ void Snapshots;
 void AnnotationBrowser;
 void FiltersPanel;
 void AnalysisPanel;
+void TranscriptsPanel;
 void AnalyzeDialog;
 void PipelineDialog;
 void ColorByPropertyDialog;
@@ -638,6 +663,7 @@ const annotationPanel = ref(false);
 const settingsPanel = ref(false);
 const filtersPanel = ref(false);
 const analysisPanel = ref(false);
+const transcriptsPanel = ref(false);
 const analyzePanel = ref(false);
 const aiPanelOpen = ref(false);
 
@@ -689,6 +715,10 @@ const rightEdgeClearance = computed(() =>
     { open: annotationPanel.value, width: RIGHT_PALETTE_WIDTHS.objectBrowser },
     { open: filtersPanel.value, width: RIGHT_PALETTE_WIDTHS.filters },
     { open: analysisPanel.value, width: RIGHT_PALETTE_WIDTHS.analysis },
+    {
+      open: transcriptsPanel.value,
+      width: RIGHT_PALETTE_WIDTHS.transcripts,
+    },
     { open: settingsPanel.value, width: RIGHT_PALETTE_WIDTHS.settings },
     { open: snapshotPanel.value, width: RIGHT_PALETTE_WIDTHS.snapshots },
     {
@@ -831,6 +861,7 @@ type PaletteId =
   | "annotationPanel"
   | "filtersPanel"
   | "analysisPanel"
+  | "transcriptsPanel"
   | "snapshotPanel"
   | "settingsPanel"
   | "navigatorPanel"
@@ -851,6 +882,7 @@ const paletteOpen: Record<PaletteId, Ref<boolean>> = {
   annotationPanel,
   filtersPanel,
   analysisPanel,
+  transcriptsPanel,
   snapshotPanel,
   settingsPanel,
   navigatorPanel,
@@ -861,6 +893,7 @@ const paletteOpen: Record<PaletteId, Ref<boolean>> = {
 const paletteRoles: Record<PaletteId, PaletteRole> = {
   annotationPanel: { role: "primary", zone: "right" },
   analysisPanel: { role: "primary", zone: "right" },
+  transcriptsPanel: { role: "primary", zone: "right" },
   snapshotPanel: { role: "primary", zone: "right" },
   settingsPanel: { role: "primary", zone: "right" },
   // Filters hosts alongside both the Object Browser and the Analysis panel:
@@ -877,6 +910,19 @@ const paletteRoles: Record<PaletteId, PaletteRole> = {
 };
 
 const paletteIds = Object.keys(paletteRoles) as PaletteId[];
+
+// The Transcripts button and the viewer's overlay only appear for a dataset
+// with a registered transcript store, so the registration is looked up as
+// soon as the dataset is known rather than when the palette first opens.
+watch(
+  () => store.dataset?.id,
+  (datasetId) => {
+    if (datasetId) {
+      transcriptsStore.ensureSchema();
+    }
+  },
+  { immediate: true },
+);
 
 function openPalette(id: PaletteId) {
   const def = paletteRoles[id];

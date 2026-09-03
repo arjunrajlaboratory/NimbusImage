@@ -52,6 +52,18 @@
         _setAnnotationOverviewVisibility(mapentry, $event)
       "
     />
+    <template v-if="transcriptsStore.hasTranscripts && transcriptImage">
+      <transcript-overlay
+        v-for="(mapentry, index) in annotationViewerMaps"
+        :key="'transcript-overlay-' + index"
+        :map="mapentry.map"
+        :annotationLayer="mapentry.annotationLayer"
+        :sizeX="transcriptImage.sizeX"
+        :sizeY="transcriptImage.sizeY"
+        :maxLevel="mapentry.params.layer.maxLevel ?? transcriptImage.levels - 1"
+        :disabled="unrolling"
+      />
+    </template>
     <!-- Mounted ONCE, outside the per-map v-for above. In unroll layer mode
          ImageViewer renders one AnnotationViewer per layer group, so a panel
          living inside that loop appeared N times over and registered N global
@@ -227,6 +239,8 @@ import {
   toRaw,
 } from "vue";
 import annotationStore from "@/store/annotation";
+import transcriptsStore from "@/store/transcripts";
+import TranscriptOverlay from "@/components/TranscriptOverlay.vue";
 import connectionListStore from "@/store/connectionList";
 import { TOUR_ANCHORS } from "@/tours/anchors";
 import progressStore from "@/store/progress";
@@ -704,6 +718,12 @@ const maps = computed({
   get: () => store.maps,
   set: (value: IMapEntry[]) => store.setMaps(value),
 });
+
+// The image the transcript density pyramid is sized to: the same one the
+// annotation overview uses.
+const transcriptImage = computed(
+  () => layerStackImages.value.find((lsi) => lsi.images[0])?.images[0] ?? null,
+);
 
 const annotationViewerMaps = computed(() =>
   maps.value.filter(

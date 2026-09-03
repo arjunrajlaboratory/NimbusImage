@@ -36,6 +36,7 @@ from upenncontrast_annotation.server.models.property import (
 )
 
 from .. import differential, materialize
+from .transcripts import TranscriptRoutes
 from ..models.registry import DatasetSpatial
 from ..store import (
     invalidateStore,
@@ -65,7 +66,7 @@ def _serialize(document):
     }
 
 
-class Spatial(Resource):
+class Spatial(TranscriptRoutes, Resource):
     def __init__(self):
         super().__init__()
         self.resourceName = "spatial"
@@ -84,6 +85,7 @@ class Spatial(Resource):
         self.route(
             "POST", (":datasetId", "differential"), self.differential
         )
+        self._addTranscriptRoutes()
 
     # ---- helpers --------------------------------------------------------
 
@@ -96,7 +98,8 @@ class Spatial(Resource):
 
     def _registered(self, datasetId):
         entry = self._registry.forDataset(datasetId)
-        if entry is None:
+        # A registration may hold only a transcript store (Phase 3).
+        if entry is None or "fileId" not in entry:
             raise RestException(
                 "No spatial table is registered for this dataset.", code=404
             )
@@ -219,7 +222,7 @@ class Spatial(Resource):
     def unregister(self, datasetId, params):
         datasetId = self._loadDataset(datasetId, AccessType.WRITE)
         entry = self._registry.unregister(datasetId)
-        if entry is not None:
+        if entry is not None and "fileId" in entry:
             invalidateStore(entry["fileId"])
 
     # ---- reads ----------------------------------------------------------

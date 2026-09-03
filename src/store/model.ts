@@ -1236,13 +1236,32 @@ export interface IGeoJSTextFeature
     (() => IGeoJSPosition[] | ((dataPoint: any) => IGeoJSPosition));
 }
 
+// https://opengeoscience.github.io/geojs/apidocs/geo.pointFeature.html
+export interface IGeoJSPointFeature
+  extends IGeoJSFeatureBase<IGeoJSPointFeature> {
+  position: ((
+    val: IGeoJSPosition[] | ((dataPoint: any, index: number) => IGeoJSPosition),
+  ) => IGeoJSPointFeature) &
+    (() => IGeoJSPosition[] | ((dataPoint: any) => IGeoJSPosition));
+  visible: ((val: boolean) => IGeoJSPointFeature) & (() => boolean);
+  geoOn: (event: string, handler: Function) => IGeoJSPointFeature;
+  geoOff: (
+    event?: string | string[],
+    arg?: Function | Function[] | null,
+  ) => IGeoJSPointFeature;
+}
+
 // https://opengeoscience.github.io/geojs/apidocs/geo.featureLayer.html
 export interface IGeoJSFeatureLayer extends IGeoJSLayer {
   readonly idle: boolean;
   createFeature: <T extends string>(
     featureName: T,
     arg?: IObject,
-  ) => T extends "text" ? IGeoJSTextFeature : IGeoJSFeature;
+  ) => T extends "text"
+    ? IGeoJSTextFeature
+    : T extends "point"
+      ? IGeoJSPointFeature
+      : IGeoJSFeature;
   deleteFeature: (feature: IGeoJSFeature) => IGeoJSFeatureLayer;
   clear: () => IGeoJSFeatureLayer;
   geoOn: (event: string, handler: Function) => IGeoJSFeatureLayer;
@@ -1795,6 +1814,68 @@ export interface ISpatialInfo {
 export interface ISpatialFeature {
   symbol: string;
   featureType: string | null;
+}
+
+/** One pyramid level of a registered transcript store. */
+export interface ISpatialTranscriptLevel {
+  level: number;
+  tileMicrons: number;
+  tilePixels: number;
+  // "gx,gy" keys of the tiles that hold molecules, with their point counts
+  // (all genes), so the client can budget a request before making it.
+  keys: string[];
+  counts: number[];
+}
+
+/** GET spatial/{datasetId}/transcripts */
+export interface ISpatialTranscriptsSchema {
+  itemId: string;
+  levels: number;
+  gridSizeMicrons: number;
+  pixelSize: number;
+  // 3x3 row-major, transcript-grid pixels -> this image's pixels; null when
+  // the image is on the transcripts' own grid.
+  transform: number[][] | null;
+  genes: number;
+  totalPoints: number;
+  tiles: ISpatialTranscriptLevel[];
+}
+
+/** Decoded body of POST spatial/{datasetId}/transcripts/points. */
+export interface ITranscriptPoints {
+  count: number;
+  x: Float32Array;
+  y: Float32Array;
+  // Index into the requested gene list.
+  gene: Uint8Array;
+  // Level 0 only.
+  quality: Float32Array | null;
+}
+
+export interface ITranscriptGene {
+  symbol: string;
+  color: string;
+}
+
+export type TTranscriptRenderMode = "auto" | "points" | "density";
+
+export interface ITranscriptOverlayStatus {
+  rendering: "points" | "density" | "none";
+  level: number;
+  points: number;
+  // Why nothing (or the heat map) is shown when the user asked for points.
+  note: string | null;
+}
+
+export interface ITranscriptReadout {
+  symbol: string;
+  x: number;
+  y: number;
+  quality: number | null;
+  // The drawn cell outline containing the molecule, found geometrically at
+  // click time (the transcript store carries no cell reference); null when
+  // the click was outside every drawn cell.
+  annotationId: string | null;
 }
 
 export interface ISpatialFeatureAggregate {

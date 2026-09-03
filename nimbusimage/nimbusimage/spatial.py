@@ -1,14 +1,16 @@
-"""Spatial-transcriptomics table accessor (``ds.spatial``).
+"""Spatial-transcriptomics accessor (``ds.spatial``).
 
 A dataset may hold one ``spatial.zarr.zip`` item: an AnnData-layout zarr
-store whose ``obs.annotation_id`` joins each row to a cell annotation. The
-``upenncontrast_spatial`` Girder plugin registers and serves it under
-``/spatial/{datasetId}``.
+store whose ``obs.annotation_id`` joins each row to a cell annotation. It may
+also hold the 10x ``transcripts.zarr.zip`` (per-molecule points, served as a
+tile pyramid and density heat map). The ``upenncontrast_spatial`` Girder
+plugin registers and serves both under ``/spatial/{datasetId}``.
 """
 
 from __future__ import annotations
 
 import os
+import struct
 from typing import TYPE_CHECKING
 
 import girder_client
@@ -182,4 +184,88 @@ class SpatialAccessor:
         (no materialization): usable wherever a property path is accepted —
         filters, analysis axes, color-by, export columns."""
         return ["spatial", symbol]
+
+    # --- transcripts (per-molecule store) ---
+
+    def transcripts(self) -> dict | None:
+        """The registered transcript store's pyramid, or None when none is
+        registered: ``levels``, ``pixelSize``, ``transform``, ``genes``,
+        ``totalPoints`` and per-level ``tiles`` (keys and counts)."""
+        try:
+            return self._gc.get(f"{self._base}/transcripts")
+        except girder_client.HttpError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def upload_transcripts(self, path: str | os.PathLike) -> dict:
+        """Upload a ``transcripts.zarr.zip`` into the dataset folder and
+        return its item."""
+        file = self._gc.uploadFileToFolder(self._dataset_id, str(path))
+        return self._gc.getItem(file["itemId"])
+
+    def register_transcripts(
+        self, item_id: str, pixel_size: float, transform=None
+    ) -> dict:
+        """Make an item in the dataset folder the dataset's transcript store.
+
+        ``pixel_size`` is microns per image pixel; ``transform`` an optional
+        3x3 matrix taking pixels on the transcripts' grid to this image's
+        pixels (H&E). Returns the pyramid description (see ``transcripts``).
+        """
+        body: dict = {"itemId": item_id, "pixelSize": pixel_size}
+        if transform is not None:
+            body["transform"] = [
+                [float(value) for value in row] for row in transform
+            ]
+        return self._gc.post(f"{self._base}/transcripts/register", json=body)
+
+    def unregister_transcripts(self) -> None:
+        self._gc.delete(f"{self._base}/transcripts")
+
+    def transcript_genes(self, search: str = "", limit: int = 25) -> list[str]:
+        """Gene symbols of the transcript store matching ``search`` (control
+        codewords are never listed)."""
+        return self._gc.get(
+            f"{self._base}/transcripts/genes",
+            parameters={"search": search, "limit": limit},
+        )
+
+    def transcript_points(
+        self,
+        genes: list[str],
+        tiles: list[str],
+        level: int = 0,
+        min_qv: float = 0,
+    ) -> dict:
+        """Molecules of ``genes`` in pyramid ``tiles`` (``"gx,gy"`` keys of
+        ``transcripts()["tiles"][level]``), decoded from the binary response.
+
+        Returns numpy arrays: ``x``/``y`` in image pixels, ``gene`` (index
+        into ``genes``), and at level 0 ``quality``. The store carries no
+        cell reference; a molecule's cell is whichever annotation contains
+        its point.
+        """
+        import numpy as np
+
+        resp = self._gc.sendRestRequest(
+            "POST", f"{self._base}/transcripts/points",
+            json={"genes": genes, "tiles": tiles, "level": level,
+                  "minQv": min_qv},
+            jsonResp=False,
+        )
+        body = resp.content
+        (n,) = struct.unpack_from("<I", body, 0)
+        has_quality = body[4] == 1
+        offset = 5
+        xy = np.frombuffer(body, dtype="<f4", count=2 * n, offset=offset)
+        offset += 8 * n
+        gene = np.frombuffer(body, dtype=np.uint8, count=n, offset=offset)
+        offset += n
+        result = {"x": xy[0::2], "y": xy[1::2], "gene": gene}
+        if has_quality:
+            result["quality"] = np.frombuffer(
+                body, dtype="<f4", count=n, offset=offset
+            )
+        return result
 

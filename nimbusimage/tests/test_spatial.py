@@ -128,3 +128,63 @@ class TestSpatialAccessor:
             "spatial", "CD3E",
         ]
 
+
+
+class TestTranscripts:
+    def test_transcripts_none_when_unregistered(self, mock_gc):
+        mock_gc.get.side_effect = girder_client.HttpError(
+            404, "none", "url", "GET"
+        )
+        assert SpatialAccessor(mock_gc, "ds_001").transcripts() is None
+
+    def test_register_sends_pixel_size_and_transform(self, mock_gc):
+        mock_gc.uploadFileToFolder.return_value = {"itemId": "item_t"}
+        mock_gc.getItem.return_value = {"_id": "item_t"}
+        accessor = SpatialAccessor(mock_gc, "ds_001")
+        item = accessor.upload_transcripts("/tmp/transcripts.zarr.zip")
+        accessor.register_transcripts(item["_id"], 0.2125)
+        mock_gc.post.assert_called_with(
+            "spatial/ds_001/transcripts/register",
+            json={"itemId": "item_t", "pixelSize": 0.2125},
+        )
+        accessor.register_transcripts(
+            "item_t", 0.5, transform=[[1, 0, 2], [0, 1, 3], [0, 0, 1]]
+        )
+        assert mock_gc.post.call_args.kwargs["json"]["transform"] == [
+            [1.0, 0.0, 2.0], [0.0, 1.0, 3.0], [0.0, 0.0, 1.0],
+        ]
+        accessor.unregister_transcripts()
+        mock_gc.delete.assert_called_with("spatial/ds_001/transcripts")
+
+    def test_points_decode_the_binary_body(self, mock_gc):
+        import struct
+
+        import numpy as np
+
+        body = struct.pack("<I", 2) + bytes([1])
+        body += np.array([1.5, 2.5, 3.5, 4.5], "<f4").tobytes()
+        body += bytes([0, 1])
+        body += np.array([30.0, 15.0], "<f4").tobytes()
+        mock_gc.sendRestRequest.return_value.content = body
+        result = SpatialAccessor(mock_gc, "ds_001").transcript_points(
+            ["CD3E", "MS4A1"], ["0,0"], level=0, min_qv=10
+        )
+        mock_gc.sendRestRequest.assert_called_once_with(
+            "POST", "spatial/ds_001/transcripts/points",
+            json={"genes": ["CD3E", "MS4A1"], "tiles": ["0,0"], "level": 0,
+                  "minQv": 10},
+            jsonResp=False,
+        )
+        assert result["x"].tolist() == [1.5, 3.5]
+        assert result["y"].tolist() == [2.5, 4.5]
+        assert result["gene"].tolist() == [0, 1]
+        assert result["quality"].tolist() == [30.0, 15.0]
+
+    def test_gene_search_route(self, mock_gc):
+        accessor = SpatialAccessor(mock_gc, "ds_001")
+        mock_gc.get.return_value = ["CD3E"]
+        assert accessor.transcript_genes("cd", limit=3) == ["CD3E"]
+        mock_gc.get.assert_called_with(
+            "spatial/ds_001/transcripts/genes",
+            parameters={"search": "cd", "limit": 3},
+        )
