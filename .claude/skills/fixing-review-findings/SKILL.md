@@ -52,6 +52,9 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | **Disabled work still treated as mandatory** | Persisted gates, filters, pipeline steps, hidden panels | Name each consumer's scope explicitly: hidden/filtering work may use the enabled subset, while visible counts/highlights may still materialize disabled entries and therefore must sign their inputs. Sweep fetch scope, derived-state resolution, and downstream query signatures. If disabled inputs are omitted, omit their derived outputs too; resolving them from a narrower active-only projection can publish plausible but false empty state. Re-enable/open transitions must wake the work when it becomes necessary. |
 | **Cost before the guard** | Getters/handlers with a cheap precondition and expensive body | Does the cheap check run FIRST, in every consumer? A cap that filters or hashes 700K annotations to discover the limit was exceeded is doing the work it exists to prevent. Use a bounded walk (`limit + 1` as an overflow bit), then share that bounded result across the watcher, action, and renderer; checking `.length` after building the full collection is not a guard. |
 | **A signature hashes values but not their structure** | Incremental hashes over nested rows, fields, or variable-length lists | Feed field/record boundaries into the hash, not only value separators and a final count; test two inputs with the same flattened values redistributed across records |
+| **A derived-data identity is lossy** | Staleness checks, incremental recompute, deduplication | Sums, moments, rounded coordinates, or sampled fields are summaries, not identities. Persist a canonical cryptographic hash at the write boundary, backfill legacy rows once, and test a collision pair that the tempting summary cannot distinguish. |
+| **A large cache is bounded by entries** | Image grids, arrays, serialized payloads, model outputs | Bound retained bytes, not object count: one entry may be enormous. Prefer a compact representation, track actual retained bytes under the cache lock, and test eviction with a deliberately tiny byte budget. |
+| **A partial nested response is shallow-merged** | Lazy property fetches, patch responses, provider-backed values | A top-level spread replaces sibling leaves under a shared root. Recursively merge plain objects while treating scalars/arrays as leaves, and test two separately fetched sibling paths. |
 | **Display text used as identity** | Categorical plots, select options, persisted group/order state | Carry a collision-free raw key separately from its human-readable label. Test sentinel-label collisions, delimiter collisions, and duplicate display names; persist keys and render labels. For persisted migrations, store an explicit schema version — never infer the version from a prefix in user-controlled display text. |
 
 #### The blast-radius sweep: who depended on what your fix changed?
@@ -341,6 +344,30 @@ Report per-finding outcomes (fixed / stale / by-design / needs-decision) keyed t
 
 ## Common mistakes
 
+### Persistence and cache replacement traps
+
+- Framework index helpers may be **best effort**: Girder `ensureIndices` catches
+  index errors internally. An `except DuplicateKeyError` around it cannot run
+  a migration. Test the constructor/startup path, not only the migration helper.
+- An atomic writer is only safe from lost updates if its sibling writers stop
+  replacing old snapshots too. Audit ordinary imports/workers and deletion, not
+  just the new job writer; test stored and incoming property values disagreeing.
+- Incremental geometry work needs both the **old and new footprint**. Persist
+  previous bounds; if a legacy snapshot has none, rebuild fully. The same rule
+  covers moved and deleted objects.
+- A backfill must not overwrite a newer normal write. Use a conditional update
+  and reread the winning persisted identity before returning derived state.
+- Projection-aware mocks matter: a mock returning every field hides code that
+  reads a discriminator omitted from its database projection.
+- Replacing a data source invalidates values, pending responses, AND revisions
+  consumed by gates. Test lazy and wholesale paths separately, plus late replies.
+- Virtual entities have no backing document ID. Persistence validators must
+  recognize their reserved identity too: otherwise a live column works until
+  reload, then disappears together with its filters, labels and saved gates.
+  Test all four symmetric hydration paths with no stored property IDs present.
+- In-memory capability authentication needs a reloadable URL or isolated session;
+  test initial open AND remount/reload without overwriting the owner's login.
+
 | Mistake | Reality |
 |---|---|
 | Fixing all findings as stated without verification | Some are stale or by-design; you'll churn correct code |
@@ -383,6 +410,14 @@ stash`, or a scripted edit you undo from a backup) and **watch it fail**.
 "It would obviously fail" has been wrong here more than once.
 
 ### Verifying a fix live: pick a fixture that actually exercises it
+
+When routes share a normalized mode (e.g. shared and embedded viewers), test the
+raw-route transition as well as a direct mount. Separate watchers that close UI
+for one mode and restore defaults for another can overwrite each other during
+initial navigation. Give one watcher ownership of the defaults, guard later open
+requests too, and test leaving the restricted mode when the normalized route
+name does not change. Check controls outside the main registry (e.g. a palette
+whose visibility mirrors a viewer mode) without resetting the underlying mode.
 
 A live check on the wrong dataset is worse than none — it produces a confident result about nothing. Before claiming live verification, confirm the fixture has the property under test:
 

@@ -244,6 +244,24 @@ describe("virtual (spatial table) property paths", () => {
     expect(properties.propertyValues.a1).toEqual({ spatial: { CD3E: 3 } });
   });
 
+  it("keeps earlier live columns when a sibling column is fetched later", async () => {
+    annotationMock.stubOnlyMode = false;
+    getPropertyValuesForIds
+      .mockResolvedValueOnce([
+        { annotationId: "a1", values: { spatial: { CD3E: 3 } } },
+      ])
+      .mockResolvedValueOnce([
+        { annotationId: "a1", values: { spatial: { MS4A1: 5 } } },
+      ]);
+
+    await properties.addVirtualPropertyPaths([["spatial", "CD3E"]]);
+    await properties.addVirtualPropertyPaths([["spatial", "MS4A1"]]);
+
+    expect(properties.propertyValues.a1).toEqual({
+      spatial: { CD3E: 3, MS4A1: 5 },
+    });
+  });
+
   it("does not fetch wholesale in stub-only mode (the visible fetch handles it)", async () => {
     await properties.addVirtualPropertyPaths([["spatial", "MS4A1"]]);
     expect(getPropertyValuesForIds).not.toHaveBeenCalled();

@@ -35,7 +35,7 @@ def square(datasetId, x, y, size, tags, name=None):
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_spatial")
 class TestAnalysis(TestSpatial):
-    def testNeighborhoodUnits(self):
+    def testNeighborhoodUnits(self, monkeypatch):
         # Three cells on a line 10 apart: T, B, T; radius 15 links neighbors
         # only.
         centroids = np.array([[0, 0], [10, 0], [20, 0]], dtype=float)
@@ -55,6 +55,19 @@ class TestAnalysis(TestSpatial):
         assert counts.tolist() == [[0], [2], [0]]
         assert pairs.tolist() == [[0]]
         assert module.enrichment(np.zeros((1, 1), int)).tolist() == [[0.0]]
+
+        monkeypatch.setattr(
+            module, "MAX_NEIGHBOR_RESULT_BYTES", 79, raising=False
+        )
+        with pytest.raises(ValueError, match="result arrays"):
+            module.neighborhood(centroids, np.array([0, 1, 0]), 2, 15)
+        monkeypatch.setattr(
+            module, "MAX_NEIGHBOR_RESULT_BYTES", 512 * 1024 * 1024,
+            raising=False,
+        )
+        monkeypatch.setattr(module, "MAX_NEIGHBOR_PAIRS", 1, raising=False)
+        with pytest.raises(ValueError, match="neighbor pairs"):
+            module.neighborhood(centroids, np.array([0, 1, 0]), 2, 25)
 
     def testNeighborhoodJobWritesFractionsAndMatrix(
         self, admin, server, tmp_path, fsAssetstore

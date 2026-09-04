@@ -33,6 +33,10 @@ from girder.models.file import File
 from PIL import Image
 
 MAX_OPEN_TRANSCRIPT_STORES = 4
+# Across the maximum number of open stores, cached density grids may retain at
+# most this many bytes. Each store gets an equal share, which makes the bound
+# deterministic without coupling the stores' individual locks.
+MAX_DENSITY_CACHE_BYTES = 512 * 1024 * 1024
 # Points per response: 8 genes over a screen's worth of level-0 tiles can
 # reach millions; the client budgets before asking, this is the hard stop.
 MAX_POINTS_PER_RESPONSE = 2_000_000
@@ -95,6 +99,7 @@ class TranscriptStore:
         self.totalPoints = sum(self.tileCounts[0]) if self.tileCounts else 0
         self._density = None
         self._densityCache = OrderedDict()
+        self._densityCacheBytes = 0
         self._lock = threading.Lock()
 
     # ---- schema -----------------------------------------------------------
@@ -241,7 +246,9 @@ class TranscriptStore:
         )
         indptr = group["indptr"]
         indices, data = group["indices"], group["data"]
-        grid = np.zeros((rows, cols), dtype=np.float64)
+        # Density tiles are visualization data; float32 halves the retained
+        # grid cost while preserving more precision than the rendered alpha.
+        grid = np.zeros((rows, cols), dtype=np.float32)
         for geneIndex in key:
             pointers = np.asarray(
                 indptr[geneIndex * rows:(geneIndex + 1) * rows + 1]
@@ -252,7 +259,7 @@ class TranscriptStore:
             rowIds = np.repeat(np.arange(rows), np.diff(pointers))
             np.add.at(
                 grid, (rowIds, np.asarray(indices[start:end])),
-                np.asarray(data[start:end], dtype=np.float64),
+                np.asarray(data[start:end], dtype=np.float32),
             )
         # Alpha reference: the 99.5th percentile of the occupied bins, not
         # the maximum — a single hot bin would otherwise flatten the rest.
@@ -262,9 +269,15 @@ class TranscriptStore:
         )
         result = (grid, binMicrons, reference)
         with self._lock:
+            previous = self._densityCache.pop(key, None)
+            if previous is not None:
+                self._densityCacheBytes -= previous[0].nbytes
             self._densityCache[key] = result
-            while len(self._densityCache) > 16:
-                self._densityCache.popitem(last=False)
+            self._densityCacheBytes += grid.nbytes
+            budget = MAX_DENSITY_CACHE_BYTES // MAX_OPEN_TRANSCRIPT_STORES
+            while self._densityCache and self._densityCacheBytes > budget:
+                _, evicted = self._densityCache.popitem(last=False)
+                self._densityCacheBytes -= evicted[0].nbytes
         return result
 
     def densityTile(self, geneIndices, color, sizeX, sizeY, tileSize,

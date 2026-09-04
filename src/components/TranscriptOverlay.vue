@@ -26,6 +26,7 @@ import { annotationIdAtPoint } from "@/utils/annotationAtPoint";
 import {
   AUTO_DENSITY_LEVEL,
   planTranscriptLevel,
+  tilesInView,
   viewToTranscriptMicrons,
 } from "@/utils/transcriptTiles";
 
@@ -136,8 +137,8 @@ function createDensityLayer(): IGeoJSOsmLayer {
       y: Math.floor(props.sizeY / scale),
     };
   };
-  // Tiles arrive through <img> requests, which carry the auth cookie rather
-  // than the Girder-Token header (same as the annotation overview).
+  // Tiles arrive through <img> requests: normal sessions use Girder's auth
+  // cookie, while shared views put their isolated bearer on the tile URL.
   params.layer.crossDomain = "use-credentials";
   params.layer.autoshareRenderer = false;
   params.layer.nearestPixel = maxLevel;
@@ -236,6 +237,7 @@ function showDensity(datasetId: string) {
       tileSize: DENSITY_TILE_SIZE,
       maxLevel: props.maxLevel,
       color: gene.color,
+      authToken: store.shareLinkTileToken,
     });
     if (template !== entry.template) {
       entry.template = template;
@@ -324,9 +326,7 @@ async function refresh() {
   const minQv = transcriptsStore.minQv;
   for (let level = plan.level; level < schema.levels; level++) {
     const tiles =
-      level === plan.level
-        ? plan.tiles
-        : planTranscriptLevel(schema, view, symbols.length, Infinity).tiles;
+      level === plan.level ? plan.tiles : tilesInView(schema, level, view).keys;
     try {
       const fetched = await store.spatialAPI.fetchTranscriptPoints(
         datasetId,

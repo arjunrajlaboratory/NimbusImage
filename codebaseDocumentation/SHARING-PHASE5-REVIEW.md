@@ -15,7 +15,7 @@ is unavailable: API spend limit). Status: `fixed` / `by-design` / `deferred — 
 | 10 | High | `src/store/index.ts` `createGirderRestClient` handlers | Live: opening a dead link in one tab signed the owner out of every tab — the client's `userFetched` (anonymous `user/me`) and 401 handlers wipe the stored login, and the shared route had just put a foreign token on the same client. | fixed — `openShareLink` enters a shared session during which `clearStoredToken` is a no-op; the design note "in memory only" is now enforced, not assumed. |
 | 11 | Low | shared viewer | The link user has no storage quota (logged error) and its token cannot open the jobs WebSocket (retries). | fixed — `loggedIn` skips both for a user carrying the `shareLink` marker. |
 | 12 | Medium | `api/shareLink.py` `create` | Branch review: the creator needed only READ on the dataset view and configuration (ADMIN on the folder), so a folder admin could hand out READ on a configuration they may not share; the named-share endpoint demands WRITE on both. | fixed — WRITE on the view and configuration; pinned in *"testCreateNeedsAdminAndValidInput"*. |
-| 13 | High | `api/shareLink.py` `me`, `src/store/index.ts` | Independent review: `<img>`-loaded tile routes (image tiles, annotation raster, density) authenticate from the HttpOnly `girderToken` cookie alone, and the client only set the header — a recipient with no session of their own would see annotations over a blank canvas. The live check passed only because it ran in the owner's browser (own cookie). | fixed — `share_link/me` sets the cookie to the link token when the browser has none (never over an existing login), for the token's lifetime; pinned in *"testBearerReadsOnlyTheSharedDataset"*. |
+| 13 | High | `api/shareLink.py` `me`, tile URL builders | Independent review: `<img>`-loaded tile routes need an explicit shared-view credential. The first fix set a link cookie only when no ambient login existed, which still made signed-in recipients render with the wrong identity. | superseded — `/me` sets no cookie; image, annotation-raster, and density URLs carry the in-memory link bearer, pinned by their API/component tests and *"testBearerReadsOnlyTheSharedDataset"*. |
 | 14 | Medium | `SHARING.md`, `ShareDataset.vue`, `helpers/shareLinkGuards.py` | Independent review: a link was also a download capability (`folder/{id}/download`, `/export`). | fixed — route `before` hooks refuse link users on every download/export route (403); pinned in *"testBearerReadsOnlyTheSharedDataset"*. |
 | 15 | Low | `models/shareLink.py` | Independent review: `createUser` honors the registration policy — with "approve", every link e-mails the admins and creates a pending user. | fixed — the link user is saved `status: enabled`; folders noted in SHARING.md. |
 | 16 | Low | `src/store/index.ts` `openShareLink` | Independent review: the shared-session flag was raised before the token was validated (a dead link left the tab in shared mode) and exposed through a Vuex getter over a non-reactive variable. | fixed — the flag is reset and the token cleared when the attempt fails; the unused getter is removed. |
@@ -37,10 +37,9 @@ is unavailable: API spend limit). Status: `fixed` / `by-design` / `deferred — 
   the toolbar. Revoking the link (`DELETE share_link/{id}`) kills the token immediately.
 - Finding 10 was found this way: the very first attempt (token without `USER_INFO_READ`)
   signed the owner out of the neighboring tab.
-- After the branch review (finding 13): `share_link/me` without a cookie answers
-  `Set-Cookie: girderToken=<link token>; HttpOnly; Path=/` expiring with the token; a density
-  tile and an image tile fetched with only that cookie are 200; `me` with an existing
-  cookie sets none.
+- Historical first fix for finding 13 used a link cookie. The later review replaced it:
+  `/me` now sets no cookie and shared-view tile URLs carry the link bearer explicitly,
+  preventing an unrelated signed-in cookie from choosing the rendering identity.
 - After the "fix everything" round: as the bearer, `folder/{id}/download` and `export/json`
   are 403 while `item/{id}/tiles` stays 200; `GET user?text=share-` as the owner lists no
   link users; listing links with the bearer's token is 401 (WRITE required).

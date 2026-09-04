@@ -154,6 +154,15 @@ describe("SelectionSummaryDialog", () => {
     );
   });
 
+  it("counts only selected ids that still resolve", async () => {
+    (filterStore as any).filteredAnnotations = new Array(10).fill({});
+    (annotationStore as any).selectedAnnotationIds = new Set(["a1", "stale"]);
+    const wrapper = await openDialog();
+    const vm = wrapper.vm as any;
+    expect(vm.selectedCount).toBe(1);
+    expect(vm.scopeLabel).toBe("the 1 selected objects");
+  });
+
   it("uses the server list filters for the filtered scope and refetches when they change", async () => {
     (filterStore as any).filteredAnnotations = [{}, {}];
     const wrapper = await openDialog();

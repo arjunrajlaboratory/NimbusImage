@@ -42,6 +42,7 @@ export interface IAnnotationRasterUrlOptions {
   mode: TAnnotationOverviewMode;
   color: string;
   version: number;
+  authToken?: string | null;
 }
 
 export default class AnnotationsAPI {
@@ -144,6 +145,9 @@ export default class AnnotationsAPI {
     url.searchParams.set("mode", options.mode);
     url.searchParams.set("color", options.color);
     url.searchParams.set("v", options.version.toString());
+    if (options.authToken) {
+      url.searchParams.set("token", options.authToken);
+    }
     return url.href.replace(
       "/upenn_annotation/raster/0/0/0",
       "/upenn_annotation/raster/{z}/{x}/{y}",

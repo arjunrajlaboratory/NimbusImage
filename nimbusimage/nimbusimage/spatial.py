@@ -35,6 +35,26 @@ class SpatialAccessor:
     def _base(self) -> str:
         return f"spatial/{self._dataset_id}"
 
+    def _wait_for_job_result(
+        self,
+        response: dict,
+        operation: str,
+        timeout: float | None = None,
+    ) -> dict:
+        """Wait for a spatial job and return its final published result."""
+        job_id = response["jobId"]
+        job = Job(self._gc, self._gc.get(f"job/{job_id}"))
+        if not job.wait(timeout=timeout):
+            raise RuntimeError(
+                f"{operation} job {job_id} failed ({job.status_name})"
+            )
+        completed = self._gc.get(f"job/{job_id}")
+        if "spatialResult" not in completed:
+            raise RuntimeError(
+                f"{operation} job {job_id} completed without a result"
+            )
+        return completed["spatialResult"]
+
     # --- registry ---
 
     def info(self, verify: bool = False) -> dict | None:
@@ -66,7 +86,9 @@ class SpatialAccessor:
 
     def register(self, item_id: str) -> dict:
         """Make an item in the dataset folder the dataset's spatial table."""
-        return self._gc.post(f"{self._base}/register", json={"itemId": item_id})
+        return self._gc.post(
+            f"{self._base}/register", json={"itemId": item_id}
+        )
 
     def upload_and_register(self, path: str | os.PathLike) -> dict:
         return self.register(self.upload(path)["_id"])
@@ -129,7 +151,7 @@ class SpatialAccessor:
             json={"features": symbols, "propertyName": property_name},
         )
         if wait and result.get("jobId"):
-            Job(self._gc, self._gc.get(f"job/{result['jobId']}")).wait()
+            return self._wait_for_job_result(result, "materialize")
         return result
 
     def score(
@@ -151,7 +173,7 @@ class SpatialAccessor:
             },
         )
         if wait and result.get("jobId"):
-            Job(self._gc, self._gc.get(f"job/{result['jobId']}")).wait()
+            return self._wait_for_job_result(result, "score")
         return result
 
     def differential(
@@ -178,14 +200,13 @@ class SpatialAccessor:
         )
         if not wait:
             return result
-        job = Job(self._gc, self._gc.get(f"job/{result['jobId']}"))
-        job.wait()
-        return self._gc.get(f"job/{result['jobId']}")["spatialResult"]
+        return self._wait_for_job_result(result, "differential")
 
     def virtual_path(self, symbol: str) -> list[str]:
         """The property path that reads ``symbol`` straight from the table
         (no materialization): usable wherever a property path is accepted —
-        filters, analysis axes, color-by, export columns."""
+        filters, analysis axes, color-by, and displayed columns. CSV export
+        requires copying the gene into a measurement with ``materialize``."""
         return ["spatial", symbol]
 
     # --- transcripts (per-molecule store) ---
@@ -320,12 +341,7 @@ class SpatialAccessor:
         response = self._gc.post(f"{self._base}/recompute", json=body)
         if not wait:
             return response
-        job = Job(self._gc, self._gc.get(f"job/{response['jobId']}"))
-        if not job.wait(timeout=timeout):
-            raise RuntimeError(
-                "recompute job %s failed" % response["jobId"]
-            )
-        return self._gc.get(f"job/{response['jobId']}")["spatialResult"]
+        return self._wait_for_job_result(response, "recompute", timeout)
 
     # --- neighborhood and regions (Phase 6) ---
 
@@ -359,12 +375,7 @@ class SpatialAccessor:
         response = self._gc.post(f"{self._base}/neighborhood", json=body)
         if not wait:
             return response
-        job = Job(self._gc, self._gc.get(f"job/{response['jobId']}"))
-        if not job.wait(timeout=timeout):
-            raise RuntimeError(
-                "neighborhood job %s failed" % response["jobId"]
-            )
-        return self._gc.get(f"job/{response['jobId']}")["spatialResult"]
+        return self._wait_for_job_result(response, "neighborhood", timeout)
 
     def region_summary(
         self,
@@ -386,4 +397,3 @@ class SpatialAccessor:
         if exclude_tags is not None:
             body["excludeTags"] = list(exclude_tags)
         return self._gc.post(f"{self._base}/regions/summary", json=body)
-

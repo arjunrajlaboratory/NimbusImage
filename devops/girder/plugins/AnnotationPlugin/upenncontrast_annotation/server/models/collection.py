@@ -151,6 +151,21 @@ class Collection(ProxiedModel):
             },
         })
 
+    def addPropertyToCollections(self, collections, propertyId):
+        """Register a property on already WRITE-authorized configurations.
+
+        Atomic add-to-set preserves concurrent additions and avoids replacing
+        unrelated metadata from the caller's snapshots.
+        """
+        if not collections:
+            return
+        self.update(
+            {'_id': {'$in': [c['_id'] for c in collections]},
+             'meta.propertyIds': {'$ne': propertyId}},
+            {'$addToSet': {'meta.propertyIds': propertyId},
+             '$set': {'updated': datetime.datetime.utcnow()}},
+        )
+
     def setMetadata(self, collection, metadata, allowNull=False):
         if 'meta' not in collection:
             collection['meta'] = {}

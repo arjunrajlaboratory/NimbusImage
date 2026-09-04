@@ -6,8 +6,8 @@ two-sided p-value. One vectorized pass per feature over the CSC slice, so
 4,600 features over 700K cells is tens of seconds — a job, with the ranked
 table stored on the job document under `spatialResult`.
 
-Wilcoxon / Mann-Whitney is deliberately not here: per-feature rank sums over
-700K cells are minutes, and belong in a worker (plan §11.3).
+The optional Wilcoxon method uses Mann-Whitney U over each feature's dense
+count distributions and reports its signed z statistic for consistent ranking.
 """
 
 import math

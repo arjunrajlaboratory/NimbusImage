@@ -39,6 +39,7 @@ from skimage.draw import polygon as rasterPolygon
 from upenncontrast_annotation.server.helpers.annotationRaster import (
     getRasterVersion,
 )
+from upenncontrast_annotation.server.helpers.geometry import geometryHash
 from upenncontrast_annotation.server.models.annotation import Annotation
 
 from .models.registry import DatasetSpatial
@@ -72,66 +73,51 @@ class Cell:
     geometryHash: str
 
 
-def geometryHash(coordinates):
-    """A fingerprint of a polygon's vertices, so an edited cell can be told
-    from an unedited one without timestamps: vertex count and the sums of
-    x, y, x*y and x^2+y^2, rounded to a hundredth of a pixel. Chosen so
-    Mongo can compute the same value with $size/$sum (see
-    `polygonFingerprints`), which keeps staleness from downloading 700K
-    coordinate arrays. The second moments matter: a rectangle scaled
-    symmetrically about its center keeps count, sum x, sum y and sum xy but
-    not sum x^2+y^2. Python's sum() and Mongo's $sum accumulate doubles
-    slightly differently; the %.2f rounding absorbs that except at an exact
-    .xx5 boundary, which is why this is not math.fsum."""
-    xs = [float(point["x"]) for point in coordinates]
-    ys = [float(point["y"]) for point in coordinates]
-    return fingerprint(
-        len(xs), sum(xs), sum(ys),
-        sum(x * y for x, y in zip(xs, ys)),
-        sum(x * x + y * y for x, y in zip(xs, ys)),
+def isFingerprint(value):
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
     )
 
 
-def fingerprint(count, sumX, sumY, sumXY, sumSquares):
-    return "%d:%.2f:%.2f:%.2f:%.2f" % (count, sumX, sumY, sumXY, sumSquares)
-
-
-def isFingerprint(value):
-    return isinstance(value, str) and value.count(":") == 4
-
-
 def polygonFingerprints(datasetId):
-    """{annotation id: fingerprint} for every polygon of the dataset, from
-    one aggregation — no coordinates leave Mongo."""
-    pipeline = [
-        {"$match": {
-            "datasetId": ObjectId(str(datasetId)),
-            "shape": {"$in": list(CELL_SHAPES)},
-        }},
-        {"$project": {
-            "n": {"$size": "$coordinates"},
-            "sx": {"$sum": "$coordinates.x"},
-            "sy": {"$sum": "$coordinates.y"},
-            "sxy": {"$sum": {"$map": {
-                "input": "$coordinates", "as": "p",
-                "in": {"$multiply": ["$$p.x", "$$p.y"]},
-            }}},
-            "ssq": {"$sum": {"$map": {
-                "input": "$coordinates", "as": "p",
-                "in": {"$add": [
-                    {"$multiply": ["$$p.x", "$$p.x"]},
-                    {"$multiply": ["$$p.y", "$$p.y"]},
-                ]},
-            }}},
-        }},
-    ]
-    return {
-        str(doc["_id"]): fingerprint(
-            int(doc["n"]), float(doc["sx"]), float(doc["sy"]),
-            float(doc["sxy"]), float(doc["ssq"]),
-        )
-        for doc in Annotation().collection.aggregate(pipeline)
+    """Exact stored geometry digests for every cell polygon.
+
+    Older annotations are backfilled once. Subsequent staleness checks read
+    only `_id` and the digest, never the coordinate arrays.
+    """
+    annotationModel = Annotation()
+    query = {
+        "datasetId": ObjectId(str(datasetId)),
+        "shape": {"$in": list(CELL_SHAPES)},
     }
+    result = {
+        str(document["_id"]): document["geometryHash"]
+        for document in annotationModel.find(
+            {**query, "geometryHash": {"$exists": True}},
+            fields=["geometryHash"],
+        )
+    }
+    backfill = {
+        str(document["_id"]): geometryHash(document["coordinates"])
+        for document in annotationModel.find(
+            {**query, "geometryHash": {"$exists": False}},
+            fields=["coordinates"],
+        )
+    }
+    if backfill:
+        annotationModel.setGeometryHashes(backfill)
+        # A concurrent save may have won the conditional backfill (or removed
+        # the polygon). Report the persisted hashes, not our older snapshot.
+        result = {
+            str(document['_id']): document['geometryHash']
+            for document in annotationModel.find(
+                {**query, 'geometryHash': {'$exists': True}},
+                fields=['geometryHash'],
+            )
+        }
+    return result
 
 
 def _polygonArea(xy):
@@ -207,7 +193,7 @@ def staleness(datasetId, store, fileId, cells=None):
             store.annotationIds.tolist(),
             (str(h) for h in readStringColumn(obs, "geometry_hash")),
         ))
-        # Tables written before the fingerprint format (sha1 digests) cannot
+        # Tables written before the exact digest format cannot
         # be compared; treat them as hash-less rather than "all changed".
         if hashes and not any(
             isFingerprint(value) for value in list(hashes.values())[:10]
@@ -216,8 +202,8 @@ def staleness(datasetId, store, fileId, cells=None):
     if cells is not None:
         live = [(cell.annotationId, cell.geometryHash) for cell in cells]
     elif hashes is not None:
-        # Fingerprints straight from Mongo: seconds, not a coordinate
-        # download (the old sha1 of every vertex cost a minute at 700K).
+        # Exact digests straight from Mongo. Migrated documents pay a one-time
+        # coordinate read and are backfilled for later checks.
         live = list(polygonFingerprints(datasetId).items())
     else:
         # Without hashes only membership matters: skip the coordinates,
@@ -230,11 +216,14 @@ def staleness(datasetId, store, fileId, cells=None):
     known = set(store.annotationIds.tolist())
     added, changed = [], []
     liveIds = set()
-    for annotationId, geometryHash in live:
+    for annotationId, liveGeometryHash in live:
         liveIds.add(annotationId)
         if annotationId not in known:
             added.append(annotationId)
-        elif hashes is not None and hashes.get(annotationId) != geometryHash:
+        elif (
+            hashes is not None
+            and hashes.get(annotationId) != liveGeometryHash
+        ):
             changed.append(annotationId)
     removed = sorted(known - liveIds)
     result = {
@@ -511,8 +500,13 @@ def writeStore(path, counts, cells, symbols, cellTypes, provenance,
     var.attrs.update({"_index": "_index", "column-order": ["feature_type"]})
     _stringArray(var, "_index", symbols)
     _stringArray(var, "feature_type", ["gene"] * len(symbols))
+    obsm = root.create_group("obsm")
+    # Previous footprints are required to reassign molecules released by a
+    # moved/deleted cell, not just those underneath its current polygon.
+    obsm.create_dataset("nimbus_cell_bounds", data=np.array(
+        [c.bbox for c in cells], dtype=np.float64,
+    ).reshape(-1, 4))
     if projection is not None:
-        obsm = root.create_group("obsm")
         obsm.create_dataset("X_umap", data=projection)
     uns = root.create_group("uns")
     uns.attrs["nimbus"] = provenance
@@ -548,6 +542,11 @@ def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
 
     carried = None
     dirtyIndices = set(range(len(cells)))
+    if scope == "dirty" and activeStore is not None:
+        if "obsm/nimbus_cell_bounds" not in activeStore.root:
+            # Legacy/imported tables cannot locate the old footprint. The
+            # first rebuild upgrades them without carrying incorrect rows.
+            scope = "all"
     if scope == "dirty":
         if activeStore is None:
             raise ValueError("dirty scope needs an active table")
@@ -556,10 +555,11 @@ def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
         dirtyIndices = {
             i for i, cell in enumerate(cells) if cell.annotationId in dirtyIds
         }
-        boxes = [cells[i].bbox for i in dirtyIndices]
-        # A removed cell has no polygon left to locate its molecules; they
-        # stay unassigned unless a neighbor grew over them, in which case
-        # that neighbor is itself "changed" and its tile is redone.
+        previousIds = set(stale['changed']) | set(stale['removed'])
+        previousBounds = activeStore.root['obsm/nimbus_cell_bounds'][:]
+        oldBoxes = previousBounds[
+            np.isin(activeStore.annotationIds, list(previousIds))
+        ].tolist()
         # Every cell overlapping a dirty tile is re-assigned (its molecules
         # may have moved to a neighbor), and a re-assigned cell needs every
         # tile IT touches, so the tile set and the touched set grow together
@@ -572,7 +572,7 @@ def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
         ).reshape(-1, 4)
         while True:
             tileKeys = tilesForBoxes(
-                transcripts, [cells[i].bbox for i in touched]
+                transcripts, oldBoxes + [cells[i].bbox for i in touched]
             )
             before = len(touched)
             for key in tileKeys:

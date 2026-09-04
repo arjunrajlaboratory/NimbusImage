@@ -1,6 +1,6 @@
 # Spatial plugin (`upenncontrast_spatial`)
 
-**Status: Phases 1 and 2 of the spatial-transcriptomics platform plan, implemented on
+**Status: Phases 1–6 of the spatial-transcriptomics platform plan, implemented on
 `xenium-phase0` (2026-09-02). Plugin, Python accessor and frontend suites green; verified
 live on the 708,983-cell × 4,624-gene Xenium lymph-node store.**
 
@@ -24,7 +24,8 @@ from growing further. It is installed alongside the annotation plugin and
 ## Row identity: `obs.annotation_id` only
 
 Rows join to cell annotations through the store's `obs.annotation_id` column and nothing
-else — the annotation schema is untouched. `SpatialStore` sorts that column once per open
+else. Polygon and rectangle annotations also persist an exact `geometryHash` used only for
+staleness checks. `SpatialStore` sorts the id column once per open
 store and answers annotation → row with `searchsorted` (one vectorized call per gate);
 row → annotation is an array read. `GET spatial/{datasetId}?verify=true` reports `liveAnnotations`,
 the rows that still resolve, so an orphaned table (polygons deleted and re-uploaded) is
@@ -88,11 +89,13 @@ writes `values[propertyId][symbol] = count` for every row, zeros included. Inlin
 `MATERIALIZE_INLINE_MAX_ROWS` (50K), otherwise a Girder local job
 (`upenncontrast_spatial.server.materialize.run`) reporting progress.
 
-Merging trap: `AnnotationPropertyValues.validateMultiple` lets the STORED
-`values[propertyId]` win when a document already exists — that is why plain resubmission
-is a no-op. Adding genes to a property that already has values therefore updates the
-stored documents in place and saves them with `validate=False`; new documents validate as
-usual. Pinned by *"testMaterializeWritesRegistersAndMerges"*.
+Writes use `AnnotationPropertyValues.setSubValuesMany`: one bulk set of atomic Mongo update
+pipelines merges `values[propertyId]` with `$mergeObjects`. Concurrent materialize, score,
+and neighborhood writes therefore cannot replace unrelated property subtrees. A unique
+`(datasetId, annotationId)` key prevents racing upserts from making a
+second document; startup coalesces legacy duplicates before adding it. Pinned by
+*"testCellValueWriterUsesAtomicNestedUpdates"* and
+*"testLegacyDuplicatePropertyValuesAreCoalesced"*.
 
 ## Phase 2: any gene as a property path (value providers)
 
@@ -146,7 +149,7 @@ is the signed z so ranking by |statistic| works the same). Pinned by
   matching A and those matching B (omitted = every other cell): mean, fraction
   expressing, log2 fold change (pseudocount 0.01), t, p. The validated filter objects,
   not row indices, ride in the job kwargs; the table lands on the job document as
-  `spatialResult`. Wilcoxon is deferred to a worker (plan §11.3). UI: **Compare
+  `spatialResult`. UI: **Compare
   expression…** in the selection summary's Expression section (group A = the summarized
   scope, B = the rest or objects with picked tags), ranked table, CSV download. Python:
   `ds.spatial.score()`, `ds.spatial.differential()`, `ds.spatial.virtual_path()`.
@@ -169,7 +172,8 @@ density/gene              CSR over (gene, row) of a 10 um grid — a heat map pe
 codewords, `tilePoints` slicing the two runs per gene with the quality threshold,
 microns → image pixels through `pixelSize` and the optional 3×3 `transform`,
 `densityGrid`/`densityTile` on the annotation overview's pyramid), an LRU of
-`MAX_OPEN_TRANSCRIPT_STORES` open stores, and `encodePoints`. `server/api/transcripts.py`
+`MAX_OPEN_TRANSCRIPT_STORES` open stores, and `encodePoints`. Density grids are float32 and
+evicted by actual bytes; the open stores divide a 512 MiB process budget. `server/api/transcripts.py`
 is a mixin the `Spatial` resource inherits. The registry document gains
 `{transcriptsItemId, transcriptsFileId, pixelSize, transform}`; either half (table,
 transcripts) may be absent, and each is forgotten independently.
@@ -181,7 +185,7 @@ transcripts) may be absent, and each is forgotten independently.
 | `DELETE spatial/{datasetId}/transcripts` (WRITE) | — | forgets the store; the item stays |
 | `GET spatial/{datasetId}/transcripts/genes` | `search`, `limit` (≤ 200) | `[symbol]`, prefix matches first, no control codewords |
 | `POST spatial/{datasetId}/transcripts/points` | `{genes (≤ 8), level, tiles (≤ 256 keys, non-empty), minQv?}` | **binary**: `uint32 n, uint8 hasQuality, float32[n*2] x,y (image px), uint8[n] gene slot`, then at level 0 `float32[n] quality`; 413 above `MAX_POINTS_PER_RESPONSE` (2M) |
-| `GET spatial/{datasetId}/transcripts/density/{z}/{x}/{y}` (cookie auth) | `genes`, `sizeX`, `sizeY`, `tileSize`, `maxLevel`, `color` | PNG, alpha = sqrt of the genes' count per 10 um bin relative to the 99.5th percentile of their occupied bins (a ubiquitous gene keeps its gradient); a tile outside the pyramid is a 400, as is a transformed registration (the grid is only rendered on the transcripts' own pixel grid) |
+| `GET spatial/{datasetId}/transcripts/density/{z}/{x}/{y}` | `genes`, `sizeX`, `sizeY`, `tileSize`, `maxLevel`, `color`; shared views also send `token` | PNG, alpha = sqrt of the genes' count per 10 um bin relative to the 99.5th percentile of their occupied bins (a ubiquitous gene keeps its gradient); a tile outside the pyramid is a 400, as is a transformed registration (the grid is only rendered on the transcripts' own pixel grid) |
 
 **Molecule → cell is geometric.** The zarr's level-0 `id` is the *transcript's* id (unique
 per molecule; the bundle ships no per-molecule cell reference — that lives only in
@@ -213,25 +217,30 @@ Closing the loop (plan §13): edited cell polygons → a corrected count matrix,
   job go through `DatasetSpatial.registerVersion`, which pushes the previous active table
   (if another item) into `versions`; `activateVersion` swaps; `forgetVersion` drops a
   non-active one. Every consumer reads the active table, so a switch re-points virtual
-  paths, aggregate, score and DE with no other state (gates are shapes in value space).
-- **Staleness is computed, not tracked** (`server/recompute.py`): a recomputed table stores
-  `obs.geometry_hash` — a fingerprint `count:Σx:Σy:Σxy:Σ(x²+y²)` of the polygon vertices,
-  rounded to 0.01 px (the second moment catches a symmetric resize the first moments miss)
-  — beside `annotation_id`, and `GET …/staleness` compares the live polygons:
+  paths, aggregate, score and DE. The client invalidates cached virtual values,
+  in-flight value requests and the property revision used by gate caches;
+  gate shapes remain defined in value space and are resolved again.
+- **Staleness is computed, not tracked** (`server/recompute.py`): polygon and rectangle
+  annotations persist `geometryHash`, a SHA-256 digest of the ordered IEEE-754 coordinate
+  pairs and vertex count. A recomputed table stores that exact identity in
+  `obs.geometry_hash` beside `annotation_id`, and `GET …/staleness` compares the live polygons:
   **added** (cell without a row), **changed** (fingerprint differs), **removed** (row without
-  a cell). The live fingerprints come from one Mongo aggregation (`$size`/`$sum`), so no
-  coordinates are downloaded (the earlier sha1-of-vertices scan cost a minute at 700K
-  cells). Cached on the dataset's annotation raster version, which bumps on every annotation
-  save/delete. An imported table has no fingerprints and reports added/removed only.
+  a cell). Legacy annotations missing the field are hashed once and bulk-backfilled; normal
+  reads never download or hash every coordinate. Results are cached on the dataset's
+  annotation raster version, which bumps on every annotation save/delete. An imported table
+  has no hashes and reports added/removed only.
 - **Assignment: smallest polygon wins.** Per level-0 transcript tile the intersecting
   polygons are rasterized largest-first (`skimage.draw.polygon`) into an int32 label image
   at image resolution; molecules with quality ≥ `minQv` of a real gene look up their
   label; (cell, gene) pairs are summed via a COO → CSR build (duplicates sum). 2D, z
   ignored. Cell types transfer through **tags**: a cell's tag among the previous table's
   `cell_type` categories.
-- **`scope: "dirty"`** reassigns only the tiles touched by added/changed cells (every cell
+- **`scope: "dirty"`** seeds tiles from both old and new footprints of changed cells,
+  old footprints of removed cells, and current footprints of added cells (every cell
   overlapping such a tile is redone, since molecules may have moved to a neighbor) and
-  carries the other rows over from the active table by `annotation_id`. `scope: "all"`
+  carries the other rows over from the active table by `annotation_id`. Previous bounds
+  are stored in `obsm/nimbus_cell_bounds`. Legacy tables without bounds fall back to a
+  full rebuild once, so no old footprint is silently missed. `scope: "all"`
   rasterizes every tile. Both write a complete new `spatial.zarr.zip` (zarr 2, AnnData
   layout: `X` csc, `layers/X_csr`, `obs` with `annotation_id`, `cell_index`,
   `geometry_hash`, `area`, `transcript_count`, `cell_type`, `var`, optional
@@ -277,6 +286,9 @@ cells); a cell's **type** is its first tag not in `excludeTags` (default `["cell
   `pairs[i][j]` = observed neighbors of type j around cells of type i (symmetric);
   `matrix = log2((pairs + 1) / (expected + 1))` with `expected_ij = row_i × col_j / total`,
   i.e. the counts under a label shuffle. Untyped cells count neighbors but join no pair.
+  Before either allocation, the job rejects result matrices above 512 MiB and neighborhoods
+  above 5 million pairs; `count_neighbors` performs the pair preflight without retaining the
+  full pair set.
 - **Regions**: polygon annotations carrying the tag (or the ids); cells inside =
   `skimage.measure.points_in_poly` after a bounding-box prefilter; the region polygons are
   excluded from the cells and the region tag from the type tags. Expression per region is
@@ -319,6 +331,20 @@ for the H&E dataset).
 
 ## Regression checklist
 
+- Saved virtual columns, filters, labels, and gates survive reload without a stored
+  property ID — `annotationBrowserConfig.test.ts`, `preserves virtual columns, filters, labels and gates on reload`.
+
+### Astra review: persistence and replacement
+
+- Startup migrates duplicate values and propagates index failures — `testStartupMigratesBeforeRetryingUniqueIndex`, `testStartupDoesNotSwallowUniqueIndexFailure`.
+- Ordinary single/bulk appends cannot replace spatial updates; property deletion only unsets its own key — `testAppendDoesNotReplaceConcurrentValues`, `testDeleteOnlyUnsetsRequestedProperty`.
+- Dirty rebuild includes old moved/deleted footprints and safely upgrades legacy tables — `testDirtyRecomputeIncludesPreviousFootprint`.
+- Backfill cannot overwrite a concurrent edit and returns the winning hash — `testBackfillDoesNotOverwriteConcurrentEdit`.
+- Rectangle summaries request the shape field — `testRectangleProjectionIncludesShape`.
+- Transcript-only registrations answer missing expression values — `testTranscriptOnlyRegistryHasNoExpressionValues`.
+- Table changes invalidate both lazy values and whole-dataset gate revisions; late responses cannot cross dataset reset — `virtualTableRefresh.test.ts`.
+- Materialized properties register atomically across configurations — `testMaterializeRegistersConfigurationsWithoutReplacement`.
+
 Each line names the test that holds it.
 
 **Plugin (`upenncontrast_spatial/test/test_spatial.py`)**
@@ -337,11 +363,16 @@ Each line names the test that holds it.
   *"testMaterializeWritesRegistersAndMerges"*; needs a configuration and WRITE —
   *"testMaterializeNeedsConfigurationAndWrite"*; schedules a job above the inline limit —
   *"testMaterializeSchedulesJobAboveInlineLimit"*.
+- Materialize/score/neighborhood merge nested values atomically without reading a
+  replaceable snapshot — *"testCellValueWriterUsesAtomicNestedUpdates"*; a scheduled
+  materialize job publishes its final counts — *"testMaterializeJobPublishesItsFinalResult"*.
 - `rowsForAnnotationIds` handles missing ids, empty input, and an empty store — *"testRowsForAnnotationIdsHandlesMissingAndEmpty"*.
 
 **Value providers (annotation plugin `test/test_value_providers.py`, with a fake provider)**
 - A virtual property filter resolves like a gate, combines with stored filters, and an
   unknown key is a 400 — *"testVirtualPropertyFilterResolvesLikeAGate"*.
+- Provider ids are intersected with live annotations before match-all or complement logic —
+  *"testVirtualFilterIntersectsProviderIdsWithLiveAnnotations"*.
 - The list page carries virtual values for rows with and without a value document, and
   refuses to sort by one — *"testListPageCarriesVirtualValues"*.
 - Gates take a virtual axis — *"testAnalysisGateOnVirtualAxis"*; color-by takes a virtual
@@ -364,6 +395,8 @@ Each line names the test that holds it.
 - Upload + register, route shapes, filters default, job wait only when scheduled —
   *"test_upload_and_register"*, *"test_reads_hit_the_expected_routes"*,
   *"test_aggregate_sends_filters_or_empty_object"*, *"test_materialize_waits_for_job_only_when_scheduled"*.
+- Every awaited spatial operation raises on a failed job —
+  *"test_spatial_jobs_raise_when_the_job_fails"*.
 
 **Frontend, Phase 2**
 - The store answers for the pseudo-property and names virtual paths — *"answers for the spatial pseudo-property and names its paths"*.
@@ -371,6 +404,9 @@ Each line names the test that holds it.
   *"adds live columns: shown, listed among computed paths, and fetched below the stub threshold"*; not wholesale in stub mode —
   *"does not fetch wholesale in stub-only mode (the visible fetch handles it)"*; a displayed
   virtual column survives reload and can be removed — *"keeps a displayed virtual column across a reload and can remove it"*.
+- Partial virtual-column responses recursively retain previously fetched siblings —
+  *"keeps earlier live columns when a sibling column is fetched later"* and
+  *"retains nested sibling paths fetched in separate requests"*.
 - Measurements groups virtual columns without a Run button — *"lists virtual spatial columns under one group without a Run button"*.
 - Genes dialog: live mode writes nothing server-side — *"adds live columns by default, with no server write"*; score mode —
   *"scores a gene set into its own measurement"*.
@@ -389,6 +425,8 @@ Each line names the test that holds it.
 - Picker debounces typing, keeps picked symbols listed, caps at max — *"lists picked symbols alongside search results and debounces typing"*, *"caps the selection at max"*.
 - Summary expression: only with a table and picked genes, same scope, in the CSV —
   *"aggregates expression over the same scope only when a table exists and genes are picked"*.
+- Selection counts, labels, and default scope ignore stale selected ids, matching the
+  request constraint — *"counts only selected ids that still resolve"*.
 
 **Transcripts (`test/test_transcripts.py`, synthetic two-level pyramid)**
 - Registration describes the pyramid, skips control codewords in the gene count, and
@@ -404,13 +442,14 @@ Each line names the test that holds it.
   *"testPointsAtCoarserLevelsHaveNoQuality"*.
 - Malformed bodies (an empty tile list included) are 400s and too many points a 413 —
   *"testPointsRejectBadInputAndTooMany"*;
-  private datasets refuse reads, density tiles need the cookie — *"testPointsRequireReadAccess"*.
+  private datasets refuse reads, including density tiles without an accepted credential —
+  *"testPointsRequireReadAccess"*.
 - Density tiles light exactly the bins holding molecules, in the requested color, on the
   overview pyramid — *"testDensityTileMatchesBins"*; parameters and the tile range validated —
   *"testDensityTileValidatesParams"*; a transformed registration transforms points and
   refuses density — *"testDensityRefusesTransformedRegistrations"*.
 - Store units: tile bounds, unknown keys, density grid, transform parsing, empty encoding —
-  *"testStoreUnits"*.
+  *"testStoreUnits"*; the same test pins float32 density grids and byte-budget eviction.
 
 **Transcripts, Python (`nimbusimage/tests/test_spatial.py`)**
 - 404 → None — *"test_transcripts_none_when_unregistered"*; registration body —
@@ -436,7 +475,7 @@ Each line names the test that holds it.
   colors do not refetch — *"changes the request signature for refetch inputs only"*; cell
   navigation — *"navigates to a molecule's cell by annotation id"*.
 - Overlay: fetches the view's tiles at the planned level — *"fetches the view's tiles at the finest fitting level and draws them"*;
-  413 steps coarser — *"steps one level coarser when the server answers 413"*; density in auto
+  413 replans the keys at the coarser level — *"steps one level coarser when the server answers 413"*; density in auto
   when zoomed out and on demand — *"shows the density heat map when zoomed far out in auto mode, and when asked"*;
   clears when off — *"clears everything when disabled, turned off, or without genes"*; stale
   fetch ignored — *"ignores a fetch that finishes after a newer one started"*; click readout
@@ -462,8 +501,9 @@ Each line names the test that holds it.
   *"testActivateAndForgetVersions"*.
 - Bad scope/label/minQv/tags, `dirty` without a table, a transformed registration and a
   missing transcript store are 400/404 — *"testRecomputeValidation"*.
-- Units: geometry hash, largest-first label image, COO → CSR duplicate summing, the written
-  zarr layout — *"testUnits"*; embeddings shapes — *"testEmbeddingsShapes"*.
+- Units: exact ordered-coordinate geometry hashes distinguish equal-moment polygons,
+  largest-first label image, COO → CSR duplicate summing, and the written zarr layout —
+  *"testUnits"*; embeddings shapes — *"testEmbeddingsShapes"*.
 
 **Recompute, Python (`nimbusimage/tests/test_spatial.py`)**
 - Routes — *"test_version_routes"*; recompute waits for the job and raises on failure —
@@ -483,7 +523,7 @@ Each line names the test that holds it.
 
 **Neighborhood and regions (`test/test_analysis.py`)**
 - Neighbor counts, pair matrix, enrichment sign and untyped handling by hand —
-  *"testNeighborhoodUnits"*.
+  *"testNeighborhoodUnits"*; the same test pins the matrix-byte and pair-count ceilings.
 - The job writes per-cell fractions and `neighbors`, stores and serves the matrix —
   *"testNeighborhoodJobWritesFractionsAndMatrix"*; radius/tags/property validation, 404
   before computing, WRITE required — *"testNeighborhoodValidation"*.
@@ -504,6 +544,15 @@ Each line names the test that holds it.
   *"offers the dataset's tags and summarizes the chosen one with genes"*,
   *"asks for no genes without a table and surfaces errors"*.
 - API — *"uses the documented routes and maps 404 to null"*.
+
+**Shared-view tile authentication**
+- `/share_link/me` does not replace either an empty or ambient login cookie —
+  *"testBearerReadsOnlyTheSharedDataset"*.
+- Image, annotation-raster, and density templates add the isolated link bearer while
+  preserving tile placeholders — *"adds an explicit share-link token without changing
+  tile placeholders"*, *"preserves z/x/y placeholders and serializes render inputs"*, and
+  *"builds a density template on the overview pyramid"*; viewer/overlay tests pin that the
+  store token reaches those builders.
 
 **Process**
 - Backend edits need `docker compose build girder && docker compose up -d girder`.

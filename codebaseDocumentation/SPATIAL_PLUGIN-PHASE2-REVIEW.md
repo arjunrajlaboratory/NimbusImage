@@ -11,7 +11,7 @@ Self-review round on the Phase 2 diff (`xenium-phase0`, 2026-09-02). Feature rec
 | 4 | Low | `properties.ts` | Reusing `uniquePropertyPaths` for the computed-path union would have truncated the list at the displayed-column cap | fixed — uncapped `dedupePropertyPaths` |
 | 5 | Low | `properties.ts` `fetchAllPropertyValues` | Below the stub threshold the wholesale value map comes from the find endpoint, which knows nothing about virtual paths | fixed — `fetchVirtualPropertyValues` merges them from the batch endpoint; *"adds live columns: shown, listed among computed paths, and fetched below the stub threshold"* |
 | 6 | Low | `PropertyChipStrip.test.ts` | Mock of `@/store/properties` lacked the new named exports `propertyEntries.ts` imports | fixed |
-| 7 | Low | `differential.py` | Welch t on raw counts; Wilcoxon/Mann-Whitney deferred | by-design — per-gene rank sums over 700K cells belong in a worker (plan §11.3); stated in the dialog subtitle and the doc |
+| 7 | Low | `differential.py` | Welch t on raw counts; Wilcoxon/Mann-Whitney initially deferred | superseded — the branch now implements the optional Mann-Whitney method and exposes it in the API, client, and dialog |
 | 8 | Low | CSV export / list sort | Virtual columns export empty and cannot sort | by-design for this phase — documented in the genes dialog's mode hint and `SPATIAL_PLUGIN.md`; the stored copy covers both |
 | 9 | Nit | Girder local jobs | `createLocalJob(asynchronous=True)` sometimes ran inside the request (score 43 s, differential 14 s observed live) | noted — Girder's local-job daemon behavior, not this plugin's; the clients poll either way |
 

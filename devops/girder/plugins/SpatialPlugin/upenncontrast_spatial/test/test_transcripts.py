@@ -483,7 +483,7 @@ class TestTranscripts(TestSpatial):
 
     # ---- unit --------------------------------------------------------------
 
-    def testStoreUnits(self, tmp_path):
+    def testStoreUnits(self, tmp_path, monkeypatch):
         path = str(tmp_path / "t.zarr.zip")
         buildTranscriptsZip(path)
         store = TranscriptStore(path, 1.0)
@@ -501,6 +501,20 @@ class TestTranscripts(TestSpatial):
         assert binMicrons == 10.0 and grid.shape == (30, 50)
         assert grid.sum() == 1  # only the high-quality MS4A1 molecule
         assert reference == 1.0
+
+        # Density grids are visualization data. Keep them float32 and evict by
+        # actual bytes rather than entry count so large tissue sections cannot
+        # multiply into an unbounded process cache.
+        perStoreBudget = 2 * grid.nbytes
+        monkeypatch.setattr(
+            transcriptsModule, "MAX_DENSITY_CACHE_BYTES",
+            perStoreBudget * transcriptsModule.MAX_OPEN_TRANSCRIPT_STORES,
+        )
+        for symbol in ("CD3E", "MS4A1", "CCL19"):
+            store.densityGrid(store.geneIndices([symbol]))
+        assert grid.dtype == np.float32
+        assert store._densityCacheBytes <= perStoreBudget
+        assert len(store._densityCache) == 2
         assert parseTransform(None) is None
         assert parseTransform([1, 0, 0, 0, 1, 0, 0, 0, 1]).shape == (3, 3)
         for bad in ([1, 2], [[1, 2, 3]], [[1, 2, "x"]] * 3, "matrix"):

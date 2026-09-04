@@ -1,5 +1,6 @@
 <template>
-  <v-container class="shared-view fill-height" fluid>
+  <viewer v-if="ready" />
+  <v-container v-else class="shared-view fill-height" fluid>
     <v-row justify="center" align="center">
       <v-col cols="12" sm="6" class="text-center">
         <template v-if="error">
@@ -17,41 +18,52 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { onBeforeUnmount, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import store from "@/store";
 import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
+import Viewer from "./datasetView/Viewer.vue";
 
 /**
  * `#/shared/<token>` and `#/embed/<token>` (SHARING.md "Share links"): act as
- * the link's bearer, find out which dataset view the link opens, and go
- * there. The embed variant carries `?embed=1`, which App.vue reads to drop
- * the chrome.
+ * the link's bearer and render its dataset view WITHOUT dropping the route's
+ * credential. Reload revalidates the link, without persisting a foreign login.
+ * App.vue recognizes the embed route and drops its chrome.
  */
 
 const route = useRoute();
-const router = useRouter();
 const error = ref<string | null>(null);
+const ready = ref(false);
+let sequence = 0;
+onBeforeUnmount(() => sequence++);
 
-onMounted(async () => {
-  const token = String(route.params.token ?? "");
-  if (!token) {
-    error.value = "The link carries no token.";
-    return;
-  }
-  try {
-    const link = await store.openShareLink(token);
-    await router.replace({
-      name: "datasetview",
-      params: { datasetViewId: link.datasetViewId },
-      query: route.name === "embed" ? { embed: "1" } : {},
-    });
-  } catch (caught) {
-    logError("Failed to open a share link:", caught);
-    error.value = extractErrorMessage(caught);
-  }
-});
+watch(
+  () => route.params.token,
+  async () => {
+    const request = ++sequence;
+    ready.value = false;
+    error.value = null;
+    const token = String(route.params.token ?? "");
+    if (!token) {
+      error.value = "The link carries no token.";
+      return;
+    }
+    try {
+      const link = await store.openShareLink(token);
+      if (request !== sequence) return;
+      await store.setDatasetViewId({
+        id: link.datasetViewId,
+        routeQuery: route.query,
+      });
+      if (request === sequence) ready.value = true;
+    } catch (caught) {
+      logError("Failed to open a share link:", caught);
+      if (request === sequence) error.value = extractErrorMessage(caught);
+    }
+  },
+  { immediate: true },
+);
 
-defineExpose({ error });
+defineExpose({ error, ready });
 </script>

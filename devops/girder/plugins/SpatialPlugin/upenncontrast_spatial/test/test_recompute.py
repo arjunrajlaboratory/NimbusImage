@@ -48,6 +48,28 @@ def runJob(jobId):
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_spatial")
 class TestRecompute(TestTranscripts):
+    def testBackfillDoesNotOverwriteConcurrentEdit(
+        self, admin, server, tmp_path, fsAssetstore, monkeypatch,
+    ):
+        folder, _, _, cells = self._scene(admin, server, tmp_path)
+        model = Annotation()
+        target = cells['C']
+        model.update({'_id': target['_id']}, {'$unset': {'geometryHash': ''}})
+        originalBackfill = model.setGeometryHashes
+        expected = {}
+
+        def editBeforeBackfill(hashes):
+            target['coordinates'][0]['x'] += 1
+            expected['hash'] = model.save(target)['geometryHash']
+            return originalBackfill(hashes)
+
+        monkeypatch.setattr(model, 'setGeometryHashes', editBeforeBackfill)
+        result = recomputeModule.polygonFingerprints(folder['_id'])
+        assert result[str(target['_id'])] == expected['hash']
+        assert model.load(target['_id'], force=True)['geometryHash'] == (
+            expected['hash']
+        )
+
     def _scene(self, admin, server, tmp_path):
         """The transcript fixture (POINTS in test_transcripts) plus cells:
         A over (0-60, 0-40) um holding CD3E qv30, CD3E qv15 and a control
@@ -309,12 +331,24 @@ class TestRecompute(TestTranscripts):
         assert recomputeModule.geometryHash(coordinates) != (
             recomputeModule.geometryHash(coordinates[:2] + [{"x": 6, "y": 0}])
         )
-        # Reordering vertices keeps the sums but is not an edit anyone makes;
-        # a moved vertex is caught.
-        assert recomputeModule.geometryHash(coordinates) == (
-            "3:9.00:6.00:14.00:55.00"
+        # Equal low-order moments do not make two polygons equal.  The old
+        # count/sum fingerprint collided for this pair despite their different
+        # outlines (and areas: 2.5 vs 3.0).
+        collisionA = [
+            {"x": 0, "y": 0}, {"x": 3, "y": 2},
+            {"x": 1, "y": 2}, {"x": 0, "y": 1},
+        ]
+        collisionB = [
+            {"x": 0, "y": 0}, {"x": 2, "y": 1},
+            {"x": 2, "y": 3}, {"x": 0, "y": 1},
+        ]
+        assert recomputeModule.geometryHash(collisionA) != (
+            recomputeModule.geometryHash(collisionB)
         )
-        assert recomputeModule.isFingerprint("3:9.00:6.00:14.00:55.00")
+        assert recomputeModule.isFingerprint(
+            recomputeModule.geometryHash(coordinates)
+        )
+        assert not recomputeModule.isFingerprint("3:9.00:6.00:14.00:55.00")
         assert not recomputeModule.isFingerprint("0123456789abcdef")
         assert not recomputeModule.isFingerprint("3:9.00:6.00:14.00")
         # A rectangle widened symmetrically keeps count, sum x, sum y and

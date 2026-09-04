@@ -6,7 +6,7 @@ from collections import defaultdict
 import fastjsonschema
 
 from bson.objectid import ObjectId
-from pymongo import UpdateMany
+from pymongo import UpdateMany, UpdateOne
 
 from girder import events
 from girder.constants import AccessType, SortDir
@@ -25,6 +25,7 @@ from ..helpers.colormaps import (
     colormapTable,
 )
 from ..helpers.fastjsonschema import customJsonSchemaCompile
+from ..helpers.geometry import geometryHash
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
 from ..helpers import valueProviders
@@ -102,6 +103,7 @@ class AnnotationSchema:
             "location": locationSchema,
             "shape": shapeSchema,
             "datasetId": {"type": "objectId"},
+            "geometryHash": {"type": "string"},
             "color": {
                 "type": ["string", "null"],
             },
@@ -251,11 +253,14 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # An annotation belongs to exactly one dataset. The only path that
         # changes datasetId is updateMultiple, which bumps the source
         # dataset itself, so bumping the saved dataset suffices here.
+        self._setGeometryHash(document)
         saved = super().save(document, validate, triggerEvents)
         bumpDatasetRasterVersion(saved.get("datasetId"))
         return saved
 
     def saveMany(self, documents, validate=True, triggerEvents=True):
+        for document in documents:
+            self._setGeometryHash(document)
         previous = getattr(
             self._rasterMutationState, "suppressRemoveBump", False
         )
@@ -269,6 +274,34 @@ class Annotation(AccessControlMixin, ProxiedModel):
         ):
             bumpDatasetRasterVersion(datasetId)
         return saved
+
+    @staticmethod
+    def _setGeometryHash(document):
+        if document.get("shape") in ("polygon", "rectangle"):
+            document["geometryHash"] = geometryHash(document["coordinates"])
+        else:
+            document.pop("geometryHash", None)
+
+    def setGeometryHashes(self, hashes):
+        """Backfill derived hashes without replacing annotation documents.
+
+        This is intentionally a bulk update: a migrated dataset can contain
+        hundreds of thousands of polygons.  The field is derived metadata and
+        does not affect rendering, so no raster-version bump is needed.
+        """
+        chunk = []
+        for annotationId, value in hashes.items():
+            chunk.append(UpdateOne(
+                {"_id": ObjectId(str(annotationId)),
+                 "geometryHash": {"$exists": False},
+                 "shape": {"$in": ["polygon", "rectangle"]}},
+                {"$set": {"geometryHash": value}},
+            ))
+            if len(chunk) == 10_000:
+                self.collection.bulk_write(chunk, ordered=False)
+                chunk = []
+        if chunk:
+            self.collection.bulk_write(chunk, ordered=False)
 
     def remove(self, document, **kwargs):
         previous = getattr(
@@ -1103,11 +1136,26 @@ class Annotation(AccessControlMixin, ProxiedModel):
             {"$match": {"datasetId": datasetId}}, {"$count": "count"},
         ]))
         datasetSize = counted[0]["count"] if counted else 0
-        complementSize = datasetSize - len(matchingIds)
+        # A provider can lag polygon edits, so its ids are not necessarily a
+        # subset of the current annotation collection. Intersect before using
+        # cardinality to choose "all" or a complement; otherwise one orphaned
+        # row plus one newly added cell can turn a real constraint into none.
+        matchingIds = list(set(matchingIds))
+        liveMatches = [
+            document["_id"]
+            for document in self._aggregate(self.collection, [
+                {"$match": {
+                    "datasetId": datasetId,
+                    "_id": {"$in": matchingIds},
+                }},
+                {"$project": {"_id": 1}},
+            ])
+        ] if matchingIds else []
+        complementSize = datasetSize - len(liveMatches)
         if complementSize <= 0:
             return None
-        if complementSize * 2 <= len(matchingIds):
-            matched = set(matchingIds)
+        if complementSize * 2 <= len(liveMatches):
+            matched = set(liveMatches)
             complement = [
                 doc["_id"]
                 for doc in self._aggregate(self.collection, [
@@ -1118,7 +1166,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             ]
             operator, selected = "$nin", complement
         else:
-            operator, selected = "$in", matchingIds
+            operator, selected = "$in", liveMatches
         if len(selected) > MAX_SUMMARY_CONSTRAINT_IDS:
             raise ValueError(
                 "the filters match a set the summary query cannot carry "

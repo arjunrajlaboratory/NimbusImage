@@ -14,10 +14,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/store", () => ({
   default: {
     dataset: { id: "ds1" },
+    shareLinkTileToken: "share-token",
     spatialAPI: {
       fetchTranscriptPoints: mocks.fetchTranscriptPoints,
       transcriptDensityTemplateUrl: (options: any) =>
-        `density?genes=${options.genes.join(",")}&color=${options.color}`,
+        `density?genes=${options.genes.join(",")}&color=${options.color}&token=${options.authToken}`,
     },
   },
 }));
@@ -247,6 +248,7 @@ describe("TranscriptOverlay", () => {
     await vi.advanceTimersByTimeAsync(250);
     expect(mocks.fetchTranscriptPoints).toHaveBeenCalledTimes(2);
     expect(mocks.fetchTranscriptPoints.mock.calls[1][2]).toBe(1);
+    expect(mocks.fetchTranscriptPoints.mock.calls[1][3]).toEqual(["0,0"]);
     expect(mocks.setStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({ rendering: "points", level: 1 }),
     );
@@ -260,7 +262,7 @@ describe("TranscriptOverlay", () => {
     const osmLayer = parts.osmLayer;
     expect(mocks.fetchTranscriptPoints).not.toHaveBeenCalled();
     expect(osmLayer.url).toHaveBeenCalledWith(
-      "density?genes=CD3E&color=#FF0000",
+      "density?genes=CD3E&color=#FF0000&token=share-token",
     );
     expect(osmLayer.visible()).toBe(true);
     expect(osmLayer.opacity).toHaveBeenCalledWith(0.85);
@@ -286,7 +288,7 @@ describe("TranscriptOverlay", () => {
     await vi.advanceTimersByTimeAsync(250);
     expect(parts.osmLayers).toHaveLength(2);
     expect(parts.osmLayers[1].url).toHaveBeenCalledWith(
-      "density?genes=MS4A1&color=#00FF00",
+      "density?genes=MS4A1&color=#00FF00&token=share-token",
     );
     expect(parts.osmLayers.every((l) => l.visible())).toBe(true);
     (transcriptsStore as any).genes = [{ symbol: "MS4A1", color: "#00FF00" }];

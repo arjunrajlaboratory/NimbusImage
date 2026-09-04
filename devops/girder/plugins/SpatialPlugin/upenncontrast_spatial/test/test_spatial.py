@@ -384,6 +384,27 @@ class TestSpatial:
 
     # ---- materialize ----------------------------------------------------
 
+    def testMaterializeRegistersConfigurationsWithoutReplacement(
+        self, admin, server, tmp_path, fsAssetstore, monkeypatch,
+    ):
+        folder, _, item = self._setup(admin, tmp_path)
+        self._register(server, admin, folder, item)
+        configs = [self._configure(admin, folder) for _ in range(2)]
+        model = Collection()
+
+        def noReplacement(*args, **kwargs):
+            pytest.fail('registration must not replace config snapshots')
+
+        monkeypatch.setattr(model, 'setMetadata', noReplacement)
+        response = request(server, admin, 'POST',
+                           '/spatial/%s/materialize' % folder['_id'], body={
+                               'features': ['CD3E'], 'propertyName': 'Batch',
+                           })
+        assertStatusOk(response)
+        for config in configs:
+            saved = model.load(config['_id'], force=True)
+            assert response.json['propertyId'] in saved['meta']['propertyIds']
+
     def testMaterializeWritesRegistersAndMerges(
         self, admin, server, tmp_path, fsAssetstore
     ):
@@ -425,6 +446,33 @@ class TestSpatial:
             config["_id"], force=True
         )["meta"]["propertyIds"])) == 1
 
+    def testCellValueWriterUsesAtomicNestedUpdates(
+        self, admin, tmp_path, fsAssetstore, monkeypatch
+    ):
+        from upenncontrast_spatial.server import materialize
+
+        folder, annotations, _ = self._setup(admin, tmp_path)
+        propertyId = ObjectId()
+        model = AnnotationPropertyValues()
+        model.save({
+            "annotationId": annotations[0]["_id"],
+            "datasetId": folder["_id"],
+            "values": {"existing": {"area": 12}},
+        })
+
+        def unsafeRead(*args, **kwargs):
+            raise AssertionError("writer must not read a replaceable snapshot")
+
+        monkeypatch.setattr(model, "find", unsafeRead)
+        assert materialize.writeCellValues(
+            folder["_id"], propertyId, [annotations[0]["_id"]],
+            lambda start, stop: [{"CD3E": 7}],
+        ) == 1
+        document = model.findOne({"annotationId": annotations[0]["_id"]})
+        assert document["values"] == {
+            "existing": {"area": 12}, str(propertyId): {"CD3E": 7},
+        }
+
     def testMaterializeNeedsConfigurationAndWrite(
         self, admin, user, server, tmp_path, fsAssetstore
     ):
@@ -453,6 +501,43 @@ class TestSpatial:
         )
         assertStatusOk(resp)
         assert resp.json["jobId"] is not None and resp.json["written"] == 0
+
+    def testMaterializeJobPublishesItsFinalResult(self, monkeypatch):
+        from upenncontrast_spatial.server import materialize as module
+
+        updates = []
+
+        class FakeJobModel:
+            def updateJob(self, job, **fields):
+                updates.append(fields)
+
+        class FakeFileModel:
+            def load(self, fileId, force=False):
+                return {"_id": fileId}
+
+        monkeypatch.setattr(module, "Job", FakeJobModel)
+        monkeypatch.setattr(module, "File", FakeFileModel)
+        monkeypatch.setattr(module, "openStore", lambda fileDoc: object())
+        monkeypatch.setattr(
+            module, "columnsFor", lambda store, kwargs: {"CD3E": object()}
+        )
+        monkeypatch.setattr(module, "writeValues", lambda *args: 6)
+        jobId = ObjectId()
+        propertyId = ObjectId()
+        module.run({
+            "_id": jobId,
+            "kwargs": {
+                "datasetId": str(ObjectId()),
+                "fileId": str(ObjectId()),
+                "propertyId": str(propertyId),
+                "symbols": ["CD3E"],
+            },
+        })
+        assert updates[-1]["otherFields"]["spatialResult"] == {
+            "propertyId": str(propertyId),
+            "written": 6,
+            "jobId": str(jobId),
+        }
 
     # ---- store unit checks ---------------------------------------------
 

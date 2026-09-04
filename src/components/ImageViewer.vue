@@ -1643,6 +1643,7 @@ function _syncAnnotationOverviewLayer(
     mode: config.mode,
     color: ANNOTATION_OVERVIEW_FALLBACK_COLOR,
     version: annotationStore.mutationCounter,
+    authToken: store.shareLinkTileToken,
   });
   annotationOverviewTemplates.set(mapentry.annotationOverviewLayer, template);
   if (

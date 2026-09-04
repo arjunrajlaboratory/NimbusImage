@@ -65,9 +65,10 @@ class TestShareLink:
         me = request(server, "GET", "/share_link/me", token=token)
         assertStatusOk(me)
         assert me.json["datasetViewId"] == str(view["_id"])
-        # The cookie <img> tile requests need, set to the link token.
-        assert me.cookie["girderToken"].value == token
-        assert me.cookie["girderToken"]["httponly"]
+        # Tile URLs carry the link token explicitly, so visiting a link never
+        # overwrites an ambient login cookie or creates a persistent link-user
+        # cookie in this browser profile.
+        assert "girderToken" not in me.cookie
         assert User().findOne({"login": {"$regex": "^share-"}})["status"] == (
             "enabled"
         )

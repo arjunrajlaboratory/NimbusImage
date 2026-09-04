@@ -1,6 +1,8 @@
 import fastjsonschema
 
 from bson.objectid import ObjectId
+from pymongo import DeleteMany, UpdateOne
+from pymongo.errors import DuplicateKeyError
 
 from girder import events
 from girder.constants import SortDir
@@ -49,6 +51,11 @@ class PropertySchema:
 # find/load methods take MRO precedence over the unchecked base methods.
 class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
 
+    annotationDatasetIndex = (
+        ('datasetId', SortDir.ASCENDING),
+        ('annotationId', SortDir.ASCENDING),
+    )
+
     def __init__(self):
         super().__init__()
         compoundSearchIndex = (
@@ -57,6 +64,18 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
         )
         self.ensureIndices([(compoundSearchIndex, {}),
                             "annotationId", "datasetId"])
+        # Unlike Girder's best-effort ensureIndices, this invariant must fail
+        # startup if it cannot be established. Upserts rely on uniqueness.
+        try:
+            self.collection.create_index(self.annotationDatasetIndex,
+                                         unique=True)
+        except DuplicateKeyError:
+            # Older deployments could create duplicates through concurrent
+            # read/replace writes. Consolidate them once before enforcing the
+            # invariant needed for race-safe upserts.
+            self._coalesceDuplicateDocuments()
+            self.collection.create_index(self.annotationDatasetIndex,
+                                         unique=True)
 
         # Used by Girder to define what field are used to check permissions
         self.resourceColl = 'folder'
@@ -125,10 +144,136 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
             "values": values,
             "datasetId": datasetId,
         }
-        return self.save(property_values)
+        return self.appendMultipleValues([property_values])[0]
 
     def appendMultipleValues(self, list_of_property_values):
-        return self.saveMany(list_of_property_values)
+        # Preserve the existing append contract: an already computed property
+        # wins as a whole. Do that merge AT WRITE TIME, never from a snapshot
+        # that could erase another worker's intervening update.
+        try:
+            for document in list_of_property_values:
+                self.jsonValidate(document)
+        except fastjsonschema.JsonSchemaValueException as exp:
+            raise ValidationException(exp)
+
+        results = []
+        for start in range(0, len(list_of_property_values), 5000):
+            documents = list_of_property_values[start:start + 5000]
+            keys = [{
+                'datasetId': document['datasetId'],
+                'annotationId': document['annotationId'],
+            } for document in documents]
+            query = {'$or': keys}
+            if self.is_recording:
+                for before in self.find(query):
+                    self.record.changeDocument(before, None)
+            self.collection.bulk_write([
+                UpdateOne(key, [{'$set': {
+                    **key,
+                    'values': {'$mergeObjects': [
+                        {'$literal': document['values']},
+                        {'$ifNull': ['$values', {}]},
+                    ]},
+                }}], upsert=True)
+                for key, document in zip(keys, documents)
+            ], ordered=True)
+            saved = {
+                (document['datasetId'], document['annotationId']): document
+                for document in self.find(query)
+            }
+            if self.is_recording:
+                for after in saved.values():
+                    self.record.changeDocument(None, after)
+            results.extend(saved[(key['datasetId'], key['annotationId'])]
+                           for key in keys)
+        return results
+
+    @staticmethod
+    def _mergeMissingValues(target, source):
+        """Recursively add missing values without replacing older leaves."""
+        for key, value in source.items():
+            if key not in target:
+                target[key] = value
+            elif isinstance(target[key], dict) and isinstance(value, dict):
+                AnnotationPropertyValues._mergeMissingValues(
+                    target[key], value
+                )
+
+    def _coalesceDuplicateDocuments(self):
+        """Merge legacy duplicate annotation-value documents in bulk."""
+        pipeline = [
+            {"$sort": {"_id": 1}},
+            {"$group": {
+                "_id": {
+                    "datasetId": "$datasetId",
+                    "annotationId": "$annotationId",
+                },
+                "documents": {"$push": {
+                    "_id": "$_id",
+                    "values": "$values",
+                }},
+                "count": {"$sum": 1},
+            }},
+            {"$match": {"count": {"$gt": 1}}},
+        ]
+        operations = []
+        for group in self.collection.aggregate(pipeline, allowDiskUse=True):
+            documents = group["documents"]
+            merged = documents[0]["values"].copy()
+            for document in documents[1:]:
+                self._mergeMissingValues(merged, document["values"])
+            operations.extend([
+                UpdateOne(
+                    {"_id": documents[0]["_id"]},
+                    {"$set": {"values": merged}},
+                ),
+                DeleteMany({
+                    "_id": {"$in": [
+                        document["_id"] for document in documents[1:]
+                    ]}
+                }),
+            ])
+            if len(operations) >= 10_000:
+                self.collection.bulk_write(operations, ordered=True)
+                operations = []
+        if operations:
+            self.collection.bulk_write(operations, ordered=True)
+
+    def setSubValuesMany(self, datasetId, propertyId, entries):
+        """Atomically merge nested values for several annotations.
+
+        Each update touches only one property's sub-dictionary, so concurrent
+        jobs writing other properties or sub-keys cannot replace one another's
+        snapshots. A pipeline also normalizes a legacy scalar property value
+        to an object before merging.
+        """
+        propertyPath = "values.%s" % propertyId
+        operations = []
+        for annotationId, subValues in entries:
+            operations.append(UpdateOne(
+                {
+                    "datasetId": datasetId,
+                    "annotationId": annotationId,
+                },
+                [{"$set": {
+                    "datasetId": datasetId,
+                    "annotationId": annotationId,
+                    propertyPath: {"$mergeObjects": [
+                        {"$cond": [
+                            {"$eq": [
+                                {"$type": "$" + propertyPath}, "object"
+                            ]},
+                            "$" + propertyPath,
+                            {},
+                        ]},
+                        {'$literal': subValues},
+                    ]},
+                }}],
+                upsert=True,
+            ))
+        if operations:
+            return self.collection.bulk_write(operations, ordered=False)
+        return None
 
     def findByAnnotationIds(
         self, datasetId, annotationIds, propertyPaths=None
@@ -236,18 +381,13 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
                 yield document["annotationId"], value
 
     def delete(self, propertyId, datasetId):
-        # Could use self.collection.updateMany but girder doesn't expose it
-        for document in self.find(
-            {
-                "datasetId": datasetId,
-                ".".join(["values", propertyId]): {"$exists": True},
-            }
-        ):
-            document["values"].pop(propertyId, None)
-            if len(document["values"]) == 0:
-                self.remove(document)
-            else:
-                self.save(document, False)
+        # Keep empty value documents: deleting an empty-looking snapshot can
+        # remove another property's concurrent upsert. Consumers already
+        # accept values={}, and annotation deletion cleans up the document.
+        return self.update(
+            {'datasetId': datasetId},
+            {'$unset': {'values.' + propertyId: ''}},
+        )
 
     def histogram(self, propertyPath, datasetId, buckets=255):
         valueKey = "values." + propertyPath

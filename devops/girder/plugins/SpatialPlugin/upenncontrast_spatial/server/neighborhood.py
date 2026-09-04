@@ -32,6 +32,15 @@ DEFAULT_PROPERTY_NAME = "Neighborhood"
 NEIGHBOR_COUNT_KEY = "neighbors"
 CELL_SHAPES = ("polygon", "rectangle")
 MAX_REGIONS = 50
+# A neighborhood result stays resident while values are written and the
+# response matrix is serialized. Refuse allocations above 512 MiB rather than
+# risking the whole Girder process; the usual 700K-cell / tens-of-types case is
+# comfortably below this ceiling.
+MAX_NEIGHBOR_RESULT_BYTES = 512 * 1024 * 1024
+# `query_pairs` materializes two platform integers per pair plus temporary
+# boolean/index arrays. Five million pairs keeps its working set bounded while
+# still allowing dense local neighborhoods.
+MAX_NEIGHBOR_PAIRS = 5_000_000
 # Pseudocount in the enrichment log ratio, so an empty pair is finite.
 ENRICHMENT_PSEUDOCOUNT = 1.0
 
@@ -118,11 +127,27 @@ def neighborhood(centroids, codes, nTypes, radius):
     [nTypes, nTypes] (observed pairs with type i around type j, symmetric)
     for all pairs closer than `radius`."""
     n = len(centroids)
+    resultBytes = np.dtype(np.int64).itemsize * (
+        n * nTypes + nTypes * nTypes
+    )
+    if resultBytes > MAX_NEIGHBOR_RESULT_BYTES:
+        raise ValueError(
+            "neighborhood result arrays need %d bytes; limit is %d"
+            % (resultBytes, MAX_NEIGHBOR_RESULT_BYTES)
+        )
     counts = np.zeros((n, nTypes), dtype=np.int64)
     pairs = np.zeros((nTypes, nTypes), dtype=np.int64)
     if n < 2 or radius <= 0:
         return counts, pairs
     tree = cKDTree(centroids)
+    # count_neighbors includes each pair in both directions and every point's
+    # self-match. It obtains the size without retaining the pair array.
+    pairCount = (int(tree.count_neighbors(tree, radius)) - n) // 2
+    if pairCount > MAX_NEIGHBOR_PAIRS:
+        raise ValueError(
+            "radius produces %d neighbor pairs; limit is %d"
+            % (pairCount, MAX_NEIGHBOR_PAIRS)
+        )
     close = tree.query_pairs(radius, output_type="ndarray")
     if len(close) == 0:
         return counts, pairs
@@ -250,7 +275,8 @@ def regionPolygons(datasetId, regionTag=None, regionIds=None):
         query["tags"] = regionTag
     regions = []
     for document in Annotation().find(
-        query, fields=["coordinates", "tags", "name"], sort=[("_id", 1)],
+        query, fields=["coordinates", "tags", "name", "shape"],
+        sort=[("_id", 1)],
         limit=MAX_REGIONS + 1,
     ):
         xy = np.array(

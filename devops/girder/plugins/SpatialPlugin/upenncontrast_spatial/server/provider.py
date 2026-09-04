@@ -22,9 +22,9 @@ def storeForDataset(datasetId):
     without a user so a provider call inside a pipeline needs no request
     context."""
     entry = DatasetSpatial().forDataset(ObjectId(str(datasetId)))
-    if entry is None:
+    if entry is None or 'fileId' not in entry:
         return None
-    return openStore(File().load(entry["fileId"], force=True))
+    return openStore(File().load(entry["fileId"], force=True, exc=True))
 
 
 def symbolOf(path):

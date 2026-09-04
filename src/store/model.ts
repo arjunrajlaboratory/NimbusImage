@@ -1813,6 +1813,9 @@ export interface IAnnotationSummary {
 
 // upenncontrast_spatial plugin (SPATIAL_PLUGIN.md): a dataset's registered
 // expression table and what the endpoints return.
+// Reserved property root for live expression-table columns (no property doc).
+export const SPATIAL_PROPERTY_ID = "spatial";
+
 export interface ISpatialInfo {
   datasetId: string;
   itemId: string;

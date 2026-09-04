@@ -17,7 +17,9 @@
         <p class="text-body-2 mb-3">
           Assigns every molecule of the transcript store to the cell polygon it
           falls in (smallest polygon wins) and writes a new table. The current
-          table is kept as a version.
+          table is kept as a version. Edited-cell rebuilds also update
+          neighbours in the cells' previous locations. Older tables without
+          saved cell footprints require a full rebuild once.
         </p>
         <v-text-field
           v-model="label"

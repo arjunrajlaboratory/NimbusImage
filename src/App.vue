@@ -10,7 +10,7 @@
       // slide to when a left palette is open, so they move to the top-right
       // while it is up. How far in they sit is `--nimbus-right-edge-clear-x`
       // below, not a second class.
-      'timelapse-palette-open': isDatasetView && timelapsePanel,
+      'timelapse-palette-open': isDatasetView && !embedMode && timelapsePanel,
     }"
     :style="paletteGeometryVars"
   >
@@ -510,7 +510,7 @@
       <transcripts-panel :visible="transcriptsPanel" />
     </floating-palette>
 
-    <template v-if="store.dataset && routeName === 'datasetview'">
+    <template v-if="leftPalettesMounted">
       <floating-palette
         ref="navigatorPaletteRef"
         v-model="navigatorPanel"
@@ -524,7 +524,7 @@
       <!-- Sits immediately right of the Navigator rather than in the left
            stack, so turning the mode on doesn't push Layers and Tools down.
            Visibility IS the mode: closing the palette turns timelapse off, so
-           there is no "mode on, panel hidden" state to reason about. -->
+           only the chrome-less embed hides the panel while retaining mode. -->
       <floating-palette
         ref="timelapsePaletteRef"
         v-model="timelapsePanel"
@@ -742,7 +742,7 @@ const rightEdgeClearance = computed(() =>
  * palette, using its measured height so the offset tracks its real content.
  */
 const actionPanelTop = computed(() => {
-  if (!timelapsePanel.value || !isDatasetView.value) {
+  if (!timelapsePanel.value || !isDatasetView.value || embedMode.value) {
     return ACTION_PANEL_TOP;
   }
   if (
@@ -926,6 +926,9 @@ watch(
 );
 
 function openPalette(id: PaletteId) {
+  if (embedMode.value) {
+    return;
+  }
   const def = paletteRoles[id];
   // Only the right zone has mutex/companion relationships; left-zone palettes
   // stack independently and never evict each other.
@@ -1098,7 +1101,8 @@ const toolsPanelMaxHeight = computed(
 // The left palettes live inside a v-if, so attach their observers once they
 // mount (and tear down when leaving the dataset view).
 const leftPalettesMounted = computed(
-  () => !!store.dataset && routeName.value === "datasetview",
+  () =>
+    !!store.dataset && routeName.value === "datasetview" && !embedMode.value,
 );
 
 function setupLeftPaletteObservers() {
@@ -1166,21 +1170,15 @@ function onShowInList() {
   }
 }
 
-const routeName = computed(() => route.name);
-const embedMode = computed(() => route.query.embed === "1");
-
-// An embedded share link shows the canvas alone: no palettes either.
-watch(
-  embedMode,
-  (embedded) => {
-    if (embedded) {
-      paletteIds.forEach((id) => {
-        paletteOpen[id].value = false;
-      });
-    }
-  },
-  { immediate: true },
+const routeName = computed(() =>
+  route.name === "shared" || route.name === "embed"
+    ? "datasetview"
+    : route.name,
 );
+const embedMode = computed(
+  () => route.name === "embed" || route.query.embed === "1",
+);
+
 const isDatasetView = computed(() => routeName.value === "datasetview");
 
 const activeFilterCount = computed(() => filterStore.activeFilterCount);
@@ -1314,7 +1312,7 @@ function annotationPanelChanged() {
 }
 
 function datasetChanged() {
-  if (routeName.value !== "datasetview") {
+  if (routeName.value !== "datasetview" || embedMode.value) {
     closeAllPalettes();
   } else {
     // Left palettes (Navigator / Tools / Layers) open by default on each entry.
@@ -1361,7 +1359,10 @@ watch(
   },
 );
 
-watch(routeName, () => datasetChanged());
+// One watcher owns route defaults: a separate embed-close watcher can run
+// before route initialization reopens the defaults. Watch embed as well because
+// shared and embed normalize to the same viewer route name.
+watch([routeName, embedMode], datasetChanged, { immediate: true });
 
 // Left palettes mount/unmount with the dataset view, so (re)attach their
 // height observers whenever they appear.

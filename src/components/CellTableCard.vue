@@ -160,8 +160,8 @@ async function activate(itemId: string) {
  * staleness and every live gene column. */
 async function afterTableChange() {
   staleness.value = null;
+  await propertyStore.refreshVirtualPropertyValues();
   await spatialStore.refreshInfo();
-  await propertyStore.fetchVirtualPropertyValues();
   await refresh(true);
 }
 

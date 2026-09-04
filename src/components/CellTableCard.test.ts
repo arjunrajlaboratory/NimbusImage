@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   fetchStaleness: vi.fn(),
   activateVersion: vi.fn(),
   refreshInfo: vi.fn(),
-  fetchVirtualPropertyValues: vi.fn(),
+  refreshVirtualPropertyValues: vi.fn(),
 }));
 
 vi.mock("@/store", () => ({
@@ -29,7 +29,7 @@ vi.mock("@/store/spatial", async () => {
 });
 
 vi.mock("@/store/properties", () => ({
-  default: { fetchVirtualPropertyValues: mocks.fetchVirtualPropertyValues },
+  default: { refreshVirtualPropertyValues: mocks.refreshVirtualPropertyValues },
 }));
 
 vi.mock("@/utils/log", () => ({ logError: vi.fn() }));
@@ -85,7 +85,7 @@ describe("CellTableCard", () => {
     mocks.fetchStaleness.mockReset().mockResolvedValue(STALE);
     mocks.activateVersion.mockReset();
     mocks.refreshInfo.mockReset().mockResolvedValue(undefined);
-    mocks.fetchVirtualPropertyValues.mockReset().mockResolvedValue(undefined);
+    mocks.refreshVirtualPropertyValues.mockReset().mockResolvedValue(undefined);
     (spatialStore as any).hasTable = true;
   });
 
@@ -140,7 +140,7 @@ describe("CellTableCard", () => {
     await vm.activate("i1");
     expect(mocks.activateVersion).toHaveBeenCalledWith("ds1", "i1");
     expect(mocks.refreshInfo).toHaveBeenCalledTimes(1);
-    expect(mocks.fetchVirtualPropertyValues).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshVirtualPropertyValues).toHaveBeenCalledTimes(1);
     expect(mocks.fetchStaleness).toHaveBeenCalledTimes(2);
     expect(vm.versionItems[0].title).toContain("Imported table");
   });

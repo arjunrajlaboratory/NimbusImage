@@ -143,9 +143,10 @@ describe("SpatialAPI transcripts", () => {
       tileSize: 512,
       maxLevel: 7,
       color: "#FF0000",
+      authToken: "share-token",
     });
     expect(template).toBe(
-      "http://h/api/v1/spatial/ds/transcripts/density/{z}/{x}/{y}?genes=CD3E%2CMS4A1&sizeX=100&sizeY=50&tileSize=512&maxLevel=7&color=%23FF0000",
+      "http://h/api/v1/spatial/ds/transcripts/density/{z}/{x}/{y}?genes=CD3E%2CMS4A1&sizeX=100&sizeY=50&tileSize=512&maxLevel=7&color=%23FF0000&token=share-token",
     );
   });
 });

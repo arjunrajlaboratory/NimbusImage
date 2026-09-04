@@ -115,6 +115,24 @@ class TestValueProviders:
         })
         assertStatus(resp, 400)
 
+    def testVirtualFilterIntersectsProviderIdsWithLiveAnnotations(
+        self, admin, server, provider
+    ):
+        folder, anns = self._setup(admin, provider)
+        Annotation().delete(anns[0])
+        replacement = makeAnnotation(folder["_id"], tags=["replacement"])
+
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": [
+                {"path": [PREFIX, "x"], "mode": "range", "min": 0},
+            ]},
+        })
+        assertStatusOk(resp)
+        ids = set(parseStreaming(resp)["ids"])
+        assert ids == {str(annotation["_id"]) for annotation in anns[1:]}
+        assert str(replacement["_id"]) not in ids
+
     def testListPageCarriesVirtualValues(self, admin, server, provider):
         folder, anns = self._setup(admin, provider)
         resp = postList(server, admin, "/upenn_annotation/list", {

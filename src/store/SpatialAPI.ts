@@ -26,6 +26,7 @@ export interface ITranscriptDensityUrlOptions {
   tileSize: number;
   maxLevel: number;
   color: string;
+  authToken?: string | null;
 }
 
 // Client for the upenncontrast_spatial plugin: a dataset's expression table
@@ -277,6 +278,9 @@ export default class SpatialAPI {
     url.searchParams.set("tileSize", options.tileSize.toString());
     url.searchParams.set("maxLevel", options.maxLevel.toString());
     url.searchParams.set("color", options.color);
+    if (options.authToken) {
+      url.searchParams.set("token", options.authToken);
+    }
     return url.href.replace("/density/0/0/0", "/density/{z}/{x}/{y}");
   }
 }

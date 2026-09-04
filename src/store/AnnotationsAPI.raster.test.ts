@@ -24,6 +24,7 @@ describe("annotationRasterTemplateUrl", () => {
       mode: "shapes",
       color: "#FFD700",
       version: 7,
+      authToken: "share-token",
     });
 
     const [path, query] = result.split("?");
@@ -40,6 +41,7 @@ describe("annotationRasterTemplateUrl", () => {
     expect(params.get("maxLevel")).toBe("8");
     expect(params.get("mode")).toBe("shapes");
     expect(params.get("v")).toBe("7");
+    expect(params.get("token")).toBe("share-token");
     expect(params.has("XY")).toBe(false);
     expect(params.has("Z")).toBe(false);
     expect(params.has("Time")).toBe(false);

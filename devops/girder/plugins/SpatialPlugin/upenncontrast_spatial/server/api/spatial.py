@@ -575,12 +575,5 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
                 "workerInterface": {},
             })
         propertyId = str(prop["_id"])
-        for collection in collections:
-            propertyIds = list(collection.get("meta", {}).get(
-                "propertyIds", []
-            ))
-            if propertyId not in propertyIds:
-                CollectionModel().setMetadata(
-                    collection, {"propertyIds": propertyIds + [propertyId]}
-                )
+        CollectionModel().addPropertyToCollections(collections, propertyId)
         return prop

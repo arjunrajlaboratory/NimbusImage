@@ -338,6 +338,7 @@ export default class GirderAPI {
     hist: any,
     layer: IDisplayLayer | null,
     ds: IDataset | null,
+    authToken?: string | null,
   ): string | undefined {
     if (hist === null) {
       return;
@@ -358,6 +359,9 @@ export default class GirderAPI {
     }
     url.searchParams.set("style", JSON.stringify(style));
     url.searchParams.set("edge", "crop");
+    if (authToken) {
+      url.searchParams.set("token", authToken);
+    }
     return url.href.replace("tiles/zxy", "tiles/zxy/{z}/{x}/{y}");
   }
 

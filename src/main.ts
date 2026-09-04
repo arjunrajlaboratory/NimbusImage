@@ -34,7 +34,13 @@ import annotationStore from "./store/annotation";
 import propertiesStore from "./store/properties";
 import girderResourcesStore from "./store/girderResources";
 
-main.initialize();
+// A shared route authenticates its own bearer. Do not race that bootstrap
+// with restoring the owner's persisted login on the same REST client.
+router.isReady().then(() => {
+  if (!["shared", "embed"].includes(String(router.currentRoute.value.name))) {
+    main.initialize();
+  }
+});
 main.setupWatchers();
 
 // Wire up live store/cache counts now that all store modules have finished

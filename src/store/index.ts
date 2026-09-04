@@ -298,6 +298,10 @@ export class Main extends VuexModule {
 
   history: IHistoryEntry[] = [];
 
+  get shareLinkTileToken(): string | null {
+    return this.girderUser?.shareLink ? this.girderRest.token || null : null;
+  }
+
   selectedDatasetId: string | null = null;
   dataset: IDataset | null = null;
 
@@ -3158,6 +3162,7 @@ export class Main extends VuexModule {
                 hist,
                 layer,
                 this.dataset,
+                this.shareLinkTileToken,
               )!,
             );
             results.fullUrls.push(
@@ -3172,6 +3177,7 @@ export class Main extends VuexModule {
                 hist,
                 layer,
                 this.dataset,
+                this.shareLinkTileToken,
               )!,
             );
           });
@@ -3211,6 +3217,7 @@ export class Main extends VuexModule {
             hist,
             layer,
             this.dataset,
+            this.shareLinkTileToken,
           ),
         ),
         fullUrls: images.map((image) =>
@@ -3225,6 +3232,7 @@ export class Main extends VuexModule {
             hist,
             layer,
             this.dataset,
+            this.shareLinkTileToken,
           ),
         ),
         hist,

@@ -31,7 +31,7 @@ class TestSpatialAccessor:
         )
 
     def test_upload_and_register(self, mock_gc):
-        # uploadFileToFolder returns the FILE; the item is what gets registered.
+        # uploadFileToFolder returns the FILE; its item gets registered.
         mock_gc.uploadFileToFolder.return_value = {
             "_id": "file_1", "itemId": "item_1",
         }
@@ -87,14 +87,39 @@ class TestSpatialAccessor:
         mock_gc.post.return_value = {
             "propertyId": "p1", "written": 0, "jobId": "job_1",
         }
-        mock_gc.get.return_value = {"_id": "job_1", "status": 3}
+        mock_gc.get.return_value = {
+            "_id": "job_1", "status": 3,
+            "spatialResult": {
+                "propertyId": "p1", "written": 6, "jobId": "job_1",
+            },
+        }
         result = accessor.materialize(["CD3E"], property_name="Panel")
-        assert result["jobId"] == "job_1"
+        assert result == {
+            "propertyId": "p1", "written": 6, "jobId": "job_1",
+        }
         mock_gc.post.assert_called_with(
             "spatial/ds_001/materialize",
             json={"features": ["CD3E"], "propertyName": "Panel"},
         )
         mock_gc.get.assert_any_call("job/job_1")
+
+    @pytest.mark.parametrize(
+        "operation", ["materialize", "score", "differential"]
+    )
+    def test_spatial_jobs_raise_when_the_job_fails(self, mock_gc, operation):
+        accessor = SpatialAccessor(mock_gc, "ds_001")
+        mock_gc.post.return_value = {"jobId": "job_1", "nA": 3}
+        mock_gc.get.return_value = {
+            "_id": "job_1", "status": 4, "title": "Spatial job",
+        }
+        message = f"{operation} job job_1 failed"
+        with pytest.raises(RuntimeError, match=message):
+            if operation == "materialize":
+                accessor.materialize(["CD3E"])
+            elif operation == "score":
+                accessor.score(["CD3E"], "T cell")
+            else:
+                accessor.differential({})
 
     def test_score_posts_name_and_method(self, mock_gc):
         mock_gc.post.return_value = {
@@ -128,7 +153,6 @@ class TestSpatialAccessor:
         assert SpatialAccessor(mock_gc, "ds_001").virtual_path("CD3E") == [
             "spatial", "CD3E",
         ]
-
 
 
 class TestTranscripts:

@@ -5,12 +5,8 @@ Every row of the store gets a DENSE sub-value per requested feature
 "zero" from "not computed". Runs inline for small stores and as a Girder
 local job (``run(job)``) above ``MATERIALIZE_INLINE_MAX_ROWS``.
 
-Merging: the property-values model's ``validateMultiple`` merges an incoming
-document with the stored one by letting the STORED ``values[propertyId]``
-win, which is what makes plain re-submission a no-op. Adding features to a
-property that already has values must therefore update the stored documents
-in place and save them with ``validate=False``; new documents go through
-validation as usual.
+Merging uses atomic update pipelines in the property-values model, preserving
+unrelated properties and sub-values even when spatial jobs run concurrently.
 """
 
 import numpy as np
@@ -26,7 +22,7 @@ from upenncontrast_annotation.server.models.propertyValues import (
 from .store import numberFromNumpy, openStore
 
 # Rows per write batch: 20K documents is well under Mongo's 16 MB command
-# limit for a 64-feature panel and keeps the per-batch $in lookup bounded.
+# limit for a 64-feature panel and keeps each bulk update bounded.
 CHUNK_ROWS = 20_000
 # Above this many rows the endpoint schedules a job instead of blocking the
 # request (709K rows x 5 features measured ~60 s through the REST API).
@@ -79,37 +75,14 @@ def writeCellValues(datasetId, propertyId, annotationIds, subValuesFor,
     for start in range(0, total, CHUNK_ROWS):
         stop = min(start + CHUNK_ROWS, total)
         subValues = subValuesFor(start, stop)
-        chunkIds = [
-            ObjectId(str(value)) for value in annotationIds[start:stop]
-        ]
-        existing = {
-            document["annotationId"]: document
-            for document in valuesModel.find({
-                "datasetId": datasetId,
-                "annotationId": {"$in": chunkIds},
-            })
-        }
-        updated, fresh = [], []
-        for annotationId, values in zip(chunkIds, subValues):
-            document = existing.get(annotationId)
-            if document is None:
-                fresh.append({
-                    "annotationId": annotationId,
-                    "datasetId": datasetId,
-                    "values": {propertyKey: values},
-                })
-                continue
-            current = document["values"].get(propertyKey)
-            if not isinstance(current, dict):
-                current = {}
-            current.update(values)
-            document["values"][propertyKey] = current
-            updated.append(document)
-        # See the module docstring: validation would re-merge the stored copy
-        # over these documents and silently drop the new sub-values. They were
-        # read from the collection a moment ago and only gained numeric keys.
-        valuesModel.saveMany(updated, validate=False)
-        valuesModel.saveMany(fresh)
+        valuesModel.setSubValuesMany(
+            datasetId,
+            propertyKey,
+            zip(
+                (ObjectId(str(value)) for value in annotationIds[start:stop]),
+                subValues,
+            ),
+        )
         written = stop
         if onProgress is not None:
             onProgress(written, total)
@@ -164,4 +137,11 @@ def run(job):
     jobModel.updateJob(
         job, status=JobStatus.SUCCESS,
         log="Wrote %d values for %d cells.\n" % (len(columns), written),
+        otherFields={
+            "spatialResult": {
+                "propertyId": str(kwargs["propertyId"]),
+                "written": written,
+                "jobId": str(job["_id"]),
+            }
+        },
     )

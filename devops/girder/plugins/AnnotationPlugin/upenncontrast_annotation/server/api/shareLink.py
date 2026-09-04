@@ -1,6 +1,3 @@
-import datetime
-
-import cherrypy
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute, describeRoute
 from girder.api.rest import Resource
@@ -14,15 +11,6 @@ from ..models.datasetView import DatasetView as DatasetViewModel
 from ..models.shareLink import MAX_LABEL_LENGTH, ShareLink as ShareLinkModel
 
 MAX_DAYS = 3650
-
-
-def _cookieDays(token):
-    """The cookie lives as long as the token does."""
-    expires = token["expires"]
-    if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=datetime.timezone.utc)
-    remaining = expires - datetime.datetime.now(datetime.timezone.utc)
-    return max(remaining.total_seconds() / 86400, 1 / 24)
 
 
 class ShareLink(Resource):
@@ -104,24 +92,16 @@ class ShareLink(Resource):
     @describeRoute(
         Description("The link the request's token belongs to")
         .notes("For the shared viewer: which dataset view to open. 404 when "
-               "the token is not a share link's (an ordinary login). Also "
-               "sets the girderToken cookie to the link token when the "
-               "browser has none, so <img>-loaded tiles authenticate.")
+               "the token is not a share link's (an ordinary login). The "
+               "client puts the bearer on share-view tile URLs so an "
+               "ambient login cookie is never replaced.")
         .errorResponse("Not a share link.", 404)
     )
     def me(self, params):
-        user, token = self.getCurrentUser(returnToken=True)
+        user = self.getCurrentUser()
         document = self._model.forLinkUser(user["_id"])
         if document is None or self._model.isExpired(document):
             raise RestException("This token is not a live share link.", 404)
-        # Image, annotation-raster and density tiles load through <img>
-        # requests, which Girder authenticates from the HttpOnly girderToken
-        # cookie alone. Set it to the link token — but never over a cookie
-        # the browser already has, which is some user's own login.
-        if "girderToken" not in cherrypy.request.cookie:
-            self.sendAuthTokenCookie(
-                user, token=token, days=_cookieDays(token)
-            )
         return self._model.serialize(document)
 
     @access.user(scope=TokenScope.DATA_WRITE)

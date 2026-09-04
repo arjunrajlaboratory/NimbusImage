@@ -295,7 +295,7 @@ const error = ref("");
 
 const allCount = computed(() => annotationStore.annotationCount);
 const selectedCount = computed(
-  () => annotationStore.selectedAnnotationIds.size,
+  () => annotationStore.resolvedSelectedAnnotationIds.length,
 );
 // Same reading as the CSV export dialog: the filtered population is smaller
 // than the dataset. In stub-only mode filteredAnnotations is built from stubs,
