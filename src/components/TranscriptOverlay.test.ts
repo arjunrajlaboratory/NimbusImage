@@ -275,7 +275,7 @@ describe("TranscriptOverlay", () => {
     expect(osmLayer.visible()).toBe(false);
   });
 
-  it("draws one heat map per gene in its own color and hides removed ones", async () => {
+  it("draws one heat map per gene in its own color and deletes removed ones", async () => {
     const parts = makeMap({ left: 0, top: 0, right: 4000, bottom: 2000 });
     (transcriptsStore as any).mode = "density";
     (transcriptsStore as any).genes = [
@@ -292,7 +292,8 @@ describe("TranscriptOverlay", () => {
     (transcriptsStore as any).genes = [{ symbol: "MS4A1", color: "#00FF00" }];
     await nextTick();
     await vi.advanceTimersByTimeAsync(250);
-    expect(parts.osmLayers[0].visible()).toBe(false);
+    // The removed gene's layer is deleted, not merely hidden.
+    expect(parts.map.deleteLayer).toHaveBeenCalledWith(parts.osmLayers[0]);
     expect(parts.osmLayers[1].visible()).toBe(true);
     // Opacity is a restyle: every layer follows, no refetch.
     (transcriptsStore as any).opacity = 0.4;

@@ -22,6 +22,7 @@ is unavailable: API spend limit). Status: `fixed` / `by-design` / `deferred — 
 | 17 | Low | `ShareDataset.vue` | Independent review: the link silently opened the first checked collection and the table did not say which. | fixed — Create needs exactly one selected collection; a Collection column names it. |
 | 18 | Low | `api/shareLink.py` `find` | Independent review: listing a dataset's links needed only READ. | fixed — WRITE on the dataset. |
 | 19 | Medium | `helpers/shareLinkGuards.py` | Round 2 (own pass): Girder strips fields it does not know from `user/me`, so the `shareLink` marker the client keys its bearer-session behavior on never reached it — the quota/websocket skip was dead code. | fixed — `User().exposeFields(READ, {"shareLink"})` at plugin load; asserted in *"testBearerReadsOnlyTheSharedDataset"*. |
+| 20 | Low | `src/store/index.ts` `openShareLink` | Round 2: on a dead link the client token was cleared instead of restored, so a signed-in owner's in-memory session was gone and a later 401 could wipe the stored login once shared mode ended. | fixed — the previous token is restored and the user re-fetched while still in shared mode. |
 | 7 | Deferred | plan §14.3 | Fork by reference. | deferred — policy questions on quota and cross-folder tile sources (plan §14.3). |
 | 8 | Deferred | plan §14.2 | Import-from-DOI. | deferred — the record already carries `spatial.zarr.zip` and `transcripts.zarr.zip`; the round trip is a download manager plus the existing register calls. |
 

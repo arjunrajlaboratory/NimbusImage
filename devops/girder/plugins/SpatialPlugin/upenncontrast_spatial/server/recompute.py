@@ -75,23 +75,29 @@ class Cell:
 def geometryHash(coordinates):
     """A fingerprint of a polygon's vertices, so an edited cell can be told
     from an unedited one without timestamps: vertex count and the sums of
-    x, y and x*y, rounded to a hundredth of a pixel. Chosen so Mongo can
-    compute the same value with $size/$sum (see `polygonFingerprints`), which
-    keeps staleness from downloading 700K coordinate arrays; a moved vertex
-    changes at least one sum."""
+    x, y, x*y and x^2+y^2, rounded to a hundredth of a pixel. Chosen so
+    Mongo can compute the same value with $size/$sum (see
+    `polygonFingerprints`), which keeps staleness from downloading 700K
+    coordinate arrays. The second moments matter: a rectangle scaled
+    symmetrically about its center keeps count, sum x, sum y and sum xy but
+    not sum x^2+y^2. Python's sum() and Mongo's $sum accumulate doubles
+    slightly differently; the %.2f rounding absorbs that except at an exact
+    .xx5 boundary, which is why this is not math.fsum."""
     xs = [float(point["x"]) for point in coordinates]
     ys = [float(point["y"]) for point in coordinates]
     return fingerprint(
-        len(xs), sum(xs), sum(ys), sum(x * y for x, y in zip(xs, ys))
+        len(xs), sum(xs), sum(ys),
+        sum(x * y for x, y in zip(xs, ys)),
+        sum(x * x + y * y for x, y in zip(xs, ys)),
     )
 
 
-def fingerprint(count, sumX, sumY, sumXY):
-    return "%d:%.2f:%.2f:%.2f" % (count, sumX, sumY, sumXY)
+def fingerprint(count, sumX, sumY, sumXY, sumSquares):
+    return "%d:%.2f:%.2f:%.2f:%.2f" % (count, sumX, sumY, sumXY, sumSquares)
 
 
 def isFingerprint(value):
-    return isinstance(value, str) and value.count(":") == 3
+    return isinstance(value, str) and value.count(":") == 4
 
 
 def polygonFingerprints(datasetId):
@@ -110,12 +116,19 @@ def polygonFingerprints(datasetId):
                 "input": "$coordinates", "as": "p",
                 "in": {"$multiply": ["$$p.x", "$$p.y"]},
             }}},
+            "ssq": {"$sum": {"$map": {
+                "input": "$coordinates", "as": "p",
+                "in": {"$add": [
+                    {"$multiply": ["$$p.x", "$$p.x"]},
+                    {"$multiply": ["$$p.y", "$$p.y"]},
+                ]},
+            }}},
         }},
     ]
     return {
         str(doc["_id"]): fingerprint(
             int(doc["n"]), float(doc["sx"]), float(doc["sy"]),
-            float(doc["sxy"]),
+            float(doc["sxy"]), float(doc["ssq"]),
         )
         for doc in Annotation().collection.aggregate(pipeline)
     }

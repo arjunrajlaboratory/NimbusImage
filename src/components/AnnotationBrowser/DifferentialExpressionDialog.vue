@@ -17,7 +17,7 @@
       <v-card-title>Compare expression</v-card-title>
       <v-card-subtitle>
         Genes ranked by how differently they are expressed in group A versus
-        group B (Welch t-test over every gene in the spatial table)
+        group B, over every gene in the spatial table
       </v-card-subtitle>
       <v-card-text>
         <div class="group-line mb-2">

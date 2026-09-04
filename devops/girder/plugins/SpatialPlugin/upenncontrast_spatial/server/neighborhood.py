@@ -38,7 +38,8 @@ ENRICHMENT_PSEUDOCOUNT = 1.0
 
 _centroidLock = threading.Lock()
 _centroidCache = OrderedDict()
-MAX_CENTROID_CACHE = 8
+# Each entry is ~100 MB for 700K cells; two datasets in flight is plenty.
+MAX_CENTROID_CACHE = 2
 
 
 def cellCentroids(datasetId, excludeTags=DEFAULT_EXCLUDED_TAGS,
@@ -46,25 +47,31 @@ def cellCentroids(datasetId, excludeTags=DEFAULT_EXCLUDED_TAGS,
     """(annotation ids [n] str, centroids [n, 2] float64, types [n] object)
     of the dataset's polygon annotations; type None when no tag remains.
     Cached on the annotation raster version (bumped by every polygon edit),
-    since the 700K-document pass is what a public region summary pays."""
+    since the 700K-document pass is what a public region summary pays. The
+    excluded ids (a region summary's own polygons) are dropped AFTER the
+    cache so every selection does not store its own 100 MB copy."""
     key = (
         str(datasetId), tuple(sorted(excludeTags)),
-        tuple(sorted(str(i) for i in excludeIds)), getRasterVersion(datasetId),
+        getRasterVersion(datasetId),
     )
     with _centroidLock:
         cached = _centroidCache.get(key)
         if cached is not None:
             _centroidCache.move_to_end(key)
-            return cached
-    result = _cellCentroids(datasetId, excludeTags, excludeIds)
-    with _centroidLock:
-        _centroidCache[key] = result
-        while len(_centroidCache) > MAX_CENTROID_CACHE:
-            _centroidCache.popitem(last=False)
-    return result
+    if cached is None:
+        cached = _cellCentroids(datasetId, excludeTags)
+        with _centroidLock:
+            _centroidCache[key] = cached
+            while len(_centroidCache) > MAX_CENTROID_CACHE:
+                _centroidCache.popitem(last=False)
+    if not excludeIds:
+        return cached
+    ids, centroids, types = cached
+    keep = ~np.isin(ids, np.array([str(i) for i in excludeIds], object))
+    return ids[keep], centroids[keep], types[keep]
 
 
-def _cellCentroids(datasetId, excludeTags, excludeIds):
+def _cellCentroids(datasetId, excludeTags):
     excluded = set(excludeTags)
     pipeline = [
         {"$match": {
@@ -79,10 +86,9 @@ def _cellCentroids(datasetId, excludeTags, excludeIds):
         {"$sort": {"_id": 1}},
     ]
     ids, xy, types = [], [], []
-    skip = {str(i) for i in excludeIds}
     for document in Annotation().collection.aggregate(pipeline):
         annotationId = str(document["_id"])
-        if annotationId in skip or document.get("x") is None:
+        if document.get("x") is None:
             continue
         ids.append(annotationId)
         xy.append((float(document["x"]), float(document["y"])))

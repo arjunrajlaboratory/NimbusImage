@@ -464,7 +464,8 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("Rank features by differential expression between two "
-                    "groups of cells (Welch t-test), as a job")
+                    "groups of cells (Welch t-test or Mann-Whitney U), as "
+                    "a job")
         .notes("Groups are list-filter objects (gates included). `filtersB` "
                "omitted means every cell not in A. `method` is welch "
                "(default, t-test on means) or wilcoxon (Mann-Whitney U). "

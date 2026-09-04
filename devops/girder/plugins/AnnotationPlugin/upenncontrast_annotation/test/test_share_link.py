@@ -134,10 +134,11 @@ class TestShareLink:
             params={"datasetId": str(dataset["_id"])},
         ), 403)
         # The owner still can.
+        assertStatusOk(server.request(
+            path="/folder/%s/download" % dataset["_id"], method="GET",
+            user=admin, isJson=False,
+        ))
         assertStatusOk(request(
-            server, "GET", "/folder/%s/download" % dataset["_id"], user=admin,
-            isJson=False,
-        ) if False else request(
             server, "GET", "/export/json", user=admin,
             params={"datasetId": str(dataset["_id"])},
         ))

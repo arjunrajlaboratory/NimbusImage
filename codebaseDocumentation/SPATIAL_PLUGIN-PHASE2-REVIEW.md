@@ -19,3 +19,5 @@ Blast-radius notes:
 - *"`_propertyStats` took a selector; now also the matching ids."* Only `summarize` calls it; the fallback `stats is None` path now fills every stored path with the empty record (before: an early return of empties), same result.
 - *"`listPage` returned a cursor; now a list when a virtual path is requested."* `_streamJsonArray` iterates either; `listPosition`/count are untouched.
 - *"Property filters could only be stored paths; now virtual ones resolve to id clauses."* `dropNoOpPropertyFilters` runs before `resolveProviderFilters`, so an inactive virtual filter never reaches the provider; `narrowsPopulation` counts the resulting `gateMatchClauses`, so the spatial `aggregate` still narrows correctly.
+
+| R2 | Nit | `DifferentialExpressionDialog.vue`, `api/spatial.py`, `nimbusimage/README.md`, `SPATIAL_PLUGIN.md` | Round 2: strings still said "Welch t-test" after `method=wilcoxon` was added. | fixed. |

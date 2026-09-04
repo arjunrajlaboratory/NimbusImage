@@ -20,7 +20,14 @@ vi.mock("@/store/spatial", async () => {
 vi.mock("@/store/annotation", () => ({
   default: {
     annotationTags: ["cell", "T", "region", "B"],
-    selectedAnnotationIds: new Set(["r1", "r2"]),
+    selectedAnnotationIds: new Set(["r1", "r2", "pt"]),
+    // r1 is a known polygon, r2 is not loaded, pt is a point.
+    getAnnotationOrStubFromId: (id: string) =>
+      id === "pt"
+        ? { shape: "point" }
+        : id === "r1"
+          ? { shape: "polygon" }
+          : undefined,
   },
 }));
 vi.mock("@/utils/download", () => ({

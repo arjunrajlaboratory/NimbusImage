@@ -1494,6 +1494,7 @@ export class Main extends VuexModule {
     // Raised for the duration of the attempt (the handlers fire during
     // fetchUser) and kept only once the link is confirmed live; a dead link
     // must leave this tab behaving like any other.
+    const previousToken = this.girderRest.token;
     sharedSession = true;
     try {
       this.girderRest.token = token;
@@ -1504,8 +1505,14 @@ export class Main extends VuexModule {
       await this.loggedIn(this.girderRest);
       return await this.shareLinkAPI.me();
     } catch (error) {
+      // Put the tab back the way it was — the signed-in owner's session
+      // included — before leaving shared mode, so no request in between can
+      // read the tab as anonymous and drop the stored login.
+      this.girderRest.token = previousToken;
+      if (previousToken) {
+        await this.girderRest.fetchUser().catch(() => null);
+      }
       sharedSession = false;
-      this.girderRest.token = "";
       throw error;
     }
   }

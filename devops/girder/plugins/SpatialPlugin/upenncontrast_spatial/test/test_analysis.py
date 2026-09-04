@@ -159,11 +159,18 @@ class TestAnalysis(TestSpatial):
             {"type": "Endo", "count": 1}, {"type": "T", "count": 1},
         ]
         # By id, without features: no table needed.
+        module._centroidCache.clear()
         resp = request(server, admin, "POST", path, body={
             "regionIds": [str(r1["_id"])],
         })
         assertStatusOk(resp)
         assert len(resp.json) == 1 and resp.json[0]["expression"] == []
+        # A different selection reuses the cached centroid pass: the cache
+        # is keyed on the dataset and tags, not on the excluded ids.
+        request(server, admin, "POST", path, body={
+            "regionIds": [str(r2["_id"])],
+        })
+        assert len(module._centroidCache) == 1
 
     def testRegionSummaryValidation(
         self, admin, server, tmp_path, fsAssetstore

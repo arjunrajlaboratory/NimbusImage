@@ -311,9 +311,21 @@ class TestRecompute(TestTranscripts):
         )
         # Reordering vertices keeps the sums but is not an edit anyone makes;
         # a moved vertex is caught.
-        assert recomputeModule.geometryHash(coordinates) == "3:9.00:6.00:14.00"
-        assert recomputeModule.isFingerprint("3:9.00:6.00:14.00")
+        assert recomputeModule.geometryHash(coordinates) == (
+            "3:9.00:6.00:14.00:55.00"
+        )
+        assert recomputeModule.isFingerprint("3:9.00:6.00:14.00:55.00")
         assert not recomputeModule.isFingerprint("0123456789abcdef")
+        assert not recomputeModule.isFingerprint("3:9.00:6.00:14.00")
+        # A rectangle widened symmetrically keeps count, sum x, sum y and
+        # sum xy; the second moment tells it apart.
+        rect = lambda x0, y0, x1, y1: [  # noqa: E731
+            {"x": x0, "y": y0}, {"x": x1, "y": y0},
+            {"x": x1, "y": y1}, {"x": x0, "y": y1},
+        ]
+        assert recomputeModule.geometryHash(rect(10, 10, 30, 20)) != (
+            recomputeModule.geometryHash(rect(5, 10, 35, 20))
+        )
         big = recomputeModule.Cell(
             "a", np.array([[0, 0], [10, 0], [10, 10], [0, 10]], float),
             [], (0, 0, 10, 10), 100.0, "h",

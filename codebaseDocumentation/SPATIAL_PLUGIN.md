@@ -142,7 +142,7 @@ is the signed z so ranking by |statistic| works the same). Pinned by
   one sub-value `values[property][name]` per cell (default property `Gene set scores`),
   through the Phase 1 writer (`materialize.scoreColumn`, `columnsFor`).
 - `POST spatial/{datasetId}/differential {filtersA, filtersB?, maxFeatures?}` — a local
-  job (`server/differential.py`) ranking every feature by Welch's t between the cells
+  job (`server/differential.py`) ranking every feature by Welch's t (or Mann-Whitney U) between the cells
   matching A and those matching B (omitted = every other cell): mean, fraction
   expressing, log2 fold change (pseudocount 0.01), t, p. The validated filter objects,
   not row indices, ride in the job kwargs; the table lands on the job document as
@@ -215,8 +215,9 @@ Closing the loop (plan §13): edited cell polygons → a corrected count matrix,
   non-active one. Every consumer reads the active table, so a switch re-points virtual
   paths, aggregate, score and DE with no other state (gates are shapes in value space).
 - **Staleness is computed, not tracked** (`server/recompute.py`): a recomputed table stores
-  `obs.geometry_hash` — a fingerprint `count:Σx:Σy:Σxy` of the polygon vertices, rounded to
-  0.01 px — beside `annotation_id`, and `GET …/staleness` compares the live polygons:
+  `obs.geometry_hash` — a fingerprint `count:Σx:Σy:Σxy:Σ(x²+y²)` of the polygon vertices,
+  rounded to 0.01 px (the second moment catches a symmetric resize the first moments miss)
+  — beside `annotation_id`, and `GET …/staleness` compares the live polygons:
   **added** (cell without a row), **changed** (fingerprint differs), **removed** (row without
   a cell). The live fingerprints come from one Mongo aggregation (`$size`/`$sum`), so no
   coordinates are downloaded (the earlier sha1-of-vertices scan cost a minute at 700K

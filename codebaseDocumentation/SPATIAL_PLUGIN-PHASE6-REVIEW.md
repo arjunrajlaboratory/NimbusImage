@@ -11,6 +11,8 @@ Branch `xenium-phase0`, self-review before the commit (independent reviewer unav
 | 7 | Low | `server/neighborhood.py` `cellCentroids` | Independent review: a public route ran the 700K-document centroid pass on every call. | fixed — cached per (dataset, excluded tags, excluded ids, annotation raster version); the neighborhood job shares it. |
 | 8 | Low | `server/neighborhood.py` `regionPolygons` | Independent review (symmetric path): two-corner rectangles were expanded for cells (`recompute._rectangleCorners`) but skipped as regions. | fixed — shared helper. |
 | 9 | Low | `RegionSummaryDialog.vue` | Independent review: region tags came from `annotations`, which in stub-only mode holds only hydrated objects. | fixed — `annotationStore.annotationTags`. |
+| 10 | Medium | `server/neighborhood.py` `cellCentroids` | Round 2: the cache key included the excluded region ids, so every distinct "Selected polygons" summary stored its own ~100 MB centroid copy (8 entries ≈ 800 MB from a public route). | fixed — keyed on dataset, tags and raster version; excluded ids are dropped after the cache; two entries kept; pinned in *"testRegionSummary"*. |
+| 11 | Low | `RegionSummaryDialog.vue` | Round 2: "Selected polygons (N)" counted every selected object and the 50-region cap applied to points too. | fixed — only ids resolving to polygons/rectangles (or unresolved) count and are sent. |
 | 5 | Deferred | plan §15 | Cohort summaries across configurations. | deferred — needs a project-level surface; `regions/summary` is the per-dataset building block. |
 | 6 | Low | `RegionSummaryDialog.vue` | Regions were picked by tag only. | fixed — "Selected polygons" summarizes the viewer's current selection through `regionIds`. |
 
@@ -29,3 +31,6 @@ Branch `xenium-phase0`, self-review before the commit (independent reviewer unav
 - The two dialogs were not exercised in the browser this session (the owner's tab had been
   signed out by the Phase 5 incident, see `SHARING-PHASE5-REVIEW.md` finding 10); their
   behavior is pinned by the unit tests listed in `SPATIAL_PLUGIN.md`.
+- Round 2 live: `user/me` for a bearer now carries the `shareLink` marker (dataset id
+  matches), so the client's bearer-session guards fire; a region summary by id answers with
+  the centroid pass cached per dataset rather than per selection.

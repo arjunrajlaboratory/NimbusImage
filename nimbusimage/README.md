@@ -200,5 +200,6 @@ Any gene is also usable as a virtual property path, `ds.spatial.virtual_path("CD
 `["spatial", "CD3E"]`, wherever a property path is accepted (filters, gates, color-by,
 list columns, summary). `ds.spatial.score(symbols, name, method="mean")` writes a
 gene-set score; `ds.spatial.differential(filters_a, filters_b=None, max_features=50)`
-returns the Welch-t ranked table from a server job.
+returns the ranked table (Welch t by default, ``method="wilcoxon"`` for Mann-Whitney U)
+from a server job.
 

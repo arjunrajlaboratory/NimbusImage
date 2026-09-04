@@ -141,9 +141,18 @@ const error = ref<string | null>(null);
 // desynchronize the columns from the rows until Summarize is pressed again.
 const symbolsShown = ref<string[]>([]);
 
-const selectedCount = computed(
-  () => annotationStore.selectedAnnotationIds.size,
-);
+// Only polygons can be regions; a selection may also hold points and lines.
+// Ids the store cannot resolve (not loaded) are kept — the server filters by
+// shape anyway.
+const selectedPolygonIds = computed(() => {
+  const resolve = annotationStore.getAnnotationOrStubFromId;
+  return Array.from(annotationStore.selectedAnnotationIds).filter((id) => {
+    const shape = resolve(id)?.shape;
+    return shape === undefined || shape === "polygon" || shape === "rectangle";
+  });
+});
+
+const selectedCount = computed(() => selectedPolygonIds.value.length);
 
 const canSummarize = computed(() =>
   source.value === "tag"
@@ -178,7 +187,7 @@ async function refresh() {
       datasetId,
       source.value === "tag"
         ? { regionTag: regionTag.value! }
-        : { regionIds: Array.from(annotationStore.selectedAnnotationIds) },
+        : { regionIds: selectedPolygonIds.value },
       spatialStore.hasTable ? symbols.value : [],
     );
     symbolsShown.value = spatialStore.hasTable ? [...symbols.value] : [];

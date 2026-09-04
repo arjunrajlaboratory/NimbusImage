@@ -181,6 +181,19 @@ function hideDensity(except: Set<string> = new Set()) {
   });
 }
 
+/** Layers of genes no longer picked are deleted, not just hidden: a session
+ * that cycles through many genes would otherwise keep one tile layer (DOM
+ * canvas and tile cache) per symbol ever shown. */
+function pruneDensityLayers() {
+  const picked = new Set(transcriptsStore.symbols);
+  densityLayers.forEach(({ layer }, symbol) => {
+    if (!picked.has(symbol)) {
+      props.map.deleteLayer(layer);
+      densityLayers.delete(symbol);
+    }
+  });
+}
+
 function densityShown(): boolean {
   let shown = false;
   densityLayers.forEach(({ layer }) => {
@@ -211,6 +224,7 @@ function restylePoints() {
 }
 
 function showDensity(datasetId: string) {
+  pruneDensityLayers();
   const shown = new Set<string>();
   for (const gene of transcriptsStore.genes) {
     const entry = ensureDensityLayer(gene.symbol);
