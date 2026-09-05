@@ -195,6 +195,26 @@ class TestShareLink:
         link = self._link(server, admin, view)
         assert link["expiresAt"] is None
 
+    def testLinkUsersStayOutOfAccessLists(self, admin, user, server):
+        dataset, config, view = privateDatasetWithView(admin)
+        Folder().setUserAccess(dataset, user, AccessType.READ, save=True)
+        link = self._link(server, admin, view)
+        linkUser = request(server, 'GET', '/user/me', token=link['token']).json
+        for path in (
+            '/dataset_view/access/%s' % dataset['_id'],
+            '/dataset_view/configuration_access/%s' % config['_id'],
+        ):
+            response = request(server, 'GET', path, user=admin)
+            assertStatusOk(response)
+            visibleIds = [u['id'] for u in response.json['users']]
+            assert str(admin['_id']) in visibleIds
+            assert linkUser['_id'] not in visibleIds
+        # Hiding the principal must not revoke its actual READ access.
+        assertStatusOk(request(server, 'GET', '/share_link/me',
+                               token=link['token']))
+        assertStatusOk(request(server, 'GET', '/folder/%s' % dataset['_id'],
+                               token=link['token']))
+
     def testListAndRevoke(self, admin, user, server):
         dataset, config, view = privateDatasetWithView(admin)
         first = self._link(server, admin, view, label="a")

@@ -72,6 +72,44 @@ describe("transcripts store", () => {
     expect(transcriptsStore.hasTranscripts).toBe(false);
   });
 
+  it("retries a failed refresh even when an older schema is cached", async () => {
+    await transcriptsStore.refreshSchema();
+    mocks.fetchTranscriptsSchema.mockRejectedValueOnce(new Error("offline"));
+    await transcriptsStore.refreshSchema();
+    expect(transcriptsStore.error).not.toBeNull();
+    await transcriptsStore.ensureSchema();
+    expect(mocks.fetchTranscriptsSchema).toHaveBeenCalledTimes(3);
+    expect(transcriptsStore.error).toBeNull();
+  });
+
+  it("does not let an older request clear a newer request's loading state", async () => {
+    let finishOld!: (value: any) => void;
+    let finishNew!: (value: any) => void;
+    mocks.fetchTranscriptsSchema
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishOld = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishNew = resolve;
+          }),
+      );
+    const oldRequest = transcriptsStore.refreshSchema();
+    mocks.main.dataset = { id: "ds2" };
+    const newRequest = transcriptsStore.refreshSchema();
+    finishOld(SCHEMA);
+    await oldRequest;
+    expect(transcriptsStore.loading).toBe(true);
+    finishNew(SCHEMA);
+    await newRequest;
+    expect(transcriptsStore.loading).toBe(false);
+    expect(transcriptsStore.schemaDatasetId).toBe("ds2");
+  });
+
   it("discards a stale answer after a dataset switch", async () => {
     let resolve!: (value: any) => void;
     mocks.fetchTranscriptsSchema.mockReturnValue(

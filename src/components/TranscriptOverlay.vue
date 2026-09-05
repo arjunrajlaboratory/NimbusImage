@@ -167,6 +167,7 @@ function dropDensityLayers() {
 }
 
 function hidePoints() {
+  transcriptsStore.setReadout(null);
   if (pointFeature && points) {
     points = null;
     pointFeature.data([]);
@@ -268,6 +269,12 @@ function onPointClick(event: { index: number }) {
   });
 }
 
+function showEmptyView(level: number) {
+  hidePoints();
+  hideDensity();
+  setStatus({ rendering: "none", level, points: 0, note: null });
+}
+
 async function refresh() {
   const token = ++refreshToken;
   const schema: ISpatialTranscriptsSchema | null = transcriptsStore.schema;
@@ -293,9 +300,7 @@ async function refresh() {
     props.sizeY,
   );
   if (!view) {
-    hidePoints();
-    hideDensity();
-    setStatus({ rendering: "none", level: 0, points: 0, note: null });
+    showEmptyView(0);
     return;
   }
   const plan = planTranscriptLevel(
@@ -305,9 +310,14 @@ async function refresh() {
     transcriptsStore.pointBudget,
   );
   const mode = transcriptsStore.mode;
+  if (plan.tiles.length === 0) {
+    showEmptyView(plan.level);
+    return;
+  }
   const wantDensity =
-    mode === "density" ||
-    (mode === "auto" && (!plan.fits || plan.level >= AUTO_DENSITY_LEVEL));
+    !schema.transform &&
+    (mode === "density" ||
+      (mode === "auto" && (!plan.fits || plan.level >= AUTO_DENSITY_LEVEL)));
   if (wantDensity) {
     hidePoints();
     showDensity(datasetId);
@@ -327,6 +337,10 @@ async function refresh() {
   for (let level = plan.level; level < schema.levels; level++) {
     const tiles =
       level === plan.level ? plan.tiles : tilesInView(schema, level, view).keys;
+    if (tiles.length === 0) {
+      showEmptyView(level);
+      return;
+    }
     try {
       const fetched = await store.spatialAPI.fetchTranscriptPoints(
         datasetId,
@@ -382,7 +396,11 @@ function onPan() {
 }
 
 watch(
-  () => [transcriptsStore.requestSignature, props.disabled],
+  () => [
+    transcriptsStore.requestSignature,
+    transcriptsStore.schema,
+    props.disabled,
+  ],
   () => scheduleRefresh(),
 );
 

@@ -5,6 +5,7 @@ import { shallowMount } from "@vue/test-utils";
 const mocks = vi.hoisted(() => ({
   searchTranscriptGenes: vi.fn(),
   ensureSchema: vi.fn(),
+  refreshSchema: vi.fn(),
   goToCell: vi.fn(),
   setSymbols: vi.fn(),
 }));
@@ -35,6 +36,8 @@ vi.mock("@/store/transcripts", async () => {
       status: null as any,
       readout: null as any,
       ensureSchema: mocks.ensureSchema,
+      refreshSchema: mocks.refreshSchema,
+      loading: false,
       goToCell: mocks.goToCell,
       setSymbols: mocks.setSymbols,
       setReadout: vi.fn(),
@@ -55,11 +58,16 @@ describe("TranscriptsPanel", () => {
     vi.useFakeTimers();
     mocks.searchTranscriptGenes.mockReset().mockResolvedValue(["CD3E", "CD2"]);
     mocks.ensureSchema.mockClear();
+    mocks.refreshSchema.mockClear();
     mocks.goToCell.mockReset();
     mocks.setSymbols.mockClear();
     (transcriptsStore as any).status = null;
     (transcriptsStore as any).readout = null;
     (transcriptsStore as any).enabled = true;
+    (transcriptsStore as any).schema = { levels: 7, transform: null };
+    (transcriptsStore as any).hasTranscripts = true;
+    (transcriptsStore as any).error = null;
+    (transcriptsStore as any).mode = "auto";
   });
 
   afterEach(() => {
@@ -75,6 +83,29 @@ describe("TranscriptsPanel", () => {
     expect(mocks.ensureSchema).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(300);
     expect(mocks.searchTranscriptGenes).toHaveBeenCalledWith("ds1", "", 25);
+  });
+
+  it("offers an explicit retry after schema failure", async () => {
+    (transcriptsStore as any).hasTranscripts = false;
+    (transcriptsStore as any).error = "Could not read the transcript store.";
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: false },
+      global: {
+        stubs: {
+          VBtn: {
+            props: ["disabled"],
+            template: '<button :disabled="disabled"><slot /></button>',
+          },
+        },
+      },
+    });
+    const retry = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Retry"));
+    expect(retry).toBeDefined();
+    await retry!.trigger("click");
+    expect(mocks.refreshSchema).toHaveBeenCalledOnce();
+    wrapper.unmount();
   });
 
   it("describes what the overlay is doing", async () => {
@@ -102,6 +133,34 @@ describe("TranscriptsPanel", () => {
     (transcriptsStore as any).enabled = false;
     await nextTick();
     expect(vm.statusText).toBe("Overlay off.");
+  });
+
+  it("disables heat maps for transformed registrations and explains why", () => {
+    (transcriptsStore as any).mode = "density";
+    (transcriptsStore as any).schema.transform = [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ];
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: false },
+      global: {
+        stubs: {
+          VBtnToggle: { template: "<div><slot /></div>" },
+          VBtn: {
+            props: ["value", "disabled"],
+            template:
+              '<button :value="value" :disabled="disabled"><slot /></button>',
+          },
+        },
+      },
+    });
+    expect(
+      (wrapper.find('[value="density"]').element as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(wrapper.text()).toContain("Transformed registrations use points");
+    expect((wrapper.vm as any).renderMode).toBe("points");
+    wrapper.unmount();
   });
 
   it("explains the clicked molecule's cell and navigates to it", async () => {

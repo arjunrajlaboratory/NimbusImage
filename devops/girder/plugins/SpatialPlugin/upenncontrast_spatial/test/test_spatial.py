@@ -446,6 +446,38 @@ class TestSpatial:
             config["_id"], force=True
         )["meta"]["propertyIds"])) == 1
 
+    def testCellValueWriterSkipsMovedAndDeletedAnnotations(
+        self, admin, tmp_path, fsAssetstore, monkeypatch,
+    ):
+        from upenncontrast_spatial.server import materialize
+
+        folder, annotations, _ = self._setup(admin, tmp_path)
+        other = Folder().createFolder(
+            name='destination', creator=admin, parent=folder)
+        Folder().setMetadata(other, DATASET_METADATA)
+        Annotation().updateMultiple({
+            annotations[1]['_id']: {'datasetId': other['_id']},
+        }, admin)
+        Annotation().delete(annotations[2])
+        model = AnnotationPropertyValues()
+        original = model.appendValues(
+            {'private': 1}, annotations[1]['_id'], other['_id'])
+        monkeypatch.setattr(materialize, 'CHUNK_ROWS', 2)
+        progress = []
+        propertyId = ObjectId()
+        written = materialize.writeCellValues(
+            folder['_id'], propertyId,
+            [annotation['_id'] for annotation in annotations[:3]],
+            lambda start, stop: [{'CD3E': 7}] * (stop - start),
+            lambda current, total: progress.append((current, total)),
+        )
+        assert written == 1
+        assert progress[-1] == (3, 3)
+        assert model.findOne({'_id': original['_id']}) == original
+        assert model.findOne({'annotationId': annotations[2]['_id']}) is None
+        assert model.findOne({'annotationId': annotations[0]['_id']})[
+            'values'][str(propertyId)] == {'CD3E': 7}
+
     def testCellValueWriterUsesAtomicNestedUpdates(
         self, admin, tmp_path, fsAssetstore, monkeypatch
     ):

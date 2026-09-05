@@ -254,6 +254,69 @@ describe("TranscriptOverlay", () => {
     );
   });
 
+  it.each(["auto", "density"])(
+    "clears a previously populated viewport when its tile plan is empty in %s mode",
+    async (mode) => {
+      const parts = makeMap();
+      mount(parts);
+      await vi.advanceTimersByTimeAsync(250);
+      mocks.fetchTranscriptPoints.mockClear();
+      parts.feature.data.mockClear();
+      (transcriptsStore as any).mode = mode;
+      (transcriptsStore as any).schema.tiles[0].keys = [];
+      (transcriptsStore as any).schema.tiles[0].counts = [];
+      const pan = parts.map.geoOn.mock.calls.find(
+        ([event]) => event === "geo_pan",
+      )![1];
+      pan();
+      await vi.advanceTimersByTimeAsync(250);
+      expect(mocks.fetchTranscriptPoints).not.toHaveBeenCalled();
+      expect(parts.feature.data).toHaveBeenCalledWith([]);
+      expect(mocks.setReadout).toHaveBeenLastCalledWith(null);
+      expect(mocks.setStatus).toHaveBeenLastCalledWith({
+        rendering: "none",
+        level: 0,
+        points: 0,
+        note: null,
+      });
+    },
+  );
+
+  it("rechecks rendering capabilities when the schema is refreshed", async () => {
+    (transcriptsStore as any).mode = "density";
+    const parts = makeMap();
+    mount(parts);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(parts.osmLayer.visible()).toBe(true);
+    (transcriptsStore as any).schema = {
+      ...schema(),
+      transform: [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+      ],
+    };
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(parts.osmLayer.visible()).toBe(false);
+    expect(mocks.fetchTranscriptPoints).toHaveBeenCalled();
+  });
+
+  it("does not request an empty coarser tile set after a 413", async () => {
+    (transcriptsStore as any).schema.tiles[1].keys = [];
+    (transcriptsStore as any).schema.tiles[1].counts = [];
+    mocks.fetchTranscriptPoints.mockRejectedValueOnce(axios413());
+    mount();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(mocks.fetchTranscriptPoints).toHaveBeenCalledTimes(1);
+    expect(mocks.setStatus).toHaveBeenLastCalledWith({
+      rendering: "none",
+      level: 1,
+      points: 0,
+      note: null,
+    });
+  });
+
   it("shows the density heat map when zoomed far out in auto mode, and when asked", async () => {
     const parts = makeMap({ left: 0, top: 0, right: 4000, bottom: 2000 });
     (transcriptsStore as any).pointBudget = 100;
@@ -302,6 +365,27 @@ describe("TranscriptOverlay", () => {
     await nextTick();
     expect(parts.osmLayers[1].opacity).toHaveBeenLastCalledWith(0.4);
   });
+
+  it.each(["auto", "density"])(
+    "uses points for transformed registrations in %s mode",
+    async (mode) => {
+      (transcriptsStore as any).schema.transform = [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+      ];
+      (transcriptsStore as any).mode = mode;
+      (transcriptsStore as any).pointBudget = 100;
+      const parts = makeMap({ left: 0, top: 0, right: 4000, bottom: 2000 });
+      mount(parts);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(mocks.fetchTranscriptPoints).toHaveBeenCalled();
+      expect(parts.osmLayers).toHaveLength(0);
+      expect(mocks.setStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ rendering: "points" }),
+      );
+    },
+  );
 
   it("clears everything when disabled, turned off, or without genes", async () => {
     const parts = makeMap();

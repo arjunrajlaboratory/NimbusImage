@@ -34,6 +34,7 @@ export const DEFAULT_TRANSCRIPT_MIN_QV = 20;
 export const DEFAULT_TRANSCRIPT_POINT_BUDGET = 300_000;
 export const DEFAULT_TRANSCRIPT_OPACITY = 0.85;
 export const TRANSCRIPT_POINT_BUDGETS = [100_000, 300_000, 1_000_000];
+let schemaRequestGeneration = 0;
 
 /**
  * The transcript overlay's state (SPATIAL_PLUGIN.md, Phase 3): which genes
@@ -189,9 +190,12 @@ export class Transcripts extends VuexModule {
 
   @Action
   async refreshSchema(): Promise<void> {
+    const generation = ++schemaRequestGeneration;
     const datasetId = main.dataset?.id;
     if (!datasetId) {
       this.setSchema({ datasetId: "", schema: null });
+      this.setError(null);
+      this.setLoading(false);
       return;
     }
     this.setLoading(true);
@@ -199,16 +203,24 @@ export class Transcripts extends VuexModule {
     try {
       const schema = await main.spatialAPI.fetchTranscriptsSchema(datasetId);
       // A dataset switch during the await would make this answer stale.
-      if (main.dataset?.id === datasetId) {
+      if (
+        main.dataset?.id === datasetId &&
+        generation === schemaRequestGeneration
+      ) {
         this.setSchema({ datasetId, schema });
       }
     } catch (error) {
       logError("Failed to fetch the transcript store registration:", error);
-      if (main.dataset?.id === datasetId) {
+      if (
+        main.dataset?.id === datasetId &&
+        generation === schemaRequestGeneration
+      ) {
         this.setError("Could not read the dataset's transcript store.");
       }
     } finally {
-      this.setLoading(false);
+      if (generation === schemaRequestGeneration) {
+        this.setLoading(false);
+      }
     }
   }
 
@@ -216,7 +228,11 @@ export class Transcripts extends VuexModule {
   @Action
   async ensureSchema(): Promise<void> {
     const datasetId = main.dataset?.id ?? null;
-    if (datasetId !== null && this.schemaDatasetId === datasetId) {
+    if (
+      datasetId !== null &&
+      this.schemaDatasetId === datasetId &&
+      !this.error
+    ) {
       return;
     }
     await this.refreshSchema();

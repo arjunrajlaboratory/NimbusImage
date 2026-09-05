@@ -187,7 +187,10 @@ view-only scope — `DATA_READ` would also open `folder/{id}/download`, `item/{i
 `file/{id}/download`, `resource/download` and the plugin's `/export` routes — so
 `server/helpers/shareLinkGuards.py` binds `rest.<method>.<route>.before` on those routes and
 refuses a link user (403) before the handler runs; the same module drops link users from
-`GET user` listings. Tiles, annotations, properties and the spatial routes stay open: a link
+`GET user` listings. The shared access-list formatter also excludes link principals
+from dataset, configuration, and project named-user tables without changing their ACLs.
+Manage those principals through the Share links list instead. Tiles, annotations,
+properties and the spatial routes stay open: a link
 shows a view, it does not hand out the files. Revoking
 deletes the user — Girder's `cleanupDeletedEntity` drops its ACL entries — and its tokens.
 The link user is `public: False` but does exist in the user collection; it never receives
@@ -230,6 +233,9 @@ expired links refused), `ShareLinkAPI.test.ts`, `SharedView.test.ts`,
 `ShareDataset.test.ts`.
 
 ### Share-link regression checklist
+
+- Hide link principals from dataset/configuration access lists while their bearer stays
+  readable — `test_share_link.py::testLinkUsersStayOutOfAccessLists`.
 
 - Keep the bearer URL on initial open and reload/remount without replacing the owner's
   persisted login — `SharedView.test.ts` (`acts as the link's bearer and opens its dataset view`).

@@ -85,15 +85,20 @@ Caps: `MAX_FEATURES_PER_REQUEST` 64 (aggregate and materialize), `MAX_FEATURE_SE
 Finds or creates a polygon property named `propertyName` (default `Gene Expression`,
 image `properties/none:latest`) among the dataset's configurations, registers it into all
 of them (the configuration's `meta.propertyIds` is what makes a property visible), and
-writes `values[propertyId][symbol] = count` for every row, zeros included. Inline up to
+writes `values[propertyId][symbol] = count` for every row still belonging to the
+dataset, zeros included. A batch membership lookup skips moved, deleted, or foreign
+annotation IDs from stored tables. `written` counts saved live cells; job progress
+counts examined table rows. Inline up to
 `MATERIALIZE_INLINE_MAX_ROWS` (50K), otherwise a Girder local job
 (`upenncontrast_spatial.server.materialize.run`) reporting progress.
 
 Writes use `AnnotationPropertyValues.setSubValuesMany`: one bulk set of atomic Mongo update
 pipelines merges `values[propertyId]` with `$mergeObjects`. Concurrent materialize, score,
 and neighborhood writes therefore cannot replace unrelated property subtrees. A unique
-`(datasetId, annotationId)` key prevents racing upserts from making a
-second document; startup coalesces legacy duplicates before adding it. Pinned by
+`annotationId` key prevents racing upserts from making a second document even
+after an annotation moves datasets; datasetId is mutable metadata, not identity.
+Startup replaces the old nonunique annotation index and coalesces legacy duplicates
+across datasets before adding the unique index. Pinned by
 *"testCellValueWriterUsesAtomicNestedUpdates"* and
 *"testLegacyDuplicatePropertyValuesAreCoalesced"*.
 
@@ -202,9 +207,12 @@ level whose intersecting tiles fit `MAX_TRANSCRIPT_TILES_PER_REQUEST` and whose 
 points fit the budget), fetches the binary body into a GeoJS point feature, steps coarser
 on 413, and switches to the density heat map in "auto" mode from `AUTO_DENSITY_LEVEL`
 (1 mm tiles) or when nothing fits — one OSM layer per gene in that gene's color, so a mix
-stays readable. Opacity (points and heat maps) is a palette slider and a restyle, never a
-refetch. `TranscriptsPanel.vue` is a right-zone palette
-(`transcriptsPanel`), shown only for datasets with a registered store.
+stays readable. Transformed registrations stay in points mode because the density
+endpoint does not support transforms; empty tile plans clear the overlay without a
+request. Opacity (points and heat maps) is a palette slider and a restyle, never a
+refetch. `TranscriptsPanel.vue` is a right-zone palette (`transcriptsPanel`), shown
+for registered stores and while discovery is loading or has failed, so a failed
+lookup remains reachable for retry.
 
 ## Phase 4: recompute and table versions
 
@@ -330,6 +338,30 @@ registers it with the bundle's `pixel_size` (and the inverse H&E alignment as `t
 for the H&E dataset).
 
 ## Regression checklist
+
+- Preserve one value document per annotation across dataset moves and both writers —
+  `test_property_value_atomic.py::testMoveThenComputeKeepsOneValueDocument`;
+  migrate duplicates across datasets — `testStartupCoalescesCrossDatasetDuplicates`.
+- Caller-writable datasets cannot rehome foreign annotations' values through single
+  or mixed bulk REST writes —
+  `test_property_value_atomic.py::testCannotRehomeForeignValuesThroughWritableDataset`.
+- Spatial jobs skip moved/deleted/foreign table IDs; written counts include only
+  live dataset cells, progress counts examined rows —
+  `test_spatial.py::testCellValueWriterSkipsMovedAndDeletedAnnotations`.
+- Transformed transcript registrations use points in auto and explicit density modes,
+  including after schema refresh — `TranscriptOverlay.test.ts` (`uses points for transformed
+  registrations`, `rechecks rendering capabilities when the schema is refreshed`);
+  disabled/explained heat-map choice — `TranscriptsPanel.test.ts`
+  (`disables heat maps for transformed registrations and explains why`).
+- Empty plans clear the overlay without requests in auto/density and coarser retry paths —
+  `TranscriptOverlay.test.ts` (`clears a previously populated viewport when its tile plan is empty`,
+  `does not request an empty coarser tile set after a 413`).
+- Failed transcript discovery keeps controls and retry available — `App.test.ts`
+  (`keeps the Transcripts control reachable after schema failure and during retry`),
+  `TranscriptsPanel.test.ts` (`offers an explicit retry after schema failure`);
+  cached-error retries and loading ownership — `transcripts.test.ts`
+  (`retries a failed refresh even when an older schema is cached`,
+  `does not let an older request clear a newer request's loading state`).
 
 - Saved virtual columns, filters, labels, and gates survive reload without a stored
   property ID — `annotationBrowserConfig.test.ts`, `preserves virtual columns, filters, labels and gates on reload`.

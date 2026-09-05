@@ -346,6 +346,24 @@ Report per-finding outcomes (fixed / stale / by-design / needs-decision) keyed t
 
 ### Persistence and cache replacement traps
 
+- A uniqueness key must match reader and writer identity, including resource moves.
+  Adding a mutable partition (datasetId) to an immutable identity (annotationId)
+  silently permits duplicates that annotation-only joins multiply. Test moves
+  followed by both ordinary and specialized upserts, and migration from old indexes.
+  Also audit authorization: permission on a caller-supplied partition does not
+  authorize another partition's object ID. Batch-check object membership before
+  global-key writes, including rejecting an entire mixed-validity batch before saving.
+- Capability discovery has three states: present, absent, and failed. Do not hide
+  the only recovery control when discovery fails. Test initial failure, cached
+  schema failure, and overlapping retries; only the current request may clear loading.
+- A legitimate empty plan should clear derived visuals without issuing a request.
+  Check alternate renderers and retry plans too. Capability restrictions likewise
+  belong in both automatic mode selection and explicit controls, and must re-evaluate
+  when the capability schema refreshes.
+- Hidden service principals can leak through ACL formatters even when user search
+  hides them. Sweep every access-list formatter caller, and retain actual ACLs while
+  excluding those principals from named-user editing surfaces.
+
 - Framework index helpers may be **best effort**: Girder `ensureIndices` catches
   index errors internally. An `except DuplicateKeyError` around it cannot run
   a migration. Test the constructor/startup path, not only the migration helper.

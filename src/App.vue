@@ -254,7 +254,14 @@
               </button>
             </template>
           </v-tooltip>
-          <v-tooltip v-if="transcriptsStore.hasTranscripts" text="Transcripts">
+          <v-tooltip
+            v-if="
+              transcriptsStore.hasTranscripts ||
+              transcriptsStore.error ||
+              transcriptsStore.loading
+            "
+            text="Transcripts"
+          >
             <template v-slot:activator="{ props: activatorProps }">
               <button
                 v-bind="activatorProps"

@@ -1,13 +1,29 @@
 <template>
   <div class="transcripts-panel pa-3">
+    <div v-if="transcriptsStore.error" class="mb-2">
+      <p class="text-body-2 text-error">{{ transcriptsStore.error }}</p>
+      <v-btn
+        variant="outlined"
+        color="primary"
+        size="small"
+        :loading="transcriptsStore.loading"
+        :disabled="transcriptsStore.loading"
+        @click="transcriptsStore.refreshSchema()"
+        >Retry transcript lookup</v-btn
+      >
+    </div>
     <template v-if="!transcriptsStore.hasTranscripts">
-      <p class="text-body-2 mb-2">
+      <p v-if="!transcriptsStore.error" class="text-body-2 mb-2">
         {{
-          transcriptsStore.error ??
-          "No transcript store is registered for this dataset."
+          transcriptsStore.loading
+            ? "Reading transcript registration…"
+            : "No transcript store is registered for this dataset."
         }}
       </p>
-      <p class="text-caption text-medium-emphasis mb-0">
+      <p
+        v-if="!transcriptsStore.error && !transcriptsStore.loading"
+        class="text-caption text-medium-emphasis mb-0"
+      >
         Register the 10x transcripts.zarr.zip with
         <code>xenium_register_transcripts.py</code> (nimbusimage-xenium-ingest
         skill).
@@ -100,7 +116,7 @@
 
       <div class="text-caption mt-2">Rendering</div>
       <v-btn-toggle
-        :model-value="transcriptsStore.mode"
+        :model-value="renderMode"
         mandatory
         density="compact"
         variant="outlined"
@@ -110,8 +126,19 @@
       >
         <v-btn value="auto" size="small">Auto</v-btn>
         <v-btn value="points" size="small">Points</v-btn>
-        <v-btn value="density" size="small">Heat map</v-btn>
+        <v-btn
+          value="density"
+          size="small"
+          :disabled="!!transcriptsStore.schema?.transform"
+          >Heat map</v-btn
+        >
       </v-btn-toggle>
+      <p
+        v-if="transcriptsStore.schema?.transform"
+        class="text-caption text-medium-emphasis"
+      >
+        Transformed registrations use points; heat maps are unavailable.
+      </p>
       <v-select
         :model-value="transcriptsStore.pointBudget"
         :items="budgetItems"
@@ -204,6 +231,11 @@ const navigating = ref(false);
 const navigateError = ref<string | null>(null);
 
 const readout = computed(() => transcriptsStore.readout);
+const renderMode = computed(() =>
+  transcriptsStore.schema?.transform && transcriptsStore.mode === "density"
+    ? "points"
+    : transcriptsStore.mode,
+);
 
 // Picked genes stay listed even when the search no longer matches them, so
 // their chips never lose their label.

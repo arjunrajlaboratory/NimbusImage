@@ -51,8 +51,7 @@ class PropertySchema:
 # find/load methods take MRO precedence over the unchecked base methods.
 class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
 
-    annotationDatasetIndex = (
-        ('datasetId', SortDir.ASCENDING),
+    annotationIndex = (
         ('annotationId', SortDir.ASCENDING),
     )
 
@@ -63,18 +62,25 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
             ('_id', SortDir.ASCENDING)
         )
         self.ensureIndices([(compoundSearchIndex, {}),
-                            "annotationId", "datasetId"])
+                            "datasetId"])
+        # Older installs have a non-unique annotationId index. Replace that
+        # index before enforcing the original one-document-per-annotation
+        # contract; datasetId is mutable when annotations move.
+        previousIndex = self.collection.index_information().get(
+            'annotationId_1')
+        if previousIndex and not previousIndex.get('unique'):
+            self.collection.drop_index('annotationId_1')
         # Unlike Girder's best-effort ensureIndices, this invariant must fail
         # startup if it cannot be established. Upserts rely on uniqueness.
         try:
-            self.collection.create_index(self.annotationDatasetIndex,
+            self.collection.create_index(self.annotationIndex,
                                          unique=True)
         except DuplicateKeyError:
             # Older deployments could create duplicates through concurrent
             # read/replace writes. Consolidate them once before enforcing the
             # invariant needed for race-safe upserts.
             self._coalesceDuplicateDocuments()
-            self.collection.create_index(self.annotationDatasetIndex,
+            self.collection.create_index(self.annotationIndex,
                                          unique=True)
 
         # Used by Girder to define what field are used to check permissions
@@ -160,7 +166,6 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
         for start in range(0, len(list_of_property_values), 5000):
             documents = list_of_property_values[start:start + 5000]
             keys = [{
-                'datasetId': document['datasetId'],
                 'annotationId': document['annotationId'],
             } for document in documents]
             query = {'$or': keys}
@@ -170,6 +175,7 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
             self.collection.bulk_write([
                 UpdateOne(key, [{'$set': {
                     **key,
+                    'datasetId': document['datasetId'],
                     'values': {'$mergeObjects': [
                         {'$literal': document['values']},
                         {'$ifNull': ['$values', {}]},
@@ -178,13 +184,13 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
                 for key, document in zip(keys, documents)
             ], ordered=True)
             saved = {
-                (document['datasetId'], document['annotationId']): document
+                document['annotationId']: document
                 for document in self.find(query)
             }
             if self.is_recording:
                 for after in saved.values():
                     self.record.changeDocument(None, after)
-            results.extend(saved[(key['datasetId'], key['annotationId'])]
+            results.extend(saved[key['annotationId']]
                            for key in keys)
         return results
 
@@ -204,10 +210,7 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
         pipeline = [
             {"$sort": {"_id": 1}},
             {"$group": {
-                "_id": {
-                    "datasetId": "$datasetId",
-                    "annotationId": "$annotationId",
-                },
+                "_id": "$annotationId",
                 "documents": {"$push": {
                     "_id": "$_id",
                     "values": "$values",
@@ -252,7 +255,6 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
         for annotationId, subValues in entries:
             operations.append(UpdateOne(
                 {
-                    "datasetId": datasetId,
                     "annotationId": annotationId,
                 },
                 [{"$set": {

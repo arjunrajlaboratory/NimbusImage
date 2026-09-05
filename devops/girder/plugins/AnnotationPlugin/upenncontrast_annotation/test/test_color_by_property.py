@@ -520,7 +520,7 @@ class TestColorByProperty:
         pv = AnnotationPropertyValues()
         # Simulate legacy data from before the unique annotation key, then
         # bypass the merge in validateMultiple to create two documents.
-        pv.collection.drop_index("datasetId_1_annotationId_1")
+        pv.collection.drop_index("annotationId_1")
         pv.save({"annotationId": first["_id"], "datasetId": folder["_id"],
                  "values": {"propA": 1}}, validate=False)
         pv.save({"annotationId": first["_id"], "datasetId": folder["_id"],
@@ -546,7 +546,7 @@ class TestColorByProperty:
             upenn_utilities.getSampleAnnotation(folder["_id"])
         )
         valuesModel = AnnotationPropertyValues()
-        valuesModel.collection.drop_index("datasetId_1_annotationId_1")
+        valuesModel.collection.drop_index("annotationId_1")
         for values in (
             {"p": {"old": 1, "same": 1}},
             {"p": {"new": 2, "same": 2}, "q": 3},
@@ -559,7 +559,7 @@ class TestColorByProperty:
 
         valuesModel._coalesceDuplicateDocuments()
         valuesModel.ensureIndices([
-            (valuesModel.annotationDatasetIndex, {"unique": True})
+            (valuesModel.annotationIndex, {"unique": True})
         ])
         documents = list(valuesModel.find({
             "annotationId": annotation["_id"],
