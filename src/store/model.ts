@@ -453,6 +453,21 @@ export type TRequestablePalette =
   | "analysisPanel"
   | "annotationPanel";
 
+/** A share-view link (GET share_link). The token is only present on the
+ * create response. */
+export interface IShareLink {
+  _id: string;
+  datasetId: string;
+  datasetViewId: string;
+  configurationId: string;
+  label: string;
+  created: string;
+  expiresAt: string | null;
+  expired: boolean;
+  createdBy: string;
+  token?: string;
+}
+
 export type TVolumeViewMode = "2d" | "3d";
 
 export type TVolumeBlendMode = "composite" | "mip";
@@ -1236,13 +1251,32 @@ export interface IGeoJSTextFeature
     (() => IGeoJSPosition[] | ((dataPoint: any) => IGeoJSPosition));
 }
 
+// https://opengeoscience.github.io/geojs/apidocs/geo.pointFeature.html
+export interface IGeoJSPointFeature
+  extends IGeoJSFeatureBase<IGeoJSPointFeature> {
+  position: ((
+    val: IGeoJSPosition[] | ((dataPoint: any, index: number) => IGeoJSPosition),
+  ) => IGeoJSPointFeature) &
+    (() => IGeoJSPosition[] | ((dataPoint: any) => IGeoJSPosition));
+  visible: ((val: boolean) => IGeoJSPointFeature) & (() => boolean);
+  geoOn: (event: string, handler: Function) => IGeoJSPointFeature;
+  geoOff: (
+    event?: string | string[],
+    arg?: Function | Function[] | null,
+  ) => IGeoJSPointFeature;
+}
+
 // https://opengeoscience.github.io/geojs/apidocs/geo.featureLayer.html
 export interface IGeoJSFeatureLayer extends IGeoJSLayer {
   readonly idle: boolean;
   createFeature: <T extends string>(
     featureName: T,
     arg?: IObject,
-  ) => T extends "text" ? IGeoJSTextFeature : IGeoJSFeature;
+  ) => T extends "text"
+    ? IGeoJSTextFeature
+    : T extends "point"
+      ? IGeoJSPointFeature
+      : IGeoJSFeature;
   deleteFeature: (feature: IGeoJSFeature) => IGeoJSFeatureLayer;
   clear: () => IGeoJSFeatureLayer;
   geoOn: (event: string, handler: Function) => IGeoJSFeatureLayer;
@@ -1756,6 +1790,248 @@ export interface IAnnotationListPage {
   total: number;
   rows: IAnnotationListRow[];
   offset?: number | null;
+}
+
+// POST upenn_annotation/summary: aggregate statistics over the annotations
+// matching a list filter object. `count` is the number of matching annotations
+// with a numeric value at the path; the statistics are null when it is 0 (std
+// also below two values).
+export interface IAnnotationSummaryPropertyStats {
+  path: string[];
+  count: number;
+  mean: number | null;
+  std: number | null;
+  min: number | null;
+  max: number | null;
+}
+
+export interface IAnnotationSummary {
+  total: number;
+  tags: { tag: string; count: number }[];
+  properties: IAnnotationSummaryPropertyStats[];
+}
+
+// upenncontrast_spatial plugin (SPATIAL_PLUGIN.md): a dataset's registered
+// expression table and what the endpoints return.
+// Reserved property root for live expression-table columns (no property doc).
+export const SPATIAL_PROPERTY_ID = "spatial";
+
+export interface ISpatialInfo {
+  datasetId: string;
+  itemId: string;
+  fileId: string;
+  // The active table's version label ("Imported table", a recompute label).
+  label?: string;
+  schemaVersion: number;
+  nObs: number;
+  nVar: number;
+  obsColumns: string[];
+  // Rows that still join to a live annotation of the dataset; present only
+  // when the request asked for it (`verify`), since it scans the dataset.
+  liveAnnotations?: number;
+}
+
+export interface ISpatialFeature {
+  symbol: string;
+  featureType: string | null;
+}
+
+/** One pyramid level of a registered transcript store. */
+export interface ISpatialTranscriptLevel {
+  level: number;
+  tileMicrons: number;
+  tilePixels: number;
+  // "gx,gy" keys of the tiles that hold molecules, with their point counts
+  // (all genes), so the client can budget a request before making it.
+  keys: string[];
+  counts: number[];
+}
+
+/** GET spatial/{datasetId}/transcripts */
+export interface ISpatialTranscriptsSchema {
+  itemId: string;
+  levels: number;
+  gridSizeMicrons: number;
+  pixelSize: number;
+  // 3x3 row-major, transcript-grid pixels -> this image's pixels; null when
+  // the image is on the transcripts' own grid.
+  transform: number[][] | null;
+  genes: number;
+  totalPoints: number;
+  tiles: ISpatialTranscriptLevel[];
+}
+
+/** Decoded body of POST spatial/{datasetId}/transcripts/points. */
+export interface ITranscriptPoints {
+  count: number;
+  x: Float32Array;
+  y: Float32Array;
+  // Index into the requested gene list.
+  gene: Uint8Array;
+  // Level 0 only.
+  quality: Float32Array | null;
+}
+
+export interface ITranscriptGene {
+  symbol: string;
+  color: string;
+}
+
+export type TTranscriptRenderMode = "auto" | "points" | "density";
+
+export interface ITranscriptOverlayStatus {
+  rendering: "points" | "density" | "none";
+  level: number;
+  points: number;
+  // Why nothing (or the heat map) is shown when the user asked for points.
+  note: string | null;
+}
+
+export interface ITranscriptReadout {
+  symbol: string;
+  x: number;
+  y: number;
+  quality: number | null;
+  // The drawn cell outline containing the molecule, found geometrically at
+  // click time (the transcript store carries no cell reference); null when
+  // the click was outside every drawn cell.
+  annotationId: string | null;
+}
+
+export interface ISpatialFeatureAggregate {
+  symbol: string;
+  // Mean over the selected cells, zeros included; null when none selected.
+  mean: number | null;
+  fractionExpressing: number | null;
+  expressing: number;
+}
+
+export interface ISpatialAggregate {
+  total: number;
+  // Matching annotations with no row in the table.
+  unmatched: number;
+  features: ISpatialFeatureAggregate[];
+}
+
+export interface ISpatialDifferentialFeature {
+  symbol: string;
+  meanA: number;
+  meanB: number;
+  fractionA: number;
+  fractionB: number;
+  log2FoldChange: number;
+  t: number;
+  pValue: number;
+}
+
+export interface ISpatialDifferentialResult {
+  method?: TDifferentialMethod;
+  nA: number;
+  nB: number;
+  featuresTested: number;
+  // Ranked by |t|, truncated to the requested maxFeatures.
+  features: ISpatialDifferentialFeature[];
+}
+
+// GET job/{id} for a spatial job: status plus, once finished, the result the
+// differential job stores on the document.
+/** welch: t-test on means; wilcoxon: Mann-Whitney U on the distributions. */
+export type TDifferentialMethod = "welch" | "wilcoxon";
+
+export interface ISpatialJob {
+  _id: string;
+  status: number;
+  spatialResult?:
+    | ISpatialDifferentialResult
+    | ISpatialRecomputeResult
+    | ISpatialNeighborhood;
+}
+
+/** One expression-table version (GET spatial/{datasetId}/versions). */
+export interface ISpatialTableVersion {
+  itemId: string;
+  label: string;
+  nObs: number;
+  nVar: number;
+  created: string | null;
+  provenance: Record<string, unknown>;
+}
+
+export interface ISpatialVersions {
+  active: ISpatialTableVersion;
+  versions: ISpatialTableVersion[];
+}
+
+/** GET spatial/{datasetId}/staleness: how the live cell polygons differ
+ * from the active table. */
+export interface ISpatialStaleness {
+  added: number;
+  changed: number;
+  removed: number;
+  addedIds: string[];
+  changedIds: string[];
+  removedIds: string[];
+  // Only a table this plugin recomputed carries polygon hashes; an imported
+  // one can report added/removed but never "changed".
+  hasGeometryHashes: boolean;
+  cells: number;
+  rows: number;
+  upToDate: boolean;
+}
+
+/** GET spatial/{datasetId}/neighborhood (Phase 6). */
+export interface ISpatialNeighborhood {
+  radius: number;
+  excludeTags: string[];
+  // Sorted type names; `counts` are cells per type, `pairs` observed
+  // neighbor pairs (type i around type j), `matrix` log2 observed/expected.
+  types: string[];
+  counts: number[];
+  pairs: number[][];
+  matrix: (number | null)[][];
+  cells: number;
+  typed: number;
+  written: number;
+  propertyId: string;
+  computed: string;
+}
+
+/** One row of POST spatial/{datasetId}/regions/summary. */
+export interface ISpatialRegionSummary {
+  id: string;
+  name: string;
+  tags: string[];
+  cells: number;
+  composition: { type: string; count: number }[];
+  expression: ISpatialFeatureAggregate[];
+  rows?: number;
+}
+
+export type TSpatialRecomputeScope = "all" | "dirty";
+
+export interface ISpatialRecomputeRequest {
+  label: string;
+  scope: TSpatialRecomputeScope;
+  minQv: number;
+  tags: string[] | null;
+  recomputeEmbeddings: boolean;
+}
+
+export interface ISpatialRecomputeResult {
+  itemId: string;
+  nObs: number;
+  nVar: number;
+  assigned: number;
+  unassigned: number;
+  tilesProcessed: number;
+  seconds: number;
+}
+
+export interface ISpatialMaterializeResult {
+  propertyId: string;
+  written: number;
+  // Set when the write runs as a job (large tables); null when done inline.
+  jobId: string | null;
 }
 
 export type THydrationMode = "shapes" | "dots";

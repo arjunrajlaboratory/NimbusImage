@@ -23,6 +23,8 @@ import { markRaw } from "vue";
 import { v4 as uuidv4 } from "uuid";
 
 import AnnotationsAPI from "./AnnotationsAPI";
+import SpatialAPI from "./SpatialAPI";
+import ShareLinkAPI from "./ShareLinkAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ToolSuggestionsAPI from "./ToolSuggestionsAPI";
 import AgentAPI from "./AgentAPI";
@@ -79,6 +81,7 @@ import {
   IUserStorageQuota,
   TAnnotationBrowserTab,
   TRequestablePalette,
+  IShareLink,
 } from "./model";
 import {
   buildAnnotationBrowserConfig,
@@ -179,7 +182,17 @@ function storeToken(apiRoot: string, token: string) {
   localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(value));
 }
 
+// While a share link's token is on the client (SHARING.md "Share links"),
+// the client's own bookkeeping must leave the stored login alone: a `user/me`
+// that comes back anonymous, or any 401, would otherwise wipe the token of a
+// user who is signed in on this browser — a visit to a dead link signed the
+// owner out of every other tab once.
+let sharedSession = false;
+
 function clearStoredToken() {
+  if (sharedSession) {
+    return;
+  }
   localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
@@ -266,6 +279,8 @@ export class Main extends VuexModule {
   // without breaking field-level reactivity on the API instance itself.
   api = new GirderAPI(this.girderRestProxy);
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
+  spatialAPI = new SpatialAPI(this.girderRestProxy);
+  shareLinkAPI = new ShareLinkAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
   toolSuggestionsAPI = new ToolSuggestionsAPI(this.girderRestProxy);
   agentAPI = new AgentAPI(this.girderRestProxy);
@@ -282,6 +297,10 @@ export class Main extends VuexModule {
   userStorageInfo: IUserStorageQuota | null = null;
 
   history: IHistoryEntry[] = [];
+
+  get shareLinkTileToken(): string | null {
+    return this.girderUser?.shareLink ? this.girderRest.token || null : null;
+  }
 
   selectedDatasetId: string | null = null;
   dataset: IDataset | null = null;
@@ -1043,8 +1062,13 @@ export class Main extends VuexModule {
         this.loadUserColors().catch((error) => {
           logError("Failed to load user colors during login:", error);
         }),
-        this.fetchUserStorageInfo(),
       );
+      // A share link's bearer has no storage and runs no jobs: skip the
+      // quota lookup (a logged error otherwise) and the notification socket
+      // (which its read-only token cannot open).
+      if (!user.shareLink) {
+        promises.push(this.fetchUserStorageInfo());
+      }
     } else {
       this.setAssetstores([]);
     }
@@ -1055,7 +1079,9 @@ export class Main extends VuexModule {
     );
     // Initialize notification websocket as soon as the user has logged in because
     // any notification sent without would be lost.
-    jobs.initializeNotificationSubscription();
+    if (!user?.shareLink) {
+      jobs.initializeNotificationSubscription();
+    }
     await Promise.allSettled(promises);
   }
 
@@ -1458,6 +1484,40 @@ export class Main extends VuexModule {
         return;
       }
       this.setRecentDatasetViewsImpl([]);
+    }
+  }
+
+  /**
+   * Open the app as the bearer of a share link (SHARING.md "Share links").
+   * The token is set on the REST client in memory only: the client persists
+   * a token solely on its own login event, so a user who is signed in on this
+   * browser keeps their stored login for the next reload.
+   */
+  @Action({ rawError: true })
+  async openShareLink(token: string): Promise<IShareLink> {
+    // Raised for the duration of the attempt (the handlers fire during
+    // fetchUser) and kept only once the link is confirmed live; a dead link
+    // must leave this tab behaving like any other.
+    const previousToken = this.girderRest.token;
+    sharedSession = true;
+    try {
+      this.girderRest.token = token;
+      const user = await this.girderRest.fetchUser();
+      if (!user) {
+        throw new Error("This share link is no longer valid.");
+      }
+      await this.loggedIn(this.girderRest);
+      return await this.shareLinkAPI.me();
+    } catch (error) {
+      // Put the tab back the way it was — the signed-in owner's session
+      // included — before leaving shared mode, so no request in between can
+      // read the tab as anonymous and drop the stored login.
+      this.girderRest.token = previousToken;
+      if (previousToken) {
+        await this.girderRest.fetchUser().catch(() => null);
+      }
+      sharedSession = false;
+      throw error;
     }
   }
 
@@ -3102,6 +3162,7 @@ export class Main extends VuexModule {
                 hist,
                 layer,
                 this.dataset,
+                this.shareLinkTileToken,
               )!,
             );
             results.fullUrls.push(
@@ -3116,6 +3177,7 @@ export class Main extends VuexModule {
                 hist,
                 layer,
                 this.dataset,
+                this.shareLinkTileToken,
               )!,
             );
           });
@@ -3155,6 +3217,7 @@ export class Main extends VuexModule {
             hist,
             layer,
             this.dataset,
+            this.shareLinkTileToken,
           ),
         ),
         fullUrls: images.map((image) =>
@@ -3169,6 +3232,7 @@ export class Main extends VuexModule {
             hist,
             layer,
             this.dataset,
+            this.shareLinkTileToken,
           ),
         ),
         hist,

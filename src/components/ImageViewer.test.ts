@@ -143,6 +143,7 @@ vi.mock("@/store", () => {
       drawAnnotations: true,
       showAnnotationsFromHiddenLayers: false,
       showTooltips: false,
+      shareLinkTileToken: "share-token",
       setMaps: vi.fn(),
       setMapAt: vi.fn(),
       popMap: vi.fn(),
@@ -1237,6 +1238,7 @@ describe("ImageViewer", () => {
         expect.objectContaining({
           maxLevel: 9,
           selectors: [{ channel: 0, XY: 0, Z: 0, Time: 0 }],
+          authToken: "share-token",
         }),
       );
       expect(overviewLayer.url).not.toHaveBeenCalled();

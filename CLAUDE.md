@@ -156,9 +156,11 @@ Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names
 | `/api/v1/annotation_import` | `server/api/dataImport.py` | Server-side JSON import (annotations, connections, property values) |
 | `/api/v1/project` | `server/api/project.py` | Project management |
 | `/api/v1/resource` | `server/api/resource.py` | Custom resource search |
+| `/api/v1/share_link` | `server/api/shareLink.py` | Share-view links: a hidden read-only Girder user + `DATA_READ`/`USER_INFO_READ` token per link (create/list/me/revoke). See `codebaseDocumentation/SHARING.md` "Share links". |
+| `/api/v1/spatial` | `SpatialPlugin/upenncontrast_spatial/server/api/spatial.py` | **Separate plugin** (`upenncontrast_spatial`): a dataset's spatial-transcriptomics expression table (`spatial.zarr.zip` item) — register, schema, feature search, column/row, aggregate over a list-filter object, materialize a gene panel into a property. See `codebaseDocumentation/SPATIAL_PLUGIN.md`. |
 | `/api/v1/system/authenticated_users` | `system.py` | Admin-only usage metric: count of distinct users who obtained an auth token within a look-back `window` (default `1d`). Added to Girder's core `system` route via `addSystemEndpoints`, not a plugin resource. |
 
-All source files under `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/`. Swagger UI at `http://localhost:8080/api/v1#!/`.
+All source files under `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/` except the `/spatial` resource, which lives in the sibling plugin `devops/girder/plugins/SpatialPlugin/` (its own `tox.ini`; it imports the annotation plugin's models and validation helpers). Swagger UI at `http://localhost:8080/api/v1#!/`.
 
 **Authenticated-users metric — what it measures:** a user is counted for the window if the `token` collection holds a token whose `created` timestamp falls inside it, i.e. they authenticated (logged in / refreshed a session) during the window. The count is deduplicated per user (`$group` on `userId`). It is deliberately **not** a general "used the app" metric: clients reuse a stored token across requests, so a user only mints a new token on a fresh login (or after their token expires) — someone using the app daily on a still-valid token won't reappear in a short window. Treat it as distinct authentications, not activity. Because Girder deletes tokens once they expire (default ~180 days), counts for windows longer than the token lifetime are bounded by token retention.
 

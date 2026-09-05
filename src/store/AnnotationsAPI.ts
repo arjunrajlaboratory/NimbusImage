@@ -17,6 +17,7 @@ import {
   IAnnotationListPage,
   IAnnotationListRow,
   IAnnotationListFilters,
+  IAnnotationSummary,
   IColorByPropertyOptions,
   IColorByPropertyResult,
   TAnnotationOverviewMode,
@@ -41,6 +42,7 @@ export interface IAnnotationRasterUrlOptions {
   mode: TAnnotationOverviewMode;
   color: string;
   version: number;
+  authToken?: string | null;
 }
 
 export default class AnnotationsAPI {
@@ -143,6 +145,9 @@ export default class AnnotationsAPI {
     url.searchParams.set("mode", options.mode);
     url.searchParams.set("color", options.color);
     url.searchParams.set("v", options.version.toString());
+    if (options.authToken) {
+      url.searchParams.set("token", options.authToken);
+    }
     return url.href.replace(
       "/upenn_annotation/raster/0/0/0",
       "/upenn_annotation/raster/{z}/{x}/{y}",
@@ -187,6 +192,38 @@ export default class AnnotationsAPI {
       filters,
     });
     return response.data.ids as string[];
+  }
+
+  /**
+   * Total, tag composition, and per-path statistics for the annotations
+   * matching `filters` — resolved server-side over the whole population, so
+   * it holds at any dataset size and under active gates.
+   */
+  async fetchAnnotationSummary(
+    datasetId: string,
+    filters: IAnnotationListFilters,
+    propertyPaths: string[][],
+  ): Promise<IAnnotationSummary> {
+    if (filtersMatchNothing(filters)) {
+      return {
+        total: 0,
+        tags: [],
+        properties: propertyPaths.map((path) => ({
+          path,
+          count: 0,
+          mean: null,
+          std: null,
+          min: null,
+          max: null,
+        })),
+      };
+    }
+    const response = await this.client.post("upenn_annotation/summary", {
+      datasetId,
+      filters,
+      propertyPaths,
+    });
+    return response.data as IAnnotationSummary;
   }
 
   /**

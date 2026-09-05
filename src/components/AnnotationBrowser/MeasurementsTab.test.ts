@@ -12,6 +12,8 @@ vi.mock("@/store/annotation", () => ({
 }));
 
 vi.mock("@/store/properties", () => ({
+  SPATIAL_PROPERTY_ID: "spatial",
+  SPATIAL_PSEUDO_PROPERTY: { id: "spatial", name: "Spatial table" },
   default: {
     properties: [],
     computedPropertyPaths: [],
@@ -29,8 +31,24 @@ vi.mock("@/store/filters", () => ({
   default: {},
 }));
 
+vi.mock("@/store/spatial", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      hasTable: false,
+      info: null,
+      ensureInfo: vi.fn(),
+    }),
+  };
+});
+
+vi.mock("@/store/jobs", () => ({
+  default: { fetchJobStatus: vi.fn() },
+}));
+
 import store from "@/store";
 import propertyStore from "@/store/properties";
+import spatialStore from "@/store/spatial";
 import MeasurementsTab from "./MeasurementsTab.vue";
 
 function mountComponent(props: { isActive: boolean } = { isActive: true }) {
@@ -189,5 +207,51 @@ describe("MeasurementsTab", () => {
     expect(alerts).toHaveLength(2);
     expect(wrapper.text()).toContain("Compute failed: boom");
     expect(wrapper.text()).toContain("Heads up: slow");
+  });
+});
+
+describe("MeasurementsTab spatial table", () => {
+  beforeEach(() => {
+    (spatialStore as any).hasTable = false;
+    (spatialStore as any).ensureInfo.mockClear();
+  });
+
+  it("asks for the table registration when shown, not when hidden", async () => {
+    mountComponent({ isActive: false });
+    expect(spatialStore.ensureInfo).not.toHaveBeenCalled();
+    mountComponent({ isActive: true });
+    expect(spatialStore.ensureInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Add genes only when the dataset has a spatial table", async () => {
+    const wrapper = mountComponent();
+    expect(wrapper.text()).not.toContain("Add genes");
+    (spatialStore as any).hasTable = true;
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("Add genes");
+  });
+});
+
+describe("MeasurementsTab live gene columns", () => {
+  it("lists virtual spatial columns under one group without a Run button", async () => {
+    (propertyStore as any).properties = [{ id: "area", name: "Area" }];
+    (propertyStore as any).computedPropertyPaths = [
+      ["area"],
+      ["spatial", "CD3E"],
+      ["spatial", "MS4A1"],
+    ];
+    (propertyStore as any).displayedPropertyPaths = [["spatial", "CD3E"]];
+    (propertyStore as any).uncomputedCountByProperty = { area: 0 };
+    (propertyStore as any).propertyStatuses = { area: { running: false } };
+    const wrapper = mountComponent();
+    const groups = wrapper.findAll(".measurement-group");
+    const spatial = groups.find((g) => g.text().includes("Spatial table"));
+    expect(spatial).toBeDefined();
+    expect(spatial!.text()).toContain("2 live columns");
+    expect(spatial!.text()).toContain("1 shown");
+    expect(spatial!.find(".run-property").exists()).toBe(false);
+    // Real properties keep theirs.
+    const area = groups.find((g) => g.text().includes("Area"));
+    expect(area!.find(".run-property").exists()).toBe(true);
   });
 });

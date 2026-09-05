@@ -45,6 +45,7 @@ When working from a clone of this repository, the skills are also available dire
 | Images | `/nimbus-skills:images` | `$nimbusimage:images` | Frame retrieval, composites, z-stacks, crops |
 | Workers | `/nimbus-skills:workers` | `$nimbusimage:workers` | Docker worker discovery, execution, job tracking |
 | Analyze | `/nimbus-skills:analyze` | `$nimbusimage:analyze` | Properties, export, connections, sharing |
+| Xenium ingest | `/nimbus-skills:xenium-ingest` | `$nimbusimage:xenium-ingest` | Load a 10x Xenium bundle: images, cell polygons, gene panel, clustering, UMAP, cell-type tags, and the full matrix as a spatial table |
 
 ## Progressive disclosure
 

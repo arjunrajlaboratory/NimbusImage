@@ -185,3 +185,31 @@ pytest tests/integration/ -v -m integration
 ## License
 
 See the project root for license information.
+
+## Spatial-transcriptomics table (`ds.spatial`)
+
+Datasets served by the `upenncontrast_spatial` plugin hold their full per-cell
+expression matrix as one `spatial.zarr.zip` item (AnnData layout; rows join to cell
+annotations through `obs.annotation_id`).
+
+```python
+ds.spatial.info()                       # None when no table is registered
+ds.spatial.upload_and_register("spatial.zarr.zip")
+ds.spatial.features("cd", limit=10)     # [{symbol, featureType}]
+ds.spatial.column("CD3E")               # {annotationIds, values} non-zero
+ds.spatial.row(annotation_id)           # {symbol: value}
+ds.spatial.aggregate(["CD3E"], filters={"tags": {"values": ["B Cell"], "exclusive": False}})
+ds.spatial.materialize(["CD3E", "MS4A1"], property_name="Gene Expression")
+```
+
+`aggregate` takes the same filter object the Objects tab uses (analysis gates included);
+`materialize` writes dense sub-values into a property and waits for the server job on
+large tables.
+
+Any gene is also usable as a virtual property path, `ds.spatial.virtual_path("CD3E")` →
+`["spatial", "CD3E"]`, wherever a property path is accepted (filters, gates, color-by,
+list columns, summary). `ds.spatial.score(symbols, name, method="mean")` writes a
+gene-set score; `ds.spatial.differential(filters_a, filters_b=None, max_features=50)`
+returns the ranked table (Welch t by default, ``method="wilcoxon"`` for Mann-Whitney U)
+from a server job.
+

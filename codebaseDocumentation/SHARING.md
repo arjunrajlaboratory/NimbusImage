@@ -170,6 +170,85 @@ Makes a dataset and all associated resources public or private.
 - All DatasetViews for the dataset
 - All Configurations used by those DatasetViews
 
+## Share links (share a view without making the dataset public)
+
+A **share link** is a capability URL — `#/shared/<token>` (or `#/embed/<token>` for the
+chrome-less viewer) — that opens one dataset view read-only for anyone who has it. It does
+not make the dataset public and does not require the recipient to have an account.
+
+**How the bearer is bounded.** A Girder token's scope is global (a `DATA_READ` token for
+the owner would read everything the owner can), so each link creates a hidden Girder user
+`share-<hex>` (random password, `shareLink` marker), grants it READ on the dataset folder,
+the dataset view and its configuration through the same `setUserAccess` calls the named
+sharing uses, and mints a Girder token for *that* user scoped to `DATA_READ` plus
+`USER_INFO_READ` (the client's `user/me` bootstrap; nothing else). The bearer sees
+exactly this dataset (ACL) and cannot write (scope: write endpoints answer 401). Girder has no
+view-only scope — `DATA_READ` would also open `folder/{id}/download`, `item/{id}/download`,
+`file/{id}/download`, `resource/download` and the plugin's `/export` routes — so
+`server/helpers/shareLinkGuards.py` binds `rest.<method>.<route>.before` on those routes and
+refuses a link user (403) before the handler runs; the same module drops link users from
+`GET user` listings. The shared access-list formatter also excludes link principals
+from dataset, configuration, and project named-user tables without changing their ACLs.
+Manage those principals through the Share links list instead. Tiles, annotations,
+properties and the spatial routes stay open: a link
+shows a view, it does not hand out the files. Revoking
+deletes the user — Girder's `cleanupDeletedEntity` drops its ACL entries — and its tokens.
+The link user is `public: False` but does exist in the user collection; it never receives
+storage and cannot be signed into (nobody knows its password).
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| `POST` | `/api/v1/share_link` `{datasetViewId, days? (0 = never, ≤ 3650), label?}` | ADMIN on the dataset, WRITE on the view and its configuration (as named sharing) | Create; the response carries `token` **once** |
+| `GET` | `/api/v1/share_link?datasetId=` | WRITE on the dataset | Live links (no tokens) |
+| `GET` | `/api/v1/share_link/me` | the bearer | Which view the request's token opens; 404 for an ordinary login or an expired link. Does not mutate browser cookies. |
+| `DELETE` | `/api/v1/share_link/{id}` | ADMIN on the dataset | Revoke (idempotent) |
+
+Model: `server/models/shareLink.py` (`share_link` collection: `datasetId, datasetViewId,
+configurationId, linkUserId, tokenId, label, createdBy, created, expiresAt, revoked`).
+Expiry is enforced by Girder on the token and reported by `/me`; datetimes are compared as
+aware UTC (Girder's token expiry is aware, Mongo's round trip may be naive). The link user
+is saved `status: enabled` so a registration policy of "approve" does not e-mail the admins
+for every link; it still gets Girder's default Public/Private folders (empty, no quota).
+A recipient who is signed in to this Girder on the same browser keeps their own cookie.
+Shared-view image, annotation-raster, and transcript-density tile URLs explicitly carry the
+in-memory link bearer as a `token` query parameter, so Girder authorizes those image requests
+as the link user instead of the ambient login.
+
+**Client.** `src/store/ShareLinkAPI.ts`; `store.openShareLink(token)` sets the token on
+the REST client **in memory only** (the client persists a token solely on its own login
+event, so a signed-in user's stored login survives a visit), fetches the link user and asks
+`/me`; the tile URL builders add that bearer only when the fetched user has the `shareLink`
+marker. `src/views/SharedView.vue` renders the viewer on the original token-bearing
+route, so refresh revalidates the bearer without changing the owner's stored login.
+The normal login bootstrap is skipped on shared routes to avoid racing the bearer.
+App.vue recognizes `/embed/<token>` to hide the toolbar and palettes (`embedMode`).
+Route defaults and later palette-open requests respect embed mode; the Time Lapse
+palette is hidden without changing the underlying viewer mode. The Share dialog's
+**Share links** section (admins) lists, creates (label, 7/30/90 days/never) and revokes
+links; the URL is shown once with its embed variant.
+
+Tests: `test/test_share_link.py` (bearer reads only the shared dataset and cannot write or
+mint links; create needs ADMIN and valid input; list/revoke; ordinary login is not a link;
+expired links refused), `ShareLinkAPI.test.ts`, `SharedView.test.ts`,
+`ShareDataset.test.ts`.
+
+### Share-link regression checklist
+
+- Hide link principals from dataset/configuration access lists while their bearer stays
+  readable — `test_share_link.py::testLinkUsersStayOutOfAccessLists`.
+
+- Keep the bearer URL on initial open and reload/remount without replacing the owner's
+  persisted login — `SharedView.test.ts` (`acts as the link's bearer and opens its dataset view`).
+- Recognize the embed route without redirecting away from its credential —
+  `SharedView.test.ts` (`marks the embed route so the chrome is dropped`).
+- Keep palettes closed through route initialization and late viewer requests, and
+  restore normal controls when leaving embed — `App.test.ts`
+  (`keeps palettes closed after entering an embedded viewer`, both route and query variants).
+- Display expired/invalid link errors without opening an unrelated viewer —
+  `SharedView.test.ts` (`explains a dead link instead of navigating`).
+- Preserve saved virtual gene columns and gates when a shared configuration is hydrated —
+  `annotationBrowserConfig.test.ts` (`preserves virtual columns, filters, labels and gates on reload`).
+
 ## Frontend Implementation
 
 ### Component: `ShareDataset.vue`

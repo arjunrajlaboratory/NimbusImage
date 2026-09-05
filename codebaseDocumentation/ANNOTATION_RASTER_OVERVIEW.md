@@ -25,7 +25,8 @@ original draft:
 - the read-only tile route explicitly permits Girder cookie authentication.
   GeoJS fetches OSM tiles as images and cannot attach the REST client's
   `Girder-Token` header; without `cookie=True`, private-dataset tiles return
-  401 even while the application is logged in.
+  401 even while the application is logged in. Shared views additionally put
+  their isolated bearer in the tile URL so an ambient login cookie cannot win.
 
 ## 1. Motivation
 
@@ -124,7 +125,9 @@ cookie authentication for GeoJS image requests:
 `Folder().load(datasetId, user=..., level=AccessType.READ, exc=True)`.
 Anonymous users get tiles only for public datasets; private datasets return 401. This is safe for the GET-only route and is required because `<img>`
 requests cannot attach a `Girder-Token` header. The GeoJS layer uses
-`crossDomain = "use-credentials"` so Girder's HttpOnly cookie is sent.
+`crossDomain = "use-credentials"` so Girder's HttpOnly cookie is sent. A shared
+view also supplies its link token as a query parameter; Girder prioritizes that
+explicit credential over any unrelated cookie.
 
 **Query parameters** (validate at the API boundary, per the API/model
 separation rules — the model/helper layer receives clean typed values):

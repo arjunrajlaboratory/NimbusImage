@@ -5,7 +5,10 @@ import type {
   IPropertyAnnotationFilter,
   TAnalysisAxis,
 } from "@/store/model";
-import { ANALYSIS_CATEGORY_KEY_VERSION } from "@/store/model";
+import {
+  ANALYSIS_CATEGORY_KEY_VERSION,
+  SPATIAL_PROPERTY_ID,
+} from "@/store/model";
 import { MAX_ANALYSIS_PLOTS } from "@/store/constants";
 import { isCategoricalAxisKey } from "@/utils/analysisAxes";
 import { isEncodedAnalysisCategoryKey } from "@/utils/analysisGating";
@@ -54,7 +57,8 @@ export function resolveAnnotationBrowserConfig(
     Array.isArray(path) &&
     path.length > 0 &&
     path.every((segment) => typeof segment === "string") &&
-    knownIds.has(path[0]);
+    (knownIds.has(path[0]) ||
+      (path[0] === SPATIAL_PROPERTY_ID && path.length === 2 && path[1] !== ""));
   const asArray = <T>(value: T[] | undefined): T[] =>
     Array.isArray(value) ? value : [];
 

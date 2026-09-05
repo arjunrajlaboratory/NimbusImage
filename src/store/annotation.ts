@@ -160,6 +160,17 @@ export class Annotations extends VuexModule {
     return (annotationId: string) => ids.has(annotationId);
   }
 
+  // The selection with ids that no longer resolve dropped: a delete or undo
+  // can leave stale ids behind, and a bulk action or export sized by the raw
+  // selection would then silently mis-scope (a stale id counted against
+  // annotationCount can make a real subset look like the whole dataset).
+  get resolvedSelectedAnnotationIds(): string[] {
+    const resolve = this.getAnnotationOrStubFromId;
+    return Array.from(this.selectedAnnotationIds).filter(
+      (id) => resolve(id) !== undefined,
+    );
+  }
+
   get isDeleting() {
     return this.isDeletingAnnotations;
   }

@@ -215,6 +215,124 @@
               </v-col>
             </v-row>
           </template>
+          <!-- Share-view links (admin only): capability URLs that open one
+               collection's view read-only, without making the dataset
+               public. See SHARING.md "Share links". -->
+          <template v-if="isResourceAdmin">
+            <v-divider class="my-4" />
+            <v-row>
+              <v-col cols="12">
+                <div class="subtitle-2 mb-1">Share links</div>
+                <div class="text-caption text-medium-emphasis mb-2">
+                  A link opens exactly one collection (select one above),
+                  read-only, for anyone who has it — no sign-in needed; the
+                  files themselves cannot be downloaded through it. Links can
+                  expire and can be revoked here.
+                </div>
+                <v-table v-if="shareLinks.length > 0" density="compact">
+                  <thead>
+                    <tr>
+                      <th>Label</th>
+                      <th>Collection</th>
+                      <th>Created</th>
+                      <th>Expires</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="link in shareLinks" :key="link._id">
+                      <td>{{ link.label || "—" }}</td>
+                      <td>{{ configurationName(link.configurationId) }}</td>
+                      <td>{{ formatDate(link.created) }}</td>
+                      <td>
+                        {{
+                          link.expiresAt
+                            ? formatDate(link.expiresAt) +
+                              (link.expired ? " (expired)" : "")
+                            : "never"
+                        }}
+                      </td>
+                      <td class="text-right">
+                        <v-btn
+                          size="x-small"
+                          variant="text"
+                          color="error"
+                          :loading="revokingLinkId === link._id"
+                          @click="revokeLink(link)"
+                        >
+                          Revoke
+                        </v-btn>
+                      </td>
+                    </tr>
+                  </tbody>
+                </v-table>
+                <v-row class="mt-2" align="center">
+                  <v-col cols="5">
+                    <v-text-field
+                      v-model="newLinkLabel"
+                      label="Label (optional)"
+                      density="compact"
+                      variant="outlined"
+                      hide-details
+                      :maxlength="120"
+                    />
+                  </v-col>
+                  <v-col cols="4">
+                    <v-select
+                      v-model="newLinkDays"
+                      :items="LINK_EXPIRY_OPTIONS"
+                      item-title="title"
+                      item-value="value"
+                      label="Expires"
+                      density="compact"
+                      variant="outlined"
+                      hide-details
+                    />
+                  </v-col>
+                  <v-col cols="3">
+                    <v-btn
+                      variant="flat"
+                      color="primary"
+                      size="small"
+                      :loading="creatingLink"
+                      :disabled="creatingLink || selectedConfigIds.length !== 1"
+                      @click="createLink"
+                    >
+                      <v-icon start size="small">mdi-link-plus</v-icon>
+                      Create
+                    </v-btn>
+                  </v-col>
+                </v-row>
+                <v-alert
+                  v-if="createdLinkUrl"
+                  type="success"
+                  variant="tonal"
+                  density="compact"
+                  class="mt-3"
+                >
+                  <div class="text-caption">
+                    Copy this link now; it is not shown again.
+                  </div>
+                  <div class="d-flex align-center">
+                    <code class="created-link flex-grow-1">{{
+                      createdLinkUrl
+                    }}</code>
+                    <v-btn
+                      size="x-small"
+                      variant="text"
+                      icon="mdi-content-copy"
+                      aria-label="Copy link"
+                      @click="copyCreatedLink"
+                    />
+                  </div>
+                  <div class="text-caption mt-1">
+                    Embed (no toolbar):
+                    <code class="created-link">{{ createdEmbedUrl }}</code>
+                  </div>
+                </v-alert>
+              </v-col>
+            </v-row>
+          </template>
         </v-container>
       </v-card-text>
       <v-card-actions>
@@ -255,6 +373,7 @@
 import { ref, computed, watch } from "vue";
 import { IGirderSelectAble } from "@/girder";
 import store from "@/store";
+import { shareLinkUrl } from "@/store/ShareLinkAPI";
 import { logError } from "@/utils/log";
 import { accessLevelLabel } from "@/utils/accessLevel";
 import {
@@ -262,6 +381,7 @@ import {
   IDatasetAccessUser,
   IDatasetAccessConfiguration,
   IDatasetView,
+  IShareLink,
 } from "@/store/model";
 import CopyLinkButton from "@/components/CopyLinkButton.vue";
 
@@ -293,6 +413,21 @@ const datasetId = computed((): string | null => {
 const loading = ref(false);
 const showError = ref(false);
 const errorString = ref("");
+
+// Share links (admin only)
+const LINK_EXPIRY_OPTIONS = [
+  { value: 7, title: "7 days" },
+  { value: 30, title: "30 days" },
+  { value: 90, title: "90 days" },
+  { value: 0, title: "Never" },
+];
+const shareLinks = ref<IShareLink[]>([]);
+const newLinkLabel = ref("");
+const newLinkDays = ref(30);
+const creatingLink = ref(false);
+const revokingLinkId = ref<string | null>(null);
+const createdLinkUrl = ref<string | null>(null);
+const createdEmbedUrl = ref<string | null>(null);
 
 // Access list data
 const isPublic = ref(false);
@@ -336,6 +471,10 @@ watch(dialog, (val) => {
 });
 
 function resetState() {
+  shareLinks.value = [];
+  createdLinkUrl.value = null;
+  createdEmbedUrl.value = null;
+  newLinkLabel.value = "";
   loading.value = false;
   showError.value = false;
   errorString.value = "";
@@ -350,6 +489,7 @@ function resetState() {
 }
 
 async function fetchAccessInfo(datasetId: string) {
+  fetchShareLinks(datasetId);
   loading.value = true;
   showError.value = false;
   try {
@@ -492,6 +632,80 @@ async function removeUser() {
   }
 }
 
+function formatDate(value: string): string {
+  return new Date(value).toLocaleDateString();
+}
+
+async function fetchShareLinks(id: string) {
+  try {
+    shareLinks.value = await store.shareLinkAPI.list(id);
+  } catch (error) {
+    logError("Failed to list share links", error);
+  }
+}
+
+function configurationName(configurationId: string): string {
+  return (
+    configurations.value.find((c) => c.id === configurationId)?.name ??
+    configurationId
+  );
+}
+
+async function createLink() {
+  const selectedViews = getSelectedViews();
+  if (selectedViews.length !== 1) {
+    errorString.value = "Select exactly one collection for the link";
+    showError.value = true;
+    return;
+  }
+  creatingLink.value = true;
+  showError.value = false;
+  try {
+    const link = await store.shareLinkAPI.create(
+      selectedViews[0].id,
+      newLinkDays.value,
+      newLinkLabel.value.trim(),
+    );
+    createdLinkUrl.value = shareLinkUrl(link.token);
+    createdEmbedUrl.value = shareLinkUrl(link.token, true);
+    newLinkLabel.value = "";
+    if (datasetId.value) {
+      await fetchShareLinks(datasetId.value);
+    }
+  } catch (error) {
+    logError("Failed to create a share link", error);
+    errorString.value = "Failed to create the share link";
+    showError.value = true;
+  } finally {
+    creatingLink.value = false;
+  }
+}
+
+async function revokeLink(link: IShareLink) {
+  revokingLinkId.value = link._id;
+  showError.value = false;
+  try {
+    await store.shareLinkAPI.revoke(link._id);
+    shareLinks.value = shareLinks.value.filter((l) => l._id !== link._id);
+    if (createdLinkUrl.value) {
+      createdLinkUrl.value = null;
+      createdEmbedUrl.value = null;
+    }
+  } catch (error) {
+    logError("Failed to revoke a share link", error);
+    errorString.value = "Failed to revoke the share link";
+    showError.value = true;
+  } finally {
+    revokingLinkId.value = null;
+  }
+}
+
+async function copyCreatedLink() {
+  if (createdLinkUrl.value) {
+    await navigator.clipboard.writeText(createdLinkUrl.value);
+  }
+}
+
 async function addUser() {
   if (!newUserEmail.value) return;
 
@@ -538,6 +752,12 @@ async function addUser() {
 defineExpose({
   dialog,
   datasetId,
+  shareLinks,
+  createLink,
+  revokeLink,
+  createdLinkUrl,
+  newLinkDays,
+  newLinkLabel,
   loading,
   showError,
   errorString,
@@ -566,3 +786,10 @@ defineExpose({
   addUser,
 });
 </script>
+
+<style lang="scss" scoped>
+.created-link {
+  word-break: break-all;
+  font-size: 0.75rem;
+}
+</style>
