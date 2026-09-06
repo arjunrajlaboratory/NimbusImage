@@ -339,6 +339,37 @@ for the H&E dataset).
 
 ## Regression checklist
 
+- Moving a registered source item out of its dataset refuses virtual values even
+  with a warm store cache; moving it back restores access —
+  `test_provider_access.py::testMovedSourceRefusesVirtualReads` (list, summary,
+  filter and batch consumers). The provider rechecks the file's current parent
+  item affiliation before opening or reusing the table.
+- Recompute, neighborhood, differential-expression and materialize dialogs share
+  `useJobPolling`: close, unmount, dataset change and a new run invalidate both
+  timers and in-flight responses. This stops observation, not the server job —
+  `SpatialJobLifecycle.test.ts` (`cancels scheduled polls on unmount`,
+  `ignores a submit response received after unmount`,
+  `ignores an old poll after close and a newer run`,
+  `ignores an in-flight poll after the dataset changes`).
+- One registry document survives concurrent first registrations, and later edits
+  cannot overwrite sibling data — `test_registry_atomic.py::testConcurrentFirstRegistrationsShareIdentity`,
+  `testConcurrentSiblingUpdateSurvives`.
+- Removing a registry half preserves a concurrently written neighborhood summary
+  and returns the removed file for cache invalidation —
+  `testUnregisterRetainsConcurrentSummaryAndReturnsRemovedFile`.
+- Startup merges legacy registry halves and fails if uniqueness cannot be installed —
+  `testStartupMergesLegacyHalvesAndEnforcesUniqueIndex`, `testStartupPropagatesUniqueIndexFailure`.
+- Duplicate-value migration adopts the live annotation's dataset (or preserves
+  orphan metadata) and supports destination hydration without recomputation —
+  `test_property_value_atomic.py::testStartupCoalescesCrossDatasetDuplicates`.
+- Transcript gene choices and pending results are invalidated on visible and hidden
+  dataset switches — `TranscriptsPanel.test.ts` (`clears populated gene choices and searches the new dataset`,
+  `invalidates pending results on a hidden dataset switch`).
+- Expression gene choices discard queued old queries, feature types and late
+  responses when datasets change or clear — `SpatialFeaturePicker.test.ts`
+  (`cancels queued searches and clears query and feature types on dataset change`,
+  `discards pending results when the dataset is cleared`).
+
 - Preserve one value document per annotation across dataset moves and both writers —
   `test_property_value_atomic.py::testMoveThenComputeKeepsOneValueDocument`;
   migrate duplicates across datasets — `testStartupCoalescesCrossDatasetDuplicates`.

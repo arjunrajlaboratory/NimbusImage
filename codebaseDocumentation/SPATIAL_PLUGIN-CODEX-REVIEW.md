@@ -1,5 +1,124 @@
 # PR #1347 — Codex review fixes
 
+## Final local review (2026-09-06)
+
+| Finding | Status |
+|---|---|
+| P1 Virtual values bypass file access after a source item moves | fixed — provider rechecks current parent-item affiliation before every table/cache read |
+| P2 Abandoned share-route bootstrap still commits identity | fixed — route cancellation reaches the store's identity commit guard |
+| P2 Old job polls overwrite a reopened dialog's new run | fixed — shared lifecycle guard invalidates submissions, polls and timers in all four sibling dialogs |
+
+Anonymous jobs remain deferred at the user's request. Commit and push are explicitly authorized for this round.
+
+### Final-round pattern sweep and verification
+
+- Warm-cache provider reads now refuse a source moved out of the authorized
+  dataset. Four parameterized regressions failed with 200 instead of 403 before
+  the fix; all cover restoration when the item moves back.
+- Both the real share-login action and the route have cancellation regressions;
+  both failed before the fix. Token replacement uses the same watcher cleanup.
+- Sixteen real-component lifecycle cases cover all four job dialogs. Thirteen
+  failed before the fix; the existing differential-expression implementation
+  already handled three. The shared guard also protects dependent property/info
+  refreshes and clears stale result state on dataset changes.
+- Focused share tests: 12 passed. Existing job-dialog suites plus lifecycle
+  regressions: 34 passed.
+- Full final frontend: **4,062 tests passed** across 235 files, no unhandled
+  errors. Type checking, zero-warning lint and production build pass (existing
+  bundle-size warnings). A parameterized-test typing issue was corrected, then
+  the lifecycle suite was rerun: all 16 passed.
+- Full final Spatial backend: **249 tests passed**, six existing zip/UMAP warnings.
+  Annotation backend source is unchanged from the preceding **609-test** full
+  pass. All changed Python files pass flake8; diff and skill parity checks pass.
+- Fresh live frontend: the synthetic dataset loads, recompute opens/closes/reopens
+  without stale busy state, and an invalid share link shows the expected error
+  without losing access to the private viewer. Exact delayed-response races are
+  covered by the deterministic action/component tests, not this smoke check.
+- Rebuilt and recreated Girder. A live virtual filter on a disposable copied
+  table returned 200 before moving the source item, 403 after moving it out of
+  the dataset with the cache warm, and 200 after restoring it. Removed the
+  disposable folder, copied item and registry; original data and ACLs unchanged.
+  The private viewer also loaded successfully after the backend restart.
+
+## Follow-up review of `ffc6383f` (5119300729)
+
+| Finding | Status |
+|---|---|
+| P1 Anonymous differential-expression jobs | deferred — user explicitly requested leaving anonymous jobs unchanged (2026-09-06) |
+| P2 Failed share bootstrap commits attempted identity | fixed — isolated validation before committing login state; obsolete attempts cannot win |
+| P2 Duplicate-value migration retains obsolete dataset | fixed — indexed lookup resolves live annotation ownership during migration; orphan metadata retained |
+| P2 Transcript gene results survive dataset switches | fixed — invalidate choices, query, loading and pending work on identity changes, including hidden panels/unmount |
+| P2 Spatial registry permits duplicate/lost registrations | fixed — required unique index, legacy merge and revision-checked updates/deletes across all writers |
+
+### Follow-up pattern and blast-radius checks
+
+- **Session identity:** validated on a separate client without persistence handlers.
+  The active credentials, Vuex user and dependent state are unchanged on failure.
+  Tested signed-in/anonymous origins and overlapping attempts. Login is committed
+  only after both user and share-link lookups succeed.
+- **Migration ownership:** values still merge with older-leaf precedence, but the
+  survivor now uses the annotation's live dataset. An indexed aggregation lookup
+  avoids one database call per annotation; orphaned values retain their metadata.
+  Destination-scoped hydration is tested without an additional computation.
+- **Search identity:** the expression picker had the same pending-response shape.
+  It now also invalidates requests when a dataset becomes null, cancels a queued
+  old query, clears feature-type labels, and invalidates on unmount. Both pickers
+  invalidate at query scheduling time rather than after the debounce delay.
+- **Registry identity:** audited every writer, including activation, forgetting a
+  version, neighborhood results and deleting either half. Revision checks protect
+  updates and deletes; concurrent first inserts retry against the unique key.
+  Legacy duplicates merge whole table/transcript bundles (latest wins), retaining
+  alternative tables as versions. Removing the last store no longer discards an
+  independently written neighborhood summary; removals return the removed file
+  for cache invalidation. Index installation errors propagate rather than hiding
+  a broken invariant behind Girder's best-effort helper.
+- **Harnesses:** reactive dataset mocks and automatic component unmounting make
+  stale-request tests meaningful. The full frontend run exposed older UserMenu
+  tests leaking VImg timers; those mounts are now cleaned up. Registry constructor
+  error tests patch the collection class, since initialization replaces its handle.
+  Full-suite concurrency also exposed a checklist scan entering live Mongo data
+  and file-manager mounts leaving delayed requests behind. The scan skips `db`
+  before stat calls, and those components now unmount after each test.
+
+### Follow-up verification
+
+- Every reported P2 and the sibling expression picker had failing regressions
+  before its fix. Focused auth/picker/property/registry suites pass.
+- Final frontend: **4,044 tests passed** across 234 files, no unhandled errors;
+  `pnpm tsc`, `pnpm lint:ci`, and `pnpm build` pass (existing size warnings).
+- Final Spatial backend: **245 tests passed** via tox, with six existing
+  zip/UMAP warnings. The earlier full run collected the old constructor-test
+  mock before its correction; the clean full rerun includes that correction.
+- Final Annotation backend: **609 tests passed** via tox, with 17 warnings.
+  This full run includes the final ownership-migration code and regressions.
+- Changed Python files pass flake8; skill mirrors are synchronized and parity
+  checked. `git diff --check` passes. These fixes are included with the final round.
+- Rebuilt and recreated Girder; confirmed the running image contains revision
+  checks and the live-dataset migration lookup.
+- Live browser: switched from the original synthetic fixture to a disposable
+  second fixture with distinct `ROUND2_` gene names. The mounted panel showed only
+  the new gene choices; selecting `ROUND2_CD3E` rendered two molecules. Returned
+  to the original fixture (with the panel hidden), and after the backend restart
+  a fresh load again offered only its original three genes.
+- Live invalid-link check displayed the expected error while the profile remained
+  `arjunraj`; returning to the normal private viewer and reloading retained login.
+  The more specific user-lookup-success/link-lookup-failure case is covered by the
+  real Vuex action regressions, not by a credential-bearing browser URL.
+- Live expression picker: `CD3` narrows to `CD3E`, correctly labeled as a gene;
+  closed without adding a column or starting a computation.
+- Live concurrent first-time registration on a separate disposable child retained
+  both table and transcripts in exactly one record; the unique index was verified
+  in Mongo. Unregistering the table retained transcripts.
+- Both disposable datasets and their copied/uploaded items were removed. The
+  first fixture's orphaned view/registry records were also explicitly removed.
+  No original scientific dataset, annotation, property or access policy changed.
+
+The earlier temporary share-link live check was subsequently approved and passed:
+the synthetic fixture's bearer could read, named access lists hid the link principal,
+and revocation invalidated the bearer. No test link remains active.
+
+## Previous round
+
 Review of `b25725ba`, review ID `5118897415`.
 
 | # | Priority | Location | Finding / generalized pattern | Status |

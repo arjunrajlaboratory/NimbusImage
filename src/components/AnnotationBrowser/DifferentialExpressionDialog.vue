@@ -127,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import Papa from "papaparse";
 import store from "@/store";
 import TagPicker from "@/components/TagPicker.vue";
@@ -140,6 +140,7 @@ import { jobStates } from "@/store/jobConstants";
 import { downloadToClient } from "@/utils/download";
 import { extractErrorMessage } from "@/utils/errors";
 import { logError } from "@/utils/log";
+import { useJobPolling } from "@/utils/useJobPolling";
 
 const MAX_FEATURES = 500;
 const JOB_POLL_MS = 2000;
@@ -185,47 +186,48 @@ function filtersB(): IAnnotationListFilters | null {
   return { tags: { values: [...groupBTags.value], exclusive: false } };
 }
 
-let pollTimer: ReturnType<typeof setTimeout> | null = null;
-let requestSequence = 0;
-
-function stopPolling() {
-  if (pollTimer !== null) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-}
+const polling = useJobPolling(
+  dialog,
+  () => store.dataset?.id,
+  () => {
+    running.value = false;
+    result.value = null;
+    error.value = "";
+  },
+);
 
 function pollJob(jobId: string, sequence: number) {
-  pollTimer = setTimeout(async () => {
-    pollTimer = null;
-    if (sequence !== requestSequence || !dialog.value) {
-      return;
-    }
-    try {
-      const job = await store.spatialAPI.fetchJob(jobId);
-      if (sequence !== requestSequence) {
-        return;
+  polling.schedule(
+    sequence,
+    async () => {
+      try {
+        const job = await store.spatialAPI.fetchJob(jobId);
+        if (!polling.isCurrent(sequence)) {
+          return;
+        }
+        if (job.status === jobStates.success && job.spatialResult) {
+          // The job document is shared with the recompute job; this dialog
+          // only ever polls jobs it scheduled, so the table is the DE one.
+          result.value = job.spatialResult as ISpatialDifferentialResult;
+          running.value = false;
+          return;
+        }
+        if (
+          job.status === jobStates.error ||
+          job.status === jobStates.cancelled
+        ) {
+          error.value = "The comparison job failed; see the job log.";
+          running.value = false;
+          return;
+        }
+      } catch (err) {
+        if (!polling.isCurrent(sequence)) return;
+        logError("Failed to poll the differential expression job:", err);
       }
-      if (job.status === jobStates.success && job.spatialResult) {
-        // The job document is shared with the recompute job; this dialog
-        // only ever polls jobs it scheduled, so the table is the DE one.
-        result.value = job.spatialResult as ISpatialDifferentialResult;
-        running.value = false;
-        return;
-      }
-      if (
-        job.status === jobStates.error ||
-        job.status === jobStates.cancelled
-      ) {
-        error.value = "The comparison job failed; see the job log.";
-        running.value = false;
-        return;
-      }
-    } catch (err) {
-      logError("Failed to poll the differential expression job:", err);
-    }
-    pollJob(jobId, sequence);
-  }, JOB_POLL_MS);
+      pollJob(jobId, sequence);
+    },
+    JOB_POLL_MS,
+  );
 }
 
 async function run() {
@@ -233,8 +235,7 @@ async function run() {
   if (!datasetId || !canRun.value) {
     return;
   }
-  const sequence = ++requestSequence;
-  stopPolling();
+  const sequence = polling.begin();
   running.value = true;
   error.value = "";
   result.value = null;
@@ -247,11 +248,9 @@ async function run() {
       Math.min(MAX_FEATURES, Math.max(1, Math.round(maxFeatures.value))),
       method.value,
     );
-    if (sequence === requestSequence) {
-      pollJob(jobId, sequence);
-    }
+    pollJob(jobId, sequence);
   } catch (err) {
-    if (sequence === requestSequence) {
+    if (polling.isCurrent(sequence)) {
       error.value = extractErrorMessage(err);
       running.value = false;
     }
@@ -304,16 +303,6 @@ function download() {
     download: `${store.dataset?.name ?? "dataset"}-differential-expression.csv`,
   });
 }
-
-watch(dialog, (open) => {
-  if (!open) {
-    stopPolling();
-    requestSequence++;
-    running.value = false;
-  }
-});
-
-onBeforeUnmount(stopPolling);
 
 defineExpose({
   dialog,

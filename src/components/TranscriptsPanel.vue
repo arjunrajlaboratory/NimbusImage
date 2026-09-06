@@ -284,34 +284,44 @@ const cellText = computed(() =>
 );
 
 let searchToken = 0;
-const runSearch = debounce(async (query: string) => {
-  const datasetId = store.dataset?.id;
-  if (!datasetId) {
-    return;
-  }
+const runSearch = debounce(
+  async (datasetId: string, query: string, token: number) => {
+    searching.value = true;
+    try {
+      const found = await store.spatialAPI.searchTranscriptGenes(
+        datasetId,
+        query,
+        25,
+      );
+      if (token === searchToken) {
+        results.value = found;
+      }
+    } catch (error) {
+      if (token === searchToken) {
+        logError("Transcript gene search failed:", error);
+      }
+    } finally {
+      if (token === searchToken) {
+        searching.value = false;
+      }
+    }
+  },
+  250,
+);
+
+function scheduleSearch(query: string) {
+  // Invalidate at scheduling time, not after the debounce delay: an older
+  // response must not land while the new query is waiting to start.
   const token = ++searchToken;
-  searching.value = true;
-  try {
-    const found = await store.spatialAPI.searchTranscriptGenes(
-      datasetId,
-      query,
-      25,
-    );
-    if (token === searchToken) {
-      results.value = found;
-    }
-  } catch (error) {
-    logError("Transcript gene search failed:", error);
-  } finally {
-    if (token === searchToken) {
-      searching.value = false;
-    }
+  runSearch.cancel();
+  if (store.dataset?.id) {
+    runSearch(store.dataset.id, query, token);
   }
-}, 250);
+}
 
 function onSearch(query: string) {
   search.value = query ?? "";
-  runSearch(search.value);
+  scheduleSearch(search.value);
 }
 
 function onSymbols(symbols: string[]) {
@@ -339,13 +349,25 @@ async function goToCell() {
 // The palette content stays mounted while hidden; look the registration up
 // only when the palette is actually shown for the current dataset.
 watch(
+  () => store.dataset?.id,
+  () => {
+    ++searchToken;
+    runSearch.cancel();
+    results.value = [];
+    search.value = "";
+    searching.value = false;
+  },
+  { flush: "sync" },
+);
+
+watch(
   () => [props.visible, store.dataset?.id],
   () => {
     if (props.visible) {
       transcriptsStore.ensureSchema();
       spatialStore.ensureInfo();
       if (results.value.length === 0) {
-        runSearch("");
+        scheduleSearch("");
       }
     }
   },
@@ -353,6 +375,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  ++searchToken;
   runSearch.cancel();
 });
 

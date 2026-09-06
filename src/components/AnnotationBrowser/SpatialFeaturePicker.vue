@@ -77,12 +77,11 @@ function featureTypeOf(symbol: string): string {
 
 let searchSequence = 0;
 
-async function runSearch(query: string) {
+async function runSearch(query: string, sequence = ++searchSequence) {
   const datasetId = store.dataset?.id;
   if (!datasetId) {
     return;
   }
-  const sequence = ++searchSequence;
   searching.value = true;
   try {
     const found = await store.spatialAPI.searchFeatures(datasetId, query);
@@ -108,7 +107,7 @@ const debouncedSearch = debounce(runSearch, 200);
 
 function onSearch(value: string) {
   search.value = value ?? "";
-  debouncedSearch(search.value);
+  debouncedSearch(search.value, ++searchSequence);
 }
 
 function onUpdate(value: string[]) {
@@ -120,15 +119,21 @@ function onUpdate(value: string[]) {
 watch(
   () => store.dataset?.id,
   (datasetId) => {
+    ++searchSequence;
+    debouncedSearch.cancel();
     results.value = [];
+    featureTypes.value = {};
+    search.value = "";
+    searching.value = false;
     if (datasetId) {
       runSearch("");
     }
   },
-  { immediate: true },
+  { immediate: true, flush: "sync" },
 );
 
 onBeforeUnmount(() => {
+  ++searchSequence;
   debouncedSearch.cancel();
 });
 

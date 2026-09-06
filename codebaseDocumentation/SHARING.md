@@ -214,10 +214,13 @@ Shared-view image, annotation-raster, and transcript-density tile URLs explicitl
 in-memory link bearer as a `token` query parameter, so Girder authorizes those image requests
 as the link user instead of the ambient login.
 
-**Client.** `src/store/ShareLinkAPI.ts`; `store.openShareLink(token)` sets the token on
-the REST client **in memory only** (the client persists a token solely on its own login
-event, so a signed-in user's stored login survives a visit), fetches the link user and asks
-`/me`; the tile URL builders add that bearer only when the fetched user has the `shareLink`
+**Client.** `src/store/ShareLinkAPI.ts`; `store.openShareLink({token, signal})` validates the token
+on an isolated REST client **in memory only**, fetching the link user and asking `/me`
+before committing either credentials or Vuex identity. Failed or superseded attempts
+leave the current session and user-dependent state untouched. The route aborts its
+signal on token changes or unmount; the store checks cancellation before committing
+identity, so an abandoned bootstrap cannot log in after navigation. A signed-in user's
+persisted login survives a visit. The tile URL builders add that bearer only when the fetched user has the `shareLink`
 marker. `src/views/SharedView.vue` renders the viewer on the original token-bearing
 route, so refresh revalidates the bearer without changing the owner's stored login.
 The normal login bootstrap is skipped on shared routes to avoid racing the bearer.
@@ -233,6 +236,14 @@ expired links refused), `ShareLinkAPI.test.ts`, `SharedView.test.ts`,
 `ShareDataset.test.ts`.
 
 ### Share-link regression checklist
+
+- Leaving the shared route cancels pending authentication before identity commits —
+  `SharedView.test.ts` (`cancels pending authentication when leaving the shared route`),
+  `index.test.ts` (`does not commit a share bootstrap after its route is cancelled`).
+- Failed link validation cannot commit attempted identity or reset user state;
+  only the latest successful bootstrap commits, without persisting its bearer —
+  `index.test.ts` (`does not commit an attempted identity when link validation fails`,
+  `commits only the latest validated link and does not persist its bearer`).
 
 - Hide link principals from dataset/configuration access lists while their bearer stays
   readable — `test_share_link.py::testLinkUsersStayOutOfAccessLists`.

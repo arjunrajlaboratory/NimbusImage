@@ -346,6 +346,23 @@ Report per-finding outcomes (fixed / stale / by-design / needs-decision) keyed t
 
 ### Persistence and cache replacement traps
 
+- Deduplication must restore mutable routing metadata from its authoritative
+  owner, not from whichever duplicate survives. Test an old source-dataset
+  document against an annotation already in the destination, including
+  destination-scoped hydration and orphan handling.
+- A unique index prevents duplicate identities, not lost updates. When optional
+  halves share one document, all writers (version changes and removal included)
+  need atomic updates or revision-checked retries. Guard deletions too, and
+  preserve independent summaries when the last data-store half is removed.
+- Validate capability sessions on an isolated client before committing token,
+  user identity, or user-dependent state. Test user lookup success followed by
+  capability lookup failure, anonymous and signed-in origins, and late replies.
+- Invalidate debounced searches when their dataset or query changes, not only
+  when the delayed request begins. Hidden mounted panels and unmounts must also
+  invalidate in-flight results. Make dataset mocks reactive and unmount them.
+- Constructor tests must patch the collection class when initialization obtains
+  a new handle; patching one old instance silently misses the code under test.
+
 - A uniqueness key must match reader and writer identity, including resource moves.
   Adding a mutable partition (datasetId) to an immutable identity (annotationId)
   silently permits duplicates that annotation-only joins multiply. Test moves
@@ -426,6 +443,23 @@ Two more from the same round:
 Mechanically: after writing the test, restore the pre-fix behaviour (`git
 stash`, or a scripted edit you undo from a backup) and **watch it fail**.
 "It would obviously fail" has been wrong here more than once.
+
+### Cancellation and inherited access must reach the effect boundary
+
+- A component's sequence guard cannot undo a store action that already committed
+  identity. Pass cancellation into the action and check it immediately before
+  committing, including route token changes and unmount. Test the real action
+  with a delayed successful response after cancellation, not only a mocked view.
+- Clearing a polling timer does not invalidate a request already in flight.
+  Treat submission and every subsequent poll as one generation, invalidated by
+  close, unmount, dataset changes and a new run. Check after every await before
+  publishing state or starting dependent work. Sweep sibling job dialogs and
+  share the lifecycle primitive; cancellation of observation is not job deletion.
+- Authorization inherited through a mutable parent is not a durable registration
+  fact. A registered file's item can move to a private folder after the dataset
+  was authorized. Revalidate current affiliation before indirect reads, including
+  cache hits, and test every consumer (lists, filters, summaries and batches).
+  Warm the cache before moving the item so the test covers the bypass path.
 
 ### Verifying a fix live: pick a fixture that actually exercises it
 

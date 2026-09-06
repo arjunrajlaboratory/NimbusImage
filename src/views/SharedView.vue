@@ -40,7 +40,9 @@ onBeforeUnmount(() => sequence++);
 
 watch(
   () => route.params.token,
-  async () => {
+  async (_token, _previous, onCleanup) => {
+    const controller = new AbortController();
+    onCleanup(() => controller.abort());
     const request = ++sequence;
     ready.value = false;
     error.value = null;
@@ -50,7 +52,10 @@ watch(
       return;
     }
     try {
-      const link = await store.openShareLink(token);
+      const link = await store.openShareLink({
+        token,
+        signal: controller.signal,
+      });
       if (request !== sequence) return;
       await store.setDatasetViewId({
         id: link.datasetViewId,
@@ -58,6 +63,7 @@ watch(
       });
       if (request === sequence) ready.value = true;
     } catch (caught) {
+      if (controller.signal.aborted) return;
       logError("Failed to open a share link:", caught);
       if (request === sequence) error.value = extractErrorMessage(caught);
     }

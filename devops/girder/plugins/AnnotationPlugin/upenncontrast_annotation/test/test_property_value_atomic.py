@@ -51,9 +51,17 @@ class TestAtomicPropertyValues:
         assert model.findOne({'_id': original['_id']}) == original
         assert model.findOne({'annotationId': own['_id']}) is None
 
-    def testStartupCoalescesCrossDatasetDuplicates(self, admin):
+    @pytest.mark.parametrize('live', [False, True])
+    def testStartupCoalescesCrossDatasetDuplicates(self, admin, live):
         model = AnnotationPropertyValues()
         annotationId = ObjectId()
+        destination = ObjectId()
+        if live:
+            folder = utilities.createFolder(
+                admin, 'destination', upenn_utilities.datasetMetadata)
+            destination = folder['_id']
+            annotationId = Annotation().create(
+                upenn_utilities.getSampleAnnotation(destination))['_id']
         model.collection.drop_index('annotationId_1')
         model.collection.create_index('annotationId')  # pre-upgrade index
         first = model.save({
@@ -61,13 +69,19 @@ class TestAtomicPropertyValues:
             'values': {'old': 1, 'nested': {'a': 1}},
         }, validate=False)
         model.save({
-            'annotationId': annotationId, 'datasetId': ObjectId(),
+            'annotationId': annotationId, 'datasetId': destination,
             'values': {'new': 2, 'nested': {'b': 2}},
         }, validate=False)
         model.__init__()
         documents = list(model.find({'annotationId': annotationId}))
         assert len(documents) == 1
         assert documents[0]['_id'] == first['_id']
+        assert documents[0]['datasetId'] == (
+            destination if live else first['datasetId'])
+        if live:
+            hydrated = list(model.findByAnnotationIds(
+                destination, [annotationId]))
+            assert hydrated[0]['values']['new'] == 2
         assert documents[0]['values'] == {
             'old': 1, 'new': 2, 'nested': {'a': 1, 'b': 2},
         }

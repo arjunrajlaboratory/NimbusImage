@@ -127,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import store from "@/store";
 import propertyStore, { SPATIAL_PROPERTY_ID } from "@/store/properties";
 import spatialStore from "@/store/spatial";
@@ -135,6 +135,7 @@ import jobsStore from "@/store/jobs";
 import SpatialFeaturePicker from "@/components/AnnotationBrowser/SpatialFeaturePicker.vue";
 import { extractErrorMessage } from "@/utils/errors";
 import { jobStates } from "@/store/jobConstants";
+import { useJobPolling } from "@/utils/useJobPolling";
 
 type TMode = "live" | "copy" | "score";
 
@@ -202,47 +203,58 @@ watch(mode, (next, previous) => {
   }
 });
 
-let pollTimer: ReturnType<typeof setTimeout> | null = null;
+const polling = useJobPolling(
+  dialog,
+  () => store.dataset?.id,
+  () => {
+    running.value = false;
+    done.value = "";
+    error.value = "";
+  },
+);
 
-function stopPolling() {
-  if (pollTimer !== null) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-}
-
-async function afterWrite(written: number, what: string) {
+async function afterWrite(written: number, what: string, request: number) {
   // The new sub-values are ordinary property values: reload the property
   // list and value sample so they show up in the Measurements tab.
   await propertyStore.fetchProperties();
+  if (!polling.isCurrent(request)) return;
   await propertyStore.fetchPropertyPathsSample();
+  if (!polling.isCurrent(request)) return;
   done.value = `Wrote ${what} for ${written.toLocaleString()} cells into “${propertyName.value.trim()}”.`;
   running.value = false;
 }
 
-function pollJob(jobId: string, total: number, what: string) {
-  pollTimer = setTimeout(async () => {
-    pollTimer = null;
-    const status = await jobsStore.fetchJobStatus(jobId);
-    if (!dialog.value) {
-      return;
-    }
-    if (status === jobStates.success) {
-      await afterWrite(total, what);
-      return;
-    }
-    if (status === jobStates.error || status === jobStates.cancelled) {
-      error.value = "The server job failed; see the job log.";
-      running.value = false;
-      return;
-    }
-    pollJob(jobId, total, what);
-  }, JOB_POLL_MS);
+function pollJob(jobId: string, total: number, what: string, request: number) {
+  polling.schedule(
+    request,
+    async () => {
+      try {
+        const status = await jobsStore.fetchJobStatus(jobId);
+        if (!polling.isCurrent(request)) return;
+        if (status === jobStates.success) {
+          await afterWrite(total, what, request);
+          return;
+        }
+        if (status === jobStates.error || status === jobStates.cancelled) {
+          error.value = "The server job failed; see the job log.";
+          running.value = false;
+          return;
+        }
+        pollJob(jobId, total, what, request);
+      } catch (caught) {
+        if (!polling.isCurrent(request)) return;
+        error.value = extractErrorMessage(caught);
+        running.value = false;
+      }
+    },
+    JOB_POLL_MS,
+  );
 }
 
-async function addLiveColumns() {
+async function addLiveColumns(request: number) {
   const paths = symbols.value.map((symbol) => [SPATIAL_PROPERTY_ID, symbol]);
   await propertyStore.addVirtualPropertyPaths(paths);
+  if (!polling.isCurrent(request)) return;
   done.value = `Added ${genesLabel.value} as live columns. They are listed under “Spatial table” and offered wherever a measurement is.`;
   running.value = false;
 }
@@ -252,13 +264,14 @@ async function submit() {
   if (!datasetId || !canSubmit.value) {
     return;
   }
+  const request = polling.begin();
   running.value = true;
   error.value = "";
   done.value = "";
   runningMessage.value = "Writing values…";
   try {
     if (mode.value === "live") {
-      await addLiveColumns();
+      await addLiveColumns(request);
       return;
     }
     const what =
@@ -279,13 +292,15 @@ async function submit() {
             symbols.value,
             propertyName.value.trim(),
           );
+    if (!polling.isCurrent(request)) return;
     if (result.jobId) {
       runningMessage.value = "Writing values in a server job…";
-      pollJob(result.jobId, spatialStore.info?.nObs ?? 0, what);
+      pollJob(result.jobId, spatialStore.info?.nObs ?? 0, what, request);
       return;
     }
-    await afterWrite(result.written, what);
+    await afterWrite(result.written, what, request);
   } catch (err) {
+    if (!polling.isCurrent(request)) return;
     error.value = extractErrorMessage(err);
     running.value = false;
   }
@@ -300,12 +315,9 @@ watch(dialog, (open) => {
     done.value = "";
     spatialStore.ensureInfo();
   } else {
-    stopPolling();
     running.value = false;
   }
 });
-
-onBeforeUnmount(stopPolling);
 
 defineExpose({
   dialog,

@@ -51,7 +51,10 @@ describe("SharedView", () => {
     mocks.openShareLink.mockResolvedValue({ datasetViewId: "v1" });
     const wrapper = shallowMount(SharedView);
     await flush();
-    expect(mocks.openShareLink).toHaveBeenCalledWith("tok");
+    expect(mocks.openShareLink).toHaveBeenCalledWith({
+      token: "tok",
+      signal: expect.any(AbortSignal),
+    });
     expect(mocks.setDatasetViewId).toHaveBeenCalledWith({
       id: "v1",
       routeQuery: {},
@@ -89,5 +92,22 @@ describe("SharedView", () => {
     const empty = shallowMount(SharedView);
     await flush();
     expect((empty.vm as any).error).toContain("no token");
+  });
+
+  it("cancels pending authentication when leaving the shared route", async () => {
+    let finish!: (link: any) => void;
+    mocks.openShareLink.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const wrapper = shallowMount(SharedView);
+    await flush();
+    const request = mocks.openShareLink.mock.calls[0][0];
+    wrapper.unmount();
+    finish({ datasetViewId: "v1" });
+    await flush();
+    expect(request.signal?.aborted).toBe(true);
+    expect(mocks.setDatasetViewId).not.toHaveBeenCalled();
   });
 });

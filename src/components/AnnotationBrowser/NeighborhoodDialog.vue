@@ -124,6 +124,7 @@ import { convertLength } from "@/utils/conversion";
 import { downloadToClient } from "@/utils/download";
 import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
+import { useJobPolling } from "@/utils/useJobPolling";
 
 /**
  * Neighborhood composition and enrichment (SPATIAL_PLUGIN.md "Phase 6").
@@ -141,7 +142,16 @@ const running = ref(false);
 const loaded = ref(false);
 const error = ref<string | null>(null);
 const result = ref<ISpatialNeighborhood | null>(null);
-let pollTimer: ReturnType<typeof setTimeout> | null = null;
+const polling = useJobPolling(
+  dialog,
+  () => store.dataset?.id,
+  () => {
+    running.value = false;
+    loaded.value = false;
+    result.value = null;
+    error.value = null;
+  },
+);
 
 /** Image pixels per micron from the configuration's scale, or null when
  * the dataset has no physical scale. */
@@ -200,13 +210,16 @@ async function load() {
   if (!datasetId) {
     return;
   }
+  const request = polling.begin();
   try {
-    result.value = await store.spatialAPI.fetchNeighborhood(datasetId);
+    const next = await store.spatialAPI.fetchNeighborhood(datasetId);
+    if (polling.isCurrent(request)) result.value = next;
   } catch (caught) {
+    if (!polling.isCurrent(request)) return;
     logError("Failed to read the neighborhood enrichment:", caught);
     error.value = extractErrorMessage(caught);
   } finally {
-    loaded.value = true;
+    if (polling.isCurrent(request)) loaded.value = true;
   }
 }
 
@@ -215,6 +228,7 @@ async function run() {
   if (!datasetId || radiusPixels.value === null || !canRun.value) {
     return;
   }
+  const request = polling.begin();
   running.value = true;
   error.value = null;
   try {
@@ -224,53 +238,49 @@ async function run() {
       excludeTags(),
       "Neighborhood",
     );
-    poll(jobId);
+    poll(jobId, request);
   } catch (caught) {
+    if (!polling.isCurrent(request)) return;
     logError("Neighborhood request failed:", caught);
     error.value = extractErrorMessage(caught);
     running.value = false;
   }
 }
 
-function stopPolling() {
-  if (pollTimer !== null) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-}
-
-function poll(jobId: string) {
-  stopPolling();
-  pollTimer = setTimeout(async () => {
-    pollTimer = null;
-    if (!dialog.value) {
-      return;
-    }
-    try {
-      const job = await store.spatialAPI.fetchJob(jobId);
-      if (job.status === jobStates.success) {
-        result.value = (job.spatialResult as ISpatialNeighborhood) ?? null;
+function poll(jobId: string, request: number) {
+  polling.schedule(
+    request,
+    async () => {
+      try {
+        const job = await store.spatialAPI.fetchJob(jobId);
+        if (!polling.isCurrent(request)) return;
+        if (job.status === jobStates.success) {
+          result.value = (job.spatialResult as ISpatialNeighborhood) ?? null;
+          running.value = false;
+          // The fractions are a new measurement: make it show up.
+          await propertyStore.fetchProperties();
+          if (!polling.isCurrent(request)) return;
+          await propertyStore.fetchPropertyPathsSample();
+          return;
+        }
+        if (
+          job.status === jobStates.error ||
+          job.status === jobStates.cancelled
+        ) {
+          error.value = "The neighborhood job failed; see the job log.";
+          running.value = false;
+          return;
+        }
+        poll(jobId, request);
+      } catch (caught) {
+        if (!polling.isCurrent(request)) return;
+        logError("Neighborhood job poll failed:", caught);
+        error.value = extractErrorMessage(caught);
         running.value = false;
-        // The fractions are a new measurement: make it show up.
-        await propertyStore.fetchProperties();
-        await propertyStore.fetchPropertyPathsSample();
-        return;
       }
-      if (
-        job.status === jobStates.error ||
-        job.status === jobStates.cancelled
-      ) {
-        error.value = "The neighborhood job failed; see the job log.";
-        running.value = false;
-        return;
-      }
-      poll(jobId);
-    } catch (caught) {
-      logError("Neighborhood job poll failed:", caught);
-      error.value = extractErrorMessage(caught);
-      running.value = false;
-    }
-  }, POLL_MS);
+    },
+    POLL_MS,
+  );
 }
 
 function buildCsv(summary: ISpatialNeighborhood): string {
@@ -301,7 +311,6 @@ watch(dialog, (open) => {
     error.value = null;
     load();
   } else {
-    stopPolling();
     running.value = false;
   }
 });

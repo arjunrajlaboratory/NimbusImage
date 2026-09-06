@@ -218,6 +218,16 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
                 "count": {"$sum": 1},
             }},
             {"$match": {"count": {"$gt": 1}}},
+            # Identity is global, but datasetId follows the live annotation.
+            # Join in Mongo rather than issuing one model load per group.
+            {"$lookup": {
+                "from": "upenn_annotation", "localField": "_id",
+                "foreignField": "_id", "as": "annotation",
+            }},
+            {"$set": {"liveDatasetId": {
+                "$arrayElemAt": ["$annotation.datasetId", 0],
+            }}},
+            {"$unset": "annotation"},
         ]
         operations = []
         for group in self.collection.aggregate(pipeline, allowDiskUse=True):
@@ -225,10 +235,13 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
             merged = documents[0]["values"].copy()
             for document in documents[1:]:
                 self._mergeMissingValues(merged, document["values"])
+            fields = {"values": merged}
+            if group.get("liveDatasetId") is not None:
+                fields["datasetId"] = group["liveDatasetId"]
             operations.extend([
                 UpdateOne(
                     {"_id": documents[0]["_id"]},
-                    {"$set": {"values": merged}},
+                    {"$set": fields},
                 ),
                 DeleteMany({
                     "_id": {"$in": [

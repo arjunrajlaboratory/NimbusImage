@@ -105,6 +105,7 @@ import { ISpatialStaleness, TSpatialRecomputeScope } from "@/store/model";
 import { jobStates } from "@/store/jobConstants";
 import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
+import { useJobPolling } from "@/utils/useJobPolling";
 
 /**
  * Rebuild the expression table from the current cell polygons (plan §13).
@@ -126,7 +127,15 @@ const embeddings = ref(false);
 const running = ref(false);
 const error = ref<string | null>(null);
 const done = ref<string | null>(null);
-let pollTimer: ReturnType<typeof setTimeout> | null = null;
+const polling = useJobPolling(
+  dialog,
+  () => store.dataset?.id,
+  () => {
+    running.value = false;
+    done.value = null;
+    error.value = null;
+  },
+);
 
 // "Edited cells only" needs a table to carry rows from and something dirty.
 const canDirty = computed(
@@ -162,7 +171,6 @@ watch(canDirty, (value) => {
 
 watch(dialog, (open) => {
   if (!open) {
-    stopPolling();
     running.value = false;
   } else {
     error.value = null;
@@ -170,13 +178,6 @@ watch(dialog, (open) => {
     scope.value = canDirty.value ? "dirty" : "all";
   }
 });
-
-function stopPolling() {
-  if (pollTimer !== null) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-}
 
 function tags(): string[] | null {
   const list = tagsText.value
@@ -191,6 +192,7 @@ async function run() {
   if (!datasetId || !canSubmit.value) {
     return;
   }
+  const request = polling.begin();
   running.value = true;
   error.value = null;
   done.value = null;
@@ -202,50 +204,53 @@ async function run() {
       tags: tags(),
       recomputeEmbeddings: embeddings.value,
     });
-    poll(jobId);
+    poll(jobId, request);
   } catch (caught) {
+    if (!polling.isCurrent(request)) return;
     logError("Recompute request failed:", caught);
     error.value = extractErrorMessage(caught);
     running.value = false;
   }
 }
 
-function poll(jobId: string) {
-  stopPolling();
-  pollTimer = setTimeout(async () => {
-    pollTimer = null;
-    if (!dialog.value) {
-      return;
-    }
-    try {
-      const job = await store.spatialAPI.fetchJob(jobId);
-      if (job.status === jobStates.success) {
-        const result = job.spatialResult as
-          | { nObs: number; assigned: number; seconds: number }
-          | undefined;
-        done.value = result
-          ? `Wrote ${result.nObs.toLocaleString()} cells, ${result.assigned.toLocaleString()} molecules assigned, in ${result.seconds}s.`
-          : "Done.";
+function poll(jobId: string, request: number) {
+  polling.schedule(
+    request,
+    async () => {
+      try {
+        const job = await store.spatialAPI.fetchJob(jobId);
+        if (!polling.isCurrent(request)) return;
+        if (job.status === jobStates.success) {
+          const result = job.spatialResult as
+            | { nObs: number; assigned: number; seconds: number }
+            | undefined;
+          done.value = result
+            ? `Wrote ${result.nObs.toLocaleString()} cells, ${result.assigned.toLocaleString()} molecules assigned, in ${result.seconds}s.`
+            : "Done.";
+          running.value = false;
+          await spatialStore.refreshInfo();
+          if (!polling.isCurrent(request)) return;
+          emit("recomputed");
+          return;
+        }
+        if (
+          job.status === jobStates.error ||
+          job.status === jobStates.cancelled
+        ) {
+          error.value = "The recompute job failed; see the job log.";
+          running.value = false;
+          return;
+        }
+        poll(jobId, request);
+      } catch (caught) {
+        if (!polling.isCurrent(request)) return;
+        logError("Recompute job poll failed:", caught);
+        error.value = extractErrorMessage(caught);
         running.value = false;
-        await spatialStore.refreshInfo();
-        emit("recomputed");
-        return;
       }
-      if (
-        job.status === jobStates.error ||
-        job.status === jobStates.cancelled
-      ) {
-        error.value = "The recompute job failed; see the job log.";
-        running.value = false;
-        return;
-      }
-      poll(jobId);
-    } catch (caught) {
-      logError("Recompute job poll failed:", caught);
-      error.value = extractErrorMessage(caught);
-      running.value = false;
-    }
-  }, POLL_MS);
+    },
+    POLL_MS,
+  );
 }
 
 defineExpose({ run, dirtyHint, canDirty, canSubmit, tags });

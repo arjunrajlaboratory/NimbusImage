@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { nextTick } from "vue";
-import { shallowMount } from "@vue/test-utils";
+import { shallowMount, enableAutoUnmount } from "@vue/test-utils";
+
+enableAutoUnmount(afterEach);
 
 const mocks = vi.hoisted(() => ({
   searchTranscriptGenes: vi.fn(),
@@ -10,11 +12,11 @@ const mocks = vi.hoisted(() => ({
   setSymbols: vi.fn(),
 }));
 
-vi.mock("@/store", () => ({
-  default: {
+vi.mock("@/store", async () => ({
+  default: (await import("vue")).reactive({
     dataset: { id: "ds1" },
     spatialAPI: { searchTranscriptGenes: mocks.searchTranscriptGenes },
-  },
+  }),
 }));
 
 vi.mock("@/store/transcripts", async () => {
@@ -52,9 +54,11 @@ vi.mock("@/utils/errors", () => ({
 
 import TranscriptsPanel from "./TranscriptsPanel.vue";
 import transcriptsStore from "@/store/transcripts";
+import store from "@/store";
 
 describe("TranscriptsPanel", () => {
   beforeEach(() => {
+    (store as any).dataset = { id: "ds1" };
     vi.useFakeTimers();
     mocks.searchTranscriptGenes.mockReset().mockResolvedValue(["CD3E", "CD2"]);
     mocks.ensureSchema.mockClear();
@@ -72,6 +76,47 @@ describe("TranscriptsPanel", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("clears populated gene choices and searches the new dataset", async () => {
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: true },
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    expect((wrapper.vm as any).results).toEqual(["CD3E", "CD2"]);
+    (wrapper.vm as any).onSearch("old-query");
+    mocks.searchTranscriptGenes.mockResolvedValue(["NEW"]);
+    (store as any).dataset = { id: "ds2" };
+    await nextTick();
+    expect((wrapper.vm as any).results).toEqual([]);
+    expect((wrapper.vm as any).search).toBe("");
+    await vi.advanceTimersByTimeAsync(300);
+    expect(mocks.searchTranscriptGenes).toHaveBeenLastCalledWith("ds2", "", 25);
+    expect((wrapper.vm as any).results).toEqual(["NEW"]);
+  });
+
+  it("invalidates pending results on a hidden dataset switch", async () => {
+    let finish!: (genes: string[]) => void;
+    mocks.searchTranscriptGenes.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: true },
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    await wrapper.setProps({ visible: false });
+    (store as any).dataset = { id: "ds2" };
+    await nextTick();
+    finish(["OLD"]);
+    await nextTick();
+    expect((wrapper.vm as any).results).toEqual([]);
+    expect((wrapper.vm as any).searching).toBe(false);
+    mocks.searchTranscriptGenes.mockResolvedValue(["NEW"]);
+    await wrapper.setProps({ visible: true });
+    await vi.advanceTimersByTimeAsync(300);
+    expect((wrapper.vm as any).results).toEqual(["NEW"]);
   });
 
   it("looks the registration up only when shown", async () => {

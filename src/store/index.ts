@@ -182,17 +182,9 @@ function storeToken(apiRoot: string, token: string) {
   localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(value));
 }
 
-// While a share link's token is on the client (SHARING.md "Share links"),
-// the client's own bookkeeping must leave the stored login alone: a `user/me`
-// that comes back anonymous, or any 401, would otherwise wipe the token of a
-// user who is signed in on this browser — a visit to a dead link signed the
-// owner out of every other tab once.
-let sharedSession = false;
+let shareBootstrapSequence = 0;
 
 function clearStoredToken() {
-  if (sharedSession) {
-    return;
-  }
   localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
@@ -1494,31 +1486,39 @@ export class Main extends VuexModule {
    * browser keeps their stored login for the next reload.
    */
   @Action({ rawError: true })
-  async openShareLink(token: string): Promise<IShareLink> {
-    // Raised for the duration of the attempt (the handlers fire during
-    // fetchUser) and kept only once the link is confirmed live; a dead link
-    // must leave this tab behaving like any other.
-    const previousToken = this.girderRest.token;
-    sharedSession = true;
-    try {
-      this.girderRest.token = token;
-      const user = await this.girderRest.fetchUser();
-      if (!user) {
-        throw new Error("This share link is no longer valid.");
-      }
-      await this.loggedIn(this.girderRest);
-      return await this.shareLinkAPI.me();
-    } catch (error) {
-      // Put the tab back the way it was — the signed-in owner's session
-      // included — before leaving shared mode, so no request in between can
-      // read the tab as anonymous and drop the stored login.
-      this.girderRest.token = previousToken;
-      if (previousToken) {
-        await this.girderRest.fetchUser().catch(() => null);
-      }
-      sharedSession = false;
-      throw error;
+  async openShareLink({
+    token,
+    signal,
+  }: {
+    token: string;
+    signal?: AbortSignal;
+  }): Promise<IShareLink> {
+    const sequence = ++shareBootstrapSequence;
+    const previousClient = this.girderRest;
+    const previousToken = previousClient.token;
+    // Validate on an isolated client with no persisted-login handlers. Even
+    // a successful user/me followed by a failed link/me must not change the
+    // current token, Vuex identity, or user-dependent state.
+    const candidate = new RestClient({ apiRoot: previousClient.apiRoot });
+    candidate.token = token;
+    if (!(await candidate.fetchUser())) {
+      throw new Error("This share link is no longer valid.");
     }
+    const link = await new ShareLinkAPI(candidate).me();
+    // The view owns this attempt. Leaving its route cancels the commit even
+    // when no newer login or share-link request has changed the session.
+    if (signal?.aborted) {
+      throw new Error("Share-link request was cancelled.");
+    }
+    if (
+      sequence !== shareBootstrapSequence ||
+      this.girderRest !== previousClient ||
+      previousClient.token !== previousToken
+    ) {
+      throw new Error("A newer session has replaced this share-link request.");
+    }
+    await this.loggedIn(candidate);
+    return link;
   }
 
   @Action

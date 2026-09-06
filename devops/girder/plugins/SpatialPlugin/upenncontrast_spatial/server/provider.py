@@ -8,7 +8,9 @@ consuming endpoints turn into a 400.
 
 import numpy as np
 from bson.objectid import ObjectId
+from girder.exceptions import AccessException
 from girder.models.file import File
+from girder.models.item import Item
 
 from .models.registry import DatasetSpatial
 from .store import numberFromNumpy, openStore
@@ -18,13 +20,21 @@ PREFIX = "spatial"
 
 def storeForDataset(datasetId):
     """The open store for a dataset, or None when none is registered. Access
-    to the dataset was checked by the endpoint that asked; the file is loaded
-    without a user so a provider call inside a pipeline needs no request
-    context."""
-    entry = DatasetSpatial().forDataset(ObjectId(str(datasetId)))
+    to the dataset was checked by the caller. Verify the file still inherits
+    that dataset's ACL, including on cache hits: moving an item must not let
+    a stale registry reference read another folder through force=True.
+    This affiliation check also works outside an HTTP request context."""
+    datasetId = ObjectId(str(datasetId))
+    entry = DatasetSpatial().forDataset(datasetId)
     if entry is None or 'fileId' not in entry:
         return None
-    return openStore(File().load(entry["fileId"], force=True, exc=True))
+    # Force loads only establish affiliation; no data is opened until checked.
+    fileDoc = File().load(entry["fileId"], force=True, exc=True)
+    item = Item().load(fileDoc["itemId"], force=True, exc=True)
+    if item["folderId"] != datasetId:
+        raise AccessException(
+            "The spatial source is no longer in this dataset.")
+    return openStore(fileDoc)
 
 
 def symbolOf(path):
