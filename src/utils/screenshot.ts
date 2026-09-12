@@ -1,7 +1,7 @@
 import {
-  ITileOptions,
   ITileOptionsBands,
   getBandOption,
+  getLayerImages,
   type ITileHistogram,
 } from "@/store/images";
 import {
@@ -20,6 +20,15 @@ export function getDownloadParameters(
   jpegQuality: number,
   downloadMode: "layers" | "channels",
 ) {
+  if (
+    ![bounds.left, bounds.top, bounds.right, bounds.bottom].every(
+      Number.isFinite,
+    ) ||
+    bounds.right <= bounds.left ||
+    bounds.bottom <= bounds.top
+  ) {
+    throw new Error("Snapshot crop must have a positive width and height.");
+  }
   const params: IDownloadParameters = {
     encoding: format.toUpperCase(),
     contentDisposition: "attachment",
@@ -71,32 +80,30 @@ export async function getLayersDownloadUrls(
   location: IDatasetLocation,
   api: { getLayerHistogram(images: IImage[]): Promise<ITileHistogram | null> },
 ) {
-  // Get layer bands: style and frame idx
-  const styles: { style: ITileOptions; layerId: string }[] = [];
-  const promises: Promise<any>[] = [];
-  if (exportLayer === "composite" || exportLayer === "all") {
-    configurationLayers.forEach((layer) => {
-      if (layer.visible || exportLayer === "all") {
-        promises.push(
-          getBandOption(dataset, layer, location, api).then((style) =>
-            styles.push({ layerId: layer.id, style }),
-          ),
-        );
-      }
-    });
-  } else {
-    const layerId = exportLayer;
-    const layer = configurationLayers.find((layer) => layer.id === layerId);
-    if (!layer) {
-      return [];
+  const layers = configurationLayers.filter(
+    (layer) =>
+      exportLayer === "all" ||
+      (exportLayer === "composite" ? layer.visible : layer.id === exportLayer),
+  );
+  if (layers.length === 0) throw new Error("No layers selected for download.");
+  // A style without a frame defaults to frame zero on the server. Validate
+  // before requesting any histograms so missing planes cannot be mislabeled.
+  for (const layer of layers) {
+    if (
+      !getLayerImages(layer, dataset, location.time, location.xy, location.z)
+        .length
+    ) {
+      throw new Error(
+        `No image for layer ${layer.name} at XY${location.xy + 1}, T${location.time + 1}, Z${location.z + 1}.`,
+      );
     }
-    promises.push(
-      getBandOption(dataset, layer, location, api).then((style) =>
-        styles.push({ layerId: layer.id, style }),
-      ),
-    );
   }
-  await Promise.all(promises);
+  const styles = await Promise.all(
+    layers.map(async (layer) => ({
+      layerId: layer.id,
+      style: await getBandOption(dataset, layer, location, api),
+    })),
+  );
 
   // Return one URL per band or a single URL with all bands
   if (exportLayer === "all") {
@@ -145,7 +152,14 @@ export function getChannelsDownloadUrls(
   const urls: { url: URL; channel: number }[] = [];
   const { xy, z, time } = location;
   for (const channel of channelsToDownload) {
-    const image = dataset.images(z, time, xy, channel)[0];
+    // Locations contain slider indices; raw channel selections already contain
+    // dataset channel IDs (unlike a display layer's channel index).
+    const image = dataset.images(
+      dataset.z[z],
+      dataset.time[time],
+      dataset.xy[xy],
+      channel,
+    )[0];
     if (!image) {
       const channelName =
         dataset.channelNames.get(channel) ?? "Unknown channel";
