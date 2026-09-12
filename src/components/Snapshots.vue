@@ -69,12 +69,11 @@
             />
           </v-col>
         </v-row>
-        <v-row class="pl-3">
+        <div class="d-flex flex-column align-start ga-2 mt-4">
           <v-btn
             variant="outlined"
             color="primary"
             size="small"
-            class="my-2"
             @click="setArea('viewport')"
             :disabled="isRotated()"
           >
@@ -84,13 +83,10 @@
             variant="outlined"
             color="primary"
             size="small"
-            class="my-2"
             @click="setArea('full')"
           >
             Set frame to maximum view size
           </v-btn>
-        </v-row>
-        <v-row class="pl-3">
           <v-dialog v-model="createDialog">
             <template v-slot:activator="{ props: activatorProps }">
               <v-btn
@@ -162,7 +158,7 @@
               </v-form>
             </v-card>
           </v-dialog>
-        </v-row>
+        </div>
       </v-card-text>
 
       <v-divider />
