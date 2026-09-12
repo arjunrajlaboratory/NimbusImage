@@ -1911,6 +1911,9 @@ describe("Snapshots.vue", () => {
         { url: second, scalebarSpec: null },
       ]);
 
+      await Promise.resolve();
+      // A large stack must not start every crop request at once.
+      expect(store.api.getSnapshotImage).toHaveBeenCalledTimes(1);
       resolveSecond?.({ data: new Uint8Array([2]).buffer });
       await Promise.resolve();
       resolveFirst?.({ data: new Uint8Array([1]).buffer });
