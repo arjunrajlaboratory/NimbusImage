@@ -11,6 +11,8 @@ The crop rectangle is identical at every exported position. Multiple images use
 the existing ZIP archive workflow; TIFF exports contain a separate TIFF per
 position and channel/layer, not a multipage TIFF. Names include one-based
 `XY1_T19_Z3` coordinates whenever any dimension checkbox is checked.
+These names describe slider positions. Image lookups translate positions to
+metadata values, including noncontiguous XY/T/Z coordinates and channel IDs.
 
 Raw channels keep the server's TIFF bytes. TIFF and tiled TIFF bypass canvas
 scalebars; the panel explains this. Scaled layers retain colors and contrast
@@ -36,6 +38,8 @@ bounds transient decoded-image memory, not the final archive size.
 
 - All eight axis combinations produce the unique Cartesian product and retain unchecked coordinates: `snapshotDimensions.test.ts` — *"exports exactly the selected Cartesian product"*.
 - Each dataset supplies its own dimensions: `snapshotDimensions.test.ts` — *"expands each snapshot against its own dataset"*.
+- Sparse coordinate values resolve the correct frame in raw and scaled exports for every axis combination: `screenshot.test.ts` — *"resolves $mode frame IDs for sparse coordinates with axis mask $mask"*.
+- Unchecked constant/offset/projection settings use the same coordinate mapping for styles and histograms: `screenshot.test.ts` — *"resolves sparse coordinates in standalone layer styles and unchecked projections"*.
 - Projected/fixed layers become individual planes on checked axes without mutating shared settings: `snapshotDimensions.test.ts` — *"exports individual planes without mutating projection or offset settings"*.
 - Raw and scaled Z downloads retain the crop and name each position: `Snapshots.test.ts` — *"expands Z with a fixed crop and distinct names"*.
 - All/selected saved snapshots use saved crops and locations: `Snapshots.test.ts` — *"expands %s saved snapshots using their saved crop and location"*.
@@ -75,3 +79,10 @@ The viewer remained at Z6/T19. Files were decoded using tifffile, rather than
 inferring correctness from download completion. The temporary valid snapshot
 was removed after verification. Multiple-XY expansion is covered by the unit
 matrix. Review findings and resolution are in `SNAPSHOT_DIMENSIONS_REVIEW.md`.
+
+The coordinate-translation follow-up also used a temporary local metadata
+remapping fixture (XY=3, T=4/7/10/..., Z=10/20/30/..., channels=2/7) with real
+backend image bytes. The snapshot UI produced 11 scaled and 22 raw TIFFs, each
+128×96; all pixels matched the original-coordinate exports. Stored datasets
+were unchanged. The noncontiguous multi-XY matrix and PositionZ fallback are
+covered using the real metadata parser in the regression tests.

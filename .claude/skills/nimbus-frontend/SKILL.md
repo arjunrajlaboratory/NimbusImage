@@ -822,3 +822,10 @@ Check single-file and ZIP paths together: a direct download URL does not carry
 an Axios/Girder authentication header. Both paths must use the authenticated
 client before offering a local Blob, especially when disabling a canvas overlay
 changes which path a format takes.
+
+Snapshot locations and display-layer channels use slider indices, but
+`dataset.images(z, time, xy, channel)` is keyed by metadata coordinate values.
+Use `getLayerImages` for layer validation and styles; for raw exports, map
+location indices through the dataset arrays while preserving channel IDs from
+the raw-channel selector. Test with the real `parseTiles` lookup and sparse,
+nonzero values on every axis: an index-agnostic image mock hides this mismatch.

@@ -2,7 +2,24 @@
 
 ## Overall Assessment
 
-Frontend-only XY/T/Z expansion preserves crops and uses existing image-region requests. Initial validation passed 175 tests, type checking, lint, and a browser export of 22 TIFFs from 11 Z slices and two channels. The findings below were fixed and retested. Final verification: all 3,981 frontend tests pass; type checking, zero-warning lint, production build, and skill parity pass. Browser artifact checks cover raw Z, scaled Z, combined T/Z, a valid saved crop, and an invalid saved crop. No unresolved findings remain.
+Frontend-only XY/T/Z expansion preserves crops and uses existing image-region requests. Initial validation passed 175 tests, type checking, lint, and a browser export of 22 TIFFs from 11 Z slices and two channels. The findings below were fixed and retested. Final verification: all 3,981 frontend tests pass; type checking, zero-warning lint, production build, and skill parity pass. Browser artifact checks cover raw Z, scaled Z, combined T/Z, a valid saved crop, and an invalid saved crop. The initial local review findings are resolved; the external review and its backend follow-up are recorded below.
+
+## External Codex review (94eaf6e)
+
+- P1, `Snapshots.vue:2251`: batch expanded region requests. **Status: deferred** — backend work tracked in https://github.com/arjunrajlaboratory/NimbusImage/issues/1350; this PR is explicitly frontend-only.
+- P2, `screenshot.ts:101`: slider indices passed to image lookups keyed by dataset coordinate values. **Status: fixed (coordinate translation follow-up)** — confirmed in scaled validation, downstream `getBandOption`, and the raw-channel sibling path. Spatial/time indices now map through dataset arrays; layers reuse `getLayerImages` for both validation and styles, while raw selectors retain their existing channel IDs.
+
+The generalized pattern was treating a UI index as a metadata key. The sweep
+covered raw channels, scaled validation, style/histogram lookup, projection
+handling, and the overview caller. Filenames still use one-based slider
+positions; no location or selection contract changed. All 17 new cases failed
+against the pre-fix code (using git stash), then passed after restoration.
+The full suite passes 3,998 tests across 219 files; type checking, lint, and
+production build pass. Browser verification used a temporary local Vite fixture
+that remapped metadata to XY=3, T=4/7/10/..., Z=10/20/30/..., channels=2/7,
+without modifying stored datasets. The real snapshot UI exported 11 scaled and
+22 raw TIFFs; all decoded to 128×96 and matched the original-coordinate
+exports pixel-for-pixel. The sparse-coordinate fixture is test-only.
 
 ## Findings
 
@@ -76,7 +93,7 @@ Frontend-only XY/T/Z expansion preserves crops and uses existing image-region re
 | Category | Status | Findings |
 |---|---|---|
 | Pattern consistency / factorization / naming | pass | #3 |
-| Performance / looped API calls | pass | #3; one region per request is an existing backend constraint |
+| Performance / looped API calls | warn | #3; backend batch export deferred to issue #1350 |
 | Type safety / defaults | pass | #4 fixed; existing defaults preserved |
 | Error handling / empty-state contracts | pass | #2 and #5 fixed |
 | API calls in Vue components | pass | #3 |

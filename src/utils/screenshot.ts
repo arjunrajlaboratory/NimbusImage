@@ -1,7 +1,7 @@
 import {
   ITileOptionsBands,
   getBandOption,
-  getLayerSliceIndexes,
+  getLayerImages,
   type ITileHistogram,
 } from "@/store/images";
 import {
@@ -89,21 +89,9 @@ export async function getLayersDownloadUrls(
   // A style without a frame defaults to frame zero on the server. Validate
   // before requesting any histograms so missing planes cannot be mislabeled.
   for (const layer of layers) {
-    const indexes = getLayerSliceIndexes(
-      layer,
-      dataset,
-      location.time,
-      location.xy,
-      location.z,
-    );
     if (
-      !indexes ||
-      !dataset.images(
-        indexes.zIndex,
-        indexes.tIndex,
-        indexes.xyIndex,
-        layer.channel,
-      ).length
+      !getLayerImages(layer, dataset, location.time, location.xy, location.z)
+        .length
     ) {
       throw new Error(
         `No image for layer ${layer.name} at XY${location.xy + 1}, T${location.time + 1}, Z${location.z + 1}.`,
@@ -164,7 +152,14 @@ export function getChannelsDownloadUrls(
   const urls: { url: URL; channel: number }[] = [];
   const { xy, z, time } = location;
   for (const channel of channelsToDownload) {
-    const image = dataset.images(z, time, xy, channel)[0];
+    // Locations contain slider indices; raw channel selections already contain
+    // dataset channel IDs (unlike a display layer's channel index).
+    const image = dataset.images(
+      dataset.z[z],
+      dataset.time[time],
+      dataset.xy[xy],
+      channel,
+    )[0];
     if (!image) {
       const channelName =
         dataset.channelNames.get(channel) ?? "Unknown channel";
