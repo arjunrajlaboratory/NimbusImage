@@ -817,3 +817,8 @@ origin: `"100" + 128` becomes `"100128"`. Width/height setters must add numeric
 sizes to the origin consistently; do not preserve a test that accidentally
 asserts a width is an absolute right coordinate. See `Snapshots.test.ts` and
 `utils/screenshot.test.ts` for artifact and crop regression coverage.
+
+Check single-file and ZIP paths together: a direct download URL does not carry
+an Axios/Girder authentication header. Both paths must use the authenticated
+client before offering a local Blob, especially when disabling a canvas overlay
+changes which path a format takes.

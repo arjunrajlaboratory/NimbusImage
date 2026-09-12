@@ -1468,6 +1468,9 @@ describe("Snapshots.vue", () => {
       wrapper = mountComponent();
       (wrapper.vm as any).bboxRight = 100;
       (wrapper.vm as any).bboxBottom = 100;
+      vi.mocked(store.api.getSnapshotImage).mockResolvedValue(
+        new ArrayBuffer(4),
+      );
       vi.clearAllMocks();
     });
 
@@ -1814,13 +1817,20 @@ describe("Snapshots.vue", () => {
       expect(filename).toContain("MySnapshot");
     });
 
-    it("downloadUrls downloads single file directly without scalebar", async () => {
-      const url = new URL("http://localhost/api/v1/test");
-      url.searchParams.set("contentDispositionFilename", "test.png");
-      await (wrapper.vm as any).downloadUrls([{ url, scalebarSpec: null }]);
-      expect(mockedDownloadToClient).toHaveBeenCalledWith({
-        href: url.href,
+    it("downloadUrls authenticates single-file downloads without a scalebar", async () => {
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:single"),
+        revokeObjectURL: vi.fn(),
       });
+      const url = new URL("http://localhost/api/v1/test");
+      url.searchParams.set("contentDispositionFilename", "test.tiff");
+      await (wrapper.vm as any).downloadUrls([{ url, scalebarSpec: null }]);
+      expect(store.api.getSnapshotImage).toHaveBeenCalledWith(url);
+      expect(mockedDownloadToClient).toHaveBeenCalledWith({
+        href: "blob:single",
+        download: "test.tiff",
+      });
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:single");
     });
 
     it("downloadUrls sanitizes zip entry filenames", async () => {

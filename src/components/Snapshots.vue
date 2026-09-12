@@ -2179,20 +2179,22 @@ async function downloadUrls(
 
   if (urls.length === 1) {
     const { url, scalebarSpec } = urls[0];
-    if (scalebarSpec) {
-      const data = await store.api.getSnapshotImage(url);
-      const processedData = await addScalebarToImageBuffer(data, scalebarSpec);
-      const blob = new Blob([processedData], { type: "image/png" });
-      const objectUrl = URL.createObjectURL(blob);
-      const filename =
-        url.searchParams.get("contentDispositionFilename") || "snapshot.png";
+    // Direct navigation does not carry the client's authentication header.
+    // Use the same authenticated binary fetch for a single image and a ZIP.
+    const data = await store.api.getSnapshotImage(url);
+    const finalData = scalebarSpec
+      ? await addScalebarToImageBuffer(data, scalebarSpec)
+      : data;
+    const objectUrl = URL.createObjectURL(new Blob([finalData]));
+    try {
       downloadToClient({
         href: objectUrl,
-        download: sanitizeSnapshotFilename(filename),
+        download: sanitizeSnapshotFilename(
+          url.searchParams.get("contentDispositionFilename") || "snapshot.png",
+        ),
       });
+    } finally {
       URL.revokeObjectURL(objectUrl);
-    } else {
-      downloadToClient({ href: url.href });
     }
     return;
   }
