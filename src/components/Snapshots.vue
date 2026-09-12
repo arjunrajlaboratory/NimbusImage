@@ -31,7 +31,7 @@
           <v-col>
             <v-text-field
               label="Left"
-              v-model="bboxLeft"
+              v-model.number="bboxLeft"
               type="number"
               :max="store.dataset.width"
               density="compact"
@@ -41,7 +41,7 @@
           <v-col>
             <v-text-field
               label="Top"
-              v-model="bboxTop"
+              v-model.number="bboxTop"
               type="number"
               :max="store.dataset.height"
               density="compact"
@@ -233,71 +233,116 @@
         Download Snapshot Images
       </v-card-title>
       <v-card-text>
-        <v-row>
-          <v-col cols="5">
-            <v-radio-group v-model="downloadMode">
-              <v-radio label="Scaled Layers" value="layers" />
-              <v-radio label="Raw channels" value="channels" />
-            </v-radio-group>
-          </v-col>
-          <v-col>
-            <v-select
-              v-if="downloadMode === 'layers'"
-              v-model="exportLayer"
-              :items="layerItems"
-              item-title="text"
-              item-value="value"
-              label="Layer"
+        <fieldset :disabled="downloading" class="download-options">
+          <v-row>
+            <v-col cols="5">
+              <v-radio-group v-model="downloadMode">
+                <v-radio label="Scaled Layers" value="layers" />
+                <v-radio label="Raw channels" value="channels" />
+              </v-radio-group>
+            </v-col>
+            <v-col>
+              <v-select
+                v-if="downloadMode === 'layers'"
+                v-model="exportLayer"
+                :items="layerItems"
+                item-title="text"
+                item-value="value"
+                label="Layer"
+                density="compact"
+                hide-details
+              />
+              <v-select
+                v-if="downloadMode === 'channels'"
+                v-model="exportChannel"
+                :items="channelItems"
+                item-title="text"
+                item-value="value"
+                label="Channel"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+          </v-row>
+          <v-row>
+            <v-col>
+              <v-select
+                v-model="format"
+                :items="formatList"
+                item-title="text"
+                item-value="value"
+                label="Format"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+          </v-row>
+          <v-row>
+            <v-col>
+              <v-slider
+                v-if="format === 'jpeg'"
+                label="JPEG Quality"
+                v-model="jpegQuality"
+                min="80"
+                max="95"
+                step="5"
+              >
+                <template v-slot:append>
+                  <v-text-field
+                    v-model="jpegQuality"
+                    class="mt-0 pt-0"
+                    type="number"
+                    step="5"
+                    style="width: 3em"
+                  />
+                </template>
+              </v-slider>
+            </v-col>
+          </v-row>
+          <div class="text-body-2 mt-2">Download across</div>
+          <div class="d-flex ga-4">
+            <v-checkbox
+              v-model="downloadAcross.xy"
+              label="XY"
               density="compact"
               hide-details
             />
-            <v-select
-              v-if="downloadMode === 'channels'"
-              v-model="exportChannel"
-              :items="channelItems"
-              item-title="text"
-              item-value="value"
-              label="Channel"
+            <v-checkbox
+              v-model="downloadAcross.time"
+              label="T"
               density="compact"
               hide-details
             />
-          </v-col>
-        </v-row>
-        <v-row>
-          <v-col>
-            <v-select
-              v-model="format"
-              :items="formatList"
-              item-title="text"
-              item-value="value"
-              label="Format"
+            <v-checkbox
+              v-model="downloadAcross.z"
+              label="Z"
               density="compact"
               hide-details
             />
-          </v-col>
-        </v-row>
-        <v-row>
-          <v-col>
-            <v-slider
-              v-if="format === 'jpeg'"
-              label="JPEG Quality"
-              v-model="jpegQuality"
-              min="80"
-              max="95"
-              step="5"
-            >
-              <template v-slot:append>
-                <v-text-field
-                  v-model="jpegQuality"
-                  class="mt-0 pt-0"
-                  type="number"
-                  step="5"
-                  style="width: 3em"
-                />
-              </template>
-            </v-slider>
-          </v-col>
-        </v-row>
+          </div>
+          <div class="text-caption">
+            Applies to current, all, and selected snapshot image downloads.
+            Checked axes export every position with the same crop; unchecked
+            axes keep each snapshot's location. Multiple images download in a
+            ZIP, with one TIFF per position when TIFF is selected. Scaled layers
+            use individual planes on checked axes.
+          </div>
+          <div
+            v-if="format === 'tiff' || format === 'tiled'"
+            class="text-caption mt-2"
+          >
+            TIFF images are exported without a scalebar to preserve their
+            format.
+          </div>
+        </fieldset>
+        <v-alert
+          v-if="downloadError"
+          type="error"
+          class="mt-2"
+          density="compact"
+        >
+          {{ downloadError }}
+        </v-alert>
       </v-card-text>
       <v-card-actions class="d-block">
         <v-row>
@@ -582,6 +627,12 @@ export enum ScalebarMode {
 </script>
 
 <style scoped lang="scss">
+.download-options {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+
 /* Let the palette's frosted-glass surface show through the snapshots panel.
    The top-level Vuetify card/table backgrounds are opaque by default, while
    dialog cards remain covered by the global overlay glass rules. */
@@ -627,6 +678,12 @@ import geojs from "geojs";
 import { formatDate } from "@/utils/date";
 import { downloadToClient } from "@/utils/download";
 import GIF from "gif.js";
+import { cloneDeep } from "lodash";
+import {
+  snapshotLocations,
+  snapshotLayers,
+  type SnapshotDimensions,
+} from "@/utils/snapshotDimensions";
 import {
   IDatasetLocation,
   IDisplayLayer,
@@ -661,11 +718,6 @@ function snapshotKey(snapshot: ISnapshot) {
   return `${snapshot.datasetViewId}:${snapshot.name}`;
 }
 
-function intFromString(value: string) {
-  const parsedValue = parseInt("0" + value, 10);
-  return Number.isNaN(parsedValue) ? 0 : parsedValue;
-}
-
 interface IGifOptions extends GIF.Options {
   workerOptions?: {
     willReadFrequently: boolean;
@@ -694,6 +746,28 @@ interface IScalebarSpec {
   datasetPixelWidth: number;
   // Text label drawn next to the bar, e.g. "50µm".
   label: string;
+  color?: string;
+  showText?: boolean;
+}
+
+interface IImageDownloadOptions {
+  across: SnapshotDimensions;
+  format: string;
+  jpegQuality: number;
+  mode: "layers" | "channels";
+  channel: "all" | number;
+  layer: string;
+}
+
+function imageDownloadOptions(): IImageDownloadOptions {
+  return {
+    across: { ...downloadAcross.value },
+    format: format.value,
+    jpegQuality: Number(jpegQuality.value),
+    mode: downloadMode.value,
+    channel: exportChannel.value,
+    layer: exportLayer.value,
+  };
 }
 
 // A download URL paired with the scalebar to draw onto its image (null = none).
@@ -760,6 +834,12 @@ const bboxBottom = ref(0);
 const bboxLayer = ref<IGeoJSAnnotationLayer | null>(null);
 const bboxAnnotation = ref<IGeoJSAnnotation | null>(null);
 const scalebarAnnotation = ref<IGeoJSAnnotation | null>(null);
+const downloadAcross = ref<SnapshotDimensions>({
+  xy: false,
+  time: false,
+  z: false,
+});
+const downloadError = ref("");
 const downloadMode = ref<"layers" | "channels">("layers");
 const exportLayer = ref<string>("composite");
 const exportChannel = ref<"all" | number>("all");
@@ -840,6 +920,11 @@ function getUniqueZipEntryName(name: string | null, filenames: Set<string>) {
 
 const isLoggedIn = computed(() => store.isLoggedIn);
 
+const imageDownloadScalebar = computed(
+  () =>
+    addScalebar.value && format.value !== "tiff" && format.value !== "tiled",
+);
+
 const formatList = computed(() => {
   if (downloadMode.value === "layers") {
     return [
@@ -863,11 +948,7 @@ const bboxWidth = computed({
     return (bboxRight.value || 0) - (bboxLeft.value || 0);
   },
   set: (value: string | number) => {
-    if (typeof value == "string") {
-      bboxRight.value = (bboxLeft.value || 0) + intFromString(value);
-    } else {
-      bboxRight.value = value;
-    }
+    bboxRight.value = Number(bboxLeft.value || 0) + Number(value || 0);
   },
 });
 
@@ -876,11 +957,7 @@ const bboxHeight = computed({
     return (bboxBottom.value || 0) - (bboxTop.value || 0);
   },
   set: (value: string | number) => {
-    if (typeof value == "string") {
-      bboxBottom.value = (bboxTop.value || 0) + intFromString(value);
-    } else {
-      bboxBottom.value = value;
-    }
+    bboxBottom.value = Number(bboxTop.value || 0) + Number(value || 0);
   },
 });
 
@@ -1295,6 +1372,8 @@ function buildScalebarSpec(bbox: IGeoJSBounds): IScalebarSpec {
     lengthInDatasetPixels: lengthInPixels,
     datasetPixelWidth,
     label: `${settings.length}${settings.unit}`,
+    color: snapshotScalebarColor.value,
+    showText: addScalebarText.value,
   };
 }
 
@@ -1819,18 +1898,19 @@ async function snapshotWithAnnotations() {
 
 async function downloadImagesForCurrentState() {
   const datasetId = store.dataset?.id;
-  if (!datasetId) {
+  const configuration = store.configuration;
+  if (!datasetId || !configuration || downloading.value) {
     return;
   }
-  const location = store.currentLocation;
-  const boundingBox = currentBbox.value;
+  const location = { ...store.currentLocation };
+  const boundingBox = { ...currentBbox.value };
+  const options = imageDownloadOptions();
+  const scalebarSpec = imageDownloadScalebar.value
+    ? buildScalebarSpec(boundingBox)
+    : null;
 
   downloading.value = true;
-
-  const configuration = store.configuration;
-  if (!configuration) {
-    return;
-  }
+  downloadError.value = "";
 
   try {
     const urls = await getUrlsForSnapshot(
@@ -1840,12 +1920,18 @@ async function downloadImagesForCurrentState() {
       newName.value,
       configuration.layers,
       configuration.name,
+      options,
     );
     if (!urls) {
       return;
     }
-    const scalebarSpec = addScalebar.value ? currentScalebarSpec.value : null;
     await downloadUrls(urls.map((url) => ({ url, scalebarSpec })));
+  } catch (error) {
+    downloadError.value =
+      error instanceof Error
+        ? `Snapshot download failed: ${error.message}`
+        : "Snapshot download failed. Please try again.";
+    logError("Snapshot download failed:", error);
   } finally {
     downloading.value = false;
   }
@@ -1873,7 +1959,22 @@ async function downloadImagesForSelectedSnapshots() {
 }
 
 async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
+  if (downloading.value || snapshots.length === 0) return;
+  const configurationName = store.configuration?.name;
+  if (configurationName === undefined) return;
+  const options = imageDownloadOptions();
+  const exports = snapshots.map((snapshot) => ({
+    ...snapshot,
+    layers: snapshot.layers.map((layer) =>
+      cloneDeep(copyLayerWithoutPrivateAttributes(layer)),
+    ),
+    screenshot: { bbox: { ...snapshot.screenshot.bbox } },
+    scalebarSpec: imageDownloadScalebar.value
+      ? buildScalebarSpec(snapshot.screenshot.bbox)
+      : null,
+  }));
   downloading.value = true;
+  downloadError.value = "";
 
   const progressId = await progress.create({
     type: ProgressType.SNAPSHOT_BATCH_DOWNLOAD,
@@ -1881,16 +1982,11 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
   });
 
   try {
-    const configuration = store.configuration;
-    if (!configuration) {
-      return;
-    }
-
     const allUrls: IDownloadUrlItem[] = [];
-    const totalSnapshots = snapshots.length;
+    const totalSnapshots = exports.length;
 
     for (let i = 0; i < totalSnapshots; i++) {
-      const snapshot = snapshots[i];
+      const snapshot = exports[i];
 
       progress.update({
         id: progressId,
@@ -1908,16 +2004,16 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
         datasetView.datasetId,
         snapshot.name,
         snapshot.layers,
-        configuration.name,
+        configurationName,
+        options,
       );
-      if (currentUrls) {
-        // Each snapshot has its own bounding box, so resolve the scalebar per
-        // snapshot rather than reusing the current view's.
-        const scalebarSpec = addScalebar.value
-          ? buildScalebarSpec(snapshot.screenshot.bbox)
-          : null;
-        allUrls.push(...currentUrls.map((url) => ({ url, scalebarSpec })));
-      }
+      if (!currentUrls) return;
+      allUrls.push(
+        ...currentUrls.map((url) => ({
+          url,
+          scalebarSpec: snapshot.scalebarSpec,
+        })),
+      );
     }
 
     progress.update({
@@ -1927,7 +2023,13 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
       title: "Downloading files...",
     });
 
-    await downloadUrls(allUrls);
+    await downloadUrls(allUrls, progressId);
+  } catch (error) {
+    downloadError.value =
+      error instanceof Error
+        ? `Snapshot download failed: ${error.message}`
+        : "Snapshot download failed. Please try again.";
+    logError("Snapshot download failed:", error);
   } finally {
     progress.complete(progressId);
     downloading.value = false;
@@ -1941,77 +2043,94 @@ async function getUrlsForSnapshot(
   name: string,
   layers: IDisplayLayer[],
   configurationName: string,
+  options = imageDownloadOptions(),
 ) {
+  // Snapshot every live input before fetching a dataset or histogram.
+  location = { xy: location.xy, z: location.z, time: location.time };
+  boundingBox = { ...boundingBox };
+  layers = layers.map((layer) =>
+    cloneDeep(copyLayerWithoutPrivateAttributes(layer)),
+  );
   const dataset =
     store.dataset?.id === datasetId
       ? store.dataset
       : await girderResources.getDataset({ id: datasetId });
-  if (!dataset) {
-    return;
-  }
+  if (!dataset) throw new Error("Snapshot dataset is unavailable.");
 
   const anyImage = dataset.anyImage();
-  if (!anyImage) {
-    return;
-  }
+  if (!anyImage) throw new Error("Snapshot dataset has no images.");
   const itemId = anyImage.item._id;
 
   const dateStr = formatDate(new Date());
-  const extension = format.value === "tiled" ? "tiff" : format.value;
+  const extension = options.format === "tiled" ? "tiff" : options.format;
 
-  const jpegQualityNum =
-    typeof jpegQuality.value !== "number"
-      ? Number(jpegQuality.value)
-      : jpegQuality.value;
   const params = getDownloadParameters(
     boundingBox,
-    format.value,
+    options.format,
     maxPixels,
-    jpegQualityNum,
-    downloadMode.value,
+    options.jpegQuality,
+    options.mode,
   );
   if (params === null) {
     imageTooBigDialog.value = true;
     return;
   }
+  if (
+    boundingBox.left >= dataset.width ||
+    boundingBox.top >= dataset.height ||
+    boundingBox.right <= 0 ||
+    boundingBox.bottom <= 0
+  ) {
+    throw new Error(
+      "Snapshot crop is outside the image. Set a crop within the dataset.",
+    );
+  }
   const apiRoot = store.girderRest.apiRoot;
   const baseUrl = getBaseURLFromDownloadParameters(params, itemId, apiRoot);
 
   const urls: URL[] = [];
-  if (downloadMode.value === "channels") {
-    const channelUrls = getChannelsDownloadUrls(
-      baseUrl,
-      exportChannel.value,
-      dataset,
-      location,
-    );
-    for (const { url, channel } of channelUrls) {
-      const channelName =
-        dataset.channelNames.get(channel) ?? "Unknown channel";
-      const fileName = `${name} - ${channelName} - ${dataset.name} - ${configurationName} - ${dateStr}.${extension}`;
-      url.searchParams.set("contentDispositionFilename", fileName);
-      urls.push(url);
-    }
-  } else {
-    const layerUrls = await getLayersDownloadUrls(
-      baseUrl,
-      exportLayer.value,
-      layers,
-      dataset,
-      location,
-      store.api,
-    );
-    for (const { url, layerIds } of layerUrls) {
-      const layerNames = layerIds.map(
-        (layerId) =>
-          layers.find((layer) => layer.id === layerId)?.name ?? "Unknown layer",
+  const across = options.across;
+  const exportLayers = snapshotLayers(layers, across);
+  const expanded = Object.values(across).some(Boolean);
+  for (const exportLocation of snapshotLocations(dataset, location, across)) {
+    const coordinateSuffix = expanded
+      ? ` - XY${exportLocation.xy + 1}_T${exportLocation.time + 1}_Z${exportLocation.z + 1}`
+      : "";
+    if (options.mode === "channels") {
+      const channelUrls = getChannelsDownloadUrls(
+        baseUrl,
+        options.channel,
+        dataset,
+        exportLocation,
       );
-      const fileName = `${name} - ${layerNames.join(" ")} - ${dataset.name} - ${configurationName} - ${dateStr}.${extension}`;
-      url.searchParams.set("contentDispositionFilename", fileName);
-      urls.push(url);
+      for (const { url, channel } of channelUrls) {
+        const channelName =
+          dataset.channelNames.get(channel) ?? "Unknown channel";
+        const fileName = `${name} - ${channelName} - ${dataset.name} - ${configurationName} - ${dateStr}${coordinateSuffix}.${extension}`;
+        url.searchParams.set("contentDispositionFilename", fileName);
+        urls.push(url);
+      }
+    } else {
+      const layerUrls = await getLayersDownloadUrls(
+        baseUrl,
+        options.layer,
+        exportLayers,
+        dataset,
+        exportLocation,
+        store.api,
+      );
+      for (const { url, layerIds } of layerUrls) {
+        const layerNames = layerIds.map(
+          (layerId) =>
+            layers.find((layer) => layer.id === layerId)?.name ??
+            "Unknown layer",
+        );
+        const fileName = `${name} - ${layerNames.join(" ")} - ${dataset.name} - ${configurationName} - ${dateStr}${coordinateSuffix}.${extension}`;
+        url.searchParams.set("contentDispositionFilename", fileName);
+        urls.push(url);
+      }
     }
   }
-
   return urls;
 }
 
@@ -2050,7 +2169,10 @@ async function addScalebarToImageBuffer(
 // Each URL carries its own scalebar spec (or null for no scalebar) so that a
 // batch of snapshots with different bounding boxes each gets a correctly sized
 // bar rather than the current view's.
-async function downloadUrls(urls: IDownloadUrlItem[]) {
+async function downloadUrls(
+  urls: IDownloadUrlItem[],
+  batchProgressId?: string,
+) {
   if (urls.length <= 0) {
     return;
   }
@@ -2058,9 +2180,7 @@ async function downloadUrls(urls: IDownloadUrlItem[]) {
   if (urls.length === 1) {
     const { url, scalebarSpec } = urls[0];
     if (scalebarSpec) {
-      const { data } = await store.girderRest.get(url.href, {
-        responseType: "arraybuffer",
-      });
+      const data = await store.api.getSnapshotImage(url);
       const processedData = await addScalebarToImageBuffer(data, scalebarSpec);
       const blob = new Blob([processedData], { type: "image/png" });
       const objectUrl = URL.createObjectURL(blob);
@@ -2077,38 +2197,56 @@ async function downloadUrls(urls: IDownloadUrlItem[]) {
     return;
   }
 
+  const progressId =
+    batchProgressId ??
+    (await progress.create({
+      type: ProgressType.SNAPSHOT_BATCH_DOWNLOAD,
+      title: "Downloading snapshot images",
+    }));
   const zip: Zip = new Zip();
-  const zipChunks: Uint8Array[] = [];
-  const zipDone: Promise<Blob> = new Promise((resolve, reject) => {
-    zip.ondata = (err: Error | null, data: Uint8Array, final: boolean) => {
-      if (!err) {
-        zipChunks.push(data);
-        if (final) {
-          resolve(new Blob(zipChunks as BlobPart[]));
+  try {
+    const zipChunks: Uint8Array[] = [];
+    const zipDone: Promise<Blob> = new Promise((resolve, reject) => {
+      zip.ondata = (err: Error | null, data: Uint8Array, final: boolean) => {
+        if (!err) {
+          zipChunks.push(data);
+          if (final) {
+            resolve(new Blob(zipChunks as BlobPart[]));
+          }
+        } else {
+          reject(err);
         }
-      } else {
-        reject(err);
-      }
-    };
-  });
+      };
+    });
 
-  const deflateOptions: DeflateOptions = {
-    level: ["jpeg", "png"].includes(format.value) ? 0 : 9,
-  };
-  const filenames: Set<string> = new Set();
-  const zipEntries = urls.map(({ url, scalebarSpec }) => ({
-    url,
-    scalebarSpec,
-    fileName: getUniqueZipEntryName(
-      url.searchParams.get("contentDispositionFilename") || "snapshot",
-      filenames,
-    ),
-  }));
-  const filesPushed = zipEntries.map(
-    async ({ url, scalebarSpec, fileName }) => {
-      const { data } = await store.girderRest.get(url.href, {
-        responseType: "arraybuffer",
+    // A compression error can arrive while the next network request is pending.
+    // Attach a handler immediately; awaiting zipDone below still reports it.
+    void zipDone.catch(() => {});
+    const deflateOptions: DeflateOptions = {
+      level: ["jpeg", "png"].includes(format.value) ? 0 : 9,
+    };
+    const filenames: Set<string> = new Set();
+    const zipEntries = urls.map(({ url, scalebarSpec }) => ({
+      url,
+      scalebarSpec,
+      fileName: getUniqueZipEntryName(
+        url.searchParams.get("contentDispositionFilename") || "snapshot",
+        filenames,
+      ),
+    }));
+    // The region endpoint serves one image per request. Process sequentially
+    // so a large stack does not allocate all decoded crops at once.
+    for (const [
+      index,
+      { url, scalebarSpec, fileName },
+    ] of zipEntries.entries()) {
+      progress.update({
+        id: progressId,
+        progress: index,
+        total: zipEntries.length,
+        title: `Downloading image ${index + 1} of ${zipEntries.length}`,
       });
+      const data = await store.api.getSnapshotImage(url);
 
       const finalData = scalebarSpec
         ? await addScalebarToImageBuffer(data, scalebarSpec)
@@ -2117,19 +2255,22 @@ async function downloadUrls(urls: IDownloadUrlItem[]) {
       const zipFile = new ZipDeflate(fileName, deflateOptions);
       zip.add(zipFile);
       zipFile.push(new Uint8Array(finalData), true);
-    },
-  );
+    }
 
-  await Promise.all(filesPushed);
-  zip.end();
+    zip.end();
 
-  const blob = await zipDone;
-  const dataURL = URL.createObjectURL(blob);
-  const params = {
-    href: dataURL,
-    download: "snapshot.zip",
-  };
-  downloadToClient(params);
+    const blob = await zipDone;
+    const dataURL = URL.createObjectURL(blob);
+    const params = {
+      href: dataURL,
+      download: "snapshot.zip",
+    };
+    downloadToClient(params);
+    URL.revokeObjectURL(dataURL);
+  } finally {
+    zip.terminate();
+    if (!batchProgressId) progress.complete(progressId);
+  }
 }
 
 async function getUrlsForMovie(
@@ -2827,8 +2968,8 @@ function drawScalebarOnCanvas(
   const lineWidth = Math.max(3, Math.min(12, 0.008 * maxDim));
   const fontSize = Math.max(12, Math.min(24, 0.02 * maxDim));
 
-  ctx.strokeStyle = snapshotScalebarColor.value;
-  ctx.fillStyle = snapshotScalebarColor.value;
+  ctx.strokeStyle = spec.color ?? snapshotScalebarColor.value;
+  ctx.fillStyle = spec.color ?? snapshotScalebarColor.value;
   ctx.lineWidth = lineWidth;
 
   ctx.beginPath();
@@ -2836,7 +2977,7 @@ function drawScalebarOnCanvas(
   ctx.lineTo(width - padding - scalebarLength, height - padding);
   ctx.stroke();
 
-  if (addScalebarText.value) {
+  if (spec.showText ?? addScalebarText.value) {
     ctx.font = `${fontSize}px Arial`;
     ctx.textBaseline = "bottom";
     ctx.textAlign = "right";
@@ -2914,6 +3055,9 @@ defineExpose({
   bboxAnnotation,
   scalebarAnnotation,
   downloadMode,
+  downloadAcross,
+  downloadError,
+  imageDownloadScalebar,
   exportLayer,
   exportChannel,
   format,

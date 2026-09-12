@@ -796,3 +796,24 @@ Before concluding "the code doesn't work", check what the relevant mock actually
 - When working on projects feature: read `codebaseDocumentation/PROJECTS.md`
 - When working on sharing UI: read `codebaseDocumentation/SHARING.md`
 - When working on annotation combining: read `codebaseDocumentation/COMBINE_ANNOTATIONS.md`
+
+## Snapshot/export validation must inspect the actual artifact
+
+A successful download click can produce a ZIP of empty or mislabeled images.
+For image exports, decode the downloaded files and check format, dimensions,
+coordinate coverage, and distinct pixels where expected. TIFF must bypass a
+browser canvas scalebar path: canvas cannot decode TIFF and PNG re-encoding
+would discard the original TIFF data. A scaled style with no frame can default
+to frame zero on the server; reject missing planes and empty layer selections
+before building export styles. Reject empty/inverted/nonfinite crops and empty
+binary responses instead of offering a plausible archive.
+
+Capture export inputs before the first await, including nested layer contrasts,
+per-crop scalebar geometry/color/text, and format/dimension selections. Disabled
+controls do not protect against changes from other panels or navigation.
+
+Numeric field tests must cover both emitted strings and numbers, with a nonzero
+origin: `"100" + 128` becomes `"100128"`. Width/height setters must add numeric
+sizes to the origin consistently; do not preserve a test that accidentally
+asserts a width is an absolute right coordinate. See `Snapshots.test.ts` and
+`utils/screenshot.test.ts` for artifact and crop regression coverage.

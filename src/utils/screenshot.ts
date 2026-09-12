@@ -1,7 +1,7 @@
 import {
-  ITileOptions,
   ITileOptionsBands,
   getBandOption,
+  getLayerSliceIndexes,
   type ITileHistogram,
 } from "@/store/images";
 import {
@@ -20,6 +20,15 @@ export function getDownloadParameters(
   jpegQuality: number,
   downloadMode: "layers" | "channels",
 ) {
+  if (
+    ![bounds.left, bounds.top, bounds.right, bounds.bottom].every(
+      Number.isFinite,
+    ) ||
+    bounds.right <= bounds.left ||
+    bounds.bottom <= bounds.top
+  ) {
+    throw new Error("Snapshot crop must have a positive width and height.");
+  }
   const params: IDownloadParameters = {
     encoding: format.toUpperCase(),
     contentDisposition: "attachment",
@@ -71,32 +80,42 @@ export async function getLayersDownloadUrls(
   location: IDatasetLocation,
   api: { getLayerHistogram(images: IImage[]): Promise<ITileHistogram | null> },
 ) {
-  // Get layer bands: style and frame idx
-  const styles: { style: ITileOptions; layerId: string }[] = [];
-  const promises: Promise<any>[] = [];
-  if (exportLayer === "composite" || exportLayer === "all") {
-    configurationLayers.forEach((layer) => {
-      if (layer.visible || exportLayer === "all") {
-        promises.push(
-          getBandOption(dataset, layer, location, api).then((style) =>
-            styles.push({ layerId: layer.id, style }),
-          ),
-        );
-      }
-    });
-  } else {
-    const layerId = exportLayer;
-    const layer = configurationLayers.find((layer) => layer.id === layerId);
-    if (!layer) {
-      return [];
-    }
-    promises.push(
-      getBandOption(dataset, layer, location, api).then((style) =>
-        styles.push({ layerId: layer.id, style }),
-      ),
+  const layers = configurationLayers.filter(
+    (layer) =>
+      exportLayer === "all" ||
+      (exportLayer === "composite" ? layer.visible : layer.id === exportLayer),
+  );
+  if (layers.length === 0) throw new Error("No layers selected for download.");
+  // A style without a frame defaults to frame zero on the server. Validate
+  // before requesting any histograms so missing planes cannot be mislabeled.
+  for (const layer of layers) {
+    const indexes = getLayerSliceIndexes(
+      layer,
+      dataset,
+      location.time,
+      location.xy,
+      location.z,
     );
+    if (
+      !indexes ||
+      !dataset.images(
+        indexes.zIndex,
+        indexes.tIndex,
+        indexes.xyIndex,
+        layer.channel,
+      ).length
+    ) {
+      throw new Error(
+        `No image for layer ${layer.name} at XY${location.xy + 1}, T${location.time + 1}, Z${location.z + 1}.`,
+      );
+    }
   }
-  await Promise.all(promises);
+  const styles = await Promise.all(
+    layers.map(async (layer) => ({
+      layerId: layer.id,
+      style: await getBandOption(dataset, layer, location, api),
+    })),
+  );
 
   // Return one URL per band or a single URL with all bands
   if (exportLayer === "all") {
