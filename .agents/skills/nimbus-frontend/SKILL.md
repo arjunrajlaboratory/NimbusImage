@@ -5,6 +5,27 @@ description: "Use when writing or modifying Vue 3 components, Vuex store modules
 
 # Nimbus Frontend Development
 
+## Dependency bumps and Vitest 4
+
+- Compare the actual resolved graph, not the Dependabot title. An override can
+  make a proposed bump a no-op. Keep legacy consumers on the API major they
+  require; a direct upgrade must not force every transitive consumer across it.
+- A pnpm package has both a `packages` entry and a `snapshots` dependency entry.
+  Updating only its version and integrity can omit a newly required dependency.
+  Re-resolve with pnpm and inspect the diff; a frozen install checks importer
+  consistency but does not prove every transitive snapshot is complete.
+- Vitest 4 mocks used with `new` must use a regular function or class, not an
+  arrow. Sweep sibling constructor mocks, including rarely exercised GIF/ZIP
+  paths. Factory methods such as vtk's `newInstance()` remain ordinary calls.
+- `vi.restoreAllMocks()` no longer clears standalone mock call history. The
+  suite uses `clearMocks: true` for call isolation; tests must still reset any
+  implementations or state they change. Do not relax call-count assertions.
+- jsdom 24 forwards stylesheet errors through a host console outside Vitest 4's
+  test console. Filter only `Could not parse CSS stylesheet` on its existing
+  virtual-console handlers, preserving every other error. A console.error
+  wrapper in test setup misses these events and can produce hundreds of MB of
+  log output. Verify the actual log after a runner upgrade.
+
 ## Test mocks must model the real store's REPLACEMENT semantics
 
 A mock that mutates state in place where the real store replaces it makes

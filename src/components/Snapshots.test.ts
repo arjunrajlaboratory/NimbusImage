@@ -134,15 +134,17 @@ vi.mock("geojs", () => ({
 }));
 
 vi.mock("gif.js", () => ({
-  default: vi.fn().mockImplementation(() => ({
-    addFrame: vi.fn(),
-    on: vi.fn(),
-    render: vi.fn(),
-  })),
+  default: vi.fn(function () {
+    return {
+      addFrame: vi.fn(),
+      on: vi.fn(),
+      render: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock("fflate", () => ({
-  Zip: vi.fn().mockImplementation(() => {
+  Zip: vi.fn(function () {
     const zip = {
       add: vi.fn(),
       terminate: vi.fn(),
@@ -155,9 +157,9 @@ vi.mock("fflate", () => ({
     };
     return zip;
   }),
-  ZipDeflate: vi.fn().mockImplementation(() => ({
-    push: vi.fn(),
-  })),
+  ZipDeflate: vi.fn(function () {
+    return { push: vi.fn() };
+  }),
 }));
 
 vi.mock("@/utils/date", () => ({
