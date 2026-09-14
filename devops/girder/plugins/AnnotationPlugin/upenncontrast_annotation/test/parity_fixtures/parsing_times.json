@@ -1,0 +1,28 @@
+{
+  "name": "parsing_times",
+  "description": "Timepoints with a 'sec' unit token (05sec/10sec/15sec) categorized as T.",
+  "input": {
+    "filenames": [
+      "v_05sec.tif",
+      "v_10sec.tif",
+      "v_15sec.tif"
+    ]
+  },
+  "expected": {
+    "variables": [
+      {
+        "guess": "T",
+        "valueIdxPerFilename": {
+          "v_05sec.tif": 0,
+          "v_10sec.tif": 1,
+          "v_15sec.tif": 2
+        },
+        "values": [
+          "05sec",
+          "10sec",
+          "15sec"
+        ]
+      }
+    ]
+  }
+}

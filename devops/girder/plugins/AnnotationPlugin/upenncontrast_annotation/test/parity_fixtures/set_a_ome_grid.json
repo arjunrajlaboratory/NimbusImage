@@ -1,0 +1,945 @@
+{
+  "name": "set_a_ome_grid",
+  "description": "20 numeric OME-TIFF files (5 channels x 4 positions), single frame each, no file index metadata. Exercises filename-variable detection over many files plus the images fallback dimension.",
+  "input": {
+    "itemNames": [
+      "img000_000_000000_0000000000.ome.tif",
+      "img000_001_000000_0000000000.ome.tif",
+      "img000_002_000000_0000000000.ome.tif",
+      "img000_003_000000_0000000000.ome.tif",
+      "img001_000_000000_0000000000.ome.tif",
+      "img001_001_000000_0000000000.ome.tif",
+      "img001_002_000000_0000000000.ome.tif",
+      "img001_003_000000_0000000000.ome.tif",
+      "img002_000_000000_0000000000.ome.tif",
+      "img002_001_000000_0000000000.ome.tif",
+      "img002_002_000000_0000000000.ome.tif",
+      "img002_003_000000_0000000000.ome.tif",
+      "img003_000_000000_0000000000.ome.tif",
+      "img003_001_000000_0000000000.ome.tif",
+      "img003_002_000000_0000000000.ome.tif",
+      "img003_003_000000_0000000000.ome.tif",
+      "img004_000_000000_0000000000.ome.tif",
+      "img004_001_000000_0000000000.ome.tif",
+      "img004_002_000000_0000000000.ome.tif",
+      "img004_003_000000_0000000000.ome.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      }
+    ],
+    "tilesInternalMetadata": [
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [
+      {
+        "guess": "T",
+        "valueIdxPerFilename": {
+          "img000_000_000000_0000000000.ome.tif": 0,
+          "img000_001_000000_0000000000.ome.tif": 0,
+          "img000_002_000000_0000000000.ome.tif": 0,
+          "img000_003_000000_0000000000.ome.tif": 0,
+          "img001_000_000000_0000000000.ome.tif": 1,
+          "img001_001_000000_0000000000.ome.tif": 1,
+          "img001_002_000000_0000000000.ome.tif": 1,
+          "img001_003_000000_0000000000.ome.tif": 1,
+          "img002_000_000000_0000000000.ome.tif": 2,
+          "img002_001_000000_0000000000.ome.tif": 2,
+          "img002_002_000000_0000000000.ome.tif": 2,
+          "img002_003_000000_0000000000.ome.tif": 2,
+          "img003_000_000000_0000000000.ome.tif": 3,
+          "img003_001_000000_0000000000.ome.tif": 3,
+          "img003_002_000000_0000000000.ome.tif": 3,
+          "img003_003_000000_0000000000.ome.tif": 3,
+          "img004_000_000000_0000000000.ome.tif": 4,
+          "img004_001_000000_0000000000.ome.tif": 4,
+          "img004_002_000000_0000000000.ome.tif": 4,
+          "img004_003_000000_0000000000.ome.tif": 4
+        },
+        "values": [
+          "img000",
+          "img001",
+          "img002",
+          "img003",
+          "img004"
+        ]
+      },
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "img000_000_000000_0000000000.ome.tif": 0,
+          "img000_001_000000_0000000000.ome.tif": 1,
+          "img000_002_000000_0000000000.ome.tif": 2,
+          "img000_003_000000_0000000000.ome.tif": 3,
+          "img001_000_000000_0000000000.ome.tif": 0,
+          "img001_001_000000_0000000000.ome.tif": 1,
+          "img001_002_000000_0000000000.ome.tif": 2,
+          "img001_003_000000_0000000000.ome.tif": 3,
+          "img002_000_000000_0000000000.ome.tif": 0,
+          "img002_001_000000_0000000000.ome.tif": 1,
+          "img002_002_000000_0000000000.ome.tif": 2,
+          "img002_003_000000_0000000000.ome.tif": 3,
+          "img003_000_000000_0000000000.ome.tif": 0,
+          "img003_001_000000_0000000000.ome.tif": 1,
+          "img003_002_000000_0000000000.ome.tif": 2,
+          "img003_003_000000_0000000000.ome.tif": 3,
+          "img004_000_000000_0000000000.ome.tif": 0,
+          "img004_001_000000_0000000000.ome.tif": 1,
+          "img004_002_000000_0000000000.ome.tif": 2,
+          "img004_003_000000_0000000000.ome.tif": 3
+        },
+        "values": [
+          "000",
+          "001",
+          "002",
+          "003"
+        ]
+      }
+    ],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": {
+        "source": "images",
+        "guess": "Z"
+      },
+      "T": {
+        "source": "filename",
+        "guess": "T"
+      },
+      "C": {
+        "source": "filename",
+        "guess": "C"
+      }
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "000",
+        "001",
+        "002",
+        "003"
+      ],
+      "sources": [
+        {
+          "path": "img000_000_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            0
+          ],
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "img000_001_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            0
+          ],
+          "cValues": [
+            1
+          ]
+        },
+        {
+          "path": "img000_002_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            0
+          ],
+          "cValues": [
+            2
+          ]
+        },
+        {
+          "path": "img000_003_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            0
+          ],
+          "cValues": [
+            3
+          ]
+        },
+        {
+          "path": "img001_000_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            1
+          ],
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "img001_001_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            1
+          ],
+          "cValues": [
+            1
+          ]
+        },
+        {
+          "path": "img001_002_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            1
+          ],
+          "cValues": [
+            2
+          ]
+        },
+        {
+          "path": "img001_003_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            1
+          ],
+          "cValues": [
+            3
+          ]
+        },
+        {
+          "path": "img002_000_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            2
+          ],
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "img002_001_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            2
+          ],
+          "cValues": [
+            1
+          ]
+        },
+        {
+          "path": "img002_002_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            2
+          ],
+          "cValues": [
+            2
+          ]
+        },
+        {
+          "path": "img002_003_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            2
+          ],
+          "cValues": [
+            3
+          ]
+        },
+        {
+          "path": "img003_000_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            3
+          ],
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "img003_001_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            3
+          ],
+          "cValues": [
+            1
+          ]
+        },
+        {
+          "path": "img003_002_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            3
+          ],
+          "cValues": [
+            2
+          ]
+        },
+        {
+          "path": "img003_003_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            3
+          ],
+          "cValues": [
+            3
+          ]
+        },
+        {
+          "path": "img004_000_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            4
+          ],
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "img004_001_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            4
+          ],
+          "cValues": [
+            1
+          ]
+        },
+        {
+          "path": "img004_002_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            4
+          ],
+          "cValues": [
+            2
+          ]
+        },
+        {
+          "path": "img004_003_000000_0000000000.ome.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ],
+          "tValues": [
+            4
+          ],
+          "cValues": [
+            3
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": null,
+      "z": [
+        "1"
+      ],
+      "t": [
+        "img000",
+        "img001",
+        "img002",
+        "img003",
+        "img004"
+      ]
+    }
+  }
+}

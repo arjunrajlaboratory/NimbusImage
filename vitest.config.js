@@ -29,6 +29,8 @@ export default mergeConfig(
   defineConfig({
     test: {
       globals: true,
+      // Vitest 4 restores spies without clearing standalone mock call history.
+      clearMocks: true,
       environment: "jsdom",
       // "**/.tox/**" keeps vitest from globbing Girder's bundled *.spec.ts
       // files that appear under .tox/ after a backend `tox` run (they import
@@ -48,7 +50,7 @@ export default mergeConfig(
       setupFiles: [
         fileURLToPath(new URL("./test/setup.ts", import.meta.url)),
       ],
-      // Vitest 3 exits with code 1 on unhandled async errors even when all tests pass.
+      // Vitest exits with code 1 on unhandled async errors even when all tests pass.
       // Our tests produce harmless async lifecycle errors (e.g., ImageViewer tile URL
       // generation after teardown). These aren't real failures.
       dangerouslyIgnoreUnhandledErrors: true,

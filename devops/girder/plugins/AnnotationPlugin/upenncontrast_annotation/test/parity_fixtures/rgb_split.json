@@ -1,0 +1,137 @@
+{
+  "name": "rgb_split",
+  "description": "Single RGB rgb.tif (bandCount 3, photometricInterpretation 2), splitRGBBands true. Channels expand to Red/Green/Blue.",
+  "input": {
+    "itemNames": [
+      "rgb.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 3,
+        "IndexRange": null,
+        "IndexStride": null,
+        "metadata": {
+          "photometricInterpretation": 2
+        }
+      }
+    ],
+    "tilesInternalMetadata": [
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": {
+        "source": "images",
+        "guess": "Z"
+      },
+      "T": null,
+      "C": null
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "Default - Red",
+        "Default - Green",
+        "Default - Blue"
+      ],
+      "sources": [
+        {
+          "path": "rgb.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 1
+              }
+            ]
+          },
+          "c": 0,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "rgb.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 2
+              }
+            ]
+          },
+          "c": 1,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "rgb.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 3
+              }
+            ]
+          },
+          "c": 2,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": true
+    },
+    "dimensionLabels": {
+      "xy": null,
+      "z": [
+        "1"
+      ],
+      "t": null
+    }
+  }
+}

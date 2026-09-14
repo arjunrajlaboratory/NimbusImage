@@ -1,0 +1,42 @@
+{
+  "name": "parsing_collide",
+  "description": "Two non-numeric varying columns both categorize as channel, forcing conflict resolution (second becomes the next available category).",
+  "input": {
+    "filenames": [
+      "gfp_red.tif",
+      "gfp_green.tif",
+      "dapi_red.tif",
+      "dapi_green.tif"
+    ]
+  },
+  "expected": {
+    "variables": [
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "dapi_green.tif": 0,
+          "dapi_red.tif": 0,
+          "gfp_green.tif": 1,
+          "gfp_red.tif": 1
+        },
+        "values": [
+          "dapi",
+          "gfp"
+        ]
+      },
+      {
+        "guess": "XY",
+        "valueIdxPerFilename": {
+          "dapi_green.tif": 0,
+          "dapi_red.tif": 1,
+          "gfp_green.tif": 0,
+          "gfp_red.tif": 1
+        },
+        "values": [
+          "green",
+          "red"
+        ]
+      }
+    ]
+  }
+}

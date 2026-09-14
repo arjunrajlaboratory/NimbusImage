@@ -1,0 +1,28 @@
+{
+  "name": "parsing_ragged",
+  "description": "Ragged token counts (one row has fewer tokens). Exercises missing-token (undefined/None) handling in the dataframe.",
+  "input": {
+    "filenames": [
+      "s_00.tif",
+      "s_01.tif",
+      "s.tif"
+    ]
+  },
+  "expected": {
+    "variables": [
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "s.tif": 2,
+          "s_00.tif": 0,
+          "s_01.tif": 1
+        },
+        "values": [
+          "00",
+          "01",
+          "tif"
+        ]
+      }
+    ]
+  }
+}

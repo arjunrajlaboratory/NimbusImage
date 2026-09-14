@@ -60,6 +60,13 @@ import nimbusimage as ni
 
 client = ni.connect()
 
+# Build a dataset from image files (dry-run first to check the plan)
+ds = client.create_dataset("My Experiment")
+ds.upload("path/to/images/")
+plan = ds.configure(dry_run=True)
+if plan.is_valid:
+    ds.configure()   # also creates the collection + view, so ds.open() works
+
 # List datasets
 for d in client.list_datasets():
     print(f"{d['name']} (ID: {d['_id']})")
@@ -98,7 +105,10 @@ The package follows an accessor pattern:
 
 ```
 ni.connect() -> NimbusClient
+    client.create_dataset(name) -> Dataset
     client.dataset(id) -> Dataset
+        ds.upload()      # add image files to the dataset folder
+        ds.configure()   # turn those files into one multi-dimensional image
         ds.images        # fetch frames, composites, z-stacks
         ds.annotations   # create, list, filter, delete annotations
         ds.connections   # parent-child annotation links

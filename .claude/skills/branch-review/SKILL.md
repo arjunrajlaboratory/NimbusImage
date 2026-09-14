@@ -168,8 +168,13 @@ Flag any use of `Model().collection.find()` — should be `Model().find()`. The 
 - Flag `Model().load(id, ...)` followed by `if result is None: raise ...`. Should use `exc=True` parameter instead.
 - Flag `Model().load(id, force=True)` unless there's a clear comment explaining why access checks are bypassed.
 
-### 5. Broad Exception Handling
+### 5. Broad Exception Handling — and Silent Exception Handling
 Flag `except Exception:` or bare `except:`. These swallow errors like KeyboardInterrupt, MemoryError, etc. Catch specific exception types.
+
+Even where a broad catch is justified (best-effort cleanup that must not mask the original error), **the exception message must be surfaced, not just the fact that something failed** (pchoisel, PR #1225):
+- Inside the handler, log with `logger.exception(...)` — it appends the message *and* traceback; a `logger.error("cleanup failed")` with no exception info, or a bare `pass`, hides the one thing a debugger needs. (`logger.exception` outside an `except` block logs `NoneType: None` — use it only inside the handler.)
+- When converting to another error (`ValueError` → `RestException`, cleanup failure → `RuntimeError`), include `str(e)` in the message or chain with `raise ... from exc`.
+- A deliberate skip (`except X: pass`) must catch the *narrow* exception the skip is designed for (e.g. `girder_client.HttpError` for an inaccessible resource), with a comment; `except Exception: pass` silently eats real bugs.
 
 ### 6. Access Control
 - Check that mutation endpoints (POST, PUT, DELETE) verify the user has `WRITE` or `ADMIN` access on the affected resource.
@@ -201,7 +206,7 @@ For every new or modified `@access.public` endpoint:
 - Class-level constants (allowed-field sets, collection names, `MAX_*`) belong at the top of the class definition, not between methods mid-file.
 - Aggregation `$count` output fields should be named `count`, not a cryptic short name — easier to debug. Dense `$addFields`/`$cond`/`$ifNull` stages need a comment explaining what the stage computes and why.
 
-### 12. Girder Built-Ins, Python Idioms, and Reviewer Questions (pchoisel's recurring comments, PRs #1071–#1247)
+### 12. Girder Built-Ins, Python Idioms, and Reviewer Questions (pchoisel's recurring comments, PRs #1071–#1247, #1225)
 The backend's human reviewer flags these reliably; catch them first.
 
 **Girder provides it — don't hand-roll it.** These get flagged with a link to the Girder source:
@@ -209,6 +214,10 @@ The backend's human reviewer flags these reliably; catch them first.
 - `getServerMode()` answers "is this production?" — don't invent env flags or tox-level configuration for it.
 - `Model()` construction is a cached singleton (see check 11) — no lazy-loading properties.
 - When a change needs plumbing (user loading, env detection, caching), search girder/girder for an existing mechanism before writing one.
+
+**girder_client provides it too — check before raw `gc.get`/`gc.post`.** The same rule applies client-side in the `nimbusimage/` package (pchoisel, PR #1225): a hand-rolled `gc.get("folder", parameters={...})` + client-side scan was a one-call `gc.listFolder(parentId, parentFolderType="user", name=...)`, and a raw `gc.post("folder", ...)` with manually `json.dumps`-ed metadata was `gc.createFolder(..., metadata=dict)` (it JSON-encodes metadata itself). Before writing a raw REST call, check `girder_client.GirderClient` for a method covering the operation (`listFolder`, `listItem`, `createFolder`, `createItem`, `uploadFileToFolder`, `listResource`, `addMetadataToFolder`, ...) — server-side filtering via their parameters beats fetching everything and scanning.
+
+**Python stdlib idioms for float checks:** `math.isnan(x)` / `math.isinf(x)`, never the `x != x` NaN trick or equality against `float("inf")` (pchoisel, PR #1225).
 
 **Factorization habits:**
 - N near-identical consecutive statements → a for-loop over a small spec list.
@@ -228,6 +237,14 @@ The backend's human reviewer flags these reliably; catch them first.
 **Answer the reviewer's questions before review does.** For each new parameter or data path, the questions asked in past rounds: can this be `None`? What happens on re-run/re-import when the data already exists (overwrite, duplicate, or delete-old)? What happens to non-scalar values (a dict landing in a CSV cell)? Handle it in code, or say why not in a comment.
 
 **Why-comments on non-obvious mechanisms** ("for future us"): anything relying on subtle semantics — aggregation stages, context-manager/GC behavior — needs a comment saying why it matters, written for a reader who doesn't know that corner of Python or Mongo.
+
+### 13. Function Placement — does this function belong in this file?
+For every *new* function or method in the diff, ask where it belongs before reviewing what it does (pchoisel, PR #1225 flagged a generic boolean-body parser defined as a staticmethod in an API resource class):
+- **Generic input validators/parsers** (no domain knowledge beyond "this is a request field") defined in `server/api/*.py` belong in `server/helpers/validation.py`, next to `requireInt`/`requireObjectId`/`optionalBoolean` — where the other API files can find and reuse them. Endpoint-specific schema validators (ones encoding this endpoint's field names, dimensions, or messages) may stay in the API file.
+- **Logic shared or shareable across API files** belongs in `server/helpers/` or the model layer, not copy-pasted or parked in whichever API file needed it first.
+- **A staticmethod that never touches `self` or the class** is a hint it is a utility that belongs at module level or in a helper module.
+- Frontend equivalents already covered below: API calls belong in `src/store/*API.ts`, shared utilities in `src/utils/`.
+The test: "if a second endpoint needed this tomorrow, would it import from here?" If importing from an API module feels wrong, the function is in the wrong place today.
 
 ## Frontend-Specific Checks
 

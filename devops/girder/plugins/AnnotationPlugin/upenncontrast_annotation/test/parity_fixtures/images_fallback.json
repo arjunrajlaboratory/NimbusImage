@@ -1,0 +1,123 @@
+{
+  "name": "images_fallback",
+  "description": "Single stack.tif with 7 frames and no IndexRange/IndexStride. Exercises the images fallback dimension (Z size 7).",
+  "input": {
+    "itemNames": [
+      "stack.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexT": 0,
+            "IndexZ": 1,
+            "IndexC": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexT": 0,
+            "IndexZ": 2,
+            "IndexC": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexT": 0,
+            "IndexZ": 3,
+            "IndexC": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexT": 0,
+            "IndexZ": 4,
+            "IndexC": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexT": 0,
+            "IndexZ": 5,
+            "IndexC": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexT": 0,
+            "IndexZ": 6,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      }
+    ],
+    "tilesInternalMetadata": [
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": {
+        "source": "images",
+        "guess": "Z"
+      },
+      "T": null,
+      "C": null
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "Default"
+      ],
+      "sources": [
+        {
+          "path": "stack.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": null,
+      "z": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7"
+      ],
+      "t": null
+    }
+  }
+}

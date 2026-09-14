@@ -1,0 +1,433 @@
+{
+  "name": "rgb_multifile_split",
+  "description": "4 RGB files (well x time), RGB bandCount 3 on first file, splitRGBBands true. C is explicitly unassigned via strategy so the RGB split remains valid.",
+  "input": {
+    "itemNames": [
+      "wellA1_t0.tif",
+      "wellA1_t1.tif",
+      "wellB2_t0.tif",
+      "wellB2_t1.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 3,
+        "IndexRange": null,
+        "IndexStride": null,
+        "metadata": {
+          "photometricInterpretation": 2
+        }
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 3,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 3,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 3,
+        "IndexRange": null,
+        "IndexStride": null
+      }
+    ],
+    "tilesInternalMetadata": [
+      {},
+      {},
+      {},
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": {
+        "C": null
+      }
+    }
+  },
+  "expected": {
+    "filenameVariables": [
+      {
+        "guess": "XY",
+        "valueIdxPerFilename": {
+          "wellA1_t0.tif": 0,
+          "wellA1_t1.tif": 0,
+          "wellB2_t0.tif": 1,
+          "wellB2_t1.tif": 1
+        },
+        "values": [
+          "wellA1",
+          "wellB2"
+        ]
+      },
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "wellA1_t0.tif": 0,
+          "wellA1_t1.tif": 1,
+          "wellB2_t0.tif": 0,
+          "wellB2_t1.tif": 1
+        },
+        "values": [
+          "t0",
+          "t1"
+        ]
+      }
+    ],
+    "defaultAssignments": {
+      "XY": {
+        "source": "filename",
+        "guess": "XY"
+      },
+      "Z": {
+        "source": "images",
+        "guess": "Z"
+      },
+      "T": null,
+      "C": {
+        "source": "filename",
+        "guess": "C"
+      }
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "Default - Red",
+        "Default - Green",
+        "Default - Blue"
+      ],
+      "sources": [
+        {
+          "path": "wellA1_t0.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 1
+              }
+            ]
+          },
+          "c": 0,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "wellA1_t0.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 2
+              }
+            ]
+          },
+          "c": 1,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "wellA1_t0.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 3
+              }
+            ]
+          },
+          "c": 2,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "wellA1_t1.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 1
+              }
+            ]
+          },
+          "c": 0,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "wellA1_t1.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 2
+              }
+            ]
+          },
+          "c": 1,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "wellA1_t1.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 3
+              }
+            ]
+          },
+          "c": 2,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "wellB2_t0.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 1
+              }
+            ]
+          },
+          "c": 0,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            1
+          ]
+        },
+        {
+          "path": "wellB2_t0.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 2
+              }
+            ]
+          },
+          "c": 1,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            1
+          ]
+        },
+        {
+          "path": "wellB2_t0.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 3
+              }
+            ]
+          },
+          "c": 2,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            1
+          ]
+        },
+        {
+          "path": "wellB2_t1.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 1
+              }
+            ]
+          },
+          "c": 0,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            1
+          ]
+        },
+        {
+          "path": "wellB2_t1.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 2
+              }
+            ]
+          },
+          "c": 1,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            1
+          ]
+        },
+        {
+          "path": "wellB2_t1.tif",
+          "style": {
+            "bands": [
+              {
+                "band": 3
+              }
+            ]
+          },
+          "c": 2,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            1
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": true
+    },
+    "dimensionLabels": {
+      "xy": [
+        "wellA1",
+        "wellB2"
+      ],
+      "z": [
+        "1"
+      ],
+      "t": null
+    }
+  }
+}

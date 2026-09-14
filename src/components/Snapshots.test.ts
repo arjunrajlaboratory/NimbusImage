@@ -62,6 +62,7 @@ vi.mock("@/store", () => ({
     girderRest: { apiRoot: "/api/v1", get: vi.fn() },
     girderUser: { _id: "user1" },
     api: {
+      getSnapshotImage: vi.fn(),
       getDatasetView: vi.fn().mockResolvedValue({ datasetId: "dataset1" }),
     },
     setXY: vi.fn().mockResolvedValue(undefined),
@@ -133,17 +134,20 @@ vi.mock("geojs", () => ({
 }));
 
 vi.mock("gif.js", () => ({
-  default: vi.fn().mockImplementation(() => ({
-    addFrame: vi.fn(),
-    on: vi.fn(),
-    render: vi.fn(),
-  })),
+  default: vi.fn(function () {
+    return {
+      addFrame: vi.fn(),
+      on: vi.fn(),
+      render: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock("fflate", () => ({
-  Zip: vi.fn().mockImplementation(() => {
+  Zip: vi.fn(function () {
     const zip = {
       add: vi.fn(),
+      terminate: vi.fn(),
       end: vi.fn(() => {
         zip.ondata?.(null, new Uint8Array([1]), true);
       }),
@@ -153,9 +157,9 @@ vi.mock("fflate", () => ({
     };
     return zip;
   }),
-  ZipDeflate: vi.fn().mockImplementation(() => ({
-    push: vi.fn(),
-  })),
+  ZipDeflate: vi.fn(function () {
+    return { push: vi.fn() };
+  }),
 }));
 
 vi.mock("@/utils/date", () => ({
@@ -441,8 +445,7 @@ describe("Snapshots.vue", () => {
     it("sets bboxWidth as number updates bboxRight", () => {
       (wrapper.vm as any).bboxLeft = 10;
       (wrapper.vm as any).bboxWidth = 200;
-      // When set as number, bboxRight = value (not left + value)
-      expect((wrapper.vm as any).bboxRight).toBe(200);
+      expect((wrapper.vm as any).bboxRight).toBe(210);
     });
 
     it("sets bboxWidth as string updates bboxRight to left + parsed value", () => {
@@ -460,13 +463,25 @@ describe("Snapshots.vue", () => {
     it("sets bboxHeight as number updates bboxBottom", () => {
       (wrapper.vm as any).bboxTop = 20;
       (wrapper.vm as any).bboxHeight = 300;
-      expect((wrapper.vm as any).bboxBottom).toBe(300);
+      expect((wrapper.vm as any).bboxBottom).toBe(320);
     });
 
     it("sets bboxHeight as string updates bboxBottom to top + parsed value", () => {
       (wrapper.vm as any).bboxTop = 20;
       (wrapper.vm as any).bboxHeight = "300";
       expect((wrapper.vm as any).bboxBottom).toBe(320);
+    });
+
+    it("adds entered widths and heights numerically when origins are strings", () => {
+      const vm = wrapper.vm as any;
+      vm.bboxLeft = "100";
+      vm.bboxTop = "120";
+      vm.bboxWidth = "128";
+      vm.bboxHeight = "96";
+      expect(vm.bboxRight).toBe(228);
+      expect(vm.bboxBottom).toBe(216);
+      expect(vm.bboxWidth).toBe(128);
+      expect(vm.bboxHeight).toBe(96);
     });
 
     it("setBoundingBox clamps values to dataset bounds", () => {
@@ -1453,7 +1468,295 @@ describe("Snapshots.vue", () => {
   describe("Group 6: Download URLs and image download", () => {
     beforeEach(() => {
       wrapper = mountComponent();
+      (wrapper.vm as any).bboxRight = 100;
+      (wrapper.vm as any).bboxBottom = 100;
+      vi.mocked(store.api.getSnapshotImage).mockResolvedValue(
+        new ArrayBuffer(4),
+      );
       vi.clearAllMocks();
+    });
+
+    it.each(["layers", "channels"])(
+      "expands Z with a fixed crop and distinct names in %s mode",
+      async (mode) => {
+        const vm = wrapper.vm as any;
+        const originalDataset = store.dataset;
+        (store as any).dataset = {
+          ...originalDataset,
+          xy: [0, 1],
+          z: [0, 1, 2],
+          time: [0, 1],
+        };
+        vm.downloadMode = mode;
+        await wrapper.vm.$nextTick();
+        vm.format = "tiff";
+        vm.downloadAcross.z = true;
+        mockedGetLayersDownloadUrls.mockImplementation(async () => [
+          { url: new URL("http://localhost/layer"), layerIds: ["layer1"] },
+        ]);
+        mockedGetChannelsDownloadUrls.mockImplementation(() => [
+          { url: new URL("http://localhost/channel"), channel: 0 },
+        ]);
+        const bbox = { left: 15, top: 25, right: 115, bottom: 225 };
+        const urls = await vm.getUrlsForSnapshot(
+          { xy: 1, z: 1, time: 1 },
+          bbox,
+          "dataset1",
+          "crop",
+          store.layers,
+          "config",
+        );
+        const calls =
+          mode === "layers"
+            ? mockedGetLayersDownloadUrls.mock.calls.map((c) => c[4])
+            : mockedGetChannelsDownloadUrls.mock.calls.map((c) => c[3]);
+        expect(calls).toEqual([
+          { xy: 1, z: 0, time: 1 },
+          { xy: 1, z: 1, time: 1 },
+          { xy: 1, z: 2, time: 1 },
+        ]);
+        expect(mockedGetDownloadParameters).toHaveBeenCalledWith(
+          bbox,
+          "tiff",
+          4000000,
+          95,
+          mode,
+        );
+        expect(
+          urls.map((url: URL) =>
+            url.searchParams.get("contentDispositionFilename"),
+          ),
+        ).toEqual([
+          expect.stringContaining("XY2_T2_Z1.tiff"),
+          expect.stringContaining("XY2_T2_Z2.tiff"),
+          expect.stringContaining("XY2_T2_Z3.tiff"),
+        ]);
+        expect(store.setZ).not.toHaveBeenCalled();
+        (store as any).dataset = originalDataset;
+      },
+    );
+
+    it.each(["tiff", "tiled"])(
+      "preserves %s bytes when scalebar is checked",
+      async (format) => {
+        const vm = wrapper.vm as any;
+        const originalDataset = store.dataset;
+        (store as any).dataset = {
+          ...originalDataset,
+          xy: [0],
+          z: [0, 1],
+          time: [0],
+        };
+        vm.format = format;
+        vm.downloadAcross.z = true;
+        vm.addScalebar = true;
+        Object.assign(URL, {
+          createObjectURL: vi.fn(() => "blob:test"),
+          revokeObjectURL: vi.fn(),
+        });
+        (store.api.getSnapshotImage as any).mockResolvedValue(
+          new Uint8Array([73, 73, 42, 0]).buffer,
+        );
+        await vm.downloadImagesForCurrentState();
+        expect(vm.downloadError).toBe("");
+        expect(mockedZipDeflate).toHaveBeenCalledTimes(2);
+        for (const result of mockedZipDeflate.mock.results) {
+          expect(Array.from(result.value.push.mock.calls[0][0])).toEqual([
+            73, 73, 42, 0,
+          ]);
+        }
+        expect(mockedDownloadToClient).toHaveBeenCalledWith({
+          href: "blob:test",
+          download: "snapshot.zip",
+        });
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:test");
+        (store as any).dataset = originalDataset;
+        (store.api.getSnapshotImage as any).mockReset();
+      },
+    );
+
+    it("reports failed exports and resets the download lock", async () => {
+      mockedGetLayersDownloadUrls.mockRejectedValueOnce(new Error("offline"));
+      await (wrapper.vm as any).downloadImagesForCurrentState();
+      expect((wrapper.vm as any).downloading).toBe(false);
+      expect((wrapper.vm as any).downloadError).toContain("failed");
+      expect(mockedDownloadToClient).not.toHaveBeenCalled();
+    });
+
+    it.each(["all", "selected"])(
+      "expands %s saved snapshots using their saved crop and location",
+      async (selection) => {
+        const originalDataset = store.dataset;
+        const originalConfiguration = store.configuration;
+        (store as any).dataset = {
+          ...originalDataset,
+          xy: [0, 1],
+          z: [0, 1],
+          time: [0, 1],
+        };
+        const saved = {
+          name: "saved",
+          datasetViewId: "view1",
+          tags: [],
+          description: "",
+          modified: 0,
+          xy: 1,
+          z: 1,
+          time: 1,
+          layers: store.layers,
+          screenshot: { bbox: { left: 30, top: 40, right: 130, bottom: 140 } },
+        };
+        (store as any).configuration = {
+          ...originalConfiguration,
+          snapshots: [saved],
+        };
+        const w = mountComponent();
+        const vm = w.vm as any;
+        vm.selectedSnapshotItems = vm.snapshotList;
+        vm.downloadAcross.z = true;
+        vm.addScalebar = false;
+        Object.assign(URL, {
+          createObjectURL: vi.fn(() => "blob:test"),
+          revokeObjectURL: vi.fn(),
+        });
+        (store.api.getSnapshotImage as any).mockResolvedValue(
+          new ArrayBuffer(4),
+        );
+        if (selection === "all") await vm.downloadImagesForAllSnapshots();
+        else await vm.downloadImagesForSelectedSnapshots();
+        expect(
+          mockedGetLayersDownloadUrls.mock.calls.map((call) => call[4]),
+        ).toEqual([
+          { xy: 1, z: 0, time: 1 },
+          { xy: 1, z: 1, time: 1 },
+        ]);
+        expect(mockedGetDownloadParameters.mock.calls[0][0]).toEqual(
+          saved.screenshot.bbox,
+        );
+        expect(mockedProgress.complete).toHaveBeenCalled();
+        w.unmount();
+        (store as any).dataset = originalDataset;
+        (store as any).configuration = originalConfiguration;
+        (store.api.getSnapshotImage as any).mockReset();
+      },
+    );
+
+    it("captures scalebar geometry before asynchronous URL preparation", async () => {
+      const vm = wrapper.vm as any;
+      vm.bboxLeft = 10;
+      vm.bboxRight = 110;
+      vm.bboxTop = 20;
+      vm.bboxBottom = 120;
+      const canvasSpy = vi.spyOn(document, "createElement");
+      let finish!: (value: any) => void;
+      mockedGetLayersDownloadUrls.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const downloading = vm.downloadImagesForCurrentState();
+      vm.addScalebar = false;
+      finish([
+        { url: new URL("http://localhost/layer"), layerIds: ["layer1"] },
+      ]);
+      // The captured scalebar path fetches bytes. Fail that fetch deliberately
+      // before canvas work, proving the post-await toggle did not change scope.
+      (store.api.getSnapshotImage as any).mockRejectedValueOnce(
+        new Error("expected fetch"),
+      );
+      await downloading;
+      expect(store.api.getSnapshotImage).toHaveBeenCalled();
+      expect(mockedDownloadToClient).not.toHaveBeenCalled();
+      canvasSpy.mockRestore();
+    });
+
+    it("does not download a partial saved-snapshot batch when a crop is invalid", async () => {
+      const saved = {
+        name: "crop",
+        datasetViewId: "view1",
+        xy: 0,
+        z: 0,
+        time: 0,
+        layers: store.layers,
+        screenshot: { bbox: { left: 0, top: 0, right: 100, bottom: 100 } },
+      };
+      mockedGetDownloadParameters
+        .mockReturnValueOnce({
+          encoding: "PNG",
+          contentDisposition: "attachment",
+        })
+        .mockReturnValueOnce(null);
+      (wrapper.vm as any).addScalebar = false;
+      await (wrapper.vm as any).downloadImagesForSetOfSnapshots([
+        saved,
+        { ...saved, name: "invalid" },
+      ]);
+      expect(mockedDownloadToClient).not.toHaveBeenCalled();
+      expect((wrapper.vm as any).downloading).toBe(false);
+      expect(mockedProgress.complete).toHaveBeenCalled();
+    });
+
+    it("cleans up ZIP progress without downloading on a network failure", async () => {
+      (store.api.getSnapshotImage as any).mockRejectedValueOnce(
+        new Error("offline"),
+      );
+      await expect(
+        (wrapper.vm as any).downloadUrls([
+          { url: new URL("http://localhost/first"), scalebarSpec: null },
+          { url: new URL("http://localhost/second"), scalebarSpec: null },
+        ]),
+      ).rejects.toThrow("offline");
+      expect(store.api.getSnapshotImage).toHaveBeenCalledTimes(1);
+      expect(mockedProgress.complete).toHaveBeenCalledWith("progress1");
+      expect(mockedDownloadToClient).not.toHaveBeenCalled();
+    });
+
+    it("freezes options and nested layer settings before loading a saved dataset", async () => {
+      const vm = wrapper.vm as any;
+      const original = store.dataset;
+      const dataset = {
+        ...original,
+        id: "another",
+        xy: [0],
+        z: [0, 1],
+        time: [0],
+      };
+      let finish!: (value: any) => void;
+      mockedGirderResources.getDataset.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      vm.downloadAcross.z = true;
+      vm.format = "tiff";
+      const layers = [
+        {
+          ...store.layers[0],
+          contrast: { mode: "absolute", blackPoint: 0, whitePoint: 200 },
+        },
+      ];
+      const urlsPromise = vm.getUrlsForSnapshot(
+        { xy: 0, z: 0, time: 0 },
+        { left: 0, top: 0, right: 10, bottom: 20 },
+        "another",
+        "saved",
+        layers,
+        "config",
+      );
+      vm.downloadAcross.z = false;
+      vm.format = "jpeg";
+      layers[0].contrast.whitePoint = 100;
+      finish(dataset);
+      const urls = await urlsPromise;
+      expect(urls).toHaveLength(2);
+      expect(urls[0].searchParams.get("contentDispositionFilename")).toContain(
+        ".tiff",
+      );
+      expect(
+        mockedGetLayersDownloadUrls.mock.calls[0][2][0].contrast.whitePoint,
+      ).toBe(200);
     });
 
     it("getUrlsForSnapshot returns URLs for layer mode", async () => {
@@ -1516,22 +1819,30 @@ describe("Snapshots.vue", () => {
       expect(filename).toContain("MySnapshot");
     });
 
-    it("downloadUrls downloads single file directly without scalebar", async () => {
-      const url = new URL("http://localhost/api/v1/test");
-      url.searchParams.set("contentDispositionFilename", "test.png");
-      await (wrapper.vm as any).downloadUrls([{ url, scalebarSpec: null }]);
-      expect(mockedDownloadToClient).toHaveBeenCalledWith({
-        href: url.href,
+    it("downloadUrls authenticates single-file downloads without a scalebar", async () => {
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:single"),
+        revokeObjectURL: vi.fn(),
       });
+      const url = new URL("http://localhost/api/v1/test");
+      url.searchParams.set("contentDispositionFilename", "test.tiff");
+      await (wrapper.vm as any).downloadUrls([{ url, scalebarSpec: null }]);
+      expect(store.api.getSnapshotImage).toHaveBeenCalledWith(url);
+      expect(mockedDownloadToClient).toHaveBeenCalledWith({
+        href: "blob:single",
+        download: "test.tiff",
+      });
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:single");
     });
 
     it("downloadUrls sanitizes zip entry filenames", async () => {
       Object.assign(URL, {
         createObjectURL: vi.fn(() => "blob:snapshot"),
+        revokeObjectURL: vi.fn(),
       });
-      (store.girderRest.get as any)
-        .mockResolvedValueOnce({ data: new ArrayBuffer(1) })
-        .mockResolvedValueOnce({ data: new ArrayBuffer(1) });
+      (store.api.getSnapshotImage as any)
+        .mockResolvedValueOnce(new ArrayBuffer(1))
+        .mockResolvedValueOnce(new ArrayBuffer(1));
 
       const first = new URL("http://localhost/api/v1/first");
       first.searchParams.set(
@@ -1568,6 +1879,7 @@ describe("Snapshots.vue", () => {
     it("downloadUrls assigns sanitized duplicate zip filenames in input order", async () => {
       Object.assign(URL, {
         createObjectURL: vi.fn(() => "blob:snapshot"),
+        revokeObjectURL: vi.fn(),
       });
 
       let resolveFirst: ((value: { data: ArrayBuffer }) => void) | undefined;
@@ -1579,8 +1891,10 @@ describe("Snapshots.vue", () => {
         resolveSecond = resolve;
       });
 
-      (store.girderRest.get as any).mockImplementation((href: string) =>
-        href.includes("first") ? firstResponse : secondResponse,
+      (store.api.getSnapshotImage as any).mockImplementation((url: URL) =>
+        (url.href.includes("first") ? firstResponse : secondResponse).then(
+          ({ data }) => data,
+        ),
       );
 
       const first = new URL("http://localhost/api/v1/first");
@@ -1599,11 +1913,14 @@ describe("Snapshots.vue", () => {
         { url: second, scalebarSpec: null },
       ]);
 
+      await Promise.resolve();
+      // A large stack must not start every crop request at once.
+      expect(store.api.getSnapshotImage).toHaveBeenCalledTimes(1);
       resolveSecond?.({ data: new Uint8Array([2]).buffer });
       await Promise.resolve();
       resolveFirst?.({ data: new Uint8Array([1]).buffer });
       await downloadPromise;
-      (store.girderRest.get as any).mockReset();
+      (store.api.getSnapshotImage as any).mockReset();
 
       const pushedDataByFileName = new Map(
         mockedZipDeflate.mock.calls.map(([fileName], index) => {

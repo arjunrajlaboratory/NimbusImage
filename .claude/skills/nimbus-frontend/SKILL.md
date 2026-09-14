@@ -5,6 +5,27 @@ description: "Use when writing or modifying Vue 3 components, Vuex store modules
 
 # Nimbus Frontend Development
 
+## Dependency bumps and Vitest 4
+
+- Compare the actual resolved graph, not the Dependabot title. An override can
+  make a proposed bump a no-op. Keep legacy consumers on the API major they
+  require; a direct upgrade must not force every transitive consumer across it.
+- A pnpm package has both a `packages` entry and a `snapshots` dependency entry.
+  Updating only its version and integrity can omit a newly required dependency.
+  Re-resolve with pnpm and inspect the diff; a frozen install checks importer
+  consistency but does not prove every transitive snapshot is complete.
+- Vitest 4 mocks used with `new` must use a regular function or class, not an
+  arrow. Sweep sibling constructor mocks, including rarely exercised GIF/ZIP
+  paths. Factory methods such as vtk's `newInstance()` remain ordinary calls.
+- `vi.restoreAllMocks()` no longer clears standalone mock call history. The
+  suite uses `clearMocks: true` for call isolation; tests must still reset any
+  implementations or state they change. Do not relax call-count assertions.
+- jsdom 24 forwards stylesheet errors through a host console outside Vitest 4's
+  test console. Filter only `Could not parse CSS stylesheet` on its existing
+  virtual-console handlers, preserving every other error. A console.error
+  wrapper in test setup misses these events and can produce hundreds of MB of
+  log output. Verify the actual log after a runner upgrade.
+
 ## Test mocks must model the real store's REPLACEMENT semantics
 
 A mock that mutates state in place where the real store replaces it makes
@@ -796,3 +817,36 @@ Before concluding "the code doesn't work", check what the relevant mock actually
 - When working on projects feature: read `codebaseDocumentation/PROJECTS.md`
 - When working on sharing UI: read `codebaseDocumentation/SHARING.md`
 - When working on annotation combining: read `codebaseDocumentation/COMBINE_ANNOTATIONS.md`
+
+## Snapshot/export validation must inspect the actual artifact
+
+A successful download click can produce a ZIP of empty or mislabeled images.
+For image exports, decode the downloaded files and check format, dimensions,
+coordinate coverage, and distinct pixels where expected. TIFF must bypass a
+browser canvas scalebar path: canvas cannot decode TIFF and PNG re-encoding
+would discard the original TIFF data. A scaled style with no frame can default
+to frame zero on the server; reject missing planes and empty layer selections
+before building export styles. Reject empty/inverted/nonfinite crops and empty
+binary responses instead of offering a plausible archive.
+
+Capture export inputs before the first await, including nested layer contrasts,
+per-crop scalebar geometry/color/text, and format/dimension selections. Disabled
+controls do not protect against changes from other panels or navigation.
+
+Numeric field tests must cover both emitted strings and numbers, with a nonzero
+origin: `"100" + 128` becomes `"100128"`. Width/height setters must add numeric
+sizes to the origin consistently; do not preserve a test that accidentally
+asserts a width is an absolute right coordinate. See `Snapshots.test.ts` and
+`utils/screenshot.test.ts` for artifact and crop regression coverage.
+
+Check single-file and ZIP paths together: a direct download URL does not carry
+an Axios/Girder authentication header. Both paths must use the authenticated
+client before offering a local Blob, especially when disabling a canvas overlay
+changes which path a format takes.
+
+Snapshot locations and display-layer channels use slider indices, but
+`dataset.images(z, time, xy, channel)` is keyed by metadata coordinate values.
+Use `getLayerImages` for layer validation and styles; for raw exports, map
+location indices through the dataset arrays while preserving channel IDs from
+the raw-channel selector. Test with the real `parseTiles` lookup and sparse,
+nonzero values on every axis: an index-agnostic image mock hides this mismatch.

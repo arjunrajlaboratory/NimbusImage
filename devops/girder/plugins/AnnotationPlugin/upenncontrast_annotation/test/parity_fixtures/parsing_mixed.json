@@ -1,0 +1,71 @@
+{
+  "name": "parsing_mixed",
+  "description": "Channel x well x time (2x2x2) requiring a size-3 minimal spanning column set; yields C, XY and T variables.",
+  "input": {
+    "filenames": [
+      "gfp_A1_05sec.tif",
+      "gfp_A1_10sec.tif",
+      "gfp_B2_05sec.tif",
+      "gfp_B2_10sec.tif",
+      "dapi_A1_05sec.tif",
+      "dapi_A1_10sec.tif",
+      "dapi_B2_05sec.tif",
+      "dapi_B2_10sec.tif"
+    ]
+  },
+  "expected": {
+    "variables": [
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "dapi_A1_05sec.tif": 0,
+          "dapi_A1_10sec.tif": 0,
+          "dapi_B2_05sec.tif": 0,
+          "dapi_B2_10sec.tif": 0,
+          "gfp_A1_05sec.tif": 1,
+          "gfp_A1_10sec.tif": 1,
+          "gfp_B2_05sec.tif": 1,
+          "gfp_B2_10sec.tif": 1
+        },
+        "values": [
+          "dapi",
+          "gfp"
+        ]
+      },
+      {
+        "guess": "XY",
+        "valueIdxPerFilename": {
+          "dapi_A1_05sec.tif": 0,
+          "dapi_A1_10sec.tif": 0,
+          "dapi_B2_05sec.tif": 1,
+          "dapi_B2_10sec.tif": 1,
+          "gfp_A1_05sec.tif": 0,
+          "gfp_A1_10sec.tif": 0,
+          "gfp_B2_05sec.tif": 1,
+          "gfp_B2_10sec.tif": 1
+        },
+        "values": [
+          "A1",
+          "B2"
+        ]
+      },
+      {
+        "guess": "T",
+        "valueIdxPerFilename": {
+          "dapi_A1_05sec.tif": 0,
+          "dapi_A1_10sec.tif": 1,
+          "dapi_B2_05sec.tif": 0,
+          "dapi_B2_10sec.tif": 1,
+          "gfp_A1_05sec.tif": 0,
+          "gfp_A1_10sec.tif": 1,
+          "gfp_B2_05sec.tif": 0,
+          "gfp_B2_10sec.tif": 1
+        },
+        "values": [
+          "05sec",
+          "10sec"
+        ]
+      }
+    ]
+  }
+}

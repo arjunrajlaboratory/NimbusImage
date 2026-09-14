@@ -1,0 +1,335 @@
+{
+  "name": "set_b_dir_channels",
+  "description": "6 files with directory-based channels (gfp/phase/red) and well+timepoint tokens. Exercises filename parsing with slash and underscore delimiters.",
+  "input": {
+    "itemNames": [
+      "gfp/VID1630_A1_1_00d00h00m.tif",
+      "gfp/VID1630_C4_1_01d23h34m.tif",
+      "phase/VID1630_A1_1_00d00h00m.tif",
+      "phase/VID1630_C4_1_01d23h34m.tif",
+      "red/VID1630_A1_1_00d00h00m.tif",
+      "red/VID1630_C4_1_01d23h34m.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      },
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      }
+    ],
+    "tilesInternalMetadata": [
+      {},
+      {},
+      {},
+      {},
+      {},
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "gfp/VID1630_A1_1_00d00h00m.tif": 0,
+          "gfp/VID1630_C4_1_01d23h34m.tif": 0,
+          "phase/VID1630_A1_1_00d00h00m.tif": 1,
+          "phase/VID1630_C4_1_01d23h34m.tif": 1,
+          "red/VID1630_A1_1_00d00h00m.tif": 2,
+          "red/VID1630_C4_1_01d23h34m.tif": 2
+        },
+        "values": [
+          "gfp",
+          "phase",
+          "red"
+        ]
+      },
+      {
+        "guess": "XY",
+        "valueIdxPerFilename": {
+          "gfp/VID1630_A1_1_00d00h00m.tif": 0,
+          "gfp/VID1630_C4_1_01d23h34m.tif": 1,
+          "phase/VID1630_A1_1_00d00h00m.tif": 0,
+          "phase/VID1630_C4_1_01d23h34m.tif": 1,
+          "red/VID1630_A1_1_00d00h00m.tif": 0,
+          "red/VID1630_C4_1_01d23h34m.tif": 1
+        },
+        "values": [
+          "A1",
+          "C4"
+        ]
+      }
+    ],
+    "defaultAssignments": {
+      "XY": {
+        "source": "filename",
+        "guess": "XY"
+      },
+      "Z": {
+        "source": "images",
+        "guess": "Z"
+      },
+      "T": null,
+      "C": {
+        "source": "filename",
+        "guess": "C"
+      }
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "gfp",
+        "phase",
+        "red"
+      ],
+      "sources": [
+        {
+          "path": "gfp/VID1630_A1_1_00d00h00m.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "xyValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "gfp/VID1630_C4_1_01d23h34m.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "xyValues": [
+            1
+          ],
+          "zValues": [
+            0
+          ],
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "phase/VID1630_A1_1_00d00h00m.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "xyValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "cValues": [
+            1
+          ]
+        },
+        {
+          "path": "phase/VID1630_C4_1_01d23h34m.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "xyValues": [
+            1
+          ],
+          "zValues": [
+            0
+          ],
+          "cValues": [
+            1
+          ]
+        },
+        {
+          "path": "red/VID1630_A1_1_00d00h00m.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "xyValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "cValues": [
+            2
+          ]
+        },
+        {
+          "path": "red/VID1630_C4_1_01d23h34m.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "xyValues": [
+            1
+          ],
+          "zValues": [
+            0
+          ],
+          "cValues": [
+            2
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": [
+        "A1",
+        "C4"
+      ],
+      "z": [
+        "1"
+      ],
+      "t": null
+    }
+  }
+}

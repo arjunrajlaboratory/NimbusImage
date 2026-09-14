@@ -1680,7 +1680,9 @@ describe("MultiSourceConfiguration", () => {
     });
   });
 
-  describe("getCompositingValueFromAssignments", () => {
+  // The compositing branch of generateJson used to call a byte-identical
+  // copy of getValueFromAssignments; it now shares the one implementation.
+  describe("getValueFromAssignments (compositing branch)", () => {
     it("returns correct value for file source", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
@@ -1693,7 +1695,7 @@ describe("MultiSourceConfiguration", () => {
         },
       };
       // frameIdx=30, stride=15, range=4 => floor(30/15) % 4 = 2
-      expect(vm.getCompositingValueFromAssignments("T", 0, 30)).toBe(2);
+      expect(vm.getValueFromAssignments("T", 0, 30)).toBe(2);
     });
   });
 

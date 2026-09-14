@@ -1,0 +1,79 @@
+{
+  "name": "real_rgb_no_split",
+  "description": "The same real RGB TIFF with splitRGBBands off: one channel, no band styling, singleBand still true.",
+  "input": {
+    "itemNames": [
+      "Hair sample image.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "bandCount": 3,
+        "dtype": "uint8",
+        "levels": 3,
+        "magnification": null,
+        "mm_x": null,
+        "mm_y": null,
+        "sizeX": 844,
+        "sizeY": 868,
+        "tileHeight": 258,
+        "tileWidth": 844
+      }
+    ],
+    "tilesInternalMetadata": [
+      {
+        "iccprofiles": [
+          "sRGB IEC61966-2.1\r\n\r\nCopyright (c) 1998 Hewlett-Packard Company"
+        ],
+        "populatedLevels": 1,
+        "tiff": {
+          "datetime": "2024:12:05 14:40:48",
+          "software": "Adobe Photoshop CS6 (Windows)"
+        },
+        "tilesource": "tiff"
+      }
+    ],
+    "options": {
+      "splitRGBBands": false,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": {
+        "source": "images",
+        "guess": "Z"
+      },
+      "T": null,
+      "C": null
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "Default"
+      ],
+      "sources": [
+        {
+          "path": "Hair sample image.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": true
+    },
+    "dimensionLabels": {
+      "xy": null,
+      "z": [
+        "1"
+      ],
+      "t": null
+    }
+  }
+}

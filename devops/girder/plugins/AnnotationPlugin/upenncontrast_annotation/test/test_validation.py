@@ -64,6 +64,26 @@ class TestRequireFloat:
             validation.requireFloat(HUGE_INT, "pointRadius")
 
 
+class TestOptionalBoolean:
+    def testMissingKeyReturnsDefault(self):
+        assert validation.optionalBoolean({}, "dryRun", False) is False
+        assert validation.optionalBoolean({}, "createView", True) is True
+
+    def testPresentBooleanIsReturned(self):
+        assert validation.optionalBoolean(
+            {"dryRun": True}, "dryRun", False
+        ) is True
+
+    def testTruthyNonBooleansAreRejected(self):
+        """JSON strings/numbers must not be truthy-coerced: "false" and 1
+        would both silently read as True."""
+        for badValue in ("false", "true", 1, 0, None, [], {}):
+            with pytest.raises(RestException):
+                validation.optionalBoolean(
+                    {"dryRun": badValue}, "dryRun", False
+                )
+
+
 class TestGateVertexValidation:
     def testHugeIntVertexIsABadRequestNotA500(self):
         """Gate vertices reach the finite check on PUBLIC analysis

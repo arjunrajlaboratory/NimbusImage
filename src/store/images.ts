@@ -152,12 +152,7 @@ export async function getBandOption(
 ) {
   // Get the images at the location
   const { xy, z, time } = location;
-  const indexes = getLayerSliceIndexes(layer, dataset, time, xy, z);
-  let images: IImage[] = [];
-  if (indexes) {
-    const { zIndex, tIndex, xyIndex } = indexes;
-    images = dataset.images(zIndex, tIndex, xyIndex, layer.channel);
-  }
+  const images = getLayerImages(layer, dataset, time, xy, z);
 
   // Fetch the histogram
   const histogram = await api.getLayerHistogram(images);
