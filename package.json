@@ -55,7 +55,7 @@
     "dompurify": "^3.4.13",
     "driver.js": "^1.4.0",
     "earcut": "^3.0.2",
-    "fflate": "^0.7.4",
+    "fflate": "^0.7.5",
     "file-selector": "^2.1.2",
     "fs-extra": "^10.0.0",
     "gif.js": "^0.2.0",
