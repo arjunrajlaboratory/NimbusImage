@@ -146,6 +146,47 @@ describe("annotation browser config persistence", () => {
   });
 
   describe("resolveAnnotationBrowserConfig", () => {
+    it("preserves virtual columns, filters, labels and gates on reload", () => {
+      const path = ["spatial", "CD3E"];
+      const config = {
+        displayedPropertyPaths: [path],
+        filterPaths: [path],
+        propertyFilters: [{ ...makeFilter("spatial"), propertyPath: path }],
+        trackLabelPath: path,
+        analysisPlots: [
+          {
+            id: "gene-gate",
+            xAxis: { type: "property" as const, path },
+            yAxis: { type: "property" as const, path },
+            gateEnabled: true,
+            gate: {
+              categoryKeyVersion: 1 as const,
+              vertices: [
+                { x: 0, y: 0 },
+                { x: 1, y: 0 },
+                { x: 1, y: 1 },
+              ],
+              xCategories: null,
+              yCategories: null,
+            },
+          },
+        ],
+      };
+      expect(resolveAnnotationBrowserConfig(config, [])).toEqual(config);
+      expect(
+        resolveAnnotationBrowserConfig(
+          {
+            displayedPropertyPaths: [
+              ["spatial"],
+              ["spatial", ""],
+              ["spatial", "gene", "extra"],
+            ],
+          },
+          [],
+        ).displayedPropertyPaths,
+      ).toEqual([]);
+    });
+
     it("returns empty state for a configuration without the key", () => {
       expect(resolveAnnotationBrowserConfig(undefined, ["prop-a"])).toEqual({
         displayedPropertyPaths: [],

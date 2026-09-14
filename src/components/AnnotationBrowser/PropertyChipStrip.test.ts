@@ -12,6 +12,8 @@ vi.mock("@/store/annotation", () => ({
 }));
 
 vi.mock("@/store/properties", () => ({
+  SPATIAL_PROPERTY_ID: "spatial",
+  SPATIAL_PSEUDO_PROPERTY: { id: "spatial", name: "Spatial table" },
   default: {
     properties: [],
     computedPropertyPaths: [],

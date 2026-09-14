@@ -13,6 +13,18 @@ export function findIndexOfPath(path: string[], pathArray: string[][]): number {
 }
 
 // Generate a unique string from a path
+// A property path as a single string key, e.g. for Set/Map membership or a
+// select's item value. NUL cannot appear in a path segment (isValidPropertyPath
+// rejects "." and "$"; segments are user-facing names), so the round trip is
+// exact — unlike "." which a display-name join would collide with.
+export function serializePropertyPath(path: string[]): string {
+  return path.join("\u0000");
+}
+
+export function deserializePropertyPath(key: string): string[] {
+  return key.split("\u0000");
+}
+
 export function createPathStringFromPathArray(path: string[]): string {
   // . shouldn't be used in a subId (mongoDB restriction on field names)
   return path.join(".");

@@ -1,6 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mount, enableAutoUnmount } from "@vue/test-utils";
 import { routeProvider, routerProvider } from "@/test/helpers";
+
+enableAutoUnmount(afterEach);
+afterEach(() =>
+  document.querySelectorAll('[data-app="true"]').forEach((app) => app.remove()),
+);
 
 vi.mock("@/store", () => ({
   default: {

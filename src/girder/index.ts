@@ -23,6 +23,8 @@ export interface IGirderUser extends IGirderBase {
   firstName: string;
   lastName: string;
   admin?: boolean;
+  // Set on the hidden user behind a share link (SHARING.md "Share links").
+  shareLink?: { datasetId: string; createdBy: string };
   meta?: {
     channelColors?: { [key: string]: string };
     [key: string]: any;

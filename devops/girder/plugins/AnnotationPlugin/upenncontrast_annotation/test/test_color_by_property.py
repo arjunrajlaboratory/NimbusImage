@@ -518,7 +518,9 @@ class TestColorByProperty:
             {"_id": stale["_id"]}, {"$set": {"color": "#ff0000"}}
         )
         pv = AnnotationPropertyValues()
-        # Two documents for `first`, bypassing the merge in validateMultiple.
+        # Simulate legacy data from before the unique annotation key, then
+        # bypass the merge in validateMultiple to create two documents.
+        pv.collection.drop_index("annotationId_1")
         pv.save({"annotationId": first["_id"], "datasetId": folder["_id"],
                  "values": {"propA": 1}}, validate=False)
         pv.save({"annotationId": first["_id"], "datasetId": folder["_id"],
@@ -535,6 +537,39 @@ class TestColorByProperty:
         # ...and is reported as uncoloured.
         assert result["colored"] == 2
         assert result["uncolored"] == 1
+
+    def testLegacyDuplicatePropertyValuesAreCoalesced(self, admin):
+        folder = utilities.createFolder(
+            admin, "legacy-dupes", upenn_utilities.datasetMetadata
+        )
+        annotation = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        valuesModel = AnnotationPropertyValues()
+        valuesModel.collection.drop_index("annotationId_1")
+        for values in (
+            {"p": {"old": 1, "same": 1}},
+            {"p": {"new": 2, "same": 2}, "q": 3},
+        ):
+            valuesModel.save({
+                "annotationId": annotation["_id"],
+                "datasetId": folder["_id"],
+                "values": values,
+            }, validate=False)
+
+        valuesModel._coalesceDuplicateDocuments()
+        valuesModel.ensureIndices([
+            (valuesModel.annotationIndex, {"unique": True})
+        ])
+        documents = list(valuesModel.find({
+            "annotationId": annotation["_id"],
+            "datasetId": folder["_id"],
+        }))
+        assert len(documents) == 1
+        assert documents[0]["values"] == {
+            "p": {"old": 1, "same": 1, "new": 2},
+            "q": 3,
+        }
 
     def testEmptyExplicitRangeIsA400(self, admin, server):
         # A single explicit bound can invert the resolved range (e.g.

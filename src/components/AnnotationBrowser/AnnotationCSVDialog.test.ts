@@ -42,6 +42,14 @@ vi.mock("@/store/annotation", () => ({
     annotationCount: 0,
     getAnnotationOrStubFromId: () => undefined,
     selectedAnnotationIds: new Set<string>(),
+    // Mirrors the real getter so tests that set a selection and a resolver
+    // exercise the stale-id drop rather than a fixed constant.
+    get resolvedSelectedAnnotationIds(): string[] {
+      const resolve = this.getAnnotationOrStubFromId as (id: string) => unknown;
+      return Array.from(this.selectedAnnotationIds as Set<string>).filter(
+        (id: string) => resolve(id) !== undefined,
+      );
+    },
   },
 }));
 

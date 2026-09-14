@@ -14,6 +14,8 @@ from bson.objectid import ObjectId
 
 from girder.exceptions import RestException
 
+from . import valueProviders
+
 from . import analysis
 
 # Request-size sanity ceilings: reject only degenerate/garbage payloads that
@@ -55,6 +57,12 @@ MAX_HISTOGRAM_BINS = 512
 # stays unaffected; only a degenerate request asking for an enormous page is
 # clamped down rather than served.
 MAX_LIST_LIMIT = 10_000
+
+# Property paths one selection-summary request may aggregate. Each path adds
+# five accumulators to a single $group over the dataset's property values, so
+# the cap bounds the pipeline's per-document work; comfortably above the
+# frontend's displayed-column cap and a whole marker panel.
+MAX_SUMMARY_PROPERTY_PATHS = 200
 
 
 def requireCountWithin(count, limit, name):
@@ -584,6 +592,16 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
         ):
             raise RestException(
                 "sort.type must be 'field' or 'property'", code=400
+            )
+        if sort["type"] == "property" and valueProviders.isVirtualPath(
+            sort.get("key")
+        ):
+            # A virtual column has no Mongo field to sort on; the provider
+            # would have to rank every row per page. Refuse rather than sort
+            # by nothing.
+            raise RestException(
+                "sorting by a virtual (provider) column is not supported",
+                code=400,
             )
         if sort["type"] == "property" and not isValidPropertyPath(
             sort.get("key")

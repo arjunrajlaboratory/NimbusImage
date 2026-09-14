@@ -53,6 +53,16 @@
           </template>
         </annotation-csv-dialog>
 
+        <selection-summary-dialog>
+          <template v-slot:activator="{ props }">
+            <v-list-item
+              v-bind="props"
+              prepend-icon="mdi-chart-box-outline"
+              title="Selection summary"
+            />
+          </template>
+        </selection-summary-dialog>
+
         <index-conversion-dialog>
           <template v-slot:activator="{ props }">
             <v-list-item
@@ -76,6 +86,7 @@ import AnnotationImport from "@/components/AnnotationBrowser/AnnotationImport.vu
 import AnnotationExport from "@/components/AnnotationBrowser/AnnotationExport.vue";
 import AnnotationCsvDialog from "@/components/AnnotationBrowser/AnnotationCSVDialog.vue";
 import IndexConversionDialog from "@/components/AnnotationBrowser/IndexConversionDialog.vue";
+import SelectionSummaryDialog from "@/components/AnnotationBrowser/SelectionSummaryDialog.vue";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 const filteredAnnotations = computed(() => filterStore.filteredAnnotations);

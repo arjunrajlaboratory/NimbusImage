@@ -31,8 +31,8 @@ def requireDatasetsAccess(datasetIds, user, level=AccessType.WRITE):
         folderModel.requireAccess(dataset, user, level)
 
 
-def fetchUserEmails(userIds):
-    """Bulk-fetch email addresses for a list of user IDs.
+def fetchNamedUserEmails(userIds):
+    """Bulk-fetch emails of ordinary users, excluding share-link principals.
 
     :param userIds: List of ObjectId user IDs.
     :returns: Dict mapping user ObjectId -> email string.
@@ -40,7 +40,7 @@ def fetchUserEmails(userIds):
     if not userIds:
         return {}
     users = list(User().find(
-        {'_id': {'$in': userIds}},
+        {'_id': {'$in': userIds}, 'shareLink': {'$exists': False}},
         fields=['email']
     ))
     return {
@@ -53,7 +53,8 @@ def formatAccessList(model, document):
     """Format a document's access list with user emails.
 
     Returns dict with 'public', 'users', and 'groups' keys.
-    Users include id, login, name, email, and level.
+    Users include id, login, name, email, and level. Share-link principals
+    are managed only through the link list, never the named sharing table.
 
     :param model: The Girder model instance.
     :param document: The document to get access for.
@@ -63,7 +64,7 @@ def formatAccessList(model, document):
     userIds = [
         u['id'] for u in accessList.get('users', [])
     ]
-    userEmails = fetchUserEmails(userIds)
+    userEmails = fetchNamedUserEmails(userIds)
     return {
         'public': document.get('public', False),
         'users': [
@@ -77,6 +78,7 @@ def formatAccessList(model, document):
                 'level': u['level'],
             }
             for u in accessList.get('users', [])
+            if u['id'] in userEmails
         ],
         'groups': accessList.get('groups', []),
     }

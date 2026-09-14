@@ -1,0 +1,4 @@
+interface:
+  display_name: "NimbusImage Xenium Ingest"
+  short_description: "Load a 10x Xenium bundle into NimbusImage"
+  default_prompt: "Use the NimbusImage xenium-ingest skill to load Xenium images, cell polygons, gene expression, clustering, UMAP, and cell types into a NimbusImage dataset."

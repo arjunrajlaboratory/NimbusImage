@@ -23,6 +23,8 @@ import { markRaw } from "vue";
 import { v4 as uuidv4 } from "uuid";
 
 import AnnotationsAPI from "./AnnotationsAPI";
+import SpatialAPI from "./SpatialAPI";
+import ShareLinkAPI from "./ShareLinkAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ToolSuggestionsAPI from "./ToolSuggestionsAPI";
 import AgentAPI from "./AgentAPI";
@@ -79,6 +81,7 @@ import {
   IUserStorageQuota,
   TAnnotationBrowserTab,
   TRequestablePalette,
+  IShareLink,
 } from "./model";
 import {
   buildAnnotationBrowserConfig,
@@ -179,6 +182,8 @@ function storeToken(apiRoot: string, token: string) {
   localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(value));
 }
 
+let shareBootstrapSequence = 0;
+
 function clearStoredToken() {
   localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
@@ -266,6 +271,8 @@ export class Main extends VuexModule {
   // without breaking field-level reactivity on the API instance itself.
   api = new GirderAPI(this.girderRestProxy);
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
+  spatialAPI = new SpatialAPI(this.girderRestProxy);
+  shareLinkAPI = new ShareLinkAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
   toolSuggestionsAPI = new ToolSuggestionsAPI(this.girderRestProxy);
   agentAPI = new AgentAPI(this.girderRestProxy);
@@ -282,6 +289,10 @@ export class Main extends VuexModule {
   userStorageInfo: IUserStorageQuota | null = null;
 
   history: IHistoryEntry[] = [];
+
+  get shareLinkTileToken(): string | null {
+    return this.girderUser?.shareLink ? this.girderRest.token || null : null;
+  }
 
   selectedDatasetId: string | null = null;
   dataset: IDataset | null = null;
@@ -1043,8 +1054,13 @@ export class Main extends VuexModule {
         this.loadUserColors().catch((error) => {
           logError("Failed to load user colors during login:", error);
         }),
-        this.fetchUserStorageInfo(),
       );
+      // A share link's bearer has no storage and runs no jobs: skip the
+      // quota lookup (a logged error otherwise) and the notification socket
+      // (which its read-only token cannot open).
+      if (!user.shareLink) {
+        promises.push(this.fetchUserStorageInfo());
+      }
     } else {
       this.setAssetstores([]);
     }
@@ -1055,7 +1071,9 @@ export class Main extends VuexModule {
     );
     // Initialize notification websocket as soon as the user has logged in because
     // any notification sent without would be lost.
-    jobs.initializeNotificationSubscription();
+    if (!user?.shareLink) {
+      jobs.initializeNotificationSubscription();
+    }
     await Promise.allSettled(promises);
   }
 
@@ -1459,6 +1477,48 @@ export class Main extends VuexModule {
       }
       this.setRecentDatasetViewsImpl([]);
     }
+  }
+
+  /**
+   * Open the app as the bearer of a share link (SHARING.md "Share links").
+   * The token is set on the REST client in memory only: the client persists
+   * a token solely on its own login event, so a user who is signed in on this
+   * browser keeps their stored login for the next reload.
+   */
+  @Action({ rawError: true })
+  async openShareLink({
+    token,
+    signal,
+  }: {
+    token: string;
+    signal?: AbortSignal;
+  }): Promise<IShareLink> {
+    const sequence = ++shareBootstrapSequence;
+    const previousClient = this.girderRest;
+    const previousToken = previousClient.token;
+    // Validate on an isolated client with no persisted-login handlers. Even
+    // a successful user/me followed by a failed link/me must not change the
+    // current token, Vuex identity, or user-dependent state.
+    const candidate = new RestClient({ apiRoot: previousClient.apiRoot });
+    candidate.token = token;
+    if (!(await candidate.fetchUser())) {
+      throw new Error("This share link is no longer valid.");
+    }
+    const link = await new ShareLinkAPI(candidate).me();
+    // The view owns this attempt. Leaving its route cancels the commit even
+    // when no newer login or share-link request has changed the session.
+    if (signal?.aborted) {
+      throw new Error("Share-link request was cancelled.");
+    }
+    if (
+      sequence !== shareBootstrapSequence ||
+      this.girderRest !== previousClient ||
+      previousClient.token !== previousToken
+    ) {
+      throw new Error("A newer session has replaced this share-link request.");
+    }
+    await this.loggedIn(candidate);
+    return link;
   }
 
   @Action
@@ -3102,6 +3162,7 @@ export class Main extends VuexModule {
                 hist,
                 layer,
                 this.dataset,
+                this.shareLinkTileToken,
               )!,
             );
             results.fullUrls.push(
@@ -3116,6 +3177,7 @@ export class Main extends VuexModule {
                 hist,
                 layer,
                 this.dataset,
+                this.shareLinkTileToken,
               )!,
             );
           });
@@ -3155,6 +3217,7 @@ export class Main extends VuexModule {
             hist,
             layer,
             this.dataset,
+            this.shareLinkTileToken,
           ),
         ),
         fullUrls: images.map((image) =>
@@ -3169,6 +3232,7 @@ export class Main extends VuexModule {
             hist,
             layer,
             this.dataset,
+            this.shareLinkTileToken,
           ),
         ),
         hist,
