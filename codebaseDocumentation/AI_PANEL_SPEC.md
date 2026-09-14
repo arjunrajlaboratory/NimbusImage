@@ -215,6 +215,7 @@ Reversibility notes:
 | `run_worker` | `{image, channel?, tags?, location scope, workerInterface values}` | `annotation.computeAnnotationsWithWorker` (+ `jobs.addJob` for progress) | compute cost, creates many annotations |
 | `compute_property` | `{propertyId \| create: {...}}` | `properties.computeProperty` | compute cost |
 | `add_tool` | `{templateId \| catalogEntry, name, channel/layer targeting, values}` | `main.addToolToConfiguration` (reuse `buildToolConfiguration` from PR #1224's `toolSuggestions.ts`) | mutates shared configuration |
+| `color_annotations_by_property` | `{propertyPath \| clear: true, mode?, colormap?, rangeMin/Max?, percentileLow/High?}` | `annotation.applyColorByProperty` / `removeColorByProperty` (server-side bulk color write + legend persisted in the configuration) | recolors every annotation in the dataset; not on the undo stack |
 | `create_annotations` | `{annotations: [...]}` (bulk) | annotation store bulk create | data mutation (undoable, but bulk) |
 | `delete_annotations` | `{target: selection\|query}` | bulk delete | destructive (undoable, but scary) |
 | `edit_layers` | `{add?, remove?, group?}` | `main.addLayer/removeLayer/groupLayers` | mutates shared configuration |
@@ -716,6 +717,38 @@ Cost and responsiveness:
 - The frontend tool surface and the backend's `agent_tools.json` define the
   same set of tools — `executors.test.ts` "defines exactly the tools the
   backend advertises".
+
+## 12. Regression checklist — destructive coloring and the approval surface
+
+Invariants from the `color_annotations_by_property` review rounds (PR #1345),
+each with the test that holds it. Re-check these when touching the coloring
+executors, the gated-tool registry, or the auto-approve UI.
+
+Destructive paths:
+
+- `clear: true` with no active property coloring is refused as a no-op (the
+  backend clear resets EVERY annotation color, not just property-assigned
+  ones, and is not undoable — the dialog's `hasActiveColoring` gate, mirrored)
+  — `executors.test.ts` "color_annotations_by_property refuses clear with no
+  active coloring".
+- The tool is gated and validates its input before any backend call —
+  "color_annotations_by_property is gated and validates its input".
+- The approval card's one-liner carries the irreversibility warning (it is
+  all the user sees before approving; the dialog says as much) —
+  "warns that property recoloring is irreversible on the approval card".
+
+Approval surface:
+
+- Every gated tool is named in the auto-approve switch's tooltip in
+  `AiPanel.vue`, so enabling the switch never bypasses an action the user was
+  not warned about — `executors.test.ts` "names every gated tool in
+  AiPanel.vue's auto-approve tooltip". A new gated tool fails this test until
+  the tooltip names it.
+
+Context cost:
+
+- A categorical legend echoed to the model is capped, not exhaustive —
+  "color_annotations_by_property caps echoed categories".
 - `MAX_TOOL_ITERATIONS` (30) stays below the plugin's
   `RATE_LIMIT_MAX_REQUESTS` (45) so one turn cannot 429 itself. No test; both
   constants carry a comment pointing at the other.

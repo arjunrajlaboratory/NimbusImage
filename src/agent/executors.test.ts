@@ -139,6 +139,8 @@ vi.mock("@/store/annotation", () => ({
     selectAnnotations: vi.fn(),
     unselectAnnotations: vi.fn(),
     colorAnnotationIds: vi.fn(),
+    applyColorByProperty: vi.fn(),
+    removeColorByProperty: vi.fn(),
     addTagsByAnnotationIds: vi.fn(),
     removeTagsByAnnotationIds: vi.fn(),
     replaceTagsByAnnotationIds: vi.fn(),
@@ -349,6 +351,20 @@ describe("describeAgentToolCall", () => {
     expect(describeAgentToolCall("set_camera", { zoom: 3 })).toBe(
       "Zoom to level 3",
     );
+  });
+
+  it("warns that property recoloring is irreversible on the approval card", () => {
+    // This line is all the gated approval card shows; without the warning
+    // the user gets less than the Color by Property dialog tells them
+    // (review finding, PR #1345 round 4).
+    expect(
+      describeAgentToolCall("color_annotations_by_property", {
+        propertyPath: ["p1", "Area"],
+      }),
+    ).toMatch(/overwrites every existing annotation color; cannot be undone/);
+    expect(
+      describeAgentToolCall("color_annotations_by_property", { clear: true }),
+    ).toMatch(/cannot be undone/);
   });
 });
 
@@ -616,6 +632,154 @@ describe("executeAgentTool", () => {
     expect(mockAnnotations.colorAnnotationIds).toHaveBeenLastCalledWith(
       expect.objectContaining({ annotationIds: ["a1", "a2"] }),
     );
+  });
+
+  it("color_annotations_by_property is gated and validates its input", async () => {
+    expect(isGatedTool("color_annotations_by_property")).toBe(true);
+    // Missing propertyPath (and no clear).
+    await expect(
+      executeAgentTool("color_annotations_by_property", {}, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // A bare string instead of a path array.
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: "p1.Area" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // An unknown mode.
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: ["p1", "Area"], mode: "rainbow" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // A non-numeric bound.
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: ["p1", "Area"], rangeMin: "0" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockAnnotations.applyColorByProperty).not.toHaveBeenCalled();
+
+    mockMain.isLoggedIn = false;
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: ["p1", "Area"] },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockAnnotations.applyColorByProperty).not.toHaveBeenCalled();
+  });
+
+  it("color_annotations_by_property applies and summarizes the legend", async () => {
+    mockAnnotations.applyColorByProperty.mockResolvedValue({
+      colored: 120,
+      uncolored: 3,
+      legend: {
+        type: "continuous",
+        propertyPath: ["p1", "Area"],
+        colormap: "viridis",
+        stops: ["#000000", "#ffffff"],
+        min: 10,
+        max: 90,
+        dataMin: 1,
+        dataMax: 400,
+        clippedLow: true,
+        clippedHigh: true,
+      },
+      assignment: [],
+    });
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { propertyPath: ["p1", "Area"], colormap: "viridis" },
+      context,
+    );
+    expect(mockAnnotations.applyColorByProperty).toHaveBeenCalledWith(
+      expect.objectContaining({
+        propertyPath: ["p1", "Area"],
+        // getFullNameFromPath is mocked to null, so the label falls back to
+        // the dotted path.
+        propertyName: "p1.Area",
+        colormap: "viridis",
+      }),
+    );
+    expect(out.result.colored).toBe(120);
+    expect(out.result.uncolored).toBe(3);
+    // The legend is summarized: bounds and clipping, no raw stops.
+    expect(out.result.legend).toEqual({
+      type: "continuous",
+      colormap: "viridis",
+      min: 10,
+      max: 90,
+      dataMin: 1,
+      dataMax: 400,
+      clippedLow: true,
+      clippedHigh: true,
+    });
+  });
+
+  it("color_annotations_by_property caps echoed categories", async () => {
+    mockAnnotations.applyColorByProperty.mockResolvedValue({
+      colored: 40,
+      uncolored: 0,
+      legend: {
+        type: "categorical",
+        propertyPath: ["p1", "Cluster"],
+        categories: Array.from({ length: 30 }, (_, i) => ({
+          value: `${i}`,
+          color: "#112233",
+          count: 1,
+        })),
+      },
+    });
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { propertyPath: ["p1", "Cluster"], mode: "categorical" },
+      context,
+    );
+    expect(out.result.legend.categoryCount).toBe(30);
+    expect(out.result.legend.categories).toHaveLength(25);
+    expect(out.result.legend.categoriesTruncated).toBe(true);
+  });
+
+  it("color_annotations_by_property clears via the store twin", async () => {
+    mockMain.colorByPropertyForCurrentDataset = {
+      propertyName: "Area",
+      propertyPath: ["p1", "Area"],
+      type: "continuous",
+      showLegend: true,
+    };
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { clear: true },
+      context,
+    );
+    expect(mockAnnotations.removeColorByProperty).toHaveBeenCalled();
+    expect(mockAnnotations.applyColorByProperty).not.toHaveBeenCalled();
+    expect(out.result.cleared).toBe(true);
+    mockMain.colorByPropertyForCurrentDataset = null;
+  });
+
+  it("color_annotations_by_property refuses clear with no active coloring", async () => {
+    // Review finding (Codex, PR #1345): the backend's clear resets EVERY
+    // annotation color, not just property-assigned ones, and is not
+    // undoable — so with no active legend the clear must be a no-op, like
+    // the dialog's hasActiveColoring-gated Remove button.
+    mockMain.colorByPropertyForCurrentDataset = null;
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { clear: true },
+      context,
+    );
+    expect(mockAnnotations.removeColorByProperty).not.toHaveBeenCalled();
+    expect(out.result.cleared).toBe(false);
+    expect(out.result.note).toMatch(/no property-based coloring/i);
   });
 
   it("validates select_annotations queries but allows omitting for all", async () => {
@@ -1142,6 +1306,45 @@ describe("tool schema parity with the backend", () => {
       (tool: { name: string }) => tool.name,
     );
     expect([...AGENT_TOOL_NAMES].sort()).toEqual([...schemaNames].sort());
+  });
+});
+
+// The auto-approve switch's tooltip is the only place a user learns what
+// enabling it stops confirming. A gated tool missing from it (found in
+// review on PR #1345: the property recoloring, and clear_analysis_plots
+// before it) means users opt into bypassing an action they were never
+// warned about — and nothing else keeps the tooltip and the gated registry
+// in step.
+describe("auto-approve warning coverage", () => {
+  // The phrase in AiPanel.vue's tooltip that names each gated tool. Adding
+  // a gated tool without mapping it here fails this test: extend the
+  // tooltip text in AiPanel.vue first, then map the phrase.
+  const TOOLTIP_PHRASE_BY_GATED_TOOL: { [name: string]: string } = {
+    run_worker: "worker runs",
+    compute_property: "property computation",
+    create_tool: "tool / property / scale creation",
+    create_property: "tool / property / scale creation",
+    set_scale: "tool / property / scale creation",
+    color_annotations_by_property: "recoloring the whole dataset by a property",
+    clear_analysis_plots: "removing analysis plots",
+  };
+
+  it("names every gated tool in AiPanel.vue's auto-approve tooltip", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/AiPanel.vue"),
+      "utf8",
+    );
+    const tooltip = source.match(/text="(Skip the confirmation[^"]*)"/)?.[1];
+    expect(tooltip).toBeTruthy();
+    for (const name of AGENT_TOOL_NAMES.filter(isGatedTool)) {
+      const phrase = TOOLTIP_PHRASE_BY_GATED_TOOL[name];
+      expect(
+        phrase,
+        `gated tool "${name}" has no auto-approve tooltip phrase — name it ` +
+          "in AiPanel.vue's tooltip and map the phrase here",
+      ).toBeTruthy();
+      expect(tooltip).toContain(phrase);
+    }
   });
 });
 
@@ -2847,6 +3050,31 @@ describe("analysis panel tools", () => {
       type: "categorical",
       key: "tags",
     });
+  });
+
+  it("reports the color-by-property legend in the interface state", () => {
+    // Absent (mock without the getter) reads as null.
+    expect((buildInterfaceState() as any).colorByProperty).toBeNull();
+    mockMain.colorByPropertyForCurrentDataset = {
+      propertyName: "Area",
+      propertyPath: ["p1", "Area"],
+      type: "continuous",
+      colormap: "viridis",
+      stops: ["#000000", "#ffffff"],
+      min: 10,
+      max: 90,
+      showLegend: true,
+    };
+    expect((buildInterfaceState() as any).colorByProperty).toEqual({
+      propertyName: "Area",
+      propertyPath: ["p1", "Area"],
+      type: "continuous",
+      colormap: "viridis",
+      min: 10,
+      max: 90,
+      categoryCount: null,
+    });
+    mockMain.colorByPropertyForCurrentDataset = null;
   });
 });
 

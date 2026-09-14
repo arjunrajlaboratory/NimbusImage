@@ -82,6 +82,25 @@ Open the Object list, choose the **Connections** tab, and group by track (or use
   Objects and links are separate selections feeding separate actions, so choosing one deliberately leaves the other alone. Each choice replaces its own selection rather than adding to it — use the per-row checkboxes to build up a union across tracks
 - **Delete track**: removes every connection in the track in one batched operation. The objects themselves are kept
 
+**Track ID labels from a property**: by default track rows are titled with a short internal id. If a track ID property has been computed (e.g. the **Parent-Child Connection IDs** worker, which stores a `trackId` per object), pick it in the **Track ID property** select and each row is titled `Track 42` using that value — matching the ids in exported CSVs, so a track flagged in post-processing can be found in the panel. Warning badges flag staleness: `partial` means some members were added after the property was computed, `mixed IDs` means tracks were joined afterwards, `no ID` means no member has a value. Re-running the property refreshes the ids. The chosen property is saved with the collection.
+
+## Filtering Connections by Track Metrics
+The Connections tab has a **Track filters** menu (filter icon) with optional min/max bounds on three dataset-wide track metrics:
+
+- **Connections in track** — number of links
+- **Objects in track** — number of members
+- **Duration in timepoints** — the time span the track covers
+
+A connection whose track falls outside any active bound is hidden from the list **and** from the viewer (both normal connection lines and timelapse tracks). The count readout becomes "N of M" while narrowing, and the filter button shows a badge. Notes:
+
+- Metrics are dataset-wide: a track judged by these bounds is the full track, even if the list is currently scoped to a subset
+- **"Also hide these tracks' objects in the image"** (off by default) extends the filter to the filtered-out tracks' objects in the viewer. It is a display lens only — the Objects tab, exports and analysis are untouched, and objects with no connections are never hidden. While active it registers in the coverage HUD as an active constraint
+- Track filters are session-only view state, reset when switching datasets — if tracks seem missing, check this menu
+- Bulk delete respects the filter: only listed connections are deleted
+
+## Cleaning Up Dangling Connections
+When connections point at deleted objects (e.g. objects removed after tracking), the Connections tab shows a cleanup row with the live count, offering a whole-dataset batched delete behind a confirm dialog. It participates in undo and is hidden entirely on healthy datasets. Under an active duration bound, tracks whose every endpoint is deleted are excluded as unknowable — cleanup is the remedy.
+
 ## Managing Connections
 Tools and techniques for maintaining connection accuracy:
 
