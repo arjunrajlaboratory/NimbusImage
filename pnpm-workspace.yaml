@@ -8,7 +8,8 @@ overrides:
   # merge-key DoS and prototype pollution, all patched in the 3.x line at
   # 3.15.0. Two consumers are stuck on js-yaml 3: yaml-front-matter (^3.14.1)
   # and xmlbuilder2@3.0.2, which pins 3.14.0 exactly and so cannot float on
-  # its own. Scoped to the 3.x range so the direct js-yaml 4 dep is untouched.
+  # its own. Scoped to the 3.x range so js-yaml 4 build-tool consumers and
+  # the direct js-yaml 5 dependency retain their own APIs.
   #
   # This clears `pnpm audit`, but note what it does NOT reach: the copy that
   # actually ships to the browser is inlined inside vtk.js@29.4.2's prebuilt
