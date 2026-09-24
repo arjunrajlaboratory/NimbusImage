@@ -96,6 +96,10 @@ The recommended setup uses an **API key**, which is persistent and doesn't expir
 - **nimbusimage.com (hosted):** Email **support@cytopixel.com** with your account email address to request an API key.
 - **Local/self-hosted server:** In the Girder admin UI, go to **Users** > select the user > **Edit User** > **API Keys** > create a new key and copy the key string.
 
+**Key scopes.** A key may be full-access (empty scope list) or scoped. Scoped keys handle data read/write and can **submit and run** workers, but watching jobs needs more: `core.user_auth` for job status, `jobs.rest.list_job` for job logs. The recommended scoped set is `core.data.read`, `core.data.write`, `core.data.own`, `core.user_info.read`, `core.user_auth`, `jobs.rest.list_job`.
+
+**Don't blame the key without evidence.** If something seems not to happen, check its *effect* (did the annotations or property values appear?) before telling the user their key lacks permission or that they need to contact support. When a scope really is missing, name the exact scope and the exact operation it blocks. See "Can't see a job's logs ≠ the job didn't run" in `references/gotchas.md`.
+
 ```bash
 # Add to ~/.zshrc or ~/.bashrc for persistence
 
