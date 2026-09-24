@@ -213,9 +213,9 @@ Status codes: 0=inactive, 1=queued, 2=running, **3=success**, 4=error, 5=cancell
 
 ### When you can't see what a job is doing
 
-**Not being able to observe a job is different from the job not running.** A scoped API key that can submit jobs may not be able to read their status (needs `core.user_auth`; `refresh()`/`wait()` raise `PermissionError`) or logs (needs `jobs.rest.list_job`; `job.log` just stays empty, with no error). The job still runs.
+**Not being able to observe a job is different from the job not running.** A custom-scoped API key (e.g. only *Read data* / *Write data*) can submit jobs, and they run, but it can't read their status or logs: `refresh()` / `wait()` raise `PermissionError`. Only a full-access key ("Allow all actions on behalf of my user") can watch jobs.
 
-Before you conclude that jobs aren't executing, or tell the user their key is wrong and they need a new one, **check the outputs directly**. Count annotations with the output tags before and after (`ds.annotations.count(tags=[...])`), or read `ds.properties.get_values()` for property workers, and give the job a realistic amount of time (queueing and image pulls can take minutes). If outputs show up, the pipeline works. Tell the user that status/logs aren't visible with this key and keep going. See "Can't see a job's logs ≠ the job didn't run" in `references/gotchas.md` for the full decision table.
+Before you conclude that jobs aren't executing, or tell the user their key is wrong and they need a new one, **check the outputs directly**. Count annotations with the output tags before and after (`ds.annotations.count(tags=[...])`), or read `ds.properties.get_values()` for property workers, and give the job a realistic amount of time (queueing and image pulls can take minutes). If outputs show up, the pipeline works. Tell the user that status/logs aren't visible with this key and keep going. See "Can't see a job's status ≠ the job didn't run" in `references/gotchas.md` for the full decision table.
 
 ## Writing your own worker
 
@@ -280,6 +280,6 @@ values = ds.properties.get_values()
 - The `connect_to` dict must always include `"tags"` — use `{"tags": []}` for no connections.
 - Property workers require the property to be created and registered before running.
 - `job.wait()` blocks the Python process. For long-running workers, consider non-blocking polling.
-- An empty `job.log` or a `PermissionError` while polling means you can't *watch* the job, not that it didn't run. Verify by checking for its outputs before blaming the API key.
+- A `PermissionError` while polling means you can't *watch* the job, not that it didn't run. Verify by checking for its outputs before blaming the API key.
 
 For worker-related accessor signatures, read `references/api-overview.md`. Before submitting work, read `references/gotchas.md`, especially exact interface keys and job status codes.

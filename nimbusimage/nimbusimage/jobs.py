@@ -7,17 +7,20 @@ import time
 
 import girder_client
 
-# Scopes a (scoped) API key needs to poll job status. The job-status
-# endpoint is @access.public and effectively requires core.user_auth; a
-# key minted without it gets a 401 whose raw message misattributes the
-# missing scope (NIM-005).
+# GET job/{id} is @access.public with no declared scope, so Girder
+# authenticates the caller only if the key carries core.user_auth. That scope
+# is what "Allow all actions on behalf of my user" grants; it is not one of
+# the checkboxes in Girder's API key dialog, so a custom-scoped key (e.g.
+# core.data.read/write) can submit jobs but never poll them, and gets a 401
+# whose raw message misattributes the cause (NIM-005).
 _JOB_SCOPE_HINT = (
-    "Could not read job status (HTTP 401). Your API key is most likely "
-    "missing the 'core.user_auth' scope, which is required to poll job "
-    "status — the raw 401 misattributes this. Provision a key that "
-    "includes 'core.user_auth' (and 'jobs.rest.list_job' so job logs can "
-    "be read too), or use a full-access key. See the nimbusimage README "
-    "(Authentication) for the required scope set."
+    "Could not read job status (HTTP 401). Your API key is most likely a "
+    "custom-scoped key (e.g. only 'Read data'/'Write data'), which can "
+    "submit jobs but cannot poll their status. The job itself is not "
+    "affected and may still be running. To watch jobs, use a full-access "
+    "key ('Allow all actions on behalf of my user'). Meanwhile you can "
+    "confirm the job ran by checking for its output annotations or "
+    "property values. See the nimbusimage README (Authentication)."
 )
 
 # Girder job status codes
@@ -86,12 +89,12 @@ class Job:
         return self.status == STATUS_SUCCESS
 
     def refresh(self) -> None:
-        """Fetch latest job status and log from the server.
+        """Fetch the latest job status and log from the server.
 
         Raises:
             PermissionError: If the job-status request returns 401, which
-                almost always means the API key lacks the ``core.user_auth``
-                scope (NIM-005). The message names the likely missing scope.
+                almost always means a custom-scoped API key rather than a
+                full-access one (NIM-005). The job itself is unaffected.
         """
         try:
             self._data = self._gc.get(f"job/{self._id}")
@@ -99,16 +102,10 @@ class Job:
             if getattr(exc, "status", None) == 401:
                 raise PermissionError(_JOB_SCOPE_HINT) from exc
             raise
-        try:
-            log_resp = self._gc.get(f"job/{self._id}/log")
-            if isinstance(log_resp, list):
-                self._log = "\n".join(str(entry) for entry in log_resp)
-            elif isinstance(log_resp, dict):
-                self._log = log_resp.get("log", "")
-            else:
-                self._log = str(log_resp)
-        except Exception:
-            pass
+        # The log comes back inside the job document; girder_jobs has no
+        # separate job/{id}/log route.
+        log = self._data.get("log") or []
+        self._log = "".join(log) if isinstance(log, list) else str(log)
 
     def wait(
         self,
@@ -128,9 +125,9 @@ class Job:
 
         Raises:
             TimeoutError: If timeout is reached before the job finishes.
-            PermissionError: If polling returns 401 — usually a missing
-                ``core.user_auth`` scope on the API key (NIM-005). Raised
-                via :meth:`refresh`.
+            PermissionError: If polling returns 401, usually because the
+                API key is custom-scoped rather than full-access (NIM-005).
+                Raised via :meth:`refresh`.
         """
         start = time.monotonic()
         last_log_len = 0

@@ -16,7 +16,7 @@ Things that will trip you up if you don't know about them.
 - [Dataset discovery caveat](#list_datasets-uses-dataset_view-endpoint)
 - [Composite layer requirements](#composite-needs-layer-settings)
 - [Job status codes](#job-status-3-is-success)
-- [Can't see it ≠ didn't run](#cant-see-a-jobs-logs--the-job-didnt-run)
+- [Can't see it ≠ didn't run](#cant-see-a-jobs-status--the-job-didnt-run)
 - [Property registration](#property-registration-is-required)
 - [Collections and configurations](#collections--configurations)
 - [Safe sharing](#never-call-raw-put-folderidaccess--use-dssharing)
@@ -102,14 +102,11 @@ Following numpy convention: `ds.shape` returns `(rows, cols)` = `(height, width)
 
 Girder job status codes: 0=inactive, 1=queued, 2=running, **3=success**, 4=error, 5=cancelled. Status 3 means the job completed successfully — don't confuse it with "still running."
 
-## Can't see a job's logs ≠ the job didn't run
+## Can't see a job's status ≠ the job didn't run
 
-API keys can be **scoped**. A key with only `core.data.read`/`core.data.write` can still **submit** jobs, and those jobs **do run** server-side. What such a key can't necessarily do is **watch** them:
+API keys are either **full access** ("Allow all actions on behalf of my user") or **custom-scoped** (specific checkboxes such as *Read data* / *Write data*). A custom-scoped key can still **submit** jobs, and those jobs **do run** server-side. What it can't do is **watch** them: `GET job/{id}` needs `core.user_auth`, which only a full-access key carries. `job.refresh()` / `job.wait()` then raise a `PermissionError` saying so.
 
-- **Job status** (`job.refresh()` / `job.wait()`) needs `core.user_auth`. Without it the poll returns 401, which the package turns into a `PermissionError` that names the scope.
-- **Job logs** (`job.log`) need `jobs.rest.list_job`. **A failed log fetch is swallowed silently**, so `job.log` just stays `""`. An empty log is **not** evidence that nothing ran.
-
-So "I submitted a job, then saw no log and no progress" does **not** mean jobs aren't executing, and it doesn't mean the key "can't run jobs". Don't tell the user to get a new key, email support, or give up on the pipeline until you have checked the **data**, which a data-scoped key can always read:
+So "I submitted a job but can't see its status" does **not** mean jobs aren't executing, and it doesn't mean the key "can't run jobs". Don't tell the user to get a new key, email support, or give up on the pipeline until you have checked the **data**, which a data-scoped key can always read:
 
 ```python
 before = ds.annotations.count(tags=["detected"])
@@ -118,6 +115,7 @@ job = ds.annotations.compute(image=..., channel=0, tags=["detected"], ...)
 try:
     job.refresh()
     print("status:", job.status_name)  # queued/running/success/error
+    print(job.log)                     # the log comes with the status
 except PermissionError as exc:
     print("can't poll status with this key:", exc)  # the job is still running
 
@@ -131,13 +129,13 @@ How to read the result:
 | What you see | What it means |
 |---|---|
 | Output annotations/values appeared | The job ran. The key is fine for this work; you just can't watch it. Poll the outputs and carry on |
-| `PermissionError` from `refresh()` | Key lacks `core.user_auth`. Jobs still run; to see status, the user needs a key that includes it |
-| Status works, `job.log` empty | Probably no `jobs.rest.list_job` (or the worker hasn't logged yet). Say the log isn't readable. Don't read it as failure |
-| Status `error` (4) | A real failure. Report it (and the log, if you can read it) |
+| `PermissionError` from `refresh()` | Custom-scoped key. Jobs still run; to see status and logs the user needs a full-access key |
+| Status readable, `job.log` empty | The worker hasn't written anything yet. Not a permission problem: status and log come from the same request |
+| Status `error` (4) | A real failure. Report it with `job.log` |
 | Status stays `queued` (1) | The worker queue is busy, or the server has no worker for it. This is server-side, not a key scope |
-| Status readable, `success`, but no outputs | Check the tags/channel/location you are counting against, and the worker parameters |
+| Status `success`, but no outputs | Check the tags/channel/location you are counting against, and the worker parameters |
 
-Needing to watch jobs is a fair reason to ask for a different key. But say exactly what is missing ("the key can't read job status/logs: needs `core.user_auth` and `jobs.rest.list_job`") rather than "the key can't run jobs". The full recommended scoped set is `core.data.read`, `core.data.write`, `core.data.own`, `core.user_info.read`, `core.user_auth`, `jobs.rest.list_job`; a full-access key (empty scope list) also works.
+Needing to watch jobs is a fair reason to ask for a different key. Say exactly what is missing: "this key is custom-scoped, so it can't read job status or logs; a full-access key ('Allow all actions on behalf of my user') can". Don't say "the key can't run jobs". Don't ask for a key with `core.user_auth` or `jobs.*` scopes added either: Girder's key dialog doesn't offer those, and a key with `core.user_auth` is a full-access key anyway.
 
 Also: two minutes of nothing proves very little. Workers queue behind other jobs and may pull a large Docker image first. Use `job.wait(timeout=...)` with a generous timeout, or poll outputs over a longer window, before calling it stuck.
 

@@ -23,7 +23,7 @@ The recommended setup uses a **Girder API key**, which is persistent and doesn't
 - **nimbusimage.com (hosted):** Email **[support@cytopixel.com](mailto:support@cytopixel.com)** with your account email address to request an API key.
 - **Local/self-hosted server:** In the Girder admin UI, go to **Users** > select the user > **Edit User** > **API Keys** > create a new key and copy the key string.
 
-**Required scopes.** The simplest option is a **full-access key** (leave the scope list empty), which works for everything including polling job status. If you instead create a *scoped* key, it must include **`core.user_auth`** — without it, `job.wait()` / `job.refresh()` fail with a confusing `401 Unauthorized` even though you own the job. Add **`jobs.rest.list_job`** as well so job logs can be read. Recommended scoped-key set: `core.data.read`, `core.data.write`, `core.data.own`, `core.user_info.read`, `core.user_auth`, `jobs.rest.list_job`.
+**Key scope.** Create the key with **"Allow all actions on behalf of my user"** (full access). A key limited to specific permissions (e.g. only *Read data* / *Write data*) can read and write datasets and even **submit** workers, and those jobs do run. But it **cannot poll job status**: `GET job/{id}` requires the `core.user_auth` scope that only a full-access key carries, so `job.wait()` / `job.refresh()` raise `PermissionError` (Girder's raw 401 would misattribute this). Girder's API key dialog doesn't offer `core.user_auth` or any `jobs.*` scope as a checkbox, so a custom-scoped key can't be fixed by ticking more boxes. Use a full-access key.
 
 Set environment variables for persistent access:
 
