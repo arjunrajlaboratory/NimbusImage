@@ -49,24 +49,34 @@ class TestJobProperties:
 class TestJobRefresh:
     def test_refresh_updates_status(self):
         gc = MagicMock()
-        gc.get.side_effect = [
-            {"_id": "j1", "status": STATUS_SUCCESS, "title": "Done"},
-            [],  # log response
-        ]
+        gc.get.return_value = {
+            "_id": "j1", "status": STATUS_SUCCESS, "title": "Done",
+        }
         job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
         job.refresh()
         assert job.status == STATUS_SUCCESS
 
-    def test_refresh_fetches_log(self):
+    def test_refresh_reads_log_from_job_document(self):
+        """girder_jobs returns the log inside GET job/{id}; there is no
+        job/{id}/log route, so asking for one left job.log always empty.
+        """
         gc = MagicMock()
-        gc.get.side_effect = [
-            {"_id": "j1", "status": STATUS_SUCCESS},
-            ["line 1", "line 2"],
-        ]
+        gc.get.return_value = {
+            "_id": "j1",
+            "status": STATUS_SUCCESS,
+            "log": ["line 1\n", "line 2\n"],
+        }
         job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
         job.refresh()
-        assert "line 1" in job.log
-        assert "line 2" in job.log
+        assert job.log == "line 1\nline 2\n"
+        gc.get.assert_called_once_with("job/j1")
+
+    def test_refresh_without_log_field(self):
+        gc = MagicMock()
+        gc.get.return_value = {"_id": "j1", "status": STATUS_RUNNING}
+        job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
+        job.refresh()
+        assert job.log == ""
 
 
 class TestJobScopeError:
@@ -85,20 +95,20 @@ class TestJobScopeError:
             method="GET",
         )
 
-    def test_refresh_401_names_user_auth_scope(self):
+    def test_refresh_401_names_full_access_key(self):
         gc = MagicMock()
         gc.get.side_effect = self._http_error(401)
         job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
 
-        with pytest.raises(PermissionError, match="core.user_auth"):
+        with pytest.raises(PermissionError, match="Allow all actions"):
             job.refresh()
 
-    def test_wait_401_names_user_auth_scope(self):
+    def test_wait_401_names_full_access_key(self):
         gc = MagicMock()
         gc.get.side_effect = self._http_error(401)
         job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
 
-        with pytest.raises(PermissionError, match="core.user_auth"):
+        with pytest.raises(PermissionError, match="Allow all actions"):
             job.wait(verbose=False)
 
     def test_refresh_non_401_propagates_unchanged(self):
@@ -118,7 +128,6 @@ class TestJobWait:
         gc = MagicMock()
         gc.get.side_effect = [
             {"_id": "j1", "status": STATUS_SUCCESS},
-            [],
         ]
         job = Job(gc, {"_id": "j1", "status": STATUS_SUCCESS})
         assert job.wait(verbose=False) is True
@@ -127,7 +136,6 @@ class TestJobWait:
         gc = MagicMock()
         gc.get.side_effect = [
             {"_id": "j1", "status": STATUS_ERROR},
-            [],
         ]
         job = Job(gc, {"_id": "j1", "status": STATUS_ERROR})
         assert job.wait(verbose=False) is False
@@ -138,10 +146,8 @@ class TestJobWait:
         gc.get.side_effect = [
             # First poll: running
             {"_id": "j1", "status": STATUS_RUNNING},
-            [],
             # Second poll: success
             {"_id": "j1", "status": STATUS_SUCCESS},
-            [],
         ]
         job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
         result = job.wait(poll_interval=1.0, verbose=False)
@@ -154,7 +160,6 @@ class TestJobWait:
         gc = MagicMock()
         gc.get.side_effect = [
             {"_id": "j1", "status": STATUS_RUNNING},
-            [],
         ] * 10  # keep returning running
         mock_monotonic.side_effect = [0.0, 0.0, 11.0]  # start, check, timeout
 
