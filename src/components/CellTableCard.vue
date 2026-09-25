@@ -89,16 +89,22 @@ const stalenessText = computed(() => {
   if (!s) {
     return checking.value ? "Checking for edits…" : "";
   }
+  // Without stored digests the check compares membership only, so it sees
+  // added and removed cells but never a moved vertex. Both branches have to
+  // say so: claiming the table is "up to date with the cell polygons" is a
+  // statement about geometry this check cannot make.
+  const note = s.hasGeometryHashes
+    ? ""
+    : " (an imported table cannot tell edited cells; recompute once to start tracking)";
   if (s.upToDate) {
-    return "Up to date with the cell polygons.";
+    return s.hasGeometryHashes
+      ? "Up to date with the cell polygons."
+      : `No cells added or removed since this table was built.${note}`;
   }
   const parts = [];
   if (s.added) parts.push(`${s.added.toLocaleString()} cells added`);
   if (s.changed) parts.push(`${s.changed.toLocaleString()} edited`);
   if (s.removed) parts.push(`${s.removed.toLocaleString()} removed`);
-  const note = s.hasGeometryHashes
-    ? ""
-    : " (an imported table cannot tell edited cells; recompute once to start tracking)";
   return `${parts.join(", ")} since this table was built.${note}`;
 });
 

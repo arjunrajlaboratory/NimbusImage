@@ -124,6 +124,25 @@ describe("CellTableCard", () => {
     );
   });
 
+  it("does not claim the polygons match when it cannot see edits", async () => {
+    // Membership-only staleness (no stored digests) can see added and removed
+    // cells but never a moved vertex, so "up to date" must not be stated as a
+    // fact about the geometry.
+    mocks.fetchStaleness.mockResolvedValue({
+      ...STALE,
+      added: 0,
+      changed: 0,
+      removed: 0,
+      upToDate: true,
+      hasGeometryHashes: false,
+    });
+    const wrapper = shallowMount(CellTableCard, { props: { visible: true } });
+    await flush();
+    const text = (wrapper.vm as any).stalenessText;
+    expect(text).not.toBe("Up to date with the cell polygons.");
+    expect(text).toContain("recompute once to start tracking");
+  });
+
   it("switching the version re-reads the table and the live gene columns", async () => {
     const swapped = {
       active: VERSIONS.versions[0],

@@ -140,8 +140,10 @@ class SpatialStore:
         return column
 
     def searchFeatures(self, query, limit):
-        """Symbols matching `query` case-insensitively, prefix matches first,
-        each group alphabetical."""
+        """Symbols matching `query` case-insensitively: shortest prefix
+        matches first, so "CD3" offers CD3E before CD300A, then substring
+        matches alphabetically. Same ranking as TranscriptStore.searchGenes —
+        the two pickers search the same panel and must agree."""
         needle = (query or "").strip().lower()
         if not needle:
             picked = list(range(min(limit, self.nVar)))
@@ -154,8 +156,11 @@ class SpatialStore:
                 index for index, symbol in enumerate(self._lowerSymbols)
                 if needle in symbol and not symbol.startswith(needle)
             ]
-            key = self.featureSymbols.__getitem__
-            picked = (sorted(prefix, key=key) + sorted(inner, key=key))[:limit]
+            symbols = self.featureSymbols
+            picked = (
+                sorted(prefix, key=lambda i: (len(symbols[i]), symbols[i]))
+                + sorted(inner, key=symbols.__getitem__)
+            )[:limit]
         return [self.featureInfo(index) for index in picked]
 
     def featureInfo(self, index):

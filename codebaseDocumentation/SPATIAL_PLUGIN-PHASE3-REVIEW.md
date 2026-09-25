@@ -21,6 +21,7 @@ started but died on an API spend limit before reporting). Status: `fixed` / `by-
 | 10 | Low | plan §12.3 | Opacity control. | fixed — palette slider, a restyle of points and heat maps (store `opacity`). |
 | 11 | Medium | `server/transcripts.py` `densityTile` | Live: CD3E's heat map was a flat saturated sheet over the whole section — log(count)/log(max) puts a typical bin at alpha ≈ 0.6. | fixed — alpha = sqrt(count / p99.5 of occupied bins); the gradient is visible. |
 | 12 | Medium | `TranscriptOverlay.vue`, `transcriptTiles.ts` | Live: "auto" at whole-section zoom drew 119,574 level-2 clustered points at radius 4.5 px — a solid red blob. | fixed — `AUTO_DENSITY_LEVEL` 3 → 2 (heat map from 1 mm tiles) and clustered points draw at 2 px. |
+| 13 | Medium | `server/store.py` `searchFeatures` vs `server/transcripts.py` `searchGenes` | Round 3 (live, 2026-09-25): the transcript gene search ranks prefix matches shortest-first (its comment cites exactly this case), the cell-table feature search sorted them alphabetically. Both search the same 4,624-gene panel, so "CD3" put CD3E at rank 5 in the Transcripts picker and rank 10 in the gene/property picker, behind CD300A, CD300C, CD300E, CD302 and CD320. | fixed — `searchFeatures` sorts prefix matches by `(len, symbol)` and substring matches alphabetically, matching `searchGenes`; pinned in *"testFeatureSearchRanksShortestPrefixFirst"* (the old fixture's symbols were all the same length, so it could not tell the orderings apart). |
 
 ## Live verification (lymph node, 2026-09-03)
 

@@ -63,6 +63,7 @@ export class Spatial extends VuexModule {
       // A dataset switch during the await would make this answer stale.
       if (main.dataset?.id === datasetId) {
         this.setInfo({ datasetId, info });
+        await this.adoptRegistryPixelSize(datasetId);
       }
     } catch (error) {
       logError("Failed to fetch the spatial table registration:", error);
@@ -71,6 +72,52 @@ export class Spatial extends VuexModule {
       }
     } finally {
       this.setLoading(false);
+    }
+  }
+
+  /**
+   * Copy the table's microns-per-pixel into the configuration's scale.
+   *
+   * A vendor table (Xenium and friends) records the pixel size the section
+   * was imaged at, and the analyses that take a radius or an area in microns
+   * need it. Making the configuration scale the one place that holds it keeps
+   * those dialogs working on a freshly ingested dataset instead of asking the
+   * user to retype a number the table already carries.
+   *
+   * Only ever fills a blank: a pixel size someone set by hand is the
+   * authority, and a read-only viewer (a share link included, which
+   * `canEditDatasetView` excludes) must not try to write at all.
+   */
+  @Action
+  async adoptRegistryPixelSize(datasetId: string): Promise<void> {
+    const micronsPerPixel = this.info?.pixelSize;
+    if (
+      typeof micronsPerPixel !== "number" ||
+      !Number.isFinite(micronsPerPixel) ||
+      micronsPerPixel <= 0
+    ) {
+      return;
+    }
+    if (!main.canEditDatasetView || !main.configuration) {
+      return;
+    }
+    // Already set (including by a previous call) — never overwrite.
+    if ((main.configuration.scales?.pixelSize?.value ?? 0) > 0) {
+      return;
+    }
+    // The write targets whatever configuration is open now, so a dataset
+    // switch while the registration was in flight must not redirect it.
+    if (main.dataset?.id !== datasetId) {
+      return;
+    }
+    try {
+      await main.saveScalesInConfiguration({
+        scales: { pixelSize: { value: micronsPerPixel, unit: "µm" } },
+      });
+    } catch (error) {
+      // A viewer who can edit the view but not the configuration: the scale
+      // stays blank and the dialogs say so. Not worth failing the fetch.
+      logError("Could not adopt the spatial table's pixel size:", error);
     }
   }
 

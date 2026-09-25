@@ -1829,6 +1829,9 @@ export interface ISpatialInfo {
   // Rows that still join to a live annotation of the dataset; present only
   // when the request asked for it (`verify`), since it scans the dataset.
   liveAnnotations?: number;
+  // Microns per image pixel, as recorded by the vendor in the table the
+  // dataset was ingested from; null when the table does not carry one.
+  pixelSize?: number | null;
 }
 
 export interface ISpatialFeature {

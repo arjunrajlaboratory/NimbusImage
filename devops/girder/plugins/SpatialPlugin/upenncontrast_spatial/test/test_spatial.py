@@ -140,7 +140,8 @@ def request(server, user, method, path, body=None, params=None):
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_spatial")
 class TestSpatial:
-    def _setup(self, admin, tmp_path, private=False, withCsr=True):
+    def _setup(self, admin, tmp_path, private=False, withCsr=True,
+               symbols=SYMBOLS):
         """A dataset with six tagged cell annotations and a matching store
         uploaded (not yet registered) into its folder."""
         parent = Folder().find({
@@ -157,7 +158,7 @@ class TestSpatial:
         ]
         ids = [str(annotation["_id"]) for annotation in annotations]
         path = str(tmp_path / "spatial.zarr.zip")
-        buildStoreZip(path, ids, withCsr=withCsr)
+        buildStoreZip(path, ids, symbols=symbols, withCsr=withCsr)
         item, fileDoc = uploadStore(admin, folder, path)
         return folder, annotations, item
 
@@ -286,6 +287,32 @@ class TestSpatial:
         )
         assert [f["symbol"] for f in resp.json] == ["MS4A1"]
         assert resp.json[0]["featureType"] == "gene"
+
+    def testFeatureSearchRanksShortestPrefixFirst(
+        self, admin, server, tmp_path, fsAssetstore
+    ):
+        """The gene picker must offer CD3E before CD300A for "CD3", the same
+        ranking the transcript gene search uses. Sorting prefix matches
+        alphabetically buries the short, commonly wanted symbol."""
+        folder, _, item = self._setup(
+            admin, tmp_path, symbols=["CD300A", "MS4A1", "CD3E", "PECAM1"],
+        )
+        self._register(server, admin, folder, item)
+        resp = request(
+            server, admin, "GET", "/spatial/%s/features" % folder["_id"],
+            params={"search": "CD3"},
+        )
+        assertStatusOk(resp)
+        assert [f["symbol"] for f in resp.json] == ["CD3E", "CD300A"]
+        # Substring matches keep following the prefix group, alphabetically.
+        resp = request(
+            server, admin, "GET", "/spatial/%s/features" % folder["_id"],
+            params={"search": "a"},
+        )
+        assertStatusOk(resp)
+        assert [f["symbol"] for f in resp.json] == [
+            "CD300A", "MS4A1", "PECAM1",
+        ]
 
     def testColumnAndRow(self, admin, server, tmp_path, fsAssetstore):
         folder, annotations, item = self._setup(admin, tmp_path)
