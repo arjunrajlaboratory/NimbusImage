@@ -1,5 +1,13 @@
 # PR #1347 — Codex review fixes
 
+## Review of `038f25e4` (2026-09-26)
+
+| Finding | Status |
+|---|---|
+| P2 Dirty recompute opens the active table without the affiliation check | fixed — the recompute preflight uses the shared `_openStore` (a sweep found no other request-time opener); regression fails without the fix |
+| P2 Pixel-size adoption is not rolled back on a failed write | declined — the blank is only filled in memory for that session; the next load re-adopts it from the registry |
+| P2 Selection-based region summary vs a changing selection | declined — the dialog is modal, so the viewer selection cannot change while a request runs |
+
 ## Review of `b00adb36` (2026-09-26)
 
 | Finding | Status |

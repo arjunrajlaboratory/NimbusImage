@@ -40,7 +40,9 @@ curl -sL -o cell_types.csv "<prefix>_cell_types.csv"
 # 3. Extract only what is needed
 unzip -o outs.zip 'morphology_focus/*' cells.zarr.zip cell_feature_matrix.zarr.zip \
       analysis.zarr.zip experiment.xenium -d extracted/
-# 4. Load images through the NimbusImage UI (§2); note the dataset FOLDER ids (§4)
+# 4. Images: one dataset from morphology_focus/, channels named by stain (§2);
+#    prints the dataset FOLDER id. (Or through the UI, then find the id — §4.)
+MORPH=$(python $S/xenium_upload_morphology.py --bundle-dir extracted --name "Lymph node")
 # 5. Polygons — validate a slice, then all; keep the returned ids
 python $S/xenium_upload_polygons.py --bundle-dir extracted --dataset $MORPH --limit 5000 --tags xenium-test
 python $S/xenium_upload_polygons.py --bundle-dir extracted --dataset $MORPH --delete-tag xenium-test --ids-out ids_morph.npy
@@ -65,7 +67,7 @@ Run every upload script with `--limit 2000` first and look at the result in the 
 | File | Where | Contains |
 |---|---|---|
 | `_xe_outs.zip` | standalone (~8.5 GB) | everything below plus transcripts |
-| `morphology_focus/morphology_focus_000{0..3}.ome.tif` | **in zip** | ONE logical 4-channel image (DAPI is channel 0) spread over 4 files |
+| `morphology_focus/morphology_focus_000{0..3}.ome.tif` (XOA 1-3) or `ch00NN_<stain>.ome.tif` (XOA 4) | **in zip** | ONE logical multi-channel image (DAPI is channel 0) spread over one file per channel; 4 channels, 12 with the protein panel. Stain names are in each file's OME `<Channel Name>` |
 | `cells.zarr.zip` | **in zip** | `polygon_sets/{0: nucleus, 1: cell}` vertices in **microns**, `cell_id`, `cell_summary`, label masks |
 | `cell_feature_matrix.zarr.zip` | **in zip** | counts, **gene-major CSR** (row = feature, `indices` = cell), `feature_keys`, `feature_types` |
 | `analysis.zarr.zip` | **in zip** | `cell_groups` clusterings ONLY — **no UMAP / PCA** |
@@ -84,8 +86,14 @@ Three "panel sizes" coexist: real genes (`feature_type == "gene"`, e.g. 4,624) �
 
 ## 2. Images
 
-Import the four `morphology_focus_*.ome.tif` files together through the NimbusImage UI;
-they become one multi-source 4-frame image. Import the H&E OME-TIFF as a separate
+`xenium_upload_morphology.py` creates the dataset from `morphology_focus/` and configures
+it as one multi-channel image, channels named after their stains. The file names can't
+supply those names: NimbusImage's filename parser splits on `_`, so XOA 4's
+`ch0001_atp1a1_cd45_e-cadherin.ome.tif` became channel `ch0001` (and XOA 1-3 files carry no
+stain at all). The script reads the names from the OME metadata, uploads copies named
+`c01-ATP1A1+CD45+E-Cadherin.ome.tif` (two-digit prefix keeps the order; `/` and `_` would
+split the token), and pins the channel axis to that name. Importing the files through the
+UI works too, with `ch00NN`-style channel names. Import the H&E OME-TIFF as a separate
 dataset. The two are **not co-registered** — the H&E dataset needs the alignment matrix
 for every overlay (§3).
 

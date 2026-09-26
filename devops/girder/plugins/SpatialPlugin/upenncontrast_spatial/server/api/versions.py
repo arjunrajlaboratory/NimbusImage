@@ -6,7 +6,6 @@ from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
-from girder.models.file import File
 from girder_jobs.models.job import Job
 
 from upenncontrast_annotation.server.helpers.validation import (
@@ -17,7 +16,7 @@ from upenncontrast_annotation.server.helpers.validation import (
 )
 
 from .. import recompute
-from ..store import invalidateStore, openStore
+from ..store import invalidateStore
 
 MAX_LABEL_LENGTH = 80
 MAX_TAGS = 16
@@ -188,11 +187,9 @@ class VersionRoutes:
                 code=400,
             )
         if activeFileId is not None:
-            # Fail now, not in the job, if the active table is unreadable.
-            openStore(File().load(
-                activeFileId, user=self.getCurrentUser(),
-                level=AccessType.READ, exc=True,
-            ))
+            # Fail now, not in the job, if the active table is unreadable or
+            # no longer in this dataset (a dirty run carries its rows over).
+            self._openStore(datasetId)
         user = self.getCurrentUser()
         job = Job().createLocalJob(
             module="upenncontrast_spatial.server.recompute",

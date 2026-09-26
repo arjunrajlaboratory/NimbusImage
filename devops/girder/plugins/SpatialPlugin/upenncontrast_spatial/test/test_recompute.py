@@ -264,6 +264,25 @@ class TestRecompute(TestTranscripts):
             str(i): self._row(server, admin, folder, i) for i in everyCell
         } == dirtyRows
 
+    def testDirtyRecomputeRefusesAMovedActiveTable(
+        self, admin, server, tmp_path, fsAssetstore
+    ):
+        # A dirty run carries the active table's rows over, so a table moved
+        # to another folder the caller can also read must be refused.
+        from girder.models.folder import Folder
+        from girder.models.item import Item
+        folder, _, tableItem, _ = self._scene(admin, server, tmp_path)
+        path = "/spatial/%s/recompute" % folder["_id"]
+        elsewhere = Folder().findOne({
+            "parentId": admin["_id"], "name": "Private",
+        })
+        Item().move(tableItem, elsewhere)
+        resp = request(
+            server, admin, "POST", path, body={"scope": "dirty"}
+        )
+        assertStatus(resp, 403)
+        Item().move(tableItem, folder)
+
     def testActivateAndForgetVersions(
         self, admin, user, server, tmp_path, fsAssetstore
     ):
