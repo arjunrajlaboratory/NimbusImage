@@ -1,5 +1,14 @@
 # PR #1347 — Codex review fixes
 
+## Review of `4793d690` (2026-09-26)
+
+| Finding | Status |
+|---|---|
+| P2 Quality threshold is not exact in every render mode | fixed — the panel says so: coarser point levels only split at Q20 (exact at 0 and 20), and the heat map counts every quality; per-level quality data was not added |
+| P2 Share-session restore can race the link's initialization | deferred — needs leaving the route inside the sub-second `loggedIn`; the worst case is a stale folder location or colour list until reload, not a wrong credential (the restored client is set synchronously) |
+| P2 Region summaries survive dataset switches | fixed — results and the tag clear on a dataset change and an in-flight answer for another dataset is dropped; regression fails without the fix |
+| P2 Falsy non-object `filters` default to `{}` on the aggregate endpoint | declined — `{}` is itself a valid request with the same cost, so a malformed falsy value grants nothing a caller could not already ask for |
+
 ## Review of `756f68b6` (2026-09-26)
 
 | Finding | Status |

@@ -101,6 +101,12 @@
         hide-details
         @update:model-value="transcriptsStore.setMinQv($event)"
       />
+      <div
+        v-if="qualityCaveat"
+        class="text-caption text-medium-emphasis quality-caveat"
+      >
+        {{ qualityCaveat }}
+      </div>
 
       <div class="text-caption mt-2">
         Opacity {{ Math.round(transcriptsStore.opacity * 100) }}%
@@ -278,6 +284,25 @@ const statusText = computed(() => {
   }
 });
 
+// The threshold is exact only on full-resolution points: coarser pyramid
+// levels keep just Xenium's two runs (quality ≥ 20 or below), and the heat
+// map counts every molecule.
+const qualityCaveat = computed(() => {
+  const status = transcriptsStore.enabled ? transcriptsStore.status : null;
+  if (status?.rendering === "density") {
+    return "The heat map counts molecules of every quality.";
+  }
+  if (
+    status?.rendering === "points" &&
+    status.level > 0 &&
+    transcriptsStore.minQv !== DEFAULT_TRANSCRIPT_MIN_QV &&
+    transcriptsStore.minQv !== 0
+  ) {
+    return `Zoomed out, points are only split at quality ${DEFAULT_TRANSCRIPT_MIN_QV}; zoom in for an exact threshold.`;
+  }
+  return null;
+});
+
 const cellText = computed(() =>
   readout.value?.annotationId
     ? "Inside a segmented cell."
@@ -380,7 +405,14 @@ onBeforeUnmount(() => {
   runSearch.cancel();
 });
 
-defineExpose({ statusText, cellText, onSymbols, onSearch, goToCell });
+defineExpose({
+  statusText,
+  qualityCaveat,
+  cellText,
+  onSymbols,
+  onSearch,
+  goToCell,
+});
 </script>
 
 <style lang="scss" scoped>

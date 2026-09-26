@@ -7,12 +7,16 @@ const mocks = vi.hoisted(() => ({
   downloadToClient: vi.fn(),
 }));
 
-vi.mock("@/store", () => ({
-  default: {
-    dataset: { id: "ds1", name: "Lymph" },
-    spatialAPI: { regionSummary: mocks.regionSummary },
-  },
-}));
+// Reactive, so the dataset watcher sees a switch.
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      dataset: { id: "ds1", name: "Lymph" },
+      spatialAPI: { regionSummary: mocks.regionSummary },
+    }),
+  };
+});
 vi.mock("@/store/spatial", async () => {
   const { reactive } = await import("vue");
   return { default: reactive({ hasTable: true }) };
@@ -44,6 +48,7 @@ vi.mock("papaparse", () => ({
   },
 }));
 
+import store from "@/store";
 import RegionSummaryDialog from "./RegionSummaryDialog.vue";
 import spatialStore from "@/store/spatial";
 
@@ -77,6 +82,7 @@ const ROWS = [
 
 describe("RegionSummaryDialog", () => {
   beforeEach(() => {
+    (store as any).dataset = { id: "ds1", name: "Lymph" };
     mocks.regionSummary.mockReset().mockResolvedValue(ROWS);
     mocks.downloadToClient.mockReset();
     (spatialStore as any).hasTable = true;
@@ -121,6 +127,32 @@ describe("RegionSummaryDialog", () => {
     await pending;
     expect(vm.symbolsShown).toEqual(["CD3E"]);
     expect(vm.buildCsv().split("\n")[0]).toBe("region,cells,B,T,CD3E");
+  });
+
+  it("drops results, and in-flight answers, from another dataset", async () => {
+    const wrapper = shallowMount(RegionSummaryDialog);
+    const vm = wrapper.vm as any;
+    vm.regionTag = "region";
+    await vm.refresh();
+    expect(vm.rows).toEqual(ROWS);
+    (store as any).dataset = { id: "ds2", name: "Other" };
+    await nextTick();
+    expect(vm.rows).toEqual([]);
+    expect(vm.regionTag).toBeNull();
+
+    let resolve!: (rows: typeof ROWS) => void;
+    mocks.regionSummary.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    vm.regionTag = "region";
+    const pending = vm.refresh();
+    (store as any).dataset = { id: "ds3", name: "Third" };
+    await nextTick();
+    resolve(ROWS);
+    await pending;
+    expect(vm.rows).toEqual([]);
   });
 
   it("asks for no genes without a table and surfaces errors", async () => {

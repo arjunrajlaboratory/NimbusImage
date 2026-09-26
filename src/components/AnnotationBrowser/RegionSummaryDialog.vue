@@ -186,22 +186,42 @@ async function refresh() {
   // the genes this request was sent with, not whatever is picked on return.
   const requestedSymbols = spatialStore.hasTable ? [...symbols.value] : [];
   try {
-    rows.value = await store.spatialAPI.regionSummary(
+    const result = await store.spatialAPI.regionSummary(
       datasetId,
       source.value === "tag"
         ? { regionTag: regionTag.value! }
         : { regionIds: selectedPolygonIds.value },
       requestedSymbols,
     );
+    // The dialog outlives dataset switches: drop another dataset's answer.
+    if (store.dataset?.id !== datasetId) {
+      return;
+    }
+    rows.value = result;
     symbolsShown.value = requestedSymbols;
+    loaded.value = true;
   } catch (caught) {
     logError("Region summary failed:", caught);
-    error.value = extractErrorMessage(caught);
+    if (store.dataset?.id === datasetId) {
+      error.value = extractErrorMessage(caught);
+      loaded.value = true;
+    }
   } finally {
     loading.value = false;
-    loaded.value = true;
   }
 }
+
+// A summary (and the chosen tag) belongs to one dataset.
+watch(
+  () => store.dataset?.id,
+  () => {
+    rows.value = [];
+    symbolsShown.value = [];
+    regionTag.value = null;
+    error.value = null;
+    loaded.value = false;
+  },
+);
 
 function buildCsv(): string {
   const types = Array.from(

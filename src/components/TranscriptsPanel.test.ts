@@ -180,6 +180,34 @@ describe("TranscriptsPanel", () => {
     expect(vm.statusText).toBe("Overlay off.");
   });
 
+  it("says when the quality threshold is only approximate", async () => {
+    (transcriptsStore as any).enabled = true;
+    (transcriptsStore as any).minQv = 30;
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: true },
+    });
+    const vm = wrapper.vm as any;
+    const points = (level: number) => ({
+      rendering: "points",
+      level,
+      points: 10,
+      note: null,
+    });
+    (transcriptsStore as any).status = points(0);
+    await nextTick();
+    expect(vm.qualityCaveat).toBeNull(); // full resolution: exact
+    (transcriptsStore as any).status = points(2);
+    await nextTick();
+    expect(vm.qualityCaveat).toMatch(/only split at quality 20/);
+    (transcriptsStore as any).minQv = 20; // Xenium's own split: exact
+    await nextTick();
+    expect(vm.qualityCaveat).toBeNull();
+    (transcriptsStore as any).status = { ...points(3), rendering: "density" };
+    await nextTick();
+    expect(vm.qualityCaveat).toMatch(/every quality/);
+    wrapper.unmount();
+  });
+
   it("disables heat maps for transformed registrations and explains why", () => {
     (transcriptsStore as any).mode = "density";
     (transcriptsStore as any).schema.transform = [
