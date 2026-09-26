@@ -357,6 +357,8 @@ for the H&E dataset).
 
 ## Open decisions / future work
 
+The V2 feature list (what users ask for, ranked) is in `SPATIAL_V2_ROADMAP.md`.
+
 - **Anonymous heavy compute on public datasets.** `POST spatial/{id}/differential`
   (a local job that walks every feature of the table) and `POST
   spatial/{id}/regions/summary` (synchronous, up to 50 regions × 64 features)
