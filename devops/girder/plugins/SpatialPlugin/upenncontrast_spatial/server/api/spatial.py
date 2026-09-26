@@ -40,6 +40,7 @@ from .transcripts import TranscriptRoutes
 from .versions import VersionRoutes
 from .analysis import AnalysisRoutes
 from ..models.registry import DatasetSpatial
+from ..provider import requireFileInDataset
 from ..store import (
     invalidateStore,
     liveAnnotationCount,
@@ -117,6 +118,7 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
             entry["fileId"], user=self.getCurrentUser(),
             level=AccessType.READ, exc=True,
         )
+        requireFileInDataset(fileDoc, datasetId)
         return entry, openStore(fileDoc)
 
     def _requireSymbols(self, store, value, field="features"):

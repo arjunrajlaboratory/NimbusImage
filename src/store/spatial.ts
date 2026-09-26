@@ -9,6 +9,11 @@ import store from "./root";
 import main from "./index";
 import { ISpatialInfo } from "./model";
 import { logError } from "@/utils/log";
+import { createSequenceGuard } from "@/utils/sequenceGuard";
+
+// Only the latest refreshInfo may commit: a refresh after a table activation
+// or recompute can overlap an older one for the same dataset.
+const infoRequestGuard = createSequenceGuard();
 
 /**
  * The current dataset's spatial expression table (upenncontrast_spatial
@@ -51,27 +56,33 @@ export class Spatial extends VuexModule {
   /** Fetch (or re-fetch) the current dataset's registration. */
   @Action
   async refreshInfo(): Promise<void> {
+    // Claimed before the early return, so a bail-out also retires a pending
+    // answer for the previous dataset.
+    const token = infoRequestGuard.next();
     const datasetId = main.dataset?.id;
     if (!datasetId) {
       this.setInfo({ datasetId: "", info: null });
+      this.setLoading(false);
       return;
     }
     this.setLoading(true);
     this.setError(null);
     try {
       const info = await main.spatialAPI.fetchInfo(datasetId);
-      // A dataset switch during the await would make this answer stale.
-      if (main.dataset?.id === datasetId) {
+      // A newer refresh (or a dataset switch) makes this answer stale.
+      if (infoRequestGuard.isCurrent(token) && main.dataset?.id === datasetId) {
         this.setInfo({ datasetId, info });
         await this.adoptRegistryPixelSize(datasetId);
       }
     } catch (error) {
       logError("Failed to fetch the spatial table registration:", error);
-      if (main.dataset?.id === datasetId) {
+      if (infoRequestGuard.isCurrent(token) && main.dataset?.id === datasetId) {
         this.setError("Could not read the dataset's spatial table.");
       }
     } finally {
-      this.setLoading(false);
+      if (infoRequestGuard.isCurrent(token)) {
+        this.setLoading(false);
+      }
     }
   }
 

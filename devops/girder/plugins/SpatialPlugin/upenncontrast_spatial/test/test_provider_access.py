@@ -8,6 +8,7 @@ from pytest_girder.assertions import assertStatus
 
 from .test_spatial import TestSpatial as SpatialFixture, request
 from .test_phase2 import postJson
+from .test_transcripts import TestTranscripts as TranscriptsFixture
 
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
@@ -51,3 +52,30 @@ class TestProviderAccess:
         # Moving back restores valid affiliation without re-registering.
         Item().move(item, folder)
         assertStatus(postJson(server, user, endpoint, body), 200)
+
+    def testMovedSourcesRefuseDirectOpenersEvenWithReadOnBoth(
+        self, admin, server, tmp_path, fsAssetstore,
+    ):
+        # The admin reads both folders, so the ACL alone would not stop a
+        # moved table or transcript store being answered as this dataset's.
+        fixture = TranscriptsFixture()
+        folder, _, table, transcripts = fixture._setupTranscripts(
+            admin, tmp_path
+        )
+        fixture._register(server, admin, folder, table)
+        fixture._registerTranscripts(server, admin, folder, transcripts)
+        features = "/spatial/%s/features" % folder["_id"]
+        genes = "/spatial/%s/transcripts/genes" % folder["_id"]
+        for path in (features, genes):
+            assertStatus(request(server, admin, "GET", path), 200)
+        elsewhere = Folder().findOne({
+            "parentId": admin["_id"], "name": "Private",
+        })
+        Item().move(table, elsewhere)
+        Item().move(transcripts, elsewhere)
+        for path in (features, genes):
+            assertStatus(request(server, admin, "GET", path), 403)
+        Item().move(table, folder)
+        Item().move(transcripts, folder)
+        for path in (features, genes):
+            assertStatus(request(server, admin, "GET", path), 200)

@@ -1,5 +1,13 @@
 # PR #1347 — Codex review fixes
 
+## Review of `b00adb36` (2026-09-26)
+
+| Finding | Status |
+|---|---|
+| P2 Overlapping spatial-info refreshes | fixed — `refreshInfo` claims a sequence token first; only the latest commits info, error or loading; regression fails without the fix |
+| P2 Direct store openers skip the dataset-affiliation check | fixed — `provider.requireFileInDataset` now guards the provider and both API openers (table, transcripts); regression with a caller who reads both folders fails without the fix |
+| P2 Virtual columns densify the whole column per page | declined — the CSC column read is unavoidable either way; the dense fill is a ~ms allocation next to it |
+
 ## Review of `a7c48839` (2026-09-26)
 
 | Finding | Status |

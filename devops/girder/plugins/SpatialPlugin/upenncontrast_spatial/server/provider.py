@@ -30,11 +30,18 @@ def storeForDataset(datasetId):
         return None
     # Force loads only establish affiliation; no data is opened until checked.
     fileDoc = File().load(entry["fileId"], force=True, exc=True)
+    requireFileInDataset(fileDoc, datasetId)
+    return openStore(fileDoc)
+
+
+def requireFileInDataset(fileDoc, datasetId):
+    """Refuse a registered file whose item was moved out of the dataset: the
+    registry still names it, but it no longer describes (or inherits the ACL
+    of) that dataset. Every opener of a registered store checks this."""
     item = Item().load(fileDoc["itemId"], force=True, exc=True)
-    if item["folderId"] != datasetId:
+    if item["folderId"] != ObjectId(str(datasetId)):
         raise AccessException(
             "The spatial source is no longer in this dataset.")
-    return openStore(fileDoc)
 
 
 def symbolOf(path):

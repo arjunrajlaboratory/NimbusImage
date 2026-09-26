@@ -87,3 +87,44 @@ describe("spatial store: the configuration scale pulls from the registry", () =>
     expect(mocks.saveScalesInConfiguration).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("spatial store: overlapping refreshes", () => {
+  beforeEach(() => {
+    mocks.fetchInfo.mockReset();
+    mocks.main.dataset = { id: "ds1" };
+    mocks.main.canEditDatasetView = false;
+    spatialStore.setInfo({ datasetId: "", info: null });
+    spatialStore.setError(null);
+  });
+
+  it("lets only the latest refresh commit, success or failure", async () => {
+    let finishOld!: (info: any) => void;
+    let failOld!: (error: Error) => void;
+    mocks.fetchInfo
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
+      )
+      .mockResolvedValueOnce({ ...INFO, nObs: 20 })
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          failOld = reject;
+        }),
+      )
+      .mockResolvedValueOnce({ ...INFO, nObs: 30 });
+    const older = spatialStore.refreshInfo();
+    await spatialStore.refreshInfo(); // e.g. after a table activation
+    finishOld({ ...INFO, nObs: 10 });
+    await older;
+    expect(spatialStore.info?.nObs).toBe(20);
+
+    const failing = spatialStore.refreshInfo();
+    await spatialStore.refreshInfo();
+    failOld(new Error("offline"));
+    await failing;
+    expect(spatialStore.info?.nObs).toBe(30);
+    expect(spatialStore.error).toBeNull();
+    expect(spatialStore.loading).toBe(false);
+  });
+});

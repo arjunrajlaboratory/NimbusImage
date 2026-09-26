@@ -30,6 +30,7 @@ from upenncontrast_annotation.server.helpers.validation import (
     requireObjectId,
 )
 
+from ..provider import requireFileInDataset
 from ..transcripts import (
     MAX_GENES_PER_REQUEST,
     MAX_POINTS_PER_RESPONSE,
@@ -100,6 +101,7 @@ class TranscriptRoutes:
             entry["transcriptsFileId"], user=self.getCurrentUser(),
             level=AccessType.READ, exc=True,
         )
+        requireFileInDataset(fileDoc, datasetId)
         return entry, openTranscriptStore(
             fileDoc, entry["pixelSize"], parseTransform(entry.get("transform"))
         )
