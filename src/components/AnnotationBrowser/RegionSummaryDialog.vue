@@ -182,15 +182,18 @@ async function refresh() {
   }
   loading.value = true;
   error.value = null;
+  // The picker stays editable while the request runs: label the columns with
+  // the genes this request was sent with, not whatever is picked on return.
+  const requestedSymbols = spatialStore.hasTable ? [...symbols.value] : [];
   try {
     rows.value = await store.spatialAPI.regionSummary(
       datasetId,
       source.value === "tag"
         ? { regionTag: regionTag.value! }
         : { regionIds: selectedPolygonIds.value },
-      spatialStore.hasTable ? symbols.value : [],
+      requestedSymbols,
     );
-    symbolsShown.value = spatialStore.hasTable ? [...symbols.value] : [];
+    symbolsShown.value = requestedSymbols;
   } catch (caught) {
     logError("Region summary failed:", caught);
     error.value = extractErrorMessage(caught);

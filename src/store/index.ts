@@ -19,7 +19,7 @@ import {
   Mutation,
   VuexModule,
 } from "vuex-module-decorators";
-import { markRaw } from "vue";
+import { markRaw, toRaw } from "vue";
 import { v4 as uuidv4 } from "uuid";
 
 import AnnotationsAPI from "./AnnotationsAPI";
@@ -183,6 +183,14 @@ function storeToken(apiRoot: string, token: string) {
 }
 
 let shareBootstrapSequence = 0;
+// The session a share link replaced, restored when the viewer leaves the
+// shared route (leaveShareLink). The link's client lives in memory only, so
+// without this a signed-in user who navigates back from a share link stays
+// the read-only link user until a reload.
+let shareLinkSession: {
+  linkClient: RestClientInstance;
+  previousClient: RestClientInstance;
+} | null = null;
 
 function clearStoredToken() {
   localStorage.removeItem(TOKEN_STORAGE_KEY);
@@ -1531,8 +1539,29 @@ export class Main extends VuexModule {
     ) {
       throw new Error("A newer session has replaced this share-link request.");
     }
+    // Switching straight from one link to another restores the session from
+    // before the first, not the first link's client.
+    // Compared raw: Vuex state hands clients back as reactive proxies.
+    shareLinkSession = {
+      linkClient: candidate,
+      previousClient:
+        shareLinkSession?.linkClient === toRaw(previousClient)
+          ? shareLinkSession.previousClient
+          : toRaw(previousClient),
+    };
     await this.loggedIn(candidate);
     return link;
+  }
+
+  /** Leaving a shared route: give back the session the link replaced, unless
+   * something else (a login, a logout) has replaced the link's since. */
+  @Action({ rawError: true })
+  async leaveShareLink() {
+    const session = shareLinkSession;
+    shareLinkSession = null;
+    if (session && toRaw(this.girderRest) === session.linkClient) {
+      await this.loggedIn(session.previousClient);
+    }
   }
 
   @Action

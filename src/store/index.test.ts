@@ -126,6 +126,34 @@ describe("share-link bootstrap identity", () => {
     expect((main.girderRestProxy as any).token).toBe("new-link");
   });
 
+  it("restores the replaced session when the shared route is left", async () => {
+    const client = main.girderRest;
+    const owner = { _id: "owner", login: "owner" };
+    Object.assign(client, { user: owner, token: "owner-token" });
+    (rootStore.state as any).main.girderUser = owner;
+    vi.spyOn(RestClient.prototype, "fetchUser").mockImplementation(
+      async function (this: any) {
+        this.user = { _id: this.token, shareLink: { datasetId: "d" } };
+        return this.user;
+      },
+    );
+    vi.spyOn(ShareLinkAPI.prototype, "me").mockResolvedValue({
+      datasetViewId: "v",
+    } as any);
+    await main.openShareLink({ token: "link-a" });
+    // Straight to a second link: leaving restores the owner, not link A.
+    await main.openShareLink({ token: "link-b" });
+    expect(main.girderRest.token).toBe("link-b");
+    await main.leaveShareLink();
+    expect(main.girderRest).toBe(client);
+    expect(main.girderRest.token).toBe("owner-token");
+    expect(main.girderUser).toEqual(owner);
+    expect((main.girderRestProxy as any).token).toBe("owner-token");
+    // Nothing to restore a second time.
+    await main.leaveShareLink();
+    expect(main.girderRest).toBe(client);
+  });
+
   it("does not commit a share bootstrap after its route is cancelled", async () => {
     const client = main.girderRest;
     const identity = main.girderUser;

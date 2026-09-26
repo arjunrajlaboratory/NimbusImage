@@ -1522,11 +1522,16 @@ describe("ImageViewer", () => {
       tileErrorCallbacks[0]();
       tileErrorCallbacks[1]();
       expect(overviewLayer.reset).not.toHaveBeenCalled();
+      const mapDraw = overviewLayer.map().draw;
+      const mapDrawsBefore = mapDraw.mock.calls.length;
       await vi.advanceTimersByTimeAsync(999);
       expect(overviewLayer.reset).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
       expect(overviewLayer.reset).toHaveBeenCalledTimes(1);
-      expect(overviewLayer.draw).toHaveBeenCalled();
+      // reset() drops every tile; only a MAP draw reaches the layer's _update
+      // and refetches them (a layer draw() renders what it already has, which
+      // is nothing — the overview stayed blank until the user panned).
+      expect(mapDraw.mock.calls.length).toBe(mapDrawsBefore + 1);
 
       // Backing off (2 s, then 4 s, capped) so a multi-second server build
       // (503 meanwhile) is outlasted; bounded at eight retries.

@@ -667,9 +667,13 @@ function scheduleAnnotationOverviewRetry(layer: AnnotationOverviewLayer) {
         return;
       }
       // reset() clears the tile cache — the only way to make GeoJS refetch a
-      // tile whose previous fetch was rejected.
+      // tile whose previous fetch was rejected. It also drops every drawn
+      // tile, and a layer's own draw() only renders what it already has: the
+      // fetch runs in _update, which map().draw() (like a camera move)
+      // reaches. A layer draw() here left the overview blank after any 503
+      // until the user panned.
       layer.reset();
-      layer.draw();
+      layer.map().draw();
       trackAnnotationOverviewLoad(layer);
     },
     Math.min(

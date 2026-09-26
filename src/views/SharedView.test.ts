@@ -4,6 +4,7 @@ import { nextTick } from "vue";
 
 const mocks = vi.hoisted(() => ({
   openShareLink: vi.fn(),
+  leaveShareLink: vi.fn(),
   setDatasetViewId: vi.fn(),
   replace: vi.fn(),
   route: {
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/store", () => ({
   default: {
     openShareLink: mocks.openShareLink,
+    leaveShareLink: mocks.leaveShareLink,
     setDatasetViewId: mocks.setDatasetViewId,
   },
 }));
@@ -41,6 +43,7 @@ async function flush() {
 describe("SharedView", () => {
   beforeEach(() => {
     mocks.openShareLink.mockReset();
+    mocks.leaveShareLink.mockReset().mockResolvedValue(undefined);
     mocks.replace.mockReset();
     mocks.setDatasetViewId.mockReset().mockResolvedValue(undefined);
     mocks.route.name = "shared";
@@ -109,5 +112,14 @@ describe("SharedView", () => {
     await flush();
     expect(request.signal?.aborted).toBe(true);
     expect(mocks.setDatasetViewId).not.toHaveBeenCalled();
+  });
+
+  it("gives back the viewer's own session when the route is left", async () => {
+    mocks.openShareLink.mockResolvedValue({ datasetViewId: "v1" });
+    const wrapper = shallowMount(SharedView);
+    await flush();
+    expect(mocks.leaveShareLink).not.toHaveBeenCalled();
+    wrapper.unmount();
+    expect(mocks.leaveShareLink).toHaveBeenCalledTimes(1);
   });
 });

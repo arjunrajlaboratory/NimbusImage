@@ -220,7 +220,10 @@ before committing either credentials or Vuex identity. Failed or superseded atte
 leave the current session and user-dependent state untouched. The route aborts its
 signal on token changes or unmount; the store checks cancellation before committing
 identity, so an abandoned bootstrap cannot log in after navigation. A signed-in user's
-persisted login survives a visit. The tile URL builders add that bearer only when the fetched user has the `shareLink`
+persisted login survives a visit, and leaving the shared route in the same tab
+(`store.leaveShareLink`, from `SharedView`'s unmount) restores the session the link
+replaced — also after hopping between links — unless a login or logout replaced the
+link's session meanwhile. The tile URL builders add that bearer only when the fetched user has the `shareLink`
 marker. `src/views/SharedView.vue` renders the viewer on the original token-bearing
 route, so refresh revalidates the bearer without changing the owner's stored login.
 The normal login bootstrap is skipped on shared routes to avoid racing the bearer.
@@ -256,6 +259,10 @@ expired links refused), `ShareLinkAPI.test.ts`, `SharedView.test.ts`,
 
 - Keep the bearer URL on initial open and reload/remount without replacing the owner's
   persisted login — `SharedView.test.ts` (`acts as the link's bearer and opens its dataset view`).
+- Leaving the shared route restores the replaced session, from before the first of
+  several links — `index.test.ts` (`restores the replaced session when the shared
+  route is left`), `SharedView.test.ts` (`gives back the viewer's own session when the
+  route is left`).
 - Recognize the embed route without redirecting away from its credential —
   `SharedView.test.ts` (`marks the embed route so the chrome is dropped`).
 - Keep palettes closed through route initialization and late viewer requests, and

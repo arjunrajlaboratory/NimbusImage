@@ -260,6 +260,8 @@ class TestAnalysis(TestSpatial):
             {}, {"regionTag": ""}, {"regionIds": []}, {"regionIds": ["x"]},
             {"regionTag": "region", "excludeTags": [1]},
             {"regionIds": ["0" * 24] * 51},
+            # A malformed tag beside valid ids is a 400, not a 500.
+            {"regionIds": [str(item["_id"])], "regionTag": 5},
         ):
             assertStatus(request(server, admin, "POST", path, body=body), 400)
         # Features without a registered table.

@@ -104,6 +104,25 @@ describe("RegionSummaryDialog", () => {
     ]);
   });
 
+  it("labels the columns with the genes the request was sent with", async () => {
+    let resolve!: (rows: typeof ROWS) => void;
+    mocks.regionSummary.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    const wrapper = shallowMount(RegionSummaryDialog);
+    const vm = wrapper.vm as any;
+    vm.regionTag = "region";
+    vm.symbols = ["CD3E"];
+    const pending = vm.refresh();
+    vm.symbols = ["MS4A1"]; // edited while the request runs
+    resolve(ROWS);
+    await pending;
+    expect(vm.symbolsShown).toEqual(["CD3E"]);
+    expect(vm.buildCsv().split("\n")[0]).toBe("region,cells,B,T,CD3E");
+  });
+
   it("asks for no genes without a table and surfaces errors", async () => {
     (spatialStore as any).hasTable = false;
     const wrapper = shallowMount(RegionSummaryDialog);

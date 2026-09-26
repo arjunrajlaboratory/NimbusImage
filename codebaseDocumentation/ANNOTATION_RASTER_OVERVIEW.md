@@ -848,7 +848,11 @@ vectors but the zoomed-out raster kept drawing all 709K cells.
   so tiles come back empty without a special case.
 - **Client retries** back off (1, 2, 4, 4 … s, eight attempts) so a multi-second
   geometry or filter build (503 meanwhile) is outlasted; three 1 s retries gave
-  up before a 5 s build and left the overview blank.
+  up before a 5 s build and left the overview blank. A retry is
+  `layer.reset()` + `map().draw()`: reset drops every drawn tile, and only a
+  map draw reaches the layer's `_update` (the tile fetch) — a layer `draw()`
+  re-rendered nothing, so any 503 left the overview blank until the user
+  panned.
 
 ## 9. Explicit non-goals / future extensions
 

@@ -132,6 +132,10 @@ class AnalysisRoutes:
         body = requireObjectBody(self.getBodyJson())
         regionIds = body.get("regionIds")
         regionTag = body.get("regionTag")
+        if regionTag is not None and (
+            not isinstance(regionTag, str) or not regionTag
+        ):
+            raise RestException("regionTag must be a tag", code=400)
         if regionIds is not None:
             regionIds = requireList(regionIds, "regionIds")
             requireCountWithin(
@@ -140,7 +144,7 @@ class AnalysisRoutes:
             if not regionIds:
                 raise RestException("regionIds must not be empty", code=400)
             regionIds = [requireObjectId(i, "regionIds") for i in regionIds]
-        elif not isinstance(regionTag, str) or not regionTag:
+        elif regionTag is None:
             raise RestException(
                 "regionTag (a tag) or regionIds is required", code=400
             )

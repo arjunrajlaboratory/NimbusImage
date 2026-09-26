@@ -36,7 +36,13 @@ const route = useRoute();
 const error = ref<string | null>(null);
 const ready = ref(false);
 let sequence = 0;
-onBeforeUnmount(() => sequence++);
+onBeforeUnmount(() => {
+  sequence++;
+  // The link's session is this route's: leaving it restores the viewer's own.
+  store.leaveShareLink().catch((caught) => {
+    logError("Failed to restore the session after a share link:", caught);
+  });
+});
 
 watch(
   () => route.params.token,

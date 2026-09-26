@@ -1,5 +1,15 @@
 # PR #1347 — Codex review fixes
 
+## Review of `756f68b6` (2026-09-26)
+
+| Finding | Status |
+|---|---|
+| P1 Anonymous region-summary computation | deferred — same class as the anonymous differential-expression jobs the user asked to leave unchanged (2026-09-06); the centroid pass is cached per raster version |
+| P2 Malformed `regionTag` beside `regionIds` → 500 | fixed — `regionTag` validated whenever present (400); regression in `testRegionSummaryValidation` fails without the fix |
+| P2 Region polygons counted as cells in neighborhoods | deferred — a handful of region polygons among ~700K cells barely moves counts or enrichment, and every candidate cell predicate (the `cell` tag, table membership) would exclude real cells on non-Xenium datasets; revisit if regions become numerous |
+| P2 Region results labelled with edited genes | fixed — columns use the genes the request was sent with (the button is disabled while loading, so no guard is needed); regression fails without the fix |
+| P2 Session not restored after leaving a shared view | fixed — `leaveShareLink` restores the replaced client on route unmount (raw-client comparison: Vuex hands back reactive proxies), including after link-to-link hops |
+
 ## Final local review (2026-09-06)
 
 | Finding | Status |
