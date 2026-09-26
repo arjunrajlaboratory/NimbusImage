@@ -1,5 +1,12 @@
 # PR #1347 — Codex review fixes
 
+## Review of `980059cb` (2026-09-26)
+
+| Finding | Status |
+|---|---|
+| P2 Only a strided sample of `obs.annotation_id` is validated | fixed — the whole column is checked, vectorized (0.09 s for 700K ids), so a bad row is a registration 400, not a failed job; regression fails without the fix |
+| P2 A missing live gene aborts the post-activation refreshes | fixed — registration, versions and staleness are re-read even when the gene-value refresh rejects; the first failure is still shown; regression fails without the fix |
+
 ## Review of `62f5c81a` (2026-09-26)
 
 | Finding | Status |

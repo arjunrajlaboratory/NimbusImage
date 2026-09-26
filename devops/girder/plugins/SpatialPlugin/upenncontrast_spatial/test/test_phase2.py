@@ -309,3 +309,18 @@ def testWelchSeparatesUnequalConstantGroups():
     assert differentialModule.welch(3.0, 3.0, 3, 2.0, 2.0, 2)[:2] == (
         0.0, 1.0,
     )
+
+
+def testEveryRowIdIsValidatedNotASample(tmp_path):
+    """A bad id between strided sample positions must still refuse the
+    store at open (registration's 400), not fail a later job."""
+    n = 2001
+    ids = ["%024x" % i for i in range(n)]
+    ids[1001] = "not-an-annotation-id-xx"
+    path = str(tmp_path / "spatial.zarr.zip")
+    buildStoreZip(
+        path, ids, counts=np.zeros((n, COUNTS.shape[1]), dtype=np.float32),
+        cellTypes=["T"] * n,
+    )
+    with pytest.raises(ValueError, match="24-character annotation ids"):
+        storeModule.SpatialStore(path)

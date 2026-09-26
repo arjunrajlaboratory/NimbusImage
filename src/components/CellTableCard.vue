@@ -166,9 +166,25 @@ async function activate(itemId: string) {
  * staleness and every live gene column. */
 async function afterTableChange() {
   staleness.value = null;
-  await propertyStore.refreshVirtualPropertyValues();
-  await spatialStore.refreshInfo();
-  await refresh(true);
+  // Each refresh runs even when an earlier one fails: a live gene column the
+  // new table lacks makes the value refresh reject ("unknown feature"), and
+  // that must not leave the registration, versions and staleness stale. The
+  // first failure is still reported.
+  let failure: unknown = null;
+  for (const step of [
+    () => propertyStore.refreshVirtualPropertyValues(),
+    () => spatialStore.refreshInfo(),
+    () => refresh(true),
+  ]) {
+    try {
+      await step();
+    } catch (caught) {
+      failure = failure ?? caught;
+    }
+  }
+  if (failure !== null) {
+    throw failure;
+  }
 }
 
 async function onRecomputed() {

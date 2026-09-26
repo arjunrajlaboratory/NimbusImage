@@ -12,7 +12,6 @@ over a sorted copy of that column, built once per open store and kept in a
 small LRU keyed by the Girder file id (SPATIAL_PLUGIN.md, "Row identity").
 """
 
-import re
 import threading
 from collections import OrderedDict
 
@@ -35,7 +34,23 @@ MAX_OPEN_STORES = 8
 # values.
 COLUMN_BLOCK_VALUES = 8_000_000
 
-OBJECT_ID_PATTERN = re.compile(r"^[0-9a-f]{24}$")
+
+def _allObjectIds(values):
+    """Every value is a 24-character lowercase hex ObjectId string.
+
+    Checks the whole column, vectorized (a strided sample let a bad row
+    through registration and fail a later job instead of the upload): a
+    value longer than 24 characters survives the U25 cast with its excess,
+    and a non-string (None, a number) fails as its text."""
+    if not all(isinstance(value, str) for value in values):
+        return False
+    text = np.asarray(values, dtype="U25")
+    if text.size == 0:
+        return True
+    return bool(
+        (np.char.str_len(text) == 24).all()
+        and (np.char.strip(text, "0123456789abcdef") == "").all()
+    )
 
 
 def readStringColumn(group, name):
@@ -127,10 +142,7 @@ class SpatialStore:
                 "obs.annotation_id has %d rows, X has %d"
                 % (len(annotationIds), self.nObs)
             )
-        if self.nObs and not all(
-            isinstance(value, str) and OBJECT_ID_PATTERN.match(value)
-            for value in annotationIds[:: max(1, self.nObs // 1000)]
-        ):
+        if not _allObjectIds(annotationIds):
             raise ValueError(
                 "obs.annotation_id must hold 24-character annotation ids"
             )

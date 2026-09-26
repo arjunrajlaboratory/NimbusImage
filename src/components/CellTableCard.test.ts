@@ -164,6 +164,27 @@ describe("CellTableCard", () => {
     expect(vm.versionItems[0].title).toContain("Imported table");
   });
 
+  it("still refreshes the table when a live gene is missing from it", async () => {
+    const swapped = {
+      active: VERSIONS.versions[0],
+      versions: [VERSIONS.active],
+    };
+    mocks.activateVersion.mockResolvedValue(swapped);
+    mocks.refreshVirtualPropertyValues.mockRejectedValue(
+      new Error("unknown feature 'CD3E'"),
+    );
+    const wrapper = shallowMount(CellTableCard, { props: { visible: true } });
+    await flush();
+    const vm = wrapper.vm as any;
+    mocks.fetchVersions.mockResolvedValue(swapped);
+    await vm.activate("i1");
+    // The registration and the versions/staleness are re-read anyway, and
+    // the gene failure is still reported.
+    expect(mocks.refreshInfo).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchStaleness).toHaveBeenCalledTimes(2);
+    expect(vm.error).toContain("unknown feature");
+  });
+
   it("shows the error when the registry cannot be read", async () => {
     mocks.fetchVersions.mockRejectedValue(new Error("offline"));
     const wrapper = shallowMount(CellTableCard, { props: { visible: true } });
