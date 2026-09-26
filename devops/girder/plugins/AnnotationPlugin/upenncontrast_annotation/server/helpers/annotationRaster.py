@@ -1051,47 +1051,34 @@ class FilterMaskCache:
     process wrote; the client version carries the client's property-value
     revision, which is what moves when a recomputed property changes a
     gate's membership (the raster version only moves on annotation writes).
-    Anonymous builds share FrameGeometryCache's rate limits.
+    Anonymous request rates are limited at the proxy, which sees the client
+    address (Girder behind HAProxy sees only the proxy's): CytoPixel/
+    AWSDeploy#120.
     """
 
     def __init__(
         self,
         maxEntries=RASTER_FILTER_CACHE_ENTRIES,
         maxConcurrentBuilds=RASTER_MAX_CONCURRENT_FILTER_BUILDS,
-        anonymousBuildLimit=RASTER_ANONYMOUS_BUILD_LIMIT,
-        anonymousBuildWindowSeconds=(
-            RASTER_ANONYMOUS_BUILD_WINDOW_SECONDS
-        ),
-        timeFn=time.monotonic,
     ):
         self._passing = OrderedDict()
         self._maxEntries = maxEntries
         self._locks = {}
         self._lock = threading.RLock()
         self._buildSlots = threading.BoundedSemaphore(maxConcurrentBuilds)
-        self._anonymousBuildLimiter = _AnonymousBuildRateLimiter(
-            anonymousBuildLimit,
-            anonymousBuildWindowSeconds,
-            timeFn,
-        )
 
-    def mask(
-        self, geometry, passingKey, computePassingIds, anonymousIdentity=None
-    ):
+    def mask(self, geometry, passingKey, computePassingIds):
         """Boolean mask over ``geometry`` of the objects passing; builds the
         passing set with ``computePassingIds()`` (-> id strings) on a miss.
         Raises RasterBuildBusy when another filter build is running (or the
-        same key's build outlasts the wait), and RasterBuildRateLimited when
-        an anonymous caller exceeds the cold-build budget."""
+        same key's build outlasts the wait)."""
         with self._lock:
             masks = geometry.filterMasks
             mask = masks.pop(passingKey, None)
             if mask is not None:
                 masks[passingKey] = mask
                 return mask
-        passing = self._passingIds(
-            passingKey, computePassingIds, anonymousIdentity
-        )
+        passing = self._passingIds(passingKey, computePassingIds)
         mask = np.isin(geometry.ids, passing)
         with self._lock:
             masks = geometry.filterMasks
@@ -1101,7 +1088,7 @@ class FilterMaskCache:
                 del masks[next(iter(masks))]
         return mask
 
-    def _passingIds(self, passingKey, computePassingIds, anonymousIdentity):
+    def _passingIds(self, passingKey, computePassingIds):
         with self._lock:
             passing = self._passing.get(passingKey)
             if passing is not None:
@@ -1126,11 +1113,6 @@ class FilterMaskCache:
             ):
                 raise RasterBuildBusy()
             try:
-                if anonymousIdentity is not None:
-                    with self._lock:
-                        self._anonymousBuildLimiter.check(
-                            anonymousIdentity
-                        )
                 passing = np.array(
                     [bytes.fromhex(value) for value in computePassingIds()],
                     dtype="S12",
@@ -1160,7 +1142,6 @@ class FilterMaskCache:
         with self._lock:
             self._passing.clear()
             self._locks.clear()
-            self._anonymousBuildLimiter.clear()
 
 
 filterMaskCache = FilterMaskCache()

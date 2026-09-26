@@ -981,16 +981,14 @@ class Annotation(Resource):
         mask = None
         if filterKey is not None:
             mask = self._rasterFilterMask(
-                datasetId, geometry, version, filterKey, clientVersion,
-                anonymousIdentity,
+                datasetId, geometry, version, filterKey, clientVersion
             )
         setResponseHeader("Content-Type", "image/png")
         setRawResponse()
         return renderRasterTile(geometry, tileParams, mask)
 
     def _rasterFilterMask(
-        self, datasetId, geometry, version, filterKey, clientVersion,
-        anonymousIdentity,
+        self, datasetId, geometry, version, filterKey, clientVersion
     ):
         """The frame mask of a registered filter. The registered spec is
         read (and resolved, gates included, exactly as the list endpoints
@@ -1015,7 +1013,6 @@ class Annotation(Resource):
                 geometry,
                 (str(datasetId), version, filterKey, clientVersion),
                 computePassingIds,
-                anonymousIdentity=anonymousIdentity,
             )
         except UnknownRasterFilter:
             raise RestException(
@@ -1025,11 +1022,6 @@ class Annotation(Resource):
             setResponseHeader("Retry-After", "1")
             raise RestException(
                 "Overview filter is being computed; retry shortly", 503
-            )
-        except RasterBuildRateLimited:
-            setResponseHeader("Retry-After", "1")
-            raise RestException(
-                "Too many overview filter builds", 429
             )
         except ValueError as exc:
             raise RestException(str(exc), code=400)

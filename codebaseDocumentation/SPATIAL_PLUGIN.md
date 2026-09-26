@@ -363,10 +363,11 @@ for the H&E dataset).
   are `@access.public`: an unauthenticated caller can repeat them on a public
   dataset. Kept anonymous on purpose for now (decision 2026-09-06, reaffirmed
   2026-09-26) so public viewers can use them. When this matters, the smallest
-  fix is `@access.user` — share-link viewers carry a token, so they keep
-  working — or a per-IP limiter like the raster overview's
-  `_AnonymousBuildRateLimiter`. Codex flags it every review round; see
-  `SPATIAL_PLUGIN-CODEX-REVIEW.md`.
+  fix is `@access.user` (share-link viewers carry a token, so they keep
+  working). Per-client rate limiting belongs at the proxy, not in Girder,
+  which behind HAProxy sees only the proxy's address:
+  CytoPixel/AWSDeploy#120 covers these endpoints and the raster overview.
+  Codex flags it every review round; see `SPATIAL_PLUGIN-CODEX-REVIEW.md`.
 
 ## Regression checklist
 

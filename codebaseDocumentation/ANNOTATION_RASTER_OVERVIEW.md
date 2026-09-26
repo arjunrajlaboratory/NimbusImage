@@ -269,7 +269,10 @@ selector]}`, then
   nonblocking build semaphore caps distinct cold builds at one; saturation
   returns retryable 503 instead of accumulating a Mongo/Python work queue.
   Anonymous cold builds are additionally limited per remote IP + dataset;
-  cache hits are free.
+  cache hits are free. Behind HAProxy (no `option forwardfor`) the remote IP
+  is the proxy's, so in production this is one bucket per dataset for every
+  anonymous viewer; per-client limiting belongs at the proxy
+  (CytoPixel/AWSDeploy#120), after which this can go.
 - **Bounds**: LRU, max 3 entries and max 300 MiB of retained NumPy/spatial-grid
   allocations, plus a TTL of 120 s. Entries are evicted until both limits are
   met; a single over-budget geometry serves its request but is not retained.
@@ -629,13 +632,12 @@ let shared fixtures return fixed values that defeat assertions.
 - **Filter masks do not pin geometries**: masks live on the geometry, at
   most four each, and the passing set is computed once per key —
   _"testFilterMasksLiveOnTheGeometryAndAreCapped"_.
-- **Filter builds are bounded**: anonymous builds rate-limited (hits free) —
-  _"testAnonymousFilterBuildsAreRateLimitedButCacheHitsAreNot"_; same-key
+- **Filter builds are bounded**: same-key
   waits time out to 503 — _"testFilterWaitOnSameKeyBuildIsBounded"_; one build
   for concurrent same-key requests —
   _"testConcurrentFilterRequestsForSameKeyBuildOnce"_; a failed build is not
   cached and frees its lock —
-  _"testFailedFilterBuildIsNotCachedAndReleasesItsLock"_; 503/429 carry
+  _"testFailedFilterBuildIsNotCachedAndReleasesItsLock"_; 503 carries
   `Retry-After` — _"testFilterBuildCapacityErrorsReturnRetryableResponses"_.
 - **Registrations are capped per user** and validated —
   _"testRasterFilterRegistrationsAreCappedPerUser"_.
@@ -825,10 +827,11 @@ vectors but the zoomed-out raster kept drawing all 709K cells.
   `FrameGeometry.filterMasks` (at most `RASTER_FILTER_MASKS_PER_GEOMETRY` = 4,
   oldest dropped), not in the filter cache, so a 150–200 MB geometry evicted by
   `FrameGeometryCache` is freed with its masks instead of being pinned by them.
-- **Anonymous filter builds are rate limited** like geometry builds (same
-  `RASTER_ANONYMOUS_BUILD_LIMIT` per `RASTER_ANONYMOUS_BUILD_WINDOW_SECONDS`,
-  per (IP, dataset)), counted only when a passing set is actually built —
-  cache hits are free. Over the budget the tile is a 429 with `Retry-After`.
+- **Anonymous request rates are limited at the proxy**, not here: Girder
+  behind HAProxy sees only the proxy's address, so a backend per-IP limit
+  would throttle every anonymous viewer together
+  (CytoPixel/AWSDeploy#120). Filter builds are bounded by the build slot
+  and the same-key wait above.
 - **Key only while current.** Tiles carry the key from
   `annotationListServer.activeOverviewFilter`, which is non-null only while the
   committed signature equals the current `overviewFiltersSignature`. While a

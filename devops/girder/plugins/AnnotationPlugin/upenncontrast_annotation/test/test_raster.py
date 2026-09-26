@@ -444,32 +444,6 @@ class TestAnnotationRaster:
             "k%d" % index for index in range(limit)
         ]
 
-    def testAnonymousFilterBuildsAreRateLimitedButCacheHitsAreNot(self):
-        cache = FilterMaskCache(anonymousBuildLimit=1)
-        geometry, ids = pointGeometry(2)
-        identity = ("127.0.0.1", "dataset")
-        builds = []
-
-        def compute():
-            builds.append(1)
-            return ids[:1]
-
-        first = cache.mask(
-            geometry, "a", compute, anonymousIdentity=identity
-        )
-        # A mask hit and a passing-set hit (a new geometry) are not builds.
-        assert cache.mask(
-            geometry, "a", compute, anonymousIdentity=identity
-        ) is first
-        cache.mask(
-            pointGeometry(1)[0], "a", compute, anonymousIdentity=identity
-        )
-        with pytest.raises(RasterBuildRateLimited):
-            cache.mask(geometry, "b", compute, anonymousIdentity=identity)
-        # A signed-in caller is not limited.
-        cache.mask(geometry, "b", compute)
-        assert len(builds) == 2
-
     def testConcurrentFilterRequestsForSameKeyBuildOnce(self):
         cache = FilterMaskCache()
         geometry, ids = pointGeometry(2)
@@ -578,26 +552,20 @@ class TestAnnotationRaster:
         with pytest.raises(ValidationException):
             model.register(datasetId, {"tags": {"values": ["y"]}}, admin)
 
-    @pytest.mark.parametrize(
-        "error,status",
-        [
-            (RasterBuildBusy(), 503),
-            (RasterBuildRateLimited(), 429),
-        ],
-    )
     def testFilterBuildCapacityErrorsReturnRetryableResponses(
-        self, admin, server, monkeypatch, error, status
+        self, admin, server, monkeypatch
     ):
+        # Anonymous request rates are limited at the proxy
+        # (CytoPixel/AWSDeploy#120), not per IP here.
+        error, status = RasterBuildBusy(), 503
         folder = utilities.createFolder(
             admin,
             "raster_filter_capacity_{}".format(status),
             upenn_utilities.datasetMetadata,
         )
         Folder().setPublic(folder, True, save=True)
-        identities = []
 
-        def rejectMask(_geometry, _key, _compute, anonymousIdentity=None):
-            identities.append(anonymousIdentity)
+        def rejectMask(_geometry, _key, _compute):
             raise error
 
         monkeypatch.setattr(annotationApi.filterMaskCache, "mask", rejectMask)
@@ -605,7 +573,6 @@ class TestAnnotationRaster:
 
         assertStatus(response, status)
         assert response.headers["Retry-After"] == "1"
-        assert identities[0][1] == str(folder["_id"])
 
     def testGeometryCacheEvictsByRetainedBytes(self, monkeypatch):
         class SizedGeometry:
