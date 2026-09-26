@@ -1,5 +1,15 @@
 # PR #1347 — Codex review fixes
 
+## Review of `a7c48839` (2026-09-26)
+
+| Finding | Status |
+|---|---|
+| P2 Wilcoxon statistic labelled `t` | fixed — header and CSV say `z` for Wilcoxon results (`t` for Welch); regression fails without the fix |
+| P2 Region inputs editable while a summary runs | fixed — source and tag lock while loading (the genes were already captured per request); regression fails without the fix |
+| P2 Falsy non-object `filters` in the shared list prologue | declined — same reasoning as the aggregate endpoint: `{}` is a valid request with the same cost |
+| P2 Unfiltered aggregate reads the table, not live annotations | declined — by design: the table is a versioned snapshot with its own staleness claim and recompute; resolving 700K live ids would defeat the shortcut |
+| P2 Overview filter keys expire after seven days | declined — needs a viewer left open over a week with unchanged filters; a reload or any filter change re-registers |
+
 ## Review of `e1b483dd` (2026-09-26)
 
 | Finding | Status |

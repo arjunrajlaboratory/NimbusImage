@@ -168,16 +168,22 @@ const canRun = computed(
     (groupB.value === "rest" || groupBTags.value.length > 0),
 );
 
-const headers = [
+// The `t` field holds Welch's t or, for Wilcoxon, the signed Mann–Whitney
+// z: label it by the method the result was computed with.
+function statisticLabel(table: ISpatialDifferentialResult | null): string {
+  return table?.method === "wilcoxon" ? "z" : "t";
+}
+
+const headers = computed(() => [
   { title: "Gene", key: "symbol" },
   { title: "log₂ FC", key: "log2FoldChange", align: "end" as const },
   { title: "Mean A", key: "meanA", align: "end" as const },
   { title: "Mean B", key: "meanB", align: "end" as const },
   { title: "% A", key: "fractionA", align: "end" as const },
   { title: "% B", key: "fractionB", align: "end" as const },
-  { title: "t", key: "t", align: "end" as const },
+  { title: statisticLabel(result.value), key: "t", align: "end" as const },
   { title: "p", key: "pValue", align: "end" as const },
-];
+]);
 
 function filtersB(): IAnnotationListFilters | null {
   if (groupB.value === "rest") {
@@ -276,7 +282,7 @@ function buildCsv(table: ISpatialDifferentialResult): string {
       "MeanB",
       "FractionA",
       "FractionB",
-      "t",
+      statisticLabel(table),
       "pValue",
     ],
     data: table.features.map((row) => [
@@ -312,6 +318,7 @@ defineExpose({
   running,
   error,
   result,
+  headers,
   run,
   buildCsv,
   download,

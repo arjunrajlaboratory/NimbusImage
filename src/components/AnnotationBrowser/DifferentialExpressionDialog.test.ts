@@ -157,5 +157,11 @@ describe("DifferentialExpressionDialog", () => {
       href: "data:text/csv;charset=utf-8," + encodeURIComponent(csv),
       download: "Lymph-differential-expression.csv",
     });
+    // Wilcoxon's statistic is a z, not a t: header and CSV say so.
+    const wilcoxon = { ...RESULT, method: "wilcoxon" };
+    expect(vm.buildCsv(wilcoxon).split("\n")[0]).toContain(",z,pValue");
+    vm.result = wilcoxon;
+    await nextTick();
+    expect(vm.headers.find((h: any) => h.key === "t").title).toBe("z");
   });
 });

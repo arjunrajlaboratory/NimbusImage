@@ -11,7 +11,15 @@
           the viewer. Each region's cells are the cell polygons whose center
           lies inside it.
         </p>
-        <v-radio-group v-model="source" inline hide-details class="mb-2">
+        <!-- Region inputs lock while a summary runs, so its rows always
+             describe the regions shown (the genes are captured instead). -->
+        <v-radio-group
+          v-model="source"
+          inline
+          hide-details
+          class="mb-2"
+          :disabled="loading"
+        >
           <v-radio value="tag" label="Polygons with a tag" />
           <v-radio
             value="selection"
@@ -25,6 +33,7 @@
               v-model="regionTag"
               :items="tagOptions"
               label="Region tag"
+              :disabled="loading"
               density="compact"
               variant="outlined"
               hide-details

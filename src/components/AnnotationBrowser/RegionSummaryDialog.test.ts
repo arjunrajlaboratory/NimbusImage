@@ -155,6 +155,34 @@ describe("RegionSummaryDialog", () => {
     expect(vm.rows).toEqual([]);
   });
 
+  it("locks the region inputs while a summary runs", async () => {
+    let resolve!: (rows: typeof ROWS) => void;
+    mocks.regionSummary.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    const wrapper = shallowMount(RegionSummaryDialog, {
+      global: { renderStubDefaultSlot: true },
+    });
+    const vm = wrapper.vm as any;
+    vm.dialog = true;
+    vm.regionTag = "region";
+    const pending = vm.refresh();
+    await nextTick();
+    const radio = wrapper.findComponent({ name: "VRadioGroup" });
+    const tag = wrapper.findComponent({ name: "VCombobox" });
+    expect(radio.exists() && tag.exists()).toBe(true);
+    expect(
+      radio.props("disabled") ?? radio.attributes("disabled"),
+    ).toBeTruthy();
+    expect(tag.props("disabled") ?? tag.attributes("disabled")).toBeTruthy();
+    resolve(ROWS);
+    await pending;
+    await nextTick();
+    expect(radio.props("disabled") ?? radio.attributes("disabled")).toBeFalsy();
+  });
+
   it("asks for no genes without a table and surfaces errors", async () => {
     (spatialStore as any).hasTable = false;
     const wrapper = shallowMount(RegionSummaryDialog);
