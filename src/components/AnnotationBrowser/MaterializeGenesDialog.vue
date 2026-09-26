@@ -131,7 +131,7 @@ import { computed, ref, watch } from "vue";
 import store from "@/store";
 import propertyStore, { SPATIAL_PROPERTY_ID } from "@/store/properties";
 import spatialStore from "@/store/spatial";
-import jobsStore from "@/store/jobs";
+import { ISpatialMaterializeResult } from "@/store/model";
 import SpatialFeaturePicker from "@/components/AnnotationBrowser/SpatialFeaturePicker.vue";
 import { extractErrorMessage } from "@/utils/errors";
 import { jobStates } from "@/store/jobConstants";
@@ -231,10 +231,16 @@ function pollJob(jobId: string, total: number, what: string, request: number) {
     request,
     async () => {
       try {
-        const status = await jobsStore.fetchJobStatus(jobId);
+        const job = await store.spatialAPI.fetchJob(jobId);
+        const status = job.status;
         if (!polling.isCurrent(request)) return;
         if (status === jobStates.success) {
-          await afterWrite(total, what, request);
+          // The job publishes what it actually wrote: rows whose annotation
+          // was deleted or moved are skipped, so the table size overstates.
+          const result = job.spatialResult as
+            | ISpatialMaterializeResult
+            | undefined;
+          await afterWrite(result?.written ?? total, what, request);
           return;
         }
         if (status === jobStates.error || status === jobStates.cancelled) {

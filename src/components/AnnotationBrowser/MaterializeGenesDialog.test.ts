@@ -8,14 +8,18 @@ const mocks = vi.hoisted(() => ({
   addVirtualPropertyPaths: vi.fn(),
   fetchProperties: vi.fn(),
   fetchPropertyPathsSample: vi.fn(),
-  fetchJobStatus: vi.fn(),
+  fetchJob: vi.fn(),
   ensureInfo: vi.fn(),
 }));
 
 vi.mock("@/store", () => ({
   default: {
     dataset: { id: "ds1", name: "Lymph" },
-    spatialAPI: { materialize: mocks.materialize, score: mocks.score },
+    spatialAPI: {
+      materialize: mocks.materialize,
+      score: mocks.score,
+      fetchJob: mocks.fetchJob,
+    },
   },
 }));
 
@@ -39,10 +43,6 @@ vi.mock("@/store/spatial", async () => {
   };
 });
 
-vi.mock("@/store/jobs", () => ({
-  default: { fetchJobStatus: mocks.fetchJobStatus },
-}));
-
 vi.mock("@/utils/errors", () => ({
   extractErrorMessage: (error: any) =>
     error?.response?.data?.message ?? error?.message ?? String(error),
@@ -64,7 +64,7 @@ describe("MaterializeGenesDialog", () => {
     mocks.materialize.mockReset();
     mocks.fetchProperties.mockReset().mockResolvedValue(undefined);
     mocks.fetchPropertyPathsSample.mockReset().mockResolvedValue(undefined);
-    mocks.fetchJobStatus.mockReset();
+    mocks.fetchJob.mockReset();
     mocks.score.mockReset();
     mocks.addVirtualPropertyPaths.mockReset().mockResolvedValue(undefined);
     mocks.ensureInfo.mockClear();
@@ -154,19 +154,27 @@ describe("MaterializeGenesDialog", () => {
       written: 0,
       jobId: "job1",
     });
-    mocks.fetchJobStatus.mockResolvedValueOnce(2).mockResolvedValueOnce(3);
+    // The job skipped rows whose annotation was deleted: report what it
+    // wrote, not the table's size.
+    mocks.fetchJob
+      .mockResolvedValueOnce({ _id: "job1", status: 2 })
+      .mockResolvedValueOnce({
+        _id: "job1",
+        status: 3,
+        spatialResult: { propertyId: "p1", written: 700000, jobId: "job1" },
+      });
     const wrapper = await openDialog();
     const vm = wrapper.vm as any;
     vm.symbols = ["CD3E"];
     await vm.materialize();
     expect(vm.running).toBe(true);
     await vi.advanceTimersByTimeAsync(2000);
-    expect(mocks.fetchJobStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchJob).toHaveBeenCalledTimes(1);
     expect(vm.running).toBe(true);
     await vi.advanceTimersByTimeAsync(2000);
-    expect(mocks.fetchJobStatus).toHaveBeenCalledTimes(2);
+    expect(mocks.fetchJob).toHaveBeenCalledTimes(2);
     expect(vm.running).toBe(false);
-    expect(vm.done).toContain("708,983 cells");
+    expect(vm.done).toContain("700,000 cells");
   });
 
   it("reports a failed job and a rejected request", async () => {
@@ -175,7 +183,7 @@ describe("MaterializeGenesDialog", () => {
       written: 0,
       jobId: "job1",
     });
-    mocks.fetchJobStatus.mockResolvedValue(4);
+    mocks.fetchJob.mockResolvedValue({ _id: "job1", status: 4 });
     const wrapper = await openDialog();
     const vm = wrapper.vm as any;
     vm.symbols = ["CD3E"];
@@ -204,7 +212,7 @@ describe("MaterializeGenesDialog", () => {
     vm.dialog = false;
     await nextTick();
     await vi.advanceTimersByTimeAsync(5000);
-    expect(mocks.fetchJobStatus).not.toHaveBeenCalled();
+    expect(mocks.fetchJob).not.toHaveBeenCalled();
     expect(vm.running).toBe(false);
   });
 });

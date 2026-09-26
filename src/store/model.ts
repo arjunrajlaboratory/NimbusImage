@@ -1923,7 +1923,9 @@ export interface ISpatialDifferentialFeature {
   fractionA: number;
   fractionB: number;
   log2FoldChange: number;
-  t: number;
+  // Welch's t or Wilcoxon's z; null when infinite (two constant groups
+  // with different means: perfect separation, pValue 0).
+  t: number | null;
   pValue: number;
 }
 
@@ -1947,7 +1949,8 @@ export interface ISpatialJob {
   spatialResult?:
     | ISpatialDifferentialResult
     | ISpatialRecomputeResult
-    | ISpatialNeighborhood;
+    | ISpatialNeighborhood
+    | ISpatialMaterializeResult;
 }
 
 /** One expression-table version (GET spatial/{datasetId}/versions). */

@@ -263,8 +263,8 @@ async function run() {
   }
 }
 
-function format(value: number): string {
-  return Number.isFinite(value)
+function format(value: number | null): string {
+  return value !== null && Number.isFinite(value)
     ? value.toLocaleString(undefined, { maximumSignificantDigits: 3 })
     : "–";
 }

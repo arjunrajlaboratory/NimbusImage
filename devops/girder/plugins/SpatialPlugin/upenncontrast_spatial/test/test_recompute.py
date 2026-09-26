@@ -283,6 +283,30 @@ class TestRecompute(TestTranscripts):
         assertStatus(resp, 403)
         Item().move(tableItem, folder)
 
+    def testActivatingAMovedVersionLeavesTheRegistryAlone(
+        self, admin, server, tmp_path, fsAssetstore
+    ):
+        from girder.models.folder import Folder
+        from girder.models.item import Item
+        folder, _, tableItem, _ = self._scene(admin, server, tmp_path)
+        resp = request(
+            server, admin, "POST", "/spatial/%s/recompute" % folder["_id"],
+            body={"scope": "all"},
+        )
+        newItemId = runJob(resp.json["jobId"])["itemId"]
+        elsewhere = Folder().findOne({
+            "parentId": admin["_id"], "name": "Private",
+        })
+        Item().move(tableItem, elsewhere)
+        activate = "/spatial/%s/versions/%s/activate" % (
+            folder["_id"], tableItem["_id"])
+        assertStatus(request(server, admin, "POST", activate), 403)
+        info = request(server, admin, "GET", "/spatial/%s" % folder["_id"])
+        assertStatusOk(info)
+        assert info.json["itemId"] == newItemId
+        Item().move(tableItem, folder)
+        assertStatusOk(request(server, admin, "POST", activate))
+
     def testActivateAndForgetVersions(
         self, admin, user, server, tmp_path, fsAssetstore
     ):

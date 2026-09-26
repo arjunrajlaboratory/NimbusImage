@@ -34,14 +34,17 @@ PROGRESS_EVERY = 250
 
 
 def welch(sumA, sumSqA, nA, sumB, sumSqB, nB):
-    """(t, p, meanA, meanB) for Welch's unequal-variance t-test from sums;
-    t is 0 and p is 1 when both variances are 0."""
+    """(t, p, meanA, meanB) for Welch's unequal-variance t-test from sums.
+    With both variances 0 the test degenerates: equal means are t 0, p 1;
+    different means are perfectly separated, t ±inf and p 0 (as scipy)."""
     meanA, meanB = sumA / nA, sumB / nB
     varA = max((sumSqA - nA * meanA ** 2) / (nA - 1), 0.0) if nA > 1 else 0.0
     varB = max((sumSqB - nB * meanB ** 2) / (nB - 1), 0.0) if nB > 1 else 0.0
     se2 = varA / nA + varB / nB
     if se2 <= 0:
-        return 0.0, 1.0, meanA, meanB
+        if meanA == meanB:
+            return 0.0, 1.0, meanA, meanB
+        return math.copysign(math.inf, meanA - meanB), 0.0, meanA, meanB
     t = (meanA - meanB) / math.sqrt(se2)
     dof = se2 * se2 / (
         (varA / nA) ** 2 / max(nA - 1, 1) + (varB / nB) ** 2 / max(nB - 1, 1)
@@ -155,6 +158,11 @@ def differential(store, rowsA, rowsB, maxFeatures, onProgress=None,
         if onProgress is not None and (index + 1) % PROGRESS_EVERY == 0:
             onProgress(index + 1, store.nVar)
     table.sort(key=lambda row: -abs(row["t"]))
+    # An infinite statistic (perfectly separated constant groups) ranks
+    # first above, but JSON has no infinity: report it as null (p is 0).
+    for row in table[:maxFeatures]:
+        if not math.isfinite(row["t"]):
+            row["t"] = None
     return {
         "nA": nA,
         "nB": nB,

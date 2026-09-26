@@ -297,3 +297,15 @@ def testWilcoxonMatchesScipy(seed):
             (expected.statistic - nA * nB / 2.0) / scale, rel=1e-12
         )
         assert p == pytest.approx(expected.pvalue, rel=1e-9)
+
+
+def testWelchSeparatesUnequalConstantGroups():
+    # Both groups constant: equal means are no difference, different means
+    # are perfect separation (t +-inf, p 0), not "t 0, p 1".
+    t, p, meanA, meanB = differentialModule.welch(4.0, 4.0, 4, 0.0, 0.0, 5)
+    assert (t, p, meanA, meanB) == (math.inf, 0.0, 1.0, 0.0)
+    t, p, _, _ = differentialModule.welch(0.0, 0.0, 3, 6.0, 12.0, 3)
+    assert (t, p) == (-math.inf, 0.0)
+    assert differentialModule.welch(3.0, 3.0, 3, 2.0, 2.0, 2)[:2] == (
+        0.0, 1.0,
+    )

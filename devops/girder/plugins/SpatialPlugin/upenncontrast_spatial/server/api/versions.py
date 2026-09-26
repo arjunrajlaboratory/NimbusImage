@@ -6,6 +6,7 @@ from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
+from girder.models.file import File
 from girder_jobs.models.job import Job
 
 from upenncontrast_annotation.server.helpers.validation import (
@@ -16,6 +17,7 @@ from upenncontrast_annotation.server.helpers.validation import (
 )
 
 from .. import recompute
+from ..provider import requireFileInDataset
 from ..store import invalidateStore
 
 MAX_LABEL_LENGTH = 80
@@ -77,6 +79,17 @@ class VersionRoutes:
     def activateVersion(self, datasetId, itemId, params):
         datasetId = self._loadDataset(datasetId, AccessType.WRITE)
         itemId = requireObjectId(itemId, "itemId")
+        # Check the version's file (readable, still in this dataset) before
+        # the registry changes: activating a moved table would leave the
+        # dataset with an active table every read then refuses.
+        entry = self._registry.forDataset(datasetId) or {}
+        version = next((v for v in entry.get("versions", [])
+                        if v["itemId"] == itemId), None)
+        if version is not None:
+            requireFileInDataset(File().load(
+                version["fileId"], user=self.getCurrentUser(),
+                level=AccessType.READ, exc=True,
+            ), datasetId)
         document = self._registry.activateVersion(datasetId, itemId)
         if document is None:
             raise RestException("Unknown table version.", code=404)

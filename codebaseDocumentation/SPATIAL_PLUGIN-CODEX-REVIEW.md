@@ -1,5 +1,13 @@
 # PR #1347 — Codex review fixes
 
+## Review of `a643cc49` (2026-09-26)
+
+| Finding | Status |
+|---|---|
+| P1 Welch reports t 0 / p 1 for two constant groups with different means | fixed — perfect separation is t ±inf, p 0 (as scipy); it ranks first and serializes as `t: null` (JSON has no infinity; the dialog shows –); unit test |
+| P2 Activating a version moved out of the dataset breaks the registry | fixed — the version's file is loaded and affiliation-checked before the registry changes; regression fails without the fix |
+| P2 Materialize job reports the table size as cells written | fixed — the dialog reads the job's published `spatialResult.written`; regression fails without the fix |
+
 ## Review of `038f25e4` (2026-09-26)
 
 | Finding | Status |
