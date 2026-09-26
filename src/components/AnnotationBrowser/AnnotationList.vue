@@ -385,6 +385,17 @@ interface IAnnotationListItem {
   properties: IAnnotationPropertyValues[string];
 }
 
+// Shown (palette open, Objects tab active). Hidden, a server-mode refetch is
+// deferred rather than run: the list stays mounted while its palette is
+// closed, and with an analysis gate every refetch is a whole-dataset gate
+// resolution — seconds of server work competing with the gate the user
+// just drew, for a table no one can see. The deferred fetch runs once the
+// list is shown again.
+const props = withDefaults(defineProps<{ visible?: boolean }>(), {
+  visible: true,
+});
+let serverRefetchDeferred = false;
+
 const emit = defineEmits<{
   (e: "clickedTag", tag: string): void;
 }>();
@@ -905,9 +916,26 @@ watch([hoveredId, itemsPerPage], onHoveredIdOrItemsPerPageChanged);
 // rapid filter/frame changes would otherwise fire one slow /list request per
 // keystroke. State (idSubstring, page reset) is updated synchronously so the
 // store is always consistent; only the network fetch is deferred.
-const debouncedServerRefetch = debounce(() => {
+// Fetch now if shown, otherwise once shown (see `visible`).
+function fetchServerPageWhenShown() {
+  if (!props.visible) {
+    serverRefetchDeferred = true;
+    return;
+  }
   annotationListServer.fetchPage();
-}, 300);
+}
+
+const debouncedServerRefetch = debounce(fetchServerPageWhenShown, 300);
+
+watch(
+  () => props.visible,
+  (visible) => {
+    if (visible && serverRefetchDeferred && isServerMode.value) {
+      serverRefetchDeferred = false;
+      annotationListServer.fetchPage();
+    }
+  },
+);
 
 watch(localIdFilter, (value) => {
   if (!isServerMode.value) {
@@ -985,7 +1013,7 @@ watch(
 watch(isServerMode, (value) => {
   if (value) {
     annotationListServer.setOptions({ page: 1 });
-    annotationListServer.fetchPage();
+    fetchServerPageWhenShown();
   }
 });
 
@@ -1017,7 +1045,7 @@ onBeforeUnmount(() => {
 
 onMounted(() => {
   if (isServerMode.value) {
-    annotationListServer.fetchPage();
+    fetchServerPageWhenShown();
   }
 });
 
@@ -1110,6 +1138,7 @@ async function deleteUnselected() {
 }
 
 defineExpose({
+  fetchServerPageWhenShown,
   isLoggedIn,
   isDeletingAnnotations,
   isServerMode,

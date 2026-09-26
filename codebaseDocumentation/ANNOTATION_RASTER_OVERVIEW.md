@@ -25,7 +25,8 @@ original draft:
 - the read-only tile route explicitly permits Girder cookie authentication.
   GeoJS fetches OSM tiles as images and cannot attach the REST client's
   `Girder-Token` header; without `cookie=True`, private-dataset tiles return
-  401 even while the application is logged in.
+  401 even while the application is logged in. Shared views additionally put
+  their isolated bearer in the tile URL so an ambient login cookie cannot win.
 
 ## 1. Motivation
 
@@ -124,7 +125,9 @@ cookie authentication for GeoJS image requests:
 `Folder().load(datasetId, user=..., level=AccessType.READ, exc=True)`.
 Anonymous users get tiles only for public datasets; private datasets return 401. This is safe for the GET-only route and is required because `<img>`
 requests cannot attach a `Girder-Token` header. The GeoJS layer uses
-`crossDomain = "use-credentials"` so Girder's HttpOnly cookie is sent.
+`crossDomain = "use-credentials"` so Girder's HttpOnly cookie is sent. A shared
+view also supplies its link token as a query parameter; Girder prioritizes that
+explicit credential over any unrelated cookie.
 
 **Query parameters** (validate at the API boundary, per the API/model
 separation rules — the model/helper layer receives clean typed values):
@@ -266,7 +269,10 @@ selector]}`, then
   nonblocking build semaphore caps distinct cold builds at one; saturation
   returns retryable 503 instead of accumulating a Mongo/Python work queue.
   Anonymous cold builds are additionally limited per remote IP + dataset;
-  cache hits are free.
+  cache hits are free. Behind HAProxy (no `option forwardfor`) the remote IP
+  is the proxy's, so in production this is one bucket per dataset for every
+  anonymous viewer; per-client limiting belongs at the proxy
+  (CytoPixel/AWSDeploy#120), after which this can go.
 - **Bounds**: LRU, max 3 entries and max 300 MiB of retained NumPy/spatial-grid
   allocations, plus a TTL of 120 s. Entries are evicted until both limits are
   met; a single over-budget geometry serves its request but is not retained.
@@ -605,6 +611,37 @@ let shared fixtures return fixed values that defeat assertions.
 
 ## Regression checklist
 
+- **Overview follows the viewer's filters**: a registered filter draws only
+  passing objects (tags and id lists), is content-addressed and in the ETag,
+  and is refused for a bad spec (400), no access (403), anonymous (401), a
+  malformed/unknown/other-dataset key (400/404) —
+  _"testRegisteredFilterDrawsOnlyPassingObjects"_; one registration per filter
+  state, latest wins, failure retries, small gates as ids —
+  `annotationListServer.test.ts`; URL `filter`/`v` and the match-nothing spec —
+  `AnnotationsAPI.raster.test.ts`; retry back-off — `ImageViewer.test.ts`
+  _"retries failed overview tiles with a bounded delayed reset"_.
+- **Overview key only while current**: a revert A→B→A with B in flight keeps
+  A — _"keeps the committed key when filters revert while another
+  registers"_; no key while pending or after a dataset switch — _"offers no
+  key while a new one is pending or after a dataset switch"_ and
+  `ImageViewer.test.ts` _"passes the filter key only while it matches the
+  current filters"_; property recomputes move `v` — _"versions the tiles by
+  the property-value revision under a property filter"_; frame steps don't
+  re-register when selectors pin the frame — _"leaves the frame out when
+  every drawn layer pins the current frame"_.
+- **Filter masks do not pin geometries**: masks live on the geometry, at
+  most four each, and the passing set is computed once per key —
+  _"testFilterMasksLiveOnTheGeometryAndAreCapped"_.
+- **Filter builds are bounded**: same-key
+  waits time out to 503 — _"testFilterWaitOnSameKeyBuildIsBounded"_; one build
+  for concurrent same-key requests —
+  _"testConcurrentFilterRequestsForSameKeyBuildOnce"_; a failed build is not
+  cached and frees its lock —
+  _"testFailedFilterBuildIsNotCachedAndReleasesItsLock"_; 503 carries
+  `Retry-After` — _"testFilterBuildCapacityErrorsReturnRetryableResponses"_.
+- **Registrations are capped per user** and validated —
+  _"testRasterFilterRegistrationsAreCappedPerUser"_.
+
 Per `CLAUDE.md`, every item names its test:
 
 - **Drawing/clearing symmetry**: raster→vector hides raster AND restores
@@ -735,6 +772,91 @@ Per `CLAUDE.md`, every item names its test:
   into the rightmost or bottommost tile padding —
   _"testTileBoundaryAndTransparentPadding"_.
 
+## 8a. Coupling to the viewer's filters
+
+The overview draws what the zoomed-in vectors would: only the objects passing
+the viewer's filters and analysis gates. Before this, a gate narrowed the
+vectors but the zoomed-out raster kept drawing all 709K cells.
+
+- **What is filtered.** `annotationListServer.overviewFilters` — the server-list
+  filter object without the Objects tab's id search (tags, current frame,
+  property ranges, selection and object-list id filters, gates). The current
+  frame (`location`) is left out when every drawn layer's selectors already pin
+  the current xy/z/time (`overviewSelectorsPinCurrentFrame`) — the tiles are
+  per frame, and keying on it made every frame step re-register and rebuild the
+  passing set; a projected (max-merge) or offset layer keeps it. Region (ROI)
+  filters are not expressible server-side, so under one the overview can
+  over-include, as the server list does.
+- **Why a registry.** Tiles are GET image URLs and the filters carry id lists
+  (a selection, a gate), far past a URL. The client POSTs the spec once —
+  `POST upenn_annotation/raster/filter {datasetId, filters}` →
+  `{key}` — and tiles carry `filter=<key>`. The spec lives in Mongo
+  (`models/rasterFilter.py`, collection `annotation_raster_filter`): keyed by a
+  content hash, so re-registering the same spec is the same document, expiring
+  by a TTL index (7 days), and answerable by every Girder process behind the
+  load balancer (an in-process registry would not be). Registration needs a
+  login (an anonymous caller could fill the collection); each document records
+  its `userId`, and a user keeps at most `MAX_RASTER_FILTERS_PER_USER` (50)
+  live registrations — registering past it deletes their oldest (one query
+  plus one `deleteMany`). The spec is validated on a copy and stored raw (the
+  stored document goes through the model's `validate()`), and re-validated
+  when used. An unknown or expired key raises `UnknownRasterFilter` → 404;
+  only that exception maps to 404.
+- **Small gates travel as ids.** A gate the client already resolved (≤ 50K ids
+  in total) is sent as its own `idConstraints` set — exactly how the server
+  applies a gate — so the tile side needs an id lookup, not a second
+  whole-dataset gate resolution right after `gate_ids` did the same work
+  (overview filtered 0.5 s after the gate instead of 4.5 s). Larger gates go as
+  definitions.
+- **Server.** `FilterMaskCache` (`helpers/annotationRaster.py`) resolves the
+  passing ids once per (dataset, raster version, key, client version) under a
+  per-key lock — a view's dozen tiles share one resolution — and masks each
+  frame geometry by them (`FrameGeometry.ids`, the ObjectId bytes in geometry
+  order, read from the same raw-BSON pass). `renderRasterTile(…, mask)` drops the
+  failing candidates. The key is part of the ETag. A second filter build waits
+  up to 30 s for the build slot (`RASTER_FILTER_BUILD_WAIT_SECONDS`) rather than
+  failing at once: a filter change arrives as two registrations (a new gate is
+  first unresolved, then resolved), and tiles of the second used to 503 and
+  exhaust the client's retries while the first built. Waiting on another
+  request building the same key is bounded by the same 30 s (503 past it). The
+  builder stores the passing set and drops the key lock in one critical
+  section, so a request arriving in between cannot build it twice. The raster
+  version stays in the passing key: its 120 s time bucket bounds how stale a
+  set cached by one process can be after another process's writes.
+- **Masks live on the geometry.** Each frame mask is stored in
+  `FrameGeometry.filterMasks` (at most `RASTER_FILTER_MASKS_PER_GEOMETRY` = 4,
+  oldest dropped), not in the filter cache, so a 150–200 MB geometry evicted by
+  `FrameGeometryCache` is freed with its masks instead of being pinned by them.
+- **Anonymous request rates are limited at the proxy**, not here: Girder
+  behind HAProxy sees only the proxy's address, so a backend per-IP limit
+  would throttle every anonymous viewer together
+  (CytoPixel/AWSDeploy#120). Filter builds are bounded by the build slot
+  and the same-key wait above.
+- **Key only while current.** Tiles carry the key from
+  `annotationListServer.activeOverviewFilter`, which is non-null only while the
+  committed signature equals the current `overviewFiltersSignature`. While a
+  new key is registering (debounce plus POST), or right after a dataset switch,
+  the overview draws unfiltered rather than masked by the previous filters
+  (blank on a new frame, 404s on a new dataset). `refreshOverviewFilter` claims
+  its sequence token before the "unchanged" early return, so reverting A→B→A
+  while B is in flight cannot commit B.
+- **Client version.** The raster version only moves on annotation writes, but a
+  recompute can change what a fixed filter matches. The tile `v` therefore
+  carries a hash of the committed signature (which includes the resolved-gate
+  hash) plus, when the filters hold property filters,
+  `propertyValuesRevision` (moved by value fetches and spatial recomputes, not
+  by viewport hydration) — so new membership refetches tiles and misses the
+  server cache without a re-registration.
+- **Matches nothing** registers a spec matching a well-formed id no object has,
+  so tiles come back empty without a special case.
+- **Client retries** back off (1, 2, 4, 4 … s, eight attempts) so a multi-second
+  geometry or filter build (503 meanwhile) is outlasted; three 1 s retries gave
+  up before a 5 s build and left the overview blank. A retry is
+  `layer.reset()` + `map().draw()`: reset drops every drawn tile, and only a
+  map draw reaches the layer's `_update` (the tile fetch) — a layer `draw()`
+  re-rendered nothing, so any 503 left the overview blank until the user
+  panned.
+
 ## 9. Explicit non-goals / future extensions
 
 - **Pixel-perfect hover/click under the raster** (stub proximity hit-testing or
@@ -742,8 +864,6 @@ Per `CLAUDE.md`, every item names its test:
 - **Unroll-mode support** (per-cell tile remapping like
   `ImageViewer.vue:1272-1319`).
 - **Anti-aliasing** (2× supersample + downscale; ~4× tile draw cost).
-- **Coupling to annotation-browser filters** (render only the filtered
-  set; needs filter serialization into the tile URL / cache key).
 - **Cross-process/live invalidation** (shared cache or pub/sub; today:
   TTL 120 s + per-process ETag uuid).
 - **Partial-axis projection ranges** (max-merge currently omits the axis and

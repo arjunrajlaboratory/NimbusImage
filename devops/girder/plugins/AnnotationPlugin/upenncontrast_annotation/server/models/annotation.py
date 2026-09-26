@@ -6,7 +6,7 @@ from collections import defaultdict
 import fastjsonschema
 
 from bson.objectid import ObjectId
-from pymongo import UpdateMany
+from pymongo import UpdateMany, UpdateOne
 
 from girder import events
 from girder.constants import AccessType, SortDir
@@ -16,7 +16,10 @@ from girder.models.folder import Folder
 from girder.utility.acl_mixin import AccessControlMixin
 
 from ..helpers import analysis
-from ..helpers.aggregation import AGGREGATION_MAX_TIME_MS
+from ..helpers.aggregation import (
+    AGGREGATION_MAX_TIME_MS,
+    prefetchedDocuments,
+)
 from ..helpers.colormaps import (
     CONTINUOUS_COLORMAPS,
     DEFAULT_COLORMAP,
@@ -25,8 +28,10 @@ from ..helpers.colormaps import (
     colormapTable,
 )
 from ..helpers.fastjsonschema import customJsonSchemaCompile
+from ..helpers.geometry import geometryHash
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
+from ..helpers import valueProviders
 from ..helpers.annotationRaster import (
     bumpDatasetRasterVersion,
     bumpGlobalRasterVersion,
@@ -40,6 +45,11 @@ from .propertyValues import AnnotationPropertyValues
 # `$nin` of its complement (see resolveListGateConstraints) already halves
 # the worst case; this is the backstop past that.
 MAX_GATE_CONSTRAINT_IDS = 400_000
+# One selection-summary request carries a single id clause (the smaller of
+# the matched set and its complement), so it can hold more than a gate's
+# share of MAX_GATE_CONSTRAINT_IDS; 1M ObjectIds is ~12 MB, under Mongo's
+# 16 MB command limit with room for the rest of the pipeline.
+MAX_SUMMARY_CONSTRAINT_IDS = 1_000_000
 
 # Ceiling on ids returned by one gate-resolution response, across all plots.
 # A single gate legitimately matches most of a large dataset (708K ids is
@@ -96,6 +106,7 @@ class AnnotationSchema:
             "location": locationSchema,
             "shape": shapeSchema,
             "datasetId": {"type": "objectId"},
+            "geometryHash": {"type": "string"},
             "color": {
                 "type": ["string", "null"],
             },
@@ -245,11 +256,14 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # An annotation belongs to exactly one dataset. The only path that
         # changes datasetId is updateMultiple, which bumps the source
         # dataset itself, so bumping the saved dataset suffices here.
+        self._setGeometryHash(document)
         saved = super().save(document, validate, triggerEvents)
         bumpDatasetRasterVersion(saved.get("datasetId"))
         return saved
 
     def saveMany(self, documents, validate=True, triggerEvents=True):
+        for document in documents:
+            self._setGeometryHash(document)
         previous = getattr(
             self._rasterMutationState, "suppressRemoveBump", False
         )
@@ -263,6 +277,42 @@ class Annotation(AccessControlMixin, ProxiedModel):
         ):
             bumpDatasetRasterVersion(datasetId)
         return saved
+
+    @staticmethod
+    def _setGeometryHash(document):
+        if document.get("shape") in ("polygon", "rectangle"):
+            try:
+                document["geometryHash"] = geometryHash(
+                    document["coordinates"]
+                )
+                return
+            except (KeyError, TypeError, ValueError):
+                # Malformed coordinates: hashing runs before the schema
+                # validator in save(), which then rejects the document with
+                # its proper message instead of this surfacing as a 500.
+                pass
+        document.pop("geometryHash", None)
+
+    def setGeometryHashes(self, hashes):
+        """Backfill derived hashes without replacing annotation documents.
+
+        This is intentionally a bulk update: a migrated dataset can contain
+        hundreds of thousands of polygons.  The field is derived metadata and
+        does not affect rendering, so no raster-version bump is needed.
+        """
+        chunk = []
+        for annotationId, value in hashes.items():
+            chunk.append(UpdateOne(
+                {"_id": ObjectId(str(annotationId)),
+                 "geometryHash": {"$exists": False},
+                 "shape": {"$in": ["polygon", "rectangle"]}},
+                {"$set": {"geometryHash": value}},
+            ))
+            if len(chunk) == 10_000:
+                self.collection.bulk_write(chunk, ordered=False)
+                chunk = []
+        if chunk:
+            self.collection.bulk_write(chunk, ordered=False)
 
     def remove(self, document, **kwargs):
         previous = getattr(
@@ -357,7 +407,8 @@ class Annotation(AccessControlMixin, ProxiedModel):
     def stubs(self, datasetId, shape=None, tags=None):
         """Lightweight stub docs for every annotation in a dataset: centroid +
         estimatedRadius, with the full coordinates dropped. Drives the frontend
-        stub/hydration view of large datasets. Returns a cursor.
+        stub/hydration view of large datasets. Returns an iterator of
+        documents, in _id order (the standard hint's index order).
 
         Built here (not in the API method) so pipeline construction and the
         runtime-bound _aggregate options live with the other list aggregations.
@@ -368,37 +419,53 @@ class Annotation(AccessControlMixin, ProxiedModel):
         if tags:
             match["tags"] = {"$all": tags}
 
+        # Each "$coordinates.x" builds an array of the vertices' x; $let
+        # builds x and y once instead of once per operator (six), which is
+        # most of the Mongo time at 700K.
+        radius = {"$divide": [
+            {"$max": [
+                {"$subtract": [{"$max": "$$xs"}, {"$min": "$$xs"}]},
+                {"$subtract": [{"$max": "$$ys"}, {"$min": "$$ys"}]},
+            ]},
+            2,
+        ]}
         pipeline = [
             {"$match": match},
             {"$addFields": {
-                "centroid": {
-                    "x": {"$avg": "$coordinates.x"},
-                    "y": {"$avg": "$coordinates.y"},
-                },
-                # Half the larger bounding-box side. Matches the frontend
-                # estimateAnnotationRadius so the stub circle tracks the
-                # annotation's footprint; the previous bbox-diagonal/2
-                # circumscribed the box and overshot the real size by up to
-                # sqrt(2) (a square cell rendered ~41% too large).
-                "estimatedRadius": {
-                    "$divide": [
-                        {"$max": [
-                            {"$subtract": [
-                                {"$max": "$coordinates.x"},
-                                {"$min": "$coordinates.x"},
-                            ]},
-                            {"$subtract": [
-                                {"$max": "$coordinates.y"},
-                                {"$min": "$coordinates.y"},
-                            ]},
-                        ]},
-                        2,
-                    ]
-                },
+                "_stub": {"$let": {
+                    "vars": {"xs": "$coordinates.x", "ys": "$coordinates.y"},
+                    "in": {
+                        "centroid": {
+                            "x": {"$avg": "$$xs"},
+                            "y": {"$avg": "$$ys"},
+                        },
+                        # Half the larger bounding-box side. Matches the
+                        # frontend estimateAnnotationRadius so the stub
+                        # circle tracks the annotation's footprint; the
+                        # previous bbox-diagonal/2 circumscribed the box and
+                        # overshot the real size by up to sqrt(2) (a square
+                        # cell rendered ~41% too large).
+                        "estimatedRadius": radius,
+                    },
+                }},
             }},
-            {"$project": {"coordinates": 0}},
+            {"$addFields": {
+                "centroid": "$_stub.centroid",
+                "estimatedRadius": "$_stub.estimatedRadius",
+            }},
+            {"$project": {"coordinates": 0, "_stub": 0}},
         ]
-        return self._aggregate(self.collection, pipeline)
+        # Mongo evaluating the pipeline and pymongo decoding its output each
+        # take seconds at 700K; the prefetch overlaps them.
+        return prefetchedDocuments(
+            self.collection.aggregate_raw_batches(
+                pipeline,
+                hint=DEFAULT_AGGREGATE_HINT,
+                allowDiskUse=True,
+                maxTimeMS=AGGREGATION_MAX_TIME_MS,
+            ),
+            self.collection.codec_options,
+        )
 
     def _buildListMatchStages(self, datasetId, filters):
         """Pipeline stages matching annotation-document fields.
@@ -484,12 +551,15 @@ class Annotation(AccessControlMixin, ProxiedModel):
         the property-values collection when any axis is a property axis.
         """
         propertyPaths = {}
+        virtualPaths = {}
         categoricalKeys = set()
         for axis in axes:
-            if axis["type"] == "property":
-                propertyPaths[".".join(axis["path"])] = axis["path"]
-            else:
+            if axis["type"] != "property":
                 categoricalKeys.add(axis["key"])
+            elif valueProviders.isVirtualPath(axis["path"]):
+                virtualPaths[".".join(axis["path"])] = axis["path"]
+            else:
+                propertyPaths[".".join(axis["path"])] = axis["path"]
 
         fields = {"_id": 1}
         if "tags" in categoricalKeys:
@@ -501,19 +571,29 @@ class Annotation(AccessControlMixin, ProxiedModel):
         if categoricalKeys & {"xy", "z", "time"}:
             fields["location"] = 1
         docs = []
+        indexOf = {}
         cursor = self._aggregate(
             self.collection,
             [{"$match": {"datasetId": datasetId}}, {"$project": fields}],
         )
         for doc in cursor:
-            doc["id"] = str(doc.pop("_id"))
+            annotationId = doc.pop("_id")
+            indexOf[annotationId] = len(docs)
+            doc["id"] = str(annotationId)
             docs.append(doc)
 
-        valuesById = {}
+        # Stored property axes come back as numeric COLUMNS aligned with
+        # `docs` (analysis.AnalysisValues), from one flat projection — not a
+        # nested values dict per annotation, whose decoding and per-document
+        # walking were most of a 700K-object gate resolution.
+        valuesById = analysis.AnalysisValues()
         if propertyPaths:
-            pvFields = {"_id": 0, "annotationId": 1}
-            for path in propertyPaths.values():
-                pvFields["values." + ".".join(path)] = 1
+            columnNames = {
+                key: "c%d" % i for i, key in enumerate(propertyPaths)
+            }
+            pvFields = {"_id": 0, "a": "$annotationId"}
+            for key, path in propertyPaths.items():
+                pvFields[columnNames[key]] = "$values." + ".".join(path)
             pvCursor = self._aggregate(
                 self._pvModel.collection,
                 [
@@ -521,11 +601,82 @@ class Annotation(AccessControlMixin, ProxiedModel):
                     {"$project": pvFields},
                 ],
             )
+            rows = []
+            raw = {key: [] for key in propertyPaths}
             for doc in pvCursor:
-                valuesById[str(doc["annotationId"])] = (
-                    doc.get("values") or {}
+                row = indexOf.get(doc["a"])
+                if row is None:
+                    continue  # orphaned value doc: annotations anchor
+                rows.append(row)
+                for key, name in columnNames.items():
+                    raw[key].append(doc.get(name))
+            for key in propertyPaths:
+                valuesById.setColumn(
+                    key, len(docs), rows, analysis.numeric_column(raw[key])
+                )
+        # Virtual axes (valueProviders): the provider's dense answer is nested
+        # under the same {prefix: {sub: value}} shape the pure helpers read,
+        # so a gene axis and a property axis are indistinguishable downstream.
+        for path in virtualPaths.values():
+            provider = valueProviders.providerFor(path)
+            for annotationId, value in provider.values(
+                datasetId, path
+            ).items():
+                valueProviders.nestValue(
+                    valuesById.setdefault(annotationId, {}), path, value
                 )
         return docs, valuesById
+
+    def resolveProviderFilters(self, datasetId, filters):
+        """Turn property filters on VIRTUAL paths (valueProviders) into
+        `gateMatchClauses`, in place, leaving the stored-path filters for the
+        Mongo pipelines. Same treatment as gate definitions: the provider
+        resolves the predicate to an id set once per request, and the clause
+        is the smaller of the set and its complement (_idSelector). A filter
+        matching nothing becomes a match-none clause, deliberately."""
+        propertyFilters = filters.get("propertyFilters")
+        if not propertyFilters:
+            return filters
+        stored = []
+        for propertyFilter in propertyFilters:
+            provider = valueProviders.providerFor(propertyFilter["path"])
+            if provider is None:
+                stored.append(propertyFilter)
+                continue
+            matching = [
+                ObjectId(i) for i in provider.matchingIds(
+                    datasetId, propertyFilter["path"], propertyFilter
+                )
+            ]
+            selector = self._idSelector(datasetId, matching)
+            if selector is None:
+                continue  # every annotation matches: no constraint
+            filters.setdefault("gateMatchClauses", []).append(
+                {"_id": selector}
+            )
+        if stored:
+            filters["propertyFilters"] = stored
+        else:
+            del filters["propertyFilters"]
+        return filters
+
+    def _fillVirtualValues(self, datasetId, rows, propertyPaths):
+        """Add the virtual-path values to page rows (list of documents with
+        an `_id`), one provider call per path for the whole page."""
+        _, virtualPaths = valueProviders.splitPaths(propertyPaths or [])
+        if not virtualPaths:
+            return rows
+        rows = list(rows)
+        annotationIds = [str(row["_id"]) for row in rows]
+        for path in virtualPaths:
+            provider = valueProviders.providerFor(path)
+            values = provider.valuesForIds(datasetId, path, annotationIds)
+            for row, value in zip(rows, values):
+                if value is not None:
+                    valueProviders.nestValue(
+                        row.setdefault("values", {}), path, value
+                    )
+        return rows
 
     def resolveListGateConstraints(self, datasetId, filters):
         """Convert `filters['analysisGates']` (gate DEFINITIONS, validated at
@@ -657,15 +808,24 @@ class Annotation(AccessControlMixin, ProxiedModel):
         axes = [spec["xAxis"], spec["yAxis"]]
         for upstream in spec["upstreamGates"]:
             axes += [upstream["xAxis"], upstream["yAxis"]]
+        colorBy = (spec.get("sample") or {}).get("colorBy")
+        if colorBy is not None:
+            axes.append(colorBy)
         docs, valuesById = self._analysisData(datasetId, axes)
+        # Narrow docs and their value columns together (AnalysisValues
+        # columns are aligned with the docs list they were built for).
         if spec["filters"]:
             passing = set(self.listIds(datasetId, spec["filters"]))
-            docs = [doc for doc in docs if doc["id"] in passing]
+            docs, valuesById = analysis.subset_analysis_data(
+                docs, valuesById, [doc["id"] in passing for doc in docs]
+            )
         for upstream in spec["upstreamGates"]:
             inside = set(
                 analysis.resolve_gate_ids(docs, valuesById, upstream)
             )
-            docs = [doc for doc in docs if doc["id"] in inside]
+            docs, valuesById = analysis.subset_analysis_data(
+                docs, valuesById, [doc["id"] in inside for doc in docs]
+            )
         return analysis.histogram2d(docs, valuesById, spec)
 
     def _centroidAddFields(self):
@@ -762,6 +922,14 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 return {"$sort": {"_id": direction}}
             return {"$sort": {key: direction, "_id": 1}}
         return {"$sort": {"_id": 1}}
+
+    def narrowsPopulation(self, filters):
+        """True when a list-filter object constrains the dataset at all —
+        annotation-document fields, id constraints, resolved gate clauses,
+        or property filters. The one place other plugins should ask this,
+        rather than mirroring the field list."""
+        return bool(filters.get("propertyFilters")) or \
+            self._hasAnnotationFieldFilters(filters)
 
     def _hasAnnotationFieldFilters(self, filters):
         """True if any filter constrains annotation-document fields.
@@ -932,6 +1100,210 @@ class Annotation(AccessControlMixin, ProxiedModel):
         pipeline.append({"$count": "n"})
         result = list(self._aggregate(self.collection, pipeline))
         return result[0]["n"] if result else 0
+
+    def summarize(self, datasetId, filters, propertyPaths):
+        """Aggregate statistics over the annotations matching `filters`.
+
+        Returns {total, tags: [{tag, count}] (count desc, then tag), and
+        properties: [{path, count, mean, std, min, max}]} — one entry per
+        requested path, in request order. `count` is the number of matching
+        annotations holding a NUMERIC value at the path; non-numeric, NaN
+        and missing values are skipped, matching the analysis axes' reading
+        of a property value (Infinity is a number and is kept). `std` is the
+        sample standard deviation (null below two values).
+
+        The matching id set is resolved at most once, and the id clause
+        both aggregations share is the SMALLER of the matched set and its
+        complement (`_idSelector`), as the gate resolver does: a broad
+        filter that keeps most of a 700K dataset would otherwise ship a
+        dataset-sized `$in` twice. Annotation-field-only filters skip the
+        property-value join, so the tag facet runs on them directly and only
+        the statistics need the ids.
+
+        Without any filter the statistics run over every property-value
+        document of the dataset, so a value document orphaned by a deleted
+        annotation counts until the removal hook cleans it (excluding them
+        would cost a second full scan per request).
+        """
+        selector = None
+        matchingIds = None
+        facetFilters = filters
+        if filters.get("propertyFilters"):
+            matchingIds = self._matchingObjectIds(datasetId, filters)
+            selector = self._idSelector(datasetId, matchingIds)
+            facetFilters = (
+                {"gateMatchClauses": [{"_id": selector}]} if selector else {}
+            )
+        elif self._hasAnnotationFieldFilters(filters):
+            matchingIds = self._matchingObjectIds(datasetId, filters)
+            selector = self._idSelector(datasetId, matchingIds)
+
+        pipeline = self._buildListMatchStages(datasetId, facetFilters)
+        pipeline.append({"$facet": {
+            "total": [{"$count": "count"}],
+            "tags": [
+                {"$unwind": "$tags"},
+                {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
+                {"$sort": {"count": -1, "_id": 1}},
+            ],
+        }})
+        facets = next(self._aggregate(self.collection, pipeline))
+        total = facets["total"][0]["count"] if facets["total"] else 0
+        return {
+            "total": total,
+            "tags": [
+                {"tag": doc["_id"], "count": doc["count"]}
+                for doc in facets["tags"]
+            ],
+            "properties": self._propertyStats(
+                datasetId, selector, matchingIds, propertyPaths, total
+            ),
+        }
+
+    def _matchingObjectIds(self, datasetId, filters):
+        """ObjectIds of the annotations matching `filters`; the same two
+        pipelines as listIds, without the string round trip."""
+        if (filters.get("propertyFilters")
+                and not self._hasAnnotationFieldFilters(filters)):
+            pipeline = [{"$match": {"datasetId": datasetId}}]
+            pipeline += self._propertyFilterStages(
+                filters, valueBase="values.")
+            pipeline.append({"$project": {"annotationId": 1, "_id": 0}})
+            return [
+                doc["annotationId"]
+                for doc in self._aggregate(self._pvModel.collection, pipeline)
+            ]
+        pipeline = self._annotationDrivenStages(datasetId, filters)
+        pipeline.append({"$project": {"_id": 1}})
+        return [
+            doc["_id"] for doc in self._aggregate(self.collection, pipeline)
+        ]
+
+    def _idSelector(self, datasetId, matchingIds):
+        """The cheaper id clause for `matchingIds` within this dataset:
+        `{"$in": matched}` or `{"$nin": complement}`, or None when every
+        annotation matches (no clause needed).
+
+        Same 2x rule as resolveListGateConstraints, whose measurements it
+        relies on: `$nin` costs ~1.4x per element, so the complement only
+        wins once it is at most half the matched set.
+        """
+        counted = list(self._aggregate(self.collection, [
+            {"$match": {"datasetId": datasetId}}, {"$count": "count"},
+        ]))
+        datasetSize = counted[0]["count"] if counted else 0
+        # A provider can lag polygon edits, so its ids are not necessarily a
+        # subset of the current annotation collection. Intersect before using
+        # cardinality to choose "all" or a complement; otherwise one orphaned
+        # row plus one newly added cell can turn a real constraint into none.
+        matchingIds = list(set(matchingIds))
+        liveMatches = [
+            document["_id"]
+            for document in self._aggregate(self.collection, [
+                {"$match": {
+                    "datasetId": datasetId,
+                    "_id": {"$in": matchingIds},
+                }},
+                {"$project": {"_id": 1}},
+            ])
+        ] if matchingIds else []
+        complementSize = datasetSize - len(liveMatches)
+        if complementSize <= 0:
+            return None
+        if complementSize * 2 <= len(liveMatches):
+            matched = set(liveMatches)
+            complement = [
+                doc["_id"]
+                for doc in self._aggregate(self.collection, [
+                    {"$match": {"datasetId": datasetId}},
+                    {"$project": {"_id": 1}},
+                ])
+                if doc["_id"] not in matched
+            ]
+            operator, selected = "$nin", complement
+        else:
+            operator, selected = "$in", liveMatches
+        if len(selected) > MAX_SUMMARY_CONSTRAINT_IDS:
+            raise ValueError(
+                "the filters match a set the summary query cannot carry "
+                "(more than %d ids on either side); narrow the filters or "
+                "summarize the whole dataset" % MAX_SUMMARY_CONSTRAINT_IDS
+            )
+        return {operator: selected}
+
+    def _propertyStats(self, datasetId, selector, matchingIds, propertyPaths,
+                       total):
+        """Per-path statistics over the property values of the annotations
+        `selector` picks (an `$in`/`$nin` clause from _idSelector; None =
+        every annotation in the dataset). Virtual paths (valueProviders) are
+        computed in numpy from the provider's dense answer, restricted to
+        `matchingIds` (the same set the selector expresses)."""
+        empty = {"count": 0, "mean": None, "std": None,
+                 "min": None, "max": None}
+        if not propertyPaths or total == 0:
+            return [{"path": path, **empty} for path in propertyPaths]
+
+        statsByKey = {}
+        storedPaths, virtualPaths = valueProviders.splitPaths(propertyPaths)
+        if virtualPaths:
+            selected = (
+                None if matchingIds is None
+                else {str(i) for i in matchingIds}
+            )
+            for path in virtualPaths:
+                values = valueProviders.providerFor(path).values(
+                    datasetId, path
+                )
+                statsByKey[".".join(path)] = analysis.describe_values(
+                    value for annotationId, value in values.items()
+                    if selected is None or annotationId in selected
+                )
+        if not storedPaths:
+            return [
+                {"path": path, **statsByKey[".".join(path)]}
+                for path in propertyPaths
+            ]
+
+        match = {"datasetId": datasetId}
+        if selector is not None:
+            match["annotationId"] = selector
+
+        group = {"_id": None}
+        propertyPaths, requestedPaths = storedPaths, propertyPaths
+        for index, path in enumerate(propertyPaths):
+            ref = "$values." + ".".join(path)
+            # $avg/$min/$max/$stdDevSamp skip nulls, so mapping every
+            # non-number to null excludes strings and nested objects from
+            # the statistics while $sum counts exactly the values used. NaN
+            # is a number to $isNumber and would poison the mean, so it is
+            # treated as missing too (BSON compares NaN equal to NaN, which
+            # is what makes the $ne test work); Infinity stays a value.
+            usable = {"$and": [
+                {"$isNumber": ref}, {"$ne": [ref, float("nan")]},
+            ]}
+            numeric = {"$cond": [usable, ref, None]}
+            group[f"count{index}"] = {"$sum": {"$cond": [usable, 1, 0]}}
+            group[f"mean{index}"] = {"$avg": numeric}
+            group[f"std{index}"] = {"$stdDevSamp": numeric}
+            group[f"min{index}"] = {"$min": numeric}
+            group[f"max{index}"] = {"$max": numeric}
+        result = list(self._aggregate(
+            self._pvModel.collection,
+            [{"$match": match}, {"$group": group}],
+        ))
+        stats = result[0] if result else None
+        for index, path in enumerate(propertyPaths):
+            statsByKey[".".join(path)] = empty if stats is None else {
+                "count": stats[f"count{index}"],
+                "mean": stats[f"mean{index}"],
+                "std": stats[f"std{index}"],
+                "min": stats[f"min{index}"],
+                "max": stats[f"max{index}"],
+            }
+        return [
+            {"path": path, **statsByKey[".".join(path)]}
+            for path in requestedPaths
+        ]
 
     def listPosition(self, datasetId, filters, sort, annotationId):
         """Zero-based position of an annotation in a filtered/sorted list.
@@ -1106,21 +1478,39 @@ class Annotation(AccessControlMixin, ProxiedModel):
             ],
         )), {})
 
-        # One streaming pass over the value docs: count, per top-level property
-        # key, how many docs carry it. `values`' top-level keys are property
-        # ids -- exactly the existence the client checks (propertyValues a/p).
+        # One pass over the value docs counting, for each REQUESTED property
+        # id, the docs whose `values` carry that top-level key (null values
+        # included -- the existence the client checks). Only the requested
+        # keys are looked at: turning every doc's whole `values` into a key
+        # array (all stored gene sub-keys' parents included) cost twice as
+        # much at 700K. $getField with a literal name reads keys containing
+        # "." or "$" verbatim, as the key-array form did.
+        propertyIds = list(dict.fromkeys(
+            propertyFilter["id"] for propertyFilter in propertyFilters
+        ))
+        hasValueGroup = {"_id": None}
+        for i, propertyId in enumerate(propertyIds):
+            hasValueGroup["p%d" % i] = {"$sum": {"$cond": [
+                {"$eq": [
+                    {"$type": {"$getField": {
+                        "field": {"$literal": propertyId},
+                        "input": {"$ifNull": ["$values", {}]},
+                    }}},
+                    "missing",
+                ]},
+                0,
+                1,
+            ]}}
+        hasValueCounts = next(iter(self._aggregate(
+            self._pvModel.collection,
+            [
+                {"$match": {"datasetId": datasetId}},
+                {"$group": hasValueGroup},
+            ],
+        )), {})
         hasValueByProperty = {
-            doc["_id"]: doc["n"]
-            for doc in self._aggregate(
-                self._pvModel.collection,
-                [
-                    {"$match": {"datasetId": datasetId}},
-                    {"$project": {"k": {"$objectToArray": {
-                        "$ifNull": ["$values", {}]}}}},
-                    {"$unwind": "$k"},
-                    {"$group": {"_id": "$k.k", "n": {"$sum": 1}}},
-                ],
-            )
+            propertyId: hasValueCounts.get("p%d" % i, 0)
+            for i, propertyId in enumerate(propertyIds)
         }
 
         counts = {}
@@ -1160,6 +1550,14 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def listPage(self, datasetId, filters, sort, propertyPaths,
                  offset, limit):
+        storedPaths, _ = valueProviders.splitPaths(propertyPaths or [])
+        rows = self._listPageRows(
+            datasetId, filters, sort, storedPaths, offset, limit
+        )
+        return self._fillVirtualValues(datasetId, rows, propertyPaths)
+
+    def _listPageRows(self, datasetId, filters, sort, propertyPaths,
+                      offset, limit):
         skip = max(0, offset)
         if not self._needsPropertyBeforePage(filters, sort):
             # Sort by an annotation field (the {datasetId,_id} index orders
@@ -1310,9 +1708,19 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # the clearing pass can be skipped, hiding an uncovered annotation's
         # stale color. Last value wins, deterministically by cursor order.
         valueByAnnotation = {}
-        for annotationId, value in self._pvModel.valuesForPath(
-            datasetId, propertyPath
-        ):
+        provider = valueProviders.providerFor(propertyPath)
+        if provider is not None:
+            # Providers key by id STRING; the membership guard and the color
+            # writes below work in ObjectIds like the stored-value path.
+            pairs = (
+                (ObjectId(annotationId), value)
+                for annotationId, value in provider.values(
+                    datasetId, propertyPath
+                ).items()
+            )
+        else:
+            pairs = self._pvModel.valuesForPath(datasetId, propertyPath)
+        for annotationId, value in pairs:
             valueByAnnotation[annotationId] = value
 
         # Membership guard: drop values whose annotation is not (or is no

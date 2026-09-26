@@ -52,6 +52,18 @@
         _setAnnotationOverviewVisibility(mapentry, $event)
       "
     />
+    <template v-if="transcriptsStore.hasTranscripts && transcriptImage">
+      <transcript-overlay
+        v-for="(mapentry, index) in annotationViewerMaps"
+        :key="'transcript-overlay-' + index"
+        :map="mapentry.map"
+        :annotationLayer="mapentry.annotationLayer"
+        :sizeX="transcriptImage.sizeX"
+        :sizeY="transcriptImage.sizeY"
+        :maxLevel="mapentry.params.layer.maxLevel ?? transcriptImage.levels - 1"
+        :disabled="unrolling"
+      />
+    </template>
     <!-- Mounted ONCE, outside the per-map v-for above. In unroll layer mode
          ImageViewer renders one AnnotationViewer per layer group, so a panel
          living inside that loop appeared N times over and registered N global
@@ -227,6 +239,11 @@ import {
   toRaw,
 } from "vue";
 import annotationStore from "@/store/annotation";
+import annotationListServer from "@/store/annotationListServer";
+import { createHasher } from "@/utils/signatures";
+import { debounce } from "lodash";
+import transcriptsStore from "@/store/transcripts";
+import TranscriptOverlay from "@/components/TranscriptOverlay.vue";
 import connectionListStore from "@/store/connectionList";
 import { TOUR_ANCHORS } from "@/tours/anchors";
 import progressStore from "@/store/progress";
@@ -430,7 +447,12 @@ const ANNOTATION_OVERVIEW_PROGRESS_DELAY_MS = 300;
 // while another geometry key is still cold-building. The delay matches that
 // Retry-After; the bound keeps a genuinely broken template from looping.
 const ANNOTATION_OVERVIEW_RETRY_DELAY_MS = 1000;
-const ANNOTATION_OVERVIEW_MAX_RETRIES = 3;
+// With a growing delay (1, 2, 4, 4, … s): the server answers 503 while a
+// geometry or filter build is running, and those take seconds on a large
+// dataset — three 1 s retries gave up before a 5 s build finished, leaving
+// the overview blank.
+const ANNOTATION_OVERVIEW_MAX_RETRIES = 8;
+const ANNOTATION_OVERVIEW_MAX_RETRY_DELAY_MS = 4000;
 
 type AnnotationOverviewLayer = NonNullable<
   IMapEntry["annotationOverviewLayer"]
@@ -629,26 +651,36 @@ function scheduleAnnotationOverviewRetry(layer: AnnotationOverviewLayer) {
     return;
   }
   state.attempts += 1;
-  state.timer = setTimeout(() => {
-    state.timer = null;
-    // Only retry a layer that is still mounted, shown, and displaying the
-    // same template — a template change redraws with a fresh budget anyway.
-    if (
-      !maps.value.some(
-        (mountedMapentry) =>
-          toRaw(mountedMapentry.annotationOverviewLayer) === toRaw(layer),
-      ) ||
-      !layer.visible() ||
-      !annotationOverviewTemplates.has(layer)
-    ) {
-      return;
-    }
-    // reset() clears the tile cache — the only way to make GeoJS refetch a
-    // tile whose previous fetch was rejected.
-    layer.reset();
-    layer.draw();
-    trackAnnotationOverviewLoad(layer);
-  }, ANNOTATION_OVERVIEW_RETRY_DELAY_MS);
+  state.timer = setTimeout(
+    () => {
+      state.timer = null;
+      // Only retry a layer that is still mounted, shown, and displaying the
+      // same template — a template change redraws with a fresh budget anyway.
+      if (
+        !maps.value.some(
+          (mountedMapentry) =>
+            toRaw(mountedMapentry.annotationOverviewLayer) === toRaw(layer),
+        ) ||
+        !layer.visible() ||
+        !annotationOverviewTemplates.has(layer)
+      ) {
+        return;
+      }
+      // reset() clears the tile cache — the only way to make GeoJS refetch a
+      // tile whose previous fetch was rejected. It also drops every drawn
+      // tile, and a layer's own draw() only renders what it already has: the
+      // fetch runs in _update, which map().draw() (like a camera move)
+      // reaches. A layer draw() here left the overview blank after any 503
+      // until the user panned.
+      layer.reset();
+      layer.map().draw();
+      trackAnnotationOverviewLoad(layer);
+    },
+    Math.min(
+      ANNOTATION_OVERVIEW_RETRY_DELAY_MS * 2 ** (state.attempts - 1),
+      ANNOTATION_OVERVIEW_MAX_RETRY_DELAY_MS,
+    ),
+  );
 }
 
 function _setAnnotationOverviewVisibility(
@@ -704,6 +736,12 @@ const maps = computed({
   get: () => store.maps,
   set: (value: IMapEntry[]) => store.setMaps(value),
 });
+
+// The image the transcript density pyramid is sized to: the same one the
+// annotation overview uses.
+const transcriptImage = computed(
+  () => layerStackImages.value.find((lsi) => lsi.images[0])?.images[0] ?? null,
+);
 
 const annotationViewerMaps = computed(() =>
   maps.value.filter(
@@ -1623,6 +1661,13 @@ function _syncAnnotationOverviewLayer(
     mode: config.mode,
     color: ANNOTATION_OVERVIEW_FALLBACK_COLOR,
     version: annotationStore.mutationCounter,
+    authToken: store.shareLinkTileToken,
+    // The viewer's filters (gates included), so the zoomed-out overview
+    // shows what the zoomed-in vectors would.
+    // Only a key matching the current filters: while a new one registers
+    // (or right after a dataset switch) the tiles draw unfiltered.
+    filterKey: annotationListServer.activeOverviewFilter?.key ?? null,
+    filterVersion: overviewFilterVersion(),
   });
   annotationOverviewTemplates.set(mapentry.annotationOverviewLayer, template);
   if (
@@ -2178,11 +2223,49 @@ watch(dataset, () => {
   datasetReset();
 });
 
-// Frame changes already redraw through mapLayerList. Overview-only settings
-// and client mutation versions do not, so explicitly refresh the lazy raster
-// layer for those two inputs.
+// Short identity of the active filter's query (and, under a property filter,
+// the property-value revision), for the tile cache-buster.
+function overviewFilterVersion(): string {
+  const version = annotationListServer.activeOverviewFilter?.version;
+  if (!version) {
+    return "";
+  }
+  const hasher = createHasher();
+  hasher.feedString(version);
+  return hasher.digest().replace(":", "-");
+}
+
+// The overview follows the viewer's filters: register them (debounced — a
+// lasso or a slider emits several changes) whenever they change while the
+// overview is on. The key it yields redraws the layer below.
+const refreshOverviewFilter = debounce(
+  () => annotationListServer.refreshOverviewFilter(),
+  250,
+);
 watch(
-  [() => annotationStore.overviewConfig, () => annotationStore.mutationCounter],
+  () =>
+    annotationStore.overviewConfig.enabled
+      ? annotationListServer.overviewFiltersSignature
+      : null,
+  (signature) => {
+    if (signature !== null) {
+      refreshOverviewFilter();
+    }
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => refreshOverviewFilter.cancel());
+
+// Frame changes already redraw through mapLayerList. Overview-only settings,
+// client mutation versions and the overview filter do not, so explicitly
+// refresh the lazy raster layer for those inputs.
+watch(
+  [
+    () => annotationStore.overviewConfig,
+    () => annotationStore.mutationCounter,
+    () => annotationListServer.activeOverviewFilter?.key ?? null,
+    () => annotationListServer.activeOverviewFilter?.version ?? null,
+  ],
   ([config], [previousConfig]) => {
     // Annotation edits can be frequent. When overview has never been enabled,
     // its cache-buster must remain truly zero-cost instead of redrawing every

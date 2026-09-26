@@ -2,6 +2,7 @@ import Home from "./Home.vue";
 import DatasetAndConfigurationRouter from "./DatasetAndConfigurationRouter.vue";
 import EmptyRouterView from "./EmptyRouterView.vue";
 import ProjectRouter from "./ProjectRouter.vue";
+import SharedView from "./SharedView.vue";
 import datasetRoutes from "./dataset";
 import configurationRoutes from "./configuration";
 import datasetViewRoutes from "./datasetView";
@@ -37,6 +38,19 @@ const routes: RouteRecordRaw[] = [
     path: "/project",
     children: projectRoutes,
     component: ProjectRouter,
+  },
+  // Share-view links: the bearer opens exactly one dataset view (SHARING.md).
+  {
+    path: "/shared/:token",
+    name: "shared",
+    component: SharedView,
+    meta: { hidden: true },
+  },
+  {
+    path: "/embed/:token",
+    name: "embed",
+    component: SharedView,
+    meta: { hidden: true },
   },
   {
     path: "/:pathMatch(.*)*",

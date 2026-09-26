@@ -2,6 +2,13 @@
 
 Publish NimbusImage projects to [Zenodo](https://zenodo.org/) for permanent archival with DOI minting.
 
+
+> **Spatial data is included.** The uploader sends every file in every dataset folder, so a
+> dataset with a registered `spatial.zarr.zip` (expression table) and `transcripts.zarr.zip`
+> (molecules) ships both with the record — the DOI carries the matrix and the molecules, not
+> only the images. They are listed with `type: "spatial"` in the pre-flight file list.
+> Re-importing them from a DOI (download + `POST spatial/{dataset}/register`) is not built.
+
 ## Overview
 
 The Zenodo integration allows users to upload an entire project (image files, annotation data, collection configs) to Zenodo as a dataset deposition. The workflow is:

@@ -10,12 +10,13 @@
     <div v-if="overCap" class="analysis-overcap">
       <v-icon size="16" class="mr-1">mdi-information-outline</v-icon>
       More than {{ MAX_ANALYSIS_PLOT_POINTS.toLocaleString() }} objects pass the
-      current filters, so plots show binned distributions computed on the
-      server. Draw a closed shape (or rectangle) around the objects to keep —
-      gates stay exact at any size.
+      current filters, so plots are computed on the server: Density shows the
+      binned distribution (draw a closed shape or rectangle to gate), Dots a
+      random sample of them (lasso to gate). Gates stay exact at any size — they
+      apply to every object, not just the ones drawn.
     </div>
     <div
-      v-if="overCap && skippedHistogramFilters.length > 0"
+      v-if="serverDisplayActive && skippedHistogramFilters.length > 0"
       class="analysis-overcap analysis-skipped"
     >
       <v-icon size="16" class="mr-1">mdi-alert-outline</v-icon>
@@ -54,6 +55,7 @@
       :axis-items="axisItems"
       :over-cap="overCap"
       :histogram="histogramsByPlot[plot.id] ?? null"
+      :chained-gate-count="chainedGateCounts[plot.id] ?? null"
     />
 
     <div class="analysis-actions">
@@ -71,6 +73,18 @@
         @click="addPlot"
       >
         Add plot
+      </v-btn>
+      <v-btn
+        v-if="hasUmap"
+        variant="text"
+        color="primary"
+        size="small"
+        prepend-icon="mdi-scatter-plot"
+        :disabled="!canAddPlot && !umapPlotExists"
+        title="Plot the UMAP embedding as dots colored by cell type"
+        @click="addUmapPlot"
+      >
+        UMAP
       </v-btn>
     </div>
 
@@ -91,10 +105,12 @@ import annotationStore from "@/store/annotation";
 import {
   IAnalysisHistogramDisplay,
   IAnalysisHistogramRequest,
+  IAnalysisPlot,
   TAnnotationOrStub,
 } from "@/store/model";
 import {
   ANALYSIS_HISTOGRAM_BINS,
+  ANALYSIS_SAMPLE_POINTS,
   MAX_ANALYSIS_PLOTS,
   MAX_ANALYSIS_PLOT_POINTS,
 } from "@/store/constants";
@@ -103,6 +119,7 @@ import { CATEGORICAL_AXES, encodeAxis, IAxisItem } from "@/utils/analysisAxes";
 import {
   buildPlotSeries,
   chainPlotInputs,
+  colorLegendLabels,
   IAnalysisSeries,
   labelForCategoryKey,
 } from "@/utils/analysisGating";
@@ -280,8 +297,21 @@ const seriesByPlot = computed(() => {
 // sequence guard. Gate RESOLUTION does not pass through here — the store owns
 // it and it runs panel-open or not.
 
+// Plots drawn from the server: every plot above the cap (heatmap or dots),
+// and dots-mode plots below it (their sample is every point, colored).
+const usesServerDisplay = (plot: IAnalysisPlot) =>
+  overCap.value || plot.display === "dots";
+const serverDisplayActive = computed(
+  () =>
+    overCap.value ||
+    plots.value.some(
+      (plot) =>
+        plot.display === "dots" && plot.xAxis !== null && plot.yAxis !== null,
+    ),
+);
+
 const histogramFilterSpec = computed(() =>
-  props.visible && overCap.value
+  props.visible && serverDisplayActive.value
     ? filterStore.analysisHistogramFilterSpec
     : { filters: {}, skipped: [] },
 );
@@ -322,13 +352,16 @@ function requestSignature(request: IAnalysisHistogramRequest): string {
 }
 
 const histogramWork = computed<IHistogramWork[]>(() => {
-  if (!props.visible || !overCap.value) {
+  if (!props.visible || !serverDisplayActive.value) {
     return [];
   }
   const { filters } = histogramFilterSpec.value;
   const allPlots = plots.value;
   return allPlots
-    .filter((plot) => plot.xAxis !== null && plot.yAxis !== null)
+    .filter(
+      (plot) =>
+        plot.xAxis !== null && plot.yAxis !== null && usesServerDisplay(plot),
+    )
     .map((plot) => {
       const index = allPlots.indexOf(plot);
       const upstreamGates = allPlots
@@ -353,7 +386,22 @@ const histogramWork = computed<IHistogramWork[]>(() => {
         bins: { x: ANALYSIS_HISTOGRAM_BINS, y: ANALYSIS_HISTOGRAM_BINS },
         upstreamGates,
         filters,
-        gate: plot.gate,
+        // Not sent: the gate is display-only here (its outline, and dimming
+        // dots outside it, are drawn client-side) and its badge count is
+        // chainedGateCounts. Sending it made every lasso re-run this
+        // whole-dataset scan beside the gate resolution itself.
+        gate: null,
+        // Dots mode: the server also returns a display sample (colored by
+        // `colorBy`) in place of drawing the heatmap. Part of the request,
+        // so it is part of the signature: toggling refetches.
+        ...(plot.display === "dots"
+          ? {
+              sample: {
+                size: ANALYSIS_SAMPLE_POINTS,
+                colorBy: plot.colorBy ?? null,
+              },
+            }
+          : {}),
       };
       return { plotId: plot.id, request, signature: requestSignature(request) };
     });
@@ -375,10 +423,20 @@ function toDisplay(
     Array.isArray(categories) && axis.type === "categorical"
       ? categories.map((key) => labelForCategoryKey(key, axis.key, channelName))
       : null;
+  const colorBy = request.sample?.colorBy ?? null;
   return {
     ...response,
     xCategoryLabels: labels(response.xCategories, request.xAxis),
     yCategoryLabels: labels(response.yCategories, request.yAxis),
+    colorCategoryLabels:
+      colorBy?.type === "categorical" &&
+      Array.isArray(response.sample?.colorCategories)
+        ? colorLegendLabels(
+            response.sample.colorCategories,
+            colorBy.key,
+            channelName,
+          )
+        : null,
   };
 }
 
@@ -487,7 +545,7 @@ watch(
     // empty by construction, and pruning then would defeat the reopen
     // behavior: signatures persist across panel closes on purpose, so
     // reopening with unchanged inputs refetches nothing.
-    if (props.visible && overCap.value) {
+    if (props.visible && serverDisplayActive.value) {
       const live = new Set(work.map(({ plotId }) => plotId));
       const gone = [...pendingHistograms.keys()].filter((id) => !live.has(id));
       // Advance before forgetting the guard, or the queued callback still
@@ -554,6 +612,50 @@ watch(
   { immediate: true },
 );
 
+// Above the cap, each drawn gate's badge: |gate ∩ the population reaching
+// its plot| — the non-gate filters, narrowed by every ENABLED upstream gate —
+// from the resolved (pure) gate ids the store already has. Computed here
+// instead of asking histogram2d for it, which re-scanned the whole dataset
+// on every lasso. null until the gate, and every enabled gate above it, is
+// resolved.
+const chainedGateCounts = computed<{ [plotId: string]: number | null }>(() => {
+  const counts: { [plotId: string]: number | null } = {};
+  if (!props.visible || !overCap.value) {
+    return counts;
+  }
+  // The population reaching each gate, built at the first gate that needs
+  // it: a Set over every object passing the other filters (up to ~700K ids)
+  // is wasted work — and a dependency on that population — when no plot has
+  // a resolved gate. `undefined`: not built yet; null: depends on a gate
+  // whose ids are not known.
+  let input: Set<string> | null | undefined;
+  for (const plot of plots.value) {
+    if (plot.gate === null) {
+      continue;
+    }
+    const ids = gateIds.value[plot.id];
+    if (!ids || input === null) {
+      counts[plot.id] = null;
+      if (plot.gateEnabled) {
+        input = null; // everything below depends on this gate
+      }
+      continue;
+    }
+    input ??= new Set(
+      filterStore.annotationsPassingNonGateFilters.map(
+        (annotation) => annotation.id,
+      ),
+    );
+    const reaching: Set<string> = input;
+    const inside = ids.filter((id) => reaching.has(id));
+    counts[plot.id] = inside.length;
+    if (plot.gateEnabled) {
+      input = new Set(inside);
+    }
+  }
+  return counts;
+});
+
 const passingCount = computed(() => filterStore.filteredAnnotations.length);
 
 // Disabled rather than silently no-op: the store refuses past the cap
@@ -564,8 +666,28 @@ function addPlot() {
   filterStore.addAnalysisPlot(uuidv4());
 }
 
+const hasUmap = computed(() => filterStore.umapAxes !== null);
+const umapPlotExists = computed(() => {
+  const axes = filterStore.umapAxes;
+  return (
+    axes !== null &&
+    plots.value.some(
+      (plot) =>
+        encodeAxis(plot.xAxis) === encodeAxis(axes.xAxis) &&
+        encodeAxis(plot.yAxis) === encodeAxis(axes.yAxis),
+    )
+  );
+});
+
+function addUmapPlot() {
+  filterStore.ensureUmapPlot(uuidv4());
+}
+
 defineExpose({
   addPlot,
+  addUmapPlot,
+  hasUmap,
+  serverDisplayActive,
   plots,
   plotInputs,
   seriesByPlot,
@@ -579,6 +701,7 @@ defineExpose({
   MAX_ANALYSIS_PLOTS,
   histogramsByPlot,
   histogramWork,
+  chainedGateCounts,
   skippedHistogramFilters,
   MAX_ANALYSIS_PLOT_POINTS,
 });
@@ -639,6 +762,7 @@ defineExpose({
 
 .analysis-actions {
   display: flex;
+  gap: 8px;
 }
 
 .analysis-footer {

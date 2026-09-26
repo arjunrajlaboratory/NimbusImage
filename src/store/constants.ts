@@ -44,6 +44,10 @@ export const MAX_ANALYSIS_PLOT_POINTS = 50000;
 // Bins per numeric axis for the over-cap heatmaps (clamped server-side at
 // 512; categorical axes bin one category per index regardless).
 export const ANALYSIS_HISTOGRAM_BINS = 128;
+// Dots drawn by a "dots" plot above the point cap: a random display sample
+// (gates still resolve over every object). Same as the cap, so dots mode draws
+// what the full scatter would at the largest population it handles.
+export const ANALYSIS_SAMPLE_POINTS = 50000;
 
 // Largest id-list filter the client will inline into a histogram request as
 // an idConstraints entry. Bigger lists are skipped and reported in the

@@ -154,6 +154,15 @@ describe("scopedMergePropertyValues", () => {
     expect(result.a).toEqual({ p: 1, q: 9 });
   });
 
+  it("retains nested sibling paths fetched in separate requests", () => {
+    const result = scopedMergePropertyValues(
+      { a: { spatial: { CD3E: 3 } } },
+      [{ annotationId: "a", values: { spatial: { MS4A1: 5 } } }],
+      new Set(["a"]),
+    );
+    expect(result.a).toEqual({ spatial: { CD3E: 3, MS4A1: 5 } });
+  });
+
   it("drops new entries whose id is not in the keep set", () => {
     const result = scopedMergePropertyValues(
       prev,

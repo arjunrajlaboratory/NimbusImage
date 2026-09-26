@@ -18,6 +18,7 @@ from nimbusimage.models import (
 )
 from nimbusimage.properties import PropertyAccessor
 from nimbusimage.sharing import SharingAccessor
+from nimbusimage.spatial import SpatialAccessor
 from nimbusimage.urls import (
     DEFAULT_FRONTEND_URL,
     dataset_info_url,
@@ -60,6 +61,7 @@ class Dataset:
         self.export = ExportAccessor(gc, dataset_id)
         self.history = HistoryAccessor(gc, dataset_id)
         self.sharing = SharingAccessor(gc, dataset_id)
+        self.spatial = SpatialAccessor(gc, dataset_id)
 
     def _ensure_metadata(self):
         """Fetch and cache metadata if not already loaded."""

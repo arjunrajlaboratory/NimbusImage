@@ -1,10 +1,15 @@
 import io
 import json
 import threading
+import time
 
+import bson
+from bson.objectid import ObjectId
+import numpy as np
 import pytest
 from PIL import Image
 
+from girder.exceptions import ValidationException
 from girder.models.folder import Folder
 from girder.models.token import Token
 from pytest_girder.assertions import assertStatus, assertStatusOk
@@ -12,18 +17,24 @@ from pytest_girder.assertions import assertStatus, assertStatusOk
 from upenncontrast_annotation.server.api import annotation as annotationApi
 from upenncontrast_annotation.server.helpers import annotationRaster
 from upenncontrast_annotation.server.helpers.annotationRaster import (
+    FilterMaskCache,
     FrameGeometryCache,
     RasterBuildBusy,
     RasterBuildRateLimited,
     RasterGeometryKey,
     RasterLayerSelector,
+    _geometryFromDocuments,
+    _geometryFromRawBatches,
+    _geometryMatch,
     _geometryPipeline,
     _buildFrameGeometry,
+    filterMaskCache,
     frameGeometryCache,
 )
 from upenncontrast_annotation.server.helpers.colormaps import (
     categoricalColor,
 )
+from upenncontrast_annotation.server.models import rasterFilter
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models.propertyValues import (
     AnnotationPropertyValues,
@@ -52,6 +63,114 @@ def rasterKey(datasetId="dataset", z=0, mode="shapes"):
         selectors=(RasterLayerSelector(0, 0, z, 0),),
         mode=mode,
     )
+
+
+GEOMETRY_FIELDS = (
+    "vertices",
+    "offsets",
+    "bboxes",
+    "centroids",
+    "radii",
+    "colors",
+    "validColors",
+    "shapes",
+)
+
+
+def assertSameGeometry(actual, expected):
+    for field in GEOMETRY_FIELDS:
+        actualValue = getattr(actual, field)
+        expectedValue = getattr(expected, field)
+        assert actualValue.dtype == expectedValue.dtype, field
+        assert np.array_equal(
+            actualValue,
+            expectedValue,
+            equal_nan=actualValue.dtype.kind == "f",
+        ), field
+    assert len(actual.grid) == len(expected.grid)
+    for actualCell, expectedCell in zip(actual.grid, expected.grid):
+        assert np.array_equal(actualCell, expectedCell)
+    # The NaN document makes the union NaN, as it does on the decoded path.
+    assert np.array_equal(
+        actual.unionBounds, expected.unionBounds, equal_nan=True
+    )
+    assert actual.nbytes == expected.nbytes
+
+
+def rawGeometryDocuments():
+    """Documents covering the raw shapes path and each decoded fallback."""
+    def floatPoints(count, offset=0.0):
+        return [
+            {"x": offset + index * 1.25, "y": offset - index * 0.5}
+            for index in range(count)
+        ]
+
+    return [
+        # Conforming: the layout the app writes, one- and two-digit keys.
+        {"shape": "polygon", "coordinates": floatPoints(4, 10.5),
+         "color": "#112233"},
+        {"shape": "polygon", "coordinates": floatPoints(12, 3.1),
+         "color": "#112233"},
+        {"shape": "polygon", "coordinates": floatPoints(4, 99.9),
+         "color": "#445566"},
+        # Cancellation that numpy's pairwise sum resolves differently from
+        # sum()'s left-to-right order: the centroid must follow sum().
+        {"shape": "polygon",
+         "coordinates": [
+             {"x": value, "y": float(index)}
+             for index, value in enumerate(
+                 [1e17] + [1.0] * 7 + [-1e17] + [1.0] * 8
+             )
+         ],
+         "color": "#445566"},
+        # Integer coordinates and a z value decode through pymongo.
+        {"shape": "polygon",
+         "coordinates": [{"x": 0, "y": 0}, {"x": 10, "y": 0},
+                         {"x": 10, "y": 10}],
+         "color": "#112233"},
+        {"shape": "point", "coordinates": [{"x": 5.5, "y": 6.5, "z": 1.0}],
+         "color": "#112233"},
+        # Other key order, and a NaN, have the conforming length.
+        {"shape": "line",
+         "coordinates": [{"y": 1.5, "x": 2.5}, {"y": 3.5, "x": 4.5}],
+         "color": "#112233"},
+        # NaN second: Python's min() keeps 2.0 where numpy's would be NaN.
+        {"shape": "polygon",
+         "coordinates": [{"x": 2.0, "y": 3.0},
+                         {"x": float("nan"), "y": 1.0}],
+         "color": "#112233"},
+        # Skipped: empty, missing and null coordinates.
+        {"shape": "polygon", "coordinates": [], "color": "#112233"},
+        {"shape": "polygon", "color": "#112233"},
+        {"shape": "polygon", "coordinates": None, "color": "#112233"},
+        # Invalid, null and absent colors; unknown and null shapes; the
+        # fields in another order.
+        {"shape": "polygon", "coordinates": floatPoints(3), "color": "red"},
+        {"shape": "polygon", "coordinates": floatPoints(3), "color": None},
+        {"shape": "rectangle", "coordinates": floatPoints(4)},
+        {"shape": "blob", "coordinates": floatPoints(3), "color": "#abcdef"},
+        {"shape": None, "coordinates": floatPoints(3), "color": "#abcdef"},
+        {"color": "#abcdef", "coordinates": floatPoints(5, -7.25),
+         "shape": "polygon"},
+    ]
+
+
+def pointGeometry(count):
+    """A frame geometry of ``count`` points, and its annotation id strings."""
+    ids = [ObjectId() for _ in range(count)]
+    geometry = _geometryFromDocuments(
+        [
+            {
+                "_id": annotationId,
+                "shape": "point",
+                "coordinates": [{"x": index, "y": index}],
+                "color": None,
+            }
+            for index, annotationId in enumerate(ids)
+        ],
+        rasterKey(),
+    )
+    return geometry, [str(annotationId) for annotationId in ids]
 
 
 def responseBytes(response):
@@ -94,8 +213,10 @@ def requestTile(server, dataset, user=None, **overrides):
 @pytest.fixture(autouse=True)
 def clearRasterCache():
     frameGeometryCache.clear()
+    filterMaskCache.clear()
     yield
     frameGeometryCache.clear()
+    filterMaskCache.clear()
 
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
@@ -289,6 +410,170 @@ class TestAnnotationRaster:
         assert response.headers["Retry-After"] == "1"
         assert anonymousIdentities[0][1] == str(folder["_id"])
 
+    def testFilterMasksLiveOnTheGeometryAndAreCapped(self):
+        """Masks are stored on the geometry (dropped with it when the
+        geometry cache evicts it), a few per geometry, oldest first; the
+        passing set is computed once per key."""
+        cache = FilterMaskCache()
+        geometry, ids = pointGeometry(3)
+        calls = []
+
+        def compute(passing):
+            def run():
+                calls.append(passing)
+                return passing
+            return run
+
+        mask = cache.mask(geometry, "a", compute(ids[:2]))
+        assert mask.tolist() == [True, True, False]
+        assert cache.mask(geometry, "a", compute(ids)) is mask
+        assert geometry.filterMasks == {"a": mask}
+        assert not hasattr(cache, "_masks")
+
+        other, _ = pointGeometry(2)
+        # Same passing key on another geometry: the passing set is reused.
+        assert cache.mask(other, "a", compute([])).tolist() == [
+            False, False,
+        ]
+        assert len(calls) == 1
+
+        limit = annotationRaster.RASTER_FILTER_MASKS_PER_GEOMETRY
+        for index in range(limit):
+            cache.mask(geometry, "k%d" % index, compute(ids[:1]))
+        assert list(geometry.filterMasks) == [
+            "k%d" % index for index in range(limit)
+        ]
+
+    def testConcurrentFilterRequestsForSameKeyBuildOnce(self):
+        cache = FilterMaskCache()
+        geometry, ids = pointGeometry(2)
+        started = threading.Event()
+        finish = threading.Event()
+        builds = []
+
+        def compute():
+            builds.append(1)
+            started.set()
+            finish.wait(timeout=2)
+            return ids[:1]
+
+        results = []
+        first = threading.Thread(
+            target=lambda: results.append(cache.mask(geometry, "a", compute))
+        )
+        second = threading.Thread(
+            target=lambda: results.append(
+                cache.mask(pointGeometry(2)[0], "a", compute)
+            )
+        )
+        first.start()
+        assert started.wait(timeout=1)
+        second.start()
+        finish.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+        assert not first.is_alive() and not second.is_alive()
+        assert len(results) == 2
+        assert len(builds) == 1
+        # The build's key lock is gone once the set is stored.
+        assert cache._locks == {}
+
+    def testFilterWaitOnSameKeyBuildIsBounded(self, monkeypatch):
+        monkeypatch.setattr(
+            annotationRaster, "RASTER_FILTER_BUILD_WAIT_SECONDS", 0.05
+        )
+        cache = FilterMaskCache()
+        geometry, ids = pointGeometry(2)
+        started = threading.Event()
+        finish = threading.Event()
+
+        def compute():
+            started.set()
+            finish.wait(timeout=2)
+            return ids
+
+        worker = threading.Thread(
+            target=lambda: cache.mask(geometry, "a", compute)
+        )
+        worker.start()
+        assert started.wait(timeout=1)
+        with pytest.raises(RasterBuildBusy):
+            cache.mask(pointGeometry(1)[0], "a", compute)
+        finish.set()
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+
+    def testFailedFilterBuildIsNotCachedAndReleasesItsLock(self):
+        cache = FilterMaskCache()
+        geometry, ids = pointGeometry(2)
+
+        def fail():
+            raise ValueError("bad gate")
+
+        with pytest.raises(ValueError):
+            cache.mask(geometry, "a", fail)
+        assert cache._locks == {}
+        assert cache.mask(geometry, "a", lambda: ids).tolist() == [
+            True, True,
+        ]
+
+    def testRasterFilterRegistrationsAreCappedPerUser(
+        self, admin, user, monkeypatch
+    ):
+        monkeypatch.setattr(rasterFilter, "MAX_RASTER_FILTERS_PER_USER", 3)
+        model = rasterFilter.RasterFilter()
+        datasetId = ObjectId()
+        keys = []
+        for index in range(5):
+            keys.append(model.register(
+                datasetId, {"tags": {"values": [str(index)]}}, admin
+            ))
+            # Mongo stores milliseconds: keep "oldest" unambiguous.
+            time.sleep(0.005)
+        otherKey = model.register(datasetId, {"tags": {"values": ["x"]}},
+                                  user)
+        remaining = {
+            document["_id"]: document["userId"]
+            for document in model.find({"_id": {"$in": keys + [otherKey]}})
+        }
+        # The admin's two oldest are gone; the other user's is untouched.
+        assert set(remaining) == set(keys[2:]) | {otherKey}
+        assert remaining[otherKey] == user["_id"]
+        assert model.filtersFor(keys[0], datasetId) is None
+        assert model.filtersFor(keys[4], datasetId) == {
+            "tags": {"values": ["4"]}
+        }
+        # The upserted document goes through validate().
+
+        def reject(document):
+            raise ValidationException("rejected")
+
+        monkeypatch.setattr(model, "validate", reject)
+        with pytest.raises(ValidationException):
+            model.register(datasetId, {"tags": {"values": ["y"]}}, admin)
+
+    def testFilterBuildCapacityErrorsReturnRetryableResponses(
+        self, admin, server, monkeypatch
+    ):
+        # Anonymous request rates are limited at the proxy
+        # (CytoPixel/AWSDeploy#120), not per IP here.
+        error, status = RasterBuildBusy(), 503
+        folder = utilities.createFolder(
+            admin,
+            "raster_filter_capacity_{}".format(status),
+            upenn_utilities.datasetMetadata,
+        )
+        Folder().setPublic(folder, True, save=True)
+
+        def rejectMask(_geometry, _key, _compute):
+            raise error
+
+        monkeypatch.setattr(annotationApi.filterMaskCache, "mask", rejectMask)
+        response = requestTile(server, folder, params={"filter": "0" * 64})
+
+        assertStatus(response, status)
+        assert response.headers["Retry-After"] == "1"
+
     def testGeometryCacheEvictsByRetainedBytes(self, monkeypatch):
         class SizedGeometry:
             def __init__(self, nbytes):
@@ -332,27 +617,19 @@ class TestAnnotationRaster:
         ])
         point = CountingCoordinates([{"x": 100, "y": 100}])
 
-        class AnnotationModel:
-            collection = object()
-
-            def _aggregate(self, collection, pipeline):
-                assert collection is self.collection
-                assert pipeline[-1]["$project"]["coordinates"] == 1
-                return iter([
-                    {
-                        "color": "#112233",
-                        "coordinates": polygon,
-                        "shape": "polygon",
-                    },
-                    {
-                        "color": None,
-                        "coordinates": point,
-                        "shape": "point",
-                    },
-                ])
-
-        geometry = _buildFrameGeometry(
-            AnnotationModel(),
+        geometry = _geometryFromDocuments(
+            [
+                {
+                    "color": "#112233",
+                    "coordinates": polygon,
+                    "shape": "polygon",
+                },
+                {
+                    "color": None,
+                    "coordinates": point,
+                    "shape": "point",
+                },
+            ],
             rasterKey(),
         )
 
@@ -371,9 +648,63 @@ class TestAnnotationRaster:
         ]
         assert geometry.centroids.tolist() == [[5, 5], [100, 100]]
         assert geometry.radii.tolist() == [5, 0]
-        assert geometry.nbytes == 320
+        # 320 bytes of geometry + two 12-byte annotation ids (used to mask
+        # the frame to the viewer's filters).
+        assert geometry.nbytes == 344
         assert geometry.candidates((-1, -1, 11, 11)).tolist() == [0]
         assert geometry.candidates((99, 99, 101, 101)).tolist() == [1]
+
+    def testRawBatchGeometryMatchesDecodedGeometry(self):
+        encoded = [
+            bson.encode({"_id": bson.ObjectId(), **document})
+            for document in rawGeometryDocuments()
+        ]
+        # Documents split across batches, as a cursor returns them.
+        geometry = _geometryFromRawBatches(
+            [b"".join(encoded[:5]), b"".join(encoded[5:])]
+        )
+
+        assertSameGeometry(
+            geometry,
+            _geometryFromDocuments(
+                [bson.decode(document) for document in encoded],
+                rasterKey(),
+            ),
+        )
+        # Every document with coordinates, the integer and z ones included.
+        assert geometry.count == 14
+        assert geometry.coordinates(4).tolist() == [
+            [0, 0], [10, 0], [10, 10],
+        ]
+        assert geometry.validColors.tolist().count(False) == 3
+
+    def testShapesBuildReadsFrameFromMongo(self, db):
+        datasetId = bson.ObjectId()
+        documents = [
+            {
+                "datasetId": datasetId,
+                "channel": 0,
+                "location": {"XY": 0, "Z": 0, "Time": 0},
+                **document,
+            }
+            for document in rawGeometryDocuments()
+        ]
+        # Another channel and another dataset stay out of the frame.
+        documents.append({**documents[0], "channel": 1})
+        documents.append({**documents[0], "datasetId": bson.ObjectId()})
+        Annotation().collection.insert_many(documents)
+        key = rasterKey(datasetId)
+
+        geometry = _buildFrameGeometry(Annotation(), key)
+
+        assertSameGeometry(
+            geometry,
+            _geometryFromDocuments(
+                Annotation().find(_geometryMatch(key), sort=[("_id", 1)]),
+                key,
+            ),
+        )
+        assert geometry.count == 14
 
     def testPolygonAndSubpixelRendering(self, admin, server):
         folder = utilities.createFolder(
@@ -480,6 +811,84 @@ class TestAnnotationRaster:
         assert image.getpixel((20, 20)) == (17, 34, 51, 255)
         assert image.getpixel((60, 60)) == (0, 0, 0, 0)
         assert image.getpixel((90, 90)) == (0, 0, 0, 0)
+
+    def testRegisteredFilterDrawsOnlyPassingObjects(
+        self, admin, user, server
+    ):
+        """The overview follows the viewer's filters: a registered filter
+        (tags here; gates and id lists travel the same way) leaves the
+        objects failing it out of the tile."""
+        folder = utilities.createFolder(
+            admin, "raster_viewer_filters", upenn_utilities.datasetMetadata
+        )
+        # Private, so the non-owner `user` fixture has no access.
+        Folder().setPublic(folder, False, save=True)
+        kept = createAnnotation(
+            folder["_id"], [{"x": 20, "y": 20}], shape="point",
+            color="#112233", tags=["B"],
+        )
+        createAnnotation(
+            folder["_id"], [{"x": 60, "y": 60}], shape="point",
+            color="#445566", tags=["T"],
+        )
+
+        def register(filters, who=admin):
+            return server.request(
+                path="/upenn_annotation/raster/filter", method="POST",
+                user=who, type="application/json",
+                body=json.dumps({
+                    "datasetId": str(folder["_id"]), "filters": filters,
+                }),
+            )
+
+        resp = register({"tags": {"values": ["B"], "exclusive": False}})
+        assertStatusOk(resp)
+        key = resp.json["key"]
+        # Content-addressed: the same spec is the same key.
+        assert register(
+            {"tags": {"values": ["B"], "exclusive": False}}
+        ).json["key"] == key
+
+        unfiltered = responseImage(requestTile(server, folder, admin))
+        assert unfiltered.getpixel((60, 60)) == (68, 85, 102, 255)
+        response = requestTile(
+            server, folder, admin, params={"filter": key}
+        )
+        assertStatusOk(response)
+        image = responseImage(response)
+        assert image.getpixel((20, 20)) == (17, 34, 51, 255)
+        assert image.getpixel((60, 60)) == (0, 0, 0, 0)
+        # The filter is part of the tile identity.
+        assert response.headers["ETag"] != requestTile(
+            server, folder, admin
+        ).headers["ETag"]
+
+        # An id-list filter (the selection) works the same way.
+        resp = register({"idConstraints": [[str(kept["_id"])]]})
+        image = responseImage(requestTile(
+            server, folder, admin, params={"filter": resp.json["key"]}
+        ))
+        assert image.getpixel((20, 20)) == (17, 34, 51, 255)
+        assert image.getpixel((60, 60)) == (0, 0, 0, 0)
+
+        # Validation and access: bad filters 400, no access 403, anonymous
+        # 401, a malformed key 400, an unknown key 404, and a key from
+        # another dataset does not apply here.
+        assertStatus(register({"tags": "B"}), 400)
+        assertStatus(register({}, who=user), 403)
+        assertStatus(register({}, who=None), 401)
+        assertStatus(requestTile(
+            server, folder, admin, params={"filter": "nope"}
+        ), 400)
+        assertStatus(requestTile(
+            server, folder, admin, params={"filter": "0" * 64}
+        ), 404)
+        other = utilities.createFolder(
+            admin, "raster_other", upenn_utilities.datasetMetadata
+        )
+        assertStatus(requestTile(
+            server, other, admin, params={"filter": key}
+        ), 404)
 
     def testPointRadiusIsConstantAcrossLevels(self, admin, server):
         folder = utilities.createFolder(

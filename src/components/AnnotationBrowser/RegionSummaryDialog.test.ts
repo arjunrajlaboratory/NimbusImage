@@ -1,0 +1,213 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
+import { shallowMount } from "@vue/test-utils";
+
+const mocks = vi.hoisted(() => ({
+  regionSummary: vi.fn(),
+  downloadToClient: vi.fn(),
+}));
+
+// Reactive, so the dataset watcher sees a switch.
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      dataset: { id: "ds1", name: "Lymph" },
+      spatialAPI: { regionSummary: mocks.regionSummary },
+    }),
+  };
+});
+vi.mock("@/store/spatial", async () => {
+  const { reactive } = await import("vue");
+  return { default: reactive({ hasTable: true }) };
+});
+vi.mock("@/store/annotation", () => ({
+  default: {
+    annotationTags: ["cell", "T", "region", "B"],
+    selectedAnnotationIds: new Set(["r1", "r2", "pt"]),
+    // r1 is a known polygon, r2 is not loaded, pt is a point.
+    getAnnotationOrStubFromId: (id: string) =>
+      id === "pt"
+        ? { shape: "point" }
+        : id === "r1"
+          ? { shape: "polygon" }
+          : undefined,
+  },
+}));
+vi.mock("@/utils/download", () => ({
+  downloadToClient: mocks.downloadToClient,
+}));
+vi.mock("@/utils/log", () => ({ logError: vi.fn() }));
+vi.mock("@/utils/errors", () => ({
+  extractErrorMessage: (error: any) => error?.message ?? String(error),
+}));
+vi.mock("papaparse", () => ({
+  default: {
+    unparse: ({ fields, data }: any) =>
+      [fields.join(","), ...data.map((row: any[]) => row.join(","))].join("\n"),
+  },
+}));
+
+import store from "@/store";
+import RegionSummaryDialog from "./RegionSummaryDialog.vue";
+import spatialStore from "@/store/spatial";
+
+const ROWS = [
+  {
+    id: "r1",
+    name: "follicle",
+    tags: ["region"],
+    cells: 6,
+    composition: [
+      { type: "B", count: 4 },
+      { type: "T", count: 2 },
+    ],
+    expression: [
+      { symbol: "CD3E", mean: 1.25, fractionExpressing: 0.5, expressing: 3 },
+    ],
+    rows: 6,
+  },
+  {
+    id: "r2",
+    name: "medulla",
+    tags: ["region"],
+    cells: 1,
+    composition: [{ type: "T", count: 1 }],
+    expression: [
+      { symbol: "CD3E", mean: null, fractionExpressing: 0, expressing: 0 },
+    ],
+    rows: 0,
+  },
+];
+
+describe("RegionSummaryDialog", () => {
+  beforeEach(() => {
+    (store as any).dataset = { id: "ds1", name: "Lymph" };
+    mocks.regionSummary.mockReset().mockResolvedValue(ROWS);
+    mocks.downloadToClient.mockReset();
+    (spatialStore as any).hasTable = true;
+  });
+
+  it("offers the dataset's tags and summarizes the chosen one with genes", async () => {
+    const wrapper = shallowMount(RegionSummaryDialog);
+    const vm = wrapper.vm as any;
+    expect(vm.tagOptions).toEqual(["B", "T", "cell", "region"]);
+    await vm.refresh(); // no tag yet: nothing happens
+    expect(mocks.regionSummary).not.toHaveBeenCalled();
+    vm.regionTag = "region";
+    vm.symbols = ["CD3E"];
+    await vm.refresh();
+    expect(mocks.regionSummary).toHaveBeenCalledWith(
+      "ds1",
+      { regionTag: "region" },
+      ["CD3E"],
+    );
+    expect(vm.rows).toEqual(ROWS);
+    expect(vm.buildCsv().split("\n")).toEqual([
+      "region,cells,B,T,CD3E",
+      "follicle,6,4,2,1.25",
+      "medulla,1,0,1,",
+    ]);
+  });
+
+  it("labels the columns with the genes the request was sent with", async () => {
+    let resolve!: (rows: typeof ROWS) => void;
+    mocks.regionSummary.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    const wrapper = shallowMount(RegionSummaryDialog);
+    const vm = wrapper.vm as any;
+    vm.regionTag = "region";
+    vm.symbols = ["CD3E"];
+    const pending = vm.refresh();
+    vm.symbols = ["MS4A1"]; // edited while the request runs
+    resolve(ROWS);
+    await pending;
+    expect(vm.symbolsShown).toEqual(["CD3E"]);
+    expect(vm.buildCsv().split("\n")[0]).toBe("region,cells,B,T,CD3E");
+  });
+
+  it("drops results, and in-flight answers, from another dataset", async () => {
+    const wrapper = shallowMount(RegionSummaryDialog);
+    const vm = wrapper.vm as any;
+    vm.regionTag = "region";
+    await vm.refresh();
+    expect(vm.rows).toEqual(ROWS);
+    (store as any).dataset = { id: "ds2", name: "Other" };
+    await nextTick();
+    expect(vm.rows).toEqual([]);
+    expect(vm.regionTag).toBeNull();
+
+    let resolve!: (rows: typeof ROWS) => void;
+    mocks.regionSummary.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    vm.regionTag = "region";
+    const pending = vm.refresh();
+    (store as any).dataset = { id: "ds3", name: "Third" };
+    await nextTick();
+    resolve(ROWS);
+    await pending;
+    expect(vm.rows).toEqual([]);
+  });
+
+  it("locks the region inputs while a summary runs", async () => {
+    let resolve!: (rows: typeof ROWS) => void;
+    mocks.regionSummary.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    const wrapper = shallowMount(RegionSummaryDialog, {
+      global: { renderStubDefaultSlot: true },
+    });
+    const vm = wrapper.vm as any;
+    vm.dialog = true;
+    vm.regionTag = "region";
+    const pending = vm.refresh();
+    await nextTick();
+    const radio = wrapper.findComponent({ name: "VRadioGroup" });
+    const tag = wrapper.findComponent({ name: "VCombobox" });
+    expect(radio.exists() && tag.exists()).toBe(true);
+    expect(
+      radio.props("disabled") ?? radio.attributes("disabled"),
+    ).toBeTruthy();
+    expect(tag.props("disabled") ?? tag.attributes("disabled")).toBeTruthy();
+    resolve(ROWS);
+    await pending;
+    await nextTick();
+    expect(radio.props("disabled") ?? radio.attributes("disabled")).toBeFalsy();
+  });
+
+  it("asks for no genes without a table and surfaces errors", async () => {
+    (spatialStore as any).hasTable = false;
+    const wrapper = shallowMount(RegionSummaryDialog);
+    const vm = wrapper.vm as any;
+    vm.regionTag = "region";
+    vm.symbols = ["CD3E"];
+    await nextTick();
+    await vm.refresh();
+    expect(mocks.regionSummary).toHaveBeenCalledWith(
+      "ds1",
+      { regionTag: "region" },
+      [],
+    );
+    // The current selection can be the regions instead of a tag.
+    vm.source = "selection";
+    await nextTick();
+    expect(vm.canSummarize).toBe(true);
+    await vm.refresh();
+    expect(mocks.regionSummary).toHaveBeenLastCalledWith(
+      "ds1",
+      { regionIds: ["r1", "r2"] },
+      [],
+    );
+    mocks.regionSummary.mockRejectedValue(new Error("offline"));
+    await vm.refresh();
+    expect(vm.error).toBe("offline");
+  });
+});

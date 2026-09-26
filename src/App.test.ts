@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { nextTick } from "vue";
+import { routeLocationKey } from "vue-router";
 import { shallowMount, flushPromises } from "@vue/test-utils";
 
 vi.mock("@/utils/log", () => ({
@@ -43,6 +44,18 @@ vi.mock("@/store/filters", () => ({
   },
 }));
 
+vi.mock("@/store/transcripts", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      hasTranscripts: false,
+      error: null,
+      loading: false,
+      ensureSchema: vi.fn(),
+    }),
+  };
+});
+
 vi.mock("axios", () => ({
   default: {
     get: vi
@@ -68,6 +81,7 @@ import App from "./App.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
+import transcriptsStore from "@/store/transcripts";
 import axios from "axios";
 import { logError } from "@/utils/log";
 
@@ -83,6 +97,7 @@ const mockRouter = {
 function mountComponent(
   routeOverrides: Record<string, any> = {},
   extraStubs: Record<string, any> = {},
+  providedRoute = routeProvider({ ...mockRoute, ...routeOverrides }),
 ) {
   return shallowMount(App, {
     global: {
@@ -91,7 +106,7 @@ function mountComponent(
         $startTour: vi.fn(),
       },
       provide: {
-        ...routeProvider({ ...mockRoute, ...routeOverrides }),
+        ...providedRoute,
         ...routerProvider(mockRouter),
       },
       stubs: {
@@ -143,6 +158,8 @@ describe("App", () => {
     (propertyStore as any).uncomputedCountByProperty = {};
     (filterStore as any).activeFilterCount = 0;
     (filterStore as any).activeAnalysisGateCount = 0;
+    (transcriptsStore as any).error = null;
+    (transcriptsStore as any).loading = false;
     (axios.get as any) = vi
       .fn()
       .mockResolvedValue({ data: [{ name: "Tool1", type: "create" }] });
@@ -150,6 +167,21 @@ describe("App", () => {
   });
 
   // -- Computed: routeName --
+  it("keeps the Transcripts control reachable after schema failure and during retry", async () => {
+    const wrapper = mountWithAppBar();
+    expect(wrapper.find('[aria-label="Transcripts"]').exists()).toBe(false);
+    (transcriptsStore as any).error =
+      "Could not read the dataset's transcript store.";
+    await nextTick();
+    await wrapper.get('[aria-label="Transcripts"]').trigger("click");
+    expect((wrapper.vm as any).transcriptsPanel).toBe(true);
+    (transcriptsStore as any).error = null;
+    (transcriptsStore as any).loading = true;
+    await nextTick();
+    expect(wrapper.find('[aria-label="Transcripts"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
   it("routeName returns the current route name", () => {
     const wrapper = mountComponent({ name: "datasetview" });
     const vm = wrapper.vm as any;
@@ -161,6 +193,47 @@ describe("App", () => {
     const vm = wrapper.vm as any;
     expect(vm.routeName).toBe("root");
   });
+
+  it.each([
+    { name: "embed", query: {} },
+    { name: "datasetview", query: { embed: "1" } },
+  ])(
+    "keeps palettes closed after entering an embedded viewer: $name",
+    async (destination) => {
+      const providedRoute = routeProvider();
+      const route = providedRoute[routeLocationKey as symbol];
+      const wrapper = mountComponent({}, renderAppBarStubs, providedRoute);
+      const vm = wrapper.vm as any;
+      Object.assign(route, destination);
+      await nextTick();
+      (store as any).dataset = { id: "ds1", name: "Dataset" };
+      await flushPromises();
+      expect(vm.navigatorPanel).toBe(false);
+      expect(vm.layersPanel).toBe(false);
+      expect(vm.toolsPanel).toBe(false);
+      expect(wrapper.findComponent({ name: "NavigatorPanel" }).exists()).toBe(
+        false,
+      );
+
+      // Late viewer requests and keyboard toggles must not reopen either side.
+      (store as any).paletteOpenRequests = ["analysisPanel", "filtersPanel"];
+      vm.togglePalette("navigatorPanel");
+      await nextTick();
+      expect(vm.analysisPanel).toBe(false);
+      expect(vm.filtersPanel).toBe(false);
+      expect(vm.navigatorPanel).toBe(false);
+      expect(store.setPaletteOpenRequests).toHaveBeenCalledWith([]);
+
+      // The normalized route name stays datasetview: leaving embed must still
+      // restore the ordinary shared viewer's default controls.
+      Object.assign(route, { name: "shared", query: {} });
+      await nextTick();
+      expect(vm.navigatorPanel).toBe(true);
+      expect(vm.layersPanel).toBe(true);
+      expect(vm.toolsPanel).toBe(true);
+      wrapper.unmount();
+    },
+  );
 
   // -- Method: togglePalette --
   it("togglePalette opens a palette", () => {

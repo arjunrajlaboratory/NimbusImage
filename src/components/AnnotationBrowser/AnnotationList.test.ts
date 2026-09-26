@@ -170,8 +170,9 @@ function makeAnnotation(overrides: any = {}) {
   };
 }
 
-function mountComponent() {
+function mountComponent(props: Record<string, unknown> = {}) {
   return shallowMount(AnnotationList, {
+    props,
     global: {
       stubs: {
         TagSelectionDialog: true,
@@ -1187,6 +1188,26 @@ describe("AnnotationList", () => {
         sort: { type: "field", key: "location.XY", order: "asc" },
       });
       expect(mockFetchPage).toHaveBeenCalled();
+    });
+
+    it("defers server fetches while hidden and runs one when shown", async () => {
+      // The list stays mounted inside its closed palette; with a gate, each
+      // fetch is a whole-dataset resolve nobody would see.
+      (annotationStore as any).stubOnlyMode = true;
+      mockFetchPage.mockClear();
+      const wrapper = mountComponent({ visible: false });
+      const vm = wrapper.vm as any;
+      expect(mockFetchPage).not.toHaveBeenCalled();
+      vm.fetchServerPageWhenShown();
+      expect(mockFetchPage).not.toHaveBeenCalled();
+      await wrapper.setProps({ visible: true });
+      expect(mockFetchPage).toHaveBeenCalledTimes(1);
+      // Shown: fetches go straight through, and nothing is left deferred.
+      vm.fetchServerPageWhenShown();
+      expect(mockFetchPage).toHaveBeenCalledTimes(2);
+      await wrapper.setProps({ visible: false });
+      await wrapper.setProps({ visible: true });
+      expect(mockFetchPage).toHaveBeenCalledTimes(2);
     });
 
     it("onServerOptions is a no-op when options match the store state (mount dedup)", () => {

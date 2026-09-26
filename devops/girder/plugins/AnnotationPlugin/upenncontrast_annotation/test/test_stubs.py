@@ -200,6 +200,87 @@ class TestStubs:
         assert len(stubs) == 1
         assert "alpha" in stubs[0]["tags"]
 
+    def testStubsMatchPreviousPipeline(self, admin):
+        """The $let pipeline returns exactly what the one that evaluated
+        $coordinates.x/.y per operator did: same documents, field order and
+        values (ints, a z, empty/missing/null coordinates, NaN, a stored
+        `centroid` overwritten in place), in _id order, filters included."""
+        folder = utilities.createFolder(
+            admin, "stubs_equivalence", upenn_utilities.datasetMetadata
+        )
+        other = utilities.createFolder(
+            admin, "stubs_equivalence_other", upenn_utilities.datasetMetadata
+        )
+        base = {"datasetId": folder["_id"], "tags": ["cell"], "channel": 0,
+                "location": {"XY": 0, "Z": 0, "Time": 0},
+                "shape": "polygon", "color": "#112233"}
+        coordinateCases = [
+            [
+                {"x": 1.5, "y": 2.25}, {"x": 3.0, "y": 8.0},
+                {"x": 0.1, "y": 0.7},
+            ],
+            [{"x": 1, "y": 2}, {"x": 4, "y": 10}],
+            [{"x": 1.0, "y": 2.0, "z": 5.0}, {"x": 7.0, "y": 3.0, "z": 1.0}],
+            [{"y": 2.0, "x": 1.0}, {"y": 6.0, "x": 9.0}],
+            [{"x": float("nan"), "y": 1.0}, {"x": 2.0, "y": 3.0}],
+            [],
+            None,
+        ]
+        documents = [dict(base, coordinates=c) for c in coordinateCases]
+        documents.append(dict(base))  # no coordinates at all
+        documents.append(dict(
+            base, centroid="stale", tags=["B Cell"], shape="point",
+            coordinates=[{"x": 5.0, "y": 5.0}],
+        ))
+        documents.append(dict(
+            base, datasetId=other["_id"], coordinates=[{"x": 1, "y": 1}]
+        ))
+        Annotation().collection.insert_many(documents)
+
+        def previous(match):
+            return list(Annotation().collection.aggregate([
+                {"$match": match},
+                {"$addFields": {
+                    "centroid": {
+                        "x": {"$avg": "$coordinates.x"},
+                        "y": {"$avg": "$coordinates.y"},
+                    },
+                    "estimatedRadius": {"$divide": [
+                        {"$max": [
+                            {"$subtract": [
+                                {"$max": "$coordinates.x"},
+                                {"$min": "$coordinates.x"},
+                            ]},
+                            {"$subtract": [
+                                {"$max": "$coordinates.y"},
+                                {"$min": "$coordinates.y"},
+                            ]},
+                        ]},
+                        2,
+                    ]},
+                }},
+                {"$project": {"coordinates": 0}},
+            ], hint={"datasetId": 1, "_id": 1}))
+
+        def encoded(documents):
+            return [json.dumps(d, default=str) for d in documents]
+
+        stubs = list(Annotation().stubs(folder["_id"]))
+        assert len(stubs) == 9
+        assert encoded(stubs) == encoded(
+            previous({"datasetId": folder["_id"]})
+        )
+        assert [s["_id"] for s in stubs] == sorted(s["_id"] for s in stubs)
+        filtered = list(Annotation().stubs(
+            folder["_id"], shape="point", tags=["B Cell"]
+        ))
+        assert encoded(filtered) == encoded(previous({
+            "datasetId": folder["_id"], "shape": "point",
+            "tags": {"$all": ["B Cell"]},
+        }))
+        # The stored `centroid` is replaced where it stood, not appended.
+        assert filtered[0]["centroid"] == {"x": 5.0, "y": 5.0}
+
     def testStubsInvalidDataset(self, admin, server):
         """Returns 400 for nonexistent dataset."""
         resp = server.request(

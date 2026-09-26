@@ -107,6 +107,22 @@ class TestAnnotation:
         ):
             Annotation().validate(sample)
 
+    @pytest.mark.parametrize("coordinates", [
+        None, [{"x": 1}], [{"x": "a", "y": 2}], [5],
+    ])
+    def testMalformedPolygonIsAValidationError(self, admin, coordinates):
+        # The geometry hash is derived before the schema validator runs; a
+        # malformed polygon must still reach the validator (a 400), not
+        # raise KeyError/TypeError/ValueError from hashing (a 500).
+        folder = utilities.createFolder(
+            admin, "malformed", upenn_utilities.datasetMetadata
+        )
+        sample = upenn_utilities.getSampleAnnotation(folder["_id"])
+        sample["shape"] = "polygon"
+        sample["coordinates"] = coordinates
+        with pytest.raises(ValidationException):
+            Annotation().save(sample)
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")

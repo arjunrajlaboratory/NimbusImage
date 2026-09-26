@@ -14,6 +14,8 @@ from bson.objectid import ObjectId
 
 from girder.exceptions import RestException
 
+from . import valueProviders
+
 from . import analysis
 
 # Request-size sanity ceilings: reject only degenerate/garbage payloads that
@@ -22,7 +24,11 @@ from . import analysis
 # ids and even "select all" on a multi-million-annotation dataset is < 100M).
 # These are guards, not tuning knobs — runtime is bounded by
 # AGGREGATION_MAX_TIME_MS, not by these.
-MAX_UNCOMPUTED_PROPERTIES = 100_000_000
+# Properties per uncomputed-counts request: the pipeline builds one
+# accumulator per property, so this bounds the command size (Mongo refuses
+# commands over 16 MiB) as well as the payload. A configuration holds a
+# few dozen properties at most.
+MAX_UNCOMPUTED_PROPERTIES = 10_000
 MAX_ANNOTATION_IDS = 100_000_000
 
 # Analysis-gating request ceilings (SERVER_GATING.md "Limits"): abuse guards
@@ -55,6 +61,12 @@ MAX_HISTOGRAM_BINS = 512
 # stays unaffected; only a degenerate request asking for an enormous page is
 # clamped down rather than served.
 MAX_LIST_LIMIT = 10_000
+
+# Property paths one selection-summary request may aggregate. Each path adds
+# five accumulators to a single $group over the dataset's property values, so
+# the cap bounds the pipeline's per-document work; comfortably above the
+# frontend's displayed-column cap and a whole marker panel.
+MAX_SUMMARY_PROPERTY_PATHS = 200
 
 
 def requireCountWithin(count, limit, name):
@@ -414,6 +426,21 @@ def validateAnalysisHistogramRequest(body):
         )
     if body.get("gate") is not None:
         _validateGateObject(body["gate"], xAxis, yAxis)
+    sample = body.get("sample")
+    if sample is not None:
+        # An optional display sample (dots instead of the heatmap): size is
+        # CLAMPED like bins; colorBy is one more axis.
+        if not isinstance(sample, dict):
+            raise RestException("sample must be an object", code=400)
+        colorBy = sample.get("colorBy")
+        if colorBy is not None:
+            _validateAnalysisAxis(colorBy, "sample.colorBy")
+        body["sample"] = {
+            "size": min(analysis.MAX_SAMPLE_POINTS, max(1, requireInt(
+                sample.get("size"), "sample.size"
+            ))),
+            "colorBy": colorBy,
+        }
     # Upstream gates AND this plot's own gate are all resolved server-side
     # for one response, so they share the request budget.
     _requireTotalVertexBudget(
@@ -584,6 +611,16 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
         ):
             raise RestException(
                 "sort.type must be 'field' or 'property'", code=400
+            )
+        if sort["type"] == "property" and valueProviders.isVirtualPath(
+            sort.get("key")
+        ):
+            # A virtual column has no Mongo field to sort on; the provider
+            # would have to rank every row per page. Refuse rather than sort
+            # by nothing.
+            raise RestException(
+                "sorting by a virtual (provider) column is not supported",
+                code=400,
             )
         if sort["type"] == "property" and not isValidPropertyPath(
             sort.get("key")

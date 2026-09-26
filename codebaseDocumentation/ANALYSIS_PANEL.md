@@ -335,6 +335,46 @@ represent multiple raw categories. Property-only gates have no category-key
 semantics and can be upgraded to the current version without guessing. The plot
 and axes remain so a dropped categorical gate can be redrawn.
 
+## Dots mode and the UMAP shortcut
+
+Above the cap a plot is a density heatmap by default, which is exact but is not
+what a UMAP normally looks like. A plot can instead be drawn as **dots**
+(`IAnalysisPlot.display = "dots"`): the server returns a random display sample
+(`ANALYSIS_SAMPLE_POINTS` = 50K) with the heatmap response, optionally colored
+by `IAnalysisPlot.colorBy` (SERVER_GATING.md, "Optional display sample"). The
+earlier "no sampling" rule is about GATES — a lasso over a sample that resolved
+to the sampled ids would drop every unsampled object — and still holds: the
+lasso becomes the same value-space polygon, resolved over every object. Only
+the picture is sampled, and the footer says so.
+
+- **Any size.** Below the cap a dots plot also draws from the server sample
+  (then every point), so choosing *Color by* is what turns dots on there; a
+  plain plot keeps the client scatter. The gate is still resolved client-side
+  below the cap — the two resolvers are parity-pinned.
+- **Coloring.** Categorical keys (tags → cell types) color by category; the
+  legend drops tags every category shares ("B Cell", not "B Cell, cell";
+  `colorLegendLabels`). A property named like a clustering (`clust`, `kmeans`,
+  `leiden`, `louvain`) with ≤ 30 integer values colors by category; any other
+  number — a gene count is an integer too — on a Viridis ramp over the 1st–99th
+  percentile, with a grey "No value" trace. The category palette
+  (`categoricalPalette.ts`) is Tableau 20 without its two grays, so no category
+  can be mistaken for "No value".
+- **Draw order.** All dots are one trace colored per point, in sample order
+  (effectively random with respect to category): a trace per category let the
+  largest categories paint over the small ones. The legend is empty proxy
+  traces, with legend clicks off (they would hide only the proxy).
+- **Gating.** Dots use lasso/box selection (`selectionEventToGate` with the
+  server's category orders), outline the persisted gate, and dim dots outside
+  it (drawn-polygon membership, a picture of the gate). Display and color
+  changes never invalidate the gate (`setAnalysisPlotDisplay`).
+- **UMAP shortcut.** `filters.umapAxes` (`findUmapAxes`) finds a property named
+  like a UMAP with x/y or numbered sub-values (the lowest number is x, so
+  `0`/`1` and `UMAP_1`/`UMAP_2` both order correctly). The toolbar's UMAP button and the
+  panel's "UMAP" action call `ensureUmapPlot`: reuse the plot of those axes
+  (switched to dots, keeping its color and gate) or add one colored by tags,
+  then open the panel. `display`/`colorBy` persist with the configuration;
+  unknown values fall back to the defaults without dropping the plot.
+
 ## Regression checklist
 
 Change any of this and re-check these. Each item names the test that holds it.
@@ -464,6 +504,7 @@ Change any of this and re-check these. Each item names the test that holds it.
 - Input arrays stay identity-stable when nothing changed, so a Z-scrub doesn't re-render every plot — *"keeps plot input arrays identity-stable when nothing changed"*
 - Memoised inputs for removed plots are dropped — *"drops memoised inputs for removed plots"*
 - A series is built per plot with both axes chosen — *"builds a series per plot with both axes chosen, and none without"*
+- Above the cap, the chained gate counts build no full-population id Set until a plot has a resolved gate (up to ~700K ids per recompute otherwise) — *"builds the reaching population only once a plot has a resolved gate"*
 
 **Selection safety (`src/components/AnnotationBrowser/AnnotationList.test.ts`)**
 - Every query change clears the global object selection in client and server modes, so an analysis gate cannot hide a selected object that a later bulk action deletes — *"clears the global selection when an analysis gate changes in client mode"*
@@ -475,6 +516,17 @@ Change any of this and re-check these. Each item names the test that holds it.
 - A bare selection event leaves the gate alone — *"ignores a selection event carrying no lasso or range"*
 - Deselect clears the gate — *"clears the gate on deselect"*
 - Gated points are marked selected; unresolved gates leave it null — *"marks the gated points as selected in the trace"*, *"leaves selectedpoints null when no gate has been resolved"*
+- Dots mode: one interleaved trace plus legend proxies, lasso → polygon gate,
+  outside-gate dots dimmed — `AnalysisScatterPlot.test.ts` ("dots mode" block);
+  a clustering colors by category while a gene count gets a ramp — *"colors a
+  clustering by category and anything else on a ramp"*; dots plots request a
+  sample at any population size — `AnalysisPanel.test.ts` *"asks for a colored
+  sample for dots plots"*; the sample is a stable subset across populations —
+  `test_analysis_gating.py::testSampleIsAStableSubsetAcrossPopulations`,
+  `testSampleReturnsColoredDots`; display/color persist and never invalidate
+  the gate — `annotationBrowserConfig.test.ts` *"keeps a plot's display and
+  color"*, `filters.test.ts` *"changes display and color without touching the
+  gate"*, *"opens the UMAP as colored dots"*.
 
 **Server-mode list (`src/store/__tests__/annotationListServer.test.ts`)**
 - Gates reach the list as AND-composed DEFINITIONS, never id lists

@@ -56,6 +56,7 @@ export const RIGHT_PALETTE_WIDTHS = {
   snapshots: 480,
   analyze: 480,
   analysis: 560,
+  transcripts: 400,
 } as const;
 
 /** Kept as its own name: the Object Browser is referenced by several callers. */

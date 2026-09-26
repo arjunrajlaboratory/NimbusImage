@@ -19,10 +19,12 @@ import {
   Mutation,
   VuexModule,
 } from "vuex-module-decorators";
-import { markRaw } from "vue";
+import { markRaw, toRaw } from "vue";
 import { v4 as uuidv4 } from "uuid";
 
 import AnnotationsAPI from "./AnnotationsAPI";
+import SpatialAPI from "./SpatialAPI";
+import ShareLinkAPI from "./ShareLinkAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ToolSuggestionsAPI from "./ToolSuggestionsAPI";
 import AgentAPI from "./AgentAPI";
@@ -79,6 +81,7 @@ import {
   IUserStorageQuota,
   TAnnotationBrowserTab,
   TRequestablePalette,
+  IShareLink,
 } from "./model";
 import {
   buildAnnotationBrowserConfig,
@@ -179,6 +182,16 @@ function storeToken(apiRoot: string, token: string) {
   localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(value));
 }
 
+let shareBootstrapSequence = 0;
+// The session a share link replaced, restored when the viewer leaves the
+// shared route (leaveShareLink). The link's client lives in memory only, so
+// without this a signed-in user who navigates back from a share link stays
+// the read-only link user until a reload.
+let shareLinkSession: {
+  linkClient: RestClientInstance;
+  previousClient: RestClientInstance;
+} | null = null;
+
 function clearStoredToken() {
   localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
@@ -237,22 +250,36 @@ let recentDatasetViewsRequestId = 0;
 // state because the debounce timer is never read by the UI.
 let annotationBrowserSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** The module's current girderRest (falls back to the construction-time
+ * instance before the module is registered). */
+function liveGirderRest(instance: Main): RestClientInstance {
+  return (
+    (store.state as { main?: Pick<Main, "girderRest"> }).main?.girderRest ??
+    instance.girderRest
+  );
+}
+
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
   girderRest = createGirderRestClient({
     apiRoot: apiRootFromGirderUrl(persister.get("girderUrl", defaultGirderUrl)),
   });
 
-  // Use a proxy to dynamically resolve to the right girderRest client
+  // Use a proxy to dynamically resolve to the right girderRest client. It
+  // must read the LIVE module state: `obj` is the instance the decorators
+  // built the initial state from, and a mutation that replaces `girderRest`
+  // (openShareLink commits the link's own client) never reaches it — every
+  // API class would keep sending the boot client's token, i.e. the stored
+  // login, or no token at all for a recipient without one.
   girderRestProxy = new Proxy(this, {
     get(obj: Main, prop: keyof RestClientInstance) {
-      return obj.girderRest[prop];
+      return liveGirderRest(obj)[prop];
     },
     set(target: Main, p: keyof RestClientInstance, newValue: any) {
       if (p != "token") {
         throw "Can only set token to RestClient";
       }
-      target.girderRest[p] = newValue;
+      liveGirderRest(target)[p] = newValue;
       return true;
     },
   }) as unknown as RestClientInstance;
@@ -266,6 +293,8 @@ export class Main extends VuexModule {
   // without breaking field-level reactivity on the API instance itself.
   api = new GirderAPI(this.girderRestProxy);
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
+  spatialAPI = new SpatialAPI(this.girderRestProxy);
+  shareLinkAPI = new ShareLinkAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
   toolSuggestionsAPI = new ToolSuggestionsAPI(this.girderRestProxy);
   agentAPI = new AgentAPI(this.girderRestProxy);
@@ -282,6 +311,10 @@ export class Main extends VuexModule {
   userStorageInfo: IUserStorageQuota | null = null;
 
   history: IHistoryEntry[] = [];
+
+  get shareLinkTileToken(): string | null {
+    return this.girderUser?.shareLink ? this.girderRest.token || null : null;
+  }
 
   selectedDatasetId: string | null = null;
   dataset: IDataset | null = null;
@@ -1043,8 +1076,13 @@ export class Main extends VuexModule {
         this.loadUserColors().catch((error) => {
           logError("Failed to load user colors during login:", error);
         }),
-        this.fetchUserStorageInfo(),
       );
+      // A share link's bearer has no storage and runs no jobs: skip the
+      // quota lookup (a logged error otherwise) and the notification socket
+      // (which its read-only token cannot open).
+      if (!user.shareLink) {
+        promises.push(this.fetchUserStorageInfo());
+      }
     } else {
       this.setAssetstores([]);
     }
@@ -1055,7 +1093,9 @@ export class Main extends VuexModule {
     );
     // Initialize notification websocket as soon as the user has logged in because
     // any notification sent without would be lost.
-    jobs.initializeNotificationSubscription();
+    if (!user?.shareLink) {
+      jobs.initializeNotificationSubscription();
+    }
     await Promise.allSettled(promises);
   }
 
@@ -1458,6 +1498,69 @@ export class Main extends VuexModule {
         return;
       }
       this.setRecentDatasetViewsImpl([]);
+    }
+  }
+
+  /**
+   * Open the app as the bearer of a share link (SHARING.md "Share links").
+   * The token is set on the REST client in memory only: the client persists
+   * a token solely on its own login event, so a user who is signed in on this
+   * browser keeps their stored login for the next reload.
+   */
+  @Action({ rawError: true })
+  async openShareLink({
+    token,
+    signal,
+  }: {
+    token: string;
+    signal?: AbortSignal;
+  }): Promise<IShareLink> {
+    const sequence = ++shareBootstrapSequence;
+    const previousClient = this.girderRest;
+    const previousToken = previousClient.token;
+    // Validate on an isolated client with no persisted-login handlers. Even
+    // a successful user/me followed by a failed link/me must not change the
+    // current token, Vuex identity, or user-dependent state.
+    const candidate = new RestClient({ apiRoot: previousClient.apiRoot });
+    candidate.token = token;
+    if (!(await candidate.fetchUser())) {
+      throw new Error("This share link is no longer valid.");
+    }
+    const link = await new ShareLinkAPI(candidate).me();
+    // The view owns this attempt. Leaving its route cancels the commit even
+    // when no newer login or share-link request has changed the session.
+    if (signal?.aborted) {
+      throw new Error("Share-link request was cancelled.");
+    }
+    if (
+      sequence !== shareBootstrapSequence ||
+      this.girderRest !== previousClient ||
+      previousClient.token !== previousToken
+    ) {
+      throw new Error("A newer session has replaced this share-link request.");
+    }
+    // Switching straight from one link to another restores the session from
+    // before the first, not the first link's client.
+    // Compared raw: Vuex state hands clients back as reactive proxies.
+    shareLinkSession = {
+      linkClient: candidate,
+      previousClient:
+        shareLinkSession?.linkClient === toRaw(previousClient)
+          ? shareLinkSession.previousClient
+          : toRaw(previousClient),
+    };
+    await this.loggedIn(candidate);
+    return link;
+  }
+
+  /** Leaving a shared route: give back the session the link replaced, unless
+   * something else (a login, a logout) has replaced the link's since. */
+  @Action({ rawError: true })
+  async leaveShareLink() {
+    const session = shareLinkSession;
+    shareLinkSession = null;
+    if (session && toRaw(this.girderRest) === session.linkClient) {
+      await this.loggedIn(session.previousClient);
     }
   }
 
@@ -3102,6 +3205,7 @@ export class Main extends VuexModule {
                 hist,
                 layer,
                 this.dataset,
+                this.shareLinkTileToken,
               )!,
             );
             results.fullUrls.push(
@@ -3116,6 +3220,7 @@ export class Main extends VuexModule {
                 hist,
                 layer,
                 this.dataset,
+                this.shareLinkTileToken,
               )!,
             );
           });
@@ -3155,6 +3260,7 @@ export class Main extends VuexModule {
             hist,
             layer,
             this.dataset,
+            this.shareLinkTileToken,
           ),
         ),
         fullUrls: images.map((image) =>
@@ -3169,6 +3275,7 @@ export class Main extends VuexModule {
             hist,
             layer,
             this.dataset,
+            this.shareLinkTileToken,
           ),
         ),
         hist,

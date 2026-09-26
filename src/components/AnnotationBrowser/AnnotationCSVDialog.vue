@@ -400,14 +400,10 @@ const bulkExportError = ref("");
 // O(subset) even when the stub map holds the whole dataset.
 const exportAnnotationIds = computed((): string[] | null => {
   if (annotationScope.value === "selected") {
-    // Drop selection ids that no longer resolve (a delete or undo can leave
-    // stale ids behind): counted against annotationCount below, a stale id
-    // could make a real subset look like the whole dataset and silently
-    // widen the export.
-    const resolve = annotationStore.getAnnotationOrStubFromId;
-    return Array.from(annotationStore.selectedAnnotationIds).filter(
-      (id) => resolve(id) !== undefined,
-    );
+    // Stale ids are dropped by the store getter: counted against
+    // annotationCount below, a stale id could make a real subset look like
+    // the whole dataset and silently widen the export.
+    return annotationStore.resolvedSelectedAnnotationIds;
   }
   if (annotationScope.value === "filtered") {
     return props.annotations.map((annotation) => annotation.id);

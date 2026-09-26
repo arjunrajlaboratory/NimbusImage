@@ -29,6 +29,7 @@ import {
   collectActiveConstraints,
   countActiveConstraints,
 } from "@/utils/activeConstraints";
+import { encodeAxis, findUmapAxes } from "@/utils/analysisAxes";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
 import { idListSignature } from "@/utils/signatures";
 
@@ -48,6 +49,7 @@ import {
   IAnnotationLocation,
   IAnnotationListFilters,
   TAnalysisAxis,
+  TAnalysisPlotDisplay,
 } from "./model";
 import {
   MAX_ANALYSIS_PLOTS,
@@ -507,6 +509,93 @@ export class Filters extends VuexModule {
         plot.id === id ? { ...plot, gateEnabled: !plot.gateEnabled } : plot,
       ),
     );
+  }
+
+  // How a plot draws (density heatmap or sampled dots) and what colors the
+  // dots. Display only: the gate is a polygon in value space and its ids do
+  // not depend on either, so nothing is invalidated.
+  @Action
+  setAnalysisPlotDisplay(payload: {
+    id: string;
+    display?: TAnalysisPlotDisplay;
+    colorBy?: TAnalysisAxis | null;
+  }) {
+    this.applyAnalysisPlots(
+      this.analysisPlots.map((plot) =>
+        plot.id === payload.id
+          ? {
+              ...plot,
+              ...(payload.display !== undefined
+                ? { display: payload.display }
+                : {}),
+              ...(payload.colorBy !== undefined
+                ? { colorBy: payload.colorBy }
+                : {}),
+            }
+          : plot,
+      ),
+    );
+  }
+
+  // Add a ready-made plot (axes and display chosen), e.g. the UMAP preset.
+  @Action
+  addPresetAnalysisPlot(plot: Omit<IAnalysisPlot, "gate" | "gateEnabled">) {
+    if (!this.canAddAnalysisPlot) {
+      return;
+    }
+    this.applyAnalysisPlots([
+      ...this.analysisPlots,
+      { ...plot, gate: null, gateEnabled: true },
+    ]);
+  }
+
+  // The dataset's UMAP axes (see findUmapAxes), null when it has none.
+  get umapAxes(): { xAxis: TAnalysisAxis; yAxis: TAnalysisAxis } | null {
+    return findUmapAxes(
+      properties.computedPropertyPaths,
+      (path) => properties.getPropertyById(path[0])?.name ?? "",
+    );
+  }
+
+  /**
+   * Show the UMAP as dots: the existing plot of the UMAP axes if there is
+   * one (switched to dots), otherwise a new one in dots mode colored by
+   * tags (cell type). Returns the plot id, or null (no UMAP, or the plot
+   * limit).
+   */
+  @Action
+  ensureUmapPlot(newId: string): string | null {
+    const axes = this.umapAxes;
+    if (axes === null) {
+      return null;
+    }
+    const same = (a: TAnalysisAxis | null, b: TAnalysisAxis) =>
+      encodeAxis(a) === encodeAxis(b);
+    const existing = this.analysisPlots.find(
+      (plot) => same(plot.xAxis, axes.xAxis) && same(plot.yAxis, axes.yAxis),
+    );
+    if (existing) {
+      // The button means "show me the UMAP as dots": switch a saved density
+      // plot of the same axes over, keeping any color already chosen.
+      if (existing.display !== "dots") {
+        this.setAnalysisPlotDisplay({
+          id: existing.id,
+          display: "dots",
+          colorBy: existing.colorBy ?? { type: "categorical", key: "tags" },
+        });
+      }
+      return existing.id;
+    }
+    if (!this.canAddAnalysisPlot) {
+      return null;
+    }
+    this.addPresetAnalysisPlot({
+      id: newId,
+      ...axes,
+      display: "dots",
+      colorBy: { type: "categorical", key: "tags" },
+    });
+    return newId;
   }
 
   // Restore plots persisted in the configuration. Uses the raw mutation so

@@ -6,9 +6,17 @@ const mockFindDatasetViews = vi.fn();
 const mockShareDatasetView = vi.fn();
 const mockSetDatasetPublic = vi.fn();
 
+const shareLinkMocks = vi.hoisted(() => ({
+  list: vi.fn(),
+  create: vi.fn(),
+  revoke: vi.fn(),
+}));
+
 vi.mock("@/store", () => ({
   default: {
     dataset: { _id: "ds1", name: "TestDataset" },
+    girderUser: { _id: "u1" },
+    shareLinkAPI: shareLinkMocks,
     api: {
       getDatasetAccess: (...args: any[]) => mockGetDatasetAccess(...args),
       findDatasetViews: (...args: any[]) => mockFindDatasetViews(...args),
@@ -70,6 +78,46 @@ describe("ShareDataset", () => {
     mockFindDatasetViews.mockResolvedValue([...defaultViews]);
     mockShareDatasetView.mockResolvedValue({});
     mockSetDatasetPublic.mockResolvedValue(undefined);
+    shareLinkMocks.list.mockReset().mockResolvedValue([]);
+    shareLinkMocks.create.mockReset();
+    shareLinkMocks.revoke.mockReset().mockResolvedValue({});
+  });
+
+  it("lists, creates and revokes share links for an admin", async () => {
+    const link = {
+      _id: "l1",
+      datasetId: "ds1",
+      datasetViewId: "v1",
+      configurationId: "cfg1",
+      label: "reviewers",
+      created: "2026-09-03T00:00:00Z",
+      expiresAt: null,
+      expired: false,
+      createdBy: "u1",
+    };
+    shareLinkMocks.list.mockResolvedValue([link]);
+    shareLinkMocks.create.mockResolvedValue({ ...link, token: "tok" });
+    mockFindDatasetViews.mockResolvedValue([
+      { id: "v1", configurationId: "cfg1", datasetId: "ds1" },
+    ]);
+    const wrapper = mountComponent({ modelValue: true });
+    const vm = wrapper.vm as any;
+    await vm.fetchAccessInfo("ds1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(shareLinkMocks.list).toHaveBeenCalledWith("ds1");
+    expect(vm.shareLinks).toEqual([link]);
+
+    vm.selectedConfigIds = ["cfg1"];
+    vm.newLinkLabel = " reviewers ";
+    vm.newLinkDays = 7;
+    await vm.createLink();
+    expect(shareLinkMocks.create).toHaveBeenCalledWith("v1", 7, "reviewers");
+    expect(vm.createdLinkUrl).toContain("#/shared/tok");
+
+    await vm.revokeLink(link);
+    expect(shareLinkMocks.revoke).toHaveBeenCalledWith("l1");
+    expect(vm.shareLinks).toEqual([]);
+    expect(vm.createdLinkUrl).toBeNull();
   });
 
   it("dialog computed getter returns value prop", () => {

@@ -14,6 +14,42 @@ export interface IUncomputedCountRequestEntry {
 
 type TValuesObject = IAnnotationPropertyValues[string];
 
+function isPropertyValueBranch(
+  value: TPropertyValue | undefined,
+): value is { [pathName: string]: TPropertyValue } {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergePropertyValue(
+  previous: TPropertyValue | undefined,
+  incoming: TPropertyValue,
+): TPropertyValue {
+  if (!isPropertyValueBranch(previous) || !isPropertyValueBranch(incoming)) {
+    return incoming;
+  }
+  const merged: { [pathName: string]: TPropertyValue } = { ...previous };
+  for (const [key, value] of Object.entries(incoming)) {
+    merged[key] = mergePropertyValue(previous[key], value);
+  }
+  return merged;
+}
+
+/**
+ * Merge a partial property-value document without discarding sibling leaves.
+ * Server-side value providers may return one requested nested path at a time,
+ * so a top-level spread is not sufficient when two paths share a root.
+ */
+export function mergeNestedPropertyValues(
+  previous: TValuesObject | undefined,
+  incoming: TValuesObject,
+): TValuesObject {
+  const merged: TValuesObject = { ...(previous ?? {}) };
+  for (const [key, value] of Object.entries(incoming)) {
+    merged[key] = mergePropertyValue(previous?.[key], value);
+  }
+  return merged;
+}
+
 function valueAtPath(
   values: TValuesObject,
   path: string[],
@@ -103,8 +139,8 @@ export function idsMissingPaths(
 /**
  * Merge freshly-fetched values into the cache, scoped to `keepIds`: the result
  * contains only ids in `keepIds`, preserving previously-cached values and
- * overlaying the new ones (shallow per-id merge — fetches always request the
- * full current path set together, so each slice is internally consistent).
+ * recursively overlaying the new ones so separately fetched sibling paths are
+ * retained.
  * Scoping to the rendered set is what bounds memory in lazy mode.
  */
 export function scopedMergePropertyValues(
@@ -122,7 +158,10 @@ export function scopedMergePropertyValues(
     if (!keepIds.has(annotationId)) {
       continue;
     }
-    result[annotationId] = { ...result[annotationId], ...values };
+    result[annotationId] = mergeNestedPropertyValues(
+      result[annotationId],
+      values,
+    );
   }
   return result;
 }

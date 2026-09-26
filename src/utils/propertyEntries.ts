@@ -1,5 +1,8 @@
 import { computed, ComputedRef } from "vue";
-import propertyStore from "@/store/properties";
+import propertyStore, {
+  SPATIAL_PROPERTY_ID,
+  SPATIAL_PSEUDO_PROPERTY,
+} from "@/store/properties";
 import { IAnnotationProperty } from "@/store/model";
 import { findIndexOfPath } from "@/utils/paths";
 
@@ -22,13 +25,20 @@ export function usePropertyEntries(options: {
   return computed((): IPropertyEntry[] => {
     const allPaths = propertyStore.computedPropertyPaths;
     const displayed = propertyStore.displayedPropertyPaths;
-    const entries = propertyStore.properties.map((property) => {
+    const entryFor = (property: IAnnotationProperty): IPropertyEntry => {
       const paths = allPaths.filter((path) => path[0] === property.id);
       const shownCount = displayed.filter(
         (path) => path[0] === property.id,
       ).length;
       return { property, paths, shownCount };
-    });
+    };
+    const entries = propertyStore.properties.map(entryFor);
+    // The spatial table's live columns have no property document; they get
+    // one group, only while at least one is in play.
+    const spatial = entryFor(SPATIAL_PSEUDO_PROPERTY);
+    if (spatial.paths.length > 0) {
+      entries.push(spatial);
+    }
     return options.includeUncomputed
       ? entries
       : entries.filter((entry) => entry.paths.length > 0);
@@ -54,4 +64,9 @@ export function propertyValueName(path: string[]): string {
 
 export function propertyColumnActionLabel(path: string[]): string {
   return `${isPathShown(path) ? "Hide" : "Show"} ${propertyValueName(path)} column`;
+}
+
+/** True for the spatial table's pseudo-property (no Run, no compute). */
+export function isVirtualPropertyEntry(entry: IPropertyEntry): boolean {
+  return entry.property.id === SPATIAL_PROPERTY_ID;
 }
