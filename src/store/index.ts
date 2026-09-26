@@ -242,22 +242,36 @@ let recentDatasetViewsRequestId = 0;
 // state because the debounce timer is never read by the UI.
 let annotationBrowserSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** The module's current girderRest (falls back to the construction-time
+ * instance before the module is registered). */
+function liveGirderRest(instance: Main): RestClientInstance {
+  return (
+    (store.state as { main?: Pick<Main, "girderRest"> }).main?.girderRest ??
+    instance.girderRest
+  );
+}
+
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
   girderRest = createGirderRestClient({
     apiRoot: apiRootFromGirderUrl(persister.get("girderUrl", defaultGirderUrl)),
   });
 
-  // Use a proxy to dynamically resolve to the right girderRest client
+  // Use a proxy to dynamically resolve to the right girderRest client. It
+  // must read the LIVE module state: `obj` is the instance the decorators
+  // built the initial state from, and a mutation that replaces `girderRest`
+  // (openShareLink commits the link's own client) never reaches it — every
+  // API class would keep sending the boot client's token, i.e. the stored
+  // login, or no token at all for a recipient without one.
   girderRestProxy = new Proxy(this, {
     get(obj: Main, prop: keyof RestClientInstance) {
-      return obj.girderRest[prop];
+      return liveGirderRest(obj)[prop];
     },
     set(target: Main, p: keyof RestClientInstance, newValue: any) {
       if (p != "token") {
         throw "Can only set token to RestClient";
       }
-      target.girderRest[p] = newValue;
+      liveGirderRest(target)[p] = newValue;
       return true;
     },
   }) as unknown as RestClientInstance;

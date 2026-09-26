@@ -395,6 +395,21 @@ Phase 1's endpoint; this endpoint is **display only**.
 }
 ```
 
+### Optional display sample (dots mode)
+
+`"sample": {"size": 50000, "colorBy": TAnalysisAxis | null}` (size clamped to
+`[1, MAX_SAMPLE_POINTS = 100,000]`) adds `sample: {x, y, total, color,
+colorCategories}` to the response: up to `size` of the plotted points
+(`analysis.sample_points`), with each point's color value — a category index
+into `colorCategories` for a categorical `colorBy`, the property (or virtual
+gene) value otherwise. Display only, like the counts: gates stay polygons and
+resolve over every object, so a lasso drawn on the sample is exact.
+Membership is by a per-id hash (`hash_ids(..., SAMPLE_SALT)`), not position,
+so the same objects stay sampled as filters and upstream gates change, and a
+narrower population shows a subset of the same dots. The client uses it for
+"Dots" plots (ANALYSIS_PANEL.md "Dots mode and the UMAP shortcut") at any
+population size.
+
 For a categorical axis, each category is one bin at its integer index
 (jitter is irrelevant for binning; it only matters for polygon membership).
 Numeric edges come from the population min/max after filters; degenerate
@@ -425,9 +440,16 @@ Numeric edges come from the population min/max after filters; degenerate
   *gate resolution* (Phase 1) is unaffected — it is filter-independent — so
   filtering correctness never degrades; only the picture can over-include.
   This mirrors the server list's existing documented ROI limitation.
-- The per-plot badge above the cap reads `gateCount` from the histogram
-  response (chained semantics preserved) rather than `gateIds.length` (pure
-  count, which would over-state).
+- The per-plot badge above the cap is the CHAINED count — never
+  `gateIds.length`, the pure count, which over-states. It used to come from
+  the histogram's `gateCount`, which meant the display request carried the
+  plot's own gate and every lasso re-ran a whole-dataset histogram scan beside
+  the gate resolution (17 s alongside a 12 s resolve on 709K objects, the two
+  competing for one process). The panel now computes it
+  (`chainedGateCounts`): |pure gate ids ∩ the non-gate-filtered population ∩
+  every enabled upstream gate|, null until all of those gates are resolved,
+  and sends `gate: null`. `gateCount` stays in the endpoint for callers that
+  send a gate.
 
 ## Phase 3 — gate definitions as first-class list-query terms
 
@@ -740,7 +762,9 @@ Every invariant names the test that holds it (format enforced by
 - Non-shape relayouts and the persisted gate's own shape are ignored —
   *"ignores non-shape relayouts and the persisted gate's own shape"*
 - The badge shows the chained count, not pure membership — *"shows the
-  chained badge count from the histogram, not pure ids"*
+  panel's chained badge count, not pure ids"*, computed by the panel with no
+  gate in the display request — `AnalysisPanel.test.ts` *"counts each gate over
+  the population reaching it, and sends no gate"*
 - The honesty banner names inexpressible filters — *"names the filters the
   distributions cannot express"*; the request spec errs one-sidedly toward
   over-inclusion — *"inlines bounded id lists and skips oversized ones with
@@ -986,11 +1010,11 @@ Every invariant names the test that holds it (format enforced by
   the filters below the cap left "gates could not be applied" on screen
   while the gates were visibly applying — *"clears the refusal banner when
   the population drops below the cap"*
-- The over-cap badge shows ONLY the histogram's chained count. Falling back
-  to `gateIds.length` while the histogram was in flight was worse than the
+- The over-cap badge shows ONLY the chained count ("…" while unknown).
+  Falling back to `gateIds.length` while it was unknown was worse than the
   "…" it replaced: the pure count over-states, so every panel open showed a
   plausible wrong number for a few seconds and then silently changed it —
-  *"shows the chained badge count from the histogram, not pure ids"*
+  *"shows the panel's chained badge count, not pure ids"*
 - `currentFilters` reads frame state only when `onlyCurrentFrame` is on, the
   untreated twin of the same fix in `analysisHistogramFilterSpec`.
 
@@ -1030,6 +1054,34 @@ Every invariant names the test that holds it (format enforced by
   (the 708,983-object Xenium dataset).
 - The parity fixture regenerates only from the TS reference implementation;
   a hand-edited fixture is a spec violation.
+
+## Analysis data as columns (gate resolution 6.2 s → 3.8 s at 709K)
+
+`_analysisData` returns `analysis.AnalysisValues`: still the id → nested-values
+dict the pure helpers read (virtual paths and parity fixtures arrive that way),
+plus one float64 column per stored property path, aligned with `docs`, built
+from a flat `$project` (`"$values.<path>"`) instead of a nested document per
+annotation — whose decoding and per-document walking were most of the time.
+`property_column` reads a column when present and walks the dict otherwise, so
+`axis_coordinates` and `sample_points` are unchanged in meaning. Two rules:
+
+- **Narrow docs and columns together** (`subset_analysis_data`). The histogram
+  narrows `docs` by filters and upstream gates; narrowing only the list left
+  columns misaligned, which `property_column` now refuses loudly
+  (RuntimeError) rather than falling back to the empty dict and drawing every
+  object as valueless.
+- **Numbers are read as `_property_value` reads them**: `isinstance` int/float
+  (Mongo's `Int64` is an int subclass), bools excluded, non-finite → NaN.
+
+Verified identical to the previous implementation on the lymph node for gate
+ids and for histograms with a categorical and a virtual-gene color, a tag
+filter and an upstream gate. Measured: gate_ids 6.2 → 3.8 s, histogram2d
+6.5 → 4.5 s.
+
+A lasso also no longer triggers a second whole-dataset scan: the display
+request carries no gate (the panel computes the chained badge), and the
+Object Browser's server list no longer refetches while its palette is closed.
+Lasso → viewer filtered went from 12.7 s to 4.3 s.
 
 ## What is verified, and what is not
 

@@ -120,6 +120,10 @@ describe("share-link bootstrap identity", () => {
     );
     expect(main.girderUser?._id).toBe("new-link");
     expect(localStorage.getItem("nimbus.girderToken")).toBe(storedLogin);
+    // The API classes reach Girder through girderRestProxy: they must send
+    // the link's bearer too, not the client (and stored login) from boot.
+    expect(main.api.client.token).toBe("new-link");
+    expect((main.girderRestProxy as any).token).toBe("new-link");
   });
 
   it("does not commit a share bootstrap after its route is cancelled", async () => {

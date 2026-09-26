@@ -49,3 +49,58 @@ describe("annotationRasterTemplateUrl", () => {
     expect(params.has("shape")).toBe(false);
   });
 });
+
+describe("overview filter", () => {
+  const base = {
+    datasetId: "dataset-id",
+    selectors: [{ channel: 0, XY: 0, Z: 0, Time: 0 }],
+    sizeX: 100,
+    sizeY: 100,
+    tileSize: 512,
+    maxLevel: 1,
+    mode: "shapes" as const,
+    color: "#FFD700",
+    version: 3,
+  };
+
+  it("adds the registered filter and its version to tile URLs", () => {
+    const api = new AnnotationsAPI({
+      apiRoot: "http://localhost:8080/api/v1",
+    } as any);
+    const params = new URLSearchParams(
+      api
+        .annotationRasterTemplateUrl({
+          ...base,
+          filterKey: "k".repeat(64),
+          filterVersion: "2-abc",
+        })
+        .split("?")[1],
+    );
+    expect(params.get("filter")).toBe("k".repeat(64));
+    // The client version moves with the filter's resolved membership.
+    expect(params.get("v")).toBe("3.2-abc");
+    const unfiltered = new URLSearchParams(
+      api.annotationRasterTemplateUrl(base).split("?")[1],
+    );
+    expect(unfiltered.has("filter")).toBe(false);
+    expect(unfiltered.get("v")).toBe("3");
+  });
+
+  it("registers filters, and a spec matching nothing for no match", async () => {
+    const post = vi.fn(async () => ({ data: { key: "the-key" } }));
+    const api = new AnnotationsAPI({ post } as any);
+    const tags = { tags: { values: ["B"], exclusive: false } };
+    expect(await api.registerRasterFilter("ds", tags)).toBe("the-key");
+    expect(post).toHaveBeenLastCalledWith("upenn_annotation/raster/filter", {
+      datasetId: "ds",
+      filters: tags,
+    });
+    // An empty id constraint (a gate matching nothing) is rejected by the
+    // API; a well-formed id no annotation has means the same thing.
+    await api.registerRasterFilter("ds", { idConstraints: [[]] });
+    expect(post).toHaveBeenLastCalledWith("upenn_annotation/raster/filter", {
+      datasetId: "ds",
+      filters: { idConstraints: [["000000000000000000000000"]] },
+    });
+  });
+});

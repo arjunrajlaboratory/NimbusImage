@@ -58,8 +58,9 @@
         <template v-if="result">
           <div class="text-caption mb-1">
             {{ result.typed.toLocaleString() }} typed cells of
-            {{ result.cells.toLocaleString() }}, radius {{ result.radius }} px,
-            computed {{ new Date(result.computed).toLocaleString() }}.
+            {{ result.cells.toLocaleString() }}, radius
+            {{ Math.round(result.radius) }} px, computed
+            {{ new Date(result.computed).toLocaleString() }}.
           </div>
           <div class="matrix-scroll">
             <table class="matrix">

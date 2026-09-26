@@ -43,7 +43,18 @@ export interface IAnnotationRasterUrlOptions {
   color: string;
   version: number;
   authToken?: string | null;
+  // A registered overview filter (registerRasterFilter): tiles then show
+  // only the objects passing the viewer's filters. `filterVersion` moves
+  // when the objects a fixed filter matches change (a gate re-resolving
+  // after a recompute), so the tiles are refetched.
+  filterKey?: string | null;
+  filterVersion?: string;
 }
+
+// A well-formed id no annotation has: registering a spec that can only match
+// it gives the tiles of "the filters match nothing" without a special case
+// (the API rejects an empty id constraint).
+const MATCHES_NOTHING_ID = "000000000000000000000000";
 
 export default class AnnotationsAPI {
   private readonly client: RestClientInstance;
@@ -144,7 +155,15 @@ export default class AnnotationsAPI {
     url.searchParams.set("maxLevel", options.maxLevel.toString());
     url.searchParams.set("mode", options.mode);
     url.searchParams.set("color", options.color);
-    url.searchParams.set("v", options.version.toString());
+    if (options.filterKey) {
+      url.searchParams.set("filter", options.filterKey);
+      url.searchParams.set(
+        "v",
+        `${options.version}.${options.filterVersion ?? ""}`,
+      );
+    } else {
+      url.searchParams.set("v", options.version.toString());
+    }
     if (options.authToken) {
       url.searchParams.set("token", options.authToken);
     }
@@ -152,6 +171,25 @@ export default class AnnotationsAPI {
       "/upenn_annotation/raster/0/0/0",
       "/upenn_annotation/raster/{z}/{x}/{y}",
     );
+  }
+
+  /**
+   * Register the viewer's filters for the overview raster; returns the key
+   * tiles carry (ANNOTATION_RASTER_OVERVIEW.md, "Coupling to the viewer's
+   * filters"). Filters that match nothing register a spec that provably
+   * matches nothing, so the tiles come back empty.
+   */
+  async registerRasterFilter(
+    datasetId: string,
+    filters: IAnnotationListFilters,
+  ): Promise<string> {
+    const response = await this.client.post("upenn_annotation/raster/filter", {
+      datasetId,
+      filters: filtersMatchNothing(filters)
+        ? { idConstraints: [[MATCHES_NOTHING_ID]] }
+        : filters,
+    });
+    return response.data.key as string;
   }
 
   toListRow = (item: any): IAnnotationListRow => {

@@ -112,6 +112,9 @@ function onSearch(value: string) {
 
 function onUpdate(value: string[]) {
   emit("update:modelValue", value.slice(0, props.max));
+  // Start the next gene from an empty field: the typed query would otherwise
+  // stay and the next keystrokes append to it ("MS4A1CD79A").
+  search.value = "";
 }
 
 // Populate the list on mount so opening the menu shows something before the

@@ -255,6 +255,22 @@
             </template>
           </v-tooltip>
           <v-tooltip
+            v-if="hasUmap"
+            text="UMAP: the embedding as dots colored by cell type; lasso to gate"
+          >
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                aria-label="UMAP"
+                @click.stop="openUmap"
+              >
+                <v-icon size="18">mdi-scatter-plot</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip
             v-if="
               transcriptsStore.hasTranscripts ||
               transcriptsStore.error ||
@@ -482,7 +498,7 @@
       :top="stackedHostTop"
       :max-height="stackedHostMaxHeight"
     >
-      <annotation-browser></annotation-browser>
+      <annotation-browser :visible="annotationPanel"></annotation-browser>
     </floating-palette>
 
     <floating-palette
@@ -584,6 +600,7 @@ import {
   ComponentPublicInstance,
 } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
 import UserMenu from "./layout/UserMenu.vue";
 import ServerStatus from "./components/ServerStatus.vue";
@@ -1212,6 +1229,17 @@ const filtersAriaLabel = computed(() =>
 // Gates are counted separately from activeFilterCount: each badge counts what
 // its own panel shows, so the Filters button never claims a filter its panel
 // cannot display (and vice versa).
+// The UMAP shortcut: the Analysis panel with the embedding plotted as
+// colored dots (reusing its plot if one exists). Shown only when the dataset
+// has a property that looks like a UMAP (filters.umapAxes).
+const hasUmap = computed(() => filterStore.umapAxes !== null);
+async function openUmap() {
+  await filterStore.ensureUmapPlot(uuidv4());
+  if (!analysisPanel.value) {
+    openPalette("analysisPanel");
+  }
+}
+
 const activeAnalysisGateCount = computed(
   () => filterStore.activeAnalysisGateCount,
 );

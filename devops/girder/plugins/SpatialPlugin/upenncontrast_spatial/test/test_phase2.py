@@ -7,6 +7,7 @@ import math
 import numpy as np
 import pytest
 from pytest_girder.assertions import assertStatus, assertStatusOk
+from scipy import stats
 
 from girder_jobs.constants import JobStatus
 from girder_jobs.models.job import Job
@@ -23,6 +24,7 @@ from .test_spatial import (
     COUNTS,
     SYMBOLS,
     TestSpatial,
+    buildStoreZip,
     makeAnnotation,
     request,
 )
@@ -253,3 +255,45 @@ def testCountsFixtureIsWhatTheAssertionsAssume():
     assert COUNTS[0, 0] == 3 and COUNTS[4, 0] == 5
     assert COUNTS[:, 3].tolist() == [0, 0, 0, 7, 0, 0]
     assert makeAnnotation is not None
+
+
+def testBlockedColumnReadsMatchPerColumnReads(tmp_path):
+    """`iterColumns` (what differential walks) returns exactly `column` for
+    every feature, whatever the block size — including blocks of one."""
+    ids = ["%024x" % i for i in range(COUNTS.shape[0])]
+    path = str(tmp_path / "spatial.zarr.zip")
+    buildStoreZip(path, ids)
+    spatialStore = storeModule.SpatialStore(path)
+    for maxValues in (1, 2, 5, storeModule.COLUMN_BLOCK_VALUES):
+        seen = []
+        for symbol, rows, values in spatialStore.iterColumns(maxValues):
+            expectedRows, expectedValues = spatialStore.column(symbol)
+            assert np.array_equal(rows, expectedRows)
+            assert np.array_equal(values, expectedValues)
+            seen.append(symbol)
+        assert seen == spatialStore.featureSymbols
+
+
+@pytest.mark.parametrize("seed", range(6))
+def testWilcoxonMatchesScipy(seed):
+    """The closed form from value counts is scipy's tie-corrected asymptotic
+    Mann-Whitney U — same z, same p — for sparse count columns, explicit
+    zeros and negative values included; tiny groups go through scipy."""
+    rng = np.random.default_rng(seed)
+    for nA, nB in ((3, 40), (9, 12), (60, 200), (500, 37)):
+        denseA = rng.poisson(0.4, nA).astype(np.float64)
+        denseB = rng.poisson(0.9, nB).astype(np.float64)
+        if seed % 2:
+            denseA[: nA // 4] -= rng.integers(0, 3, nA // 4)
+        # The stored entries: non-zeros (plus one explicit zero) up front.
+        storedA = np.concatenate((denseA[denseA != 0], [0.0]))
+        storedB = denseB[denseB != 0]
+        orderA = np.concatenate((storedA, np.zeros(nA - len(storedA))))
+        orderB = np.concatenate((storedB, np.zeros(nB - len(storedB))))
+        expected = stats.mannwhitneyu(orderA, orderB, alternative="two-sided")
+        z, p = differentialModule.wilcoxon(storedA, storedB, nA, nB)
+        scale = math.sqrt(nA * nB * (nA + nB + 1) / 12.0)
+        assert z == pytest.approx(
+            (expected.statistic - nA * nB / 2.0) / scale, rel=1e-12
+        )
+        assert p == pytest.approx(expected.pvalue, rel=1e-9)

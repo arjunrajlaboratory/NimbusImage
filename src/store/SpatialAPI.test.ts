@@ -125,6 +125,25 @@ describe("SpatialAPI transcripts", () => {
     expect(points.quality![0]).toBe(30);
   });
 
+  it("decodes a points error body so its message reaches the caller", async () => {
+    const body = new TextEncoder().encode(
+      JSON.stringify({ message: "unknown gene 'LYZ'", type: "rest" }),
+    ).buffer;
+    const error = new AxiosError("Bad request", "400", undefined, undefined, {
+      status: 400,
+      statusText: "Bad Request",
+      data: body,
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+    });
+    const { api } = makeApi({ post: async () => Promise.reject(error) });
+    const caught = await api
+      .fetchTranscriptPoints("ds", ["LYZ"], 0, ["0,0"], 20)
+      .catch((e) => e);
+    expect(caught.response.status).toBe(400);
+    expect(caught.response.data.message).toBe("unknown gene 'LYZ'");
+  });
+
   it("gene search uses the documented route", async () => {
     const { api, client } = makeApi({ get: async () => ({ data: ["CD3E"] }) });
     expect(await api.searchTranscriptGenes("ds", "cd", 5)).toEqual(["CD3E"]);

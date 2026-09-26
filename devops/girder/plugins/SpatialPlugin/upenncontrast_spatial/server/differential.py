@@ -2,8 +2,9 @@
 
 For every feature: mean, fraction expressing and n in A and B, log2 fold
 change of the means (with a pseudocount), and Welch's t statistic with its
-two-sided p-value. One vectorized pass per feature over the CSC slice, so
-4,600 features over 700K cells is tens of seconds — a job, with the ranked
+two-sided p-value. One vectorized pass per feature over the CSC slice, the
+slices read a block of columns at a time (`SpatialStore.iterColumns`), so
+4,600 features over 700K cells is seconds — still a job, with the ranked
 table stored on the job document under `spatialResult`.
 
 The optional Wilcoxon method uses Mann-Whitney U over each feature's dense
@@ -52,21 +53,59 @@ def welch(sumA, sumSqA, nA, sumB, sumSqB, nB):
 METHODS = ("welch", "wilcoxon")
 
 
+# Groups this small go through scipy, whose "auto" method may pick the exact
+# U distribution there; above it, scipy's answer is the tie-corrected normal
+# approximation, which `wilcoxon` computes in closed form from value counts.
+WILCOXON_SCIPY_MAX_GROUP = 8
+
+
+def _valueCounts(values, n):
+    """(sorted distinct values, counts) of a feature's dense column of `n`
+    cells, given only its stored entries (the rest are zeros)."""
+    levels, counts = np.unique(np.append(values, 0), return_counts=True)
+    counts[np.searchsorted(levels, 0)] += n - len(values) - 1
+    return levels, counts
+
+
 def wilcoxon(valuesA, valuesB, nA, nB):
     """(U-derived z, p) for the Mann-Whitney U test on the dense values of
     both groups (zeros for cells without the gene); z is signed like a
-    t-statistic so the ranking by |statistic| works the same way."""
-    denseA = np.zeros(nA, dtype=np.float64)
-    denseA[:len(valuesA)] = valuesA
-    denseB = np.zeros(nB, dtype=np.float64)
-    denseB[:len(valuesB)] = valuesB
-    if not denseA.any() and not denseB.any():
+    t-statistic so the ranking by |statistic| works the same way.
+
+    Counts take few distinct values, so U and the tie term come from the
+    per-value counts of each group instead of ranking every cell: the same
+    two-sided asymptotic p (tie and continuity corrected) as
+    `scipy.stats.mannwhitneyu`, in O(distinct values) after the counts."""
+    if not np.any(valuesA) and not np.any(valuesB):
         return 0.0, 1.0
-    result = stats.mannwhitneyu(denseA, denseB, alternative="two-sided")
     meanU = nA * nB / 2.0
-    z = float(result.statistic - meanU)
     scale = math.sqrt(nA * nB * (nA + nB + 1) / 12.0)
-    return (z / scale if scale else 0.0), float(result.pvalue)
+    if min(nA, nB) <= WILCOXON_SCIPY_MAX_GROUP:
+        denseA = np.zeros(nA, dtype=np.float64)
+        denseA[:len(valuesA)] = valuesA
+        denseB = np.zeros(nB, dtype=np.float64)
+        denseB[:len(valuesB)] = valuesB
+        result = stats.mannwhitneyu(denseA, denseB, alternative="two-sided")
+        z = float(result.statistic - meanU)
+        return (z / scale if scale else 0.0), float(result.pvalue)
+    levelsA, countsA = _valueCounts(valuesA, nA)
+    levelsB, countsB = _valueCounts(valuesB, nB)
+    levels = np.union1d(levelsA, levelsB)
+    perA = np.zeros(len(levels), dtype=np.float64)
+    perA[np.searchsorted(levels, levelsA)] = countsA
+    perB = np.zeros(len(levels), dtype=np.float64)
+    perB[np.searchsorted(levels, levelsB)] = countsB
+    # U of A: pairs where A's value is larger, plus half the ties.
+    uA = float(np.sum(perA * (np.cumsum(perB) - 0.5 * perB)))
+    n = nA + nB
+    ties = perA + perB
+    tieTerm = float(np.sum(ties ** 3 - ties))
+    sigma = math.sqrt(nA * nB / 12.0 * ((n + 1) - tieTerm / (n * (n - 1))))
+    if sigma == 0:
+        return 0.0, 1.0
+    numerator = max(uA, nA * nB - uA) - meanU - 0.5
+    p = min(max(2.0 * float(stats.norm.sf(numerator / sigma)), 0.0), 1.0)
+    return (uA - meanU) / scale, p
 
 
 def differential(store, rowsA, rowsB, maxFeatures, onProgress=None,
@@ -91,8 +130,7 @@ def differential(store, rowsA, rowsB, maxFeatures, onProgress=None,
             "(A has %d, B has %d)" % (nA, nB)
         )
     table = []
-    for index, symbol in enumerate(store.featureSymbols):
-        rows, values = store.column(symbol)
+    for index, (symbol, rows, values) in enumerate(store.iterColumns()):
         values = values.astype(np.float64)
         inA, inB = maskA[rows], maskB[rows]
         valuesA, valuesB = values[inA], values[inB]

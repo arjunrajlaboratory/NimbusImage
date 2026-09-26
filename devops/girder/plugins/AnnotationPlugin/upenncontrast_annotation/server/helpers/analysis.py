@@ -46,6 +46,16 @@ MAX_HISTOGRAM_CELLS = 512 * 512
 # numeric per-axis bin cap and is already far past readable.
 MAX_HISTOGRAM_AXIS_CATEGORIES = 512
 
+# Salt of the per-id hash that ranks objects for a display sample. Distinct
+# from the jitter salts so the sample is not correlated with the jitter.
+SAMPLE_SALT = 53
+# Most points one display sample returns. 100K dots is where WebGL scatter
+# stays interactive in a palette and the JSON stays a few MB.
+MAX_SAMPLE_POINTS = 100_000
+# Plot coordinates and color values are rounded for the wire: a display
+# sample does not need 17 significant digits, and the payload halves.
+SAMPLE_DECIMALS = 4
+
 
 def _utf16_units(value):
     """The string as UTF-16 code units, exactly what charCodeAt iterates."""
@@ -97,16 +107,25 @@ def _code_unit_matrix(annotation_ids):
     return codes, mask
 
 
-def jitter_from_ids(annotation_ids, salt):
-    """Vectorized jitter_from_id over many ids (float64 ndarray)."""
+def hash_ids(annotation_ids, salt):
+    """The 32-bit string hash jitter_from_id is built on, per id (uint32
+    ndarray), vectorized."""
     if not annotation_ids:
-        return np.empty(0, dtype=np.float64)
+        return np.empty(0, dtype=np.uint32)
     codes, mask = _code_unit_matrix(annotation_ids)
     h = np.full(len(annotation_ids), salt & 0xFFFFFFFF, dtype=np.uint32)
     allSet = mask.all()
     for col in range(codes.shape[1]):
         step = h * np.uint32(31) + codes[:, col]
         h = step if allSet else np.where(mask[:, col], step, h)
+    return h
+
+
+def jitter_from_ids(annotation_ids, salt):
+    """Vectorized jitter_from_id over many ids (float64 ndarray)."""
+    if not annotation_ids:
+        return np.empty(0, dtype=np.float64)
+    h = hash_ids(annotation_ids, salt)
     return ((h % 1000) / 1000.0 - 0.5) * 0.56
 
 
@@ -203,6 +222,84 @@ def _property_value(values, path):
     return float(node)
 
 
+class AnalysisValues(dict):
+    """``values_by_id`` with precomputed numeric columns.
+
+    A dict (annotation id -> nested values), as the pure helpers have always
+    read it — still how virtual paths and test fixtures arrive — plus, for
+    stored property paths, one float64 column per dotted path aligned with
+    the ``docs`` list it was built for (NaN = no number). property_column
+    reads a column when there is one.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.columns = {}
+
+    def setColumn(self, key, length, rows, values):
+        column = np.full(length, np.nan, dtype=np.float64)
+        if len(rows):
+            column[np.asarray(rows, dtype=np.int64)] = values
+        self.columns[key] = column
+
+
+def subset_analysis_data(docs, values_by_id, keep):
+    """(docs, values_by_id) narrowed to the docs where ``keep`` is true,
+    with any AnalysisValues columns narrowed alongside so they stay aligned.
+    """
+    keep = np.asarray(keep, dtype=bool)
+    subset = [doc for doc, kept in zip(docs, keep) if kept]
+    columns = getattr(values_by_id, "columns", None)
+    if not columns:
+        return subset, values_by_id
+    narrowed = AnalysisValues(values_by_id)
+    narrowed.columns = {
+        key: column[keep] for key, column in columns.items()
+    }
+    return subset, narrowed
+
+
+def numeric_column(values):
+    """float64 array of `values` under _property_value's reading: finite
+    ints and floats count, bools and anything else are NaN."""
+    # isinstance, not type(): Mongo's 64-bit integers decode to bson.Int64,
+    # an int subclass _property_value accepts. bool is an int subclass too,
+    # and is excluded explicitly.
+    return np.array(
+        [
+            value
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else math.nan
+            for value in values
+        ],
+        dtype=np.float64,
+    ) if values else np.empty(0, dtype=np.float64)
+
+
+def property_column(docs, values_by_id, path):
+    """Per-doc value of one property path (NaN = none), aligned with docs."""
+    columns = getattr(values_by_id, "columns", None)
+    column = (columns or {}).get(".".join(path))
+    if column is not None:
+        if len(column) != len(docs):
+            # Never fall back to the (empty) per-id dict: that would read
+            # every object as having no value, a plausible wrong picture.
+            raise RuntimeError(
+                "analysis value column is not aligned with its docs; narrow "
+                "both with subset_analysis_data"
+            )
+        # Copied: callers add jitter / mask in place.
+        column = column.copy()
+        column[~np.isfinite(column)] = np.nan
+        return column
+    coords = np.full(len(docs), np.nan, dtype=np.float64)
+    for i, doc in enumerate(docs):
+        value = _property_value(values_by_id.get(doc["id"]) or {}, path)
+        if value is not None:
+            coords[i] = value
+    return coords
+
+
 def axis_coordinates(docs, values_by_id, axis, categories, salt):
     """Per-annotation plot coordinates for one axis (NaN = no coordinate).
 
@@ -210,14 +307,9 @@ def axis_coordinates(docs, values_by_id, axis, categories, salt):
     category outside it yields NaN — "unknown categories are outside the
     gate"), and None for a property axis.
     """
-    coords = np.full(len(docs), np.nan, dtype=np.float64)
     if axis["type"] == "property":
-        path = axis["path"]
-        for i, doc in enumerate(docs):
-            value = _property_value(values_by_id.get(doc["id"]) or {}, path)
-            if value is not None:
-                coords[i] = value
-        return coords
+        return property_column(docs, values_by_id, axis["path"])
+    coords = np.full(len(docs), np.nan, dtype=np.float64)
     index_of = {key: i for i, key in enumerate(categories or [])}
     encode = _category_key_encoder(axis["key"])
     known = []
@@ -415,7 +507,64 @@ def histogram2d(docs, values_by_id, spec):
                     with np.errstate(invalid="ignore"):
                         inside &= np.rint(coords) < len(pinned)
             response["gateCount"] = int(inside.sum())
+    sample = spec.get("sample")
+    if sample is not None:
+        response["sample"] = sample_points(
+            docs, values_by_id, xs, ys, valid, sample
+        )
     return response
+
+
+def sample_points(docs, values_by_id, xs, ys, valid, sample):
+    """A display sample of one plot's points: at most ``sample["size"]`` of
+    the objects with both coordinates, each with an optional color value.
+
+    Display only, like the heatmap it can replace. Gates stay polygons in
+    value space and resolve over the whole population (resolve_gate_ids),
+    so a lasso drawn on the sample is exact. Membership is decided per
+    object by a hash of its id, not by position: the same objects stay in
+    the sample as filters and upstream gates change, so the picture does
+    not reshuffle under the user, and a narrower population shows a subset
+    of the same dots.
+
+    ``sample["colorBy"]`` is an axis: categorical axes return a category
+    index per point plus the category keys (labels are resolved by the
+    client, as for the heatmap's axes); property axes return the value, or
+    None where the object has none.
+    """
+    candidates = np.flatnonzero(valid)
+    size = min(int(sample["size"]), len(candidates))
+    if size < len(candidates):
+        ranks = hash_ids([docs[i]["id"] for i in candidates], SAMPLE_SALT)
+        chosen = np.sort(candidates[np.argsort(ranks, kind="stable")[:size]])
+    else:
+        chosen = candidates
+    result = {
+        "x": np.round(xs[chosen], SAMPLE_DECIMALS).tolist(),
+        "y": np.round(ys[chosen], SAMPLE_DECIMALS).tolist(),
+        "total": int(len(candidates)),
+        "color": None,
+        "colorCategories": None,
+    }
+    color_by = sample.get("colorBy")
+    if color_by is None:
+        return result
+    chosen_docs = [docs[i] for i in chosen]
+    if color_by["type"] == "categorical":
+        categories = derive_axis_categories(
+            chosen_docs, color_by["key"], None, "colorBy"
+        )
+        index_of = {key: i for i, key in enumerate(categories)}
+        encode = _category_key_encoder(color_by["key"])
+        result["color"] = [index_of[encode(doc)] for doc in chosen_docs]
+        result["colorCategories"] = categories
+        return result
+    values = property_column(docs, values_by_id, color_by["path"])[chosen]
+    result["color"] = [
+        None if math.isnan(value) else round(float(value), SAMPLE_DECIMALS)
+        for value in values
+    ]
+    return result
 
 
 def resolve_gate_ids(docs, values_by_id, plot):

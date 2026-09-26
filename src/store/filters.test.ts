@@ -44,6 +44,14 @@ vi.mock("./properties", () => ({
   default: {
     propertyValues: {},
     propertiesAPI: { getPropertyHistogram: () => Promise.resolve([]) },
+    // A dataset with a UMAP property, for the UMAP-plot tests.
+    computedPropertyPaths: [
+      ["area", "Area"],
+      ["umap", "x"],
+      ["umap", "y"],
+    ],
+    getPropertyById: (id: string) =>
+      ({ umap: { name: "UMAP" }, area: { name: "Blob metrics" } })[id],
   },
 }));
 vi.mock("geojs", () => ({
@@ -216,6 +224,68 @@ describe("analysis plot gates", () => {
     filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
     filters.setAnalysisGateIds({ p1: [] });
     expect(filteredIds()).toEqual([]);
+  });
+
+  it("changes display and color without touching the gate or its ids", () => {
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotGate({ id: "p1", gate: GATE });
+    filters.setAnalysisGateIds({ p1: ["a"] });
+    mocks.scheduleAnnotationBrowserSave.mockClear();
+
+    filters.setAnalysisPlotDisplay({
+      id: "p1",
+      display: "dots",
+      colorBy: { type: "categorical", key: "tags" },
+    });
+
+    expect(filters.analysisPlots[0]).toMatchObject({
+      gate: GATE,
+      display: "dots",
+      colorBy: { type: "categorical", key: "tags" },
+    });
+    expect(filters.analysisGateIds.p1).toEqual(["a"]);
+    expect(filteredIds()).toEqual(["a"]);
+    // Saved with the configuration, like any plot edit.
+    expect(mocks.scheduleAnnotationBrowserSave).toHaveBeenCalled();
+  });
+
+  it("opens the UMAP as colored dots, reusing a plot of the same axes", async () => {
+    const umapX = { type: "property" as const, path: ["umap", "x"] };
+    const umapY = { type: "property" as const, path: ["umap", "y"] };
+    expect(filters.umapAxes).toEqual({ xAxis: umapX, yAxis: umapY });
+
+    expect(await filters.ensureUmapPlot("u1")).toBe("u1");
+    expect(filters.analysisPlots).toEqual([
+      {
+        id: "u1",
+        xAxis: umapX,
+        yAxis: umapY,
+        display: "dots",
+        colorBy: { type: "categorical", key: "tags" },
+        gate: null,
+        gateEnabled: true,
+      },
+    ]);
+    // Asking again reuses it.
+    expect(await filters.ensureUmapPlot("u2")).toBe("u1");
+    expect(filters.analysisPlots).toHaveLength(1);
+
+    // A saved density plot of the UMAP is switched to dots, keeping its
+    // color and its gate.
+    filters.resetFilterState();
+    filters.addAnalysisPlot("d1");
+    filters.setAnalysisPlotAxes({ id: "d1", xAxis: umapX, yAxis: umapY });
+    filters.setAnalysisPlotGate({ id: "d1", gate: GATE });
+    filters.setAnalysisPlotDisplay({
+      id: "d1",
+      colorBy: { type: "property", path: ["area", "Area"] },
+    });
+    expect(await filters.ensureUmapPlot("u3")).toBe("d1");
+    expect(filters.analysisPlots[0]).toMatchObject({
+      display: "dots",
+      colorBy: { type: "property", path: ["area", "Area"] },
+      gate: GATE,
+    });
   });
 
   it("invalidates the gate and its ids when an axis changes", () => {

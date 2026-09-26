@@ -191,8 +191,10 @@ const canSubmit = computed(() => {
   return mode.value !== "score" || scoreName.value.trim().length > 0;
 });
 
-// The default measurement name follows the mode until the user edits it.
+// The default measurement name follows the mode until the user edits it,
+// and a previous run's banner describes a different action — drop it.
 watch(mode, (next, previous) => {
+  done.value = "";
   const defaults: Record<TMode, string> = {
     live: propertyName.value,
     copy: DEFAULT_PROPERTY_NAME,

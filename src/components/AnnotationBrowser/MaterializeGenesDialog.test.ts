@@ -82,6 +82,10 @@ describe("MaterializeGenesDialog", () => {
     expect(mocks.materialize).not.toHaveBeenCalled();
     expect(vm.done).toContain("live columns");
     expect(vm.running).toBe(false);
+    // The banner described that run; picking another mode drops it.
+    vm.mode = "score";
+    await nextTick();
+    expect(vm.done).toBe("");
   });
 
   it("scores a gene set into its own measurement", async () => {

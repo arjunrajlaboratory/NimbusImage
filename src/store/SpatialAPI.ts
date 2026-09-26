@@ -168,11 +168,32 @@ export default class SpatialAPI {
     tiles: string[],
     minQv: number,
   ): Promise<ITranscriptPoints> {
-    const response = await this.client.post(
-      `spatial/${datasetId}/transcripts/points`,
-      { genes, level, tiles, minQv },
-      { responseType: "arraybuffer" },
-    );
+    let response;
+    try {
+      response = await this.client.post(
+        `spatial/${datasetId}/transcripts/points`,
+        { genes, level, tiles, minQv },
+        { responseType: "arraybuffer" },
+      );
+    } catch (error) {
+      // An arraybuffer request gets its error body as bytes too; decode the
+      // Girder JSON so callers can read response.data.message as usual.
+      const errorResponse = isAxiosError(error) ? error.response : undefined;
+      const data = errorResponse?.data;
+      if (
+        errorResponse &&
+        Object.prototype.toString.call(data) === "[object ArrayBuffer]"
+      ) {
+        try {
+          errorResponse.data = JSON.parse(
+            new TextDecoder().decode(data as ArrayBuffer),
+          );
+        } catch {
+          // Not JSON (a proxy error page): leave the bytes as they were.
+        }
+      }
+      throw error;
+    }
     return decodeTranscriptPoints(response.data as ArrayBuffer);
   }
 

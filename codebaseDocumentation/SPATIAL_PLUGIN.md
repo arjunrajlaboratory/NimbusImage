@@ -244,9 +244,17 @@ Closing the loop (plan §13): edited cell polygons → a corrected count matrix,
   ignored. Cell types transfer through **tags**: a cell's tag among the previous table's
   `cell_type` categories.
 - **`scope: "dirty"`** seeds tiles from both old and new footprints of changed cells,
-  old footprints of removed cells, and current footprints of added cells (every cell
-  overlapping such a tile is redone, since molecules may have moved to a neighbor) and
-  carries the other rows over from the active table by `annotation_id`. Previous bounds
+  old footprints of removed cells, and current footprints of added cells. Every cell
+  overlapping a seed tile is redone (molecules may have moved to a neighbor) over all of
+  its own tiles — **one ring, not a fixpoint** (`dirtyTilePlan`): a cell outside the ring
+  has no changed footprint in any of its tiles, so its carried row is exact, while
+  growing the set until stable spreads through contiguous tissue (cells straddle every
+  tile edge) and rebuilt 689 of 812 lymph-node tiles for one moved cell. Inside every
+  processed tile all overlapping cells are rasterized, so a ring tile's quiet cells still
+  win their own molecules; only the redone cells' counts are kept (`assignTile`'s
+  `countCells`). The other rows are carried over from the active table by
+  `annotation_id`. `cellPolygons` reuses each annotation's stored `geometryHash` and
+  computes bounds and areas vectorized (37 s → 19 s for 709K polygons). Previous bounds
   are stored in `obsm/nimbus_cell_bounds`. Legacy tables without bounds fall back to a
   full rebuild once, so no old footprint is silently missed. `scope: "all"`
   rasterizes every tile. Both write a complete new `spatial.zarr.zip` (zarr 2, AnnData
@@ -290,13 +298,23 @@ cells); a cell's **type** is its first tag not in `excludeTags` (default `["cell
 | `GET spatial/{datasetId}/neighborhood` | — | `{radius, excludeTags, types, counts, pairs, matrix, cells, typed, written, propertyId, computed}`; 404 until computed |
 | `POST spatial/{datasetId}/regions/summary` | `{regionTag? \| regionIds? (≤ 50), excludeTags?, features? (≤ 64, needs a table)}` | `[{id, name, tags, cells, composition: [{type, count}], expression: [{symbol, mean, fractionExpressing, expressing}], rows}]` |
 
-- **Neighbors**: `cKDTree.query_pairs(radius)`; each pair counts once in each direction.
+- **Neighbors**: every pair within `radius` (`cKDTree`); each pair counts once in each direction.
   `pairs[i][j]` = observed neighbors of type j around cells of type i (symmetric);
   `matrix = log2((pairs + 1) / (expected + 1))` with `expected_ij = row_i × col_j / total`,
   i.e. the counts under a label shuffle. Untyped cells count neighbors but join no pair.
   Before either allocation, the job rejects result matrices above 512 MiB and neighborhoods
-  above 5 million pairs; `count_neighbors` performs the pair preflight without retaining the
-  full pair set.
+  above 100 million pairs (a time bound: 30 µm on the lymph node is ~24 million);
+  `query_ball_point(..., return_length=True)` performs that preflight without retaining the
+  pairs and yields each cell's neighbor count. The pairs are then enumerated a chunk of cells
+  at a time against the whole tree (`sparse_distance_matrix`), with chunk boundaries cut
+  from the cumulative per-cell counts so no chunk exceeds `NEIGHBOR_ENTRIES_PER_CHUNK`
+  directed entries unless a single cell alone does. Memory is therefore bounded by the chunk
+  regardless of radius or density; sizing chunks from the *average* count (the earlier
+  approach) let a run of cells in dense tissue, which Xenium's positional import order
+  produces, exceed the budget several-fold. The earlier 5-million-pair cap made the dialog's
+  default 30 µm radius fail on the 700K-cell dataset. Pinned by
+  *"testNeighborhoodChunksMatchBruteForce"* and
+  *"testNeighborhoodChunksStayWithinBudgetOnClumpedCells"*.
 - **Regions**: polygon annotations carrying the tag (or the ids); cells inside =
   `skimage.measure.points_in_poly` after a bounding-box prefilter; the region polygons are
   excluded from the cells and the region tag from the type tags. Expression per region is
@@ -338,6 +356,17 @@ registers it with the bundle's `pixel_size` (and the inverse H&E alignment as `t
 for the H&E dataset).
 
 ## Regression checklist
+
+- A dirty rebuild processes one ring of tiles around the edits, not the closure through
+  straddling cells — `test_recompute.py::testDirtyTilePlanIsOneRing`; ring-tile quiet cells
+  still compete for molecules — `testAssignTileCountsOnlyDirtyCellsButKeepsCompetition`;
+  and the dirty table equals a full rebuild row for row — `testStalenessAndDirtyScope`.
+- Neighborhoods at the dialog's default 30 µm run on 700K cells (pairs chunked, memory
+  bounded per chunk) and equal the all-pairs answer —
+  `test_analysis.py::testNeighborhoodChunksMatchBruteForce`.
+- Differential expression reads columns in blocks and the Wilcoxon closed form equals
+  scipy — `test_phase2.py::testBlockedColumnReadsMatchPerColumnReads`,
+  `testWilcoxonMatchesScipy`.
 
 - Moving a registered source item out of its dataset refuses virtual values even
   with a warm store cache; moving it back restores access —

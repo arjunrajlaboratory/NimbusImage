@@ -1,4 +1,6 @@
+import copy
 import math
+import re
 
 import orjson
 import cherrypy
@@ -45,6 +47,10 @@ from ..helpers.validation import (
     validateUncomputedCountsProperties,
 )
 from ..models.annotation import Annotation as AnnotationModel
+from ..models.rasterFilter import (
+    RasterFilter as RasterFilterModel,
+    UnknownRasterFilter,
+)
 from ..helpers.serialization import orJsonDefaults
 from ..helpers.annotationRaster import (
     COLOR_PATTERN,
@@ -54,11 +60,15 @@ from ..helpers.annotationRaster import (
     RasterLayerSelector,
     RasterTileParams,
     buildRasterEtag,
+    filterMaskCache,
     getFrameGeometry,
     getRasterVersion,
     parseHexColor,
     renderRasterTile,
 )
+
+
+RASTER_FILTER_KEY_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 # Helper functions to get dataset ID for recordable endpoints
@@ -214,6 +224,9 @@ class Annotation(Resource):
         self.route("GET", ("stubs",), self.stubs)
         self.route(
             "GET", ("raster", ":z", ":x", ":y"), self.rasterTile
+        )
+        self.route(
+            "POST", ("raster", "filter"), self.registerRasterFilter
         )
         self.route("POST", ("hydrate",), self.hydrate)
         self.route("POST", ("list",), self.listAnnotations)
@@ -796,14 +809,14 @@ class Annotation(Resource):
             exc=True,
         )
 
-        cursor = self._annotationModel.stubs(
+        stubs = self._annotationModel.stubs(
             datasetId,
             shape=params.get("shape"),
             tags=params.get("tags"),
         )
 
         setResponseHeader("Content-Type", "application/json")
-        return _streamJsonArray(cursor, default=orJsonDefaults)
+        return _streamJsonArray(stubs, default=orJsonDefaults)
 
     # GeoJS loads OSM tiles through <img> requests, which cannot attach the
     # Girder-Token header used by the REST client.  This read-only route must
@@ -835,6 +848,12 @@ class Annotation(Resource):
         .param("pointRadius", "Point radius in tile pixels", required=False)
         .param("lineWidth", "Line width in tile pixels", required=False)
         .param("v", "Opaque client cache version", required=False)
+        .param(
+            "filter",
+            "Key of a registered filter (POST raster/filter): draw only "
+            "the objects passing it",
+            required=False,
+        )
         .errorResponse("Invalid raster tile request", 400)
         .errorResponse("Authentication required for private dataset", 401)
         .errorResponse("Read access denied", 403)
@@ -882,6 +901,12 @@ class Annotation(Resource):
         clientVersion = params.get("v", "")
         if not isinstance(clientVersion, str) or len(clientVersion) > 64:
             raise RestException("v must be at most 64 characters", 400)
+        filterKey = params.get("filter") or None
+        if filterKey is not None and (
+            not isinstance(filterKey, str)
+            or not RASTER_FILTER_KEY_PATTERN.fullmatch(filterKey)
+        ):
+            raise RestException("filter must be a registered filter key", 400)
 
         key = RasterGeometryKey(
             datasetId=datasetId,
@@ -901,6 +926,7 @@ class Annotation(Resource):
             pointRadius=pointRadius,
             lineWidth=lineWidth,
             clientVersion=clientVersion,
+            filterKey=filterKey,
         )
         if level < 0 or level > maxLevel:
             raise RestException("z is outside the tile pyramid", 400)
@@ -952,9 +978,95 @@ class Annotation(Resource):
             raise RestException(
                 "Too many annotation raster geometry builds", 429
             )
+        mask = None
+        if filterKey is not None:
+            mask = self._rasterFilterMask(
+                datasetId, geometry, version, filterKey, clientVersion,
+                anonymousIdentity,
+            )
         setResponseHeader("Content-Type", "image/png")
         setRawResponse()
-        return renderRasterTile(geometry, tileParams)
+        return renderRasterTile(geometry, tileParams, mask)
+
+    def _rasterFilterMask(
+        self, datasetId, geometry, version, filterKey, clientVersion,
+        anonymousIdentity,
+    ):
+        """The frame mask of a registered filter. The registered spec is
+        read (and resolved, gates included, exactly as the list endpoints
+        do) only when the passing set is not cached. The raster version
+        stays in the passing key: its time bucket bounds how stale a set
+        cached by this process can be after another process's writes."""
+
+        def computePassingIds():
+            filters = RasterFilterModel().filtersFor(filterKey, datasetId)
+            if filters is None:
+                raise UnknownRasterFilter()
+            # Stored as the client sent it (validation converts ids to
+            # ObjectIds in place, which JSON cannot hold): validate again
+            # here, as every list endpoint does, then resolve.
+            resolved = copy.deepcopy(filters)
+            validateListInputs(resolved)
+            self._resolveListFilters(datasetId, resolved)
+            return self._annotationModel.listIds(datasetId, resolved)
+
+        try:
+            return filterMaskCache.mask(
+                geometry,
+                (str(datasetId), version, filterKey, clientVersion),
+                computePassingIds,
+                anonymousIdentity=anonymousIdentity,
+            )
+        except UnknownRasterFilter:
+            raise RestException(
+                "unknown or expired overview filter; register it again", 404
+            )
+        except RasterBuildBusy:
+            setResponseHeader("Retry-After", "1")
+            raise RestException(
+                "Overview filter is being computed; retry shortly", 503
+            )
+        except RasterBuildRateLimited:
+            setResponseHeader("Retry-After", "1")
+            raise RestException(
+                "Too many overview filter builds", 429
+            )
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
+
+    @access.user(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Register the viewer's filters for the overview raster")
+        .notes(
+            "Body: {datasetId, filters} — the list-endpoint filter object "
+            "(gate definitions included). Returns {key}; overview tiles "
+            "drawn with filter=<key> show only the objects passing it. "
+            "Content-addressed and expiring (models/rasterFilter.py). A "
+            "login is required: an anonymous caller could otherwise fill "
+            "the collection. Each user keeps at most 50 live "
+            "registrations; registering past that drops their oldest."
+        )
+        .param("body", "JSON: {datasetId, filters}", paramType="body")
+        .errorResponse()
+        .errorResponse("Read access denied.", 403)
+    )
+    def registerRasterFilter(self, params):
+        bodyJson = requireObjectBody(self.getBodyJson())
+        datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
+        user = self.getCurrentUser()
+        Folder().load(
+            datasetId, user=user, level=AccessType.READ, exc=True,
+        )
+        filters = bodyJson.get("filters") or {}
+        # Validated on a copy: validation converts ids in place, and the
+        # stored spec must stay JSON (it is validated again when used).
+        validateListInputs(copy.deepcopy(filters))
+        try:
+            return {
+                "key": RasterFilterModel().register(datasetId, filters, user)
+            }
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
@@ -1025,17 +1137,21 @@ class Annotation(Resource):
             )
         else:
             validateListInputs(filters)
-        dropNoOpPropertyFilters(filters)
         try:
-            self._annotationModel.resolveListGateConstraints(
-                datasetId, filters
-            )
-            # Property filters on virtual paths (valueProviders) resolve to
-            # id clauses the same way; an unknown virtual key is a 400.
-            self._annotationModel.resolveProviderFilters(datasetId, filters)
+            self._resolveListFilters(datasetId, filters)
         except ValueError as exc:
             raise RestException(str(exc), code=400)
         return bodyJson, datasetId, filters
+
+    def _resolveListFilters(self, datasetId, filters):
+        """Resolve a validated filter object in place, as every
+        filter-driven request does: drop no-op property filters, then turn
+        gate definitions and property filters on virtual paths
+        (valueProviders) into id clauses. Raises ValueError for an
+        over-budget gate or an unknown virtual key."""
+        dropNoOpPropertyFilters(filters)
+        self._annotationModel.resolveListGateConstraints(datasetId, filters)
+        self._annotationModel.resolveProviderFilters(datasetId, filters)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -1130,7 +1246,9 @@ class Annotation(Resource):
         .param(
             "body",
             "JSON: {datasetId, xAxis, yAxis, xCategories?, yCategories?, "
-            "bins, upstreamGates, filters, gate?}",
+            "bins, upstreamGates, filters, gate?, sample?: {size, "
+            "colorBy?}} — with `sample`, the response also carries a "
+            "display sample of dots (see analysis.sample_points)",
             paramType="body",
         )
         .errorResponse()

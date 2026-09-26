@@ -21,7 +21,10 @@ import {
   filtersMatchNothing,
 } from "@/utils/annotationListFilters";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
+import { MAX_HISTOGRAM_ID_CONSTRAINT } from "./constants";
 import { idListSignature } from "@/utils/signatures";
+import { logError } from "@/utils/log";
+import { annotationRasterSelectorsForLayers } from "@/utils/annotationOverview";
 
 // Monotonic stale-response guard: only the latest fetchPage may apply its
 // result. Debounce reduces overlap but doesn't eliminate it (e.g. immediate
@@ -33,6 +36,11 @@ const pageRequestGuard = createSequenceGuard();
 // anchor lookup without interfering with an unrelated page request's loading
 // cleanup. Every ordinary page fetch also invalidates pending navigation.
 const navigationRequestGuard = createSequenceGuard();
+// Resolved gate ids the overview filter carries inline rather than as gate
+// definitions (see overviewFilters). The histogram's inline id cap.
+const MAX_OVERVIEW_INLINE_GATE_IDS = MAX_HISTOGRAM_ID_CONSTRAINT;
+// Only the latest overview-filter registration may apply its key.
+const overviewFilterGuard = createSequenceGuard();
 
 // buildListFilters moved to @/utils/annotationListFilters so the filters
 // store can reuse it (importing it from here would be circular — this module
@@ -51,6 +59,16 @@ export class AnnotationListServer extends VuexModule {
   pageSize = 10;
   sort: IAnnotationListSort | null = null;
   idSubstring = "";
+  // The overview raster's registered filter (null: draw every object) and
+  // the overviewFiltersSignature it was registered for.
+  overviewFilterKey: string | null = null;
+  overviewFilterSignature: string | null = null;
+
+  @Mutation
+  setOverviewFilter(payload: { key: string | null; signature: string | null }) {
+    this.overviewFilterKey = payload.key;
+    this.overviewFilterSignature = payload.signature;
+  }
 
   @Mutation
   setPageResult(payload: { rows: IAnnotationListRow[]; total: number }) {
@@ -106,6 +124,149 @@ export class AnnotationListServer extends VuexModule {
       analysisGateDefinitions: filters.activeAnalysisGateDefinitions,
       analysisGatesMatchNothing: filters.hasEmptyResolvedGate,
     });
+  }
+
+  /**
+   * The filters the overview raster applies: what the viewer shows, i.e. the
+   * server-list query WITHOUT the Objects tab's id search (that narrows the
+   * list, not the image). Region (ROI) filters are not expressible
+   * server-side, so under one the overview can over-include — the same
+   * limitation as the server list.
+   */
+  get overviewFilters(): IAnnotationListFilters {
+    // Gates the client has already resolved travel as their ids when small
+    // enough: each is its own id set, exactly how the server applies a gate
+    // (AND per gate), so the overview needs only an id lookup instead of
+    // re-resolving the polygon over the whole dataset — seconds at 700K,
+    // right after the gate_ids request did the same work. Larger gates go as
+    // definitions.
+    const gateIdLists = filters.activeAnalysisGateIdLists.filter(
+      (ids) => ids.length > 0,
+    );
+    const inlineGates =
+      gateIdLists.reduce((total, ids) => total + ids.length, 0) <=
+      MAX_OVERVIEW_INLINE_GATE_IDS;
+    // The overview's tiles are already per frame (its selectors), so the
+    // current-frame filter only narrows it when some drawn layer is not
+    // pinned to the current frame (a max-merge or offset layer). Otherwise
+    // leaving the location out keeps the key valid across frame changes — a
+    // key carrying the old frame would draw the new frame blank until a
+    // re-registration, and force a whole-dataset rebuild server-side.
+    const onlyCurrentFrame =
+      filters.onlyCurrentFrame && !this.overviewSelectorsPinCurrentFrame;
+    const built = buildListFilters({
+      tagFilter: filters.tagFilter,
+      onlyCurrentFrame,
+      currentFrame: onlyCurrentFrame
+        ? { XY: main.xy, Z: main.z, Time: main.time }
+        : { XY: 0, Z: 0, Time: 0 },
+      idSubstring: "",
+      propertyFilters: filters.propertyFilters,
+      selectionFilter: filters.selectionFilter,
+      annotationIdFilters: filters.annotationIdFilters,
+      analysisGateDefinitions: inlineGates
+        ? []
+        : filters.activeAnalysisGateDefinitions,
+      analysisGatesMatchNothing: filters.hasEmptyResolvedGate,
+    });
+    if (inlineGates && gateIdLists.length > 0) {
+      built.idConstraints = [...(built.idConstraints ?? []), ...gateIdLists];
+    }
+    return built;
+  }
+
+  // True when every layer the overview draws selects exactly the current
+  // frame, so the raster selectors alone already restrict it to what the
+  // current-frame filter would. A max-merge dimension (the selector omits it)
+  // or an offset/constant slice (a different index) does not.
+  get overviewSelectorsPinCurrentFrame(): boolean {
+    return annotationRasterSelectorsForLayers({
+      layers: main.layers,
+      showHiddenLayers: main.showAnnotationsFromHiddenLayers,
+      layerSliceIndexes: main.layerSliceIndexes,
+    }).every(
+      (selector) =>
+        selector.XY === main.xy &&
+        selector.Z === main.z &&
+        selector.Time === main.time,
+    );
+  }
+
+  // Identity of the overview's query, including what its gates currently
+  // resolve to (so a recompute that moves a fixed gate's membership still
+  // refreshes the tiles) and the dataset (a key belongs to one dataset).
+  get overviewFiltersSignature(): string {
+    const { idConstraints, ...rest } = this.overviewFilters;
+    const constraints = (idConstraints ?? []).map(idListSignature).join(",");
+    return `${main.dataset?.id ?? ""}|${JSON.stringify(rest)}|${constraints}|${
+      filters.analysisGateSignature
+    }`;
+  }
+
+  /**
+   * The registered filter the overview's tiles should carry, or null to draw
+   * unfiltered. Only while the committed key still describes the viewer's
+   * current filters: while a new registration is pending (or after a dataset
+   * switch, whose first tiles would 404 on the old dataset's key), drawing
+   * unfiltered beats drawing the previous filters' passing set.
+   *
+   * `version` is the tiles' cache identity. The server caches a key's
+   * passing ids per (dataset, raster version, key, version), and the raster
+   * version only moves on annotation writes — so under a property filter the
+   * version also carries propertyValuesRevision, which moves when values are
+   * recomputed or imported (not on a viewport pan), or the overview would
+   * keep the pre-recompute passing set. Gates need no revision: a recompute
+   * that moves their membership moves analysisGateSignature, which is in the
+   * signature.
+   */
+  get activeOverviewFilter(): { key: string; version: string } | null {
+    const key = this.overviewFilterKey;
+    const signature = this.overviewFilterSignature;
+    if (key === null || signature !== this.overviewFiltersSignature) {
+      return null;
+    }
+    const revision = this.overviewFilters.propertyFilters?.length
+      ? `|${properties.propertyValuesRevision}`
+      : "";
+    return { key, version: `${signature}${revision}` };
+  }
+
+  /**
+   * Register the overview's filters when they changed (ImageViewer triggers
+   * this while the overview is on). No active filter: no key, every object
+   * is drawn. A failed registration clears the key and the signature, so the
+   * next change retries; meanwhile the overview draws every object.
+   */
+  @Action
+  async refreshOverviewFilter(): Promise<void> {
+    // Claimed before every early return, including the unchanged-filters one:
+    // after A (committed) -> B (registering) -> back to A, this call returns
+    // early, and B's late answer must not then commit B's key over A.
+    const token = overviewFilterGuard.next();
+    const signature = this.overviewFiltersSignature;
+    if (signature === this.overviewFilterSignature) {
+      return;
+    }
+    const datasetId = main.dataset?.id;
+    const overviewFilters = this.overviewFilters;
+    if (!datasetId || Object.keys(overviewFilters).length === 0) {
+      this.setOverviewFilter({ key: null, signature });
+      return;
+    }
+    try {
+      const key = await main.annotationsAPI.registerRasterFilter(
+        datasetId,
+        overviewFilters,
+      );
+      if (overviewFilterGuard.isCurrent(token)) {
+        this.setOverviewFilter({ key, signature });
+      }
+    } catch (error) {
+      logError("Failed to apply the filters to the overview:", error);
+      if (overviewFilterGuard.isCurrent(token)) {
+        this.setOverviewFilter({ key: null, signature: null });
+      }
+    }
   }
 
   // A cheap identity for `currentFilters`, for watchers that need to react when

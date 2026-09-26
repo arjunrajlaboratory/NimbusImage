@@ -37,10 +37,17 @@ MAX_REGIONS = 50
 # risking the whole Girder process; the usual 700K-cell / tens-of-types case is
 # comfortably below this ceiling.
 MAX_NEIGHBOR_RESULT_BYTES = 512 * 1024 * 1024
-# `query_pairs` materializes two platform integers per pair plus temporary
-# boolean/index arrays. Five million pairs keeps its working set bounded while
-# still allowing dense local neighborhoods.
-MAX_NEIGHBOR_PAIRS = 5_000_000
+# Pairs are enumerated a chunk of cells at a time (`neighborhood`), and the
+# chunks are cut from each cell's own neighbor count, so memory is bounded by
+# NEIGHBOR_ENTRIES_PER_CHUNK however unevenly the cells are packed (only a
+# single cell with more neighbors than that can exceed it). The total only
+# bounds the time: 100 million pairs is a radius of ~60 um on the 700K-cell
+# lymph node (30 um, the dialog's default, is ~24 million), and a minute or
+# two of work.
+MAX_NEIGHBOR_PAIRS = 100_000_000
+# Directed neighbor entries held at once: each is an (i, j, distance) record
+# of 24 bytes plus the index arrays derived from it, so ~200 MB at the peak.
+NEIGHBOR_ENTRIES_PER_CHUNK = 4_000_000
 # Pseudocount in the enrichment log ratio, so an empty pair is finite.
 ENRICHMENT_PSEUDOCOUNT = 1.0
 
@@ -125,7 +132,15 @@ def typeIndex(types):
 def neighborhood(centroids, codes, nTypes, radius):
     """Per-cell neighbor type counts [n, nTypes] and the pair matrix
     [nTypes, nTypes] (observed pairs with type i around type j, symmetric)
-    for all pairs closer than `radius`."""
+    for all pairs closer than `radius`.
+
+    Each pair counts once in each direction, so the cells are walked in
+    chunks and every chunk's neighbors are found against the whole tree:
+    a chunk contributes exactly its own rows of `counts` and the pairs
+    directed away from its cells, and memory stays at one chunk's pairs.
+    Chunk boundaries come from the per-cell neighbor counts, not their
+    average: cells arrive in import (spatial) order, so a run of cells in
+    dense tissue can hold many times the average."""
     n = len(centroids)
     resultBytes = np.dtype(np.int64).itemsize * (
         n * nTypes + nTypes * nTypes
@@ -140,27 +155,44 @@ def neighborhood(centroids, codes, nTypes, radius):
     if n < 2 or radius <= 0:
         return counts, pairs
     tree = cKDTree(centroids)
-    # count_neighbors includes each pair in both directions and every point's
-    # self-match. It obtains the size without retaining the pair array.
-    pairCount = (int(tree.count_neighbors(tree, radius)) - n) // 2
+    # Each cell's entry count in the pair walk below: its neighbors within
+    # the radius (inclusive, as sparse_distance_matrix) plus its self-match.
+    # Obtained without retaining any pair array.
+    perCell = tree.query_ball_point(centroids, radius, return_length=True)
+    pairCount = (int(perCell.sum()) - n) // 2
     if pairCount > MAX_NEIGHBOR_PAIRS:
         raise ValueError(
             "radius produces %d neighbor pairs; limit is %d"
             % (pairCount, MAX_NEIGHBOR_PAIRS)
         )
-    close = tree.query_pairs(radius, output_type="ndarray")
-    if len(close) == 0:
+    if pairCount == 0:
         return counts, pairs
-    i, j = close[:, 0], close[:, 1]
-    typedJ = codes[j] >= 0
-    typedI = codes[i] >= 0
-    # Each pair counts once in each direction: j is a neighbor of i and
-    # i of j.
-    np.add.at(counts, (i[typedJ], codes[j][typedJ]), 1)
-    np.add.at(counts, (j[typedI], codes[i][typedI]), 1)
-    both = typedI & typedJ
-    np.add.at(pairs, (codes[i][both], codes[j][both]), 1)
-    np.add.at(pairs, (codes[j][both], codes[i][both]), 1)
+    # Greedy cut: each chunk takes as many cells as fit the entry budget,
+    # and at least one.
+    entriesThrough = np.cumsum(perCell)
+    start = 0
+    while start < n:
+        before = int(entriesThrough[start - 1]) if start else 0
+        stop = max(start + 1, int(np.searchsorted(
+            entriesThrough, before + NEIGHBOR_ENTRIES_PER_CHUNK, side="right"
+        )))
+        close = cKDTree(centroids[start:stop]).sparse_distance_matrix(
+            tree, radius, output_type="ndarray"
+        )
+        i = close["i"].astype(np.int64) + start
+        j = close["j"].astype(np.int64)
+        keep = (i != j) & (codes[j] >= 0)
+        i, j = i[keep], j[keep]
+        typeJ = codes[j]
+        counts[start:stop] += np.bincount(
+            (i - start) * nTypes + typeJ, minlength=(stop - start) * nTypes
+        ).reshape(stop - start, nTypes)
+        typedI = codes[i] >= 0
+        pairs += np.bincount(
+            codes[i][typedI] * nTypes + typeJ[typedI],
+            minlength=nTypes * nTypes,
+        ).reshape(nTypes, nTypes)
+        start = stop
     return counts, pairs
 
 

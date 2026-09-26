@@ -16,7 +16,10 @@ from girder.models.folder import Folder
 from girder.utility.acl_mixin import AccessControlMixin
 
 from ..helpers import analysis
-from ..helpers.aggregation import AGGREGATION_MAX_TIME_MS
+from ..helpers.aggregation import (
+    AGGREGATION_MAX_TIME_MS,
+    prefetchedDocuments,
+)
 from ..helpers.colormaps import (
     CONTINUOUS_COLORMAPS,
     DEFAULT_COLORMAP,
@@ -396,7 +399,8 @@ class Annotation(AccessControlMixin, ProxiedModel):
     def stubs(self, datasetId, shape=None, tags=None):
         """Lightweight stub docs for every annotation in a dataset: centroid +
         estimatedRadius, with the full coordinates dropped. Drives the frontend
-        stub/hydration view of large datasets. Returns a cursor.
+        stub/hydration view of large datasets. Returns an iterator of
+        documents, in _id order (the standard hint's index order).
 
         Built here (not in the API method) so pipeline construction and the
         runtime-bound _aggregate options live with the other list aggregations.
@@ -407,37 +411,53 @@ class Annotation(AccessControlMixin, ProxiedModel):
         if tags:
             match["tags"] = {"$all": tags}
 
+        # Each "$coordinates.x" builds an array of the vertices' x; $let
+        # builds x and y once instead of once per operator (six), which is
+        # most of the Mongo time at 700K.
+        radius = {"$divide": [
+            {"$max": [
+                {"$subtract": [{"$max": "$$xs"}, {"$min": "$$xs"}]},
+                {"$subtract": [{"$max": "$$ys"}, {"$min": "$$ys"}]},
+            ]},
+            2,
+        ]}
         pipeline = [
             {"$match": match},
             {"$addFields": {
-                "centroid": {
-                    "x": {"$avg": "$coordinates.x"},
-                    "y": {"$avg": "$coordinates.y"},
-                },
-                # Half the larger bounding-box side. Matches the frontend
-                # estimateAnnotationRadius so the stub circle tracks the
-                # annotation's footprint; the previous bbox-diagonal/2
-                # circumscribed the box and overshot the real size by up to
-                # sqrt(2) (a square cell rendered ~41% too large).
-                "estimatedRadius": {
-                    "$divide": [
-                        {"$max": [
-                            {"$subtract": [
-                                {"$max": "$coordinates.x"},
-                                {"$min": "$coordinates.x"},
-                            ]},
-                            {"$subtract": [
-                                {"$max": "$coordinates.y"},
-                                {"$min": "$coordinates.y"},
-                            ]},
-                        ]},
-                        2,
-                    ]
-                },
+                "_stub": {"$let": {
+                    "vars": {"xs": "$coordinates.x", "ys": "$coordinates.y"},
+                    "in": {
+                        "centroid": {
+                            "x": {"$avg": "$$xs"},
+                            "y": {"$avg": "$$ys"},
+                        },
+                        # Half the larger bounding-box side. Matches the
+                        # frontend estimateAnnotationRadius so the stub
+                        # circle tracks the annotation's footprint; the
+                        # previous bbox-diagonal/2 circumscribed the box and
+                        # overshot the real size by up to sqrt(2) (a square
+                        # cell rendered ~41% too large).
+                        "estimatedRadius": radius,
+                    },
+                }},
             }},
-            {"$project": {"coordinates": 0}},
+            {"$addFields": {
+                "centroid": "$_stub.centroid",
+                "estimatedRadius": "$_stub.estimatedRadius",
+            }},
+            {"$project": {"coordinates": 0, "_stub": 0}},
         ]
-        return self._aggregate(self.collection, pipeline)
+        # Mongo evaluating the pipeline and pymongo decoding its output each
+        # take seconds at 700K; the prefetch overlaps them.
+        return prefetchedDocuments(
+            self.collection.aggregate_raw_batches(
+                pipeline,
+                hint=DEFAULT_AGGREGATE_HINT,
+                allowDiskUse=True,
+                maxTimeMS=AGGREGATION_MAX_TIME_MS,
+            ),
+            self.collection.codec_options,
+        )
 
     def _buildListMatchStages(self, datasetId, filters):
         """Pipeline stages matching annotation-document fields.
@@ -543,19 +563,29 @@ class Annotation(AccessControlMixin, ProxiedModel):
         if categoricalKeys & {"xy", "z", "time"}:
             fields["location"] = 1
         docs = []
+        indexOf = {}
         cursor = self._aggregate(
             self.collection,
             [{"$match": {"datasetId": datasetId}}, {"$project": fields}],
         )
         for doc in cursor:
-            doc["id"] = str(doc.pop("_id"))
+            annotationId = doc.pop("_id")
+            indexOf[annotationId] = len(docs)
+            doc["id"] = str(annotationId)
             docs.append(doc)
 
-        valuesById = {}
+        # Stored property axes come back as numeric COLUMNS aligned with
+        # `docs` (analysis.AnalysisValues), from one flat projection — not a
+        # nested values dict per annotation, whose decoding and per-document
+        # walking were most of a 700K-object gate resolution.
+        valuesById = analysis.AnalysisValues()
         if propertyPaths:
-            pvFields = {"_id": 0, "annotationId": 1}
-            for path in propertyPaths.values():
-                pvFields["values." + ".".join(path)] = 1
+            columnNames = {
+                key: "c%d" % i for i, key in enumerate(propertyPaths)
+            }
+            pvFields = {"_id": 0, "a": "$annotationId"}
+            for key, path in propertyPaths.items():
+                pvFields[columnNames[key]] = "$values." + ".".join(path)
             pvCursor = self._aggregate(
                 self._pvModel.collection,
                 [
@@ -563,9 +593,18 @@ class Annotation(AccessControlMixin, ProxiedModel):
                     {"$project": pvFields},
                 ],
             )
+            rows = []
+            raw = {key: [] for key in propertyPaths}
             for doc in pvCursor:
-                valuesById[str(doc["annotationId"])] = (
-                    doc.get("values") or {}
+                row = indexOf.get(doc["a"])
+                if row is None:
+                    continue  # orphaned value doc: annotations anchor
+                rows.append(row)
+                for key, name in columnNames.items():
+                    raw[key].append(doc.get(name))
+            for key in propertyPaths:
+                valuesById.setColumn(
+                    key, len(docs), rows, analysis.numeric_column(raw[key])
                 )
         # Virtual axes (valueProviders): the provider's dense answer is nested
         # under the same {prefix: {sub: value}} shape the pure helpers read,
@@ -761,15 +800,24 @@ class Annotation(AccessControlMixin, ProxiedModel):
         axes = [spec["xAxis"], spec["yAxis"]]
         for upstream in spec["upstreamGates"]:
             axes += [upstream["xAxis"], upstream["yAxis"]]
+        colorBy = (spec.get("sample") or {}).get("colorBy")
+        if colorBy is not None:
+            axes.append(colorBy)
         docs, valuesById = self._analysisData(datasetId, axes)
+        # Narrow docs and their value columns together (AnalysisValues
+        # columns are aligned with the docs list they were built for).
         if spec["filters"]:
             passing = set(self.listIds(datasetId, spec["filters"]))
-            docs = [doc for doc in docs if doc["id"] in passing]
+            docs, valuesById = analysis.subset_analysis_data(
+                docs, valuesById, [doc["id"] in passing for doc in docs]
+            )
         for upstream in spec["upstreamGates"]:
             inside = set(
                 analysis.resolve_gate_ids(docs, valuesById, upstream)
             )
-            docs = [doc for doc in docs if doc["id"] in inside]
+            docs, valuesById = analysis.subset_analysis_data(
+                docs, valuesById, [doc["id"] in inside for doc in docs]
+            )
         return analysis.histogram2d(docs, valuesById, spec)
 
     def _centroidAddFields(self):
@@ -1422,21 +1470,39 @@ class Annotation(AccessControlMixin, ProxiedModel):
             ],
         )), {})
 
-        # One streaming pass over the value docs: count, per top-level property
-        # key, how many docs carry it. `values`' top-level keys are property
-        # ids -- exactly the existence the client checks (propertyValues a/p).
+        # One pass over the value docs counting, for each REQUESTED property
+        # id, the docs whose `values` carry that top-level key (null values
+        # included -- the existence the client checks). Only the requested
+        # keys are looked at: turning every doc's whole `values` into a key
+        # array (all stored gene sub-keys' parents included) cost twice as
+        # much at 700K. $getField with a literal name reads keys containing
+        # "." or "$" verbatim, as the key-array form did.
+        propertyIds = list(dict.fromkeys(
+            propertyFilter["id"] for propertyFilter in propertyFilters
+        ))
+        hasValueGroup = {"_id": None}
+        for i, propertyId in enumerate(propertyIds):
+            hasValueGroup["p%d" % i] = {"$sum": {"$cond": [
+                {"$eq": [
+                    {"$type": {"$getField": {
+                        "field": {"$literal": propertyId},
+                        "input": {"$ifNull": ["$values", {}]},
+                    }}},
+                    "missing",
+                ]},
+                0,
+                1,
+            ]}}
+        hasValueCounts = next(iter(self._aggregate(
+            self._pvModel.collection,
+            [
+                {"$match": {"datasetId": datasetId}},
+                {"$group": hasValueGroup},
+            ],
+        )), {})
         hasValueByProperty = {
-            doc["_id"]: doc["n"]
-            for doc in self._aggregate(
-                self._pvModel.collection,
-                [
-                    {"$match": {"datasetId": datasetId}},
-                    {"$project": {"k": {"$objectToArray": {
-                        "$ifNull": ["$values", {}]}}}},
-                    {"$unwind": "$k"},
-                    {"$group": {"_id": "$k.k", "n": {"$sum": 1}}},
-                ],
-            )
+            propertyId: hasValueCounts.get("p%d" % i, 0)
+            for i, propertyId in enumerate(propertyIds)
         }
 
         counts = {}

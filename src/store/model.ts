@@ -2244,12 +2244,23 @@ export interface IAnalysisGate {
 // flow-cytometry-style sequential gating. `gate` is null until a selection is
 // drawn. The annotation ids inside a gate are derived, not stored here: see
 // `analysisGateIds` in the filters store.
+// How a plot draws its population. "density" is the server-binned heatmap
+// above the point cap (and the full scatter below it); "dots" draws a random
+// display sample above the cap — what a UMAP normally looks like. Display
+// only: gates are polygons in value space either way.
+export type TAnalysisPlotDisplay = "density" | "dots";
+
 export interface IAnalysisPlot {
   id: string;
   xAxis: TAnalysisAxis | null;
   yAxis: TAnalysisAxis | null;
   gate: IAnalysisGate | null;
   gateEnabled: boolean;
+  // Optional so configurations saved before these existed still load.
+  display?: TAnalysisPlotDisplay;
+  // Colors the dots: a categorical key (cell type tags, …) or a property
+  // (a cluster id, a gene). Display only, never part of the gate.
+  colorBy?: TAnalysisAxis | null;
 }
 
 // One plot in a server-side gate-resolution request: a DRAWN plot's
@@ -2265,7 +2276,19 @@ export interface IAnalysisGatePlotRequest {
 
 // Server-binned display data for one analysis plot above the cap
 // (SERVER_GATING.md, Phase 2). Rows of `counts` are y bins, columns x bins.
+// A display sample of one plot's points (histogram2d with `sample`). `color`
+// is a category index into `colorCategories` for a categorical colorBy, the
+// value (null = none) for a property colorBy, and null without colorBy.
+export interface IAnalysisSample {
+  x: number[];
+  y: number[];
+  total: number;
+  color: (number | null)[] | null;
+  colorCategories: string[] | null;
+}
+
 export interface IAnalysisHistogramResponse {
+  sample?: IAnalysisSample;
   counts: number[][];
   xEdges: number[] | null;
   yEdges: number[] | null;
@@ -2283,6 +2306,7 @@ export interface IAnalysisHistogramResponse {
 export interface IAnalysisHistogramDisplay extends IAnalysisHistogramResponse {
   xCategoryLabels: string[] | null;
   yCategoryLabels: string[] | null;
+  colorCategoryLabels: string[] | null;
 }
 
 export interface IAnalysisHistogramRequest {
@@ -2294,6 +2318,7 @@ export interface IAnalysisHistogramRequest {
   upstreamGates: Omit<IAnalysisGatePlotRequest, "id">[];
   filters: IAnnotationListFilters;
   gate: IAnalysisGate | null;
+  sample?: { size: number; colorBy: TAnalysisAxis | null };
 }
 
 export interface IAnnotationPropertyConfiguration {

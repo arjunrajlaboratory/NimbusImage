@@ -2,18 +2,23 @@
 
 from array import array
 from collections import deque, OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import lru_cache
 import hashlib
 import io
 import json
 import math
 import re
+import struct
 import threading
 import time
 import uuid
 
+import bson
 import numpy as np
 from PIL import Image, ImageDraw
+
+from .aggregation import AGGREGATION_MAX_TIME_MS
 
 
 RASTER_TILE_SIZE = 512
@@ -81,6 +86,9 @@ class RasterTileParams:
     pointRadius: float
     lineWidth: int
     clientVersion: str
+    # A registered filter (models/rasterFilter.py): only the objects passing
+    # it are drawn. None draws every object of the frame.
+    filterKey: str | None = None
 
     @property
     def scale(self):
@@ -101,6 +109,7 @@ class RasterTileParams:
             "sizeY": self.sizeY,
             "tileSize": self.tileSize,
             "maxLevel": self.maxLevel,
+            "filter": self.filterKey,
             "v": self.clientVersion,
             "x": self.x,
             "y": self.y,
@@ -120,6 +129,17 @@ class FrameGeometry:
     shapes: np.ndarray
     grid: tuple[np.ndarray, ...]
     unionBounds: tuple[float, float, float, float] | None
+    # Annotation ids (12-byte ObjectId binaries, "S12") in geometry order,
+    # for masking a frame to the objects passing the viewer's filters.
+    ids: np.ndarray = field(
+        default_factory=lambda: np.empty(0, dtype="S12")
+    )
+    # Filter masks over this geometry, keyed by passing key and kept here
+    # (not in FilterMaskCache) so they die with the geometry when
+    # FrameGeometryCache evicts it. Guarded by FilterMaskCache's lock.
+    filterMasks: dict = field(
+        default_factory=dict, compare=False, repr=False
+    )
 
     @property
     def count(self):
@@ -136,6 +156,7 @@ class FrameGeometry:
             self.colors,
             self.validColors,
             self.shapes,
+            self.ids,
             *self.grid,
         )
         allocationBytes = 0
@@ -297,7 +318,7 @@ def parseHexColor(value):
     )
 
 
-def _geometryPipeline(key):
+def _geometryMatch(key):
     selectors = []
     for selector in key.selectors:
         selectorMatch = {"channel": selector.channel}
@@ -308,9 +329,11 @@ def _geometryPipeline(key):
         if selector.time is not None:
             selectorMatch["location.Time"] = selector.time
         selectors.append(selectorMatch)
-    match = {"datasetId": key.datasetId, "$or": selectors}
+    return {"datasetId": key.datasetId, "$or": selectors}
 
-    pipeline = [{"$match": match}, {"$sort": {"_id": 1}}]
+
+def _geometryPipeline(key):
+    pipeline = [{"$match": _geometryMatch(key)}, {"$sort": {"_id": 1}}]
     if key.mode == "discs":
         # Compute the same centroid and half-max-bbox radius as /stubs while
         # dropping coordinates before Mongo sends the result to the process.
@@ -432,7 +455,9 @@ def _buildGrid(bboxes):
     return tuple(cells), union
 
 
-def _buildFrameGeometry(annotationModel, key):
+def _geometryFromDocuments(documents, key):
+    """Build geometry from decoded documents: the discs path, and the
+    reference the raw shapes path must reproduce exactly."""
     vertices = array("f")
     offsets = array("I", [0])
     bboxes = array("f")
@@ -442,10 +467,8 @@ def _buildFrameGeometry(annotationModel, key):
     validColors = array("B")
     shapes = array("B")
 
-    cursor = annotationModel._aggregate(
-        annotationModel.collection, _geometryPipeline(key)
-    )
-    for document in cursor:
+    ids = bytearray()
+    for document in documents:
         parsedColor = parseHexColor(document.get("color"))
         colors.extend(parsedColor or (0, 0, 0, 255))
         validColors.append(parsedColor is not None)
@@ -465,6 +488,7 @@ def _buildFrameGeometry(annotationModel, key):
             centroids.extend((centerX, centerY))
             radii.append(radius)
             shapes.append(SHAPE_CODES["point"])
+            ids += _idBinary(document.get("_id"))
             continue
 
         coordinates = document.get("coordinates") or []
@@ -472,21 +496,14 @@ def _buildFrameGeometry(annotationModel, key):
             colors[-4:] = array("B")
             validColors.pop()
             continue
-        flatCoordinates = [
-            value
-            for point in coordinates
-            for value in (point["x"], point["y"])
-        ]
+        flatCoordinates, bbox, centroid, radius = _decodedShape(coordinates)
         vertices.fromlist(flatCoordinates)
-        offsets.append(offsets[-1] + len(coordinates))
-        xs = flatCoordinates[::2]
-        ys = flatCoordinates[1::2]
-        minX, maxX = min(xs), max(xs)
-        minY, maxY = min(ys), max(ys)
-        bboxes.extend((minX, minY, maxX, maxY))
-        centroids.extend((sum(xs) / len(xs), sum(ys) / len(ys)))
-        radii.append(max(maxX - minX, maxY - minY) / 2)
+        offsets.append(offsets[-1] + len(flatCoordinates) // 2)
+        bboxes.extend(bbox)
+        centroids.extend(centroid)
+        radii.append(radius)
         shapes.append(SHAPE_CODES.get(document.get("shape"), 2))
+        ids += _idBinary(document.get("_id"))
 
     shapeArray = np.frombuffer(shapes, dtype=np.uint8)
     bboxArray = np.frombuffer(bboxes, dtype=np.float32).reshape((-1, 4))
@@ -502,7 +519,385 @@ def _buildFrameGeometry(annotationModel, key):
         shapes=shapeArray,
         grid=grid,
         unionBounds=union,
+        ids=np.frombuffer(bytes(ids), dtype="S12"),
     )
+
+
+def _idBinary(annotationId):
+    """The 12 bytes of an ObjectId (zeros for a document without one, as
+    test fixtures may be)."""
+    binary = getattr(annotationId, "binary", None)
+    return binary if binary is not None else bytes(12)
+
+
+# The shapes build reads every vertex of every annotation in the frame, and
+# for a 700K-cell dataset pymongo turning 18M points into dicts dominated it.
+# Conforming coordinates -- an array of {x: double, y: double} documents, which
+# is what the app writes -- have a byte layout fixed by their point count, so
+# they are read straight out of the raw BSON with numpy. Anything else (int or
+# NaN coordinates, a z value, another key order) is decoded by pymongo and goes
+# through _decodedShape, the same arithmetic _geometryFromDocuments uses.
+RAW_POINT_CHUNK_ROWS = 4096
+_INT32 = struct.Struct("<i")
+
+
+@lru_cache(maxsize=65536)
+def _pointArrayCount(length):
+    """Point count whose conforming array is ``length`` bytes, else None.
+
+    Element ``i`` is 29 bytes plus the digits of ``i``; the array adds five.
+    """
+    remaining = length - 5
+    count = 0
+    digits = 1
+    keys = 10
+    while remaining > 0:
+        elements = min(remaining // (29 + digits), keys)
+        count += elements
+        remaining -= elements * (29 + digits)
+        if elements < keys:
+            break
+        digits += 1
+        keys = 9 * 10 ** (digits - 1)
+    return count if remaining == 0 else None
+
+
+@lru_cache(maxsize=1024)
+def _pointArrayLayout(count):
+    """Byte offsets of the structure and of the x and y values in a
+    conforming ``count``-point array, and the structure bytes expected."""
+    template = bytearray()
+    xStarts = []
+    yStarts = []
+    for index in range(count):
+        template += b"\x03" + str(index).encode() + b"\x00"
+        template += b"\x1b\x00\x00\x00\x01x\x00"
+        xStarts.append(4 + len(template))
+        template += bytes(8) + b"\x01y\x00"
+        yStarts.append(4 + len(template))
+        template += bytes(8) + b"\x00"
+    template = (
+        (len(template) + 5).to_bytes(4, "little") + template + b"\x00"
+    )
+    valueBytes = np.arange(8)
+    xIndex = np.array(xStarts, dtype=np.intp)[:, None] + valueBytes
+    yIndex = np.array(yStarts, dtype=np.intp)[:, None] + valueBytes
+    structure = np.ones(len(template), dtype=bool)
+    structure[xIndex.ravel()] = False
+    structure[yIndex.ravel()] = False
+    structureIndex = np.flatnonzero(structure)
+    templateBytes = np.frombuffer(bytes(template), dtype=np.uint8)
+    return (
+        structureIndex,
+        templateBytes[structureIndex],
+        xIndex.ravel(),
+        yIndex.ravel(),
+    )
+
+
+def _rawGeometryFields(buffer, start, end):
+    """``(shape, color, coordinates)`` of the raw document at
+    ``buffer[start:end]``, the coordinates as the array's ``(start, end)``.
+    None when a field is not a plain string, null or array, so the caller
+    decodes the document instead."""
+    # Fast path: _id, shape, coordinates, color in the order the app stores
+    # them. startswith at an offset compares without slicing.
+    position = start + 21
+    if (
+        buffer.startswith(b"\x07_id\x00", start + 4)
+        and buffer.startswith(b"\x02shape\x00", position)
+    ):
+        size = _INT32.unpack_from(buffer, position + 7)[0]
+        shape = buffer[position + 11:position + 10 + size].decode()
+        position += 11 + size
+        if buffer.startswith(b"\x04coordinates\x00", position):
+            coordinatesStart = position + 13
+            position = coordinatesStart + _INT32.unpack_from(
+                buffer, coordinatesStart
+            )[0]
+            if buffer.startswith(b"\x02color\x00", position):
+                size = _INT32.unpack_from(buffer, position + 7)[0]
+                if position + 12 + size == end:
+                    color = buffer[position + 11:position + 10 + size]
+                    return (
+                        shape,
+                        color.decode(),
+                        (coordinatesStart, position),
+                    )
+    return _walkRawGeometryFields(buffer, start, end)
+
+
+def _walkRawGeometryFields(buffer, start, end):
+    shape = color = coordinates = None
+    position = start + 4
+    end -= 1
+    while position < end:
+        elementType = buffer[position]
+        keyEnd = buffer.index(0, position + 1)
+        key = buffer[position + 1:keyEnd]
+        position = keyEnd + 1
+        if elementType == 0x07 and key == b"_id":
+            position += 12
+        elif elementType == 0x02 and (key == b"shape" or key == b"color"):
+            size = _INT32.unpack_from(buffer, position)[0]
+            value = buffer[position + 4:position + 3 + size].decode()
+            if key == b"shape":
+                shape = value
+            else:
+                color = value
+            position += 4 + size
+        elif elementType == 0x04 and key == b"coordinates":
+            size = _INT32.unpack_from(buffer, position)[0]
+            coordinates = (position, position + size)
+            position += size
+        elif elementType == 0x0A and key in (
+            b"shape", b"color", b"coordinates"
+        ):
+            if key == b"coordinates":
+                coordinates = None
+            elif key == b"shape":
+                shape = None
+            else:
+                color = None
+        else:
+            return None
+    return shape, color, coordinates
+
+
+def _decodedShape(coordinates):
+    """Flat vertices, bbox, centroid and radius of decoded coordinates."""
+    flatCoordinates = [
+        value
+        for point in coordinates
+        for value in (point["x"], point["y"])
+    ]
+    xs = flatCoordinates[::2]
+    ys = flatCoordinates[1::2]
+    minX, maxX = min(xs), max(xs)
+    minY, maxY = min(ys), max(ys)
+    return (
+        flatCoordinates,
+        (minX, minY, maxX, maxY),
+        (sum(xs) / len(xs), sum(ys) / len(ys)),
+        max(maxX - minX, maxY - minY) / 2,
+    )
+
+
+class _RawShapeAccumulator:
+    """Collects shapes in cursor order: conforming point arrays batched per
+    point count and parsed with numpy, the rest through _decodedShape."""
+
+    def __init__(self):
+        self.count = 0
+        self.ids = bytearray()
+        self.shapes = array("B")
+        # Colors repeat (one per cell type), so parse each value once.
+        self.colorIndices = array("I")
+        self.colorValues = {}
+        # Per point count: pending shape indices and their array bytes.
+        self._pendingIndices = {}
+        self._pendingArrays = {}
+        # (shape indices, xs, ys, bboxes, centroids, radii) per chunk.
+        self._chunks = []
+        # (shape index, flat vertices, bbox, centroid, radius).
+        self._decoded = []
+
+    def add(self, shape, color, coordinates, annotationId):
+        """Add a shape whose coordinates are array bytes or decoded;
+        ``annotationId`` is the ObjectId's 12 bytes."""
+        self.ids += annotationId
+        self.shapes.append(SHAPE_CODES.get(shape, 2))
+        if not isinstance(color, str):
+            color = None
+        colorIndex = self.colorValues.get(color)
+        if colorIndex is None:
+            colorIndex = self.colorValues[color] = len(self.colorValues)
+        self.colorIndices.append(colorIndex)
+        index = self.count
+        self.count += 1
+        if isinstance(coordinates, bytes):
+            count = _pointArrayCount(len(coordinates))
+            if count is not None:
+                indices = self._pendingIndices.get(count)
+                if indices is None:
+                    indices = self._pendingIndices[count] = array("I")
+                    self._pendingArrays[count] = []
+                indices.append(index)
+                arrays = self._pendingArrays[count]
+                arrays.append(coordinates)
+                if len(arrays) >= RAW_POINT_CHUNK_ROWS:
+                    self._flush(count)
+                return
+            coordinates = list(bson.decode(coordinates).values())
+        self._decoded.append((index, *_decodedShape(coordinates)))
+
+    def _flush(self, count):
+        indices = np.frombuffer(
+            self._pendingIndices.pop(count), dtype=np.uint32
+        )
+        arrays = self._pendingArrays.pop(count)
+        data = np.frombuffer(b"".join(arrays), dtype=np.uint8).reshape(
+            (len(arrays), -1)
+        )
+        structureIndex, structureBytes, xIndex, yIndex = (
+            _pointArrayLayout(count)
+        )
+        xs = np.ascontiguousarray(data[:, xIndex]).view("<f8")
+        ys = np.ascontiguousarray(data[:, yIndex]).view("<f8")
+        conforming = (
+            (data[:, structureIndex] == structureBytes).all(axis=1)
+            & ~np.isnan(xs).any(axis=1)
+            & ~np.isnan(ys).any(axis=1)
+        )
+        if not conforming.all():
+            for row in np.flatnonzero(~conforming):
+                coordinates = list(bson.decode(arrays[row]).values())
+                self._decoded.append(
+                    (int(indices[row]), *_decodedShape(coordinates))
+                )
+            indices = indices[conforming]
+            xs = xs[conforming]
+            ys = ys[conforming]
+            if not len(indices):
+                return
+        minX, maxX = xs.min(axis=1), xs.max(axis=1)
+        minY, maxY = ys.min(axis=1), ys.max(axis=1)
+        # Summed left to right like the decoded path's sum(), so centroids
+        # match it to the bit rather than to numpy's pairwise summation.
+        sumX = xs[:, 0].copy()
+        sumY = ys[:, 0].copy()
+        for column in range(1, count):
+            sumX += xs[:, column]
+            sumY += ys[:, column]
+        self._chunks.append((
+            indices,
+            xs.astype(np.float32),
+            ys.astype(np.float32),
+            np.stack((minX, minY, maxX, maxY), axis=1),
+            np.stack((sumX / count, sumY / count), axis=1),
+            np.maximum(maxX - minX, maxY - minY) / 2,
+        ))
+
+    def geometry(self):
+        for count in list(self._pendingArrays):
+            self._flush(count)
+        pointCounts = np.zeros(self.count, dtype=np.uint32)
+        bboxes = np.empty((self.count, 4), dtype=np.float32)
+        centroids = np.empty((self.count, 2), dtype=np.float32)
+        radii = np.empty(self.count, dtype=np.float32)
+        for indices, xs, _, chunkBboxes, chunkCentroids, chunkRadii in (
+            self._chunks
+        ):
+            pointCounts[indices] = xs.shape[1]
+            bboxes[indices] = chunkBboxes
+            centroids[indices] = chunkCentroids
+            radii[indices] = chunkRadii
+        for index, flatCoordinates, bbox, centroid, radius in self._decoded:
+            pointCounts[index] = len(flatCoordinates) // 2
+            bboxes[index] = bbox
+            centroids[index] = centroid
+            radii[index] = radius
+        offsets = np.zeros(self.count + 1, dtype=np.uint32)
+        np.cumsum(pointCounts, out=offsets[1:])
+        vertices = np.empty(int(offsets[-1]) * 2, dtype=np.float32)
+        for indices, xs, ys, *_ in self._chunks:
+            starts = (
+                offsets[indices].astype(np.intp)[:, None]
+                + np.arange(xs.shape[1])
+            ) * 2
+            vertices[starts] = xs
+            vertices[starts + 1] = ys
+        for index, flatCoordinates, *_ in self._decoded:
+            start = int(offsets[index]) * 2
+            vertices[start:start + len(flatCoordinates)] = flatCoordinates
+        palette = np.zeros((max(len(self.colorValues), 1), 4), np.uint8)
+        validPalette = np.zeros(len(palette), dtype=bool)
+        for value, colorIndex in self.colorValues.items():
+            parsedColor = parseHexColor(value)
+            palette[colorIndex] = parsedColor or (0, 0, 0, 255)
+            validPalette[colorIndex] = parsedColor is not None
+        colorIndices = np.frombuffer(self.colorIndices, dtype=np.uint32)
+        grid, union = _buildGrid(bboxes)
+        return FrameGeometry(
+            vertices=vertices,
+            offsets=offsets,
+            bboxes=bboxes,
+            centroids=centroids,
+            radii=radii,
+            colors=palette[colorIndices],
+            validColors=validPalette[colorIndices],
+            shapes=np.frombuffer(self.shapes, dtype=np.uint8),
+            grid=grid,
+            unionBounds=union,
+            ids=np.frombuffer(bytes(self.ids), dtype="S12"),
+        )
+
+
+def _rawId(buffer, start, end):
+    """The ObjectId bytes of the raw document at ``buffer[start:end]``:
+    straight from the bytes when ``_id`` comes first (always, for documents
+    Mongo stores), otherwise by decoding it."""
+    if buffer.startswith(b"\x07_id\x00", start + 4):
+        return bytes(buffer[start + 9:start + 21])
+    return _idBinary(bson.decode(buffer[start:end]).get("_id"))
+
+
+def _geometryFromRawBatches(batches):
+    """Shapes-mode geometry from raw BSON batches (concatenated documents,
+    as ``find_raw_batches`` yields them); identical to
+    ``_geometryFromDocuments`` on the same documents decoded."""
+    accumulator = _RawShapeAccumulator()
+    add = accumulator.add
+    for batch in batches:
+        position = 0
+        batchEnd = len(batch)
+        while position < batchEnd:
+            documentEnd = position + _INT32.unpack_from(batch, position)[0]
+            fields = _rawGeometryFields(batch, position, documentEnd)
+            if fields is None:
+                document = bson.decode(batch[position:documentEnd])
+                coordinates = document.get("coordinates") or []
+                if coordinates:
+                    add(
+                        document.get("shape"),
+                        document.get("color"),
+                        coordinates,
+                        _idBinary(document.get("_id")),
+                    )
+            else:
+                shape, color, coordinates = fields
+                # Five bytes is the empty array, which the decoded path
+                # skips like a missing one.
+                if coordinates is not None and (
+                    coordinates[1] - coordinates[0] > 5
+                ):
+                    add(
+                        shape, color, batch[coordinates[0]:coordinates[1]],
+                        _rawId(batch, position, documentEnd),
+                    )
+            position = documentEnd
+    return accumulator.geometry()
+
+
+def _buildFrameGeometry(annotationModel, key):
+    if key.mode == "discs":
+        return _geometryFromDocuments(
+            annotationModel._aggregate(
+                annotationModel.collection, _geometryPipeline(key)
+            ),
+            key,
+        )
+    # A plain find, not the aggregate: $project costs Mongo more than it
+    # saves. Raw batches skip pymongo's decoding, which Girder's Model.find
+    # cannot, so this reads the collection directly, bounded like _aggregate.
+    batches = annotationModel.collection.find_raw_batches(
+        _geometryMatch(key),
+        {"color": 1, "coordinates": 1, "shape": 1},
+        sort=[("_id", 1)],
+        hint=[("datasetId", 1), ("_id", 1)],
+        max_time_ms=AGGREGATION_MAX_TIME_MS,
+    )
+    return _geometryFromRawBatches(batches)
 
 
 class FrameGeometryCache:
@@ -628,6 +1023,149 @@ def getFrameGeometry(
     )
 
 
+# ---- filtered overview: which objects of a frame pass the viewer's filters
+
+RASTER_FILTER_CACHE_ENTRIES = 8
+# Masks kept per frame geometry (FrameGeometry.filterMasks); the oldest is
+# dropped past this.
+RASTER_FILTER_MASKS_PER_GEOMETRY = 4
+RASTER_MAX_CONCURRENT_FILTER_BUILDS = 1
+# A filter build is seconds of whole-dataset work, and a filter change
+# arrives as two registrations in quick succession (a new gate is first
+# unresolved, then resolved): tiles of the second wait this long for the
+# first build rather than failing at once and exhausting the client's
+# retries. Past it, 503 with Retry-After as for geometry builds. The same
+# bound applies to waiting on another request building the same key.
+RASTER_FILTER_BUILD_WAIT_SECONDS = 30
+
+
+class FilterMaskCache:
+    """Per-process cache of the objects passing a registered filter.
+
+    Resolving a filter is a whole-dataset query (seconds at 700K objects),
+    and a view asks for a dozen tiles at once: the passing ids are computed
+    once per (dataset, raster version, filter, client version) under a
+    per-key lock, and turned into a boolean mask per frame geometry (stored
+    on the geometry, so an evicted geometry is not pinned here). The raster
+    version's time bucket bounds how stale a passing set can be when another
+    process wrote; the client version carries the client's property-value
+    revision, which is what moves when a recomputed property changes a
+    gate's membership (the raster version only moves on annotation writes).
+    Anonymous builds share FrameGeometryCache's rate limits.
+    """
+
+    def __init__(
+        self,
+        maxEntries=RASTER_FILTER_CACHE_ENTRIES,
+        maxConcurrentBuilds=RASTER_MAX_CONCURRENT_FILTER_BUILDS,
+        anonymousBuildLimit=RASTER_ANONYMOUS_BUILD_LIMIT,
+        anonymousBuildWindowSeconds=(
+            RASTER_ANONYMOUS_BUILD_WINDOW_SECONDS
+        ),
+        timeFn=time.monotonic,
+    ):
+        self._passing = OrderedDict()
+        self._maxEntries = maxEntries
+        self._locks = {}
+        self._lock = threading.RLock()
+        self._buildSlots = threading.BoundedSemaphore(maxConcurrentBuilds)
+        self._anonymousBuildLimiter = _AnonymousBuildRateLimiter(
+            anonymousBuildLimit,
+            anonymousBuildWindowSeconds,
+            timeFn,
+        )
+
+    def mask(
+        self, geometry, passingKey, computePassingIds, anonymousIdentity=None
+    ):
+        """Boolean mask over ``geometry`` of the objects passing; builds the
+        passing set with ``computePassingIds()`` (-> id strings) on a miss.
+        Raises RasterBuildBusy when another filter build is running (or the
+        same key's build outlasts the wait), and RasterBuildRateLimited when
+        an anonymous caller exceeds the cold-build budget."""
+        with self._lock:
+            masks = geometry.filterMasks
+            mask = masks.pop(passingKey, None)
+            if mask is not None:
+                masks[passingKey] = mask
+                return mask
+        passing = self._passingIds(
+            passingKey, computePassingIds, anonymousIdentity
+        )
+        mask = np.isin(geometry.ids, passing)
+        with self._lock:
+            masks = geometry.filterMasks
+            masks.pop(passingKey, None)
+            masks[passingKey] = mask
+            while len(masks) > RASTER_FILTER_MASKS_PER_GEOMETRY:
+                del masks[next(iter(masks))]
+        return mask
+
+    def _passingIds(self, passingKey, computePassingIds, anonymousIdentity):
+        with self._lock:
+            passing = self._passing.get(passingKey)
+            if passing is not None:
+                self._passing.move_to_end(passingKey)
+                return passing
+            keyLock = self._locks.setdefault(passingKey, threading.Lock())
+        if not keyLock.acquire(timeout=RASTER_FILTER_BUILD_WAIT_SECONDS):
+            raise RasterBuildBusy()
+        # Settled once the key's lock needs no removal: the set was already
+        # cached (its builder removed the lock) or was stored with the lock
+        # removed in the same critical section, so no request can slip in
+        # between and rebuild it.
+        settled = False
+        try:
+            with self._lock:
+                passing = self._passing.get(passingKey)
+                if passing is not None:
+                    settled = True
+                    return passing
+            if not self._buildSlots.acquire(
+                timeout=RASTER_FILTER_BUILD_WAIT_SECONDS
+            ):
+                raise RasterBuildBusy()
+            try:
+                if anonymousIdentity is not None:
+                    with self._lock:
+                        self._anonymousBuildLimiter.check(
+                            anonymousIdentity
+                        )
+                passing = np.array(
+                    [bytes.fromhex(value) for value in computePassingIds()],
+                    dtype="S12",
+                )
+            finally:
+                self._buildSlots.release()
+            with self._lock:
+                self._passing[passingKey] = passing
+                while len(self._passing) > self._maxEntries:
+                    self._passing.popitem(last=False)
+                self._dropKeyLockLocked(passingKey, keyLock)
+                settled = True
+            return passing
+        finally:
+            if not settled:
+                with self._lock:
+                    self._dropKeyLockLocked(passingKey, keyLock)
+            keyLock.release()
+
+    def _dropKeyLockLocked(self, passingKey, keyLock):
+        """Forget ``keyLock`` (while ``self._lock`` is held) unless a newer
+        request already replaced it."""
+        if self._locks.get(passingKey) is keyLock:
+            del self._locks[passingKey]
+
+    def clear(self):
+        with self._lock:
+            self._passing.clear()
+            self._locks.clear()
+            self._anonymousBuildLimiter.clear()
+
+
+filterMaskCache = FilterMaskCache()
+
+
 def _annotationColors(geometry, indices, fallback):
     result = geometry.colors[indices].copy()
     result[~geometry.validColors[indices]] = fallback
@@ -650,7 +1188,9 @@ def _splat(arr, centroids, colors, params):
     arr[y[inside], x[inside]] = colors[inside]
 
 
-def renderRasterTile(geometry, params):
+def renderRasterTile(geometry, params, mask=None):
+    """PNG bytes of one tile. With ``mask`` (a boolean per geometry object,
+    FilterMaskCache.mask) only the objects passing the filter are drawn."""
     arr = np.zeros((params.tileSize, params.tileSize, 4), dtype=np.uint8)
     scale = params.scale
     tileLeft = params.x * params.tileSize / scale
@@ -666,6 +1206,8 @@ def renderRasterTile(geometry, params):
         tileRight + padding,
         tileBottom + padding,
     ))
+    if mask is not None and indices.size:
+        indices = indices[mask[indices]]
     if indices.size == 0:
         image = Image.fromarray(arr, "RGBA")
     else:

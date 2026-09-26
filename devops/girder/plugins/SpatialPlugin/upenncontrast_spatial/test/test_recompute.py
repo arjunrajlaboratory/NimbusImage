@@ -248,6 +248,22 @@ class TestRecompute(TestTranscripts):
         ]
         assert labels == ["Imported table", "v2", "v3"]
 
+        # The dirty table is exactly what a full rebuild gives, every row.
+        everyCell = [a["_id"] for a in annotations] + [
+            cells[name]["_id"] for name in ("B", "C", "E", "F")
+        ] + [d["_id"]]
+        dirtyRows = {
+            str(i): self._row(server, admin, folder, i) for i in everyCell
+        }
+        resp = request(
+            server, admin, "POST", "/spatial/%s/recompute" % folder["_id"],
+            body={"label": "v5", "scope": "all"},
+        )
+        runJob(resp.json["jobId"])
+        assert {
+            str(i): self._row(server, admin, folder, i) for i in everyCell
+        } == dirtyRows
+
     def testActivateAndForgetVersions(
         self, admin, user, server, tmp_path, fsAssetstore
     ):
@@ -405,3 +421,87 @@ class TestRecompute(TestTranscripts):
         projection, clusters = recomputeModule.embeddings(counts)
         assert projection.shape == (40, 2) and clusters.shape == (40,)
         assert projection.dtype == np.float32
+
+
+class _TileGrid:
+    """What `dirtyTilePlan` reads of a transcript store: a 1 um pixel and
+    level-0 tiles of 250 um, 0,0 to 5,0 all present."""
+    pixelSize = 1.0
+    tileKeys = [["%d,0" % gx for gx in range(6)]]
+
+    def tileMicrons(self, level):
+        return 250.0
+
+
+def _box(x0, x1):
+    return recomputeModule.Cell(
+        annotationId="%024x" % int(x0), xy=np.zeros((3, 2)), tags=[],
+        bbox=(float(x0), 10.0, float(x1), 20.0), area=1.0, geometryHash="",
+    )
+
+
+def testDirtyTilePlanIsOneRing():
+    """A chain of cells straddling every tile edge (as tissue does) must
+    not pull the whole section into a dirty run: moving the cell in tile 0
+    re-assigns the cells overlapping tile 0 and processes their tiles —
+    0 and 1 — while the cells beyond keep their carried rows."""
+    cells = [
+        _box(100, 120),  # 0: moved, inside tile 0
+        _box(240, 260),  # 1: straddles tiles 0 | 1
+        _box(490, 510),  # 2: straddles tiles 1 | 2
+        _box(740, 760),  # 3: straddles tiles 2 | 3
+        _box(990, 1010),  # 4: straddles tiles 3 | 4
+    ]
+    tileKeys, touched = recomputeModule.dirtyTilePlan(
+        _TileGrid(), cells, {0}, [(95.0, 10.0, 115.0, 20.0)]
+    )
+    assert touched == {0, 1}
+    assert tileKeys == ["0,0", "1,0"]
+    # An old footprint in another tile seeds that tile too.
+    tileKeys, touched = recomputeModule.dirtyTilePlan(
+        _TileGrid(), cells, {0}, [(1100.0, 10.0, 1120.0, 20.0)]
+    )
+    assert touched == {0, 1, 4}
+    assert tileKeys == ["0,0", "1,0", "3,0", "4,0"]
+
+
+class _OneTile(_TileGrid):
+    """One level-0 tile with two molecules of gene 0 (qv 30): (50, 50) um,
+    inside both cells below, and (150, 50) um, inside the big one only."""
+    path = "one-tile-fixture"
+    geneNames = ["G"]
+    isGene = [True]
+
+    def tile(self, level, key):
+        return {
+            "location": np.array([[50.0, 50.0, 0.0], [150.0, 50.0, 0.0]]),
+            "gene_identity": np.array([[0], [0]]),
+            "quality_score": np.array([[30.0], [30.0]]),
+        }
+
+
+def _square(x0, y0, x1, y1):
+    xy = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=float)
+    return recomputeModule.Cell(
+        annotationId="%024x" % int(x0 * 1000 + x1), xy=xy, tags=[],
+        bbox=(x0, y0, x1, y1), area=float((x1 - x0) * (y1 - y0)),
+        geometryHash="",
+    )
+
+
+def testAssignTileCountsOnlyDirtyCellsButKeepsCompetition():
+    """A ring tile's quiet cells still compete: the small uncounted cell
+    keeps the molecule it wins, so the counted big cell gets only the one
+    outside it (not both, as it would if it were rasterized alone)."""
+    cells = [_square(10, 10, 200, 100), _square(40, 40, 60, 60)]
+    countCells = np.array([True, False])
+    keys, counts, assigned, considered = recomputeModule.assignTile(
+        _OneTile(), "0,0", cells, [0, 1], 20, np.array([0]), countCells
+    )
+    assert keys.tolist() == [0] and counts.tolist() == [1]
+    assert assigned == 1 and considered == 2
+    # Without the mask both cells are counted, each with its own molecule.
+    keys, counts, assigned, _ = recomputeModule.assignTile(
+        _OneTile(), "0,0", cells, [0, 1], 20, np.array([0])
+    )
+    assert keys.tolist() == [0, 1] and counts.tolist() == [1, 1]

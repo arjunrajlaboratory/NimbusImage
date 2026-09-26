@@ -89,6 +89,16 @@ describe("SpatialFeaturePicker", () => {
     expect(mocks.searchFeatures).toHaveBeenLastCalledWith("ds1", "cd");
   });
 
+  it("clears the typed query once a gene is picked", async () => {
+    const wrapper = shallowMount(SpatialFeaturePicker, {
+      props: { modelValue: [] },
+    });
+    const vm = wrapper.vm as any;
+    vm.onSearch("MS4A1");
+    vm.onUpdate(["MS4A1"]);
+    expect(vm.search).toBe("");
+  });
+
   it("caps the selection at max", async () => {
     const wrapper = shallowMount(SpatialFeaturePicker, {
       props: { modelValue: [], max: 2 },

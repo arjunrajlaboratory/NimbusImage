@@ -75,6 +75,7 @@
         <color-picker-menu
           :model-value="gene.color"
           class="mr-2"
+          style="width: 6.5em"
           @update:model-value="
             transcriptsStore.setGeneColor({
               symbol: gene.symbol,

@@ -136,35 +136,61 @@ def _rectangleCorners(xy):
 
 def cellPolygons(datasetId, tags=None):
     """The dataset's cell polygons as `Cell`s, in a stable order. `tags`
-    (optional) restricts to annotations carrying all of them."""
+    (optional) restricts to annotations carrying all of them.
+
+    700K polygons make per-cell numpy calls the cost, so bounds and areas
+    are computed once over all vertices, and the digest saved on each
+    annotation is used (computed only where it is missing)."""
     query = {"datasetId": ObjectId(str(datasetId)),
              "shape": {"$in": list(CELL_SHAPES)}}
     if tags:
         query["tags"] = {"$all": list(tags)}
-    cells = []
+    kept = []
     for document in Annotation().find(
-        query, fields=["coordinates", "tags", "shape"], sort=[("_id", 1)],
+        query, fields=["coordinates", "tags", "shape", "geometryHash"],
+        sort=[("_id", 1)],
     ):
         coordinates = document["coordinates"]
         xy = np.array(
             [[p["x"], p["y"]] for p in coordinates], dtype=np.float64
-        )
+        ).reshape(-1, 2)
         if document["shape"] == "rectangle":
             xy = _rectangleCorners(xy)
         if len(xy) < 3:
             continue
         if len(xy) > MAX_VERTICES:
             xy = xy[:: int(np.ceil(len(xy) / MAX_VERTICES))]
-        cells.append(Cell(
+        digest = document.get("geometryHash")
+        if not isFingerprint(digest):
+            digest = geometryHash(coordinates)
+        kept.append((document, xy, digest))
+    if not kept:
+        return []
+    lengths = np.array([len(xy) for _, xy, _ in kept])
+    starts = np.concatenate(([0], np.cumsum(lengths)[:-1]))
+    flat = np.concatenate([xy for _, xy, _ in kept])
+    x, y = flat[:, 0], flat[:, 1]
+    minX, maxX = np.minimum.reduceat(x, starts), np.maximum.reduceat(x, starts)
+    minY, maxY = np.minimum.reduceat(y, starts), np.maximum.reduceat(y, starts)
+    # Shoelace with each polygon's previous vertex (the last for the first),
+    # the same terms `_polygonArea` sums.
+    previous = np.arange(len(flat)) - 1
+    previous[starts] = starts + lengths - 1
+    areas = 0.5 * np.abs(np.add.reduceat(
+        x * y[previous] - y * x[previous], starts
+    ))
+    return [
+        Cell(
             annotationId=str(document["_id"]),
             xy=xy,
             tags=list(document.get("tags", [])),
-            bbox=(float(xy[:, 0].min()), float(xy[:, 1].min()),
-                  float(xy[:, 0].max()), float(xy[:, 1].max())),
-            area=_polygonArea(xy),
-            geometryHash=geometryHash(coordinates),
-        ))
-    return cells
+            bbox=(float(minX[i]), float(minY[i]),
+                  float(maxX[i]), float(maxY[i])),
+            area=float(areas[i]),
+            geometryHash=digest,
+        )
+        for i, (document, xy, digest) in enumerate(kept)
+    ]
 
 
 # ---- staleness --------------------------------------------------------------
@@ -293,9 +319,16 @@ def labelImage(cells, cellIndices, bounds):
     return labels
 
 
-def assignTile(transcripts, key, cells, cellIndices, minQv, geneToVar):
+def assignTile(transcripts, key, cells, cellIndices, minQv, geneToVar,
+               countCells=None):
     """(matrix keys, counts, assigned, considered) for one tile: keys are
-    `cell * nVar + var` of the molecules that landed in a cell."""
+    `cell * nVar + var` of the molecules that landed in a cell.
+
+    Every cell in `cellIndices` competes for the tile's molecules (smallest
+    polygon wins); with `countCells` (a boolean mask over `cells`) only the
+    molecules won by those cells are returned — a dirty rebuild rasterizes a
+    tile's quiet cells too, so they still take their own molecules, but
+    keeps their carried rows."""
     tile = transcripts.tile(0, key)
     if tile is None or not cellIndices:
         return None, None, 0, 0
@@ -317,6 +350,8 @@ def assignTile(transcripts, key, cells, cellIndices, minQv, geneToVar):
     label = np.zeros(len(row), dtype=np.int32)
     label[inside] = labels[row[inside], col[inside]]
     assigned = label > 0
+    if countCells is not None:
+        assigned[assigned] = countCells[label[assigned] - 1]
     nVar = len(_varSymbols(transcripts))
     keys = (label[assigned].astype(np.int64) - 1) * nVar + var[assigned]
     uniqueKeys, counts = np.unique(keys, return_counts=True)
@@ -523,6 +558,40 @@ def cellTypeOf(cell, categories):
     return None
 
 
+def dirtyTilePlan(transcripts, cells, dirtyIndices, oldBoxes):
+    """(tile keys, re-assigned cell indices) for a dirty rebuild.
+
+    The seed tiles hold a changed footprint: the old bounds of changed and
+    removed cells and the new bounds of changed and added ones. Every cell
+    overlapping a seed tile may win or lose molecules there, so it is
+    re-assigned — over all of ITS tiles, since its row is rebuilt whole.
+    One ring suffices: a cell outside it has no changed footprint in any
+    of its tiles, so the same competitors win the same molecules and its
+    carried row is exact. (Growing the set to a fixpoint instead spreads
+    through contiguous tissue, where cells straddle every tile edge, and
+    rebuilt 689 of 812 tiles for one moved cell on the lymph node.) The
+    ring tiles' other cells still compete there — see `assignTile`'s
+    `countCells`."""
+    allBoxes = np.array(
+        [cell.bbox for cell in cells], dtype=np.float64
+    ).reshape(-1, 4)
+    touched = set(dirtyIndices)
+    seeds = tilesForBoxes(
+        transcripts, list(oldBoxes) + [cells[i].bbox for i in dirtyIndices]
+    )
+    for key in seeds:
+        left, top, right, bottom = tilePixelBounds(transcripts, key)
+        hits = np.nonzero(
+            (allBoxes[:, 0] <= right) & (allBoxes[:, 2] >= left)
+            & (allBoxes[:, 1] <= bottom) & (allBoxes[:, 3] >= top)
+        )[0]
+        touched.update(int(i) for i in hits)
+    tileKeys = tilesForBoxes(
+        transcripts, list(oldBoxes) + [cells[i].bbox for i in touched]
+    )
+    return tileKeys, touched
+
+
 def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
               withEmbeddings, onProgress, cells=None, activeFileId=None):
     """The whole rebuild, without Girder job bookkeeping. Returns
@@ -560,32 +629,9 @@ def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
         oldBoxes = previousBounds[
             np.isin(activeStore.annotationIds, list(previousIds))
         ].tolist()
-        # Every cell overlapping a dirty tile is re-assigned (its molecules
-        # may have moved to a neighbor), and a re-assigned cell needs every
-        # tile IT touches, so the tile set and the touched set grow together
-        # until stable — a cell straddling into a quiet tile would otherwise
-        # lose the molecules on the far side.
-        touched = set(dirtyIndices)
-        tileKeys = []
-        allBoxes = np.array(
-            [cell.bbox for cell in cells], dtype=np.float64
-        ).reshape(-1, 4)
-        while True:
-            tileKeys = tilesForBoxes(
-                transcripts, oldBoxes + [cells[i].bbox for i in touched]
-            )
-            before = len(touched)
-            for key in tileKeys:
-                left, top, right, bottom = tilePixelBounds(transcripts, key)
-                hits = np.nonzero(
-                    (allBoxes[:, 0] <= right) & (allBoxes[:, 2] >= left)
-                    & (allBoxes[:, 1] <= bottom) & (allBoxes[:, 3] >= top)
-                )[0]
-                touched.update(int(i) for i in hits)
-            # Each round only adds cells, so this terminates; in practice
-            # it stabilizes after one or two rounds.
-            if len(touched) == before:
-                break
+        tileKeys, touched = dirtyTilePlan(
+            transcripts, cells, dirtyIndices, oldBoxes
+        )
         dirtyIndices = touched
         carriedIndex = [
             i for i in range(len(cells)) if i not in dirtyIndices
@@ -596,9 +642,15 @@ def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
     else:
         tileKeys = list(transcripts.tileKeys[0])
 
-    # Per-tile candidate cells from bboxes.
+    # Per-tile candidate cells from bboxes. Every overlapping cell competes
+    # for a tile's molecules; only the dirty ones are counted (the others'
+    # rows are carried).
     boxes = np.array([cell.bbox for cell in cells], dtype=np.float64) \
         if cells else np.zeros((0, 4))
+    countCells = None
+    if scope == "dirty":
+        countCells = np.zeros(len(cells), dtype=bool)
+        countCells[list(dirtyIndices)] = True
     keysList, countsList = [], []
     assigned = considered = 0
     for number, key in enumerate(tileKeys):
@@ -608,11 +660,12 @@ def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
                 (boxes[:, 0] <= right) & (boxes[:, 2] >= left)
                 & (boxes[:, 1] <= bottom) & (boxes[:, 3] >= top)
             )[0]
-            candidates = [int(i) for i in hits if int(i) in dirtyIndices]
+            candidates = [int(i) for i in hits]
         else:
             candidates = []
         keys, counts, tileAssigned, tileConsidered = assignTile(
-            transcripts, key, cells, candidates, minQv, geneToVar
+            transcripts, key, cells, candidates, minQv, geneToVar,
+            countCells,
         )
         if keys is not None and len(keys):
             keysList.append(keys)

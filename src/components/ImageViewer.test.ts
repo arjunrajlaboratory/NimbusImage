@@ -262,6 +262,7 @@ vi.mock("@/pipelines/computePipeline", () => ({
 
 import store from "@/store";
 import annotationStore from "@/store/annotation";
+import annotationListServer from "@/store/annotationListServer";
 import progressStore from "@/store/progress";
 import { ProgressType } from "@/store/model";
 import { logWarning } from "@/utils/log";
@@ -1260,6 +1261,60 @@ describe("ImageViewer", () => {
       expect(secondUrl(2, 3, 4)).toBe("http://localhost/raster/4/2/3?v=1");
     });
 
+    it("passes the filter key only while it matches the current filters", async () => {
+      const map = mockMap();
+      map.createLayer.mockReturnValue(mockLayer());
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      await nextTick();
+      const mountedMapentry = (wrapper.vm as any).maps[0];
+      const templateUrl = mockedAnnotationStore.annotationsAPI
+        .annotationRasterTemplateUrl as any;
+      const sync = () => {
+        templateUrl.mockClear();
+        (wrapper.vm as any)._syncAnnotationOverviewLayer(
+          mountedMapentry,
+          createLayerStackImage().images[0],
+          document.createElement("div"),
+        );
+        return templateUrl.mock.calls[0][0];
+      };
+
+      annotationListServer.setOverviewFilter({
+        key: "key-1",
+        signature: annotationListServer.overviewFiltersSignature,
+      });
+      const committed = sync();
+      expect(committed.filterKey).toBe("key-1");
+      expect(committed.filterVersion).not.toBe("");
+
+      // Right after a dataset switch the committed key is still the previous
+      // dataset's (its signature leads with that dataset id). It would 404 on
+      // this dataset's tiles, so they draw unfiltered until the new key
+      // registers. A pending re-registration looks the same: a signature
+      // behind the current filters.
+      const current = annotationListServer.overviewFiltersSignature;
+      expect(current.startsWith("dataset1|")).toBe(true);
+      annotationListServer.setOverviewFilter({
+        key: "key-previous-dataset",
+        signature: current.replace("dataset1|", "dataset0|"),
+      });
+      const switched = sync();
+      expect(switched.filterKey).toBeNull();
+      expect(switched.filterVersion).toBe("");
+      annotationListServer.setOverviewFilter({ key: null, signature: null });
+    });
+
     it("does not request or activate a raster above the selector limit", () => {
       const map = mockMap();
       const overviewLayer = mockLayer();
@@ -1473,16 +1528,21 @@ describe("ImageViewer", () => {
       expect(overviewLayer.reset).toHaveBeenCalledTimes(1);
       expect(overviewLayer.draw).toHaveBeenCalled();
 
-      // Bounded: two more rounds retry, the fourth is dropped.
+      // Backing off (2 s, then 4 s, capped) so a multi-second server build
+      // (503 meanwhile) is outlasted; bounded at eight retries.
       tileErrorCallbacks[0]();
-      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
       expect(overviewLayer.reset).toHaveBeenCalledTimes(2);
+      for (let attempt = 3; attempt <= 8; attempt++) {
+        tileErrorCallbacks[0]();
+        await vi.advanceTimersByTimeAsync(4000);
+        expect(overviewLayer.reset).toHaveBeenCalledTimes(attempt);
+      }
       tileErrorCallbacks[0]();
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(overviewLayer.reset).toHaveBeenCalledTimes(3);
-      tileErrorCallbacks[0]();
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(overviewLayer.reset).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(8);
 
       // A new template (mutation bump) restores the retry budget.
       mockedAnnotationStore.mutationCounter = 1;
@@ -1493,7 +1553,7 @@ describe("ImageViewer", () => {
       );
       tileErrorCallbacks[0]();
       await vi.advanceTimersByTimeAsync(1000);
-      expect(overviewLayer.reset).toHaveBeenCalledTimes(4);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(9);
     });
 
     it("does not retry tiles for a hidden overview layer", async () => {

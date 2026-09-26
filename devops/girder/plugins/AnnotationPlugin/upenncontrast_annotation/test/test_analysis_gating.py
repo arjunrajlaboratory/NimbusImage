@@ -606,6 +606,64 @@ class TestAnalysisHistogramEndpoint:
         assert result["counts"] == [[1, 1], [1, 1]]
         assert result["gateCount"] is None
 
+    def testSampleReturnsColoredDots(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        url = "/upenn_annotation/analysis/histogram2d"
+        # No sample unless asked: the heatmap response is unchanged.
+        resp = postJson(server, admin, url, histogramBody(folder["_id"]))
+        assertStatusOk(resp)
+        assert "sample" not in resp.json
+        # Every plottable point when the population fits, colored by tags.
+        resp = postJson(server, admin, url, histogramBody(
+            folder["_id"],
+            sample={"size": 100, "colorBy": {
+                "type": "categorical", "key": "tags",
+            }},
+        ))
+        assertStatusOk(resp)
+        sample = resp.json["sample"]
+        assert sample["total"] == 4  # the no-values annotation is not plotted
+        points = sorted(zip(sample["x"], sample["y"], sample["color"]))
+        highKey = analysis.encode_category_key(["high"])
+        lowKey = analysis.encode_category_key(["low"])
+        assert sample["colorCategories"] == [highKey, lowKey]
+        # (Area, Mean) -> tag: x < 5 are "low" (index 1), x > 5 "high" (0).
+        assert points == [(1, 1, 1), (1, 9, 1), (9, 1, 0), (9, 9, 0)]
+        # Colored by a property: the value, per point.
+        resp = postJson(server, admin, url, histogramBody(
+            folder["_id"],
+            sample={"size": 100, "colorBy": {
+                "type": "property", "path": ["p", "Area"],
+            }},
+        ))
+        sample = resp.json["sample"]
+        assert sorted(zip(sample["x"], sample["color"])) == [
+            (1, 1), (1, 1), (9, 9), (9, 9)
+        ]
+        assert sample["colorCategories"] is None
+        # A smaller sample is a stable subset, and oversized sizes clamp.
+        resp = postJson(server, admin, url, histogramBody(
+            folder["_id"], sample={"size": 2, "colorBy": None},
+        ))
+        first = resp.json["sample"]
+        assert len(first["x"]) == 2 and first["total"] == 4
+        assert first["color"] is None
+        again = postJson(server, admin, url, histogramBody(
+            folder["_id"], sample={"size": 2},
+        )).json["sample"]
+        assert (again["x"], again["y"]) == (first["x"], first["y"])
+        resp = postJson(server, admin, url, histogramBody(
+            folder["_id"], sample={"size": 10 ** 9},
+        ))
+        assertStatusOk(resp)
+        assert len(resp.json["sample"]["x"]) == 4
+        for bad in ({"size": "many"}, "dots", {"size": 5, "colorBy": {
+            "type": "categorical", "key": "nope",
+        }}):
+            assertStatus(postJson(server, admin, url, histogramBody(
+                folder["_id"], sample=bad,
+            )), 400)
+
     def testCategoricalAxisBinsPerCategory(self, admin, server):
         folder, _, _ = self._setup(admin)
         lowKey = analysis.encode_category_key(["low"])
@@ -1270,3 +1328,25 @@ class TestBranchReviewFindings:
         )
         assertStatusOk(resp)
         assert resp.json["total"] == 1
+
+
+def testSampleIsAStableSubsetAcrossPopulations():
+    """The sample is chosen per object by an id hash, so a narrower
+    population (a filter, an upstream gate) keeps the same dots, and the
+    chosen points are the lowest-ranked ones in any population."""
+    docs = [{"id": "%024x" % i} for i in range(500)]
+    xs = np.arange(500, dtype=np.float64)
+    ys = xs * 2
+    valid = np.ones(500, dtype=bool)
+    full = analysis.sample_points(
+        docs, {}, xs, ys, valid, {"size": 50, "colorBy": None}
+    )
+    assert len(full["x"]) == 50 and full["total"] == 500
+    # Drop half the population: every sampled survivor stays sampled.
+    half = np.arange(500) % 2 == 0
+    narrowed = analysis.sample_points(
+        docs, {}, xs, ys, half, {"size": 50, "colorBy": None}
+    )
+    survivors = {x for x in full["x"] if int(x) % 2 == 0}
+    assert survivors <= set(narrowed["x"])
+    assert full["y"] == [2 * x for x in full["x"]]

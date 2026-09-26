@@ -28,6 +28,13 @@ SCHEMA_VERSION = 1
 # datasets stay open.
 MAX_OPEN_STORES = 8
 
+# Non-zero entries read per slice when walking every feature. Neighboring
+# columns share compressed chunks (613K values each for the lymph node), so
+# a per-column read decompresses each chunk many times over; one slice per
+# block of columns reads each chunk once. 8M entries is 64 MB of indices and
+# values.
+COLUMN_BLOCK_VALUES = 8_000_000
+
 OBJECT_ID_PATTERN = re.compile(r"^[0-9a-f]{24}$")
 
 
@@ -182,6 +189,30 @@ class SpatialStore:
             np.asarray(self._cscIndices[start:stop]),
             np.asarray(self._cscData[start:stop]),
         )
+
+    def iterColumns(self, maxValues=COLUMN_BLOCK_VALUES):
+        """Yield (symbol, rows, values) for every feature in column order,
+        like `column`, reading runs of consecutive columns with one slice of
+        at most `maxValues` entries (a single larger column is read alone)."""
+        indptr = self._cscIndptr
+        first = 0
+        while first < self.nVar:
+            last = first + 1
+            while (
+                last < self.nVar
+                and indptr[last + 1] - indptr[first] <= maxValues
+            ):
+                last += 1
+            base, stop = int(indptr[first]), int(indptr[last])
+            rows = np.asarray(self._cscIndices[base:stop])
+            values = np.asarray(self._cscData[base:stop])
+            for j in range(first, last):
+                start, end = int(indptr[j]) - base, int(indptr[j + 1]) - base
+                yield (
+                    self.featureSymbols[j], rows[start:end],
+                    values[start:end],
+                )
+            first = last
 
     def row(self, rowIndex):
         """{symbol: value} of one cell's non-zero entries."""

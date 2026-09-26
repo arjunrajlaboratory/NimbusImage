@@ -69,6 +69,72 @@ class TestAnalysis(TestSpatial):
         with pytest.raises(ValueError, match="neighbor pairs"):
             module.neighborhood(centroids, np.array([0, 1, 0]), 2, 25)
 
+    @pytest.mark.parametrize("entriesPerChunk", [1, 7, 50, 10 ** 6])
+    def testNeighborhoodChunksMatchBruteForce(
+        self, monkeypatch, entriesPerChunk
+    ):
+        """Walking the cells in chunks (any size, down to one cell) gives
+        exactly the all-pairs answer, untyped cells and ties at the radius
+        included."""
+        rng = np.random.default_rng(entriesPerChunk)
+        centroids = rng.integers(0, 40, size=(120, 2)).astype(float)
+        codes = rng.integers(-1, 3, size=120)
+        radius = 6.0
+        monkeypatch.setattr(
+            module, "NEIGHBOR_ENTRIES_PER_CHUNK", entriesPerChunk
+        )
+        counts, pairs = module.neighborhood(centroids, codes, 3, radius)
+        distance = np.linalg.norm(
+            centroids[:, None, :] - centroids[None, :, :], axis=2
+        )
+        near = (distance <= radius) & ~np.eye(120, dtype=bool)
+        expectedCounts = np.zeros((120, 3), dtype=np.int64)
+        expectedPairs = np.zeros((3, 3), dtype=np.int64)
+        for a, b in zip(*np.nonzero(near)):
+            if codes[b] >= 0:
+                expectedCounts[a, codes[b]] += 1
+                if codes[a] >= 0:
+                    expectedPairs[codes[a], codes[b]] += 1
+        assert counts.tolist() == expectedCounts.tolist()
+        assert pairs.tolist() == expectedPairs.tolist()
+
+    @pytest.mark.parametrize("entriesPerChunk", [30, 150, 1000])
+    def testNeighborhoodChunksStayWithinBudgetOnClumpedCells(
+        self, monkeypatch, entriesPerChunk
+    ):
+        """Chunks are cut from each cell's own neighbor count, not the
+        average: a dense clump first in order (as Xenium's positional import
+        order produces) must not put a chunk over the entry budget, unless a
+        single cell alone exceeds it."""
+        rng = np.random.default_rng(entriesPerChunk)
+        dense = rng.random((60, 2)) * 3
+        sparse = 100 + np.arange(200)[:, None] * np.array([[50.0, 0.0]])
+        centroids = np.concatenate([dense, sparse])
+        codes = rng.integers(-1, 3, size=len(centroids))
+        radius = 6.0
+        expected = module.neighborhood(centroids, codes, 3, radius)
+
+        chunkEntries = []
+
+        class RecordingTree(module.cKDTree):
+            def sparse_distance_matrix(self, *args, **kwargs):
+                close = super().sparse_distance_matrix(*args, **kwargs)
+                chunkEntries.append(len(close))
+                return close
+
+        monkeypatch.setattr(module, "cKDTree", RecordingTree)
+        monkeypatch.setattr(
+            module, "NEIGHBOR_ENTRIES_PER_CHUNK", entriesPerChunk
+        )
+        counts, pairs = module.neighborhood(centroids, codes, 3, radius)
+        # Every dense cell sees all 60 (itself included); sparse cells only
+        # themselves. The average-based sizing put ~4x the budget in the
+        # first chunk.
+        assert max(chunkEntries) <= max(entriesPerChunk, 60)
+        assert sum(chunkEntries) == 60 * 60 + 200
+        assert counts.tolist() == expected[0].tolist()
+        assert pairs.tolist() == expected[1].tolist()
+
     def testNeighborhoodJobWritesFractionsAndMatrix(
         self, admin, server, tmp_path, fsAssetstore
     ):

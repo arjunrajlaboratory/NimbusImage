@@ -237,6 +237,12 @@ expired links refused), `ShareLinkAPI.test.ts`, `SharedView.test.ts`,
 
 ### Share-link regression checklist
 
+- The API classes send the link's bearer, not the boot client's token (the stored login,
+  or none for a recipient): `girderRestProxy` resolves the live `girderRest` —
+  `index.test.ts` (`commits only the latest validated link and does not persist its
+  bearer`, which asserts `main.api.client.token`). Verified live: a share view's
+  `api.client` `user/me` is the `share-…` user, the view's `_accessLevel` is 0 and
+  `canEditDatasetView` is false.
 - Leaving the shared route cancels pending authentication before identity commits —
   `SharedView.test.ts` (`cancels pending authentication when leaving the shared route`),
   `index.test.ts` (`does not commit a share bootstrap after its route is cancelled`).

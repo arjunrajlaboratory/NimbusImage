@@ -41,6 +41,8 @@ export function buildAnnotationBrowserConfig(
       yAxis: plot.yAxis,
       gate: plot.gate,
       gateEnabled: plot.gateEnabled,
+      display: plot.display,
+      colorBy: plot.colorBy,
     })),
   };
 }
@@ -210,11 +212,17 @@ function resolveAnalysisPlot(
           categoryKeyVersion: ANALYSIS_CATEGORY_KEY_VERSION,
         }
       : null;
+  // Display settings: unknown or unresolvable values fall back to the
+  // defaults rather than dropping the plot (they are cosmetic).
+  const display = candidate.display === "dots" ? "dots" : undefined;
+  const colorBy = resolveAxis(candidate.colorBy, isKnownPath);
   return {
     id: candidate.id,
     xAxis,
     yAxis,
     gate,
     gateEnabled: candidate.gateEnabled !== false,
+    ...(display ? { display } : {}),
+    ...(colorBy ? { colorBy } : {}),
   };
 }
