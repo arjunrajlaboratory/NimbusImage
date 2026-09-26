@@ -1,5 +1,14 @@
 # PR #1347 — Codex review fixes
 
+## Review of `62f5c81a` (2026-09-26)
+
+| Finding | Status |
+|---|---|
+| P2 Recompute drops cell-free tiles' molecules from `unassigned` | fixed — a tile no cell reaches still counts its quality-passing molecules as considered; unit test fails without the fix |
+| P2 Differential groups editable while a comparison runs | fixed — group B, its tags and the method lock while running (group A comes from the viewer's filters behind the modal); regression fails without the fix |
+| P1 Anonymous differential-expression jobs | deferred — repeat of the 2026-09-06 decision to leave anonymous jobs unchanged |
+| P2 Share bootstrap vs session restore | declined — repeat of the 4793d690 round's reasoning |
+
 ## Review of `a643cc49` (2026-09-26)
 
 | Finding | Status |

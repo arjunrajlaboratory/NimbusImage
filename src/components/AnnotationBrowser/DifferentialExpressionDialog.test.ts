@@ -142,6 +142,25 @@ describe("DifferentialExpressionDialog", () => {
     expect(mocks.fetchJob).not.toHaveBeenCalled();
   });
 
+  it("locks the group and method inputs while a comparison runs", async () => {
+    const wrapper = shallowMount(DifferentialExpressionDialog, {
+      props: { filtersA: FILTERS_A, groupALabel: "the filtered objects" },
+      global: { renderStubDefaultSlot: true },
+    });
+    const vm = wrapper.vm as any;
+    vm.dialog = true;
+    await nextTick();
+    const disabled = (name: string) => {
+      const found = wrapper.findComponent({ name });
+      return found.props("disabled") ?? found.attributes("disabled");
+    };
+    expect(disabled("VRadioGroup")).toBeFalsy();
+    vm.running = true;
+    await nextTick();
+    expect(disabled("VRadioGroup")).toBeTruthy();
+    expect(disabled("VBtnToggle")).toBeTruthy();
+  });
+
   it("downloads the ranked table as CSV", async () => {
     const wrapper = await openDialog();
     const vm = wrapper.vm as any;

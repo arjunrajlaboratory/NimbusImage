@@ -355,6 +355,19 @@ worker form of the import wraps this script once the format has settled.
 registers it with the bundle's `pixel_size` (and the inverse H&E alignment as `transform`
 for the H&E dataset).
 
+## Open decisions / future work
+
+- **Anonymous heavy compute on public datasets.** `POST spatial/{id}/differential`
+  (a local job that walks every feature of the table) and `POST
+  spatial/{id}/regions/summary` (synchronous, up to 50 regions × 64 features)
+  are `@access.public`: an unauthenticated caller can repeat them on a public
+  dataset. Kept anonymous on purpose for now (decision 2026-09-06, reaffirmed
+  2026-09-26) so public viewers can use them. When this matters, the smallest
+  fix is `@access.user` — share-link viewers carry a token, so they keep
+  working — or a per-IP limiter like the raster overview's
+  `_AnonymousBuildRateLimiter`. Codex flags it every review round; see
+  `SPATIAL_PLUGIN-CODEX-REVIEW.md`.
+
 ## Regression checklist
 
 - A dirty rebuild processes one ring of tiles around the edits, not the closure through

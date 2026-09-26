@@ -23,14 +23,29 @@
         <div class="group-line mb-2">
           <strong>Group A:</strong> {{ groupALabel }}
         </div>
-        <v-radio-group v-model="groupB" class="mt-0 mb-1" hide-details inline>
+        <!-- The group inputs lock while a comparison runs, so its result
+             always describes the groups shown (A is fixed by the viewer's
+             filters, which the modal dialog keeps from changing). -->
+        <v-radio-group
+          v-model="groupB"
+          class="mt-0 mb-1"
+          hide-details
+          inline
+          :disabled="running"
+        >
           <v-radio value="rest" label="B: everything else" />
           <v-radio value="tag" label="B: objects with any of these tags" />
         </v-radio-group>
-        <tag-picker v-if="groupB === 'tag'" v-model="groupBTags" class="mb-3" />
+        <tag-picker
+          v-if="groupB === 'tag'"
+          v-model="groupBTags"
+          class="mb-3"
+          :disabled="running"
+        />
         <v-btn-toggle
           v-model="method"
           mandatory
+          :disabled="running"
           density="compact"
           variant="outlined"
           divided

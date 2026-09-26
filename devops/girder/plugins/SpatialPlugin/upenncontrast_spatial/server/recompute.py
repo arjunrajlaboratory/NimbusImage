@@ -330,15 +330,19 @@ def assignTile(transcripts, key, cells, cellIndices, minQv, geneToVar,
     tile's quiet cells too, so they still take their own molecules, but
     keeps their carried rows."""
     tile = transcripts.tile(0, key)
-    if tile is None or not cellIndices:
+    if tile is None:
         return None, None, 0, 0
-    bounds = tilePixelBounds(transcripts, key)
-    labels = labelImage(cells, cellIndices, bounds)
-    location = np.asarray(tile["location"][:, :2], dtype=np.float64)
     gene = np.asarray(tile["gene_identity"][:, 0], dtype=np.int64)
     quality = np.asarray(tile["quality_score"][:, 0], dtype=np.float32)
     var = geneToVar[gene]
     keep = (quality >= minQv) & (var >= 0)
+    if not cellIndices:
+        # No cell reaches this tile: its molecules are all unassigned, and
+        # still count as considered (the published `unassigned` statistic).
+        return None, None, 0, int(keep.sum())
+    bounds = tilePixelBounds(transcripts, key)
+    labels = labelImage(cells, cellIndices, bounds)
+    location = np.asarray(tile["location"][:, :2], dtype=np.float64)
     px = location[keep] / transcripts.pixelSize
     var = var[keep]
     col = np.floor(px[:, 0] - bounds[0]).astype(np.int64)

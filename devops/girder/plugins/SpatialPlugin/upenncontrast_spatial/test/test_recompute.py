@@ -548,3 +548,16 @@ def testAssignTileCountsOnlyDirtyCellsButKeepsCompetition():
         _OneTile(), "0,0", cells, [0, 1], 20, np.array([0])
     )
     assert keys.tolist() == [0, 1] and counts.tolist() == [1, 1]
+
+
+def testCellFreeTileMoleculesCountAsUnassigned():
+    """A tile no cell reaches still holds molecules: they are considered
+    (and so unassigned), not dropped from the published statistic."""
+    keys, counts, assigned, considered = recomputeModule.assignTile(
+        _OneTile(), "0,0", [], [], 20, np.array([0])
+    )
+    assert keys is None and assigned == 0 and considered == 2
+    # Below the quality threshold they are not considered at all.
+    assert recomputeModule.assignTile(
+        _OneTile(), "0,0", [], [], 40, np.array([0])
+    )[3] == 0
