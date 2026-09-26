@@ -281,9 +281,17 @@ class Annotation(AccessControlMixin, ProxiedModel):
     @staticmethod
     def _setGeometryHash(document):
         if document.get("shape") in ("polygon", "rectangle"):
-            document["geometryHash"] = geometryHash(document["coordinates"])
-        else:
-            document.pop("geometryHash", None)
+            try:
+                document["geometryHash"] = geometryHash(
+                    document["coordinates"]
+                )
+                return
+            except (KeyError, TypeError, ValueError):
+                # Malformed coordinates: hashing runs before the schema
+                # validator in save(), which then rejects the document with
+                # its proper message instead of this surfacing as a 500.
+                pass
+        document.pop("geometryHash", None)
 
     def setGeometryHashes(self, hashes):
         """Backfill derived hashes without replacing annotation documents.

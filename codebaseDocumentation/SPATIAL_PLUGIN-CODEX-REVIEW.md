@@ -1,5 +1,14 @@
 # PR #1347 — Codex review fixes
 
+## Review of `e1b483dd` (2026-09-26)
+
+| Finding | Status |
+|---|---|
+| P2 Geometry hash raises before annotation validation (500) | fixed — malformed coordinates skip the hash so the schema validator rejects them; four parameterized cases fail without the fix |
+| P2 Density layer above annotation outlines | not a bug — GeoJS `zIndex()` without `allowDuplicate` moves the equal-z annotation layer up; verified live (density 10, annotations 11) |
+| P2 Selection summary survives a dataset switch while open | declined — the dialog is modal and refetches on every open; switching datasets underneath an open modal is not a reachable UI path |
+| P2 Table-version activation across a dataset switch | declined — needs a dataset switch inside the activation request; the next dataset load refreshes the table state |
+
 ## Review of `4793d690` (2026-09-26)
 
 | Finding | Status |
