@@ -794,9 +794,14 @@ def run(job):
         invalidateStore(fileDoc["_id"])
         store = openStore(fileDoc)
         entry = registryEntry(datasetId, item, fileDoc, store)
+        # The assignment settings go on the version too: a later dirty run
+        # carries this table's rows over and must use the same ones.
         DatasetSpatial().registerVersion(
             entry, kwargs.get("label") or DEFAULT_LABEL,
-            stats.copy(),
+            dict(
+                stats, minQv=float(kwargs["minQv"]),
+                tags=list(kwargs.get("tags") or []),
+            ),
         )
         result = {"itemId": str(item["_id"]), **stats}
     except Exception as exc:  # job boundary: recorded, then re-raised

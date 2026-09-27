@@ -199,6 +199,22 @@ class VersionRoutes:
                 "dirty scope needs an active table; run scope 'all' first.",
                 code=400,
             )
+        # A dirty run carries every untouched row over from the active
+        # table, so it must assign with the same settings: otherwise the
+        # table silently mixes thresholds (or cell sets) while its
+        # provenance records only the new ones. Tables this plugin built
+        # record their settings; an imported one has none to compare.
+        activeSettings = transcriptsEntry.get("provenance") or {}
+        if scope == "dirty" and "minQv" in activeSettings and (
+            float(activeSettings["minQv"]) != minQv
+            or sorted(activeSettings.get("tags") or []) != sorted(tags or [])
+        ):
+            raise RestException(
+                "dirty scope must use the active table's settings (minQv "
+                "%s, tags %s); run scope 'all' to change them."
+                % (activeSettings["minQv"], activeSettings.get("tags") or []),
+                code=400,
+            )
         if activeFileId is not None:
             # Fail now, not in the job, if the active table is unreadable or
             # no longer in this dataset (a dirty run carries its rows over).

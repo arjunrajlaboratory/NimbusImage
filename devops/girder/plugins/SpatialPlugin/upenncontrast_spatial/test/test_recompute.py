@@ -219,6 +219,16 @@ class TestRecompute(TestTranscripts):
             str(cells["A"]["_id"])
         ]
 
+        # A dirty run carries untouched rows over, so it cannot change the
+        # active table's assignment settings.
+        for changed in ({"minQv": 30}, {"tags": ["cell"]}):
+            mismatch = request(
+                server, admin, "POST",
+                "/spatial/%s/recompute" % folder["_id"],
+                body=dict({"label": "v4", "scope": "dirty"}, **changed),
+            )
+            assertStatus(mismatch, 400)
+            assert "active table's settings" in mismatch.json["message"]
         resp = request(
             server, admin, "POST", "/spatial/%s/recompute" % folder["_id"],
             body={"label": "v4", "scope": "dirty"},

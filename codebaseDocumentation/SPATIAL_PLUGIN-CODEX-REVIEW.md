@@ -1,5 +1,12 @@
 # PR #1347 — Codex review fixes
 
+## Review of `943b8e22` (2026-09-27)
+
+| Finding | Status |
+|---|---|
+| P1 Dirty recompute with a different `minQv` (or tags) mixes settings | fixed — recomputed versions now record `minQv`/`tags` in their provenance, and a dirty run whose settings differ from the active table's is a 400 asking for scope `all` (an imported table has no settings to compare); regression fails without the fix |
+| P2 Share-link creation vs a dialog reopened for another dataset | declined — needs the dialog closed and reopened on another dataset inside one create request; the third share-dialog race in a row, and the rounds are now finding progressively rarer interleavings of the same shape |
+
 ## Review of `1a316091` (2026-09-27)
 
 | Finding | Status |
