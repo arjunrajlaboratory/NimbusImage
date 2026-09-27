@@ -149,6 +149,20 @@ def testTranscriptGeneOffsetMustCoverEveryGene(tmp_path):
     xy, _, _ = store.tilePoints(0, "1,0", [0], 0)
     assert len(xy) == 1
 
+    # Pre-XOA-4 stores pad the table with one trailing empty row (the
+    # lymph node's 11,095 rows for 11,094 names): real data, still readable.
+    def padOffsets(root):
+        tile = root["grids/0/1,0"]
+        offsets = tile["gene_offset"][:]
+        replaceArray(tile, "gene_offset", np.vstack(
+            [offsets, np.zeros((1, 4), dtype=offsets.dtype)]
+        ))
+
+    padded = str(tmp_path / "padded.zarr.zip")
+    rewriteZip(_transcripts(tmp_path), padded, padOffsets)
+    xy, _, _ = TranscriptStore(padded, PIXEL_SIZE).tilePoints(0, "1,0", [0], 0)
+    assert len(xy) == 1
+
 
 # ---- non-finite and negative data ------------------------------------------
 

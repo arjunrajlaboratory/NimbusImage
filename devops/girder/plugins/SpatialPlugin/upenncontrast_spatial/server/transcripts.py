@@ -201,11 +201,15 @@ class TranscriptStore:
         if tile is None:
             return self._emptyPoints(level)
         offsets = tile["gene_offset"]
-        # One row per gene_names entry: a short table would index past its
-        # end, a long one misread every gene after the misalignment.
-        if tuple(offsets.shape) != (len(self.geneNames), 4):
+        # At least one row per gene_names entry: a short table would index
+        # past its end. Longer is real data — pre-XOA-4 stores pad the table
+        # with one trailing empty row (lymph node: 11,095 rows, 11,094 names).
+        if (
+            offsets.ndim != 2 or offsets.shape[1] != 4
+            or offsets.shape[0] < len(self.geneNames)
+        ):
             raise ValueError(
-                "tile %s/%s gene_offset has shape %s, expected (%d, 4)"
+                "tile %s/%s gene_offset has shape %s, expected (>= %d, 4)"
                 % (level, key, tuple(offsets.shape), len(self.geneNames))
             )
         offsets = offsets[:]

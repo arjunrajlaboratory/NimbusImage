@@ -339,6 +339,11 @@ included, and cannot be undone.
     there, so `import nimbusimage` finds a namespace package with no `connect`. Run from
     elsewhere (or install and `cd` out).
 13. **Regions without the `region` tag are cells** to every spatial analysis (§7f).
+14. **Vendor formats vary by XOA version — test validators on real bundles.** Pre-XOA-4
+    `transcripts.zarr.zip` tiles pad `gene_offset` with one trailing empty row (lymph
+    node: 11,095 rows for 11,094 `gene_names`; kidney XOA 4: exactly 516). An
+    exact-shape check added in an audit rejected every lymph-node tile; only a
+    *shorter* table is unsafe.
 
 ## 9. Post-upload verification
 
