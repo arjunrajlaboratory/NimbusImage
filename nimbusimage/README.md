@@ -94,6 +94,7 @@ job.wait()
 
 # Export data
 ds.export.to_csv(property_paths=[["prop_id", "Area"]], path="results.csv")
+ds.export.to_geojson(path="annotations.geojson")   # QuPath-compatible, image pixels
 
 # Open in browser
 ds.open(z=3)
@@ -114,7 +115,8 @@ ni.connect() -> NimbusClient
         ds.connections   # parent-child annotation links
         ds.properties    # computed measurements
         ds.collections   # display configuration (layers, tools)
-        ds.export        # JSON and CSV export
+        ds.export        # JSON, CSV and GeoJSON export
+        ds.spatial       # spatial-transcriptomics table, transcripts, neighborhoods
         ds.history       # undo/redo
         ds.sharing       # access control
     client.list_datasets()
@@ -212,4 +214,22 @@ list columns, summary). `ds.spatial.score(symbols, name, method="mean")` writes 
 gene-set score; `ds.spatial.differential(filters_a, filters_b=None, max_features=50)`
 returns the ranked table (Welch t by default, ``method="wilcoxon"`` for Mann-Whitney U)
 from a server job.
+
+Molecules, table versions and spatial statistics:
+
+```python
+ds.spatial.transcripts()                          # pyramid schema, or None
+ds.spatial.transcript_genes("cd")
+ds.spatial.transcript_points(["CD3E"], ["12,7"], level=0, min_qv=20)
+ds.spatial.staleness()                            # cells added/edited/removed since the table
+ds.spatial.recompute("v2", scope="dirty")         # re-count from the molecules; old table kept
+ds.spatial.versions(); ds.spatial.activate_version(item_id)
+ds.spatial.compute_neighborhood(radius_pixels=141)   # 30 µm at 0.2125 µm/px
+ds.spatial.region_summary("region", features=["CD3E"])
+```
+
+Polygons tagged `region` are regions of interest, never cells: neighborhoods, region
+summaries and recompute leave them out. Keep that tag on imported ROIs (the GeoJSON
+importer's default) and off cell polygons. The end-to-end Xenium runbook is the
+`xenium-ingest` skill.
 

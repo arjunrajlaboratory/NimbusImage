@@ -13,9 +13,18 @@ description: >
 
 # NimbusImage — Xenium ingest
 
-End-to-end runbook for getting a **10x Xenium** (Prime 5K or earlier) output bundle into
-NimbusImage as images + cell polygons + per-cell data. Worked example: FFPE Human Lymph
-Node, 708,983 cells, 4,624 genes, 0.2125 µm/px. Every step below was measured on it.
+End-to-end runbook for getting a **10x Xenium** output bundle (XOA 1–4, including Prime 5K
+and the XOA 4 protein panels) into NimbusImage as images + cell polygons + per-cell data.
+Every step below was measured on one of these:
+
+| Worked example | XOA | Cells | Features | Morphology | H&E | Extras |
+|---|---|---|---|---|---|---|
+| FFPE Human Lymph Node (Prime 5K) | pre-4 | 708,983 | 4,624 genes | 4 ch, 0.2125 µm/px | own grid, `M` scale 1.289 | cell types csv |
+| FFPE Human Kidney RCC, protein | 4.0.0.19 | 465,534 | 405 genes + 27 proteins | 35 ch | 24096×60680, **rotated 90°**, 0.2738 µm/px | 77M molecules, 9-region GeoJSON |
+
+Kidney timings: polygons 74 s (morphology) / 144 s (H&E), UMAP 207 s, clusters + UMAP
+properties ~90 s, table build 115 MB in 1 s + register 3 s, transcripts register 13 s,
+region summary over 9 regions ~11 s.
 
 Scripts live in `scripts/` next to this file and share `scripts/xenium_common.py`. They
 read credentials from the environment only:
@@ -73,6 +82,12 @@ pathology regions takes ~11 s.
 
 Run every upload script with `--limit 2000` first and look at the result in the viewer.
 
+**The H&E dataset's pixel size.** Distances (neighborhood radius) and areas need the
+configuration scale. Large-image metadata usually sets it on import (0.2738 µm for the
+kidney H&E). When it is blank, the app fills it from the spatial registration — through
+the transcript transform on an H&E (`pixelSize / sqrt(|det A|)`), so it is the H&E's own
+pixel, not morphology's 0.2125. A value set by hand is never overwritten.
+
 ## 1. Bundle anatomy
 
 | File | Where | Contains |
@@ -105,7 +120,8 @@ stain at all). The script reads the names from the OME metadata, uploads copies 
 `c01-ATP1A1+CD45+E-Cadherin.ome.tif` (two-digit prefix keeps the order; `/` and `_` would
 split the token), and pins the channel axis to that name. Importing the files through the
 UI works too, with `ch00NN`-style channel names. Import the H&E OME-TIFF as a separate
-dataset. The two are **not co-registered** — the H&E dataset needs the alignment matrix
+dataset. A new collection shows only the first `min(6, channels)` channels as layers; on a
+35-channel protein bundle add the rest with **Add layer**. The two are **not co-registered** — the H&E dataset needs the alignment matrix
 for every overlay (§3).
 
 ## 3. Coordinates — the crux
@@ -124,6 +140,11 @@ Xenium vertices are **microns**. Divide by the *Xenium* `pixel_size` from
 mask, build a cell-centroid density grid at the same resolution, and correlate the two
 across identity / flips / rot180 / `M` vs `M⁻¹`. Margins are unambiguous (0.75 vs ≤0.55
 for morphology; 0.88 vs 0.21 for `M⁻¹` vs `M`). Do this before uploading 700k polygons.
+
+The kidney's `M` is a 90° rotation with scale 0.7754 (H&E px → morphology px): a
+by-eye guess would have put every cell on the wrong axis. The same `M` carries regions
+and molecules onto the H&E (`--alignment`), and a transformed transcript registration
+shows points only (no density heat map).
 
 Pre-upload checklist: centroid px range ⊂ `[0, W] × [0, H]`; correlation winner has a
 clear margin; a ~5k-cell slice with a distinct tag looks right in the viewer.
@@ -257,6 +278,35 @@ composition by type and mean expression of picked genes. From Python:
 `ds.spatial.compute_neighborhood(radius_pixels=141)`, `ds.spatial.neighborhood()`,
 `ds.spatial.region_summary("region", features=["CD3E"])`.
 
+## 7f. Regions of interest (`xenium_upload_regions.py`, or the UI)
+
+10x ships a pathologist's layer (`*_annotation.geojson`, QuPath style) in **H&E pixels**.
+`xenium_upload_regions.py --frame {he,morphology,microns} --target {he,morphology}`
+transforms it (H&E→morphology applies `M`; morphology→H&E `M⁻¹`; microns divide by
+`pixel_size`) and uploads each outer ring as a polygon tagged `[<class>, "region"]` — class
+first, because GeoJSON export writes the first tag as QuPath's `classification`.
+
+In the app the same file goes in through **Import/export → Import GeoJSON…** (preview,
+layer, extra tag default `region`). The importer reads coordinates as *this* image's
+pixels, so an H&E-pixel file goes on the H&E dataset only; use the script for the
+morphology dataset. **Export GeoJSON** (or `ds.export.to_geojson(annotation_ids)`, nimbusimage ≥ 0.2.3)
+round-trips vertex-for-vertex; rectangles come back as polygons, names are not re-imported.
+
+**`region` is a reserved tag.** Polygons carrying it are never cells: neighborhoods,
+region summaries, recompute assignment and staleness all leave them out. Keep it on every
+ROI and never on a cell. Region summaries count a cell when its (vertex-mean) centroid
+lies inside the region.
+
+## 7g. Looking at everything at once
+
+With 465K–709K cells the viewer draws a subset. For the whole section: Settings →
+*Advanced settings for large numbers of annotations* → **Annotation overview raster**
+(server-rendered tiles of every cell; smaller shapes paint over larger, so regions do not
+hide cells; interactive vectors take over past the vector switch). Then **Color by
+Property** → `Clustering / graphclust` with mode **Categorical** (Auto may pick a
+continuous ramp for integer clusters). Applying recolors every annotation, regions
+included, and cannot be undone.
+
 ## 8. Traps (each cost real time)
 
 1. **`submit_values` does not overwrite.** Re-submitting an existing value is a silent
@@ -275,6 +325,20 @@ composition by type and mean expression of picked genes. From Python:
 5. **Morphology is one image in four files**; never import file 0001–0003 as separate
    images. **H&E is a separate grid**; never assume co-registration.
 6. **Categorical data are tags, not property values.**
+7. **XOA 4 renamed the morphology files** to `ch00NN_<stain>.ome.tif`; stain names come
+   from OME metadata, never from the filename (§2).
+8. **Protein features share gene names** (CD3E gene vs CD3E antibody): the table names them
+   `<name> (protein)`; registration refuses duplicate symbols.
+9. **A dataset opened while its transcode is finishing can render black** (0 tiles) even
+   though the server tiles are fine — reload the page before debugging.
+10. **Rebuilding the Girder image kills running local jobs** (materialize, recompute,
+    transcode). Never `docker compose build girder` during an ingest.
+11. **`ds.properties.get_values()` returns at most 50** — never use it to count or
+    verify; use `histogram` or the export endpoints.
+12. **Running Python from the repo root shadows the package**: `nimbusimage/` is a folder
+    there, so `import nimbusimage` finds a namespace package with no `connect`. Run from
+    elsewhere (or install and `cd` out).
+13. **Regions without the `region` tag are cells** to every spatial analysis (§7f).
 
 ## 9. Post-upload verification
 
@@ -287,3 +351,10 @@ ds.annotations.get(ann_id).tags                              # ["cell", "Memory 
 ```
 
 Spot-check several `cell_index` values against the zarr ground truth on both datasets.
+
+**Cross-dataset parity** is the strongest alignment check once both datasets are loaded:
+take the same sample of cells (same upload order) on the H&E and morphology datasets and
+count how many fall in each region there. The counts must be identical — on the kidney
+all 7 classes matched to the cell over 60K cells, which validates `M`, `M⁻¹` and both
+region uploads at once. Then export the regions (`ds.export.to_geojson`) and compare with
+the source file vertex-for-vertex (max diff 0.0 on the H&E dataset).

@@ -49,6 +49,22 @@ To import:
 
 Compatible dataset structures are essential for successful imports. Importing will not overwrite existing annotations unless explicitly configured.
 
+## GeoJSON Import and Export
+GeoJSON is for region layers (QuPath exports, 10x `*_annotation.geojson`) and for sending objects to QuPath and similar tools.
+
+**Importing**:
+1. Click the **Import / export data** icon in the top app bar
+2. Choose **Import GeoJSON…** and select a `.geojson` or `.json` file
+3. Check the **Preview** (counts by shape and by class)
+4. Pick the **Layer (sets the channel)** and, optionally, an **Extra tag for every annotation** (default `region`)
+5. Click **Import N**
+
+Coordinates are read as this image's pixels with the origin at the top-left (QuPath's convention); nothing is converted from microns, and a warning appears if coordinates fall outside the image. Objects are placed at the current XY/Z/time. Polygons (outer ring only; holes are skipped), lines and points are imported; each feature's tags and class name become tags. The import is all or nothing, up to 100,000 objects.
+
+**Exporting**: choose **Export GeoJSON**. It downloads the selected objects if there are any, otherwise the filtered objects, otherwise all objects. Rectangles export as polygons; tags are kept, so re-importing the file restores them.
+
+For how the `region` tag is used in spatial analyses, see the **spatial-transcriptomics** topic.
+
 ## Data Ownership and Integration
 NimbusImage's export capabilities ensure:
 - Complete ownership of analysis data
