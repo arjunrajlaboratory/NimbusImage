@@ -410,7 +410,12 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
             "$match": {
                 "datasetId": datasetId,
                 # TODO(performance): sparse index see above
-                valueKey: {"$exists": True, "$ne": None},
+                # Non-finite values (a stored Infinity, NaN) are left out of
+                # the buckets: a bucket bound of Infinity would reach the
+                # client as null and break the filter slider's range.
+                valueKey: {"$exists": True, "$nin": [
+                    None, float("inf"), float("-inf"), float("nan"),
+                ]},
             }
         }
 

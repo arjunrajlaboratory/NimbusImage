@@ -291,6 +291,10 @@ class TestRecompute(TestTranscripts):
             server, admin, "POST", path, body={"scope": "dirty"}
         )
         assertStatus(resp, 403)
+        # A full rebuild does not need the moved table: it is the recovery.
+        resp = request(server, admin, "POST", path, body={"scope": "all"})
+        assertStatusOk(resp)
+        runJob(resp.json["jobId"])
         Item().move(tableItem, folder)
 
     def testActivatingAMovedVersionLeavesTheRegistryAlone(

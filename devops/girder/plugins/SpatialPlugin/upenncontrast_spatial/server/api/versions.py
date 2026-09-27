@@ -233,9 +233,11 @@ class VersionRoutes:
                 "active table was built from (%s changed); run scope 'all'."
                 % ", ".join(changed), code=400,
             )
-        if activeFileId is not None:
+        if scope == "dirty":
             # Fail now, not in the job, if the active table is unreadable or
             # no longer in this dataset (a dirty run carries its rows over).
+            # A full rebuild does not need it — it is how a moved or
+            # deleted active table is recovered from.
             self._openStore(datasetId)
         user = self.getCurrentUser()
         job = Job().createLocalJob(

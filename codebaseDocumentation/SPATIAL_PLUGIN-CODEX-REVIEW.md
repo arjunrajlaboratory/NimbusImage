@@ -1,5 +1,17 @@
 # PR #1347 — Codex review fixes
 
+## Reviews of `1b8c82c9` and `283828c5` (2026-09-27)
+
+| Finding | Status |
+|---|---|
+| P2 Full rebuild refused when the active table was moved | fixed — only a dirty run pre-checks the active table; a full rebuild skips an unusable one (logged). The audit's job test is updated to that rule; regression fails without the fix |
+| P2 Histogram bucket bounds of Infinity become null | fixed — non-finite values are left out of the buckets (a consequence of the previous round's `jsonSafe`); regression fails without the fix |
+| P2 Dotted / `$` feature symbols listed but unusable in paths | fixed — refused at registration (`requirePathSafeSymbols`); existing registrations keep opening; regression fails without the fix |
+| P2 Virtual summaries count table rows for deleted cells | declined — the table-snapshot semantics already declined for the aggregate shortcut; the staleness claim and recompute cover it |
+| P2 Transcript overlay: old request commits during the debounce | declined — a sub-second window, self-corrects when the replacement request lands |
+| P2 Measurement refresh commits after a dataset switch | declined — needs the dataset switched inside the refresh's own awaits |
+| P2 Shared raster-filter key evicted by another user's cap | declined — needs two users on the identical filter and one at 50 live registrations; a reload re-registers |
+
 ## Live test of the audit fixes (2026-09-27)
 
 Backend (API, kidney/scratch test datasets) — all pass: batch unknown gene 400; summary

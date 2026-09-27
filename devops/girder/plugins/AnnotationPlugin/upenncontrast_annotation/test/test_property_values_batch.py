@@ -74,6 +74,11 @@ class TestPropertyValuesBatch:
             },
         )
         assertStatusOk(resp)
+        # Infinity is left out of the buckets, not turned into a null bound.
+        assert all(
+            bucket["min"] is not None and bucket["max"] is not None
+            for bucket in resp.json
+        )
 
     def testReturnsValuesForRequestedIds(self, admin, server):
         folder, ids = self._makeDatasetWithValues(

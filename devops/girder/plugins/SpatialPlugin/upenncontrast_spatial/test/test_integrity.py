@@ -224,9 +224,28 @@ class TestIntegrity:
 
     # ---- materialize / score ------------------------------------------------
 
-    def testMaterializeRefusesSymbolsThatAreNotSubKeys(
+    def testRegistrationRefusesSymbolsThatCannotBePathSegments(
         self, admin, server, tmp_path, fsAssetstore
     ):
+        fixture = SpatialFixture()
+        folder, _, item = fixture._setup(
+            admin, tmp_path, symbols=["CD3E", "HLA.DR", "X$Y", "PECAM1"],
+        )
+        resp = request(
+            server, admin, "POST", "/spatial/%s/register" % folder["_id"],
+            body={"itemId": str(item["_id"])},
+        )
+        assertStatus(resp, 400)
+        assert "cannot contain '.' or '$'" in resp.json["message"]
+
+    def testMaterializeRefusesSymbolsThatAreNotSubKeys(
+        self, admin, server, tmp_path, fsAssetstore, monkeypatch
+    ):
+        # A table registered before registration refused such symbols.
+        monkeypatch.setattr(
+            storeModule.SpatialStore, "requirePathSafeSymbols",
+            lambda self: None,
+        )
         fixture = SpatialFixture()
         folder, _, item = fixture._setup(
             admin, tmp_path, symbols=["CD3E", "HLA.DR", "X$Y", "PECAM1"],
@@ -468,7 +487,7 @@ class TestIntegrity:
         )
 
     @pytest.mark.parametrize("moved", ["transcripts", "table"])
-    def testRecomputeJobRefusesAMovedSource(
+    def testRecomputeJobHandlesAMovedSource(
         self, admin, server, tmp_path, fsAssetstore, moved
     ):
         fixture = RecomputeFixture()
@@ -482,8 +501,18 @@ class TestIntegrity:
         moveAway(admin, tableItem if moved == "table" else Item().load(
             entry["transcriptsItemId"], force=True
         ))
-        with pytest.raises(AccessException):
-            recomputeModule.run(Job().load(resp.json["jobId"], force=True))
-        assert DatasetSpatial().forDataset(folder["_id"])["itemId"] == (
-            tableItem["_id"]
-        )
+        job = Job().load(resp.json["jobId"], force=True)
+        if moved == "transcripts":
+            # Every rebuild reads the transcripts: a moved store is refused.
+            with pytest.raises(AccessException):
+                recomputeModule.run(job)
+            assert DatasetSpatial().forDataset(folder["_id"])["itemId"] == (
+                tableItem["_id"]
+            )
+        else:
+            # A full rebuild only borrows the active table's cell types, and
+            # is the recovery from a moved one: it runs without it.
+            recomputeModule.run(job)
+            assert DatasetSpatial().forDataset(folder["_id"])["itemId"] != (
+                tableItem["_id"]
+            )

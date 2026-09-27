@@ -20,6 +20,7 @@ import os
 import tempfile
 import threading
 import time
+import zipfile
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -28,6 +29,7 @@ import numpy as np
 import scipy.sparse as sp
 import zarr
 from bson.objectid import ObjectId
+from girder.exceptions import AccessException, ValidationException
 from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.upload import Upload
@@ -785,11 +787,25 @@ def run(job):
         )
         activeStore = None
         if kwargs.get("activeFileId"):
-            activeFile = File().load(
-                kwargs["activeFileId"], force=True, exc=True
-            )
-            requireFileInDataset(activeFile, datasetId)
-            activeStore = openStore(activeFile)
+            try:
+                activeFile = File().load(
+                    kwargs["activeFileId"], force=True, exc=True
+                )
+                requireFileInDataset(activeFile, datasetId)
+                activeStore = openStore(activeFile)
+            except (
+                AccessException, ValidationException, ValueError, KeyError,
+                OSError, zipfile.BadZipFile,
+            ) as exc:
+                # A dirty run carries the active table's rows and needs it;
+                # a full rebuild only borrows its cell types, and is the way
+                # to recover from a moved or deleted active table.
+                if kwargs["scope"] == "dirty":
+                    raise
+                jobModel.updateJob(
+                    job, log="Active table unusable (%s); rebuilding "
+                    "without it.\n" % exc,
+                )
 
         def onProgress(stage, current, total):
             jobModel.updateJob(

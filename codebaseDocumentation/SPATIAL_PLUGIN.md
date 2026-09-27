@@ -372,7 +372,12 @@ for the H&E dataset).
   written sub-keys on cells missing from the table, and a neighborhood run unsets the types
   its property's previous run wrote and this one lacks (`neighborhoodTypes` per property on
   the registry) — both only once every new value is written.
-- **Materialize refuses symbols containing `.` or `$`** (a sub-key path cannot hold them).
+- **Symbols containing `.` or `$` are refused at registration** (a `["spatial", symbol]`
+  path is validated and encoded with `.`, so such a symbol would be listed but unusable);
+  materialize still refuses them for tables registered before this rule.
+- **A full rebuild does not need the active table**: it only borrows its cell types, so a
+  moved or deleted active table is skipped (and logged) rather than blocking the recovery;
+  a dirty run still requires it.
 - **`log2FoldChange` is null** when a shifted mean is not positive (scaled tables).
 
 ## Open decisions / future work

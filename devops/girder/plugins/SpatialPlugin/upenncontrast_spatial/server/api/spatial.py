@@ -211,6 +211,7 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
         invalidateStore(files[0]["_id"])
         try:
             store = openStore(files[0])
+            store.requirePathSafeSymbols()
             store.requireFiniteValues()
         except (
             ValueError, KeyError, IndexError, TypeError, OSError,

@@ -320,6 +320,20 @@ class SpatialStore:
             })
         return {"total": total, "features": results}
 
+    def requirePathSafeSymbols(self):
+        """Refuse feature symbols containing `.` or `$`. A symbol is the last
+        segment of a `["spatial", symbol]` property path, and paths are
+        validated and encoded with `.` as the separator, so such a symbol
+        would be listed but unusable in filters, axes, color-by and columns.
+        Registration runs it; tables already registered keep opening."""
+        bad = [s for s in self.featureSymbols if "." in s or "$" in s]
+        if bad:
+            raise ValueError(
+                "feature symbols cannot contain '.' or '$' (%d do, e.g. %s); "
+                "rename them before registering"
+                % (len(bad), ", ".join(bad[:3]))
+            )
+
     def requireFiniteValues(self, chunkValues=FINITE_CHECK_CHUNK_VALUES):
         """Refuse X holding NaN or infinity: materialize would write them
         into property values, and every JSON response carrying one fails
