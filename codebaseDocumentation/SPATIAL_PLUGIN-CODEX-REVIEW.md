@@ -1,5 +1,14 @@
 # PR #1347 — Codex review fixes
 
+## Review of `38e88878` (2026-09-26)
+
+| Finding | Status |
+|---|---|
+| P1 Retired neighborhood type fractions linger after a rerun | fixed — a run clears its property for the dataset before writing (`writeCellValues` merges sub-keys); the rerun-with-a-type-excluded regression fails without the fix |
+| P2 Duplicate `obs.annotation_id` rows accepted | fixed — registration refuses a repeated id; regression fails without the fix |
+| P2 Transcript overlay reused across a replaced map | fixed — overlays are keyed by map identity, and teardown deletes only layers the map still holds (an exited map already dropped them); unit test. An unroll round-trip live did not replace map 0 here, and the overlay kept updating |
+| P2 Table card refresh not retired when the table goes away | fixed — the no-table branch claims the refresh token; regression fails without the fix |
+
 ## Review of `980059cb` (2026-09-26)
 
 | Finding | Status |

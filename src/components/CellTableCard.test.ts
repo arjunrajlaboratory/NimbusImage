@@ -185,6 +185,25 @@ describe("CellTableCard", () => {
     expect(vm.error).toContain("unknown feature");
   });
 
+  it("a late answer cannot refill the card once the table is gone", async () => {
+    let finish!: (value: typeof VERSIONS) => void;
+    mocks.fetchVersions.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const wrapper = shallowMount(CellTableCard, { props: { visible: true } });
+    await nextTick();
+    const vm = wrapper.vm as any;
+    // Navigation: the new dataset has no table (yet).
+    (spatialStore as any).hasTable = false;
+    await flush();
+    finish(VERSIONS);
+    await flush();
+    expect(vm.versionItems).toEqual([]);
+    expect(vm.stalenessText).toBeFalsy();
+  });
+
   it("shows the error when the registry cannot be read", async () => {
     mocks.fetchVersions.mockRejectedValue(new Error("offline"));
     const wrapper = shallowMount(CellTableCard, { props: { visible: true } });

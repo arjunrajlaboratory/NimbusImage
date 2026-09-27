@@ -149,6 +149,14 @@ class SpatialStore:
         self.annotationIds = np.asarray(annotationIds, dtype="U24")
         self.sortedOrder = np.argsort(self.annotationIds, kind="stable")
         self.sortedIds = self.annotationIds[self.sortedOrder]
+        # The column is the row identity: a repeated id would join one row
+        # but be aggregated and written twice.
+        repeated = self.sortedIds[1:] == self.sortedIds[:-1]
+        if repeated.any():
+            raise ValueError(
+                "obs.annotation_id must be unique (%s appears more than "
+                "once)" % self.sortedIds[1:][repeated][0]
+            )
 
     # ---- features -------------------------------------------------------
 

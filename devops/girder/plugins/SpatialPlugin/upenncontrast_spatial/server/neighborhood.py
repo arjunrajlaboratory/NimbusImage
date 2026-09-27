@@ -22,6 +22,9 @@ from upenncontrast_annotation.server.helpers.annotationRaster import (
     getRasterVersion,
 )
 from upenncontrast_annotation.server.models.annotation import Annotation
+from upenncontrast_annotation.server.models.propertyValues import (
+    AnnotationPropertyValues,
+)
 
 from .materialize import writeCellValues
 from .models.registry import DatasetSpatial
@@ -232,6 +235,11 @@ def compute(datasetId, radius, excludeTags, propertyId, onProgress):
             chunk.append(values)
         return chunk
 
+    # A run replaces the whole neighborhood property: writeCellValues merges
+    # sub-keys, so a type that no longer exists (tags or excludeTags changed)
+    # would otherwise keep its old fraction on every cell, as would a cell
+    # that is no longer counted at all.
+    AnnotationPropertyValues().delete(str(propertyId), datasetId)
     written = writeCellValues(
         datasetId, propertyId, ids, subValuesFor,
         lambda current, total: onProgress("values", current, total),

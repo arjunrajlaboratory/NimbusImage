@@ -324,3 +324,12 @@ def testEveryRowIdIsValidatedNotASample(tmp_path):
     )
     with pytest.raises(ValueError, match="24-character annotation ids"):
         storeModule.SpatialStore(path)
+
+
+def testDuplicateRowIdsAreRefused(tmp_path):
+    ids = ["%024x" % i for i in range(COUNTS.shape[0])]
+    ids[-1] = ids[0]
+    path = str(tmp_path / "spatial.zarr.zip")
+    buildStoreZip(path, ids)
+    with pytest.raises(ValueError, match="must be unique"):
+        storeModule.SpatialStore(path)

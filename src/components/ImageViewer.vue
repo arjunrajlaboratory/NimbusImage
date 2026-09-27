@@ -54,8 +54,8 @@
     />
     <template v-if="transcriptsStore.hasTranscripts && transcriptImage">
       <transcript-overlay
-        v-for="(mapentry, index) in annotationViewerMaps"
-        :key="'transcript-overlay-' + index"
+        v-for="mapentry in annotationViewerMaps"
+        :key="'transcript-overlay-' + mapKey(mapentry.map)"
         :map="mapentry.map"
         :annotationLayer="mapentry.annotationLayer"
         :sizeX="transcriptImage.sizeX"
@@ -736,6 +736,21 @@ const maps = computed({
   get: () => store.maps,
   set: (value: IMapEntry[]) => store.setMaps(value),
 });
+
+// A stable key per GeoJS map object. The transcript overlay binds its pan
+// listener and layers to its map on mount, so when _setupMap replaces the
+// map at an index (an unroll toggle) the overlay must remount, not be reused.
+const mapKeys = new WeakMap<object, number>();
+let nextMapKey = 0;
+function mapKey(map: IGeoJSMap): number {
+  const raw = toRaw(map);
+  let key = mapKeys.get(raw);
+  if (key === undefined) {
+    key = ++nextMapKey;
+    mapKeys.set(raw, key);
+  }
+  return key;
+}
 
 // The image the transcript density pyramid is sized to: the same one the
 // annotation overview uses.

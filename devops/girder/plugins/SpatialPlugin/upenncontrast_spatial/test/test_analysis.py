@@ -182,6 +182,21 @@ class TestAnalysis(TestSpatial):
         assert origin["neighbors"] == 5
         assert abs(origin["B"] - 3 / 5) < 1e-9
 
+        # Rerun with "Endo" excluded: its fractions must not linger.
+        resp = request(
+            server, admin, "POST",
+            "/spatial/%s/neighborhood" % folder["_id"],
+            body={"radius": 20, "excludeTags": ["cell", "Endo"]},
+        )
+        assertStatusOk(resp)
+        rerun = Job().load(resp.json["jobId"], force=True)
+        module.run(rerun)
+        assert resp.json["propertyId"] == propertyKey
+        for doc in AnnotationPropertyValues().find({
+            "datasetId": folder["_id"]
+        }):
+            assert "Endo" not in doc["values"].get(propertyKey, {})
+
     def testNeighborhoodValidation(
         self, admin, user, server, tmp_path, fsAssetstore
     ):

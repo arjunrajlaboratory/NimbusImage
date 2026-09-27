@@ -111,6 +111,10 @@ const stalenessText = computed(() => {
 async function refresh(force = false) {
   const datasetId = store.dataset?.id;
   if (!datasetId || !spatialStore.hasTable) {
+    // Retire an in-flight refresh too, or its late answer (the previous
+    // dataset's versions and staleness) would refill the cleared card.
+    refreshToken++;
+    checking.value = false;
     versions.value = null;
     staleness.value = null;
     return;

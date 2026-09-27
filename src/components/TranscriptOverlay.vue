@@ -161,8 +161,17 @@ function ensureDensityLayer(symbol: string) {
   return entry;
 }
 
+// Delete a layer only while the map still holds it: when ImageViewer
+// replaces the map (an unroll toggle), the old map has already exited its
+// layers, and GeoJS's deleteLayer would exit them a second time.
+function deleteOwnLayer(layer: IGeoJSFeatureLayer | IGeoJSOsmLayer) {
+  if (props.map.layers().includes(layer)) {
+    props.map.deleteLayer(layer);
+  }
+}
+
 function dropDensityLayers() {
-  densityLayers.forEach(({ layer }) => props.map.deleteLayer(layer));
+  densityLayers.forEach(({ layer }) => deleteOwnLayer(layer));
   densityLayers.clear();
 }
 
@@ -445,7 +454,7 @@ onBeforeUnmount(() => {
     pointFeature.geoOff(geojs.event.feature.mouseclick, onPointClick);
   }
   if (pointLayer) {
-    props.map.deleteLayer(pointLayer);
+    deleteOwnLayer(pointLayer);
     pointLayer = null;
     pointFeature = null;
   }

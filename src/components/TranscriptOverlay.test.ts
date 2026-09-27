@@ -137,15 +137,24 @@ function makeMap(bounds = { left: 0, top: 0, right: 600, bottom: 300 }) {
     osmLayers.push(osmLayer);
     return osmLayer;
   };
+  // The map's layer list mirrors create/delete, as GeoJS's does: the
+  // overlay only deletes layers its map still holds.
+  const held: any[] = [];
   const map = {
     bounds: vi.fn(() => bounds),
     geoOn: vi.fn(),
     geoOff: vi.fn(),
-    deleteLayer: vi.fn(),
+    layers: vi.fn(() => [...held]),
+    deleteLayer: vi.fn((layer: any) => {
+      held.splice(held.indexOf(layer), 1);
+    }),
     node: () => [document.createElement("div")],
-    createLayer: vi.fn((kind: string) =>
-      kind === "osm" ? makeOsm() : featureLayer,
-    ),
+    createLayer: vi.fn((kind: string) => {
+      const layer = kind === "osm" ? makeOsm() : featureLayer;
+      held.push(layer);
+      return layer;
+    }),
+    held,
   };
   return {
     map,
@@ -445,6 +454,17 @@ describe("TranscriptOverlay", () => {
     expect(map.geoOff).toHaveBeenCalledWith("geo_pan", expect.any(Function));
     // The point layer and every heat-map layer go.
     expect(map.deleteLayer).toHaveBeenCalledTimes(1 + parts.osmLayers.length);
+  });
+
+  it("does not delete layers again from a map that already exited them", async () => {
+    // ImageViewer replaced the map (an unroll toggle): exit() removed every
+    // layer, and a second GeoJS deleteLayer would exit them twice.
+    const parts = makeMap();
+    const { wrapper, map } = mount(parts);
+    await vi.advanceTimersByTimeAsync(250);
+    (map as any).held.length = 0;
+    wrapper.unmount();
+    expect(map.deleteLayer).not.toHaveBeenCalled();
   });
 
   it("does nothing while unrolled", async () => {
