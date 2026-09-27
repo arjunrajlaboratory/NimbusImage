@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   score: vi.fn(),
   addVirtualPropertyPaths: vi.fn(),
   fetchProperties: vi.fn(),
+  adoptServerRegisteredProperty: vi.fn(),
   fetchPropertyPathsSample: vi.fn(),
   fetchPropertyValues: vi.fn(),
   updateHistograms: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("@/store/properties", () => ({
   SPATIAL_PROPERTY_ID: "spatial",
   default: {
     fetchProperties: mocks.fetchProperties,
+    adoptServerRegisteredProperty: mocks.adoptServerRegisteredProperty,
     fetchPropertyPathsSample: mocks.fetchPropertyPathsSample,
     fetchPropertyValues: mocks.fetchPropertyValues,
     addVirtualPropertyPaths: mocks.addVirtualPropertyPaths,
@@ -156,6 +158,13 @@ describe("MaterializeGenesDialog", () => {
       ["CD3E", "MS4A1"],
       "Panel",
     );
+    // The server registered the (possibly new) property in the
+    // configuration: the client adopts it before reloading the list, or the
+    // new measurement stays invisible until a reload.
+    expect(mocks.adoptServerRegisteredProperty).toHaveBeenCalledWith("p1");
+    expect(
+      mocks.adoptServerRegisteredProperty.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.fetchProperties.mock.invocationCallOrder[0]);
     expect(mocks.fetchProperties).toHaveBeenCalledTimes(1);
     expect(mocks.fetchPropertyPathsSample).toHaveBeenCalledTimes(1);
     // The values themselves and the histograms, as after a worker job: the

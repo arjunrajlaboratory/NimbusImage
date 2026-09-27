@@ -1322,6 +1322,21 @@ export class Properties extends VuexModule {
   // Otherwise it loads everything as before. The property-filter case (which
   // still needs every value for client-side filtered drawing) is handled by
   // AnnotationViewer, which calls fetchAllPropertyValues while a filter is on.
+  /**
+   * A server job (materialize, score, neighborhood) created a property and
+   * registered it in the configuration itself; the client's copy of the
+   * configuration does not know it yet, so fetchProperties would not load
+   * it and the new measurement stayed invisible until a reload. Adopt the
+   * id locally — no write, the server already saved it.
+   */
+  @Action
+  async adoptServerRegisteredProperty(propertyId: string) {
+    const configuration = main.configuration;
+    if (configuration && !configuration.propertyIds.includes(propertyId)) {
+      configuration.propertyIds = [...configuration.propertyIds, propertyId];
+    }
+  }
+
   @Action({ rawError: true })
   async fetchPropertyValues() {
     if (!main.dataset?.id) {

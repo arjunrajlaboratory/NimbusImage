@@ -28,8 +28,7 @@
                 <div>Add as live columns</div>
                 <div class="mode-hint">
                   Read straight from the table, instantly. Works in filters,
-                  plots, color-by and the object list; not sortable, not
-                  exported to CSV.
+                  plots, color-by, the object list and CSV export; not sortable.
                 </div>
               </div>
             </template>
@@ -216,11 +215,29 @@ const polling = useJobPolling(
   },
 );
 
-async function afterWrite(written: number, what: string, request: number) {
+// What a submitted request writes into: the property (possibly new, and
+// registered by the server) and the name it was submitted with — the name
+// field stays editable while a job runs.
+interface IWriteTarget {
+  propertyId: string;
+  name: string;
+}
+
+async function afterWrite(
+  written: number,
+  what: string,
+  request: number,
+  target: IWriteTarget,
+) {
   // The new sub-values are ordinary property values: reload them everywhere
   // they show, even when the dialog was closed while the job ran.
-  const name = propertyName.value.trim();
-  if (!(await refreshWrittenMeasurements(() => polling.isLive(request)))) {
+  const name = target.name;
+  if (
+    !(await refreshWrittenMeasurements(
+      () => polling.isLive(request),
+      target.propertyId,
+    ))
+  ) {
     return;
   }
   if (!polling.isCurrent(request)) return;
@@ -228,7 +245,13 @@ async function afterWrite(written: number, what: string, request: number) {
   running.value = false;
 }
 
-function pollJob(jobId: string, total: number, what: string, request: number) {
+function pollJob(
+  jobId: string,
+  total: number,
+  what: string,
+  request: number,
+  target: IWriteTarget,
+) {
   polling.schedule(
     request,
     async () => {
@@ -242,7 +265,7 @@ function pollJob(jobId: string, total: number, what: string, request: number) {
           const result = job.spatialResult as
             | ISpatialMaterializeResult
             | undefined;
-          await afterWrite(result?.written ?? total, what, request);
+          await afterWrite(result?.written ?? total, what, request, target);
           return;
         }
         if (status === jobStates.error || status === jobStates.cancelled) {
@@ -251,7 +274,7 @@ function pollJob(jobId: string, total: number, what: string, request: number) {
           running.value = false;
           return;
         }
-        pollJob(jobId, total, what, request);
+        pollJob(jobId, total, what, request, target);
       } catch (caught) {
         if (!polling.isCurrent(request)) return;
         error.value = extractErrorMessage(caught);
@@ -289,6 +312,7 @@ async function submit() {
       mode.value === "score"
         ? `the ${scoreMethod.value} of ${genesLabel.value}`
         : genesLabel.value;
+    const name = propertyName.value.trim();
     const result =
       mode.value === "score"
         ? await store.spatialAPI.score(
@@ -296,22 +320,25 @@ async function submit() {
             symbols.value,
             scoreName.value.trim(),
             scoreMethod.value,
-            propertyName.value.trim(),
+            name,
           )
-        : await store.spatialAPI.materialize(
-            datasetId,
-            symbols.value,
-            propertyName.value.trim(),
-          );
+        : await store.spatialAPI.materialize(datasetId, symbols.value, name);
     if (!polling.isLive(request)) return;
+    const target = { propertyId: result.propertyId, name };
     if (result.jobId) {
       if (polling.isCurrent(request)) {
         runningMessage.value = "Writing values in a server job…";
       }
-      pollJob(result.jobId, spatialStore.info?.nObs ?? 0, what, request);
+      pollJob(
+        result.jobId,
+        spatialStore.info?.nObs ?? 0,
+        what,
+        request,
+        target,
+      );
       return;
     }
-    await afterWrite(result.written, what, request);
+    await afterWrite(result.written, what, request, target);
   } catch (err) {
     if (!polling.isCurrent(request)) return;
     error.value = extractErrorMessage(err);

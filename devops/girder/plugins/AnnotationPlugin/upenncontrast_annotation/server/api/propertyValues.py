@@ -8,6 +8,7 @@ from girder.exceptions import RestException
 from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
+from ..helpers.serialization import jsonSafe
 from ..helpers.validation import (
     requireList,
     requireObjectBody,
@@ -93,11 +94,11 @@ class PropertyValues(Resource):
             exc=True,
         )
         self._requireAnnotationDatasets([params])
-        return self._annotationPropertyValuesModel.appendValues(
+        return jsonSafe(self._annotationPropertyValuesModel.appendValues(
             self.getBodyJson(),
             params["annotationId"],
             params["datasetId"],
-        )
+        ))
 
     @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
@@ -121,8 +122,10 @@ class PropertyValues(Resource):
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
         self._requireAnnotationDatasets(propertyValuesList)
-        return self._annotationPropertyValuesModel.appendMultipleValues(
-            propertyValuesList
+        return jsonSafe(
+            self._annotationPropertyValuesModel.appendMultipleValues(
+                propertyValuesList
+            )
         )
 
     @describeRoute(
@@ -251,12 +254,12 @@ class PropertyValues(Resource):
             offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions
-        return self._annotationPropertyValuesModel.find(
+        return jsonSafe(list(self._annotationPropertyValuesModel.find(
             query,
             sort=sort,
             limit=limit,
             offset=offset,
-        ).hint([("datasetId", 1), ("_id", 1)])
+        ).hint([("datasetId", 1), ("_id", 1)])))
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -306,12 +309,12 @@ class PropertyValues(Resource):
             exc=True,
         )
         if "buckets" in params:
-            return self._annotationPropertyValuesModel.histogram(
+            return jsonSafe(self._annotationPropertyValuesModel.histogram(
                 params["propertyPath"],
                 params["datasetId"],
                 int(params["buckets"]),
-            )
+            ))
         else:
-            return self._annotationPropertyValuesModel.histogram(
+            return jsonSafe(self._annotationPropertyValuesModel.histogram(
                 params["propertyPath"], params["datasetId"]
-            )
+            ))

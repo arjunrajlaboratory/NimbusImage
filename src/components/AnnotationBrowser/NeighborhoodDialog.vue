@@ -262,7 +262,11 @@ function poll(jobId: string, request: number) {
           }
           // The fractions are a new measurement: make it and its values show
           // up, even when the dialog was closed while the job ran.
-          await refreshWrittenMeasurements(() => polling.isLive(request));
+          await refreshWrittenMeasurements(
+            () => polling.isLive(request),
+            (job.spatialResult as ISpatialNeighborhood | undefined)
+              ?.propertyId ?? null,
+          );
           return;
         }
         if (

@@ -126,8 +126,9 @@ Consumers that ask the provider, all in the annotation plugin:
 | batch value fetch (`findByAnnotationIds`) | merged into the returned documents, so sub-threshold datasets see the values client-side too |
 | selection summary | statistics computed in numpy from the provider's dense answer over the matched ids (`analysis.describe_values`) |
 
-Not covered, deliberately: CSV export leaves virtual columns empty (a stored copy via
-*Copy into a measurement* exports), and the Objects tab cannot sort by one.
+| CSV export | one provider call per virtual column for the whole export (`export.py` `_getVirtualValues`), before streaming, so an unknown gene is a 400; columns are named `spatial / <symbol>` |
+
+Not covered, deliberately: the Objects tab cannot sort by a virtual column.
 
 Frontend: `spatial` is a pseudo-property (`getPropertyById("spatial")` → "Spatial table",
 `SPATIAL_PSEUDO_PROPERTY` in `properties.ts`); gene paths the user adds

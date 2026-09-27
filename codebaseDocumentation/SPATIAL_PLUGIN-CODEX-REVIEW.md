@@ -1,5 +1,29 @@
 # PR #1347 — Codex review fixes
 
+## Live test of the audit fixes (2026-09-27)
+
+Backend (API, kidney/scratch test datasets) — all pass: batch unknown gene 400; summary
+with a stored Infinity (count includes it, max/mean null); dirty recompute refuses changed
+minQv and changed transcript pixel size, accepts once restored; materialize retires stale
+sub-values (358 → 5 cells after a 5-cell table); materialize `.` symbol 400; neighborhood
+retires per property; NaN / duplicate-symbol tables refused at registration with the
+registration unchanged. Browser (ovary): materialize bumps the value revision; a recompute
+whose dialog closed mid-job still switches the table (versions 0 → 2); the comparison
+table clears when the method changes and labels Wilcoxon `z`; the selection summary warns
+under a region filter; the live-column hint now says columns export to CSV.
+
+Found and fixed during the live test:
+- **A property a server job creates stayed invisible until reload** (materialize / score /
+  neighborhood register it in the configuration server-side; the client never re-read
+  it) — `adoptServerRegisteredProperty` adds the id locally before the property list
+  reloads; dialog tests assert it, verified live ("LiveTest2 genes" appears immediately).
+- **Writing a property value of `1e999` stored Infinity but answered 500** (Girder echoes
+  the document through `allow_nan=False`), and so would GET values and the histogram —
+  those endpoints now send non-finite numbers as null (`serialization.jsonSafe`); HTTP
+  regression, verified live.
+- **The hidden-layer warning** named the rule even when no layer was hidden — now only
+  when one is.
+
 ## Pre-emptive audit (2026-09-27)
 
 Three read-only auditors swept the branch for the shapes the Codex rounds kept finding

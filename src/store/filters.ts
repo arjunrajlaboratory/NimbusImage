@@ -963,7 +963,11 @@ export class Filters extends VuexModule {
     if (this.roiFilters.some((filter) => filter.enabled)) {
       skipped.push("region (ROI) filters");
     }
-    if (!main.showAnnotationsFromHiddenLayers) {
+    // The hidden-layer rule only removes anything when a layer is hidden.
+    if (
+      !main.showAnnotationsFromHiddenLayers &&
+      (main.configuration?.layers ?? []).some((layer) => !layer.visible)
+    ) {
       skipped.push("hidden-layer visibility");
     }
     return skipped;

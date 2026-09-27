@@ -20,16 +20,21 @@ const mocks = vi.hoisted(() => ({
 // The filters module only touches these dependencies inside getters/actions
 // that this test does not exercise, but they must be importable so the module
 // evaluates. Mock them to avoid pulling in the full store/geojs graph.
-vi.mock("./index", () => ({
-  default: {
-    xy: 0,
-    z: 0,
-    time: 0,
-    dataset: null,
-    showAnnotationsFromHiddenLayers: true,
-    scheduleAnnotationBrowserSave: mocks.scheduleAnnotationBrowserSave,
-  },
-}));
+// Reactive, so getters that read it (filtersOutsideListSchema) recompute.
+vi.mock("./index", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      xy: 0,
+      z: 0,
+      time: 0,
+      dataset: null,
+      configuration: null as any,
+      showAnnotationsFromHiddenLayers: true,
+      scheduleAnnotationBrowserSave: mocks.scheduleAnnotationBrowserSave,
+    }),
+  };
+});
 vi.mock("./annotation", () => ({
   default: {
     annotations: [],
@@ -460,5 +465,20 @@ describe("analysis plot gates", () => {
     filters.removeAnnotationIdFilter("Annotation List Filter 0");
     filters.newAnnotationIdFilter(["aaa", "ZZZ", "ccc"]);
     expect(filters.membershipFilterSignature).not.toBe(sig);
+  });
+});
+
+describe("filtersOutsideListSchema", () => {
+  it("names the hidden-layer rule only when a layer is actually hidden", async () => {
+    const main = (await import("./index")).default as any;
+    main.showAnnotationsFromHiddenLayers = false;
+    main.configuration = { layers: [{ visible: true }, { visible: true }] };
+    expect(filters.filtersOutsideListSchema).toEqual([]);
+    main.configuration = { layers: [{ visible: true }, { visible: false }] };
+    expect(filters.filtersOutsideListSchema).toEqual([
+      "hidden-layer visibility",
+    ]);
+    main.showAnnotationsFromHiddenLayers = true;
+    main.configuration = null;
   });
 });

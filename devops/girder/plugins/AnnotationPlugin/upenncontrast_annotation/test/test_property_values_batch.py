@@ -43,6 +43,38 @@ class TestPropertyValuesBatch:
             type="application/json",
         )
 
+    def testInfiniteValueRoundTripsAsNull(self, admin, server):
+        """A JSON body's `1e999` parses to Infinity and is stored; the write
+        echo, the GET and the histogram answer it as null instead of a 500
+        from Girder's `allow_nan=False` encoder."""
+        folder, ids = self._makeDatasetWithValues(admin, [{}])
+        body = (
+            '[{"datasetId": "%s", "annotationId": "%s", '
+            '"values": {"probe": {"x": 1e999}}}]' % (folder["_id"], ids[0])
+        )
+        resp = server.request(
+            path="/annotation_property_values/multiple", method="POST",
+            user=admin, body=body, type="application/json",
+        )
+        assertStatusOk(resp)
+        stored = AnnotationPropertyValues().findOne(
+            {"annotationId": Annotation().load(ids[0], force=True)["_id"]}
+        )
+        assert stored["values"]["probe"]["x"] == float("inf")
+        resp = server.request(
+            path="/annotation_property_values", method="GET", user=admin,
+            params={"datasetId": str(folder["_id"])},
+        )
+        assertStatusOk(resp)
+        assert resp.json[0]["values"]["probe"]["x"] is None
+        resp = server.request(
+            path="/annotation_property_values/histogram", method="GET",
+            user=admin, params={
+                "datasetId": str(folder["_id"]), "propertyPath": "probe.x",
+            },
+        )
+        assertStatusOk(resp)
+
     def testReturnsValuesForRequestedIds(self, admin, server):
         folder, ids = self._makeDatasetWithValues(
             admin,

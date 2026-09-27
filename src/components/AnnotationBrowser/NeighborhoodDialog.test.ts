@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   computeNeighborhood: vi.fn(),
   fetchJob: vi.fn(),
   fetchProperties: vi.fn(),
+  adoptServerRegisteredProperty: vi.fn(),
   fetchPropertyPathsSample: vi.fn(),
   fetchPropertyValues: vi.fn(),
   updateHistograms: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@/store", async () => {
 vi.mock("@/store/properties", () => ({
   default: {
     fetchProperties: mocks.fetchProperties,
+    adoptServerRegisteredProperty: mocks.adoptServerRegisteredProperty,
     fetchPropertyPathsSample: mocks.fetchPropertyPathsSample,
     fetchPropertyValues: mocks.fetchPropertyValues,
   },
@@ -145,6 +147,7 @@ describe("NeighborhoodDialog", () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(vm.running).toBe(false);
     expect(vm.result).toEqual(RESULT);
+    expect(mocks.adoptServerRegisteredProperty).toHaveBeenCalledWith("p1");
     expect(mocks.fetchProperties).toHaveBeenCalledTimes(1);
     // A rerun replaces the fractions' values: reload them and the histograms.
     expect(mocks.fetchPropertyValues).toHaveBeenCalledTimes(1);
