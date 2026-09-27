@@ -58,12 +58,25 @@ from .transcripts import openTranscriptStore, parseTransform
 SCOPES = ("all", "dirty")
 DEFAULT_LABEL = "Recomputed"
 CELL_SHAPES = ("polygon", "rectangle")
+# Polygons carrying this tag are regions of interest (the GeoJSON importer's
+# and the Xenium region script's default), not cells: never segmented cells
+# for assignment, neighborhoods or region membership.
+REGION_TAG = "region"
 # Cells with more vertices than this are simplified by stride before
 # rasterization; the raster is at image resolution, so nothing is lost.
 MAX_VERTICES = 4096
 EMBEDDING_COMPONENTS = 50
 EMBEDDING_CLUSTERS = 10
 MAX_STALENESS_IDS = 10_000
+
+
+def cellQuery(datasetId):
+    """Mongo query for the dataset's cell annotations."""
+    return {
+        "datasetId": ObjectId(str(datasetId)),
+        "shape": {"$in": list(CELL_SHAPES)},
+        "tags": {"$ne": REGION_TAG},
+    }
 
 
 @dataclass
@@ -91,10 +104,7 @@ def polygonFingerprints(datasetId):
     only `_id` and the digest, never the coordinate arrays.
     """
     annotationModel = Annotation()
-    query = {
-        "datasetId": ObjectId(str(datasetId)),
-        "shape": {"$in": list(CELL_SHAPES)},
-    }
+    query = cellQuery(datasetId)
     result = {
         str(document["_id"]): document["geometryHash"]
         for document in annotationModel.find(
@@ -144,10 +154,9 @@ def cellPolygons(datasetId, tags=None):
     700K polygons make per-cell numpy calls the cost, so bounds and areas
     are computed once over all vertices, and the digest saved on each
     annotation is used (computed only where it is missing)."""
-    query = {"datasetId": ObjectId(str(datasetId)),
-             "shape": {"$in": list(CELL_SHAPES)}}
+    query = cellQuery(datasetId)
     if tags:
-        query["tags"] = {"$all": list(tags)}
+        query["tags"]["$all"] = list(tags)
     kept = []
     for document in Annotation().find(
         query, fields=["coordinates", "tags", "shape", "geometryHash"],
@@ -238,9 +247,7 @@ def staleness(datasetId, store, fileId, cells=None):
         # Without hashes only membership matters: skip the coordinates,
         # which are most of the bytes of 700K polygons.
         live = [(str(doc["_id"]), None) for doc in Annotation().find(
-            {"datasetId": ObjectId(str(datasetId)),
-             "shape": {"$in": list(CELL_SHAPES)}},
-            fields=["_id"],
+            cellQuery(datasetId), fields=["_id"],
         )]
     known = set(store.annotationIds.tolist())
     added, changed = [], []

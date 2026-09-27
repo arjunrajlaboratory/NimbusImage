@@ -134,6 +134,12 @@ class TestShareLink:
             server, "GET", "/export/json", token=token,
             params={"datasetId": str(dataset["_id"])},
         ), 403)
+        # Every export format, not only JSON.
+        for route in ("/export/csv", "/export/geojson"):
+            assertStatus(request(
+                server, "POST", route, token=token,
+                body={"datasetId": str(dataset["_id"])},
+            ), 403)
         # The owner still can.
         assertStatusOk(server.request(
             path="/folder/%s/download" % dataset["_id"], method="GET",

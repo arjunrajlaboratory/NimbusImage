@@ -28,12 +28,11 @@ from upenncontrast_annotation.server.models.propertyValues import (
 
 from .materialize import writeCellValues
 from .models.registry import DatasetSpatial
-from .recompute import _rectangleCorners
+from .recompute import CELL_SHAPES, _rectangleCorners, cellQuery
 
 DEFAULT_EXCLUDED_TAGS = ("cell",)
 DEFAULT_PROPERTY_NAME = "Neighborhood"
 NEIGHBOR_COUNT_KEY = "neighbors"
-CELL_SHAPES = ("polygon", "rectangle")
 MAX_REGIONS = 50
 # A neighborhood result stays resident while values are written and the
 # response matrix is serialized. Refuse allocations above 512 MiB rather than
@@ -93,10 +92,7 @@ def cellCentroids(datasetId, excludeTags=DEFAULT_EXCLUDED_TAGS,
 def _cellCentroids(datasetId, excludeTags):
     excluded = set(excludeTags)
     pipeline = [
-        {"$match": {
-            "datasetId": ObjectId(str(datasetId)),
-            "shape": {"$in": list(CELL_SHAPES)},
-        }},
+        {"$match": cellQuery(datasetId)},
         {"$project": {
             "x": {"$avg": "$coordinates.x"},
             "y": {"$avg": "$coordinates.y"},

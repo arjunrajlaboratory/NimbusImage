@@ -281,13 +281,20 @@ class TestAnalysis(TestSpatial):
         assert second["composition"] == [
             {"type": "Endo", "count": 1}, {"type": "T", "count": 1},
         ]
-        # By id, without features: no table needed.
+        # By id, without features: no table needed. A region nested inside
+        # R1 (an ROI, tagged "region") is not one of R1's cells.
+        square(folder["_id"], 2, 2, 8, ["region"])
         module._centroidCache.clear()
         resp = request(server, admin, "POST", path, body={
             "regionIds": [str(r1["_id"])],
         })
         assertStatusOk(resp)
         assert len(resp.json) == 1 and resp.json[0]["expression"] == []
+        assert resp.json[0]["cells"] == 6
+        # Recompute's twin: regions are never cells to assign molecules to.
+        from upenncontrast_spatial.server.recompute import cellPolygons
+        cellIds = {cell.annotationId for cell in cellPolygons(folder["_id"])}
+        assert str(r1["_id"]) not in cellIds and len(cellIds) == 8
         # A different selection reuses the cached centroid pass: the cache
         # is keyed on the dataset and tags, not on the excluded ids.
         request(server, admin, "POST", path, body={

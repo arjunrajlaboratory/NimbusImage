@@ -1559,9 +1559,25 @@ export class Main extends VuexModule {
   async leaveShareLink() {
     const session = shareLinkSession;
     shareLinkSession = null;
-    if (session && toRaw(this.girderRest) === session.linkClient) {
-      await this.loggedIn(session.previousClient);
+    if (!session || toRaw(this.girderRest) !== session.linkClient) {
+      return;
     }
+    // A shared URL opened directly skips initialize(), so the saved login's
+    // client holds a token but has never fetched its user; restoring it
+    // as-is would show the owner as logged out until a reload.
+    const previous = session.previousClient;
+    if (previous.token && !previous.user) {
+      try {
+        await previous.fetchUser();
+      } catch (error) {
+        logError("Could not restore the saved login:", error);
+      }
+      // A login or another link may have taken over during the fetch.
+      if (toRaw(this.girderRest) !== session.linkClient) {
+        return;
+      }
+    }
+    await this.loggedIn(previous);
   }
 
   @Action

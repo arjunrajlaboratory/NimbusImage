@@ -154,6 +154,26 @@ describe("share-link bootstrap identity", () => {
     expect(main.girderRest).toBe(client);
   });
 
+  it("fetches the saved login's user when the shared URL was opened directly", async () => {
+    // Opening a shared URL skips initialize(): the saved client has its
+    // token but has never fetched its user.
+    const client = main.girderRest;
+    Object.assign(client, { user: null, token: "owner-token" });
+    vi.spyOn(RestClient.prototype, "fetchUser").mockImplementation(
+      async function (this: any) {
+        this.user = { _id: this.token };
+        return this.user;
+      },
+    );
+    vi.spyOn(ShareLinkAPI.prototype, "me").mockResolvedValue({
+      datasetViewId: "v",
+    } as any);
+    await main.openShareLink({ token: "link-a" });
+    await main.leaveShareLink();
+    expect(main.girderRest).toBe(client);
+    expect(main.girderUser?._id).toBe("owner-token");
+  });
+
   it("does not commit a share bootstrap after its route is cancelled", async () => {
     const client = main.girderRest;
     const identity = main.girderUser;
