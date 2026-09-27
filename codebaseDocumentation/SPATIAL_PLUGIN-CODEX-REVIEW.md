@@ -1,5 +1,13 @@
 # PR #1347 — Codex review fixes
 
+## Review of `28a50f0a` (2026-09-27)
+
+| Finding | Status |
+|---|---|
+| P1 Clearing the neighborhood property before writing loses it on failure and drops unrelated sub-keys | fixed — the previous round's up-front delete is gone; after every new value is written, only the types the previous run on this property wrote and this run lacks are unset. Regression covers a failed run (old values kept), an unrelated sub-key (kept) and a retired type (dropped); fails on the delete-first version |
+| P2 Dirty recompute reports carried cells' molecules as unassigned | fixed — `assigned` counts every molecule inside a cell; only the rebuilt-row keys are narrowed to dirty cells; test fails without the fix |
+| P2 Duplicate feature symbols accepted | fixed — registration refuses a repeated `var` symbol; verified the lymph node and the three 10x tiny tables still open; regression fails without the fix |
+
 ## Review of `38e88878` (2026-09-26)
 
 | Finding | Status |

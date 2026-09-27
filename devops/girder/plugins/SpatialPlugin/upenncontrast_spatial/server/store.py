@@ -126,6 +126,18 @@ class SpatialStore:
         self.featureIndex = {
             symbol: index for index, symbol in enumerate(self.featureSymbols)
         }
+        # Symbols are the API's feature identity: a repeated one would make
+        # column(symbol) pick an arbitrary duplicate.
+        if len(self.featureIndex) != len(self.featureSymbols):
+            seen = set()
+            repeated = next(
+                symbol for symbol in self.featureSymbols
+                if symbol in seen or seen.add(symbol)
+            )
+            raise ValueError(
+                "var feature symbols must be unique (%s appears more than "
+                "once)" % repeated
+            )
         self.featureTypes = (
             [str(t) for t in readStringColumn(var, "feature_type")]
             if "feature_type" in var else None

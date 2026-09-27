@@ -542,7 +542,9 @@ def testAssignTileCountsOnlyDirtyCellsButKeepsCompetition():
         _OneTile(), "0,0", cells, [0, 1], 20, np.array([0]), countCells
     )
     assert keys.tolist() == [0] and counts.tolist() == [1]
-    assert assigned == 1 and considered == 2
+    # Both molecules are inside a cell: the quiet cell's is carried, not
+    # unassigned, so the statistic counts it.
+    assert assigned == 2 and considered == 2
     # Without the mask both cells are counted, each with its own molecule.
     keys, counts, assigned, _ = recomputeModule.assignTile(
         _OneTile(), "0,0", cells, [0, 1], 20, np.array([0])

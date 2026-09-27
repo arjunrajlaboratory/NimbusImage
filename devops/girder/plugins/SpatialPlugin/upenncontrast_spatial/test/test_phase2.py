@@ -333,3 +333,14 @@ def testDuplicateRowIdsAreRefused(tmp_path):
     buildStoreZip(path, ids)
     with pytest.raises(ValueError, match="must be unique"):
         storeModule.SpatialStore(path)
+
+
+def testDuplicateFeatureSymbolsAreRefused(tmp_path):
+    from .test_spatial import SYMBOLS
+    ids = ["%024x" % i for i in range(COUNTS.shape[0])]
+    symbols = list(SYMBOLS)
+    symbols[-1] = symbols[0]
+    path = str(tmp_path / "spatial.zarr.zip")
+    buildStoreZip(path, ids, symbols=symbols)
+    with pytest.raises(ValueError, match="symbols must be unique"):
+        storeModule.SpatialStore(path)

@@ -235,15 +235,29 @@ def compute(datasetId, radius, excludeTags, propertyId, onProgress):
             chunk.append(values)
         return chunk
 
-    # A run replaces the whole neighborhood property: writeCellValues merges
-    # sub-keys, so a type that no longer exists (tags or excludeTags changed)
-    # would otherwise keep its old fraction on every cell, as would a cell
-    # that is no longer counted at all.
-    AnnotationPropertyValues().delete(str(propertyId), datasetId)
+    # The previous run on this property, read before this one replaces it.
+    previous = (DatasetSpatial().forDataset(datasetId) or {}).get(
+        "neighborhood"
+    ) or {}
     written = writeCellValues(
         datasetId, propertyId, ids, subValuesFor,
         lambda current, total: onProgress("values", current, total),
     )
+    # writeCellValues merges sub-keys, so a type the previous run wrote and
+    # this one no longer has (tags or excludeTags changed) would keep its old
+    # fraction on every cell. Unset exactly those keys, and only once every
+    # new value is written: a failed run keeps the previous result, and any
+    # other sub-keys stored under the same property are left alone.
+    if previous.get("propertyId") == str(propertyId):
+        retired = set(previous.get("types", [])) - set(names)
+        if retired:
+            AnnotationPropertyValues().update(
+                {"datasetId": datasetId},
+                {"$unset": {
+                    "values.%s.%s" % (propertyId, name): ""
+                    for name in retired
+                }},
+            )
     return {
         "radius": radius,
         "excludeTags": list(excludeTags),

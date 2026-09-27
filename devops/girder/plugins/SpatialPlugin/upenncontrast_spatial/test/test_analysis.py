@@ -182,6 +182,32 @@ class TestAnalysis(TestSpatial):
         assert origin["neighbors"] == 5
         assert abs(origin["B"] - 3 / 5) < 1e-9
 
+        # Another sub-key under the same property is not the run's to drop.
+        AnnotationPropertyValues().setSubValuesMany(
+            folder["_id"], propertyKey, [(a["_id"], {"note": 7.0})]
+        )
+        # A run that fails while writing keeps the previous result.
+        original = module.writeCellValues
+
+        def failing(*args, **kwargs):
+            raise RuntimeError("storage failed")
+
+        module.writeCellValues = failing
+        try:
+            resp = request(
+                server, admin, "POST",
+                "/spatial/%s/neighborhood" % folder["_id"],
+                body={"radius": 20, "excludeTags": ["cell", "Endo"]},
+            )
+            with pytest.raises(RuntimeError):
+                module.run(Job().load(resp.json["jobId"], force=True))
+        finally:
+            module.writeCellValues = original
+        kept = AnnotationPropertyValues().findOne(
+            {"annotationId": a["_id"]}
+        )["values"][propertyKey]
+        assert kept["Endo"] == 0.0 and kept["T"] == 1.0
+
         # Rerun with "Endo" excluded: its fractions must not linger.
         resp = request(
             server, admin, "POST",
@@ -196,6 +222,9 @@ class TestAnalysis(TestSpatial):
             "datasetId": folder["_id"]
         }):
             assert "Endo" not in doc["values"].get(propertyKey, {})
+        assert AnnotationPropertyValues().findOne(
+            {"annotationId": a["_id"]}
+        )["values"][propertyKey]["note"] == 7.0
 
     def testNeighborhoodValidation(
         self, admin, user, server, tmp_path, fsAssetstore

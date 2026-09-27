@@ -322,7 +322,8 @@ def labelImage(cells, cellIndices, bounds):
 def assignTile(transcripts, key, cells, cellIndices, minQv, geneToVar,
                countCells=None):
     """(matrix keys, counts, assigned, considered) for one tile: keys are
-    `cell * nVar + var` of the molecules that landed in a cell.
+    `cell * nVar + var` of the molecules that landed in a counted cell;
+    `assigned` counts every molecule inside any cell.
 
     Every cell in `cellIndices` competes for the tile's molecules (smallest
     polygon wins); with `countCells` (a boolean mask over `cells`) only the
@@ -353,11 +354,16 @@ def assignTile(transcripts, key, cells, cellIndices, minQv, geneToVar,
     )
     label = np.zeros(len(row), dtype=np.int32)
     label[inside] = labels[row[inside], col[inside]]
+    # Physically assigned (inside some cell) is what the statistics report;
+    # `counted` narrows it to the cells whose rows this run rebuilds. A
+    # quiet cell's molecules are still assigned, just carried, so counting
+    # only `counted` would publish them as unassigned.
     assigned = label > 0
+    counted = assigned.copy()
     if countCells is not None:
-        assigned[assigned] = countCells[label[assigned] - 1]
+        counted[counted] = countCells[label[counted] - 1]
     nVar = len(_varSymbols(transcripts))
-    keys = (label[assigned].astype(np.int64) - 1) * nVar + var[assigned]
+    keys = (label[counted].astype(np.int64) - 1) * nVar + var[counted]
     uniqueKeys, counts = np.unique(keys, return_counts=True)
     return uniqueKeys, counts, int(assigned.sum()), int(keep.sum())
 
