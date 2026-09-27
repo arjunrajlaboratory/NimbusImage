@@ -263,6 +263,22 @@ class TestShareLink:
         ), 404)
         assert second["token"]
 
+    def testDeletingTheDatasetRevokesItsLinks(self, admin, server):
+        dataset, _, view = privateDatasetWithView(admin)
+        _, _, otherView = privateDatasetWithView(admin)
+        doomed = self._link(server, admin, view)
+        kept = self._link(server, admin, otherView)
+        Folder().remove(dataset)
+        assertStatus(request(
+            server, "GET", "/share_link/me", token=doomed["token"]
+        ), 401)
+        assert ShareLinkModel().load(doomed["_id"])["revoked"]
+        # Only that dataset's links: another dataset's link still works.
+        assertStatusOk(request(
+            server, "GET", "/share_link/me", token=kept["token"]
+        ))
+        assert User().find({"login": {"$regex": "^share-"}}).count() == 1
+
     def testOrdinaryLoginIsNotALink(self, admin, server):
         resp = request(server, "GET", "/share_link/me", user=admin)
         assertStatus(resp, 404)

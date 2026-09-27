@@ -13,6 +13,7 @@ import datetime
 import secrets
 
 from bson.objectid import ObjectId
+from girder import events
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import ValidationException
 from girder.models.folder import Folder
@@ -47,6 +48,13 @@ class ShareLink(Model):
     def initialize(self):
         self.name = "share_link"
         self.ensureIndices(["datasetId", "linkUserId", "tokenId"])
+        # Deleting the dataset makes the revoke endpoint unreachable (it
+        # loads the folder), so its links' users and tokens go with it here.
+        events.bind(
+            "model.folder.remove",
+            "upenn.shareLinks.revokeForDataset",
+            self.revokeForRemovedDataset,
+        )
 
     def validate(self, document):
         for key in ("datasetId", "datasetViewId", "configurationId",
@@ -145,6 +153,11 @@ class ShareLink(Model):
         document["revoked"] = True
         document["revokedAt"] = _utcNow()
         return self.save(document)
+
+    def revokeForRemovedDataset(self, event):
+        if event.info and event.info.get("_id"):
+            for document in self.forDataset(event.info["_id"]):
+                self.revoke(document)
 
     def serialize(self, document):
         return {

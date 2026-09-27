@@ -193,6 +193,8 @@ Manage those principals through the Share links list instead. Tiles, annotations
 properties and the spatial routes stay open: a link
 shows a view, it does not hand out the files. Revoking
 deletes the user — Girder's `cleanupDeletedEntity` drops its ACL entries — and its tokens.
+Deleting the dataset revokes all of its links (a `model.folder.remove` hook), since the
+revoke endpoint can no longer load the folder afterwards.
 The link user is `public: False` but does exist in the user collection; it never receives
 storage and cannot be signed into (nobody knows its password).
 
@@ -234,7 +236,7 @@ palette is hidden without changing the underlying viewer mode. The Share dialog'
 links; the URL is shown once with its embed variant.
 
 Tests: `test/test_share_link.py` (bearer reads only the shared dataset and cannot write or
-mint links; create needs ADMIN and valid input; list/revoke; ordinary login is not a link;
+mint links; create needs ADMIN and valid input; list/revoke; deleting the dataset revokes its links; ordinary login is not a link;
 expired links refused), `ShareLinkAPI.test.ts`, `SharedView.test.ts`,
 `ShareDataset.test.ts`.
 
