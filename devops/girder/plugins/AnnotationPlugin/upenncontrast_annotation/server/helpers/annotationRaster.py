@@ -1198,12 +1198,6 @@ def renderRasterTile(geometry, params, mask=None):
         if params.geometryKey.mode == "discs":
             scaledRadii = geometry.radii[indices] * scale
             subpixel = scaledRadii * 2 < 1.5
-            _splat(
-                arr,
-                geometry.centroids[indices[subpixel]],
-                colors[subpixel],
-                params,
-            )
         else:
             widths = geometry.bboxes[indices, 2] - geometry.bboxes[indices, 0]
             heights = geometry.bboxes[indices, 3] - geometry.bboxes[indices, 1]
@@ -1213,17 +1207,21 @@ def renderRasterTile(geometry, params, mask=None):
                 (np.maximum(widths, heights) * scale < 1.5)
                 & (geometry.shapes[indices] != SHAPE_CODES["point"])
             )
-            _splat(
-                arr,
-                geometry.centroids[indices[subpixel]],
-                colors[subpixel],
-                params,
-            )
 
         image = Image.fromarray(arr, "RGBA")
         draw = ImageDraw.Draw(image)
+        # Painter's order, largest first: a region or tissue outline drawn
+        # after its cells (a later _id) would otherwise cover every one of
+        # them, and the sub-pixel splats (the smallest objects) go last.
         visibleIndices = indices[~subpixel]
         visibleColors = colors[~subpixel]
+        boxes = geometry.bboxes[visibleIndices]
+        largestFirst = np.argsort(
+            -(boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]),
+            kind="stable",
+        )
+        visibleIndices = visibleIndices[largestFirst]
+        visibleColors = visibleColors[largestFirst]
         for offset, index in enumerate(visibleIndices):
             color = tuple(int(value) for value in visibleColors[offset])
             center = geometry.centroids[index]
@@ -1271,6 +1269,16 @@ def renderRasterTile(geometry, params, mask=None):
                 )
             else:
                 draw.polygon(points, fill=color)
+
+        if subpixel.any():
+            arr = np.array(image)
+            _splat(
+                arr,
+                geometry.centroids[indices[subpixel]],
+                colors[subpixel],
+                params,
+            )
+            image = Image.fromarray(arr, "RGBA")
 
     validWidth = max(
         0,

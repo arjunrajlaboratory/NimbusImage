@@ -611,6 +611,11 @@ let shared fixtures return fixed values that defeat assertions.
 
 ## Regression checklist
 
+- **Small objects paint over large ones**: shapes draw largest bbox first and
+  sub-pixel splats last, so a region or tissue outline created after its cells
+  (a later `_id`) cannot cover them at any level —
+  _"testSmallObjectsPaintOverLargerOnes"_. Found on the Xenium kidney, whose
+  9 pathology regions hid all 465K cluster-colored cells.
 - **Overview follows the viewer's filters**: a registered filter draws only
   passing objects (tags and id lists), is content-addressed and in the ETag,
   and is refused for a bad spec (400), no access (403), anonymous (401), a

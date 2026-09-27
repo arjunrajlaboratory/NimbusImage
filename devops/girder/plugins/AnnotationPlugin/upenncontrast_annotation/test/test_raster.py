@@ -732,6 +732,34 @@ class TestAnnotationRaster:
         assertStatusOk(low)
         assert responseImage(low).getpixel((50, 50))[3] == 255
 
+    def testSmallObjectsPaintOverLargerOnes(self, admin, server):
+        """A region created after its cells must not cover them: large
+        shapes paint first, then smaller ones, then sub-pixel splats."""
+        folder = utilities.createFolder(
+            admin, "raster_order", upenn_utilities.datasetMetadata
+        )
+        cellColor, regionColor = "#FF0000", "#0000FF"
+        createAnnotation(folder["_id"], [
+            {"x": 40, "y": 40}, {"x": 60, "y": 40},
+            {"x": 60, "y": 60}, {"x": 40, "y": 60},
+        ], color=cellColor)
+        createAnnotation(folder["_id"], [
+            {"x": 300, "y": 300}, {"x": 301, "y": 300},
+            {"x": 301, "y": 301}, {"x": 300, "y": 301},
+        ], color=cellColor)
+        createAnnotation(folder["_id"], [
+            {"x": 0, "y": 0}, {"x": 500, "y": 0},
+            {"x": 500, "y": 500}, {"x": 0, "y": 500},
+        ], color=regionColor)
+
+        full = responseImage(requestTile(server, folder, admin))
+        assert full.getpixel((50, 50))[:3] == (255, 0, 0)
+        assert full.getpixel((200, 200))[:3] == (0, 0, 255)
+        # At level 0 (half scale) the 1-px cell is a sub-pixel splat.
+        low = responseImage(requestTile(server, folder, admin, level=0))
+        assert low.getpixel((150, 150))[:3] == (255, 0, 0)
+        assert low.getpixel((100, 100))[:3] == (0, 0, 255)
+
     def testTileBoundaryAndTransparentPadding(self, admin, server):
         folder = utilities.createFolder(
             admin, "raster_boundary", upenn_utilities.datasetMetadata
