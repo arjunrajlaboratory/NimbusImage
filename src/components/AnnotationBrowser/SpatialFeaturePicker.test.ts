@@ -52,6 +52,17 @@ describe("SpatialFeaturePicker", () => {
     expect(vm.items).toEqual(["NEW"]);
   });
 
+  it("drops the previous dataset's genes on a switch, but not on mount", async () => {
+    const wrapper = shallowMount(SpatialFeaturePicker, {
+      props: { modelValue: ["CD3E"] },
+    });
+    await nextTick();
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+    (store as any).dataset = { id: "ds2" };
+    await nextTick();
+    expect(wrapper.emitted("update:modelValue")).toEqual([[[]]]);
+  });
+
   it("discards pending results when the dataset is cleared", async () => {
     let finish!: (features: any[]) => void;
     mocks.searchFeatures.mockReturnValue(

@@ -121,9 +121,15 @@ function onUpdate(value: string[]) {
 // first keystroke.
 watch(
   () => store.dataset?.id,
-  (datasetId) => {
+  (datasetId, previousDatasetId) => {
     ++searchSequence;
     debouncedSearch.cancel();
+    // Genes picked for another dataset's table would be requested against
+    // this one ("unknown feature"); a picker that outlives the switch drops
+    // them. Not on mount, where the parent's selection is this dataset's.
+    if (previousDatasetId !== undefined && props.modelValue.length) {
+      emit("update:modelValue", []);
+    }
     results.value = [];
     featureTypes.value = {};
     search.value = "";

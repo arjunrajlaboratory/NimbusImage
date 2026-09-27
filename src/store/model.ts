@@ -1832,6 +1832,10 @@ export interface ISpatialInfo {
   // Microns per image pixel, as recorded by the vendor in the table the
   // dataset was ingested from; null when the table does not carry one.
   pixelSize?: number | null;
+  // The transcript registration's source-grid -> image affine (3x3 rows, or
+  // 9 row-major numbers); `pixelSize` describes the SOURCE grid, so an image
+  // it maps onto (an H&E) has pixels of pixelSize / sqrt(|det A|).
+  transform?: number[][] | number[] | null;
 }
 
 export interface ISpatialFeature {

@@ -21,6 +21,24 @@ const infoRequestGuard = createSequenceGuard();
  * `infoDatasetId` says which dataset the answer is for, so a stale answer
  * from a previous dataset is never shown as the current one.
  */
+/**
+ * Microns per pixel of the dataset's image: the registry's `pixelSize`
+ * (the transcript source grid's) divided by the transform's linear scale,
+ * sqrt(|det A|), since the transform maps that grid onto this image. A
+ * degenerate transform yields a non-finite size, which the caller rejects.
+ */
+export function imageMicronsPerPixel(
+  info: ISpatialInfo | null | undefined,
+): number | null | undefined {
+  const pixelSize = info?.pixelSize;
+  const transform = info?.transform;
+  if (typeof pixelSize !== "number" || transform == null) {
+    return pixelSize;
+  }
+  const [a, b, , c, d] = transform.flat();
+  return pixelSize / Math.sqrt(Math.abs(a * d - b * c));
+}
+
 @Module({ dynamic: true, store, name: "spatial" })
 export class Spatial extends VuexModule {
   info: ISpatialInfo | null = null;
@@ -101,7 +119,7 @@ export class Spatial extends VuexModule {
    */
   @Action
   async adoptRegistryPixelSize(datasetId: string): Promise<void> {
-    const micronsPerPixel = this.info?.pixelSize;
+    const micronsPerPixel = imageMicronsPerPixel(this.info);
     if (
       typeof micronsPerPixel !== "number" ||
       !Number.isFinite(micronsPerPixel) ||

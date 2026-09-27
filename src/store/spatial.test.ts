@@ -80,6 +80,32 @@ describe("spatial store: the configuration scale pulls from the registry", () =>
     expect(mocks.saveScalesInConfiguration).not.toHaveBeenCalled();
   });
 
+  it("scales the source grid's pixel size through the transcript transform", async () => {
+    // The kidney H&E registration: a 90° rotation scaling morphology px by
+    // ~0.7754 onto H&E px, so an H&E pixel is ~0.274 µm, not 0.2125.
+    mocks.fetchInfo.mockResolvedValue({
+      ...INFO,
+      transform: [
+        [0.0018203078, -0.7754285254, 22442.08],
+        [0.7754285254, 0.0018203078, 9171.58],
+        [0, 0, 1],
+      ],
+    });
+    await spatialStore.refreshInfo();
+    const written =
+      mocks.saveScalesInConfiguration.mock.calls[0][0].scales.pixelSize;
+    expect(written.value).toBeCloseTo(0.27404, 4);
+  });
+
+  it("does not adopt a size from a degenerate transform", async () => {
+    mocks.fetchInfo.mockResolvedValue({
+      ...INFO,
+      transform: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+    });
+    await spatialStore.refreshInfo();
+    expect(mocks.saveScalesInConfiguration).not.toHaveBeenCalled();
+  });
+
   it("writes once, not on every refresh", async () => {
     await spatialStore.refreshInfo();
     expect(mocks.saveScalesInConfiguration).toHaveBeenCalledTimes(1);
