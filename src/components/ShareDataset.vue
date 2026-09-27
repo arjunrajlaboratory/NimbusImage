@@ -471,6 +471,7 @@ watch(dialog, (val) => {
 });
 
 function resetState() {
+  shareLinksRequest++;
   shareLinks.value = [];
   createdLinkUrl.value = null;
   createdEmbedUrl.value = null;
@@ -636,9 +637,18 @@ function formatDate(value: string): string {
   return new Date(value).toLocaleDateString();
 }
 
+// Only the latest list request may commit: the dialog lists on open, again
+// after a create, and a revoke edits the list locally, so an older answer
+// could otherwise hide a new link or bring back a revoked one.
+let shareLinksRequest = 0;
+
 async function fetchShareLinks(id: string) {
+  const request = ++shareLinksRequest;
   try {
-    shareLinks.value = await store.shareLinkAPI.list(id);
+    const links = await store.shareLinkAPI.list(id);
+    if (request === shareLinksRequest && datasetId.value === id) {
+      shareLinks.value = links;
+    }
   } catch (error) {
     logError("Failed to list share links", error);
   }
@@ -686,6 +696,7 @@ async function revokeLink(link: IShareLink) {
   showError.value = false;
   try {
     await store.shareLinkAPI.revoke(link._id);
+    shareLinksRequest++; // an in-flight list predates the revoke
     shareLinks.value = shareLinks.value.filter((l) => l._id !== link._id);
     if (createdLinkUrl.value) {
       createdLinkUrl.value = null;
@@ -755,6 +766,7 @@ defineExpose({
   shareLinks,
   createLink,
   revokeLink,
+  fetchShareLinks,
   createdLinkUrl,
   newLinkDays,
   newLinkLabel,

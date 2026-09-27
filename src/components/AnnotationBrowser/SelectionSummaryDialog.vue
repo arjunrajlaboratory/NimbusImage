@@ -250,7 +250,7 @@
           variant="flat"
           color="primary"
           size="small"
-          :disabled="!summary || loading"
+          :disabled="!canDownload"
           @click="download"
         >
           <v-icon start>mdi-content-save</v-icon>
@@ -350,6 +350,11 @@ let requestSequence = 0;
 const expressionSymbols = ref<string[]>([]);
 const expression = ref<ISpatialAggregate | null>(null);
 const expressionLoading = ref(false);
+// The CSV joins the summary and the expression table: not while either is
+// being recomputed, or the export mixes the new genes/scope with the old.
+const canDownload = computed(
+  () => !!summary.value && !loading.value && !expressionLoading.value,
+);
 const expressionError = ref("");
 let expressionSequence = 0;
 
@@ -567,6 +572,8 @@ defineExpose({
   expression,
   expressionError,
   refreshExpression,
+  expressionLoading,
+  canDownload,
   loading,
   error,
   hasActiveFilter,

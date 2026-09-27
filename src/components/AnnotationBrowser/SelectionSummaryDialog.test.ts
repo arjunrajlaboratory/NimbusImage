@@ -258,6 +258,16 @@ describe("SelectionSummaryDialog", () => {
     });
   });
 
+  it("does not offer the CSV while the expression table is recomputing", async () => {
+    (filterStore as any).filteredAnnotations = new Array(10).fill({});
+    const wrapper = await openDialog();
+    const vm = wrapper.vm as any;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vm.canDownload).toBe(true);
+    vm.expressionLoading = true;
+    expect(vm.canDownload).toBe(false);
+  });
+
   it("aggregates expression over the same scope only when a table exists and genes are picked", async () => {
     (filterStore as any).filteredAnnotations = [{}, {}];
     mocks.aggregate.mockReset();

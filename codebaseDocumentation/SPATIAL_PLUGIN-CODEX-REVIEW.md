@@ -1,5 +1,12 @@
 # PR #1347 — Codex review fixes
 
+## Review of `1a316091` (2026-09-27)
+
+| Finding | Status |
+|---|---|
+| P2 Selection-summary CSV mixes a new summary with old expression rows | fixed — Download CSV is disabled while the expression table recomputes (`canDownload`); unit test |
+| P2 Overlapping share-link list refreshes | fixed — only the latest list request for the current dataset commits; a revoke and closing the dialog retire in-flight lists; regression fails without the guard |
+
 ## Review of `28a50f0a` (2026-09-27)
 
 | Finding | Status |

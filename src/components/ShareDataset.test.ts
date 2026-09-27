@@ -120,6 +120,36 @@ describe("ShareDataset", () => {
     expect(vm.createdLinkUrl).toBeNull();
   });
 
+  it("an older share-link list cannot overwrite a newer one", async () => {
+    const link = {
+      _id: "l1",
+      datasetId: "ds1",
+      datasetViewId: "v1",
+      configurationId: "cfg1",
+      label: "",
+      created: "2026-09-03T00:00:00Z",
+      expiresAt: null,
+      expired: false,
+      createdBy: "u1",
+    };
+    let finishOld!: (links: any[]) => void;
+    shareLinkMocks.list
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
+      )
+      .mockResolvedValue([link]);
+    const wrapper = mountComponent({ modelValue: true });
+    const vm = wrapper.vm as any;
+    await vm.fetchAccessInfo("ds1"); // opens the (slow) first list
+    await vm.fetchShareLinks("ds1"); // e.g. after a create: newer
+    expect(vm.shareLinks).toEqual([link]);
+    finishOld([]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vm.shareLinks).toEqual([link]);
+  });
+
   it("dialog computed getter returns value prop", () => {
     const wrapper = mountComponent({ modelValue: true });
     const vm = wrapper.vm as any;
