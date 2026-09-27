@@ -8,12 +8,15 @@ const mocks = vi.hoisted(() => ({
   refreshInfo: vi.fn(),
 }));
 
-vi.mock("@/store", () => ({
-  default: {
-    dataset: { id: "ds1" },
-    spatialAPI: { recompute: mocks.recompute, fetchJob: mocks.fetchJob },
-  },
-}));
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      dataset: { id: "ds1" },
+      spatialAPI: { recompute: mocks.recompute, fetchJob: mocks.fetchJob },
+    }),
+  };
+});
 
 vi.mock("@/store/spatial", async () => {
   const { reactive } = await import("vue");
@@ -30,6 +33,7 @@ vi.mock("@/utils/errors", () => ({
 
 import RecomputeTableDialog from "./RecomputeTableDialog.vue";
 import spatialStore from "@/store/spatial";
+import store from "@/store";
 
 const STALE = {
   added: 3,
@@ -60,6 +64,7 @@ describe("RecomputeTableDialog", () => {
     mocks.fetchJob.mockReset();
     mocks.refreshInfo.mockReset().mockResolvedValue(undefined);
     (spatialStore as any).hasTable = true;
+    (store as any).dataset = { id: "ds1" };
   });
 
   afterEach(() => {
@@ -116,7 +121,7 @@ describe("RecomputeTableDialog", () => {
     expect(vm.tags()).toBeNull();
   });
 
-  it("reports a failed job and a rejected request, and stops polling on close", async () => {
+  it("reports a failed job and a rejected request", async () => {
     mocks.fetchJob.mockResolvedValue({ _id: "j1", status: 4 });
     const wrapper = await open();
     const vm = wrapper.vm as any;
@@ -128,13 +133,47 @@ describe("RecomputeTableDialog", () => {
     });
     await vm.run();
     expect(vm.error).toBe("dirty scope needs an active table");
-    mocks.recompute.mockResolvedValue({ jobId: "j2" });
-    mocks.fetchJob.mockClear();
+  });
+
+  it("still re-reads the table when the dialog was closed mid-job", async () => {
+    mocks.fetchJob
+      .mockResolvedValueOnce({ _id: "j1", status: 2 })
+      .mockResolvedValueOnce({
+        _id: "j1",
+        status: 3,
+        spatialResult: { nObs: 10, assigned: 1234, seconds: 4.2 },
+      });
+    const wrapper = await open();
+    const vm = wrapper.vm as any;
     await vm.run();
     vm.dialog = false;
     await nextTick();
+    expect(vm.running).toBe(false);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(mocks.fetchJob).toHaveBeenCalledTimes(2);
+    // The server switched the active table: the registration and the live
+    // gene columns (the parent's afterTableChange) must follow it.
+    expect(mocks.refreshInfo).toHaveBeenCalledTimes(1);
+    expect(wrapper.emitted("recomputed")).toHaveLength(1);
+    // The closed dialog's own message is not written.
+    expect(vm.done).toBeNull();
+  });
+
+  it("stops polling when the dataset changes", async () => {
+    mocks.fetchJob.mockResolvedValue({
+      _id: "j1",
+      status: 3,
+      spatialResult: { nObs: 10, assigned: 1234, seconds: 4.2 },
+    });
+    const wrapper = await open();
+    const vm = wrapper.vm as any;
+    await vm.run();
+    (store as any).dataset = { id: "ds2" };
+    await nextTick();
     await vi.advanceTimersByTimeAsync(6000);
     expect(mocks.fetchJob).not.toHaveBeenCalled();
+    expect(mocks.refreshInfo).not.toHaveBeenCalled();
+    expect(wrapper.emitted("recomputed")).toBeUndefined();
     expect(vm.running).toBe(false);
   });
 });

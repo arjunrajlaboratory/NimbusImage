@@ -114,6 +114,11 @@ describe("ShareDataset", () => {
     expect(shareLinkMocks.create).toHaveBeenCalledWith("v1", 7, "reviewers");
     expect(vm.createdLinkUrl).toContain("#/shared/tok");
 
+    // Revoking an older link keeps the new URL, which is not shown again.
+    await vm.revokeLink({ ...link, _id: "l0" });
+    expect(shareLinkMocks.revoke).toHaveBeenCalledWith("l0");
+    expect(vm.createdLinkUrl).toContain("#/shared/tok");
+
     await vm.revokeLink(link);
     expect(shareLinkMocks.revoke).toHaveBeenCalledWith("l1");
     expect(vm.shareLinks).toEqual([]);

@@ -22,6 +22,7 @@ from scipy import stats
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 
+from .provider import requireFileInDataset
 from .store import openStore
 
 MAX_RESULT_FEATURES = 500
@@ -51,6 +52,16 @@ def welch(sumA, sumSqA, nA, sumB, sumSqB, nB):
     )
     p = float(2 * stats.t.sf(abs(t), dof)) if dof > 0 else 1.0
     return float(t), p, meanA, meanB
+
+
+def log2FoldChange(meanA, meanB):
+    """log2 of the pseudocounted mean ratio, or None when either shifted
+    mean is not positive: a scaled (centered) table has negative means,
+    where the ratio has no logarithm."""
+    shiftedA, shiftedB = meanA + PSEUDOCOUNT, meanB + PSEUDOCOUNT
+    if shiftedA <= 0 or shiftedB <= 0:
+        return None
+    return math.log2(shiftedA / shiftedB)
 
 
 METHODS = ("welch", "wilcoxon")
@@ -149,9 +160,7 @@ def differential(store, rowsA, rowsB, maxFeatures, onProgress=None,
             "meanB": meanB,
             "fractionA": int(np.count_nonzero(valuesA)) / nA,
             "fractionB": int(np.count_nonzero(valuesB)) / nB,
-            "log2FoldChange": math.log2(
-                (meanA + PSEUDOCOUNT) / (meanB + PSEUDOCOUNT)
-            ),
+            "log2FoldChange": log2FoldChange(meanA, meanB),
             "t": t,
             "pValue": p,
         })
@@ -191,8 +200,11 @@ def run(job):
         log="Comparing expression between two groups...\n",
     )
     try:
-        store = openStore(File().load(ObjectId(kwargs["fileId"]), force=True))
         datasetId = ObjectId(kwargs["datasetId"])
+        # The item may have left the dataset since the endpoint checked it.
+        fileDoc = File().load(ObjectId(kwargs["fileId"]), force=True, exc=True)
+        requireFileInDataset(fileDoc, datasetId)
+        store = openStore(fileDoc)
 
         def onProgress(current, total):
             jobModel.updateJob(

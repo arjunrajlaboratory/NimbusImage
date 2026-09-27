@@ -81,7 +81,8 @@ def _writeTile(grid, key, rows, level):
     return len(ordered)
 
 
-def buildTranscriptsZip(path, points=POINTS, geneNames=GENE_NAMES):
+def buildTranscriptsZip(path, points=POINTS, geneNames=GENE_NAMES,
+                        numberLevels=2):
     zipStore = zarr.ZipStore(path, mode="w")
     root = zarr.group(store=zipStore)
     root.attrs.update({
@@ -104,7 +105,7 @@ def buildTranscriptsZip(path, points=POINTS, geneNames=GENE_NAMES):
             _writeTile(grid, key, byTile[key], level) for key in sorted(byTile)
         ])
     grids.attrs.update({
-        "grid_size": [250.0], "number_levels": 2,
+        "grid_size": [250.0], "number_levels": numberLevels,
         "grid_keys": keys, "grid_number_objects": counts,
     })
     # density: 10 um bins over a 500 x 300 um section (30 rows x 50 cols)
@@ -181,6 +182,27 @@ class TestTranscripts(TestSpatial):
         )
         assertStatusOk(resp)
         return resp.json
+
+    def testRegistrationKeepsTheWorkingStoreWhenSchemaFails(
+        self, admin, server, tmp_path, fsAssetstore
+    ):
+        folder, _, _, item = self._setupTranscripts(admin, tmp_path)
+        self._registerTranscripts(server, admin, folder, item)
+        badPath = str(tmp_path / "bad" / "transcripts.zarr.zip")
+        os.makedirs(os.path.dirname(badPath))
+        buildTranscriptsZip(badPath, numberLevels=5)  # 2 levels of keys
+        bad = uploadTranscripts(admin, folder, badPath)
+        resp = request(
+            server, admin, "POST",
+            "/spatial/%s/transcripts/register" % folder["_id"],
+            body={"itemId": str(bad["_id"]), "pixelSize": PIXEL_SIZE},
+        )
+        assertStatus(resp, 400)
+        schema = request(
+            server, admin, "GET", "/spatial/%s/transcripts" % folder["_id"]
+        )
+        assertStatusOk(schema)
+        assert schema.json["itemId"] == str(item["_id"])
 
     def _points(self, server, admin, folder, body):
         return server.request(
@@ -526,3 +548,13 @@ class TestTranscripts(TestSpatial):
             np.zeros((0, 2), np.float32), np.zeros(0, np.uint8), None
         )
         assert decodePoints(body)[0].shape == (0, 2)
+
+
+def testDuplicateTranscriptGeneNamesAreRefused(tmp_path):
+    path = str(tmp_path / "transcripts.zarr.zip")
+    names = ["CD3E", "CD3E", "CCL19", "NegControlProbe_00001"]
+    buildTranscriptsZip(
+        path, points=[(names[0], 1.0, 1.0, 30.0)], geneNames=names,
+    )
+    with pytest.raises(ValueError, match="gene names must be unique"):
+        transcriptsModule.TranscriptStore(path, PIXEL_SIZE)

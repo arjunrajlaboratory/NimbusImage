@@ -428,6 +428,8 @@ const creatingLink = ref(false);
 const revokingLinkId = ref<string | null>(null);
 const createdLinkUrl = ref<string | null>(null);
 const createdEmbedUrl = ref<string | null>(null);
+// The link whose URL is shown above: only revoking that one hides it.
+let createdLinkId: string | null = null;
 
 // Access list data
 const isPublic = ref(false);
@@ -475,6 +477,7 @@ function resetState() {
   shareLinks.value = [];
   createdLinkUrl.value = null;
   createdEmbedUrl.value = null;
+  createdLinkId = null;
   newLinkLabel.value = "";
   loading.value = false;
   showError.value = false;
@@ -676,6 +679,7 @@ async function createLink() {
       newLinkDays.value,
       newLinkLabel.value.trim(),
     );
+    createdLinkId = link._id;
     createdLinkUrl.value = shareLinkUrl(link.token);
     createdEmbedUrl.value = shareLinkUrl(link.token, true);
     newLinkLabel.value = "";
@@ -698,7 +702,9 @@ async function revokeLink(link: IShareLink) {
     await store.shareLinkAPI.revoke(link._id);
     shareLinksRequest++; // an in-flight list predates the revoke
     shareLinks.value = shareLinks.value.filter((l) => l._id !== link._id);
-    if (createdLinkUrl.value) {
+    // The new URL is not shown again: keep it unless it is the one revoked.
+    if (link._id === createdLinkId) {
+      createdLinkId = null;
       createdLinkUrl.value = null;
       createdEmbedUrl.value = null;
     }

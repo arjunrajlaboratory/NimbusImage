@@ -15,6 +15,7 @@ from girder.api import access
 from girder.api.describe import autoDescribeRoute, Description
 from girder.api.rest import Resource, setResponseHeader, setContentDisposition
 from girder.constants import AccessType, TokenScope
+from girder.exceptions import RestException
 from girder.models.folder import Folder
 
 from ..models.annotation import Annotation as AnnotationModel
@@ -25,6 +26,7 @@ from ..models.propertyValues import (
 from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from ..models.datasetView import DatasetView as DatasetViewModel
+from ..helpers import valueProviders
 from ..helpers.serialization import orJsonDefaults
 from ..helpers.validation import (
     requireObjectId,
@@ -370,7 +372,9 @@ class Export(Resource):
         - Fixed columns: Id, Channel, XY, Z, Time, Tags, Shape, Name
         - XY, Z, Time are 1-indexed (location + 1)
         - Quoted columns: Id, Tags, Shape, Name
-        - Property columns: Named as "PropertyName / SubKey1 / SubKey2"
+        - Property columns: Named as "PropertyName / SubKey1 / SubKey2";
+          a virtual path (valueProviders) is named by its segments, e.g.
+          "spatial / CD3E"
         """
         # Extract parameters from body
         datasetId = body.get("datasetId")
@@ -394,8 +398,13 @@ class Export(Resource):
         # that id strings are valid ObjectIds. Convert them all here at the
         # API boundary: the CSV body is generated lazily while streaming, so
         # an InvalidId raised there could not become a clean 400 anymore.
+        # Virtual paths (valueProviders, e.g. ["spatial", "CD3E"]) name a
+        # provider prefix, not a property id.
         parsedPropertyPaths = propertyPaths or []
-        for path in parsedPropertyPaths:
+        storedPaths, virtualPaths = valueProviders.splitPaths(
+            parsedPropertyPaths
+        )
+        for path in storedPaths:
             if path:
                 requireObjectId(path[0], "propertyPaths property id")
 
@@ -406,6 +415,17 @@ class Export(Resource):
                 requireObjectId(aid, "annotationIds entry")
                 for aid in annotationIds
             ]
+
+        # Virtual values are fetched here, before streaming starts, for the
+        # same reason: a provider raises ValueError for a key it cannot
+        # resolve (an unknown gene), which must be a 400, not a truncated
+        # download.
+        try:
+            virtualValues = self._getVirtualValues(
+                datasetObjectId, virtualPaths, parsedAnnotationIds
+            )
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
 
         # Validate delimiter
         if delimiter not in (",", "\t"):
@@ -443,9 +463,33 @@ class Export(Resource):
                 undefinedValue,
                 delimiter,
                 sanitizeColumnNames,
+                virtualValues,
             )
 
         return generate
+
+    def _getVirtualValues(self, datasetId, virtualPaths, annotationIds):
+        """{annotationId(str): nested values} for the virtual paths, one
+        provider call per path for the whole export: the provider's dense
+        answer for a full export, or its answer for exactly the requested
+        ids for a subset."""
+        result = {}
+        for path in virtualPaths:
+            provider = valueProviders.providerFor(path)
+            if annotationIds is None:
+                pairs = provider.values(datasetId, path).items()
+            else:
+                idStrings = [str(i) for i in annotationIds]
+                pairs = zip(
+                    idStrings,
+                    provider.valuesForIds(datasetId, path, idStrings),
+                )
+            for annotationId, value in pairs:
+                if value is not None:
+                    valueProviders.nestValue(
+                        result.setdefault(annotationId, {}), path, value
+                    )
+        return result
 
     def _generateCsvLines(
         self,
@@ -455,8 +499,11 @@ class Export(Resource):
         undefinedValue="",
         delimiter=",",
         sanitizeColumnNames=False,
+        virtualValues=None,
     ):
-        """Generate CSV lines for a dataset."""
+        """Generate CSV lines for a dataset. `virtualValues` holds the
+        virtual paths' values ({annotationId: nested values}), fetched by
+        the caller before streaming (_getVirtualValues)."""
         propertyNameMap = self._buildPropertyNameMap(parsedPropertyPaths)
         columns, includedPaths = self._buildCsvColumns(
             parsedPropertyPaths,
@@ -472,6 +519,10 @@ class Export(Resource):
             else:
                 headerRow.append(col.name)
         yield delimiter.join(headerRow) + '\n'
+        virtualValues = virtualValues or {}
+        isVirtual = [
+            valueProviders.isVirtualPath(path) for path in includedPaths
+        ]
 
         # An explicitly empty subset has no rows, so skip the dataset-wide
         # property-values scan below entirely.
@@ -504,8 +555,11 @@ class Export(Resource):
 
             # Add property values
             annPropValues = propertyValues.get(annId, {})
-            for path in includedPaths:
-                value = self._getValueFromPath(annPropValues, path)
+            annVirtualValues = virtualValues.get(annId, {})
+            for path, virtual in zip(includedPaths, isVirtual):
+                value = self._getValueFromPath(
+                    annVirtualValues if virtual else annPropValues, path
+                )
                 if value is None:
                     row.append(undefinedValue)
                 elif isinstance(value, dict):
@@ -597,10 +651,11 @@ class Export(Resource):
         if not propertyPaths:
             return {}
 
-        # Collect unique property IDs
+        # Collect unique property IDs (virtual paths carry a provider
+        # prefix, not an id, and are named from their segments)
         propertyIds = set()
         for path in propertyPaths:
-            if path and len(path) > 0:
+            if path and not valueProviders.isVirtualPath(path):
                 propertyIds.add(path[0])
 
         if not propertyIds:
@@ -637,7 +692,10 @@ class Export(Resource):
             return None
 
         propertyId = path[0]
-        propertyName = propertyNameMap.get(propertyId)
+        propertyName = (
+            propertyId if valueProviders.isVirtualPath(path)
+            else propertyNameMap.get(propertyId)
+        )
         if not propertyName:
             return None
 

@@ -1115,6 +1115,17 @@ class Annotation(Resource):
         same constraints (SERVER_GATING.md, Phase 3). Over-budget gates
         raise ValueError -> 400. Returns (bodyJson, datasetId, filters).
         """
+        bodyJson, datasetId, filters = self._parseListRequest(
+            withSortAndPaths
+        )
+        self._resolveListRequest(datasetId, filters)
+        return bodyJson, datasetId, filters
+
+    def _parseListRequest(self, withSortAndPaths=False):
+        """The cheap half of _loadListRequest: parse, check access, and
+        validate, without resolving gates or virtual-path filters (both scan
+        the dataset). Callers with further body fields to validate do so
+        between this and _resolveListRequest."""
         bodyJson = requireObjectBody(self.getBodyJson())
         datasetId = requireObjectId(bodyJson.get("datasetId"), "datasetId")
         Folder().load(
@@ -1129,11 +1140,15 @@ class Annotation(Resource):
             )
         else:
             validateListInputs(filters)
+        return bodyJson, datasetId, filters
+
+    def _resolveListRequest(self, datasetId, filters):
+        """_resolveListFilters with its ValueError (over-budget gate,
+        unknown virtual key) as a 400."""
         try:
             self._resolveListFilters(datasetId, filters)
         except ValueError as exc:
             raise RestException(str(exc), code=400)
-        return bodyJson, datasetId, filters
 
     def _resolveListFilters(self, datasetId, filters):
         """Resolve a validated filter object in place, as every
@@ -1178,16 +1193,18 @@ class Annotation(Resource):
         .errorResponse("Read access denied.", 403)
     )
     def summary(self, params):
-        bodyJson, datasetId, filters = self._loadListRequest()
+        bodyJson, datasetId, filters = self._parseListRequest()
         propertyPaths = requireList(
             bodyJson.get("propertyPaths") or [], "propertyPaths"
         )
-        # Cap before the per-path walk so an oversized payload is refused
-        # before any O(n) work.
+        # Cap and validate the paths before resolving the filters: gate and
+        # virtual-path resolution scan the dataset, so an oversized or
+        # malformed propertyPaths is refused before any O(n) work.
         requireCountWithin(
             len(propertyPaths), MAX_SUMMARY_PROPERTY_PATHS, "propertyPaths"
         )
         validatePropertyPaths(propertyPaths)
+        self._resolveListRequest(datasetId, filters)
         try:
             return self._annotationModel.summarize(
                 datasetId, filters, propertyPaths

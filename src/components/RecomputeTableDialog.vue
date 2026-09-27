@@ -219,17 +219,21 @@ function poll(jobId: string, request: number) {
     async () => {
       try {
         const job = await store.spatialAPI.fetchJob(jobId);
-        if (!polling.isCurrent(request)) return;
+        if (!polling.isLive(request)) return;
         if (job.status === jobStates.success) {
           const result = job.spatialResult as
             | { nObs: number; assigned: number; seconds: number }
             | undefined;
-          done.value = result
-            ? `Wrote ${result.nObs.toLocaleString()} cells, ${result.assigned.toLocaleString()} molecules assigned, in ${result.seconds}s.`
-            : "Done.";
-          running.value = false;
+          if (polling.isCurrent(request)) {
+            done.value = result
+              ? `Wrote ${result.nObs.toLocaleString()} cells, ${result.assigned.toLocaleString()} molecules assigned, in ${result.seconds}s.`
+              : "Done.";
+            running.value = false;
+          }
+          // The server switched the active table: the registration and every
+          // live gene column must follow it even if the dialog was closed.
           await spatialStore.refreshInfo();
-          if (!polling.isCurrent(request)) return;
+          if (!polling.isLive(request)) return;
           emit("recomputed");
           return;
         }
@@ -237,6 +241,7 @@ function poll(jobId: string, request: number) {
           job.status === jobStates.error ||
           job.status === jobStates.cancelled
         ) {
+          if (!polling.isCurrent(request)) return;
           error.value = "The recompute job failed; see the job log.";
           running.value = false;
           return;

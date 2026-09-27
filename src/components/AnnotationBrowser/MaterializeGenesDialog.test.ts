@@ -8,19 +8,28 @@ const mocks = vi.hoisted(() => ({
   addVirtualPropertyPaths: vi.fn(),
   fetchProperties: vi.fn(),
   fetchPropertyPathsSample: vi.fn(),
+  fetchPropertyValues: vi.fn(),
+  updateHistograms: vi.fn(),
   fetchJob: vi.fn(),
   ensureInfo: vi.fn(),
 }));
 
-vi.mock("@/store", () => ({
-  default: {
-    dataset: { id: "ds1", name: "Lymph" },
-    spatialAPI: {
-      materialize: mocks.materialize,
-      score: mocks.score,
-      fetchJob: mocks.fetchJob,
-    },
-  },
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      dataset: { id: "ds1", name: "Lymph" },
+      spatialAPI: {
+        materialize: mocks.materialize,
+        score: mocks.score,
+        fetchJob: mocks.fetchJob,
+      },
+    }),
+  };
+});
+
+vi.mock("@/store/filters", () => ({
+  default: { updateHistograms: mocks.updateHistograms },
 }));
 
 vi.mock("@/store/properties", () => ({
@@ -28,6 +37,7 @@ vi.mock("@/store/properties", () => ({
   default: {
     fetchProperties: mocks.fetchProperties,
     fetchPropertyPathsSample: mocks.fetchPropertyPathsSample,
+    fetchPropertyValues: mocks.fetchPropertyValues,
     addVirtualPropertyPaths: mocks.addVirtualPropertyPaths,
   },
 }));
@@ -48,6 +58,7 @@ vi.mock("@/utils/errors", () => ({
     error?.response?.data?.message ?? error?.message ?? String(error),
 }));
 
+import store from "@/store";
 import MaterializeGenesDialog from "./MaterializeGenesDialog.vue";
 
 async function openDialog(mode: "live" | "copy" | "score" = "copy") {
@@ -64,6 +75,9 @@ describe("MaterializeGenesDialog", () => {
     mocks.materialize.mockReset();
     mocks.fetchProperties.mockReset().mockResolvedValue(undefined);
     mocks.fetchPropertyPathsSample.mockReset().mockResolvedValue(undefined);
+    mocks.fetchPropertyValues.mockReset().mockResolvedValue(undefined);
+    mocks.updateHistograms.mockReset().mockResolvedValue(undefined);
+    (store as any).dataset = { id: "ds1", name: "Lymph" };
     mocks.fetchJob.mockReset();
     mocks.score.mockReset();
     mocks.addVirtualPropertyPaths.mockReset().mockResolvedValue(undefined);
@@ -144,6 +158,10 @@ describe("MaterializeGenesDialog", () => {
     );
     expect(mocks.fetchProperties).toHaveBeenCalledTimes(1);
     expect(mocks.fetchPropertyPathsSample).toHaveBeenCalledTimes(1);
+    // The values themselves and the histograms, as after a worker job: the
+    // revision bump is what histograms, gates and columns key on.
+    expect(mocks.fetchPropertyValues).toHaveBeenCalledTimes(1);
+    expect(mocks.updateHistograms).toHaveBeenCalledTimes(1);
     expect(vm.done).toContain("Wrote 2 genes for 6 cells");
     expect(vm.running).toBe(false);
   });
@@ -175,6 +193,8 @@ describe("MaterializeGenesDialog", () => {
     expect(mocks.fetchJob).toHaveBeenCalledTimes(2);
     expect(vm.running).toBe(false);
     expect(vm.done).toContain("700,000 cells");
+    expect(mocks.fetchPropertyValues).toHaveBeenCalledTimes(1);
+    expect(mocks.updateHistograms).toHaveBeenCalledTimes(1);
   });
 
   it("reports a failed job and a rejected request", async () => {
@@ -199,7 +219,37 @@ describe("MaterializeGenesDialog", () => {
     expect(vm.error).toBe("features exceeds 64");
   });
 
-  it("stops polling when the dialog closes", async () => {
+  it("keeps polling after the dialog closes and still refreshes the values", async () => {
+    mocks.materialize.mockResolvedValue({
+      propertyId: "p1",
+      written: 0,
+      jobId: "job1",
+    });
+    mocks.fetchJob
+      .mockResolvedValueOnce({ _id: "job1", status: 2 })
+      .mockResolvedValueOnce({
+        _id: "job1",
+        status: 3,
+        spatialResult: { propertyId: "p1", written: 5, jobId: "job1" },
+      });
+    const wrapper = await openDialog();
+    const vm = wrapper.vm as any;
+    vm.symbols = ["CD3E"];
+    await vm.materialize();
+    vm.dialog = false;
+    await nextTick();
+    expect(vm.running).toBe(false);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(mocks.fetchJob).toHaveBeenCalledTimes(2);
+    expect(mocks.fetchProperties).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchPropertyValues).toHaveBeenCalledTimes(1);
+    expect(mocks.updateHistograms).toHaveBeenCalledTimes(1);
+    // The closed dialog's UI is not written to.
+    expect(vm.done).toBe("");
+    expect(vm.running).toBe(false);
+  });
+
+  it("stops polling when the dataset changes", async () => {
     mocks.materialize.mockResolvedValue({
       propertyId: "p1",
       written: 0,
@@ -209,10 +259,11 @@ describe("MaterializeGenesDialog", () => {
     const vm = wrapper.vm as any;
     vm.symbols = ["CD3E"];
     await vm.materialize();
-    vm.dialog = false;
+    (store as any).dataset = { id: "ds2", name: "Other" };
     await nextTick();
     await vi.advanceTimersByTimeAsync(5000);
     expect(mocks.fetchJob).not.toHaveBeenCalled();
+    expect(mocks.fetchPropertyValues).not.toHaveBeenCalled();
     expect(vm.running).toBe(false);
   });
 });

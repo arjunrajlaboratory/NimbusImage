@@ -950,13 +950,23 @@ export class Filters extends VuexModule {
         : this.selectionFilter,
       annotationIdFilters: idFiltersOversized ? [] : this.annotationIdFilters,
     });
+    skipped.push(...this.filtersOutsideListSchema);
+    return { filters, skipped };
+  }
+
+  // The viewer filters no list-filter object can carry — ROI polygons and the
+  // hidden-layer rule — named for the UI. Any server query built from the
+  // list schema (the over-cap histograms, the selection summary's "filtered"
+  // scope) ignores these, so its population may include objects they hide.
+  get filtersOutsideListSchema(): string[] {
+    const skipped: string[] = [];
     if (this.roiFilters.some((filter) => filter.enabled)) {
       skipped.push("region (ROI) filters");
     }
     if (!main.showAnnotationsFromHiddenLayers) {
       skipped.push("hidden-layer visibility");
     }
-    return { filters, skipped };
+    return skipped;
   }
 
   @Mutation

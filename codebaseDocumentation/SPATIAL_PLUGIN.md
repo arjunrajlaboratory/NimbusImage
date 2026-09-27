@@ -355,6 +355,25 @@ worker form of the import wraps this script once the format has settled.
 registers it with the bundle's `pixel_size` (and the inverse H&E alignment as `transform`
 for the H&E dataset).
 
+## Integrity rules (audit, 2026-09-27)
+
+- **Registration validates before it changes the registry**: store structure (indptr and
+  `feature_type` lengths, grid levels, unique `obs.annotation_id`, `var` symbols, transcript
+  gene names and per-level grid keys) at open, finite `X` values at registration only
+  (`SpatialStore.requireFiniteValues`, chunked); a malformed store is a 400 and a working
+  registration is kept. `test/test_integrity.py`.
+- **Every opener of a registered file checks it is still in the dataset**, the jobs
+  (materialize, differential, recompute) included — `provider.requireFileInDataset`.
+- **A dirty recompute uses the active table's settings**: `minQv`, tags, and the
+  transcript registration (file, pixel size, transform) are recorded on recomputed versions
+  and must match, or the run is a 400 asking for scope `all`.
+- **Written values are replaced, not merged, after success**: materialize/score unset the
+  written sub-keys on cells missing from the table, and a neighborhood run unsets the types
+  its property's previous run wrote and this one lacks (`neighborhoodTypes` per property on
+  the registry) — both only once every new value is written.
+- **Materialize refuses symbols containing `.` or `$`** (a sub-key path cannot hold them).
+- **`log2FoldChange` is null** when a shifted mean is not positive (scaled tables).
+
 ## Open decisions / future work
 
 The V2 feature list (what users ask for, ranked) is in `SPATIAL_V2_ROADMAP.md`.
@@ -529,7 +548,8 @@ Each line names the test that holds it.
 - Measurements tab asks for the registration only when shown, and offers Add genes only
   with a table — *"asks for the table registration when shown, not when hidden"*, *"offers Add genes only when the dataset has a spatial table"*.
 - Materialize dialog: inline write reloads properties; job polling until success; failed
-  job and rejected request reported; polling stops on close — *"writes inline results and reloads the property list"*, *"polls a scheduled job until it succeeds"*, *"reports a failed job and a rejected request"*, *"stops polling when the dialog closes"*.
+  job and rejected request reported; a job keeps polling after the dialog closes and still
+  refreshes the values, and a dataset change stops it — *"writes inline results and reloads the property list"*, *"polls a scheduled job until it succeeds"*, *"reports a failed job and a rejected request"*, *"keeps polling after the dialog closes and still refreshes the values"*, *"stops polling when the dataset changes"*.
 - Picker debounces typing, keeps picked symbols listed, caps at max — *"lists picked symbols alongside search results and debounces typing"*, *"caps the selection at max"*.
 - Summary expression: only with a table and picked genes, same scope, in the CSV —
   *"aggregates expression over the same scope only when a table exists and genes are picked"*.
@@ -625,8 +645,11 @@ Each line names the test that holds it.
   *"shows the error when the registry cannot be read"*.
 - Dialog offers edited-only only when something changed and a table exists —
   *"offers edited-only when something changed, full rebuild otherwise"*; posts, polls, re-reads —
-  *"posts the request and polls the job, then re-reads the table"*; failures and close —
-  *"reports a failed job and a rejected request, and stops polling on close"*.
+  *"posts the request and polls the job, then re-reads the table"*; failures —
+  *"reports a failed job and a rejected request"*; a job finishing after the dialog closed
+  still re-reads the table, and a dataset change stops polling —
+  *"still re-reads the table when the dialog was closed mid-job"*,
+  *"stops polling when the dataset changes"*.
 - API routes — *"uses the documented routes"*.
 
 **Neighborhood and regions (`test/test_analysis.py`)**

@@ -118,7 +118,6 @@
 import { computed, ref, watch } from "vue";
 import Papa from "papaparse";
 import store from "@/store";
-import propertyStore from "@/store/properties";
 import { ISpatialNeighborhood } from "@/store/model";
 import { jobStates } from "@/store/jobConstants";
 import { convertLength } from "@/utils/conversion";
@@ -126,6 +125,7 @@ import { downloadToClient } from "@/utils/download";
 import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
 import { useJobPolling } from "@/utils/useJobPolling";
+import { refreshWrittenMeasurements } from "@/utils/refreshWrittenMeasurements";
 
 /**
  * Neighborhood composition and enrichment (SPATIAL_PLUGIN.md "Phase 6").
@@ -254,20 +254,22 @@ function poll(jobId: string, request: number) {
     async () => {
       try {
         const job = await store.spatialAPI.fetchJob(jobId);
-        if (!polling.isCurrent(request)) return;
+        if (!polling.isLive(request)) return;
         if (job.status === jobStates.success) {
-          result.value = (job.spatialResult as ISpatialNeighborhood) ?? null;
-          running.value = false;
-          // The fractions are a new measurement: make it show up.
-          await propertyStore.fetchProperties();
-          if (!polling.isCurrent(request)) return;
-          await propertyStore.fetchPropertyPathsSample();
+          if (polling.isCurrent(request)) {
+            result.value = (job.spatialResult as ISpatialNeighborhood) ?? null;
+            running.value = false;
+          }
+          // The fractions are a new measurement: make it and its values show
+          // up, even when the dialog was closed while the job ran.
+          await refreshWrittenMeasurements(() => polling.isLive(request));
           return;
         }
         if (
           job.status === jobStates.error ||
           job.status === jobStates.cancelled
         ) {
+          if (!polling.isCurrent(request)) return;
           error.value = "The neighborhood job failed; see the job log.";
           running.value = false;
           return;

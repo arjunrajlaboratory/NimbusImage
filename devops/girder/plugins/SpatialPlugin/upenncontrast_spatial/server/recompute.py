@@ -43,6 +43,7 @@ from upenncontrast_annotation.server.helpers.geometry import geometryHash
 from upenncontrast_annotation.server.models.annotation import Annotation
 
 from .models.registry import DatasetSpatial
+from .provider import requireFileInDataset
 from .store import (
     SCHEMA_VERSION,
     invalidateStore,
@@ -739,6 +740,22 @@ def recompute(datasetId, transcripts, activeStore, scope, minQv, tags,
     return path, cells, symbols, stats
 
 
+def registrationSettings(registration):
+    """The transcript registration a table is counted from, as recorded in
+    its provenance and compared by a dirty run: from the registry entry or
+    the job kwargs (both carry these three keys; the file id as an ObjectId
+    or its string)."""
+    transform = registration.get("transform")
+    return {
+        "transcriptsFileId": str(registration["transcriptsFileId"]),
+        "pixelSize": float(registration["pixelSize"]),
+        "transform": (
+            None if transform is None
+            else parseTransform(transform).tolist()
+        ),
+    }
+
+
 def _boxesIntersect(a, b):
     return a[0] <= b[2] and a[2] >= b[0] and a[1] <= b[3] and a[3] >= b[1]
 
@@ -756,15 +773,23 @@ def run(job):
     )
     try:
         datasetId = ObjectId(kwargs["datasetId"])
+        # Force loads: the endpoint checked access, but either item may have
+        # been moved out of the dataset since, so re-check affiliation.
+        transcriptsFile = File().load(
+            kwargs["transcriptsFileId"], force=True, exc=True
+        )
+        requireFileInDataset(transcriptsFile, datasetId)
         transcripts = openTranscriptStore(
-            File().load(kwargs["transcriptsFileId"], force=True),
-            kwargs["pixelSize"], parseTransform(kwargs.get("transform")),
+            transcriptsFile, kwargs["pixelSize"],
+            parseTransform(kwargs.get("transform")),
         )
         activeStore = None
         if kwargs.get("activeFileId"):
-            activeStore = openStore(
-                File().load(kwargs["activeFileId"], force=True)
+            activeFile = File().load(
+                kwargs["activeFileId"], force=True, exc=True
             )
+            requireFileInDataset(activeFile, datasetId)
+            activeStore = openStore(activeFile)
 
         def onProgress(stage, current, total):
             jobModel.updateJob(
@@ -801,6 +826,7 @@ def run(job):
             dict(
                 stats, minQv=float(kwargs["minQv"]),
                 tags=list(kwargs.get("tags") or []),
+                **registrationSettings(kwargs),
             ),
         )
         result = {"itemId": str(item["_id"]), **stats}

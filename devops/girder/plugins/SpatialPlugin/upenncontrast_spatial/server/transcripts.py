@@ -85,6 +85,16 @@ class TranscriptStore:
         self.isGene = np.array(
             [CONTROL_PATTERN.match(name) is None for name in self.geneNames]
         )
+        # Gene symbols are what the overlay requests by: a repeated one would
+        # read an arbitrary duplicate's points and density.
+        genes = [n for n, gene in zip(self.geneNames, self.isGene) if gene]
+        if len(set(genes)) != len(genes):
+            seen = set()
+            repeated = next(n for n in genes if n in seen or seen.add(n))
+            raise ValueError(
+                "gene names must be unique (%s appears more than once)"
+                % repeated
+            )
         grids = self.root["grids"]
         gridAttrs = dict(grids.attrs)
         self.levels = int(gridAttrs["number_levels"])
@@ -96,6 +106,20 @@ class TranscriptStore:
             [int(count) for count in counts]
             for counts in gridAttrs["grid_number_objects"]
         ]
+        # Cheap structural checks (attributes and group names only; no tile
+        # is read). Every level a request may name must exist, and a key
+        # listed twice would have recompute count its molecules twice.
+        for level in range(self.levels):
+            if str(level) not in grids:
+                raise ValueError("grids has no level %d group" % level)
+        for level, keys in enumerate(self.tileKeys):
+            if len(set(keys)) != len(keys):
+                seen = set()
+                repeated = next(k for k in keys if k in seen or seen.add(k))
+                raise ValueError(
+                    "grid_keys of level %d list tile %s more than once"
+                    % (level, repeated)
+                )
         self.totalPoints = sum(self.tileCounts[0]) if self.tileCounts else 0
         self._density = None
         self._densityCache = OrderedDict()
@@ -176,7 +200,15 @@ class TranscriptStore:
         tile = self.tile(level, key)
         if tile is None:
             return self._emptyPoints(level)
-        offsets = tile["gene_offset"][:]
+        offsets = tile["gene_offset"]
+        # One row per gene_names entry: a short table would index past its
+        # end, a long one misread every gene after the misalignment.
+        if tuple(offsets.shape) != (len(self.geneNames), 4):
+            raise ValueError(
+                "tile %s/%s gene_offset has shape %s, expected (%d, 4)"
+                % (level, key, tuple(offsets.shape), len(self.geneNames))
+            )
+        offsets = offsets[:]
         ranges = []
         for slot, geneIndex in enumerate(geneIndices):
             lowStart, lowEnd, highStart, highEnd = (

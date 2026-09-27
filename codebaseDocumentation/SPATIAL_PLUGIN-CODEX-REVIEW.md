@@ -1,5 +1,33 @@
 # PR #1347 — Codex review fixes
 
+## Pre-emptive audit (2026-09-27)
+
+Three read-only auditors swept the branch for the shapes the Codex rounds kept finding
+(validate before mutating, 500 on malformed input, identity uniqueness, twin paths,
+merge vs replace, derived data mixing settings, non-finite JSON, miscounts), then fixers
+applied the reachable ones, each with a regression test that fails without it.
+
+| Area | Fixed |
+|---|---|
+| AnnotationPlugin | CSV export fills live gene (virtual) columns instead of a 400; histograms/dots honour gene filters (were an empty population); `batch` unknown gene is a 400; summary maps non-finite statistics to null (Infinity stays a value, as decided); summary validates paths before resolving filters; an omitted `upstreamGates` is `[]`, not a 500 |
+| SpatialPlugin | dirty recompute also compares the transcript registration (file, pixel size, transform); materialize/score retire stale sub-keys on cells absent from the table; neighborhood types retired per property; materialize refuses `.`/`$` symbols; registration catches IndexError/TypeError; structural length checks at open; duplicate grid keys refused; non-finite X refused at registration; `log2FoldChange` null for non-positive means; jobs check file affiliation |
+| Frontend | values refresh after Materialize/Score/Neighborhood; a job keeps polling after its dialog closes and still refreshes (a dataset change stops it); differential result cleared when inputs change; selection summary warns when region/hidden-layer filters are not applied server-side; revoking another link keeps a just-created URL |
+
+Declined: a registered file's contents replaced in place (Girder `PUT file/contents`),
+and the CSV preview labelling gene columns "Spatial table / X" while the file writes
+"spatial / X" (cosmetic; needs a provider display name).
+
+Suites: AnnotationPlugin 866 (full, including test_dataset_multi_source.py), SpatialPlugin
+305 (full), frontend 4,214; live: histogram with a gene filter plots 38,731 = list/ids.
+
+## Review of `96326b6d` (2026-09-27)
+
+| Finding | Status |
+|---|---|
+| P2 A store whose schema fails replaces a working transcript registration | fixed — the schema is built inside the guarded open, before the registry changes; a malformed store is a 400 and the previous registration stays; regression fails without the fix |
+| P2 Duplicate transcript gene names accepted | fixed — twin of the table-symbol check, over the biological genes; the lymph node and three tiny stores still open; regression fails without the fix |
+| P2 Density tiles cached across a re-registration | fixed — the tile URL carries the registration (item, pixel size, transform); unit test |
+
 ## Review of `943b8e22` (2026-09-27)
 
 | Finding | Status |

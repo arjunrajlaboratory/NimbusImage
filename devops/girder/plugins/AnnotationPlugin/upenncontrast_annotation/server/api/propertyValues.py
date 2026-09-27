@@ -199,9 +199,13 @@ class PropertyValues(Resource):
             exc=True,
         )
         annotationIds = [requireObjectId(i, "annotationId") for i in rawIds]
-        return self._annotationPropertyValuesModel.findByAnnotationIds(
-            datasetId, annotationIds, propertyPaths
-        )
+        try:
+            return self._annotationPropertyValuesModel.findByAnnotationIds(
+                datasetId, annotationIds, propertyPaths
+            )
+        except ValueError as exc:
+            # A virtual path the provider cannot resolve (unknown key).
+            raise RestException(str(exc), code=400)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(

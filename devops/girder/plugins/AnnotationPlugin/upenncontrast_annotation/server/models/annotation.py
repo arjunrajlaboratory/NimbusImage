@@ -815,6 +815,12 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # Narrow docs and their value columns together (AnalysisValues
         # columns are aligned with the docs list they were built for).
         if spec["filters"]:
+            # Property filters on virtual paths (a gene range) become id
+            # clauses first, as on every list endpoint: left in place, the
+            # Mongo pipeline matched them against stored values, which never
+            # hold that path, and the population came back empty. An unknown
+            # virtual key raises ValueError -> 400 at the API.
+            self.resolveProviderFilters(datasetId, spec["filters"])
             passing = set(self.listIds(datasetId, spec["filters"]))
             docs, valuesById = analysis.subset_analysis_data(
                 docs, valuesById, [doc["id"] in passing for doc in docs]
@@ -1277,7 +1283,9 @@ class Annotation(AccessControlMixin, ProxiedModel):
             # the statistics while $sum counts exactly the values used. NaN
             # is a number to $isNumber and would poison the mean, so it is
             # treated as missing too (BSON compares NaN equal to NaN, which
-            # is what makes the $ne test work); Infinity stays a value.
+            # is what makes the $ne test work); Infinity stays a value (the
+            # user's decision, SELECTION_SUMMARY.md) — a statistic it makes
+            # non-finite is reported as null below.
             usable = {"$and": [
                 {"$isNumber": ref}, {"$ne": [ref, float("nan")]},
             ]}
@@ -1293,12 +1301,15 @@ class Annotation(AccessControlMixin, ProxiedModel):
         ))
         stats = result[0] if result else None
         for index, path in enumerate(propertyPaths):
+            # An Infinity value (kept, above) or an overflow makes a statistic
+            # non-finite, and Girder's encoder refuses NaN/Infinity (a 500):
+            # report such a statistic as null.
             statsByKey[".".join(path)] = empty if stats is None else {
                 "count": stats[f"count{index}"],
-                "mean": stats[f"mean{index}"],
-                "std": stats[f"std{index}"],
-                "min": stats[f"min{index}"],
-                "max": stats[f"max{index}"],
+                "mean": analysis.finite_or_none(stats[f"mean{index}"]),
+                "std": analysis.finite_or_none(stats[f"std{index}"]),
+                "min": analysis.finite_or_none(stats[f"min{index}"]),
+                "max": analysis.finite_or_none(stats[f"max{index}"]),
             }
         return [
             {"path": path, **statsByKey[".".join(path)]}

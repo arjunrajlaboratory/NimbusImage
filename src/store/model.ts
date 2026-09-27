@@ -1922,7 +1922,8 @@ export interface ISpatialDifferentialFeature {
   meanB: number;
   fractionA: number;
   fractionB: number;
-  log2FoldChange: number;
+  // null when a mean is not positive (a scaled table with negative values)
+  log2FoldChange: number | null;
   // Welch's t or Wilcoxon's z; null when infinite (two constant groups
   // with different means: perfect separation, pValue 0).
   t: number | null;

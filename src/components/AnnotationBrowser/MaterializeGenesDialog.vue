@@ -136,6 +136,7 @@ import SpatialFeaturePicker from "@/components/AnnotationBrowser/SpatialFeatureP
 import { extractErrorMessage } from "@/utils/errors";
 import { jobStates } from "@/store/jobConstants";
 import { useJobPolling } from "@/utils/useJobPolling";
+import { refreshWrittenMeasurements } from "@/utils/refreshWrittenMeasurements";
 
 type TMode = "live" | "copy" | "score";
 
@@ -216,13 +217,14 @@ const polling = useJobPolling(
 );
 
 async function afterWrite(written: number, what: string, request: number) {
-  // The new sub-values are ordinary property values: reload the property
-  // list and value sample so they show up in the Measurements tab.
-  await propertyStore.fetchProperties();
+  // The new sub-values are ordinary property values: reload them everywhere
+  // they show, even when the dialog was closed while the job ran.
+  const name = propertyName.value.trim();
+  if (!(await refreshWrittenMeasurements(() => polling.isLive(request)))) {
+    return;
+  }
   if (!polling.isCurrent(request)) return;
-  await propertyStore.fetchPropertyPathsSample();
-  if (!polling.isCurrent(request)) return;
-  done.value = `Wrote ${what} for ${written.toLocaleString()} cells into “${propertyName.value.trim()}”.`;
+  done.value = `Wrote ${what} for ${written.toLocaleString()} cells into “${name}”.`;
   running.value = false;
 }
 
@@ -233,7 +235,7 @@ function pollJob(jobId: string, total: number, what: string, request: number) {
       try {
         const job = await store.spatialAPI.fetchJob(jobId);
         const status = job.status;
-        if (!polling.isCurrent(request)) return;
+        if (!polling.isLive(request)) return;
         if (status === jobStates.success) {
           // The job publishes what it actually wrote: rows whose annotation
           // was deleted or moved are skipped, so the table size overstates.
@@ -244,6 +246,7 @@ function pollJob(jobId: string, total: number, what: string, request: number) {
           return;
         }
         if (status === jobStates.error || status === jobStates.cancelled) {
+          if (!polling.isCurrent(request)) return;
           error.value = "The server job failed; see the job log.";
           running.value = false;
           return;
@@ -300,9 +303,11 @@ async function submit() {
             symbols.value,
             propertyName.value.trim(),
           );
-    if (!polling.isCurrent(request)) return;
+    if (!polling.isLive(request)) return;
     if (result.jobId) {
-      runningMessage.value = "Writing values in a server job…";
+      if (polling.isCurrent(request)) {
+        runningMessage.value = "Writing values in a server job…";
+      }
       pollJob(result.jobId, spatialStore.info?.nObs ?? 0, what, request);
       return;
     }

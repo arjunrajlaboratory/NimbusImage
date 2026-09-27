@@ -2,7 +2,9 @@
 
 Every row still belonging to the dataset gets a DENSE sub-value per feature
 (``values[propertyId][symbol] = count``, zeros included) so the UI can tell
-"zero" from "not computed". Runs inline for small stores and as a Girder
+"zero" from "not computed"; cells without a row in the table lose the
+written sub-keys once the write succeeds, so re-materializing from a smaller
+table leaves no stale values. Runs inline for small stores and as a Girder
 local job (``run(job)``) above ``MATERIALIZE_INLINE_MAX_ROWS``.
 
 Merging uses atomic update pipelines in the property-values model, preserving
@@ -20,6 +22,7 @@ from upenncontrast_annotation.server.models.propertyValues import (
     AnnotationPropertyValues,
 )
 
+from .provider import requireFileInDataset
 from .store import numberFromNumpy, openStore
 
 # Rows per write batch: 20K documents is well under Mongo's 16 MB command
@@ -59,21 +62,28 @@ def writeValues(store, datasetId, propertyId, columns, onProgress=None):
         return subValues
 
     return writeCellValues(
-        datasetId, propertyId, store.annotationIds, subValuesFor, onProgress
+        datasetId, propertyId, store.annotationIds, subValuesFor, onProgress,
+        retireSubKeys=symbols,
     )
 
 
 def writeCellValues(datasetId, propertyId, annotationIds, subValuesFor,
-                    onProgress=None):
+                    onProgress=None, retireSubKeys=None):
     """Chunked writer shared by materialize, score and the neighborhood
     job: `subValuesFor(start, stop)` returns one {subKey: number} dict per
     cell of the chunk, merged into the cells' property-value documents.
     Returns the number of live dataset cells written. Progress reports rows
-    examined, including moved/deleted cells that must not receive writes."""
+    examined, including moved/deleted cells that must not receive writes.
+
+    With `retireSubKeys`, once every chunk is written those sub-keys are
+    unset on this dataset's other value documents: the cells a previous
+    (larger) table wrote and this one has no row for would otherwise keep
+    its values. A failed write leaves the previous values in place."""
     valuesModel = AnnotationPropertyValues()
     propertyKey = str(propertyId)
     total = len(annotationIds)
     written = 0
+    writtenRows = np.zeros(total, dtype=bool)
     for start in range(0, total, CHUNK_ROWS):
         stop = min(start + CHUNK_ROWS, total)
         chunkIds = [ObjectId(str(value))
@@ -85,17 +95,63 @@ def writeCellValues(datasetId, propertyId, annotationIds, subValuesFor,
             'datasetId': datasetId, '_id': {'$in': chunkIds},
         }, fields=['_id'])}
         if liveIds:
+            live = [annotationId in liveIds for annotationId in chunkIds]
             entries = [
                 (annotationId, subValues)
-                for annotationId, subValues in zip(
-                    chunkIds, subValuesFor(start, stop))
-                if annotationId in liveIds
+                for annotationId, subValues, isLive in zip(
+                    chunkIds, subValuesFor(start, stop), live)
+                if isLive
             ]
             valuesModel.setSubValuesMany(datasetId, propertyKey, entries)
+            writtenRows[start:stop] = live
             written += len(entries)
         if onProgress is not None:
             onProgress(stop, total)
+    if retireSubKeys:
+        _retireUnwritten(
+            datasetId, propertyKey, retireSubKeys,
+            np.asarray([str(annotationIds[row]) for row in
+                        np.flatnonzero(writtenRows)], dtype="S24"),
+        )
     return written
+
+
+def _retireUnwritten(datasetId, propertyKey, subKeys, writtenIds):
+    """Unset `values.<property>.<subKey>` on the dataset's value documents
+    that carry one of the sub-keys but whose annotation is not among
+    `writtenIds`: one projected scan, then one bulk update per chunk."""
+    valuesModel = AnnotationPropertyValues()
+    paths = ["values.%s.%s" % (propertyKey, key) for key in subKeys]
+    writtenIds = np.sort(writtenIds)
+    stale = []
+    batch = []
+
+    def collect():
+        ids = np.asarray([str(i) for i in batch], dtype="S24")
+        found = np.zeros(len(ids), dtype=bool)
+        if len(writtenIds):
+            positions = np.clip(
+                np.searchsorted(writtenIds, ids), 0, len(writtenIds) - 1
+            )
+            found = writtenIds[positions] == ids
+        stale.extend(i for i, hit in zip(batch, found) if not hit)
+        batch.clear()
+
+    for document in valuesModel.find({
+        "datasetId": datasetId,
+        "$or": [{path: {"$exists": True}} for path in paths],
+    }, fields=["annotationId"]):
+        batch.append(document["annotationId"])
+        if len(batch) >= CHUNK_ROWS:
+            collect()
+    if batch:
+        collect()
+    for start in range(0, len(stale), CHUNK_ROWS):
+        valuesModel.update(
+            {"datasetId": datasetId,
+             "annotationId": {"$in": stale[start:start + CHUNK_ROWS]}},
+            {"$unset": {path: "" for path in paths}},
+        )
 
 
 def columnsFor(store, kwargs):
@@ -124,7 +180,11 @@ def run(job):
         log="Materializing %d features...\n" % len(symbols),
     )
     try:
-        store = openStore(File().load(kwargs["fileId"], force=True))
+        datasetId = ObjectId(kwargs["datasetId"])
+        # The item may have left the dataset since the endpoint checked it.
+        fileDoc = File().load(kwargs["fileId"], force=True, exc=True)
+        requireFileInDataset(fileDoc, datasetId)
+        store = openStore(fileDoc)
         columns = columnsFor(store, kwargs)
 
         def onProgress(current, total):
@@ -134,8 +194,8 @@ def run(job):
             )
 
         written = writeValues(
-            store, ObjectId(kwargs["datasetId"]),
-            ObjectId(kwargs["propertyId"]), columns, onProgress,
+            store, datasetId, ObjectId(kwargs["propertyId"]), columns,
+            onProgress,
         )
     except Exception as exc:
         jobModel.updateJob(

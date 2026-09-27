@@ -167,6 +167,20 @@ describe("SpatialAPI transcripts", () => {
     expect(template).toBe(
       "http://h/api/v1/spatial/ds/transcripts/density/{z}/{x}/{y}?genes=CD3E%2CMS4A1&sizeX=100&sizeY=50&tileSize=512&maxLevel=7&color=%23FF0000&token=share-token",
     );
+    // A re-registered store gets a new URL (tiles are cached an hour).
+    const versioned = new SpatialAPI(client).transcriptDensityTemplateUrl({
+      datasetId: "ds",
+      genes: ["CD3E"],
+      sizeX: 100,
+      sizeY: 50,
+      tileSize: 512,
+      maxLevel: 7,
+      color: "#FF0000",
+      registration: "item2:0.2125:",
+    });
+    expect(
+      new URL(versioned.replace("{z}/{x}/{y}", "0/0/0")).searchParams.get("v"),
+    ).toBe("item2:0.2125:");
   });
 });
 

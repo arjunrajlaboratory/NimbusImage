@@ -44,6 +44,16 @@
             :disabled="selectedCount === 0"
           />
         </v-radio-group>
+        <v-alert
+          v-if="scope === 'filtered' && skippedFilters.length > 0"
+          type="warning"
+          variant="tonal"
+          density="compact"
+          class="mb-2 summary-skipped"
+        >
+          The summary ignores: {{ skippedFilters.join(", ") }}. It may include
+          objects those filters hide.
+        </v-alert>
 
         <v-select
           v-model="selectedPathStrings"
@@ -303,6 +313,11 @@ const selectedCount = computed(
 const hasActiveFilter = computed(
   () => filterStore.filteredAnnotations.length < allCount.value,
 );
+
+// The "filtered" request is the list-filter object, which cannot carry ROI
+// polygons or the hidden-layer rule, while hasActiveFilter reads the client's
+// filtered set, which applies them: say which ones the summary drops.
+const skippedFilters = computed(() => filterStore.filtersOutsideListSchema);
 
 const propertyItems = computed(() =>
   propertyStore.computedPropertyPaths.map((path) => ({
@@ -577,6 +592,7 @@ defineExpose({
   loading,
   error,
   hasActiveFilter,
+  skippedFilters,
   requestFilters,
   refresh,
   buildCsv,

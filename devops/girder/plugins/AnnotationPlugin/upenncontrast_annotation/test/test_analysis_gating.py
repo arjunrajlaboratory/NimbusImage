@@ -840,6 +840,17 @@ class TestAnalysisHistogramEndpoint:
         )
         assertStatus(resp, 400)
 
+    def testOmittedUpstreamGatesIsNone(self, admin, server):
+        """`upstreamGates` is optional: omitting it means no upstream gates,
+        not a KeyError (500) in the model."""
+        folder, _, _ = self._setup(admin)
+        body = histogramBody(folder["_id"])
+        del body["upstreamGates"]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d", body,
+        )
+        assertStatusOk(resp)
+
 
 # --- Codex review findings (PR #1302) ---
 

@@ -142,7 +142,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import Papa from "papaparse";
 import store from "@/store";
 import TagPicker from "@/components/TagPicker.vue";
@@ -207,6 +207,19 @@ function filtersB(): IAnnotationListFilters | null {
   return { tags: { values: [...groupBTags.value], exclusive: false } };
 }
 
+// A finished table describes the inputs it ran with: editing group B or the
+// method leaves it under controls (and a CSV) it no longer matches. The
+// inputs are locked while a run is in flight, so only a finished result goes.
+watch(
+  [groupB, groupBTags, method],
+  () => {
+    if (!running.value) {
+      result.value = null;
+    }
+  },
+  { deep: true },
+);
+
 const polling = useJobPolling(
   dialog,
   () => store.dataset?.id,
@@ -221,6 +234,8 @@ function pollJob(jobId: string, sequence: number) {
   polling.schedule(
     sequence,
     async () => {
+      // The table is this dialog's only output: once it closes, stop asking.
+      if (!polling.isCurrent(sequence)) return;
       try {
         const job = await store.spatialAPI.fetchJob(jobId);
         if (!polling.isCurrent(sequence)) {
@@ -330,6 +345,7 @@ defineExpose({
   groupB,
   groupBTags,
   maxFeatures,
+  method,
   running,
   error,
   result,

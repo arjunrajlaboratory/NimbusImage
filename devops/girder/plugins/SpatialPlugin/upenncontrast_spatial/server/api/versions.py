@@ -145,7 +145,9 @@ class VersionRoutes:
                "recomputeEmbeddings? (PCA/UMAP/k-means, minutes)}. 'dirty' "
                "reassigns only the tiles touched by added/changed/removed "
                "cells and carries the other rows over from the active "
-               "table. The new table becomes active; the previous one a "
+               "table, so it must use the settings and transcript "
+               "registration the active table was built with (400 "
+               "otherwise). The new table becomes active; the previous one a "
                "version. The job's `spatialResult` carries {itemId, nObs, "
                "nVar, assigned, unassigned, tilesProcessed, seconds}.")
         .param("datasetId", "The dataset (folder) id", paramType="path")
@@ -214,6 +216,22 @@ class VersionRoutes:
                 "%s, tags %s); run scope 'all' to change them."
                 % (activeSettings["minQv"], activeSettings.get("tags") or []),
                 code=400,
+            )
+        # The same holds for the molecules themselves: carried rows were
+        # counted from the registration the table was built with, so a
+        # re-registered store, pixel size or transform needs a full run.
+        # (Tables built before these were recorded compare what they have.)
+        changed = [
+            key for key, value in recompute.registrationSettings(
+                transcriptsEntry
+            ).items()
+            if key in activeSettings and activeSettings[key] != value
+        ]
+        if scope == "dirty" and "minQv" in activeSettings and changed:
+            raise RestException(
+                "dirty scope must use the transcript registration the "
+                "active table was built from (%s changed); run scope 'all'."
+                % ", ".join(changed), code=400,
             )
         if activeFileId is not None:
             # Fail now, not in the job, if the active table is unreadable or

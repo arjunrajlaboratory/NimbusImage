@@ -33,6 +33,9 @@ MAX_OPEN_STORES = 8
 # block of columns reads each chunk once. 8M entries is 64 MB of indices and
 # values.
 COLUMN_BLOCK_VALUES = 8_000_000
+# Values per slice of the registration-time finite check over X/data: 4M
+# float64 is 32 MB (plus the boolean mask).
+FINITE_CHECK_CHUNK_VALUES = 4_000_000
 
 
 def _allObjectIds(values):
@@ -105,6 +108,13 @@ class SpatialStore:
         self.nObs, self.nVar = (int(n) for n in matrix.attrs["shape"])
         # indptr is nVar + 1 ints: small, and every column read needs it.
         self._cscIndptr = np.asarray(matrix["indptr"][:])
+        # Cheap shape checks (no data scan): a short indptr would make the
+        # last columns' reads index past it, a long one misalign them all.
+        if len(self._cscIndptr) != self.nVar + 1:
+            raise ValueError(
+                "X/indptr has %d entries, expected nVar + 1 = %d"
+                % (len(self._cscIndptr), self.nVar + 1)
+            )
         self._cscIndices = matrix["indices"]
         self._cscData = matrix["data"]
 
@@ -112,6 +122,11 @@ class SpatialStore:
         if "layers/X_csr" in self.root:
             self._csr = _requireGroup(self.root, "layers/X_csr", "csr_matrix")
             self._csrIndptr = np.asarray(self._csr["indptr"][:])
+            if len(self._csrIndptr) != self.nObs + 1:
+                raise ValueError(
+                    "layers/X_csr/indptr has %d entries, expected nObs + 1 "
+                    "= %d" % (len(self._csrIndptr), self.nObs + 1)
+                )
 
         var = _requireGroup(self.root, "var")
         symbols = readStringColumn(var, var.attrs.get("_index", "_index"))
@@ -142,6 +157,13 @@ class SpatialStore:
             [str(t) for t in readStringColumn(var, "feature_type")]
             if "feature_type" in var else None
         )
+        if self.featureTypes is not None and (
+            len(self.featureTypes) != self.nVar
+        ):
+            raise ValueError(
+                "var.feature_type has %d entries, X has %d features"
+                % (len(self.featureTypes), self.nVar)
+            )
 
         obs = _requireGroup(self.root, "obs")
         self.obsColumns = [
@@ -297,6 +319,19 @@ class SpatialStore:
                 "expressing": expressing,
             })
         return {"total": total, "features": results}
+
+    def requireFiniteValues(self, chunkValues=FINITE_CHECK_CHUNK_VALUES):
+        """Refuse X holding NaN or infinity: materialize would write them
+        into property values, and every JSON response carrying one fails
+        (Girder serializes with allow_nan=False). A full pass over X/data,
+        so registration runs it rather than every open; memory stays at one
+        chunk."""
+        for start in range(0, self._cscData.shape[0], chunkValues):
+            chunk = np.asarray(self._cscData[start:start + chunkValues])
+            if not np.isfinite(chunk).all():
+                raise ValueError(
+                    "X holds non-finite values (NaN or infinity)"
+                )
 
 
 def numberFromNumpy(value):

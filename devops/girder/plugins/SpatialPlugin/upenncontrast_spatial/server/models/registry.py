@@ -194,10 +194,31 @@ class DatasetSpatial(Model):
         return self._edit(datasetId, edit)
 
     def setNeighborhood(self, datasetId, result):
+        """Store the latest summary, and the types it wrote under ITS
+        property: each property's next run retires against its own previous
+        types, however many runs into other properties came between."""
         def edit(document):
             document['neighborhood'] = result
+            if 'propertyId' in result:
+                document['neighborhoodTypes'] = {
+                    **document.get('neighborhoodTypes', {}),
+                    result['propertyId']: list(result.get('types', [])),
+                }
             return document
         return self._edit(datasetId, edit, create=True)
+
+    def neighborhoodTypes(self, datasetId, propertyId):
+        """The types the last neighborhood run into `propertyId` wrote
+        (empty when none ran). Registries from before per-property types
+        answer from the single summary when it is that property's."""
+        document = self.forDataset(datasetId) or {}
+        types = document.get('neighborhoodTypes', {}).get(str(propertyId))
+        if types is not None:
+            return types
+        summary = document.get('neighborhood') or {}
+        if summary.get('propertyId') == str(propertyId):
+            return summary.get('types', [])
+        return []
 
     def _coalesceDuplicates(self):
         """Upgrade legacy duplicates before serving requests. Latest whole
@@ -233,6 +254,12 @@ class DatasetSpatial(Model):
                                    if key in document})
                 if 'neighborhood' in document:
                     merged['neighborhood'] = document['neighborhood']
+                merged['neighborhoodTypes'] = {
+                    **merged.get('neighborhoodTypes', {}),
+                    **document.get('neighborhoodTypes', {}),
+                }
+            if not merged['neighborhoodTypes']:
+                merged.pop('neighborhoodTypes')
             versions.pop(merged.get('itemId'), None)
             merged['versions'] = list(versions.values())
             merged['updated'] = documents[-1].get('updated')

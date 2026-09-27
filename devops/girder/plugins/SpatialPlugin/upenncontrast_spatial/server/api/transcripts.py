@@ -164,7 +164,15 @@ class TranscriptRoutes:
         invalidateTranscriptStore(files[0]["_id"])
         try:
             store = openTranscriptStore(files[0], pixelSize, transform)
-        except (ValueError, KeyError, OSError, zipfile.BadZipFile) as exc:
+            # Built before the registry changes: a store that opens but
+            # cannot describe itself (e.g. more levels than grid keys) must
+            # not replace a working registration.
+            schema = store.schema()
+        except (
+            ValueError, KeyError, IndexError, TypeError, OSError,
+            zipfile.BadZipFile,
+        ) as exc:
+            invalidateTranscriptStore(files[0]["_id"])
             raise RestException(
                 "Not a readable transcript store: %s" % exc, code=400
             )
@@ -174,7 +182,7 @@ class TranscriptRoutes:
             "pixelSize": pixelSize,
             "transform": None if transform is None else transform.tolist(),
         })
-        return store.schema()
+        return schema
 
     @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
@@ -250,7 +258,14 @@ class TranscriptRoutes:
         xys, slots, qvs = [], [], []
         total = 0
         for key in dict.fromkeys(tiles):
-            xy, slot, qv = store.tilePoints(level, key, geneIndices, minQv)
+            try:
+                xy, slot, qv = store.tilePoints(
+                    level, key, geneIndices, minQv
+                )
+            except ValueError as exc:
+                raise RestException(
+                    "Unreadable transcript tile: %s" % exc, code=400
+                )
             total += len(xy)
             if total > MAX_POINTS_PER_RESPONSE:
                 raise RestException(

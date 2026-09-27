@@ -53,7 +53,10 @@ Semantics:
 - A property `count` is the number of matching annotations holding a **numeric** value at
   the path. Strings, nested objects, missing values, and **NaN** are skipped (NaN would
   poison a mean); **Infinity is a number and is kept**. `mean/min/max` are null at count 0;
-  `std` is the sample standard deviation and is null below two values.
+  `std` is the sample standard deviation and is null below two values. A statistic that
+  comes out non-finite (an Infinity value makes `max` and `mean` infinite; a huge value can
+  overflow) is null, since JSON cannot carry it — a JSON body's `1e999` parses to Infinity
+  and is stored, and returning it made the summary a 500.
 - Without any filter the statistics run over every value document of the dataset, so a
   value document orphaned by a deleted annotation counts until the removal hook cleans it.
   Excluding them would cost a second full scan per request (measured +2.6 s for an id set

@@ -34,7 +34,12 @@ vi.mock("@/store/annotation", async () => {
 
 vi.mock("@/store/filters", async () => {
   const { reactive } = await import("vue");
-  return { default: reactive({ filteredAnnotations: [] as any[] }) };
+  return {
+    default: reactive({
+      filteredAnnotations: [] as any[],
+      filtersOutsideListSchema: [] as string[],
+    }),
+  };
 });
 
 vi.mock("@/store/properties", () => ({
@@ -127,6 +132,34 @@ describe("SelectionSummaryDialog", () => {
     (annotationStore as any).selectedAnnotationIds = new Set<string>();
     (annotationStore as any).annotationCount = 10;
     (filterStore as any).filteredAnnotations = [];
+    (filterStore as any).filtersOutsideListSchema = [];
+  });
+
+  it("warns under the scope when the filtered request drops viewer filters", async () => {
+    (filterStore as any).filteredAnnotations = [{}, {}];
+    (filterStore as any).filtersOutsideListSchema = ["region (ROI) filters"];
+    const wrapper = shallowMount(SelectionSummaryDialog, {
+      global: { renderStubDefaultSlot: true },
+    });
+    const vm = wrapper.vm as any;
+    vm.dialog = true;
+    await nextTick();
+    await nextTick();
+    expect(vm.scope).toBe("filtered");
+    const warning = () =>
+      wrapper
+        .findAllComponents({ name: "VAlert" })
+        .find((alert) => alert.text().includes("ignores"));
+    expect(warning()?.text()).toContain("region (ROI) filters");
+    // Only the filtered scope is built from the list filters.
+    vm.scope = "all";
+    await nextTick();
+    expect(warning()).toBeUndefined();
+    vm.scope = "filtered";
+    (filterStore as any).filtersOutsideListSchema = [];
+    await nextTick();
+    expect(warning()).toBeUndefined();
+    wrapper.unmount();
   });
 
   it("opens on the whole dataset with the displayed columns when nothing is selected or filtered", async () => {

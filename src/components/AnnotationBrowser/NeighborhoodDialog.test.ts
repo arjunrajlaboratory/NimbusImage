@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   fetchJob: vi.fn(),
   fetchProperties: vi.fn(),
   fetchPropertyPathsSample: vi.fn(),
+  fetchPropertyValues: vi.fn(),
+  updateHistograms: vi.fn(),
   downloadToClient: vi.fn(),
   scales: { pixelSize: { value: 0.5, unit: "µm" } } as any,
 }));
@@ -31,7 +33,11 @@ vi.mock("@/store/properties", () => ({
   default: {
     fetchProperties: mocks.fetchProperties,
     fetchPropertyPathsSample: mocks.fetchPropertyPathsSample,
+    fetchPropertyValues: mocks.fetchPropertyValues,
   },
+}));
+vi.mock("@/store/filters", () => ({
+  default: { updateHistograms: mocks.updateHistograms },
 }));
 vi.mock("@/utils/download", () => ({
   downloadToClient: mocks.downloadToClient,
@@ -92,6 +98,8 @@ describe("NeighborhoodDialog", () => {
     mocks.fetchJob.mockReset();
     mocks.fetchProperties.mockReset().mockResolvedValue(undefined);
     mocks.fetchPropertyPathsSample.mockReset().mockResolvedValue(undefined);
+    mocks.fetchPropertyValues.mockReset().mockResolvedValue(undefined);
+    mocks.updateHistograms.mockReset().mockResolvedValue(undefined);
     mocks.downloadToClient.mockReset();
     (store as any).scales = { pixelSize: { value: 0.5, unit: "µm" } };
   });
@@ -138,6 +146,25 @@ describe("NeighborhoodDialog", () => {
     expect(vm.running).toBe(false);
     expect(vm.result).toEqual(RESULT);
     expect(mocks.fetchProperties).toHaveBeenCalledTimes(1);
+    // A rerun replaces the fractions' values: reload them and the histograms.
+    expect(mocks.fetchPropertyValues).toHaveBeenCalledTimes(1);
+    expect(mocks.updateHistograms).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the values even when the dialog was closed mid-job", async () => {
+    mocks.fetchJob
+      .mockResolvedValueOnce({ _id: "j1", status: 2 })
+      .mockResolvedValueOnce({ _id: "j1", status: 3, spatialResult: RESULT });
+    const wrapper = await open();
+    const vm = wrapper.vm as any;
+    await vm.run();
+    vm.dialog = false;
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(mocks.fetchJob).toHaveBeenCalledTimes(2);
+    expect(mocks.fetchPropertyValues).toHaveBeenCalledTimes(1);
+    expect(mocks.updateHistograms).toHaveBeenCalledTimes(1);
+    expect(vm.result).toBeNull();
   });
 
   it("reports failures and exports the matrix as CSV", async () => {

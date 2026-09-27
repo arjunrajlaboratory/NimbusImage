@@ -571,11 +571,14 @@ class TestSpatial:
                 updates.append(fields)
 
         class FakeFileModel:
-            def load(self, fileId, force=False):
+            def load(self, fileId, force=False, exc=False):
                 return {"_id": fileId}
 
         monkeypatch.setattr(module, "Job", FakeJobModel)
         monkeypatch.setattr(module, "File", FakeFileModel)
+        monkeypatch.setattr(
+            module, "requireFileInDataset", lambda fileDoc, datasetId: None
+        )
         monkeypatch.setattr(module, "openStore", lambda fileDoc: object())
         monkeypatch.setattr(
             module, "columnsFor", lambda store, kwargs: {"CD3E": object()}

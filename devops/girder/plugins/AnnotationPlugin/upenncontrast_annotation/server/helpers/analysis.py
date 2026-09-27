@@ -587,11 +587,22 @@ def resolve_gate_ids(docs, values_by_id, plot):
     return [docs[i]["id"] for i in np.flatnonzero(inside)]
 
 
+def finite_or_none(value):
+    """`value` as a float, or None when it is missing or not finite. JSON
+    (and Girder's `allow_nan=False` encoder) cannot carry NaN or Infinity, so
+    a statistic that overflowed must not reach a response."""
+    if value is None:
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
 def describe_values(values):
-    """count/mean/std/min/max of the finite numeric entries of `values`, with
-    the selection summary's reading: non-numbers and NaN are missing, `std` is
-    the sample standard deviation (None below two values), everything None at
-    count 0."""
+    """count/mean/std/min/max of the numeric entries of `values`, with the
+    selection summary's reading: non-numbers and NaN are missing, Infinity is
+    a value, `std` is the sample standard deviation (None below two values),
+    everything None at count 0. A statistic that comes out non-finite (an
+    Infinity value, or an overflow) is None: JSON cannot carry it."""
     numbers = np.array([
         float(value) for value in values
         if isinstance(value, (int, float)) and not isinstance(value, bool)
@@ -601,10 +612,13 @@ def describe_values(values):
     if count == 0:
         return {"count": 0, "mean": None, "std": None,
                 "min": None, "max": None}
+    with np.errstate(over="ignore", invalid="ignore"):
+        mean = numbers.mean()
+        std = numbers.std(ddof=1) if count > 1 else None
     return {
         "count": count,
-        "mean": float(numbers.mean()),
-        "std": float(numbers.std(ddof=1)) if count > 1 else None,
-        "min": float(numbers.min()),
-        "max": float(numbers.max()),
+        "mean": finite_or_none(mean),
+        "std": finite_or_none(std),
+        "min": finite_or_none(numbers.min()),
+        "max": finite_or_none(numbers.max()),
     }

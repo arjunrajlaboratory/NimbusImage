@@ -97,6 +97,40 @@ describe("DifferentialExpressionDialog", () => {
     expect(vm.running).toBe(false);
   });
 
+  it("drops a finished table when group B or the method changes", async () => {
+    mocks.fetchJob.mockResolvedValue({
+      _id: "j1",
+      status: 3,
+      spatialResult: RESULT,
+    });
+    const wrapper = await openDialog();
+    const vm = wrapper.vm as any;
+    const finish = async () => {
+      await vm.run();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(vm.result).toEqual(RESULT);
+    };
+    await finish();
+    vm.method = "wilcoxon";
+    await nextTick();
+    expect(vm.result).toBeNull();
+    await finish();
+    vm.groupB = "tag";
+    await nextTick();
+    expect(vm.result).toBeNull();
+    vm.groupBTags = ["Endothelial Cell"];
+    await finish();
+    vm.groupBTags = ["Endothelial Cell", "B Cell"];
+    await nextTick();
+    expect(vm.result).toBeNull();
+    // Inputs are locked mid-run; a change then does not clear anything.
+    vm.result = RESULT;
+    vm.running = true;
+    vm.method = "welch";
+    await nextTick();
+    expect(vm.result).toEqual(RESULT);
+  });
+
   it("sends the picked tags as group B and refuses to run without any", async () => {
     const wrapper = await openDialog();
     const vm = wrapper.vm as any;

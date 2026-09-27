@@ -27,6 +27,9 @@ export interface ITranscriptDensityUrlOptions {
   maxLevel: number;
   color: string;
   authToken?: string | null;
+  // Identity of the transcript registration (item, pixel size, transform):
+  // tiles are cached for an hour, so re-registering must change the URL.
+  registration?: string;
 }
 
 // Client for the upenncontrast_spatial plugin: a dataset's expression table
@@ -299,6 +302,9 @@ export default class SpatialAPI {
     url.searchParams.set("tileSize", options.tileSize.toString());
     url.searchParams.set("maxLevel", options.maxLevel.toString());
     url.searchParams.set("color", options.color);
+    if (options.registration) {
+      url.searchParams.set("v", options.registration);
+    }
     if (options.authToken) {
       url.searchParams.set("token", options.authToken);
     }

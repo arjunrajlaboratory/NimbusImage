@@ -235,10 +235,9 @@ def compute(datasetId, radius, excludeTags, propertyId, onProgress):
             chunk.append(values)
         return chunk
 
-    # The previous run on this property, read before this one replaces it.
-    previous = (DatasetSpatial().forDataset(datasetId) or {}).get(
-        "neighborhood"
-    ) or {}
+    # The previous run on THIS property (other properties' runs may have
+    # come since), read before this one replaces it.
+    previousTypes = DatasetSpatial().neighborhoodTypes(datasetId, propertyId)
     written = writeCellValues(
         datasetId, propertyId, ids, subValuesFor,
         lambda current, total: onProgress("values", current, total),
@@ -248,16 +247,15 @@ def compute(datasetId, radius, excludeTags, propertyId, onProgress):
     # fraction on every cell. Unset exactly those keys, and only once every
     # new value is written: a failed run keeps the previous result, and any
     # other sub-keys stored under the same property are left alone.
-    if previous.get("propertyId") == str(propertyId):
-        retired = set(previous.get("types", [])) - set(names)
-        if retired:
-            AnnotationPropertyValues().update(
-                {"datasetId": datasetId},
-                {"$unset": {
-                    "values.%s.%s" % (propertyId, name): ""
-                    for name in retired
-                }},
-            )
+    retired = set(previousTypes) - set(names)
+    if retired:
+        AnnotationPropertyValues().update(
+            {"datasetId": datasetId},
+            {"$unset": {
+                "values.%s.%s" % (propertyId, name): ""
+                for name in retired
+            }},
+        )
     return {
         "radius": radius,
         "excludeTags": list(excludeTags),

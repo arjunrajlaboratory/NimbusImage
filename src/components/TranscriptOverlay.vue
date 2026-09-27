@@ -234,6 +234,15 @@ function restylePoints() {
   }
 }
 
+function registrationKey(): string {
+  const schema = transcriptsStore.schema;
+  if (!schema) {
+    return "";
+  }
+  const transform = schema.transform ? schema.transform.flat().join(",") : "";
+  return `${schema.itemId}:${schema.pixelSize}:${transform}`;
+}
+
 function showDensity(datasetId: string) {
   pruneDensityLayers();
   const shown = new Set<string>();
@@ -248,6 +257,7 @@ function showDensity(datasetId: string) {
       maxLevel: props.maxLevel,
       color: gene.color,
       authToken: store.shareLinkTileToken,
+      registration: registrationKey(),
     });
     if (template !== entry.template) {
       entry.template = template;

@@ -147,12 +147,37 @@ class TestAnnotationSummary:
         assert statsByPath(resp.json)["p.Area"]["mean"] == 15
 
     def testNaNIsMissingButInfinityIsAValue(self, admin, server):
-        """The user's rule: NaN counts as no value, Infinity is a number."""
+        """NaN counts as no value; Infinity is a value (the user's decision,
+        SELECTION_SUMMARY.md). A statistic an Infinity makes non-finite is
+        null — a JSON body's `1e999` parses to Infinity and is stored, and
+        Girder's encoder refuses Infinity/NaN (a 500 before)."""
         folder = utilities.createFolder(
             admin, "ds", upenn_utilities.datasetMetadata
         )
         pv = AnnotationPropertyValues()
-        for area in (5, float("nan"), 15):
+        for area in (5, float("nan"), float("inf"), 15):
+            a = makeAnnotation(folder["_id"], ["A"])
+            pv.appendValues(
+                {"p": {"Area": area}}, a["_id"], folder["_id"]
+            )
+        resp = postSummary(server, admin, {
+            "datasetId": str(folder["_id"]),
+            "propertyPaths": [["p", "Area"]],
+        })
+        assertStatusOk(resp)
+        area = statsByPath(resp.json)["p.Area"]
+        assert area["count"] == 3
+        assert area["min"] == 5
+        assert area["max"] is None and area["mean"] is None
+
+    def testOverflowingStatisticIsNone(self, admin, server):
+        """Finite values whose mean overflows the float range: the
+        statistic is None rather than an unserializable Infinity."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        for area in (1.7e308, 1.7e308):
             a = makeAnnotation(folder["_id"], ["A"])
             pv.appendValues(
                 {"p": {"Area": area}}, a["_id"], folder["_id"]
@@ -164,18 +189,9 @@ class TestAnnotationSummary:
         assertStatusOk(resp)
         area = statsByPath(resp.json)["p.Area"]
         assert area["count"] == 2
-        assert area["mean"] == 10
-        # Infinity survives the aggregation (serialization of the response
-        # is the client's concern; JSON ingestion cannot produce it).
-        inf = makeAnnotation(folder["_id"], ["A"])
-        pv.appendValues(
-            {"p": {"Area": float("inf")}}, inf["_id"], folder["_id"]
-        )
-        stats = Annotation().summarize(
-            folder["_id"], {}, [["p", "Area"]]
-        )["properties"][0]
-        assert stats["count"] == 3
-        assert stats["max"] == float("inf")
+        assert area["max"] == 1.7e308
+        for key in ("mean", "std"):
+            assert area[key] is None or math.isfinite(area[key])
 
     def testMajorityMatchUsesComplementAndStaysCorrect(self, admin, server):
         """A filter keeping most of the dataset is expressed as $nin of the

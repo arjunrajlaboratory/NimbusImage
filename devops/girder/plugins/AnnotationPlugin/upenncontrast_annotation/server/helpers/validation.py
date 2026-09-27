@@ -414,6 +414,8 @@ def validateAnalysisHistogramRequest(body):
     }
     upstream = requireList(body.get("upstreamGates", []), "upstreamGates")
     requireCountWithin(len(upstream), MAX_ANALYSIS_PLOTS, "upstreamGates")
+    # Optional: the model reads it, so an omitted field is stored as [].
+    body["upstreamGates"] = upstream
     for gatePlot in upstream:
         if not isinstance(gatePlot, dict):
             raise RestException(

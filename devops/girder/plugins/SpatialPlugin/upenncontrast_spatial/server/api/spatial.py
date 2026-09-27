@@ -211,7 +211,12 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
         invalidateStore(files[0]["_id"])
         try:
             store = openStore(files[0])
-        except (ValueError, KeyError, OSError, zipfile.BadZipFile) as exc:
+            store.requireFiniteValues()
+        except (
+            ValueError, KeyError, IndexError, TypeError, OSError,
+            zipfile.BadZipFile,
+        ) as exc:
+            invalidateStore(files[0]["_id"])
             raise RestException(
                 "Not a readable spatial store: %s" % exc, code=400
             )
@@ -362,6 +367,15 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
         entry, store = self._openStore(datasetId)
         body = requireObjectBody(self.getBodyJson())
         symbols = self._requireSymbols(store, body.get("features"))
+        # Each symbol becomes a sub-key, like score's `name`: a dotted one is
+        # stored literally but read back as a path, so its values would be
+        # invisible, and `$` is refused by the reads that address it.
+        unsafe = [s for s in symbols if "." in s or "$" in s]
+        if unsafe:
+            raise RestException(
+                "features written as sub-values cannot contain '.' or '$' "
+                "(%s)" % ", ".join(unsafe), code=400,
+            )
         propertyName = self._requirePropertyName(
             body.get("propertyName"), DEFAULT_PROPERTY_NAME
         )
@@ -474,7 +488,9 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
                "The ranked table lands on the job document as `spatialResult` "
                "({nA, nB, featuresTested, features: [{symbol, meanA, "
                "meanB, fractionA, fractionB, log2FoldChange, t, "
-               "pValue}]}); poll GET job/{jobId}.")
+               "pValue}]}; log2FoldChange is null where a pseudocounted "
+               "mean is not positive, as in a scaled table); poll GET "
+               "job/{jobId}.")
         .param("datasetId", "The dataset (folder) id", paramType="path")
         .param("body", "JSON: {filtersA, filtersB?, maxFeatures?, method?}",
                paramType="body")

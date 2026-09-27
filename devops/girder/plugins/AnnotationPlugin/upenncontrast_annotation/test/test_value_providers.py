@@ -233,6 +233,135 @@ class TestValueProviders:
                                              PREFIX: {"x": 0}}
         assert byId[str(anns[2]["_id"])] == {PREFIX: {"x": 20}}
 
+    def _postCsv(self, server, admin, body):
+        return server.request(
+            path="/export/csv", method="POST", user=admin,
+            body=json.dumps(body), type="application/json", isJson=False,
+        )
+
+    def testCsvExportFillsVirtualColumns(self, admin, server, provider):
+        folder, anns = self._setup(admin, provider)
+        resp = self._postCsv(server, admin, {
+            "datasetId": str(folder["_id"]),
+            "propertyPaths": [[PREFIX, "x"]],
+        })
+        assertStatusOk(resp)
+        lines = b"".join(resp.body).decode().splitlines()
+        header = lines[0].split(",")
+        assert header[-1] == PREFIX + " / x"
+        byId = {
+            line.split(",")[0].strip('"'): line.split(",")[-1]
+            for line in lines[1:]
+        }
+        assert byId == {
+            str(a["_id"]): str(10 * i) for i, a in enumerate(anns)
+        }
+        # One provider call for the whole export, not one per row.
+        assert provider.calls == ["values"]
+
+        # A subset asks the provider for exactly those ids; an annotation
+        # the provider has no row for is the undefined value.
+        provider.order = provider.order[:3]
+        resp = self._postCsv(server, admin, {
+            "datasetId": str(folder["_id"]),
+            "propertyPaths": [[PREFIX, "x"]],
+            "annotationIds": [str(anns[2]["_id"]), str(anns[3]["_id"])],
+            "undefinedValue": "NA",
+            "sanitizeColumnNames": True,
+        })
+        assertStatusOk(resp)
+        lines = b"".join(resp.body).decode().splitlines()
+        assert lines[0].split(",")[-1] == PREFIX + "_x"
+        assert sorted(line.split(",")[-1] for line in lines[1:]) == [
+            "20", "NA",
+        ]
+
+        # An unknown virtual key is a 400 before streaming starts.
+        resp = self._postCsv(server, admin, {
+            "datasetId": str(folder["_id"]),
+            "propertyPaths": [[PREFIX, "nope"]],
+        })
+        assertStatus(resp, 400)
+
+    def testHistogramHonoursVirtualFilter(self, admin, server, provider):
+        folder, anns = self._setup(admin, provider)
+        body = {
+            "datasetId": str(folder["_id"]),
+            "xAxis": {"type": "property", "path": [PREFIX, "x"]},
+            "yAxis": {"type": "property", "path": [PREFIX, "x"]},
+            "xCategories": None,
+            "yCategories": None,
+            "bins": {"x": 2, "y": 2},
+            "upstreamGates": [],
+            "filters": {"propertyFilters": [
+                {"path": [PREFIX, "x"], "mode": "range", "min": 15},
+            ]},
+            "gate": None,
+            "sample": {"size": 100, "colorBy": None},
+        }
+        resp = postList(
+            server, admin, "/upenn_annotation/analysis/histogram2d", body
+        )
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        # x = 20 and 30 pass the gene-style range filter.
+        assert result["inputCount"] == 2
+        assert result["plottedCount"] == 2
+        assert result["sample"]["total"] == 2
+        body["filters"] = {"propertyFilters": [
+            {"path": [PREFIX, "nope"], "mode": "range", "min": 15},
+        ]}
+        resp = postList(
+            server, admin, "/upenn_annotation/analysis/histogram2d", body
+        )
+        assertStatus(resp, 400)
+
+    def testBatchUnknownVirtualKeyIs400(self, admin, server, provider):
+        folder, anns = self._setup(admin, provider)
+        resp = server.request(
+            path="/annotation_property_values/batch", method="POST",
+            user=admin, type="application/json",
+            body=json.dumps({
+                "datasetId": str(folder["_id"]),
+                "annotationIds": [str(anns[0]["_id"])],
+                "propertyPaths": [[PREFIX, "nope"]],
+            }),
+        )
+        assertStatus(resp, 400)
+
+    def testSummaryVirtualInfinityIsAValueWithNullStatistics(
+        self, admin, server, provider
+    ):
+        folder, anns = self._setup(admin, provider)
+        values = {
+            provider.order[0]: 5, provider.order[1]: float("inf"),
+            provider.order[2]: float("nan"), provider.order[3]: 15,
+        }
+        provider.values = lambda datasetId, path: values
+        resp = postList(server, admin, "/upenn_annotation/summary", {
+            "datasetId": str(folder["_id"]),
+            "propertyPaths": [[PREFIX, "x"]],
+        })
+        assertStatusOk(resp)
+        stats = parseStreaming(resp)["properties"][0]
+        assert stats["count"] == 3
+        assert stats["min"] == 5
+        assert stats["max"] is None and stats["mean"] is None
+
+    def testSummaryRefusesBadPathsBeforeResolvingFilters(
+        self, admin, server, provider
+    ):
+        folder, anns = self._setup(admin, provider)
+        resp = postList(server, admin, "/upenn_annotation/summary", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": [
+                {"path": [PREFIX, "x"], "mode": "range", "min": 15},
+            ]},
+            "propertyPaths": [["p", "$where"]],
+        })
+        assertStatus(resp, 400)
+        assert provider.calls == []
+
     def testStoredPathsUntouchedWithoutProviders(self, admin, server):
         """No provider registered: the model treats every path as stored."""
         assert valueProviders.providerFor(["p", "Area"]) is None
