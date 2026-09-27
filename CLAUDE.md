@@ -152,7 +152,7 @@ Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names
 | `/api/v1/history` | `server/api/history.py` | Undo/redo history |
 | `/api/v1/user_assetstore` | `server/api/user_assetstore.py` | Per-user storage |
 | `/api/v1/user_colors` | `server/api/user_colors.py` | User color preferences |
-| `/api/v1/export` | `server/api/export.py` | JSON/CSV export |
+| `/api/v1/export` | `server/api/export.py` | JSON/CSV/GeoJSON export (see `codebaseDocumentation/ANNOTATION_IMPORT_EXPORT.md`) |
 | `/api/v1/annotation_import` | `server/api/dataImport.py` | Server-side JSON import (annotations, connections, property values) |
 | `/api/v1/project` | `server/api/project.py` | Project management |
 | `/api/v1/resource` | `server/api/resource.py` | Custom resource search |

@@ -58,7 +58,18 @@ python $S/xenium_upload_cell_types.py --bundle-dir extracted --cell-types cell_t
 # 9. Whole matrix as a spatial table, and the molecules as an overlay (§7b, §7c)
 python $S/xenium_build_spatial_store.py --bundle-dir extracted --dataset $MORPH --ids ids_morph.npy
 python $S/xenium_register_transcripts.py --bundle-dir extracted --dataset $MORPH
+# 10. Pathology regions (a *_annotation.geojson, drawn in H&E pixels) as tagged polygons
+python $S/xenium_upload_regions.py --geojson annotation.geojson --dataset $MORPH \
+       --frame he --target morphology --alignment he_align.csv
+python $S/xenium_upload_regions.py --geojson annotation.geojson --dataset $HE --frame he --target he
 ```
+
+Protein panels (XOA 4 "Protein" bundles) quantify antibodies in the same matrix
+(`feature_type` "protein"); the table builder keeps them as features named
+`<name> (protein)` — several share a gene's name (CD3E, CD4, CD68, …) and symbols must be
+unique. Worked example: FFPE Human Kidney RCC protein bundle, 465,534 cells, 405 genes +
+27 proteins, 35 morphology channels, 77M molecules; the region summary over its 9
+pathology regions takes ~11 s.
 
 Run every upload script with `--limit 2000` first and look at the result in the viewer.
 

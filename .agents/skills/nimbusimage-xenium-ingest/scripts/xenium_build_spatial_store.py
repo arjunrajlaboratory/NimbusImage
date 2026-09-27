@@ -52,8 +52,16 @@ from xenium_upload_properties import decode_cell_groups  # sibling script
 SCHEMA_VERSION = 1
 
 
+# A protein panel (XOA 4 "Protein" bundles) quantifies antibodies per cell in
+# the same matrix, feature_type "protein". They go into the table as features
+# of their own, named "<key> (protein)": several share a gene's name (CD3E,
+# CD4, CD68, ...) and symbols must be unique.
+PROTEIN_SUFFIX = " (protein)"
+
+
 def load_counts(bundle_dir: Path):
-    """(csc cells x genes float32, symbols, gene_ids) for feature_type == gene.
+    """(csc cells x features float32, symbols, feature_ids, feature_types) for
+    feature_type gene and protein.
 
     The 10x matrix is gene-major CSR (row = feature, indices = cell). Read as
     (data, indices, indptr) with shape (cells, genes) it IS the cells x genes CSC
@@ -69,10 +77,15 @@ def load_counts(bundle_dir: Path):
          matrix["indptr"][:].astype(np.int64)),
         shape=(n_cells, n_features),
     )
-    is_gene = np.flatnonzero(types == "gene")
-    symbols = np.asarray(attrs["feature_keys"])[is_gene]
-    gene_ids = np.asarray(attrs["feature_ids"])[is_gene]
-    return csc[:, is_gene], [str(s) for s in symbols], [str(g) for g in gene_ids]
+    keep = np.flatnonzero((types == "gene") | (types == "protein"))
+    keys = np.asarray(attrs["feature_keys"])[keep]
+    kinds = [str(t) for t in types[keep]]
+    symbols = [
+        str(key) + (PROTEIN_SUFFIX if kind == "protein" else "")
+        for key, kind in zip(keys, kinds)
+    ]
+    feature_ids = [str(f) for f in np.asarray(attrs["feature_ids"])[keep]]
+    return csc[:, keep], symbols, feature_ids, kinds
 
 
 def load_cell_types(cells_zarr: Path, cell_types_csv: Path, n_cells: int) -> list[str | None]:
@@ -105,10 +118,13 @@ def main() -> int:
                         help="H&E alignment csv, needed to VERIFY ids on the H&E dataset")
     parser.add_argument("--cell-types", type=Path, default=None, help="*_cell_types.csv")
     parser.add_argument("--umap", type=Path, default=None, help="umap_xy.npy")
-    parser.add_argument("--out", type=Path, default=Path("spatial.zarr.zip"))
+    parser.add_argument("--out", type=Path, default=None,
+                        help="default: <bundle-dir>/spatial.zarr.zip")
     parser.add_argument("--no-upload", action="store_true",
                         help="build the file only; do not upload or register")
     args = parser.parse_args()
+    if args.out is None:
+        args.out = args.bundle_dir / "spatial.zarr.zip"
 
     import anndata as ad
     import pandas as pd
@@ -128,9 +144,12 @@ def main() -> int:
     if not with_annotation.all():
         log(f"  dropping {int((~with_annotation).sum())} cells without an annotation")
 
-    counts, symbols, gene_ids = load_counts(args.bundle_dir)
+    counts, symbols, gene_ids, feature_types = load_counts(args.bundle_dir)
     counts = counts[np.flatnonzero(with_annotation)]
-    log(f"  counts: {counts.shape[0]:,} cells x {counts.shape[1]:,} genes, "
+    proteins = sum(kind == "protein" for kind in feature_types)
+    if proteins:
+        log(f"  including {proteins} protein features as '<name>{PROTEIN_SUFFIX}'")
+    log(f"  counts: {counts.shape[0]:,} cells x {counts.shape[1]:,} features, "
         f"nnz={counts.nnz:,} ({time.time() - started:.0f}s)")
 
     obs = pd.DataFrame(index=[str(i) for i in np.flatnonzero(with_annotation)])
@@ -146,7 +165,7 @@ def main() -> int:
 
     var = pd.DataFrame(index=pd.Index(symbols, name="symbol"))
     var["gene_id"] = gene_ids
-    var["feature_type"] = "gene"
+    var["feature_type"] = feature_types
 
     adata = ad.AnnData(X=counts, obs=obs, var=var)
     adata.layers["X_csr"] = counts.tocsr()

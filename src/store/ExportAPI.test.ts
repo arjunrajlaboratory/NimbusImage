@@ -66,6 +66,62 @@ describe("ExportAPI", () => {
     });
   });
 
+  describe("exportGeoJson", () => {
+    beforeEach(() => {
+      const mockBlob = new Blob(["{}"], { type: "application/geo+json" });
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(mockBlob),
+      });
+      global.URL.createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
+      global.URL.revokeObjectURL = vi.fn();
+    });
+
+    it("posts to export/geojson and downloads under the given name", async () => {
+      const { downloadToClient } = await import("@/utils/download");
+      await api.exportGeoJson({
+        datasetId: "ds1",
+        filename: "My data-annotations.geojson",
+      });
+
+      const [url, init] = (global.fetch as any).mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/v1/export/geojson");
+      expect(init.method).toBe("POST");
+      expect(init.headers["Girder-Token"]).toBe("test-token");
+      expect(JSON.parse(init.body)).toEqual({
+        datasetId: "ds1",
+        filename: "My data-annotations.geojson",
+      });
+      expect(downloadToClient).toHaveBeenCalledWith({
+        href: "blob:mock-url",
+        download: "My data-annotations.geojson",
+      });
+    });
+
+    it("omits annotationIds for everything, keeps an empty subset", async () => {
+      await api.exportGeoJson({ datasetId: "ds1" });
+      await api.exportGeoJson({ datasetId: "ds1", annotationIds: [] });
+      await api.exportGeoJson({ datasetId: "ds1", annotationIds: ["a"] });
+
+      const bodies = (global.fetch as any).mock.calls.map((call: any) =>
+        JSON.parse(call[1].body),
+      );
+      expect(bodies[0]).not.toHaveProperty("annotationIds");
+      expect(bodies[1].annotationIds).toEqual([]);
+      expect(bodies[2].annotationIds).toEqual(["a"]);
+    });
+
+    it("throws when the server refuses the export", async () => {
+      (global.fetch as any).mockResolvedValue({
+        ok: false,
+        statusText: "Bad Request",
+      });
+      await expect(api.exportGeoJson({ datasetId: "ds1" })).rejects.toThrow(
+        "GeoJSON export failed: Bad Request",
+      );
+    });
+  });
+
   describe("exportBulkCsv", () => {
     beforeEach(() => {
       // Mock fetch for exportCsv calls

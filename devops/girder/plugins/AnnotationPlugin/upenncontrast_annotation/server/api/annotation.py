@@ -51,7 +51,7 @@ from ..models.rasterFilter import (
     RasterFilter as RasterFilterModel,
     UnknownRasterFilter,
 )
-from ..helpers.serialization import orJsonDefaults
+from ..helpers.serialization import orJsonDefaults, streamJsonArray
 from ..helpers.annotationRaster import (
     COLOR_PATTERN,
     RasterBuildBusy,
@@ -133,27 +133,6 @@ def _parseRasterSelectors(value):
             -1 if selector.time is None else selector.time,
         ),
     ))
-
-
-def _streamJsonArray(items, prefix=b"[", suffix=b"]", default=None):
-    """Stream `items` as a JSON array, orjson-encoding each element and
-    wrapping them in `prefix`/`suffix` (so callers can embed the array inside
-    an enclosing object, e.g. {"total": N, "rows": [...]}). Returns a
-    generator suitable for a streamed response body."""
-    def generate():
-        chunk = [prefix]
-        first = True
-        for item in items:
-            if not first:
-                chunk.append(b",")
-            chunk.append(orjson.dumps(item, default=default))
-            first = False
-            if len(chunk) > 1000:
-                yield b"".join(chunk)
-                chunk = []
-        chunk.append(suffix)
-        yield b"".join(chunk)
-    return generate
 
 
 def getDatasetIdFromAnnotationInBody(self: "Annotation", *args, **kwargs):
@@ -500,7 +479,7 @@ class Annotation(Resource):
         setResponseHeader("Content-Type", "application/json")
         if callable(getattr(cursor, 'count', None)):
             cherrypy.response.headers['Girder-Total-Count'] = cursor.count()
-        return _streamJsonArray(cursor, default=orJsonDefaults)
+        return streamJsonArray(cursor, default=orJsonDefaults)
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
@@ -816,7 +795,7 @@ class Annotation(Resource):
         )
 
         setResponseHeader("Content-Type", "application/json")
-        return _streamJsonArray(stubs, default=orJsonDefaults)
+        return streamJsonArray(stubs, default=orJsonDefaults)
 
     # GeoJS loads OSM tiles through <img> requests, which cannot attach the
     # Girder-Token header used by the REST client.  This read-only route must
@@ -1104,7 +1083,7 @@ class Annotation(Resource):
         )
 
         setResponseHeader("Content-Type", "application/json")
-        return _streamJsonArray(cursor, default=orJsonDefaults)
+        return streamJsonArray(cursor, default=orJsonDefaults)
 
     def _loadListRequest(self, withSortAndPaths=False):
         """Shared prologue of the filter-driven POST endpoints (list,
@@ -1173,7 +1152,7 @@ class Annotation(Resource):
 
         prefix = b'{"total":' + str(len(ids)).encode() + b',"ids":['
         setResponseHeader("Content-Type", "application/json")
-        return _streamJsonArray(ids, prefix=prefix, suffix=b"]}")
+        return streamJsonArray(ids, prefix=prefix, suffix=b"]}")
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -1342,6 +1321,6 @@ class Annotation(Resource):
             + b',"offset":' + encodedOffset + b',"rows":['
         )
         setResponseHeader("Content-Type", "application/json")
-        return _streamJsonArray(
+        return streamJsonArray(
             cursor, prefix=prefix, suffix=b"]}", default=orJsonDefaults
         )

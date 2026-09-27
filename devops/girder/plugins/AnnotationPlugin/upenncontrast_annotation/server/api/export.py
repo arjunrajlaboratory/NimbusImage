@@ -1,8 +1,9 @@
 """
-Export API for downloading annotation data as JSON or CSV.
+Export API for downloading annotation data as JSON, CSV, or GeoJSON.
 
 This endpoint exports annotations, connections, properties, and property
-values for a dataset.
+values for a dataset. The GeoJSON export carries geometry and tags only, in
+the pixel-coordinate convention QuPath uses (origin top-left, y down).
 """
 
 import orjson
@@ -27,7 +28,7 @@ from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from ..models.datasetView import DatasetView as DatasetViewModel
 from ..helpers import valueProviders
-from ..helpers.serialization import orJsonDefaults
+from ..helpers.serialization import orJsonDefaults, streamJsonArray
 from ..helpers.validation import (
     requireObjectId,
     validateAnnotationIdCount,
@@ -94,6 +95,67 @@ def _deduplicateColumnNames(names):
     return result
 
 
+# GeoJSON geometry type per annotation shape. A rectangle is stored as its
+# four corners, so it exports as a Polygon like any other closed shape.
+GEOJSON_GEOMETRY_TYPES = {
+    "point": "Point",
+    "line": "LineString",
+    "polygon": "Polygon",
+    "rectangle": "Polygon",
+}
+
+# Fewest vertices each geometry needs to be valid GeoJSON (a Polygon's ring
+# is counted before it is closed). An annotation with fewer is skipped rather
+# than written as a geometry other tools would reject.
+GEOJSON_MIN_VERTICES = {"Point": 1, "LineString": 2, "Polygon": 3}
+
+
+def annotationToGeoJsonFeature(annotation):
+    """Return a GeoJSON Feature for an annotation document, or None when its
+    shape has no GeoJSON equivalent or it has too few vertices.
+
+    Coordinates are image pixels, [x, y]; any z is dropped (the z-slice is
+    the annotation's location, not a coordinate). Polygon rings are closed,
+    as RFC 7946 requires. The properties follow QuPath's object layout so a
+    QuPath import reads the first tag as the object's class; `tags` keeps
+    every tag so a NimbusImage re-import is lossless."""
+    geometryType = GEOJSON_GEOMETRY_TYPES.get(annotation.get("shape"))
+    if geometryType is None:
+        return None
+    positions = [
+        [point["x"], point["y"]]
+        for point in annotation.get("coordinates") or []
+    ]
+    if len(positions) < GEOJSON_MIN_VERTICES[geometryType]:
+        return None
+
+    if geometryType == "Point":
+        coordinates = positions[0]
+    elif geometryType == "LineString":
+        coordinates = positions
+    else:
+        ring = positions.copy()
+        if ring[0] != ring[-1]:
+            ring.append(ring[0])
+        coordinates = [ring]
+
+    tags = [str(tag) for tag in annotation.get("tags") or []]
+    properties = {
+        "objectType": "annotation",
+        "name": annotation.get("name"),
+        "tags": tags,
+    }
+    if tags:
+        properties["classification"] = {"name": tags[0]}
+
+    return {
+        "type": "Feature",
+        "id": str(annotation["_id"]),
+        "geometry": {"type": geometryType, "coordinates": coordinates},
+        "properties": properties,
+    }
+
+
 class Export(Resource):
     """REST API resource for exporting annotation data."""
 
@@ -110,6 +172,7 @@ class Export(Resource):
 
         self.route("GET", ("json",), self.exportJson)
         self.route("POST", ("csv",), self.exportCsv)
+        self.route("POST", ("geojson",), self.exportGeoJson)
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
@@ -467,6 +530,94 @@ class Export(Resource):
             )
 
         return generate
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @autoDescribeRoute(
+        Description("Export dataset annotations as a GeoJSON collection")
+        .notes("""
+            Uses POST so a large annotation subset fits in the body. Each
+            annotation becomes one Feature in image pixel coordinates
+            (origin top-left, y down; QuPath's convention): polygons and
+            rectangles as Polygon (ring closed), lines as LineString, points
+            as Point. Properties are {objectType, name, tags,
+            classification: {name: <first tag>}}; classification is omitted
+            for an untagged annotation.
+        """)
+        .jsonParam(
+            "body",
+            "Export parameters",
+            paramType="body",
+            required=True,
+            schema={
+                "type": "object",
+                "properties": {
+                    "datasetId": {
+                        "type": "string",
+                        "description": "The dataset ID (required)"
+                    },
+                    "annotationIds": {
+                        "type": "array",
+                        "description": (
+                            "Annotation IDs to export. Omit for all "
+                            "annotations; an empty array exports none."
+                        ),
+                        "items": {"type": "string"}
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Filename for download",
+                        "default": "annotations.geojson"
+                    }
+                },
+                "required": ["datasetId"]
+            }
+        )
+        .errorResponse("Dataset not found or access denied", 404)
+    )
+    def exportGeoJson(self, body):
+        """Stream a dataset's annotations as a GeoJSON FeatureCollection.
+
+        `annotationIds` is three-state: absent exports every annotation, a
+        list exports exactly those, and an empty list exports an empty
+        collection without querying."""
+        datasetObjectId = requireObjectId(body.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetObjectId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True
+        )
+
+        # Convert every id here, at the boundary: the body streams lazily,
+        # so an InvalidId raised mid-stream could no longer become a 400.
+        annotationIds = body.get("annotationIds")
+        parsedAnnotationIds = None
+        if annotationIds is not None:
+            validateAnnotationIdCount(len(annotationIds))
+            parsedAnnotationIds = [
+                requireObjectId(aid, "annotationIds entry")
+                for aid in annotationIds
+            ]
+
+        filename = body.get("filename") or "annotations.geojson"
+        if not filename.endswith(".geojson"):
+            filename += ".geojson"
+        setResponseHeader("Content-Type", "application/geo+json")
+        setContentDisposition(filename, disposition="attachment")
+
+        features = (
+            feature
+            for feature in map(
+                annotationToGeoJsonFeature,
+                self._iterAnnotations(datasetObjectId, parsedAnnotationIds),
+            )
+            if feature is not None
+        )
+        return streamJsonArray(
+            features,
+            prefix=b'{"type":"FeatureCollection","features":[',
+            suffix=b"]}",
+        )
 
     def _getVirtualValues(self, datasetId, virtualPaths, annotationIds):
         """{annotationId(str): nested values} for the virtual paths, one

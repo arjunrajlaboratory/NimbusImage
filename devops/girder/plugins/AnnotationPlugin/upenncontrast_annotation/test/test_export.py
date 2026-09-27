@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 from pytest_girder.assertions import assertStatus, assertStatusOk
@@ -18,6 +19,7 @@ from upenncontrast_annotation.server.models.datasetView import (
 from upenncontrast_annotation.server.api.export import (
     Export,
     _deduplicateColumnNames,
+    annotationToGeoJsonFeature,
     sanitizeCsvColumnName,
 )
 
@@ -1012,3 +1014,206 @@ class TestCSVExport:
         )
         assert colName == "cell fibroblast Blob Metrics / Area"
         assert ',' not in colName
+
+
+# Shared with the frontend round-trip test (src/utils/geojson.test.ts): the
+# `annotations` are stored documents, `featureCollection` is what the export
+# writes for them. Python is the reference for the export half; regenerate
+# with UPDATE_GEOJSON_FIXTURE=1 and the TS parser must still read it back to
+# the same polygons and tags.
+GEOJSON_FIXTURE_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "geojson_round_trip.json"
+)
+
+
+def loadGeoJsonFixture():
+    with open(GEOJSON_FIXTURE_PATH) as fixtureFile:
+        return json.load(fixtureFile)
+
+
+def sampleGeoJsonAnnotation(**overrides):
+    annotation = {
+        "_id": "64b000000000000000000001",
+        "shape": "polygon",
+        "tags": ["Tumor"],
+        "name": "tumor 1",
+        "coordinates": [
+            {"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10},
+        ],
+    }
+    annotation.update(overrides)
+    return annotation
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestGeoJsonExport:
+    def testPolygonRingIsClosed(self, admin):
+        feature = annotationToGeoJsonFeature(sampleGeoJsonAnnotation())
+        assert feature == {
+            "type": "Feature",
+            "id": "64b000000000000000000001",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[0, 0], [10, 0], [10, 10], [0, 0]]],
+            },
+            "properties": {
+                "objectType": "annotation",
+                "name": "tumor 1",
+                "tags": ["Tumor"],
+                "classification": {"name": "Tumor"},
+            },
+        }
+
+    def testAlreadyClosedRingIsNotClosedTwice(self, admin):
+        feature = annotationToGeoJsonFeature(sampleGeoJsonAnnotation(
+            coordinates=[
+                {"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10},
+                {"x": 0, "y": 0},
+            ],
+        ))
+        assert feature["geometry"]["coordinates"] == [
+            [[0, 0], [10, 0], [10, 10], [0, 0]]
+        ]
+
+    def testShapesMapToGeometryTypes(self, admin):
+        def geometry(shape, coordinates):
+            return annotationToGeoJsonFeature(sampleGeoJsonAnnotation(
+                shape=shape, coordinates=coordinates,
+            ))["geometry"]
+
+        assert geometry("point", [{"x": 3, "y": 4, "z": 2}]) == {
+            "type": "Point", "coordinates": [3, 4],
+        }
+        assert geometry(
+            "line", [{"x": 1, "y": 2}, {"x": 3, "y": 4, "z": 1}]
+        ) == {"type": "LineString", "coordinates": [[1, 2], [3, 4]]}
+        rectangle = geometry("rectangle", [
+            {"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 5},
+            {"x": 0, "y": 5},
+        ])
+        assert rectangle == {
+            "type": "Polygon",
+            "coordinates": [[[0, 0], [5, 0], [5, 5], [0, 5], [0, 0]]],
+        }
+
+    def testClassificationOnlyWhenTagged(self, admin):
+        feature = annotationToGeoJsonFeature(
+            sampleGeoJsonAnnotation(tags=[], name=None)
+        )
+        assert feature["properties"] == {
+            "objectType": "annotation", "name": None, "tags": [],
+        }
+        tagged = annotationToGeoJsonFeature(
+            sampleGeoJsonAnnotation(tags=["Stroma", "region"])
+        )
+        assert tagged["properties"]["classification"] == {"name": "Stroma"}
+        assert tagged["properties"]["tags"] == ["Stroma", "region"]
+
+    def testDegenerateAnnotationsAreSkipped(self, admin):
+        assert annotationToGeoJsonFeature(sampleGeoJsonAnnotation(
+            coordinates=[{"x": 0, "y": 0}, {"x": 1, "y": 1}],
+        )) is None
+        assert annotationToGeoJsonFeature(sampleGeoJsonAnnotation(
+            shape="line", coordinates=[{"x": 0, "y": 0}],
+        )) is None
+        assert annotationToGeoJsonFeature(
+            sampleGeoJsonAnnotation(shape="circle")
+        ) is None
+
+    def testFeaturesMatchRoundTripFixture(self, admin):
+        fixture = loadGeoJsonFixture()
+        features = [
+            feature for feature in map(
+                annotationToGeoJsonFeature, fixture["annotations"]
+            )
+            if feature is not None
+        ]
+        generated = {"type": "FeatureCollection", "features": features}
+        if os.environ.get("UPDATE_GEOJSON_FIXTURE"):
+            fixture["featureCollection"] = generated
+            with open(GEOJSON_FIXTURE_PATH, "w") as fixtureFile:
+                json.dump(fixture, fixtureFile, indent=2)
+                fixtureFile.write("\n")
+        assert generated == fixture["featureCollection"]
+
+    def _postGeoJson(self, server, user, body):
+        return server.request(
+            path="/export/geojson",
+            method="POST",
+            user=user,
+            body=json.dumps(body),
+            type="application/json",
+            isJson=False,
+        )
+
+    def _exportedFeatures(self, server, user, body):
+        response = self._postGeoJson(server, user, body)
+        assertStatusOk(response)
+        collection = json.loads(b"".join(response.body))
+        assert collection["type"] == "FeatureCollection"
+        return collection["features"]
+
+    def testEndpointStreamsFeatureCollection(self, admin, server):
+        dataset, annotations, _ = createDatasetWithData(admin)
+        features = self._exportedFeatures(
+            server, admin, {"datasetId": str(dataset["_id"])}
+        )
+        stored = {
+            str(ann["_id"]): ann
+            for ann in Annotation().find({"datasetId": dataset["_id"]})
+        }
+        assert {f["id"] for f in features} == set(stored)
+        for feature in features:
+            assert feature == annotationToGeoJsonFeature(
+                stored[feature["id"]]
+            )
+
+    def testEndpointPreservesExactAnnotationSubset(self, admin, server):
+        """Absent exports all, a list exactly those, empty none."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+        datasetId = str(dataset["_id"])
+        picked = str(annotations[0]["_id"])
+
+        def exportedIds(**extra):
+            return [
+                feature["id"] for feature in self._exportedFeatures(
+                    server, admin, {"datasetId": datasetId, **extra}
+                )
+            ]
+
+        assert len(exportedIds()) == 2
+        assert exportedIds(annotationIds=[picked]) == [picked]
+        assert exportedIds(annotationIds=[]) == []
+
+    def testEndpointRejectsMalformedInput(self, admin, server):
+        dataset, _, _ = createDatasetWithData(admin)
+        datasetId = str(dataset["_id"])
+        for body in (
+            {},
+            {"datasetId": "nope"},
+            {"datasetId": 5},
+            {"datasetId": datasetId, "annotationIds": False},
+            {"datasetId": datasetId, "annotationIds": ["nope"]},
+            {"datasetId": datasetId, "annotationIds": [5]},
+        ):
+            assertStatus(self._postGeoJson(server, admin, body), 400)
+
+    def testEndpointCapsAnnotationIdCount(self, admin, server, monkeypatch):
+        from upenncontrast_annotation.server.helpers import validation
+        monkeypatch.setattr(validation, "MAX_ANNOTATION_IDS", 1)
+        dataset, annotations, _ = createDatasetWithData(admin)
+        response = self._postGeoJson(server, admin, {
+            "datasetId": str(dataset["_id"]),
+            "annotationIds": [str(a["_id"]) for a in annotations],
+        })
+        assertStatus(response, 400)
+
+    def testEndpointRequiresReadAccess(self, admin, user, server):
+        dataset = utilities.createPrivateFolder(
+            admin, "private_geojson", upenn_utilities.datasetMetadata
+        )
+        response = self._postGeoJson(
+            server, user, {"datasetId": str(dataset["_id"])}
+        )
+        assertStatus(response, 403)

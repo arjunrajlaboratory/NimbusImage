@@ -1,5 +1,6 @@
 import math
 
+import orjson
 from bson import ObjectId
 
 
@@ -36,3 +37,24 @@ def jsonSafe(value):
     if hasattr(value, "__next__"):  # a cursor or generator: materialize
         return [jsonSafe(item) for item in value]
     return value
+
+
+def streamJsonArray(items, prefix=b"[", suffix=b"]", default=None):
+    """Stream `items` as a JSON array, orjson-encoding each element and
+    wrapping them in `prefix`/`suffix` (so callers can embed the array inside
+    an enclosing object, e.g. {"total": N, "rows": [...]}). Returns a
+    generator suitable for a streamed response body."""
+    def generate():
+        chunk = [prefix]
+        first = True
+        for item in items:
+            if not first:
+                chunk.append(b",")
+            chunk.append(orjson.dumps(item, default=default))
+            first = False
+            if len(chunk) > 1000:
+                yield b"".join(chunk)
+                chunk = []
+        chunk.append(suffix)
+        yield b"".join(chunk)
+    return generate
