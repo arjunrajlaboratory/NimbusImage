@@ -96,7 +96,8 @@ def _deduplicateColumnNames(names):
 
 
 # GeoJSON geometry type per annotation shape. A rectangle is stored as its
-# four corners, so it exports as a Polygon like any other closed shape.
+# four corners (or, as the schema also allows, two opposite ones) and exports
+# as a Polygon like any other closed shape.
 GEOJSON_GEOMETRY_TYPES = {
     "point": "Point",
     "line": "LineString",
@@ -126,6 +127,9 @@ def annotationToGeoJsonFeature(annotation):
         [point["x"], point["y"]]
         for point in annotation.get("coordinates") or []
     ]
+    if annotation.get("shape") == "rectangle" and len(positions) == 2:
+        (x0, y0), (x1, y1) = positions
+        positions = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
     if len(positions) < GEOJSON_MIN_VERTICES[geometryType]:
         return None
 

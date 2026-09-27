@@ -1076,6 +1076,18 @@ class TestGeoJsonExport:
             [[0, 0], [10, 0], [10, 10], [0, 0]]
         ]
 
+    def testTwoCornerRectangleExpandsToFourCorners(self, admin):
+        # The schema also stores a rectangle as two opposite corners; it
+        # must export as its full ring, not be dropped as too short.
+        feature = annotationToGeoJsonFeature(sampleGeoJsonAnnotation(
+            shape="rectangle",
+            coordinates=[{"x": 1, "y": 2}, {"x": 5, "y": 8}],
+        ))
+        assert feature["geometry"] == {
+            "type": "Polygon",
+            "coordinates": [[[1, 2], [5, 2], [5, 8], [1, 8], [1, 2]]],
+        }
+
     def testShapesMapToGeometryTypes(self, admin):
         def geometry(shape, coordinates):
             return annotationToGeoJsonFeature(sampleGeoJsonAnnotation(

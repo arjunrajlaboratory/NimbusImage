@@ -205,8 +205,9 @@ class SpatialAccessor:
     def virtual_path(self, symbol: str) -> list[str]:
         """The property path that reads ``symbol`` straight from the table
         (no materialization): usable wherever a property path is accepted —
-        filters, analysis axes, color-by, and displayed columns. CSV export
-        requires copying the gene into a measurement with ``materialize``."""
+        filters, analysis axes, color-by, displayed columns, and
+        ``ds.export.to_csv(property_paths=[ds.spatial.virtual_path("CD3E")])``
+        (no need to ``materialize`` first)."""
         return ["spatial", symbol]
 
     # --- transcripts (per-molecule store) ---

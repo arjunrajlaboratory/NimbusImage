@@ -48,7 +48,7 @@ This is for bringing pathology region layers in (QuPath exports, 10x's `*_annota
 - **`annotationIds` has three states.** Absent means all annotations. A list means exactly those. An empty list means none, and returns an empty collection without a query.
 - **Checks.** READ access on the dataset. Every id is converted at the boundary, so a bad id is a 400, never a failure mid-stream. The id count is capped by `MAX_ANNOTATION_IDS` (`validateAnnotationIdCount`), as in the CSV export.
 - **Features.** `annotationToGeoJsonFeature` builds each one:
-  - Geometry: polygon and rectangle become Polygon (ring closed), line becomes LineString, point becomes Point. Coordinates are `[x, y]`.
+  - Geometry: polygon and rectangle become Polygon (ring closed; a two-corner rectangle is expanded to its four corners), line becomes LineString, point becomes Point. Coordinates are `[x, y]`.
   - `id` is the annotation id.
   - `properties` is `{objectType: "annotation", name, tags, classification: {name: <first tag>}}`. `classification` is present only when the annotation has tags.
   - An annotation with too few vertices for a valid geometry is left out.
