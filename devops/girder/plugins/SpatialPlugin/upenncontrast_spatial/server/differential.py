@@ -23,7 +23,7 @@ from scipy import stats
 from upenncontrast_annotation.server.models.annotation import Annotation
 
 from .provider import requireFileInDataset
-from .store import openStore
+from .store import liveRowMask, openStore
 
 MAX_RESULT_FEATURES = 500
 DEFAULT_RESULT_FEATURES = 50
@@ -123,16 +123,19 @@ def wilcoxon(valuesA, valuesB, nA, nB):
 
 
 def differential(store, rowsA, rowsB, maxFeatures, onProgress=None,
-                 method="welch"):
+                 method="welch", population=None):
     """Ranked table for group A (row indices) vs group B (row indices, or
-    None for every other row). `method` is "welch" (t-test on means) or
-    "wilcoxon" (Mann-Whitney U on the count distributions)."""
+    None for every other row of `population`, a boolean row mask; None =
+    every row). `method` is "welch" (t-test on means) or "wilcoxon"
+    (Mann-Whitney U on the count distributions)."""
     if method not in METHODS:
         raise ValueError("method must be one of %s" % ", ".join(METHODS))
     maskA = np.zeros(store.nObs, dtype=bool)
     maskA[rowsA] = True
     if rowsB is None:
         maskB = ~maskA
+        if population is not None:
+            maskB &= population
     else:
         maskB = np.zeros(store.nObs, dtype=bool)
         maskB[rowsB] = True
@@ -222,6 +225,8 @@ def run(job):
             kwargs["maxFeatures"],
             onProgress,
             method=kwargs.get("method", "welch"),
+            # "The rest" is the rest of the live cells, not of the rows.
+            population=liveRowMask(Annotation(), datasetId, store),
         )
     except Exception as exc:
         # The job boundary: any failure must land in the job's status/log,

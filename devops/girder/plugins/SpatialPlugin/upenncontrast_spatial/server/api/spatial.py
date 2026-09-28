@@ -44,6 +44,7 @@ from ..provider import requireFileInDataset
 from ..store import (
     invalidateStore,
     liveAnnotationCount,
+    liveRowMask,
     openStore,
     registryEntry,
 )
@@ -138,8 +139,10 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
         return symbols
 
     def _rowsForFilters(self, datasetId, store, filters):
-        """Row indices matching a list-filter object (None = every row), plus
-        how many matching annotations have no row in the store."""
+        """Row indices matching a list-filter object, plus how many matching
+        annotations have no row in the store. None when the filter does not
+        narrow the dataset: the caller decides what "everything" is (the
+        live cells, `liveRowMask` — never every table row)."""
         validateListInputs(filters)
         dropNoOpPropertyFilters(filters)
         try:
@@ -341,6 +344,10 @@ class Spatial(TranscriptRoutes, VersionRoutes, AnalysisRoutes, Resource):
         symbols = self._requireSymbols(store, body.get("features"))
         filters = body.get("filters") or {}
         rows, unmatched = self._rowsForFilters(datasetId, store, filters)
+        if rows is None:  # "every cell" = the live ones, not every row
+            rows = np.flatnonzero(
+                liveRowMask(self._annotationModel, datasetId, store)
+            )
         result = store.aggregate(symbols, rows)
         result["unmatched"] = unmatched
         return result

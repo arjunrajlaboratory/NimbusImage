@@ -393,7 +393,45 @@ def registryEntry(datasetId, item, fileDoc, store):
     }
 
 
+_liveLock = threading.Lock()
+_liveMasks = OrderedDict()
+MAX_LIVE_MASKS = 8
+
+
+def liveRowMask(annotationModel, datasetId, store):
+    """Boolean per table row: does it still join to a live annotation of
+    this dataset? A table outlives edits — a deleted or moved cell keeps its
+    row until the table is recomputed — so every read that means "all cells"
+    goes through this, never through the raw rows. Cached per store and
+    raster version (bumped by every annotation mutation, and rotated every
+    120 s for writes seen by another process); ~1.5 s cold at 700K."""
+    from upenncontrast_annotation.server.helpers.annotationRaster import (
+        getRasterVersion,
+    )
+
+    key = (store.path, str(datasetId), getRasterVersion(datasetId))
+    with _liveLock:
+        mask = _liveMasks.get(key)
+        if mask is not None:
+            _liveMasks.move_to_end(key)
+            return mask
+    rows = store.rowsForAnnotationIds(
+        annotationModel.listIds(ObjectId(str(datasetId)), {})
+    )
+    mask = np.zeros(store.nObs, dtype=bool)
+    mask[rows[rows >= 0]] = True
+    # Shared by every caller for this version: an in-place `&=` on it would
+    # silently shrink the population for all later reads.
+    mask.setflags(write=False)
+    with _liveLock:
+        _liveMasks[key] = mask
+        while len(_liveMasks) > MAX_LIVE_MASKS:
+            _liveMasks.popitem(last=False)
+    return mask
+
+
 def liveAnnotationCount(annotationModel, datasetId, store):
     """How many rows still join to an annotation of this dataset."""
-    living = annotationModel.listIds(ObjectId(str(datasetId)), {})
-    return int(np.count_nonzero(store.rowsForAnnotationIds(living) >= 0))
+    return int(np.count_nonzero(
+        liveRowMask(annotationModel, datasetId, store)
+    ))

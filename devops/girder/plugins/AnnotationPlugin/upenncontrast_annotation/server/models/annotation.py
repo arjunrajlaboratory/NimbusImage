@@ -1633,6 +1633,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
         foundIds = set()
         updatedAnnotations = []
         movedSourceDatasetIds = set()
+        movedIdsByDestination = defaultdict(list)
         for annotation in cursor:
             annotationId = annotation["_id"]
             updateDoc = annotationIdToUpdate[annotationId]
@@ -1644,6 +1645,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 # This is the only path that moves an annotation between
                 # datasets; saveMany only bumps the destination raster.
                 movedSourceDatasetIds.add(annotation.get("datasetId"))
+                movedIdsByDestination[newDatasetId].append(annotationId)
             annotation.update(updateDoc)
             foundIds.add(annotationId)
             updatedAnnotations.append(annotation)
@@ -1652,6 +1654,15 @@ class Annotation(AccessControlMixin, ProxiedModel):
                 "Write access was denied for one or more annotations."
             )
         saved = self.saveMany(updatedAnnotations)
+        # A cell's measurements move with it: every reader scopes property
+        # values by datasetId, so values left under the source dataset
+        # would be counted there (summaries, histograms) for a cell it no
+        # longer has. Recorded like the move itself, so undo restores both.
+        for datasetId, annotationIds in movedIdsByDestination.items():
+            self._pvModel.update(
+                {"annotationId": {"$in": annotationIds}},
+                {"$set": {"datasetId": datasetId}},
+            )
         for datasetId in movedSourceDatasetIds:
             bumpDatasetRasterVersion(datasetId)
         return saved

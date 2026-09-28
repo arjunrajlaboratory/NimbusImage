@@ -11,9 +11,10 @@ from bson.objectid import ObjectId
 from girder.exceptions import AccessException
 from girder.models.file import File
 from girder.models.item import Item
+from upenncontrast_annotation.server.models.annotation import Annotation
 
 from .models.registry import DatasetSpatial
-from .store import numberFromNumpy, openStore
+from .store import liveRowMask, numberFromNumpy, openStore
 
 PREFIX = "spatial"
 
@@ -60,15 +61,18 @@ class SpatialValueProvider:
         return dense
 
     def values(self, datasetId, path):
+        """{annotationId: value} for every live cell (rows of deleted or
+        moved cells are left out: callers read this as "the dataset")."""
         store = storeForDataset(datasetId)
         if store is None:
             return {}
-        dense = self.denseColumn(store, symbolOf(path))
+        live = liveRowMask(Annotation(), datasetId, store)
+        dense = self.denseColumn(store, symbolOf(path))[live]
         integral = bool(np.all(dense == np.floor(dense)))
         cast = int if integral else float
         return {
             str(annotationId): cast(value)
-            for annotationId, value in zip(store.annotationIds, dense)
+            for annotationId, value in zip(store.annotationIds[live], dense)
         }
 
     def valuesForIds(self, datasetId, path, annotationIds):

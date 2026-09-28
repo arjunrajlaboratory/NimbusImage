@@ -118,6 +118,43 @@ class TestSpatialProvider(TestSpatial):
         assert stats["count"] == 3
         assert math.isclose(stats["mean"], 5 / 3)
 
+    def testEveryCellMeansTheLiveCellsNotTheTableRows(
+        self, admin, server, tmp_path, fsAssetstore
+    ):
+        """A table keeps the row of a deleted cell until it is recomputed.
+        Every read that means "all cells" — the unfiltered aggregate, an
+        unfiltered summary of a virtual path, differential's implicit
+        "everything else" — must count the live cells only."""
+        from upenncontrast_annotation.server.models.annotation import (
+            Annotation,
+        )
+        folder, annotations, item = self._setup(admin, tmp_path)
+        self._register(server, admin, folder, item)
+        Annotation().remove(annotations[5])
+        path = "/spatial/%s" % folder["_id"]
+
+        resp = request(server, admin, "POST", path + "/aggregate", body={
+            "features": ["CD3E"], "filters": {},
+        })
+        assertStatusOk(resp)
+        assert resp.json["total"] == 5
+
+        resp = postJson(server, admin, "/upenn_annotation/summary", {
+            "datasetId": str(folder["_id"]), "filters": {},
+            "propertyPaths": [["spatial", "CD3E"]],
+        })
+        assertStatusOk(resp)
+        assert streamed(resp)["properties"][0]["count"] == 5
+
+        resp = request(server, admin, "POST", path + "/differential", body={
+            "filtersA": {"tags": {"values": ["T"], "exclusive": False}},
+        })
+        assertStatusOk(resp)
+        job = Job().load(resp.json["jobId"], force=True)
+        differentialModule.run(job)
+        table = Job().load(resp.json["jobId"], force=True)["spatialResult"]
+        assert table["nA"] == 2 and table["nB"] == 3
+
     def testProviderWithoutStoreAnswersNothing(self, tmp_path):
         provider = SpatialValueProvider()
         missing = "6a0000000000000000000000"

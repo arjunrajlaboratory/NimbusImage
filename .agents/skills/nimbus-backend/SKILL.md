@@ -423,6 +423,13 @@ virtual paths explicitly — the six existing consumers are listed in
   Convert at the boundary.
 - `validateMultiple` in the property-values model lets the STORED sub-dict win on merge,
   so a virtual path must never be persisted through it — providers are read-only.
+- **A derived table's rows are not the dataset's cells.** The spatial table keeps rows for
+  deleted or moved cells until a recompute, so any read meaning "all cells" (an
+  unfiltered aggregate, `values()`, a complement like "everything else") must go through
+  `store.liveRowMask()`, never `rows=None` / `~maskA` / `store.annotationIds`. Codex found
+  this one call site per round for four rounds; the fix was one cached mask used by all.
+  The Mongo twin: property values are scoped by `datasetId`, so anything that moves an
+  annotation between datasets must move its value documents too (`updateMultiple`).
 
 ## A second plugin next to `upenncontrast_annotation`
 

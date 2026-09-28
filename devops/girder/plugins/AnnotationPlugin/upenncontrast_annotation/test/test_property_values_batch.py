@@ -1,5 +1,7 @@
 import json
 
+from bson import ObjectId
+
 import pytest
 
 from pytest_girder.assertions import assertStatus, assertStatusOk
@@ -347,3 +349,52 @@ class TestFindByAnnotationIds:
         assert len(docs) == 1
         assert "_id" not in docs[0]
         assert "datasetId" not in docs[0]
+
+    def testMovedAnnotationsTakeTheirValuesAndUndoReturnsThem(
+        self, admin, server
+    ):
+        """Values are scoped by datasetId everywhere they are read, so a
+        value left under the source would still count there for a cell it
+        no longer has (summary counts above `total`)."""
+        source = utilities.createFolder(
+            admin, "move_source", upenn_utilities.datasetMetadata
+        )
+        ids = []
+        for value in (1, 2):
+            annotation = Annotation().create(
+                upenn_utilities.getSampleAnnotation(source["_id"])
+            )
+            AnnotationPropertyValues().appendValues(
+                {"prop": value}, annotation["_id"], source["_id"]
+            )
+            ids.append(str(annotation["_id"]))
+        destination = utilities.createFolder(
+            admin, "move_destination", upenn_utilities.datasetMetadata
+        )
+        resp = server.request(
+            path="/upenn_annotation/multiple", method="PUT", user=admin,
+            body=json.dumps([
+                {"id": ids[0], "datasetId": str(destination["_id"])},
+            ]),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        values = AnnotationPropertyValues()
+        assert values.findOne(
+            {"annotationId": ObjectId(ids[0])}
+        )["datasetId"] == destination["_id"]
+        assert values.findOne(
+            {"annotationId": ObjectId(ids[1])}
+        )["datasetId"] == source["_id"]
+
+        undo = server.request(
+            path="/history/undo", method="PUT", user=admin,
+            params={"datasetId": str(destination["_id"])},
+        )
+        assertStatusOk(undo)
+        assert Annotation().load(ids[0], force=True)["datasetId"] == (
+            source["_id"]
+        )
+        assert values.findOne(
+            {"annotationId": ObjectId(ids[0])}
+        )["datasetId"] == source["_id"]

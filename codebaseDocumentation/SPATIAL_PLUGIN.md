@@ -31,6 +31,17 @@ row → annotation is an array read. `GET spatial/{datasetId}?verify=true` repor
 the rows that still resolve, so an orphaned table (polygons deleted and re-uploaded) is
 visible and the remedy is "rebuild with the import script".
 
+**"Every cell" means the live cells, never the table's rows.** A table outlives edits: a
+deleted or moved cell keeps its row until a recompute. `store.liveRowMask(annotationModel,
+datasetId, store)` is the one definition of the population — rows that still join to a
+live annotation of the dataset — cached per store and raster version (every annotation
+mutation bumps it; the 120 s rotation covers other processes; ~1.5 s cold at 700K). Every
+unfiltered read goes through it: `aggregate` with a non-narrowing filter, the provider's
+dense `values()` (so unfiltered summaries), differential's implicit B, `liveAnnotations`.
+New "all rows" readers must too. Stored property values follow the same rule at their
+own source: a bulk move rewrites the moved cells' value documents to the destination
+dataset (recorded, so undo restores both).
+
 ## Store layout
 
 Written by `anndata` (zarr v2) from `xenium_build_spatial_store.py` in the `xenium-ingest`
@@ -110,7 +121,7 @@ path whose first segment is a registered prefix is **virtual** — answered by t
 instead of Mongo. This plugin registers `spatial` at load (`server/provider.py`), so
 `["spatial", "CD3E"]` is the CD3E column of the dataset's store.
 
-A provider answers three questions: `values(datasetId, path)` (dense, every row it knows),
+A provider answers three questions: `values(datasetId, path)` (dense, every live cell),
 `valuesForIds(datasetId, path, ids)` (None where the annotation has no row) and
 `matchingIds(datasetId, path, propertyFilter)` (a range/values filter as an id set). It
 raises `ValueError` for an unknown sub key, which every consumer maps to a 400.
@@ -398,6 +409,12 @@ The V2 feature list (what users ask for, ranked) is in `SPATIAL_V2_ROADMAP.md`.
 
 ## Regression checklist
 
+- "Every cell" is the live cells, not the table rows: after a cell is deleted, the
+  unfiltered aggregate, an unfiltered virtual-path summary and differential's implicit B
+  all count one fewer — `test_phase2.py::testEveryCellMeansTheLiveCellsNotTheTableRows`
+  (each of the three fixes verified load-bearing on its own); a bulk move carries value
+  documents to the destination and undo returns them —
+  `test_property_values_batch.py::testMovedAnnotationsTakeTheirValuesAndUndoReturnsThem`.
 - A dirty rebuild processes one ring of tiles around the edits, not the closure through
   straddling cells — `test_recompute.py::testDirtyTilePlanIsOneRing`; ring-tile quiet cells
   still compete for molecules — `testAssignTileCountsOnlyDirtyCellsButKeepsCompetition`;
