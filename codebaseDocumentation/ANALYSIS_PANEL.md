@@ -369,10 +369,10 @@ the picture is sampled, and the footer says so.
   changes never invalidate the gate (`setAnalysisPlotDisplay`).
 - **UMAP shortcut.** `filters.umapAxes` (`findUmapAxes`) finds a property named
   like a UMAP with x/y or numbered sub-values (the lowest number is x, so
-  `0`/`1` and `UMAP_1`/`UMAP_2` both order correctly). The toolbar's UMAP button and the
-  panel's "UMAP" action call `ensureUmapPlot`: reuse the plot of those axes
-  (switched to dots, keeping its color and gate) or add one colored by tags,
-  then open the panel. `display`/`colorBy` persist with the configuration;
+  `0`/`1` and `UMAP_1`/`UMAP_2` both order correctly). The panel's "UMAP" action calls
+  `ensureUmapPlot`: reuse the plot of those axes (switched to dots, keeping its color
+  and gate) or add one colored by tags. (A toolbar shortcut doing the same plus
+  opening the panel was removed as redundant with the Analysis button.) `display`/`colorBy` persist with the configuration;
   unknown values fall back to the defaults without dropping the plot.
 
 ## Regression checklist
