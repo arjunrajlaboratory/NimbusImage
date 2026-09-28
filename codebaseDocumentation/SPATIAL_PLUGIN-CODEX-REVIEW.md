@@ -1,5 +1,32 @@
 # PR #1347 — Codex review fixes
 
+## Reviews of `447cf225` … `725d2e7a` (2026-09-27/28) — final rounds before human review
+
+| Finding | Status |
+|---|---|
+| P2 Share links survive their dataset's deletion | fixed (44e63efa) — a `model.folder.remove` hook revokes them |
+| P2 Declined: stage materialize/score/neighborhood chunks atomically | declined — only a mid-job Mongo write failure; the job reports it and a rerun fixes it |
+| P1 H&E adopts morphology's pixel size | fixed (9dff80e1) — `pixelSize / sqrt(\|det A\|)` through the transcript transform |
+| P2 Gene picker keeps another dataset's genes | fixed (9dff80e1) |
+| P1 Provider values materialize per-row dicts | declined — memory scales only on 64-gene full exports; a provider-contract redesign, not a wrong answer |
+| P2 GeoJSON export open to share-link bearers | fixed (33cfb27a) — joins the download denylist; CSV and GeoJSON now tested |
+| P1 ROI polygons counted as cells (neighborhood, regions, recompute) | fixed (33cfb27a) — `recompute.cellQuery` excludes the reserved `region` tag everywhere cells are selected |
+| P2 Owner shown logged out after a directly opened share URL | fixed (33cfb27a) |
+| P1 Vertex-mean vs area-weighted centroids | declined — segmentations are near-convex and evenly sampled; the frontend's `simpleCentroid` uses the same convention |
+| P1 Anonymous differential jobs | deferred — the earlier decision; rate limiting at the proxy (AWSDeploy#120) |
+| P2 Sparse-index validation of malformed stores; SharedView mid-load token change | declined — corrupt uploads and a sub-second navigation window |
+| (live test) Pre-XOA-4 transcript tiles refused | fixed (59f04382) — the audit's exact `gene_offset` shape check rejected the lymph node's padded tables; only a shorter table is refused now |
+| P2 Two-corner rectangles dropped from GeoJSON export | fixed (a0a292f8) |
+| P3 `virtual_path` docstring says CSV needs materialize | fixed (a0a292f8) |
+| P1 Server-atomic multi-batch GeoJSON import | declined — only a lost response mid-import; needs a server import session |
+| P2 Share-link creation rollback | declined — only a mid-create DB failure; the orphaned token is never returned to anyone |
+| P2 Singular transcript transforms accepted | declined — registrations come from the ingest scripts' real alignments |
+| P2/P1 Stale table rows in unfiltered aggregate, differential B, virtual and stored summaries (fourth round of this family) | fixed at the source (ba37f908) — `store.liveRowMask` is the one "every cell" population; a bulk move carries value documents. Supersedes the earlier declines below |
+| P2 SVD components exceed a one-feature table in recompute embeddings | declined — real tables have hundreds to thousands of features (405 / 4,624) |
+| P2 Share login commits after its bootstrap awaits | declined — the same mid-load navigation race family, sub-second window |
+| P2 Anisotropic transform and the scalar adopted scale | declined — 10x H&E alignments are similarity transforms (kidney: equal diagonals, derived 0.2740 vs the image's 0.2738 µm) |
+
+
 ## Reviews of `1b8c82c9` and `283828c5` (2026-09-27)
 
 | Finding | Status |
@@ -7,7 +34,7 @@
 | P2 Full rebuild refused when the active table was moved | fixed — only a dirty run pre-checks the active table; a full rebuild skips an unusable one (logged). The audit's job test is updated to that rule; regression fails without the fix |
 | P2 Histogram bucket bounds of Infinity become null | fixed — non-finite values are left out of the buckets (a consequence of the previous round's `jsonSafe`); regression fails without the fix |
 | P2 Dotted / `$` feature symbols listed but unusable in paths | fixed — refused at registration (`requirePathSafeSymbols`); existing registrations keep opening; regression fails without the fix |
-| P2 Virtual summaries count table rows for deleted cells | declined — the table-snapshot semantics already declined for the aggregate shortcut; the staleness claim and recompute cover it |
+| P2 Virtual summaries count table rows for deleted cells | declined then; **fixed later at the source (ba37f908, `liveRowMask`)** |
 | P2 Transcript overlay: old request commits during the debounce | declined — a sub-second window, self-corrects when the replacement request lands |
 | P2 Measurement refresh commits after a dataset switch | declined — needs the dataset switched inside the refresh's own awaits |
 | P2 Shared raster-filter key evicted by another user's cap | declined — needs two users on the identical filter and one at 50 live registrations; a reload re-registers |
@@ -142,7 +169,7 @@ Suites: AnnotationPlugin 866 (full, including test_dataset_multi_source.py), Spa
 | P2 Wilcoxon statistic labelled `t` | fixed — header and CSV say `z` for Wilcoxon results (`t` for Welch); regression fails without the fix |
 | P2 Region inputs editable while a summary runs | fixed — source and tag lock while loading (the genes were already captured per request); regression fails without the fix |
 | P2 Falsy non-object `filters` in the shared list prologue | declined — same reasoning as the aggregate endpoint: `{}` is a valid request with the same cost |
-| P2 Unfiltered aggregate reads the table, not live annotations | declined — by design: the table is a versioned snapshot with its own staleness claim and recompute; resolving 700K live ids would defeat the shortcut |
+| P2 Unfiltered aggregate reads the table, not live annotations | declined then; **fixed later at the source (ba37f908): the live mask is cached, 2.2 s cold / 0.01 s warm at 709K** |
 | P2 Overview filter keys expire after seven days | declined — needs a viewer left open over a week with unchanged filters; a reload or any filter change re-registers |
 
 ## Review of `e1b483dd` (2026-09-26)
