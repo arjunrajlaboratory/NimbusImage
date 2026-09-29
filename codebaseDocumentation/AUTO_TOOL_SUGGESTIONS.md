@@ -42,8 +42,10 @@ configuration until the user accepts it.
   takes `{ images, catalog, channels, layers }`, builds a single user message
   with the image blocks + a text description, and uses **structured output**
   (`output_config.format` with a JSON schema) at `effort: 'low'` with adaptive
-  thinking on. Returns `{ suggestions: [...] }`; a non-`end_turn` stop
-  (refusal, `max_tokens`) returns an empty list.
+  thinking on. Returns `{ suggestions: [...] }`. A non-`end_turn` stop
+  (refusal, `max_tokens`) returns `{ error }`, not an empty list: the frontend
+  permanently records an empty result as "suggested", while an error lets a
+  later layers-ready retry.
   - `SUGGEST_TOOLS_SYSTEM_PROMPT` — inline system prompt (the chat endpoint
     loads its prompt from `system_prompt_2.txt`; this one is inline for now — a
     follow-up could move it to a file for consistency).

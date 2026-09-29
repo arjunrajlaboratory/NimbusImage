@@ -183,10 +183,20 @@ def testSuggestToolsIncludesLayerContext(monkeypatch):
 @pytest.mark.parametrize(
     ('stop_reason', 'expected'),
     [
-        ('end_turn', [{'toolId': 'manual:blob', 'reason': 'Blobs seen.'}]),
-        # A refusal or truncation carries no valid JSON; don't parse it.
-        ('refusal', []),
-        ('max_tokens', []),
+        (
+            'end_turn',
+            {'suggestions': [
+                {'toolId': 'manual:blob', 'reason': 'Blobs seen.'}
+            ]},
+        ),
+        # A refusal or truncation carries no valid JSON. It must be an error,
+        # not an empty list, or the frontend records the configuration as
+        # suggested and never retries.
+        ('refusal', {'error': 'Tool suggestion stopped early (refusal)'}),
+        (
+            'max_tokens',
+            {'error': 'Tool suggestion stopped early (max_tokens)'},
+        ),
     ],
 )
 def testSuggestToolsUsesStructuredOutput(monkeypatch, stop_reason, expected):
@@ -218,7 +228,7 @@ def testSuggestToolsUsesStructuredOutput(monkeypatch, stop_reason, expected):
 
     result = resource.suggest_tools_imp({'catalog': [], 'channels': []})
 
-    assert result == {'suggestions': expected}
+    assert result == expected
     kwargs = fake_messages.create_kwargs
     assert kwargs['model'] == CLAUDE_MODEL
     assert 'tool_choice' not in kwargs

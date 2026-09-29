@@ -523,18 +523,23 @@ class ClaudeSuggestToolsResource(Resource):
                     }
                 ],
             )
-            # A refusal or a max_tokens cut carries no valid JSON.
+            # A refusal or a max_tokens cut carries no valid JSON. Report it
+            # as an error, not an empty list: the frontend permanently
+            # records an empty result as "suggested" and never retries.
             if response.stop_reason != 'end_turn':
                 logger.warning(
                     'suggest_tools stopped with %s', response.stop_reason
                 )
-                return {'suggestions': []}
+                return {
+                    'error': 'Tool suggestion stopped early '
+                             f'({response.stop_reason})'
+                }
             for block in response.content:
                 if block.type == 'text':
                     return {
                         'suggestions': json.loads(block.text)['suggestions']
                     }
-            return {'suggestions': []}
+            return {'error': 'Tool suggestion returned no result'}
         except APIError as e:
             logger.error(
                 f'Error in suggest_tools endpoint: {str(e)}', exc_info=True
