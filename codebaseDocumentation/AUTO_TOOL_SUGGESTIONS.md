@@ -183,29 +183,36 @@ affected this code:
 
 ## Regression checklist
 
-Invariants from the Sonnet 5.5 migration (PR #1353), each with the test that
-holds it. Re-check these whenever `CLAUDE_MODEL` changes or the suggestion
-call's request shape is touched.
+Invariants from the Sonnet 5.5 migration (PR #1353) and the feature's earlier
+reviews, each with the test that holds it. Re-check these whenever
+`CLAUDE_MODEL` changes or the suggestion call or its trigger logic is touched.
 
-Request shape:
+Request shape (`test_plugin.py`):
 
 - The suggestion call gets its JSON from `output_config.format` and sends no
-  `tool_choice` and no `thinking` setting — Sonnet 5.5 returns a 400 for both
+  `tool_choice` and no `thinking` setting. Sonnet 5.5 returns a 400 for both
   forced `tool_choice` and `thinking: disabled` —
-  `test_plugin.py::testSuggestToolsUsesStructuredOutput`.
+  *"testSuggestToolsUsesStructuredOutput"*.
+- The installed SDK has `output_config` and the other interfaces the plugin
+  calls, and `setup.py` declares `anthropic>=1.8.0` —
+  *"testAnthropicSdkSupportsTheApisThePluginCalls"*.
+- Malformed request bodies get a 400 before any Claude call —
+  *"testSuggestToolsRejectsMalformedRequests"*.
 
 Failure paths stay retryable:
 
 - A non-`end_turn` stop (refusal, `max_tokens`) returns `{error}`, never an
-  empty list — `testSuggestToolsUsesStructuredOutput[refusal]` and
-  `[max_tokens]` (both fail without the fix).
+  empty list. The refusal and `max_tokens` cases of
+  *"testSuggestToolsUsesStructuredOutput"* fail without the fix.
 - `ToolSuggestionsAPI` throws on an `{error}` body instead of resolving it as
-  no suggestions — `ToolSuggestionsAPI.test.ts` "throws on an {error} body so
-  the store takes its retryable failure path".
+  no suggestions (`ToolSuggestionsAPI.test.ts`) —
+  *"throws on an {error} body so the store takes its retryable failure path"*.
 - An errored run un-marks the configuration, so a later layers-ready retries;
-  only a `done` run is persisted as "suggested" — `toolSuggestions.test.ts`
-  "un-marks the configuration seen when the request errors, so a later
-  trigger retries".
+  only a `done` run is persisted as "suggested" (`toolSuggestions.test.ts`) —
+  *"un-marks the configuration seen when the request errors, so a later trigger retries"*.
+- A run that starts before its preconditions are loaded is a no-op and is not
+  persisted — *"is a no-op (retryable) when tool templates are not loaded yet"*
+  and *"is a no-op (retryable) when the user is not logged in yet"*.
 
 Process rule: an empty result is persisted forever, so any new way for the
 backend to fail must surface as `{error}`, not as `{ suggestions: [] }`.
