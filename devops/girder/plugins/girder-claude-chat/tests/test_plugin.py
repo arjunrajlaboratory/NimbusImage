@@ -168,6 +168,53 @@ def testSuggestToolsIncludesLayerContext(monkeypatch):
 
 @pytest.mark.plugin('girder_claude_chat')
 @pytest.mark.parametrize(
+    ('stop_reason', 'expected'),
+    [
+        ('end_turn', [{'toolId': 'manual:blob', 'reason': 'Blobs seen.'}]),
+        # A refusal or truncation carries no valid JSON; don't parse it.
+        ('refusal', []),
+        ('max_tokens', []),
+    ],
+)
+def testSuggestToolsUsesStructuredOutput(monkeypatch, stop_reason, expected):
+    # Sonnet 5.5 400s on forced tool_choice and on disabled thinking, so the
+    # suggestion call must get its JSON from output_config.format instead.
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeSuggestToolsResource()
+
+    class FakeMessages:
+        create_kwargs = None
+
+        def create(self, **kwargs):
+            self.create_kwargs = kwargs
+            return SimpleNamespace(
+                stop_reason=stop_reason,
+                content=[
+                    # Adaptive thinking may lead with an empty thinking block.
+                    SimpleNamespace(type='thinking', thinking=''),
+                    SimpleNamespace(
+                        type='text',
+                        text='{"suggestions": [{"toolId": "manual:blob", '
+                             '"reason": "Blobs seen."}]}',
+                    ),
+                ],
+            )
+
+    fake_messages = FakeMessages()
+    resource.client = SimpleNamespace(messages=fake_messages)
+
+    result = resource.suggest_tools_imp({'catalog': [], 'channels': []})
+
+    assert result == {'suggestions': expected}
+    kwargs = fake_messages.create_kwargs
+    assert kwargs['model'] == CLAUDE_MODEL
+    assert 'tool_choice' not in kwargs
+    assert 'thinking' not in kwargs
+    assert kwargs['output_config']['format']['type'] == 'json_schema'
+
+
+@pytest.mark.plugin('girder_claude_chat')
+@pytest.mark.parametrize(
     ('payload', 'message'),
     [
         (None, 'Request body must be a JSON object'),

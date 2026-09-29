@@ -613,8 +613,7 @@ The model is instructed to correct and retry once, then ask the user.
 - System prompt + tool definitions are stable per release → prompt cache
   them (`cache_control` on the system block and on the last tool, as the
   plugin already does for chat's system prompt).
-- Model: `CLAUDE_MODEL` constant (currently `claude-sonnet-5` on the PR
-  branch) — right latency/capability class for interactive UI driving. Not
+- Model: `CLAUDE_MODEL` constant (currently `claude-sonnet-5-5`) — right latency/capability class for interactive UI driving. Not
   a place for a smaller model: tool selection against 25+ tools with domain
   vocabulary is exactly where quality pays.
 
