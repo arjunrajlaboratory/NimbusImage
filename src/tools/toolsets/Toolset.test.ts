@@ -322,7 +322,7 @@ describe("Toolset", () => {
       (store as any).selectedTool = { configuration: workerTool };
     });
 
-    it("renders a non-persistent worker dialog wired to click:outside", () => {
+    it("renders the worker dialog as non-persistent", () => {
       const wrapper = mountComponent();
       // The worker dialog is the only scrim-less one in Toolset
       const dialog = wrapper

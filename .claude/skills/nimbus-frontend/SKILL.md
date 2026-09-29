@@ -591,6 +591,14 @@ When **not** to add the class:
 
 If you see a dialog with a `width="N%"` or `width="Nvw"` prop and no `wide-dialog` class, it's almost certainly rendering narrower than intended — add the class.
 
+### Click-outside close runs *after* the outside click — and closes on drags
+
+Vuetify's `v-click-outside` (used by every non-`persistent` `v-dialog` / `v-menu`) runs its close inside a `setTimeout`, i.e. **after** the outside click has bubbled through its own handlers. When the dialog's `@update:model-value(false)` handler clears *shared* state, it can undo what that same click just did: in the worker-tool dialog (`Toolset.vue`), clicking another worker tool selected it, and then the deferred close ran `setSelectedToolId(null)` and deselected it again. It also fires for a drag whose mousedown and mouseup both land outside, so on a scrim-less dialog over the image, **panning the map closes the dialog**.
+
+Neither case can be told apart from inside `update:model-value`. `click:outside` is emitted synchronously just before it, with the click event, so veto there. Snapshot `{clientX, clientY, relevant state}` in a capture-phase `pointerdown` listener (registered only while the dialog is open, removed in the watcher's `onCleanup`), then in `@click:outside` set a one-shot veto when the state changed or the pointer moved more than a few px. Consume the flag in `update:model-value`. Escape emits no `click:outside`, so it still closes. See `onWorkerDialogClickOutside` in `Toolset.vue` and its tests in `Toolset.test.ts`.
+
+A nested overlay (a `v-select` menu inside the dialog) is the top of the overlay stack, so the first outside click closes only that menu and the second closes the dialog. That is expected, not a bug. Tooltips (`_disableGlobalStack`) don't take part in the stack.
+
 ## API Calls
 
 Use the API classes from store — never put `girderRest.get(...)` in components:
