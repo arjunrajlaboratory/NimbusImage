@@ -7,20 +7,24 @@ import time
 
 import girder_client
 
-# GET job/{id} is @access.public with no declared scope, so Girder
-# authenticates the caller only if the key carries core.user_auth. That scope
-# is what "Allow all actions on behalf of my user" grants; it is not one of
-# the checkboxes in Girder's API key dialog, so a custom-scoped key (e.g.
-# core.data.read/write) can submit jobs but never poll them, and gets a 401
-# whose raw message misattributes the cause (NIM-005).
+# GET job/{id} recognizes a custom-scoped key only if it carries
+# jobs.rest.list_job ("List and read jobs" in Girder's API key dialog). That
+# scope exists from girder-jobs 5.0.19; on older servers GET job/{id} has no
+# declared scope, so only a full-access key ("Allow all actions on behalf of
+# my user", i.e. core.user_auth) can poll. Either way a key without it can
+# submit jobs, which then run, but gets a 401 whose raw message misattributes
+# the cause (NIM-005).
 _JOB_SCOPE_HINT = (
     "Could not read job status (HTTP 401). Your API key is most likely a "
     "custom-scoped key (e.g. only 'Read data'/'Write data'), which can "
     "submit jobs but cannot poll their status. The job itself is not "
-    "affected and may still be running. To watch jobs, use a full-access "
-    "key ('Allow all actions on behalf of my user'). Meanwhile you can "
-    "confirm the job ran by checking for its output annotations or "
-    "property values. See the nimbusimage README (Authentication)."
+    "affected and may still be running. To watch jobs, add the 'List and "
+    "read jobs' permission to the key, or use a full-access key ('Allow "
+    "all actions on behalf of my user'); servers older than girder-jobs "
+    "5.0.19 don't offer 'List and read jobs', so there only full access "
+    "works. Meanwhile you can confirm the job ran by checking for its "
+    "output annotations or property values. See the nimbusimage README "
+    "(Authentication)."
 )
 
 # Girder job status codes
@@ -93,8 +97,9 @@ class Job:
 
         Raises:
             PermissionError: If the job-status request returns 401, which
-                almost always means a custom-scoped API key rather than a
-                full-access one (NIM-005). The job itself is unaffected.
+                almost always means a custom-scoped API key without the
+                'List and read jobs' scope (NIM-005). The job itself is
+                unaffected.
         """
         try:
             self._data = self._gc.get(f"job/{self._id}")
@@ -126,7 +131,7 @@ class Job:
         Raises:
             TimeoutError: If timeout is reached before the job finishes.
             PermissionError: If polling returns 401, usually because the
-                API key is custom-scoped rather than full-access (NIM-005).
+                API key lacks the 'List and read jobs' scope (NIM-005).
                 Raised via :meth:`refresh`.
         """
         start = time.monotonic()

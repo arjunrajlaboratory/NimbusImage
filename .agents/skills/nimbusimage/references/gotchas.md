@@ -104,7 +104,7 @@ Girder job status codes: 0=inactive, 1=queued, 2=running, **3=success**, 4=error
 
 ## Can't see a job's status ≠ the job didn't run
 
-API keys are either **full access** ("Allow all actions on behalf of my user") or **custom-scoped** (specific checkboxes such as *Read data* / *Write data*). A custom-scoped key can still **submit** jobs, and those jobs **do run** server-side. What it can't do is **watch** them: `GET job/{id}` needs `core.user_auth`, which only a full-access key carries. `job.refresh()` / `job.wait()` then raise a `PermissionError` saying so.
+API keys are either **full access** ("Allow all actions on behalf of my user") or **custom-scoped** (specific checkboxes such as *Read data* / *Write data*). A custom-scoped key can still **submit** jobs, and those jobs **do run** server-side. What it can't do is **watch** them unless it also has **"List and read jobs"** (`jobs.rest.list_job`). Without that scope, `job.refresh()` / `job.wait()` raise a `PermissionError` saying so. "List and read jobs" exists from girder-jobs 5.0.19. On older servers `GET job/{id}` needs `core.user_auth`, which only a full-access key carries.
 
 So "I submitted a job but can't see its status" does **not** mean jobs aren't executing, and it doesn't mean the key "can't run jobs". Don't tell the user to get a new key, email support, or give up on the pipeline until you have checked the **data**, which a data-scoped key can always read:
 
@@ -129,13 +129,13 @@ How to read the result:
 | What you see | What it means |
 |---|---|
 | Output annotations/values appeared | The job ran. The key is fine for this work; you just can't watch it. Poll the outputs and carry on |
-| `PermissionError` from `refresh()` | Custom-scoped key. Jobs still run; to see status and logs the user needs a full-access key |
+| `PermissionError` from `refresh()` | Custom-scoped key without "List and read jobs". Jobs still run; to see status and logs the key needs that permission (or full access) |
 | Status readable, `job.log` empty | The worker hasn't written anything yet. Not a permission problem: status and log come from the same request |
 | Status `error` (4) | A real failure. Report it with `job.log` |
 | Status stays `queued` (1) | The worker queue is busy, or the server has no worker for it. This is server-side, not a key scope |
 | Status `success`, but no outputs | Check the tags/channel/location you are counting against, and the worker parameters |
 
-Needing to watch jobs is a fair reason to ask for a different key. Say exactly what is missing: "this key is custom-scoped, so it can't read job status or logs; a full-access key ('Allow all actions on behalf of my user') can". Don't say "the key can't run jobs". Don't ask for a key with `core.user_auth` or `jobs.*` scopes added either: Girder's key dialog doesn't offer those, and a key with `core.user_auth` is a full-access key anyway.
+Needing to watch jobs is a fair reason to ask for a different key. Say exactly what is missing: "this key doesn't have the 'List and read jobs' permission, so it can't read job status or logs; a key with that permission, or a full-access key ('Allow all actions on behalf of my user'), can". Don't say "the key can't run jobs". Don't ask for `core.user_auth` by name: that is what a full-access key is, and the dialog offers it only as "Allow all actions". If the server's key dialog has no "List and read jobs" checkbox (girder-jobs before 5.0.19), full access is the only option.
 
 Also: two minutes of nothing proves very little. Workers queue behind other jobs and may pull a large Docker image first. Use `job.wait(timeout=...)` with a generous timeout, or poll outputs over a longer window, before calling it stuck.
 

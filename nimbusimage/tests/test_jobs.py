@@ -81,7 +81,8 @@ class TestJobRefresh:
 
 class TestJobScopeError:
     """NIM-005: a 401 from job/{id} usually means the API key lacks the
-    'core.user_auth' scope, not that the job is missing. Re-raise with a
+    'List and read jobs' scope (or, on older servers, full access), not
+    that the job is missing. Re-raise with a
     message that names the real culprit instead of the raw Girder 401.
     """
 
@@ -101,6 +102,14 @@ class TestJobScopeError:
         job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
 
         with pytest.raises(PermissionError, match="Allow all actions"):
+            job.refresh()
+
+    def test_refresh_401_names_list_and_read_jobs_scope(self):
+        gc = MagicMock()
+        gc.get.side_effect = self._http_error(401)
+        job = Job(gc, {"_id": "j1", "status": STATUS_RUNNING})
+
+        with pytest.raises(PermissionError, match="List and read jobs"):
             job.refresh()
 
     def test_wait_401_names_full_access_key(self):

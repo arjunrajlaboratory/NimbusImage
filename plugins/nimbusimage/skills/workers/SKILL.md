@@ -213,7 +213,7 @@ Status codes: 0=inactive, 1=queued, 2=running, **3=success**, 4=error, 5=cancell
 
 ### When you can't see what a job is doing
 
-**Not being able to observe a job is different from the job not running.** A custom-scoped API key (e.g. only *Read data* / *Write data*) can submit jobs, and they run, but it can't read their status or logs: `refresh()` / `wait()` raise `PermissionError`. Only a full-access key ("Allow all actions on behalf of my user") can watch jobs.
+**Not being able to observe a job is different from the job not running.** A custom-scoped API key without **"List and read jobs"** (e.g. only *Read data* / *Write data*) can submit jobs, and they run, but it can't read their status or logs: `refresh()` / `wait()` raise `PermissionError`. To watch jobs, the key needs "List and read jobs" (`jobs.rest.list_job`, from girder-jobs 5.0.19) or full access ("Allow all actions on behalf of my user"). On older servers only full access works.
 
 Before you conclude that jobs aren't executing, or tell the user their key is wrong and they need a new one, **check the outputs directly**. Count annotations with the output tags before and after (`ds.annotations.count(tags=[...])`), or read `ds.properties.get_values()` for property workers, and give the job a realistic amount of time (queueing and image pulls can take minutes). If outputs show up, the pipeline works. Tell the user that status/logs aren't visible with this key and keep going. See "Can't see a job's status ≠ the job didn't run" in `references/gotchas.md` for the full decision table.
 
