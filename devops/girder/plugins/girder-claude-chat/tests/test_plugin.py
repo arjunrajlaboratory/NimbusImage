@@ -309,3 +309,25 @@ def testAgentParsesValidBody():
     assert ClaudeAgentResource._parse_agent_messages(
         {'messages': messages}
     ) == messages
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAnthropicSdkSupportsTheApisThePluginCalls():
+    # The unit tests above replace the SDK client with fakes, so they can't
+    # catch an SDK too old for the real calls. Guard both halves: the
+    # installed distribution declares the floor, and the installed SDK
+    # exposes every interface the plugin uses.
+    import inspect
+    from importlib.metadata import requires
+
+    from anthropic import Anthropic
+    from anthropic.types.beta import BetaThinkingConfigAdaptiveParam
+
+    assert 'anthropic>=1.8.0' in requires('girder-claude-chat')
+
+    client = Anthropic(api_key='FAKE_API_KEY')
+    agent_params = inspect.signature(client.beta.messages.stream).parameters
+    assert {'betas', 'thinking'} <= set(agent_params)
+    assert 'block_binding' in BetaThinkingConfigAdaptiveParam.__annotations__
+    suggest_params = inspect.signature(client.messages.create).parameters
+    assert 'output_config' in suggest_params

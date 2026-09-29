@@ -786,8 +786,11 @@ is edited, or the frontend changes how it rewrites earlier turns.
 - Streamed blocks sent back as the next assistant turn drop API-excluded
   fields — `testAgentEndpointStripsApiExcludedBlockFields`.
 - `setup.py` requires an SDK with `beta.messages` + `block_binding` and
-  `output_config` (`anthropic>=1.8.0`); no test covers this, so re-check it
-  by hand when adopting new API features.
+  `output_config` (`anthropic>=1.8.0`), and the installed SDK exposes all
+  three (the other tests fake the client, so they can't catch this) —
+  `test_plugin.py::testAnthropicSdkSupportsTheApisThePluginCalls` (fails
+  with the floor removed). Extend it when the plugin adopts a new API
+  feature.
 
 Process rules:
 
