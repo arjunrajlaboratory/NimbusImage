@@ -16,7 +16,7 @@ tools yet), NimbusImage:
    names, and display-layer metadata (layer color + visibility), to a backend
    endpoint. The layer metadata lets Claude map rendered colors back to channel
    names without cloning the full browser UI.
-3. Claude (Sonnet 5) looks at the image and returns a structured list of
+3. Claude (Sonnet 5.5) looks at the image and returns a structured list of
    suggested tools (e.g. Cellpose-SAM on the nuclear channel if it sees nuclei,
    a blob tool if it sees blobs, Piscis if it sees spots).
 4. The frontend resolves each suggestion into a ready-to-add
@@ -32,22 +32,24 @@ configuration until the user accepts it.
 ### Backend — `devops/girder/plugins/girder-claude-chat/girder_claude_chat/__init__.py`
 
 - `CLAUDE_MODEL` — single constant for the model id. **This is where the model
-  is set for the whole plugin.** Currently `claude-sonnet-5` (migrated from
-  `claude-sonnet-4-6`).
+  is set for the whole plugin.** Currently `claude-sonnet-5-5` (migrated from
+  `claude-sonnet-5`, before that `claude-sonnet-4-6`).
 - `ClaudeChatResource` (existing chat endpoint, `POST /claude_chat`) — updated
   to use `CLAUDE_MODEL`, `max_tokens=8192`, and to collect **text blocks** from
   the response instead of assuming `content[0]` is text (Sonnet 5 runs adaptive
   thinking by default, so a thinking block can come first).
 - `ClaudeSuggestToolsResource` (new endpoint, `POST /claude_suggest_tools`) —
   takes `{ images, catalog, channels, layers }`, builds a single user message
-  with the image blocks + a text description, and uses a **forced tool call**
-  (`tool_choice = {type: 'tool', name: 'suggest_tools'}`) to get structured
-  output. Thinking is disabled here because forced `tool_choice` is incompatible
-  with extended thinking. Returns `{ suggestions: [...] }`.
+  with the image blocks + a text description, and uses **structured output**
+  (`output_config.format` with a JSON schema) at `effort: 'low'` with adaptive
+  thinking on. Returns `{ suggestions: [...] }`. A non-`end_turn` stop
+  (refusal, `max_tokens`) returns `{ error }`, not an empty list: the frontend
+  permanently records an empty result as "suggested", while an error lets a
+  later layers-ready retry.
   - `SUGGEST_TOOLS_SYSTEM_PROMPT` — inline system prompt (the chat endpoint
     loads its prompt from `system_prompt_2.txt`; this one is inline for now — a
     follow-up could move it to a file for consistency).
-  - `SUGGEST_TOOLS_TOOL` — the JSON schema for the forced tool call.
+  - `SUGGEST_TOOLS_SCHEMA` — the JSON schema for the structured output.
 
 ### Frontend
 
@@ -100,7 +102,7 @@ Viewer.vue (config changes, map ready, empty tools, unseen)
      -> buildLayerContext() from current display layers
      -> ChatAPI.getToolSuggestions({ images, catalog, channels, layers })
         -> POST /claude_suggest_tools
-           -> Sonnet 5 forced tool call -> { suggestions: [{toolId, channelName, reason, confidence}] }
+           -> Sonnet 5.5 structured output -> { suggestions: [{toolId, channelName, reason, confidence}] }
      -> resolve each suggestion -> IResolvedToolSuggestion { suggestion, catalogEntry, tool }
   -> ToolSuggestions.vue shows them
      -> user clicks Add -> main.addToolToConfiguration(tool)
@@ -148,10 +150,9 @@ Viewer.vue (config changes, map ready, empty tools, unseen)
 4. **Prompt tuning.** The system prompt is a first draft. The nuclei / blobs /
    spots guidance is hard-coded; consider deriving it from the catalog
    descriptions instead so new worker types get sensible treatment for free.
-5. **Structured output.** The backend uses a forced tool call for structured
-   output. Sonnet 5 also supports `output_config.format` (JSON schema) — could
-   switch if the installed `anthropic` SDK version supports it, which would let
-   us keep adaptive thinking on.
+5. ~~**Structured output.**~~ **Done** — the Sonnet 5.5 migration forced the
+   switch from a forced tool call to `output_config.format`, which keeps
+   adaptive thinking on.
 6. ~~**Duplication.** `ChatComponent.vue` still has its own screenshot
    functions.~~ **Done** — `ChatComponent.vue` now uses
    `utils/interfaceCapture.ts` (a thin `captureViewportScreenshot` wrapper is
@@ -160,18 +161,58 @@ Viewer.vue (config changes, map ready, empty tools, unseen)
 7. ~~**Tests.**~~ **Done (frontend).** `src/store/toolSuggestions.test.ts` and
    `src/components/ToolSuggestions.test.ts` cover the guards, resolution logic,
    accept flow, visibility, and confidence sort/chip. The **backend**
-   `/claude_suggest_tools` endpoint still has no test — a good next candidate.
+   `/claude_suggest_tools` endpoint is covered by
+   `testSuggestToolsUsesStructuredOutput` (request shape + stop-reason
+   handling) and the malformed-request tests.
 8. ~~**Confidence field** is returned but unused in the UI.~~ **Done** — the
    panel now shows a confidence chip and sorts high→medium→low. Could still
    additionally *filter out* low-confidence suggestions if desired.
 
 ## Model migration note
 
-Both Claude calls in the plugin now use `claude-sonnet-5` via the `CLAUDE_MODEL`
-constant. When migrating again, change that one constant. Sonnet 5 specifics
-that affected this code:
+Both Claude calls in the plugin now use `claude-sonnet-5-5` via the
+`CLAUDE_MODEL` constant. When migrating again, change that one constant, then
+check the new model's breaking changes against both call sites. Specifics that
+affected this code:
 
 - Adaptive thinking is on by default → the chat endpoint must collect `text`
   blocks rather than reading `content[0].text`.
-- Forced `tool_choice` is incompatible with extended thinking → the suggestion
-  endpoint sets `thinking={'type': 'disabled'}`.
+- Sonnet 5 → 5.5: `thinking={'type': 'disabled'}` and forced `tool_choice`
+  both return a 400, so the suggestion endpoint dropped its forced tool call
+  for `output_config.format` structured output at `effort: 'low'`.
+
+## Regression checklist
+
+Invariants from the Sonnet 5.5 migration (PR #1353) and the feature's earlier
+reviews, each with the test that holds it. Re-check these whenever
+`CLAUDE_MODEL` changes or the suggestion call or its trigger logic is touched.
+
+Request shape (`test_plugin.py`):
+
+- The suggestion call gets its JSON from `output_config.format` and sends no
+  `tool_choice` and no `thinking` setting. Sonnet 5.5 returns a 400 for both
+  forced `tool_choice` and `thinking: disabled` —
+  *"testSuggestToolsUsesStructuredOutput"*.
+- The installed SDK has `output_config` and the other interfaces the plugin
+  calls, and `setup.py` declares `anthropic>=1.8.0` —
+  *"testAnthropicSdkSupportsTheApisThePluginCalls"*.
+- Malformed request bodies get a 400 before any Claude call —
+  *"testSuggestToolsRejectsMalformedRequests"*.
+
+Failure paths stay retryable:
+
+- A non-`end_turn` stop (refusal, `max_tokens`) returns `{error}`, never an
+  empty list. The refusal and `max_tokens` cases of
+  *"testSuggestToolsUsesStructuredOutput"* fail without the fix.
+- `ToolSuggestionsAPI` throws on an `{error}` body instead of resolving it as
+  no suggestions (`ToolSuggestionsAPI.test.ts`) —
+  *"throws on an {error} body so the store takes its retryable failure path"*.
+- An errored run un-marks the configuration, so a later layers-ready retries;
+  only a `done` run is persisted as "suggested" (`toolSuggestions.test.ts`) —
+  *"un-marks the configuration seen when the request errors, so a later trigger retries"*.
+- A run that starts before its preconditions are loaded is a no-op and is not
+  persisted — *"is a no-op (retryable) when tool templates are not loaded yet"*
+  and *"is a no-op (retryable) when the user is not logged in yet"*.
+
+Process rule: an empty result is persisted forever, so any new way for the
+backend to fail must surface as `{error}`, not as `{ suggestions: [] }`.
