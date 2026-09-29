@@ -180,3 +180,32 @@ affected this code:
 - Sonnet 5 → 5.5: `thinking={'type': 'disabled'}` and forced `tool_choice`
   both return a 400, so the suggestion endpoint dropped its forced tool call
   for `output_config.format` structured output at `effort: 'low'`.
+
+## Regression checklist
+
+Invariants from the Sonnet 5.5 migration (PR #1353), each with the test that
+holds it. Re-check these whenever `CLAUDE_MODEL` changes or the suggestion
+call's request shape is touched.
+
+Request shape:
+
+- The suggestion call gets its JSON from `output_config.format` and sends no
+  `tool_choice` and no `thinking` setting — Sonnet 5.5 returns a 400 for both
+  forced `tool_choice` and `thinking: disabled` —
+  `test_plugin.py::testSuggestToolsUsesStructuredOutput`.
+
+Failure paths stay retryable:
+
+- A non-`end_turn` stop (refusal, `max_tokens`) returns `{error}`, never an
+  empty list — `testSuggestToolsUsesStructuredOutput[refusal]` and
+  `[max_tokens]` (both fail without the fix).
+- `ToolSuggestionsAPI` throws on an `{error}` body instead of resolving it as
+  no suggestions — `ToolSuggestionsAPI.test.ts` "throws on an {error} body so
+  the store takes its retryable failure path".
+- An errored run un-marks the configuration, so a later layers-ready retries;
+  only a `done` run is persisted as "suggested" — `toolSuggestions.test.ts`
+  "un-marks the configuration seen when the request errors, so a later
+  trigger retries".
+
+Process rule: an empty result is persisted forever, so any new way for the
+backend to fail must surface as `{error}`, not as `{ suggestions: [] }`.

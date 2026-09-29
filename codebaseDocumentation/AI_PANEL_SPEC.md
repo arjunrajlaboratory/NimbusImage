@@ -767,3 +767,36 @@ Process notes:
 - The completion callback must fire *after* the store refreshed its data
   (`annotation.ts` awaits `fetchAnnotations` before `callback`), otherwise the
   model reads stale counts the moment it is told the job finished.
+
+## 13. Regression checklist — model migration and preserved thinking
+
+Invariants from the Sonnet 5.5 migration (PR #1353), each with the test that
+holds it. Re-check these whenever `CLAUDE_MODEL` changes, the agent request
+is edited, or the frontend changes how it rewrites earlier turns.
+
+- The agent call sends `thinking: {type: "adaptive", block_binding:
+  {prefix_mismatch_behavior: "drop_block"}}` under the
+  `thinking-binding-controls-2026-08-01` beta, so a pruned history drops
+  stale thinking blocks instead of returning a 400 on accounts created on or
+  after 2026-08-31 — `test_plugin.py::testAgentEndpointStreamsAndShapesResponse`.
+- `pruneOldScreenshots` rewrites only user `tool_result` images and never
+  touches assistant messages, so thinking blocks go back unchanged —
+  `wireConversation.test.ts` "never touches assistant messages (thinking
+  blocks must survive)".
+- Streamed blocks sent back as the next assistant turn drop API-excluded
+  fields — `testAgentEndpointStripsApiExcludedBlockFields`.
+- `setup.py` requires an SDK with `beta.messages` + `block_binding` and
+  `output_config` (`anthropic>=1.8.0`); no test covers this, so re-check it
+  by hand when adopting new API features.
+
+Process rules:
+
+- A unit test can't show whether the API accepts a history edit. Verify
+  against the live API: send the edited history with
+  `prefix_mismatch_behavior: "error"` (expect the 400 a new account gets),
+  then with `"drop_block"` (expect 200 and a `thinking_dropped` entry in
+  `input_transformations`). Setting the field opts older accounts in, so this
+  works from any key.
+- The plugin logs drops at INFO, but the Girder container doesn't print this
+  plugin's INFO output. To check drops, call `_stream_agent_response` in the
+  container with the `girder_claude_chat` logger set to INFO.
