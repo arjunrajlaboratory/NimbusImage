@@ -1,16 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
 
-vi.mock("@/store", () => ({
-  default: {
-    selectedTool: null,
-    tools: [],
-    configuration: { tools: [] },
-    isLoggedIn: true,
-    setSelectedToolId: vi.fn(),
-    getLayerFromId: vi.fn(),
-  },
-}));
+// Reactive so computeds over the store (e.g. selectedToolId) track mutations
+// made mid-test, as they would against the real Vuex store.
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      selectedTool: null,
+      tools: [],
+      configuration: { tools: [] },
+      isLoggedIn: true,
+      setSelectedToolId: vi.fn(),
+      getLayerFromId: vi.fn(),
+    }),
+  };
+});
 
 vi.mock("@/store/annotation", () => ({ default: {} }));
 vi.mock("@/store/properties", () => ({ default: {} }));
@@ -294,5 +299,91 @@ describe("Toolset", () => {
     (store as any).isLoggedIn = false;
     const wrapper = mountComponent();
     expect((wrapper.vm as any).isLoggedIn).toBe(false);
+  });
+
+  describe("worker dialog click-outside close", () => {
+    const workerTool = { id: "worker-a", type: "segmentation" };
+
+    function pointerDown(x: number, y: number) {
+      window.dispatchEvent(
+        // jsdom has no PointerEvent; a MouseEvent carries the same coordinates
+        new MouseEvent("pointerdown", { clientX: x, clientY: y }),
+      );
+    }
+
+    function outsideClick(vm: any, x: number, y: number) {
+      vm.onWorkerDialogClickOutside(
+        new MouseEvent("click", { clientX: x, clientY: y }),
+      );
+      vm.onWorkerDialogToggle(false);
+    }
+
+    beforeEach(() => {
+      (store as any).selectedTool = { configuration: workerTool };
+    });
+
+    it("renders a non-persistent worker dialog wired to click:outside", () => {
+      const wrapper = mountComponent();
+      // The worker dialog is the only scrim-less one in Toolset
+      const dialog = wrapper
+        .findAllComponents({ name: "VDialog" })
+        .find((d) => d.props("scrim") === false);
+      expect(dialog).toBeDefined();
+      expect(dialog!.props("persistent")).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("deselects the worker tool on a plain click outside the dialog", () => {
+      const wrapper = mountComponent();
+      pointerDown(100, 100);
+      outsideClick(wrapper.vm, 102, 101);
+      expect(store.setSelectedToolId).toHaveBeenCalledWith(null);
+      wrapper.unmount();
+    });
+
+    it("keeps the dialog open when the outside interaction is a drag (pan)", () => {
+      const wrapper = mountComponent();
+      pointerDown(100, 100);
+      outsideClick(wrapper.vm, 160, 130);
+      expect(store.setSelectedToolId).not.toHaveBeenCalled();
+      wrapper.unmount();
+    });
+
+    it("does not deselect a worker tool the same click just selected", () => {
+      const wrapper = mountComponent();
+      pointerDown(100, 100);
+      // The click lands on another worker tool's button, which selects it
+      // before Vuetify's deferred close runs.
+      (store as any).selectedTool = {
+        configuration: { id: "worker-b", type: "segmentation" },
+      };
+      outsideClick(wrapper.vm, 100, 100);
+      expect(store.setSelectedToolId).not.toHaveBeenCalled();
+      wrapper.unmount();
+    });
+
+    it("consumes a veto so a later Escape still closes the dialog", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      pointerDown(100, 100);
+      outsideClick(vm, 200, 200);
+      expect(store.setSelectedToolId).not.toHaveBeenCalled();
+      // Escape: Vuetify emits update:model-value(false) with no click:outside
+      vm.onWorkerDialogToggle(false);
+      expect(store.setSelectedToolId).toHaveBeenCalledWith(null);
+      wrapper.unmount();
+    });
+
+    it("removes its pointerdown listener on unmount", () => {
+      const removeSpy = vi.spyOn(window, "removeEventListener");
+      const wrapper = mountComponent();
+      wrapper.unmount();
+      expect(removeSpy).toHaveBeenCalledWith(
+        "pointerdown",
+        expect.any(Function),
+        true,
+      );
+      removeSpy.mockRestore();
+    });
   });
 });

@@ -127,13 +127,15 @@
 
     <!-- Worker tools open their configuration in a centered, scrim-less dialog
          so the image (and any worker preview overlays) stay visible behind it.
-         A single dialog tracks whichever worker tool is currently selected. -->
+         A single dialog tracks whichever worker tool is currently selected.
+         Clicking anywhere outside it (or pressing Escape) closes it, except
+         for the outside interactions onWorkerDialogClickOutside vetoes. -->
     <v-dialog
       :model-value="!!selectedWorkerTool"
       :scrim="false"
-      persistent
       width="680"
       class="worker-dialog"
+      @click:outside="onWorkerDialogClickOutside"
       @update:model-value="onWorkerDialogToggle"
     >
       <annotation-worker-menu
@@ -328,8 +330,63 @@ function getToolPropertiesDescription(tool: IToolConfiguration): string[][] {
   return propDesc;
 }
 
+// The worker dialog closes on a click outside it, but two outside
+// interactions must not close it:
+//  - dragging (panning) the image behind the scrim-less dialog, and
+//  - clicking another worker tool in the list. Vuetify runs its close in a
+//    setTimeout, i.e. *after* that click has already selected the new tool,
+//    so an unguarded close would deselect the tool the user just picked.
+// Snapshot the pointer position and selected tool at pointerdown; the
+// click:outside handler then vetoes the close Vuetify emits right after it.
+// Escape emits no click:outside, so it always closes.
+const WORKER_DIALOG_CLICK_TOLERANCE_PX = 5;
+let workerDialogPointerDown: {
+  x: number;
+  y: number;
+  toolId: string | null;
+} | null = null;
+let isWorkerDialogCloseVetoed = false;
+
+function recordWorkerDialogPointerDown(event: PointerEvent) {
+  workerDialogPointerDown = {
+    x: event.clientX,
+    y: event.clientY,
+    toolId: selectedToolId.value,
+  };
+}
+
+watch(
+  () => !!selectedWorkerTool.value,
+  (isOpen, _wasOpen, onCleanup) => {
+    if (!isOpen) {
+      return;
+    }
+    window.addEventListener("pointerdown", recordWorkerDialogPointerDown, true);
+    onCleanup(() => {
+      window.removeEventListener(
+        "pointerdown",
+        recordWorkerDialogPointerDown,
+        true,
+      );
+      workerDialogPointerDown = null;
+    });
+  },
+  { immediate: true },
+);
+
+function onWorkerDialogClickOutside(event: MouseEvent) {
+  const pointerDown = workerDialogPointerDown;
+  isWorkerDialogCloseVetoed =
+    !pointerDown ||
+    pointerDown.toolId !== selectedToolId.value ||
+    Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) >
+      WORKER_DIALOG_CLICK_TOLERANCE_PX;
+}
+
 function onWorkerDialogToggle(open: boolean) {
-  if (!open) {
+  const isVetoed = isWorkerDialogCloseVetoed;
+  isWorkerDialogCloseVetoed = false;
+  if (!open && !isVetoed) {
     store.setSelectedToolId(null);
   }
 }
@@ -348,6 +405,7 @@ defineExpose({
   toolsetTools,
   toolGroups,
   selectedWorkerTool,
+  onWorkerDialogClickOutside,
   configuration,
   selectedTool,
   isLoggedIn,
