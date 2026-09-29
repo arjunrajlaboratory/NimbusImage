@@ -25,9 +25,9 @@ def testAgentEndpointLoadsPackagedAssets(monkeypatch):
 @pytest.mark.plugin('girder_claude_chat')
 def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
     # AGENT_MAX_TOKENS is above the SDK's non-streaming ceiling (~21k), so the
-    # agent endpoint must use the streaming API (client.messages.stream) or the
-    # SDK raises "Streaming is required...". It still aggregates server-side
-    # and returns one JSON response with the same shape as before.
+    # agent endpoint must use the streaming API (client.beta.messages.stream)
+    # or the SDK raises "Streaming is required...". It still aggregates
+    # server-side and returns one JSON response with the same shape as before.
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
     resource = ClaudeAgentResource()
 
@@ -65,7 +65,9 @@ def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
             )
 
     fake_messages = FakeMessages()
-    resource.client = SimpleNamespace(messages=fake_messages)
+    resource.client = SimpleNamespace(
+        beta=SimpleNamespace(messages=fake_messages)
+    )
 
     result = resource._stream_agent_response(
         [{'role': 'user', 'content': 'hi'}]
@@ -77,6 +79,15 @@ def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
         'usage': {'input_tokens': 11, 'output_tokens': 7},
     }
     assert fake_messages.stream_kwargs['model'] == CLAUDE_MODEL
+    # The frontend prunes old screenshots (a history edit), so the agent must
+    # ask the API to drop invalidated thinking blocks rather than 400.
+    assert fake_messages.stream_kwargs['thinking'] == {
+        'type': 'adaptive',
+        'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
+    }
+    assert fake_messages.stream_kwargs['betas'] == [
+        'thinking-binding-controls-2026-08-01'
+    ]
     assert (
         fake_messages.stream_kwargs['max_tokens']
         == resource.AGENT_MAX_TOKENS
@@ -129,7 +140,9 @@ def testAgentEndpointStripsApiExcludedBlockFields(monkeypatch):
         def stream(self, **kwargs):
             return FakeStream()
 
-    resource.client = SimpleNamespace(messages=FakeMessages())
+    resource.client = SimpleNamespace(
+        beta=SimpleNamespace(messages=FakeMessages())
+    )
 
     result = resource._stream_agent_response(
         [{'role': 'user', 'content': 'x'}]

@@ -616,6 +616,13 @@ The model is instructed to correct and retry once, then ask the user.
 - Model: `CLAUDE_MODEL` constant (currently `claude-sonnet-5-5`) — right latency/capability class for interactive UI driving. Not
   a place for a smaller model: tool selection against 25+ tools with domain
   vocabulary is exactly where quality pays.
+- Preserved thinking: Sonnet 5.5 binds each thinking block to the exact
+  history before it, and `pruneOldScreenshots` edits earlier turns. The agent
+  call therefore sends `thinking.block_binding.prefix_mismatch_behavior:
+  "drop_block"` (beta `thinking-binding-controls-2026-08-01`), so the API
+  drops the stale thinking blocks instead of returning a 400 (the default for
+  accounts created on or after 2026-08-31). Text and tool calls are kept; the
+  drops are logged at INFO.
 
 ## 9. Implementation plan
 

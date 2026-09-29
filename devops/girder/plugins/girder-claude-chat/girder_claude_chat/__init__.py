@@ -18,6 +18,17 @@ logger = logging.getLogger(__name__)
 # Claude model used for all chat completions. Centralized here so that
 # additional call sites in this plugin share a single source of truth.
 CLAUDE_MODEL = 'claude-sonnet-5-5'
+# Sonnet 5.5 binds each thinking block to the exact history before it, and
+# the frontend edits earlier turns (pruneOldScreenshots swaps old images for
+# a placeholder). Accounts created on/after 2026-08-31 get a 400 for that
+# edit; drop_block tells the API to drop the affected thinking blocks
+# instead. Setting the field opts older accounts in too, so behavior is the
+# same whatever account the key belongs to.
+THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
+AGENT_THINKING = {
+    'type': 'adaptive',
+    'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
+}
 MAX_TOOL_SUGGESTION_IMAGES = 2
 MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS = 12 * 1024 * 1024
 
@@ -346,9 +357,11 @@ class ClaudeAgentResource(Resource):
         return it in one response, so the wire contract is unchanged: the
         browser owns the tool loop and never sees a token stream.
         """
-        with self.client.messages.stream(
+        with self.client.beta.messages.stream(
             model=CLAUDE_MODEL,
             max_tokens=self.AGENT_MAX_TOKENS,
+            betas=[THINKING_BINDING_BETA],
+            thinking=AGENT_THINKING,
             system=[
                 {
                     'type': 'text',
@@ -360,6 +373,16 @@ class ClaudeAgentResource(Resource):
             messages=messages,
         ) as stream:
             response = stream.get_final_message()
+        dropped = [
+            t for t in (getattr(response, 'input_transformations', None) or [])
+            if getattr(t, 'type', None) == 'thinking_dropped'
+        ]
+        if dropped:
+            logger.info(
+                'claude_agent: API dropped %d thinking block(s) (%s)',
+                len(dropped),
+                ', '.join(sorted({str(t.reason) for t in dropped})),
+            )
         return {
             # Streaming returns ParsedTextBlocks with an output-only
             # `parsed_output` field (marked __api_exclude__). These blocks are
