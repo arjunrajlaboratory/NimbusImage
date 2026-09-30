@@ -72,6 +72,8 @@ FEATURES = [
     # reject the gene CD3E as "not a gene".
     ("CD3E", "protein", [7, 0, 0, 9]),
     ("CD3E", "gene", [0, 5, 0, 2]),
+    # Mouse panels have '.' in symbols; MongoDB keys can't.
+    ("Tex19.1", "gene", [0, 0, 0, 4]),
 ]
 CELL_TYPES = ["T cell", "B cell", "T cell", "Macrophage"]
 
@@ -411,15 +413,23 @@ class TestBundle:
 
     def test_counts_are_cells_by_features_and_name_proteins(self, bundle):
         csc, symbols, feature_ids, kinds = bundle.counts()
-        assert symbols == ["GENEA", "CD3E" + PROTEIN_SUFFIX, "CD3E"]
-        assert kinds == ["gene", "protein", "gene"]
-        assert feature_ids == ["ID0", "ID2", "ID3"]
+        assert symbols == ["GENEA", "CD3E" + PROTEIN_SUFFIX, "CD3E", "Tex19_1"]
+        assert kinds == ["gene", "protein", "gene", "gene"]
+        assert feature_ids == ["ID0", "ID2", "ID3", "ID4"]
         assert csc.toarray().tolist() == [
-            [3, 7, 0],
-            [0, 0, 5],
-            [1, 0, 0],
-            [0, 9, 2],
+            [3, 7, 0, 0],
+            [0, 0, 5, 0],
+            [1, 0, 0, 0],
+            [0, 9, 2, 4],
         ]
+
+    def test_stored_symbols_have_no_dot_or_dollar(self, bundle):
+        _, symbols, names, _, _ = bundle.features()
+        assert names[-1] == "Tex19.1" and symbols[-1] == "Tex19_1"
+        # a panel may name the gene either way
+        assert bundle.gene_rows(["Tex19.1"])["Tex19.1"] == bundle.gene_rows(
+            ["Tex19_1"]
+        )["Tex19_1"]
 
 
 class TestMorphologyNames:
@@ -887,6 +897,15 @@ class TestPerCellSteps:
             "ann_2": {"GENEA": 0, "CD3E": 2},
         }
 
+    def test_gene_panel_sub_keys_are_stored_symbols(
+        self, server, bundle, uploaded
+    ):
+        ds, cells = uploaded
+        upload_gene_panel(ds, bundle, cells, ["Tex19.1"], dense=False)
+        assert _values(server, "Gene Expression") == {
+            "ann_2": {"Tex19_1": 4},  # cell 3's annotation
+        }
+
     def test_gene_panel_sparse_replace_and_limit(
         self, server, bundle, uploaded
     ):
@@ -984,11 +1003,17 @@ class TestPerCellSteps:
             "Macrophage",
         ]
         assert adata.obs["graphclust"].tolist() == [1, 2, 0]
-        assert list(adata.var_names) == ["GENEA", "CD3E (protein)", "CD3E"]
+        assert list(adata.var_names) == [
+            "GENEA",
+            "CD3E (protein)",
+            "CD3E",
+            "Tex19_1",
+        ]
+        assert adata.var["feature_name"].tolist()[-1] == "Tex19.1"
         assert np.asarray(adata.X.todense()).tolist() == [
-            [3, 7, 0],
-            [0, 0, 5],
-            [0, 9, 2],
+            [3, 7, 0, 0],
+            [0, 0, 5, 0],
+            [0, 9, 2, 4],
         ]
         assert adata.obsm["X_umap"].tolist() == [[0, 1], [2, 3], [6, 7]]
         assert adata.uns["nimbus"]["datasetId"] == MORPH
@@ -1597,6 +1622,24 @@ class TestCli:
         assert cli(argv) == 1
         assert server.writes == []
         assert cli(argv + ["--reset"]) == 0
+
+    def test_a_server_refusal_prints_its_message(
+        self, cli, server, capsys, monkeypatch
+    ):
+        import girder_client
+
+        def refuse(item_id, pixel_size, transform):
+            raise girder_client.HttpError(
+                400, '{"message": "store is not readable"}', "url", "POST"
+            )
+
+        monkeypatch.setattr(
+            server.dataset(MORPH).spatial, "register_transcripts", refuse
+        )
+        assert cli(CLI_COMMANDS["transcripts"]) == 1
+        err = capsys.readouterr().err
+        assert "the server refused: store is not readable" in err
+        assert "Traceback" not in err
 
     def test_main_module_import_does_not_run_the_cli(self):
         import importlib

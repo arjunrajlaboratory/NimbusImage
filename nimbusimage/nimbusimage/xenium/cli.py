@@ -16,10 +16,13 @@ step takes it as ``--cells`` and reuses that frame, so ``--alignment`` and
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
 from pathlib import Path
+
+import girder_client
 
 
 from nimbusimage.xenium import ingest
@@ -54,6 +57,13 @@ def _connect():
             "in the environment"
         )
     return ni.connect(username=username, password=password)
+
+
+def _server_message(exc) -> str:
+    try:
+        return json.loads(exc.responseText)["message"]
+    except (ValueError, KeyError, TypeError):
+        return str(exc)
 
 
 def _split(value: str | None) -> list[str]:
@@ -663,6 +673,13 @@ def main(argv: list[str] | None = None) -> int:
         args.func(args)
     except XeniumError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except girder_client.HttpError as exc:
+        # The server refused (validation, access): its message, not a trace.
+        print(
+            f"error: the server refused: {_server_message(exc)}",
+            file=sys.stderr,
+        )
         return 1
     finally:
         logger.removeHandler(handler)

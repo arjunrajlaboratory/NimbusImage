@@ -423,6 +423,12 @@ included, and cannot be undone.
     exact-shape check added in an audit rejected every lymph-node tile; only a
     *shorter* table is unsafe.
 
+15. **Mouse panels have `.` in gene symbols** (`Tex19.1`), and symbols become MongoDB keys,
+    which can't hold `.` or `$`: the SpatialPlugin refuses such a table. Every stored
+    symbol is `safe_symbol(name)` (`.`/`$` → `_`, so `Tex19_1`) in both the table and the
+    gene-panel sub-keys; the table keeps the original in `var/feature_name`, and a panel
+    may name the gene either way. Found only by running the XOA 3 mouse bundle live.
+
 ## 9. Post-upload verification
 
 ```python

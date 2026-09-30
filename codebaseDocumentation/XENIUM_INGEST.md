@@ -110,6 +110,10 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
 - UMAP keeps `pca.npy` when UMAP fails — `TestUmap::test_pca_is_saved_before_umap_runs`.
 
 **Vendor formats**
+- Symbols with `.`/`$` (mouse panels) are stored as `safe_symbol` in the table and the
+  panel sub-keys, originals in `var/feature_name` —
+  `TestBundle::test_stored_symbols_have_no_dot_or_dollar`,
+  `test_gene_panel_sub_keys_are_stored_symbols`, `test_spatial_table_round_trip`.
 - `cell_groups` zero-padding — `TestBundle::test_cell_groups_handles_zero_padding`.
 - A protein named like a gene doesn't block the gene —
   `TestBundle::test_gene_lookup_skips_a_same_named_protein`.
@@ -129,6 +133,11 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
 - **Make the fake hostile, not merely faithful**: `FakeAnnotations.iter_all` lists in
   reverse creation order, so order-dependent code fails in tests instead of only in a
   multi-instance production deploy; tags match with `$all` as on the server.
+- **Run every real bundle live, not one**: the mouse XOA 3 bundle's `Tex19.1` broke table
+  registration after eight review rounds and 500+ unit tests passed on human bundles.
+  `live_e2e.py`-style runs (each pipeline step on a fresh dataset, every value checked
+  against the bundle, every past bug reproduced with a write-count snapshot) are the
+  gate before a merge.
 - **Verify live on real data read-only first**: the 465K-cell kidney H&E dataset checks
   ids, frames and the wrong-file refusal without writing (`open_cells` on
   `ids_he.npy` / `ids_morph.npy`).

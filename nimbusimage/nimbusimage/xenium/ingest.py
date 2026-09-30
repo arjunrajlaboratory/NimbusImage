@@ -37,6 +37,7 @@ from nimbusimage.xenium.bundle import (
     CELL_POLYGON_SET,
     PROTEIN_SUFFIX,
     XeniumBundle,
+    safe_symbol,
     staged_channel_file_name,
 )
 from nimbusimage.xenium.cells import REGION_TAG, CellMap
@@ -355,18 +356,23 @@ def upload_gene_panel(
     """
     stop = _per_cell_stop(ds, bundle, cells, limit)
     gene_counts = bundle.gene_counts(genes)
+    # Sub-keys are MongoDB keys: stored as safe_symbol (Tex19.1 -> Tex19_1),
+    # the same form the spatial table uses.
+    keys = {symbol: safe_symbol(symbol) for symbol in genes}
+    if len(set(keys.values())) < len(keys):
+        raise XeniumError(f"{genes} repeat a gene once '.'/'$' are replaced")
     prop = _prepare_property(ds, property_name, replace)
     started = time.time()
     for c0, c1 in _chunks(stop, chunk):
         buckets = [
-            ({symbol: 0 for symbol in genes} if dense else {})
+            ({keys[symbol]: 0 for symbol in genes} if dense else {})
             for _ in range(c1 - c0)
         ]
         for symbol, (expressing, values) in gene_counts.items():
             lo = np.searchsorted(expressing, c0)
             hi = np.searchsorted(expressing, c1)
             for cell, value in zip(expressing[lo:hi], values[lo:hi]):
-                buckets[cell - c0][symbol] = int(value)
+                buckets[cell - c0][keys[symbol]] = int(value)
         _submit(
             ds,
             prop,
@@ -604,6 +610,14 @@ def build_spatial_table(
         )
 
     counts, symbols, feature_ids, kinds = bundle.counts()
+    names = bundle.features()[2]
+    renamed = [(n, s) for n, s in zip(names, symbols) if n != s]
+    if renamed:
+        logger.info(
+            "  %d symbols renamed for storage ('.'/'$' -> '_'), e.g. %s",
+            len(renamed),
+            ", ".join(f"{n} -> {s}" for n, s in renamed[:3]),
+        )
     counts = counts[kept]
     proteins = sum(kind == "protein" for kind in kinds)
     if proteins:
@@ -632,6 +646,7 @@ def build_spatial_table(
     var = pd.DataFrame(index=pd.Index(symbols, name="symbol"))
     var["gene_id"] = feature_ids
     var["feature_type"] = kinds
+    var["feature_name"] = names  # the bundle's name, before safe_symbol
 
     adata = ad.AnnData(X=counts, obs=obs, var=var)
     adata.layers["X_csr"] = counts.tocsr()

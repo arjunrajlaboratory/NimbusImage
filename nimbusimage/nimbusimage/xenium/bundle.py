@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+from collections import Counter
 from functools import cached_property
 from pathlib import Path
 
@@ -40,6 +41,17 @@ NUCLEUS_POLYGON_SET = "nucleus"
 # share a gene's name (CD3E, CD4, CD68, ...), and table symbols must be
 # unique, so proteins are named "<key> (protein)".
 PROTEIN_SUFFIX = " (protein)"
+
+
+def safe_symbol(symbol: str) -> str:
+    """A feature symbol as NimbusImage can store it.
+
+    Symbols become MongoDB keys (property sub-values, materialized genes),
+    which can't contain ``.`` or ``$``; the SpatialPlugin refuses a table
+    that has them. Mouse panels do (``Tex19.1``), so both become ``_``.
+    The table keeps the original name in ``var/feature_name``.
+    """
+    return str(symbol).replace(".", "_").replace("$", "_")
 
 
 def open_zarr_zip(path: str | Path):
@@ -298,11 +310,12 @@ class XeniumBundle:
         """
         attrs = dict(self._feature_matrix().attrs)
         keys, types = attrs["feature_keys"], attrs["feature_types"]
-        gene_row = {
-            key: row
-            for row, (key, kind) in enumerate(zip(keys, types))
-            if kind == "gene"
-        }
+        gene_row = {}
+        for row, (key, kind) in enumerate(zip(keys, types)):
+            if kind == "gene":
+                # The bundle's name, and the stored one (Tex19.1 / Tex19_1).
+                gene_row[key] = row
+                gene_row.setdefault(safe_symbol(key), row)
         missing = [symbol for symbol in symbols if symbol not in gene_row]
         if missing:
             raise XeniumError(
@@ -332,23 +345,51 @@ class XeniumBundle:
             )
         return result
 
+    def features(self, feature_types: tuple[str, ...] = ("gene", "protein")):
+        """``(rows, symbols, names, feature_ids, kinds)`` for the matrix rows
+        of ``feature_types``. ``names`` are the bundle's (proteins named
+        ``"<key> (protein)"``); ``symbols`` the stored form
+        (``safe_symbol``), which must stay unique."""
+        attrs = dict(self._feature_matrix().attrs)
+        types = np.asarray(attrs["feature_types"])
+        rows = np.flatnonzero(np.isin(types, feature_types))
+        kinds = [str(t) for t in types[rows]]
+        names = [
+            str(key) + (PROTEIN_SUFFIX if kind == "protein" else "")
+            for key, kind in zip(
+                np.asarray(attrs["feature_keys"])[rows], kinds
+            )
+        ]
+        symbols = [safe_symbol(name) for name in names]
+        repeated = {s for s, n in Counter(symbols).items() if n > 1}
+        if repeated:
+            clashes = sorted(
+                n for n, s in zip(names, symbols) if s in repeated
+            )
+            raise XeniumError(
+                f"features {clashes} become the same symbol once '.'/'$' "
+                "are replaced; they can't all be stored"
+            )
+        feature_ids = [str(f) for f in np.asarray(attrs["feature_ids"])[rows]]
+        return rows, symbols, names, feature_ids, kinds
+
     def counts(self, feature_types: tuple[str, ...] = ("gene", "protein")):
-        """``(csc cells x features float32, symbols, feature_ids, kinds)``.
+        """``(csc cells x features float32, symbols, feature_ids, kinds)``,
+        symbols in their stored form (see ``features``).
 
         The 10x matrix is gene-major CSR (row = feature, indices = cell). Read
         as ``(data, indices, indptr)`` with shape (cells, features) it IS the
         cells x features CSC matrix, so no transpose is materialized; dropping
-        control rows is a column selection on that CSC. Proteins are named
-        ``"<key> (protein)"``.
+        control rows is a column selection on that CSC.
         """
         from scipy import sparse
 
+        rows, symbols, _, feature_ids, kinds = self.features(feature_types)
         matrix = self._feature_matrix()
         attrs = dict(matrix.attrs)
         n_features, n_cells = int(attrs["number_features"]), int(
             attrs["number_cells"]
         )
-        types = np.asarray(attrs["feature_types"])
         csc = sparse.csc_matrix(
             (
                 matrix["data"][:].astype(np.float32),
@@ -357,15 +398,7 @@ class XeniumBundle:
             ),
             shape=(n_cells, n_features),
         )
-        keep = np.flatnonzero(np.isin(types, feature_types))
-        keys = np.asarray(attrs["feature_keys"])[keep]
-        kinds = [str(t) for t in types[keep]]
-        symbols = [
-            str(key) + (PROTEIN_SUFFIX if kind == "protein" else "")
-            for key, kind in zip(keys, kinds)
-        ]
-        feature_ids = [str(f) for f in np.asarray(attrs["feature_ids"])[keep]]
-        return csc[:, keep], symbols, feature_ids, kinds
+        return csc[:, rows], symbols, feature_ids, kinds
 
     # --- images ---
 
