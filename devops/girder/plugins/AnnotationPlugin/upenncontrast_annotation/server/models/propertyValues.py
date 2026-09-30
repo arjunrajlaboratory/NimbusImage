@@ -1,6 +1,8 @@
 import fastjsonschema
 
 from bson.objectid import ObjectId
+from pymongo import UpdateOne
+from pymongo.errors import BulkWriteError
 
 from girder import events
 from girder.constants import SortDir
@@ -8,8 +10,12 @@ from girder.exceptions import ValidationException
 from girder.utility.acl_mixin import AccessControlMixin
 
 from ..helpers.aggregation import AGGREGATION_MAX_TIME_MS
+from ..helpers.customModel import bulkWriteErrorMessage
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
+
+
+DUPLICATE_KEY_ERROR = 11000
 
 
 class PropertySchema:
@@ -93,41 +99,90 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
                 self.jsonValidate(propertyValues)
         except fastjsonschema.JsonSchemaValueException as exp:
             raise ValidationException(exp)
-
-        # find existing property values using the annotation id
-        annotationIds = [
-            propertyValues["annotationId"]
-            for propertyValues in propertyValuesList
-        ]
-        query = {"annotationId": {"$in": annotationIds}}
-        existingDocuments = {}  # indexed by annotation id
-        for existingDocument in self.find(query):
-            annotationId = existingDocument["annotationId"]
-            existingDocuments[annotationId] = existingDocument
-        # if some property values exist with the same annotation id, merge them
-        if len(existingDocuments) > 0:
-            for propertyValues in propertyValuesList:
-                annotationId = propertyValues["annotationId"]
-                existingDocument = existingDocuments.get(annotationId, None)
-                if existingDocument is not None:
-                    propertyValues["values"].update(existingDocument["values"])
-                    propertyValues["_id"] = existingDocument["_id"]
-
-        # TODO(performance): create sparse index on properties if nonexisting
-        # https://docs.mongodb.com/manual/reference/operator/query/exists/
-
         return propertyValuesList
 
     def appendValues(self, values, annotationId, datasetId):
-        property_values = {
+        return self.appendMultipleValues([{
             "annotationId": annotationId,
             "values": values,
             "datasetId": datasetId,
-        }
-        return self.save(property_values)
+        }])[0]
 
     def appendMultipleValues(self, list_of_property_values):
-        return self.saveMany(list_of_property_values)
+        """Merge values into each annotation's single values document.
+
+        Each entry becomes one atomic upsert that $sets only the property
+        ids it carries, so the merge happens on the server. Reading the
+        stored document, merging in Python and writing it back raced when
+        sibling property workers wrote the same annotations at once: writers
+        overwrote each other's values or failed with E11000 (issue #1356).
+
+        :returns: The stored documents for the written annotations.
+        """
+        if len(list_of_property_values) == 0:
+            return []
+        self.validateMultiple(list_of_property_values)
+        annotationIds = [
+            entry["annotationId"] for entry in list_of_property_values
+        ]
+        if self.is_recording:
+            for before in self.find({"annotationId": {"$in": annotationIds}}):
+                self.record.changeDocument(before, None)
+
+        operations = [
+            self._upsertValues(entry) for entry in list_of_property_values
+        ]
+        try:
+            self.collection.bulk_write(operations, ordered=False)
+        except BulkWriteError as e:
+            # A first write to an annotation inserts its document with
+            # _id = annotationId, so concurrent first writes collide on _id
+            # instead of creating two documents. The loser's retry matches
+            # the winner's document and merges into it.
+            retry = self._duplicateKeyRetries(e, operations)
+            try:
+                self.collection.bulk_write(retry, ordered=False)
+            except BulkWriteError as retryError:
+                raise ValidationException(
+                    "Saving property values failed: %s"
+                    % bulkWriteErrorMessage(retryError)
+                ) from retryError
+
+        documents = list(self.find({"annotationId": {"$in": annotationIds}}))
+        if self.is_recording:
+            for after in documents:
+                self.record.changeDocument(None, after)
+        return documents
+
+    @staticmethod
+    def _upsertValues(entry):
+        annotationId = entry["annotationId"]
+        onInsert = {"_id": annotationId, "datasetId": entry["datasetId"]}
+        values = entry["values"]
+        if len(values) == 0:
+            update = {"$setOnInsert": {**onInsert, "values": {}}}
+        else:
+            update = {
+                "$set": {
+                    "values." + propertyId: value
+                    for propertyId, value in values.items()
+                },
+                "$setOnInsert": onInsert,
+            }
+        return UpdateOne({"annotationId": annotationId}, update, upsert=True)
+
+    @staticmethod
+    def _duplicateKeyRetries(error, operations):
+        writeErrors = error.details.get("writeErrors") or []
+        if not writeErrors or any(
+            writeError.get("code") != DUPLICATE_KEY_ERROR
+            for writeError in writeErrors
+        ):
+            raise ValidationException(
+                "Saving property values failed: %s"
+                % bulkWriteErrorMessage(error)
+            ) from error
+        return [operations[writeError["index"]] for writeError in writeErrors]
 
     def findByAnnotationIds(
         self, datasetId, annotationIds, propertyPaths=None
