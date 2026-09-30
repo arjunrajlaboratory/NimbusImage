@@ -25,8 +25,8 @@
         class="text-caption text-medium-emphasis mb-0"
       >
         Register the 10x transcripts.zarr.zip with
-        <code>xenium_register_transcripts.py</code> (nimbusimage-xenium-ingest
-        skill).
+        <code>nimbusimage-xenium transcripts</code> (from the nimbusimage Python
+        package).
       </p>
     </template>
     <template v-else>

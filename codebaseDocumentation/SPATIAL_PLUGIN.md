@@ -44,8 +44,8 @@ dataset (recorded, so undo restores both).
 
 ## Store layout
 
-Written by `anndata` (zarr v2) from `xenium_build_spatial_store.py` in the `xenium-ingest`
-skill; read by plain `zarr` 2 on the server (already in the Girder image via large_image).
+Written by `anndata` (zarr v2) from `nimbusimage.xenium.build_spatial_table` (the
+`nimbusimage-xenium spatial-table` command; `anndata<0.14`, the last with zarr v2 writes); read by plain `zarr` 2 on the server (already in the Girder image via large_image).
 
 | Path | Content |
 |---|---|
@@ -358,12 +358,13 @@ cells); a cell's **type** is its first tag not in `excludeTags` (default `["cell
 
 ## Import
 
-`plugins/nimbusimage/skills/xenium-ingest/scripts/xenium_build_spatial_store.py` builds the
-store from a Xenium bundle and the verified annotation-id map, uploads it, registers it.
+`nimbusimage.xenium.build_spatial_table` (in the `nimbusimage` package; CLI
+`nimbusimage-xenium spatial-table`) builds the store from a Xenium bundle and the verified
+annotation-id map; `ds.spatial.upload_and_register` uploads and registers it.
 The 10x matrix is gene-major CSR, which read as `(data, indices, indptr)` with shape
 `(cells, genes)` **is** the cells × genes CSC — no transpose is materialized. The Girder
-worker form of the import wraps this script once the format has settled.
-`xenium_register_transcripts.py` uploads the bundle's `transcripts.zarr.zip` unchanged and
+worker form of the import wraps this function once the format has settled.
+`nimbusimage.xenium.register_transcripts` (`nimbusimage-xenium transcripts`) uploads the bundle's `transcripts.zarr.zip` unchanged and
 registers it with the bundle's `pixel_size` (and the inverse H&E alignment as `transform`
 for the H&E dataset).
 

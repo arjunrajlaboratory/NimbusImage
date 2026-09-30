@@ -14,6 +14,12 @@ For Docker worker development (includes `large_image` for writing TIFF files):
 pip install nimbusimage[worker]
 ```
 
+For loading 10x Xenium bundles (`nimbusimage.xenium`; `xenium-umap` adds the UMAP step):
+
+```bash
+pip install 'nimbusimage[xenium]'
+```
+
 ## Authentication
 
 The recommended setup uses a **Girder API key**, which is persistent and doesn't expire.
@@ -233,3 +239,34 @@ summaries and recompute leave them out. Keep that tag on imported ROIs (the GeoJ
 importer's default) and off cell polygons. The end-to-end Xenium runbook is the
 `xenium-ingest` skill.
 
+
+## Xenium ingest (`nimbusimage.xenium`)
+
+Loads a 10x Xenium output bundle (XOA 1–4, protein panels included) into NimbusImage:
+morphology images with stain-named channels, cell polygons, a gene panel, clusterings,
+a UMAP, cell types as tags, the full matrix as the spatial table, the transcript overlay,
+and pathology regions. Each step is a function and a `nimbusimage-xenium` subcommand.
+
+```python
+from nimbusimage import xenium
+
+bundle = xenium.XeniumBundle("extracted/")
+ds = xenium.upload_morphology(client, bundle, "Lymph node")
+ids = xenium.upload_polygons(ds, bundle)          # annotation ids in cell_index order
+xenium.upload_gene_panel(ds, bundle, ids, ["CD3E", "MS4A1"])
+xenium.upload_clusters(ds, bundle, ids)
+xenium.upload_cell_types(ds, bundle, ids, "cell_types.csv")
+ds.spatial.upload_and_register(
+    xenium.build_spatial_table(bundle, ids, "spatial.zarr.zip", dataset_id=ds.id))
+xenium.register_transcripts(ds, bundle)
+```
+
+```bash
+MORPH=$(nimbusimage-xenium morphology --bundle-dir extracted --name "Lymph node")
+nimbusimage-xenium polygons --bundle-dir extracted --dataset $MORPH --ids-out ids.npy
+nimbusimage-xenium properties --bundle-dir extracted --dataset $MORPH --ids ids.npy \
+    --what genes,clusters --genes CD3E,MS4A1
+```
+
+The `xenium-ingest` agent skill is the full runbook (coordinate frames, H&E alignment,
+orientation checks, and the traps hit on 709K-cell datasets).
