@@ -18,6 +18,8 @@ import io
 import json
 import logging
 import os
+import pickle
+import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,7 +35,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger("nimbusimage.xenium")
 
 CELLS_FILE_FORMAT = 1
+# How far a stored vertex may sit from where the frame puts it. Uploads by
+# different code versions differ by ~1e-3 px at H&E scale (float32 vs
+# float64 arithmetic), so matching is by tolerance, never exact equality.
 VERIFY_TOLERANCE_PX = 0.01
+# Grid for looking up candidate cells by first vertex; the 3x3 neighbourhood
+# of a bucket covers any point within the tolerance.
+MATCH_BUCKET_PX = 0.5
 
 
 class CellMap:
@@ -77,13 +85,18 @@ class CellMap:
         stop = len(self.ids) if stop is None else min(stop, len(self.ids))
         return [c for c in range(start, stop) if self.ids[c] is not None]
 
-    def check(self, bundle: XeniumBundle, ds: Dataset | None = None) -> None:
-        """The guard every per-cell step runs before writing anything."""
-        if ds is not None and self.dataset_id != ds.id:
+    def check_dataset(self, ds: Dataset) -> None:
+        """The map (and its frame) must be ``ds``'s."""
+        if self.dataset_id != ds.id:
             raise XeniumError(
                 f"these cells belong to dataset {self.dataset_id}, "
                 f"not {ds.id}"
             )
+
+    def check(self, bundle: XeniumBundle, ds: Dataset | None = None) -> None:
+        """The guard every per-cell step runs before writing anything."""
+        if ds is not None:
+            self.check_dataset(ds)
         if self.polygon_set != CELL_POLYGON_SET:
             raise XeniumError(
                 f"per-cell data needs the cell polygons; these are "
@@ -99,7 +112,7 @@ class CellMap:
     # --- storage
 
     def save(self, path: str | os.PathLike) -> Path:
-        """Write to ``path`` as-is (``.npz`` content; no pickle needed)."""
+        """Write to ``path`` as-is (``.npz`` content, no pickled objects)."""
         path = Path(path)
         meta = {
             "format": CELLS_FILE_FORMAT,
@@ -115,38 +128,68 @@ class CellMap:
             ),
             meta=np.array(json.dumps(meta)),
         )
-        path.write_bytes(buffer.getvalue())
+        try:
+            path.write_bytes(buffer.getvalue())
+        except OSError as exc:
+            raise XeniumError(f"cannot write {path}: {exc}") from exc
         return path
 
     @classmethod
     def read(cls, path: str | os.PathLike) -> CellMap | np.ndarray:
         """A saved ``CellMap``, or the bare id array of a pre-CellMap
-        ``--ids-out`` file (which records no dataset or frame)."""
+        ``--ids-out`` file (which records no dataset or frame).
+
+        A saved map is read without unpickling anything. Only a bare-id
+        ``.npy`` (an object array) needs pickle — read your own files only.
+        """
+        path = Path(path)
+        if not path.is_file():
+            raise XeniumError(f"no cells file at {path}")
+        with path.open("rb") as fh:
+            magic = fh.read(6)
         try:
-            loaded = np.load(Path(path), allow_pickle=True)
-        except (OSError, ValueError) as exc:
-            raise XeniumError(f"cannot read {path}: {exc}") from exc
-        if isinstance(loaded, np.ndarray):
-            return loaded
-        with loaded:
-            meta = json.loads(str(loaded["meta"]))
-            if meta.get("format") != CELLS_FILE_FORMAT:
-                raise XeniumError(f"{path}: unknown cells file format")
-            return cls(
-                meta["datasetId"],
-                ImageFrame.from_dict(meta["frame"]),
-                loaded["ids"],
-                meta["polygonSet"],
-            )
+            if zipfile.is_zipfile(path):
+                with np.load(path, allow_pickle=False) as loaded:
+                    meta = json.loads(str(loaded["meta"]))
+                    if meta.get("format") != CELLS_FILE_FORMAT:
+                        raise XeniumError(f"{path}: unknown cells file format")
+                    return cls(
+                        meta["datasetId"],
+                        ImageFrame.from_dict(meta["frame"]),
+                        loaded["ids"],
+                        meta["polygonSet"],
+                    )
+            if magic != b"\x93NUMPY":
+                raise XeniumError(f"{path} is not a cells file")
+            # Only a real .npy gets pickle, which its object array needs;
+            # np.load would otherwise unpickle any file handed to it.
+            ids = np.load(path, allow_pickle=True)
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            EOFError,
+            pickle.UnpicklingError,
+        ) as exc:
+            raise XeniumError(f"{path} is not a cells file: {exc}") from exc
+        if not isinstance(ids, np.ndarray) or ids.ndim != 1:
+            raise XeniumError(f"{path} is not a cells file")
+        return ids
 
 
-def read_frame(path: str | os.PathLike | None) -> ImageFrame | None:
-    """The frame saved in a cells file, or None (no file, or a bare-id
-    file)."""
-    if path is None or not Path(path).exists():
-        return None
+def read_frame(path: str | os.PathLike, ds: Dataset) -> ImageFrame:
+    """The frame saved in ``ds``'s cells file — the one reader of a saved
+    frame. A missing file, a bare-id file (which saves no frame) or another
+    dataset's map is an error, never a silent fall back to a default."""
     stored = CellMap.read(path)
-    return stored.frame if isinstance(stored, CellMap) else None
+    if not isinstance(stored, CellMap):
+        raise XeniumError(
+            f"{path} is a bare-id file with no saved frame; state the frame "
+            "(--image/--alignment/--pixel-size) instead"
+        )
+    stored.check_dataset(ds)
+    return stored.frame
 
 
 # --- deriving and verifying
@@ -159,55 +202,82 @@ def _first_vertex(annotation) -> tuple[float, float]:
 def fetch_cells(
     ds: Dataset,
     bundle: XeniumBundle,
-    frame: ImageFrame | None = None,
+    frame: ImageFrame,
     *,
     page: int = 20000,
 ) -> CellMap:
-    """The ``CellMap`` of a dataset whose cell polygons were uploaded
-    earlier, VERIFIED against cells.zarr.
+    """Re-derive a dataset's ``CellMap`` from the server by geometry.
 
-    ``ds.annotations.list()`` returns creation order, so annotation i is cell
-    i when the polygons were uploaded in ``cell_index`` order — but a silent
-    off-by-N attaches every cell's data to the wrong cell, so each
-    annotation's first vertex is checked against the one ``frame`` puts it
-    at. Only valid for a dataset whose first polygons came from one full
-    ``upload_polygons`` of the cells (no skipped cells). ``frame`` is the one
-    the upload used (default: the bundle's morphology frame).
+    Each polygon annotation is matched to the cell whose first two vertices
+    and vertex count ``frame`` puts at the same place — never by list
+    position, which the server does not promise. So other polygons in the
+    dataset (regions, nuclei) are ignored, a limited or partial upload maps
+    the cells it has (the rest are None), and a cell uploaded twice, or two
+    cells with the same geometry, is an error. ``frame`` is the one the
+    upload used.
     """
-    frame = frame or ImageFrame.create(bundle=bundle)
-    expected = frame.microns_to_pixels(bundle.first_vertices())
-    n_cells = len(expected)
-    ids = np.empty(n_cells, dtype=object)
-    firsts = np.empty((n_cells, 2))
-    offset = 0
-    while offset < n_cells:
-        chunk = ds.annotations.list(shape="polygon", limit=page, offset=offset)
-        if not chunk:
-            break
-        for j, annotation in enumerate(chunk[: n_cells - offset]):
-            ids[offset + j] = annotation.id
-            firsts[offset + j] = _first_vertex(annotation)
-        offset += len(chunk)
-        logger.info(
-            "  fetched %s/%s annotation ids",
-            f"{min(offset, n_cells):,}",
-            f"{n_cells:,}",
+    n_vertices, vertices = bundle.polygons()
+    usable = np.flatnonzero(n_vertices >= 3)
+    # Each cell's first two vertices, where the frame draws them.
+    first = frame.microns_to_pixels(vertices[usable, 0:2])
+    second = frame.microns_to_pixels(vertices[usable, 2:4])
+    buckets: dict[tuple[int, int], list[int]] = {}
+    for row, (x, y) in enumerate(first):
+        key = (int(x // MATCH_BUCKET_PX), int(y // MATCH_BUCKET_PX))
+        buckets.setdefault(key, []).append(row)
+
+    def cell_of(xy0, xy1, n) -> int | None:
+        bx, by = int(xy0[0] // MATCH_BUCKET_PX), int(xy0[1] // MATCH_BUCKET_PX)
+        hits = [
+            row
+            for dx in (-1, 0, 1)
+            for dy in (-1, 0, 1)
+            for row in buckets.get((bx + dx, by + dy), ())
+            if n_vertices[usable[row]] == n
+            and np.all(np.abs(first[row] - xy0) <= VERIFY_TOLERANCE_PX)
+            and np.all(np.abs(second[row] - xy1) <= VERIFY_TOLERANCE_PX)
+        ]
+        if len(hits) > 1:
+            raise XeniumError(
+                f"cells {[int(usable[r]) for r in hits]} have the same first "
+                "vertices and vertex count; their annotations can't be told "
+                "apart — keep the file polygons --cells-out wrote"
+            )
+        return int(usable[hits[0]]) if hits else None
+
+    ids = np.full(len(n_vertices), None, dtype=object)
+    seen = 0
+    for annotation in ds.annotations.iter_all(shape="polygon", page_size=page):
+        seen += 1
+        coordinates = annotation.coordinates
+        if len(coordinates) < 3:
+            continue
+        cell = cell_of(
+            np.array([coordinates[0]["x"], coordinates[0]["y"]]),
+            np.array([coordinates[1]["x"], coordinates[1]["y"]]),
+            len(coordinates),
         )
-    if offset < n_cells:
+        if cell is None:
+            continue  # a region, a nucleus, or another bundle's polygon
+        if ids[cell] is not None:
+            raise XeniumError(
+                f"cell {cell} has two annotations ({ids[cell]}, "
+                f"{annotation.id}): the polygons were uploaded twice"
+            )
+        ids[cell] = annotation.id
+    cells = CellMap(ds.id, frame, ids)
+    found = cells.count()
+    if not found:
         raise XeniumError(
-            f"only {offset} of {n_cells} polygon annotations exist in the "
-            "dataset (a limited or partial upload can't be re-derived; keep "
-            "the file polygons --cells-out wrote)"
+            f"none of the {seen:,} polygon annotations of dataset {ds.id} "
+            f"is a cell of this bundle drawn with {frame}"
         )
-    wrong = np.any(np.abs(expected - firsts) > VERIFY_TOLERANCE_PX, axis=1)
-    if wrong.any():
-        raise XeniumError(
-            f"{int(wrong.sum())} annotations' first vertex != their cell's: "
-            "the polygons are not in cell_index order, are nuclei, or were "
-            f"drawn with another frame than {frame}"
-        )
-    logger.info("  verified %s cells map to annotations", f"{n_cells:,}")
-    return CellMap(ds.id, frame, ids)
+    logger.info(
+        "  matched %s of %s cells to annotations by geometry",
+        f"{found:,}",
+        f"{len(ids):,}",
+    )
+    return cells
 
 
 def verify_cells(
@@ -265,9 +335,11 @@ def open_cells(
     ``path`` holding a saved map: it is checked (right dataset, cells, this
     bundle) and spot-checked against the server with the frame it was saved
     with; a ``frame`` given as well must match it. ``path`` holding a bare
-    id array (written before CellMap existed): spot-checked with ``frame``
-    (default: the bundle's morphology frame). No file: fetched and verified
-    in full, then saved to ``path`` if given.
+    id array (written before CellMap existed): spot-checked with ``frame``.
+    No file: re-derived by geometry with ``frame``, then saved to ``path``.
+    ``frame`` defaults to the bundle's morphology frame — safe here because
+    everything returned is verified against the server, so a wrong frame is
+    refused, never used.
     """
     path = Path(path) if path else None
     if path and path.exists():
@@ -276,18 +348,21 @@ def open_cells(
             if frame is not None and not frame.matches(stored.frame):
                 raise XeniumError(
                     f"{frame} conflicts with the {stored.frame} saved in "
-                    f"{path}; omit --alignment/--pixel-size"
+                    f"{path}"
                 )
             cells = stored
         else:
-            cells = CellMap(
-                ds.id, frame or ImageFrame.create(bundle=bundle), stored
-            )
+            cells = CellMap(ds.id, frame or _default(bundle), stored)
         verify_cells(ds, bundle, cells, sample=sample, source=str(path))
         logger.info("  using the cell map in %s", path)
         return cells
-    cells = fetch_cells(ds, bundle, frame)
+    cells = fetch_cells(ds, bundle, frame or _default(bundle))
+    cells.check(bundle, ds)
     if path:
         cells.save(path)
         logger.info("  saved the cell map to %s", path)
     return cells
+
+
+def _default(bundle: XeniumBundle) -> ImageFrame:
+    return ImageFrame.create(bundle=bundle)

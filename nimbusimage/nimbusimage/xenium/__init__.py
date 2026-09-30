@@ -21,9 +21,9 @@ Example:
     xenium.upload_gene_panel(ds, bundle, cells, ["CD3E", "MS4A1"])
     xenium.upload_clusters(ds, bundle, cells)
     xenium.upload_cell_types(ds, bundle, cells, "cell_types.csv")
-    ds.spatial.upload_and_register(
-        xenium.build_spatial_table(bundle, cells, "spatial.zarr.zip"))
-    xenium.register_transcripts(ds, bundle, cells.frame)
+    table = xenium.build_spatial_table(bundle, cells, "spatial.zarr.zip")
+    xenium.upload_spatial_table(ds, cells, table)
+    xenium.register_transcripts(ds, bundle, cells)
 
     # the H&E image: its own frame, its own cell map
     he_frame = xenium.ImageFrame.create(bundle=bundle,
@@ -63,6 +63,7 @@ from nimbusimage.xenium.ingest import (
     upload_morphology,
     upload_polygons,
     upload_regions,
+    upload_spatial_table,
     upload_umap,
 )
 
@@ -94,6 +95,7 @@ __all__ = [
     "upload_morphology",
     "upload_polygons",
     "upload_regions",
+    "upload_spatial_table",
     "upload_umap",
     "verify_cells",
 ]

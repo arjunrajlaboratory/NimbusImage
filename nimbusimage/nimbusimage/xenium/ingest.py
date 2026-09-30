@@ -111,6 +111,22 @@ def _chunks(stop: int, chunk: int):
         yield c0, min(c0 + chunk, stop)
 
 
+def _frame_for(ds: Dataset, source) -> ImageFrame:
+    """The frame a coordinate step uses on ``ds``: that of ``ds``'s own
+    ``CellMap`` (checked against ``ds``), or an ``ImageFrame`` stated
+    explicitly. Never a default: these steps have nothing to verify a
+    wrong frame against, so a guess would silently misplace everything."""
+    if isinstance(source, CellMap):
+        source.check_dataset(ds)
+        return source.frame
+    if isinstance(source, ImageFrame):
+        return source
+    raise XeniumError(
+        "pass the dataset's CellMap (upload_polygons / open_cells) or an "
+        "explicit ImageFrame"
+    )
+
+
 def _check_limit(limit: int | None, n: int) -> int:
     """How many items a ``limit`` covers (None = all)."""
     if limit is None:
@@ -640,13 +656,23 @@ def build_spatial_table(
     return out
 
 
+def upload_spatial_table(
+    ds: Dataset, cells: CellMap, path: str | os.PathLike
+) -> dict:
+    """Upload and register a table ``build_spatial_table`` wrote from
+    ``cells`` — on ``cells``'s dataset only, since its join keys are that
+    dataset's annotation ids."""
+    cells.check_dataset(ds)
+    return ds.spatial.upload_and_register(path)
+
+
 # --- molecules ---
 
 
 def register_transcripts(
     ds: Dataset,
     bundle: XeniumBundle,
-    frame: ImageFrame | None = None,
+    frame: CellMap | ImageFrame,
     *,
     item_id: str | None = None,
 ) -> dict:
@@ -654,12 +680,12 @@ def register_transcripts(
 
     The file is already a level-of-detail pyramid, so nothing is rebuilt;
     registration records how molecules land on ``ds``: ``frame``'s pixel
-    size and, for the H&E image, its inverse alignment. Pass the frame the
-    polygons used (``cells.frame``) so molecules and cells line up; default:
-    the bundle's morphology frame. ``item_id`` registers an item already in
-    the folder and skips the (slow) upload.
+    size and, for the H&E image, its inverse alignment. Pass the dataset's
+    ``CellMap`` (its polygons' frame, so molecules and cells line up) or an
+    explicit ``ImageFrame``. ``item_id`` registers an item already in the
+    folder and skips the (slow) upload.
     """
-    frame = frame or ImageFrame.create(bundle=bundle)
+    frame = _frame_for(ds, frame)
     if frame.pixel_size is None:
         raise XeniumError("registering transcripts needs a pixel size")
     if item_id is None:
@@ -718,19 +744,22 @@ def region_annotations(
 def upload_regions(
     ds: Dataset,
     geojson: dict | str | os.PathLike,
-    frame: ImageFrame,
+    frame: CellMap | ImageFrame,
     *,
     drawn_in: str,
+    alignment=None,
     tag: str = REGION_TAG,
 ) -> list[Annotation]:
     """Upload region polygons (e.g. a pathologist's layer, which 10x ships in
     H&E pixels) for the Region statistics dialog.
 
     ``region`` is a reserved tag: spatial analyses never treat those polygons
-    as cells. ``frame`` is the dataset's; on the morphology image, regions
-    drawn in H&E pixels need its ``alignment``, and ``drawn_in="microns"``
-    its pixel size.
+    as cells. ``frame`` is the dataset's ``CellMap`` or an explicit
+    ``ImageFrame``. On the morphology image, regions drawn in H&E pixels
+    need an alignment: pass ``alignment`` to add it to a frame that lacks
+    one (one that differs from the frame's own is an error).
     """
+    frame = _frame_for(ds, frame).with_alignment(alignment)
     if not isinstance(geojson, dict):
         try:
             geojson = json.loads(Path(geojson).read_text())

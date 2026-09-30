@@ -39,6 +39,8 @@ from nimbusimage.xenium import (  # noqa: E402
     upload_clusters,
     upload_gene_panel,
     upload_polygons,
+    upload_regions,
+    upload_spatial_table,
     upload_umap,
 )
 from nimbusimage.xenium.bundle import (  # noqa: E402
@@ -163,6 +165,11 @@ def _expected_first_vertex(cell: int) -> tuple[float, float]:
     return x / PIXEL_SIZE, y / PIXEL_SIZE
 
 
+def pathlib_touch(path):
+    """Module-level so a pickle can reference it (test payload only)."""
+    Path(path).touch()
+
+
 # --- an in-memory server that records every write ---
 
 
@@ -211,13 +218,20 @@ class FakeAnnotations:
         return made
 
     def list(self, shape=None, tags=None, limit=0, offset=0):
+        # Like the server: tags match with $all.
         found = [
             a
             for a in self._mine()
             if (shape is None or a.shape == shape)
-            and (not tags or set(tags) & set(a.tags))
+            and (not tags or set(tags) <= set(a.tags))
         ]
         return found[offset:offset + limit] if limit else found[offset:]
+
+    def iter_all(self, shape=None, tags=None, page_size=1000):
+        # REVERSED creation order: the server promises no creation order
+        # (ObjectIds from different Girder instances interleave), so any
+        # code that relies on it must fail here.
+        return iter(reversed(self.list(shape=shape, tags=tags)))
 
     def count(self, shape=None):
         return len(self.list(shape=shape))
@@ -301,6 +315,7 @@ def _values(server, name):
 
 MORPH = "ds_morph"
 OTHER = "ds_other"
+HE = "ds_he"
 
 
 class TestBundle:
@@ -638,45 +653,113 @@ class TestPolygons:
 
 
 class TestOpenCells:
-    def test_fetch_matches_the_upload(self, server, bundle):
-        uploaded = CellMap(
-            MORPH,
-            ImageFrame.create(bundle=bundle),
-            ["ann_0", "ann_1", "ann_2", "ann_3"],
-        )
+    def test_fetch_matches_the_upload_in_any_order(self, server, bundle):
+        """The fake lists in REVERSE creation order: matching is by
+        geometry, not position, and other polygons are ignored."""
         ds = server.dataset(MORPH)
-        # no degenerate polygon here: move cell 2 to a real triangle first
-        for i, poly in enumerate(CELL_VERTICES):
-            if len(poly) < 3:
-                continue
-        del uploaded
-        _upload(server, bundle)
-        with pytest.raises(XeniumError, match="only 3 of 4"):
-            fetch_cells(ds, bundle)
+        region = SimpleNamespace(
+            shape="polygon",
+            tags=["region"],
+            coordinates=[{"x": 0, "y": 0}, {"x": 9, "y": 0}, {"x": 9, "y": 9}],
+        )
+        ds.annotations.create_many([region])  # a polygon that is no cell
+        uploaded = _upload(server, bundle)
+        fetched = fetch_cells(ds, bundle, uploaded.frame)
+        assert fetched.ids.tolist() == uploaded.ids.tolist()
+        assert fetched.ids.tolist() == ["ann_1", "ann_2", None, "ann_3"]
 
-    def test_fetch_verifies_the_frame(self, server, bundle, monkeypatch):
-        full = [
-            p if len(p) >= 3 else [(20, 20), (22, 20), (21, 22)]
-            for p in CELL_VERTICES
-        ]
-        monkeypatch.setattr(
-            bundle,
-            "polygons",
-            lambda polygon_set="cell": _polygon_arrays(full),
-        )
-        monkeypatch.setattr(
-            bundle,
-            "first_vertices",
-            lambda cells=None: _polygon_arrays(full)[1][
-                slice(None) if cells is None else cells, :2
-            ],
-        )
+    @pytest.mark.parametrize("nudge, matches", [(1e-3, True), (0.05, False)])
+    def test_matching_tolerates_float_arithmetic_only(
+        self, server, bundle, nudge, matches
+    ):
+        """Uploads by older code (float32 arithmetic) land ~1e-3 px away at
+        H&E scale; exact keys matched 16% of a real 465K-cell dataset."""
+        uploaded = _upload(server, bundle)
+        for annotation in server.annotations.values():
+            annotation.coordinates = [
+                {"x": c["x"] + nudge, "y": c["y"] - nudge}
+                for c in annotation.coordinates
+            ]
         ds = server.dataset(MORPH)
-        upload_polygons(ds, bundle, ImageFrame.create(pixel_size=0.25))
-        with pytest.raises(XeniumError, match="another frame"):
-            fetch_cells(ds, bundle)
-        cells = fetch_cells(ds, bundle, ImageFrame.create(pixel_size=0.25))
-        assert cells.ids.tolist() == ["ann_0", "ann_1", "ann_2", "ann_3"]
+        if matches:
+            fetched = fetch_cells(ds, bundle, uploaded.frame)
+            assert fetched.ids.tolist() == uploaded.ids.tolist()
+        else:
+            with pytest.raises(XeniumError, match="none of the 3 polygon"):
+                fetch_cells(ds, bundle, uploaded.frame)
+
+    def test_a_limited_upload_can_be_re_derived(self, server, bundle):
+        uploaded = _upload(server, bundle, limit=2)
+        fetched = fetch_cells(server.dataset(MORPH), bundle, uploaded.frame)
+        assert fetched.ids.tolist() == ["ann_0", "ann_1", None, None]
+
+    def test_a_duplicate_upload_is_an_error(self, server, bundle):
+        frame = _upload(server, bundle).frame
+        _upload(server, bundle)
+        with pytest.raises(XeniumError, match="uploaded twice"):
+            fetch_cells(server.dataset(MORPH), bundle, frame)
+
+    def test_the_wrong_frame_matches_nothing(self, server, bundle):
+        _upload(server, bundle)
+        with pytest.raises(XeniumError, match="none of the 3 polygon"):
+            fetch_cells(
+                server.dataset(MORPH),
+                bundle,
+                ImageFrame.create(pixel_size=0.25),
+            )
+
+    def test_open_cells_re_derives_and_saves(self, server, bundle, tmp_path):
+        _upload(server, bundle)
+        path = tmp_path / "derived.npz"
+        cells = open_cells(server.dataset(MORPH), bundle, path)
+        assert cells.ids.tolist() == ["ann_0", "ann_1", None, "ann_2"]
+        assert CellMap.read(path).dataset_id == MORPH
+
+    def test_cells_files_load_without_unpickling(self, tmp_path):
+        """A .npz with an object array could run code if unpickled."""
+        hostile = tmp_path / "hostile.npz"
+        meta = {
+            "format": 1,
+            "datasetId": MORPH,
+            "polygonSet": "cell",
+            "frame": ImageFrame("morphology", 1).to_dict(),
+        }
+        np.savez(
+            hostile,
+            ids=np.array([object()], dtype=object),
+            meta=np.array(json.dumps(meta)),
+        )
+        with pytest.raises(XeniumError, match="not a cells file"):
+            CellMap.read(hostile)
+
+    def test_a_pickle_passed_as_cells_never_runs(self, tmp_path):
+        """np.load(allow_pickle=True) unpickles ANY non-numpy file; only a
+        real .npy may reach it."""
+        import pickle
+
+        marker = tmp_path / "ran"
+
+        class Payload:
+            def __reduce__(self):
+                return (pathlib_touch, (str(marker),))
+
+        hostile = tmp_path / "cells.npz"
+        hostile.write_bytes(pickle.dumps(Payload()))
+        with pytest.raises(XeniumError, match="not a cells file"):
+            CellMap.read(hostile)
+        assert not marker.exists(), "a pickle in a cells file was executed"
+
+    @pytest.mark.parametrize("content", ["other", "no meta", "bad meta"])
+    def test_foreign_files_are_a_xenium_error(self, tmp_path, content):
+        path = tmp_path / "foreign.npz"
+        if content == "other":
+            path.write_bytes(b"not a numpy file at all")
+        elif content == "no meta":
+            np.savez(path, ids=np.array(["a"]))
+        else:
+            np.savez(path, ids=np.array(["a"]), meta=np.array('{"x": 1}'))
+        with pytest.raises(XeniumError):
+            CellMap.read(path)
 
     def test_saved_map_round_trip_verified(self, server, bundle, tmp_path):
         path = _upload(server, bundle).save(tmp_path / "cells.npz")
@@ -887,11 +970,53 @@ class TestTranscriptsAndRegions:
         assert (item, pixel_size) == ("item_tx", 0.25)
         np.testing.assert_allclose(transform, np.diag([0.5, 0.5, 1.0]))
 
-    def test_transcripts_default_and_existing_item(self, server, bundle):
+    def test_transcripts_take_the_datasets_cell_map(self, server, bundle):
+        cells = _upload(server, bundle)
         ds = server.dataset(MORPH)
-        register_transcripts(ds, bundle, item_id="item_1")
+        register_transcripts(ds, bundle, cells, item_id="item_1")
         assert ds.spatial.registered == ("item_1", PIXEL_SIZE, None)
         assert (MORPH, "upload_transcripts") not in server.writes
+        with pytest.raises(XeniumError, match="belong to dataset ds_morph"):
+            register_transcripts(server.dataset(OTHER), bundle, cells)
+
+    def test_transcripts_never_default_the_frame(self, server, bundle):
+        with pytest.raises(XeniumError, match="explicit ImageFrame"):
+            register_transcripts(server.dataset(MORPH), bundle, None)
+
+    def test_regions_may_only_add_an_alignment(self, server, bundle):
+        cells = _upload(server, bundle)
+        geojson = {
+            "features": [
+                {
+                    "properties": {"name": "R"},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[0, 0], [9, 0], [9, 9]]],
+                    },
+                }
+            ]
+        }
+        ds = server.dataset(MORPH)
+        upload_regions(
+            ds,
+            geojson,
+            cells,
+            drawn_in="he",
+            alignment=np.diag([2.0, 2.0, 1.0]),
+        )
+        region = ds.annotations.list(tags=["region"])[0]
+        assert region.coordinates[1] == {"x": 18.0, "y": 0.0}
+        he = ImageFrame.create(bundle=bundle, alignment=np.diag([2, 2, 1.0]))
+        with pytest.raises(XeniumError, match="differs"):
+            he.with_alignment(np.diag([3.0, 3.0, 1.0]))
+
+    def test_spatial_table_upload_checks_the_dataset(
+        self, server, bundle, tmp_path
+    ):
+        cells = _upload(server, bundle)
+        with pytest.raises(XeniumError, match="belong to dataset ds_morph"):
+            upload_spatial_table(server.dataset(OTHER), cells, tmp_path / "t")
+        assert server.writes[-1][1] == "create_many"
 
     def test_regions_class_first_and_ring_closed(self):
         geojson = {
@@ -984,6 +1109,15 @@ def cli(server, bundle, tmp_path, monkeypatch):
     other = _upload(server, bundle, dataset_id=OTHER)
     other.save(tmp_path / "other.npz")
     np.save(tmp_path / "other_ids.npy", other.ids)  # a pre-CellMap file
+    np.savetxt(tmp_path / "diag.csv", np.diag([2.0, 2.0, 1.0]), delimiter=",")
+    he_frame = ImageFrame.create(
+        bundle=bundle, alignment=tmp_path / "diag.csv"
+    )
+    he = upload_polygons(server.dataset(HE), bundle, he_frame)
+    he.save(tmp_path / "cells_he.npz")
+    np.save(
+        tmp_path / "morph_ids.npy", CellMap.read(tmp_path / "cells.npz").ids
+    )
     _upload(server, bundle, polygon_set="nucleus").save(
         tmp_path / "nuclei.npz"
     )
@@ -1055,6 +1189,26 @@ CLI_COMMANDS = {
         "{tmp}/cells.npz",
     ],
 }
+CLI_COMMANDS["transcripts (H&E)"] = [
+    "transcripts",
+    "--bundle-dir",
+    "{bundle}",
+    "--dataset",
+    HE,
+    "--cells",
+    "{tmp}/cells_he.npz",
+]
+CLI_COMMANDS["regions (H&E)"] = [
+    "regions",
+    "--dataset",
+    HE,
+    "--geojson",
+    "{tmp}/regions.json",
+    "--drawn-in",
+    "he",
+    "--cells",
+    "{tmp}/cells_he.npz",
+]
 if __import__("importlib").util.find_spec("anndata"):
     CLI_COMMANDS["spatial-table"] = [
         "spatial-table",
@@ -1123,18 +1277,54 @@ BAD_INPUTS = {
     ),
     "bad geojson": ({"--geojson": "{tmp}/bad.json"}, ["regions"]),
     "microns without pixel size": (
-        {"--drawn-in": "microns", "--cells": "{tmp}/absent.npz"},
+        {"--drawn-in": "microns", "--cells": None, "--image": "morphology"},
         ["regions"],
+    ),
+    # Transcripts and regions have nothing to verify a frame against, so
+    # they must never fall back to a default one.
+    "no frame stated": (
+        {"--cells": None},
+        ["transcripts", "regions", "transcripts (H&E)", "regions (H&E)"],
+    ),
+    "mistyped cells path": (
+        {"--cells": "{tmp}/cells_typo.npz"},
+        ["transcripts", "regions", "transcripts (H&E)", "regions (H&E)"],
+    ),
+    "bare-id file as the frame": (
+        {"--cells": "{tmp}/morph_ids.npy"},
+        ["transcripts", "regions"],
+    ),
+    "alignment on a saved morphology map": (
+        {"--alignment": "{tmp}/diag.csv"},
+        ["properties", "cell-types", "transcripts", "spatial-table"],
+    ),
+    "a different alignment than the saved one": (
+        {"--alignment": "{tmp}/singular.csv"},
+        ["transcripts (H&E)", "regions (H&E)"],
+    ),
+    "conflicting image": (
+        {"--image": "he"},
+        ["transcripts", "regions"],
+    ),
+    "unwritable cells-out": (
+        {"--cells-out": "{tmp}/no_such_dir/cells.npz"},
+        ["polygons"],
     ),
 }
 
 
 def _edit(argv, edits):
+    """Set each flag's value; None removes the flag."""
     argv = list(argv)
     for flag, value in edits.items():
         if flag in argv:
-            argv[argv.index(flag) + 1] = value
-        else:
+            at = argv.index(flag)
+            if value is None:
+                del argv[at]  # the flag
+                del argv[at]  # its value
+            else:
+                argv[at + 1] = value
+        elif value is not None:
             argv += [flag, value]
     return argv
 
@@ -1203,7 +1393,8 @@ class TestCli:
             CLI_COMMANDS["regions"],
             {
                 "--drawn-in": "microns",
-                "--cells": "{tmp}/absent.npz",
+                "--cells": None,
+                "--image": "morphology",
                 "--pixel-size": "0.5",
             },
         )

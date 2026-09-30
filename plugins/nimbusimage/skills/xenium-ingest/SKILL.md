@@ -53,18 +53,23 @@ xenium.upload_gene_panel(ds, bundle, cells, ["CD3E", "MS4A1"])
 xenium.upload_clusters(ds, bundle, cells)
 xenium.upload_umap(ds, bundle, cells, xenium.compute_umap(bundle))
 xenium.upload_cell_types(ds, bundle, cells, "cell_types.csv")
-ds.spatial.upload_and_register(xenium.build_spatial_table(
-    bundle, cells, "spatial.zarr.zip", cell_types="cell_types.csv"))
-xenium.register_transcripts(ds, bundle, cells.frame)
-morph = xenium.ImageFrame.create(bundle=bundle, alignment="he_align.csv", image="morphology")
-xenium.upload_regions(ds, "annotation.geojson", morph, drawn_in="he")
+table = xenium.build_spatial_table(bundle, cells, "spatial.zarr.zip",
+                                   cell_types="cell_types.csv")
+xenium.upload_spatial_table(ds, cells, table)     # refuses another dataset's table
+xenium.register_transcripts(ds, bundle, cells)     # the polygons' frame; checked vs ds
+xenium.upload_regions(ds, "annotation.geojson", cells, drawn_in="he",
+                      alignment="he_align.csv")    # adds M to the morphology frame
 
 # the H&E image: its own frame and its own cell map
 he_frame = xenium.ImageFrame.create(bundle=bundle, alignment="he_align.csv")
 he_cells = xenium.upload_polygons(he_ds, bundle, he_frame)
 ```
 
-Two objects carry what the steps share, so nothing has to be passed twice:
+Two objects carry what the steps share, so nothing has to be passed twice. Transcripts
+and regions take the dataset's `CellMap` (or an explicit `ImageFrame`) and **never fall
+back to a default frame**: nothing verifies their coordinates, so a guess would silently
+misplace every molecule on an H&E dataset. On the command line that means `--cells`, or
+`--image`/`--alignment`/`--pixel-size`; a mistyped `--cells` path is an error.
 
 - **`ImageFrame`** — how microns land on one dataset's pixels: which image (`morphology`
   or `he`), the pixel size, the alignment. Validated when built (pixel size > 0, a 3×3
@@ -119,7 +124,7 @@ $X transcripts --bundle-dir extracted --dataset $MORPH --cells cells_morph.npz
 $X regions --geojson annotation.geojson --dataset $MORPH --cells cells_morph.npz \
        --drawn-in he --alignment he_align.csv
 $X regions --geojson annotation.geojson --dataset $HE --cells cells_he.npz \
-       --drawn-in he --target he
+       --drawn-in he
 ```
 
 Protein panels (XOA 4 "Protein" bundles) quantify antibodies in the same matrix
@@ -214,8 +219,11 @@ folder_id = view["datasetId"]           # pass this as --dataset
 Uploads in `cell_index` order via `create_many` in batches of 5,000 — ~100 s for 709k
 polygons. A per-annotation loop would be 709k requests; never do that. `--cells-out`
 saves the cell map (ids + dataset + frame); every later step takes it as `--cells`.
-Without the file, `open_cells` re-derives it from the server and verifies every first
-vertex (only possible after a full, unlimited upload). A saved map is checked against
+Without the file, `open_cells` re-derives it from the server by **geometry** — each
+annotation is matched to the cell whose first two vertices and vertex count the frame
+puts at the same place, never by list position (the server does not promise creation
+order) — so regions or nuclei in the dataset are ignored, a `--limit` upload maps the
+cells it has, and a double upload is an error. A saved map is checked against
 the dataset before use, so the H&E dataset's file can't be used for the morphology
 dataset by mistake — both have the same cell count. Files written by the older
 `--ids-out` (a bare id array) still load, spot-checked with `--alignment`/`--pixel-size`.

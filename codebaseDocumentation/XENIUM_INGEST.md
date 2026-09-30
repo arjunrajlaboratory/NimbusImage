@@ -28,6 +28,15 @@ what has broken before.
   3×3 invertible alignment, H&E needs one); `XeniumBundle._open` (file exists).
 - **One conversion per input**: `load_embedding`, `_cell_type_labels`,
   `load_alignment`, `bundle.gene_rows` — every form of the input goes through it.
+- **Defaults only where the result is verified.** Per-cell steps may default to the
+  morphology frame because `open_cells` verifies every map against the server's
+  vertices. Transcripts and regions have nothing to verify against, so they take the
+  dataset's `CellMap` (checked against the dataset) or an explicit `ImageFrame` —
+  never a default; a missing or bare-id `--cells` file is an error there.
+- **Never rely on server list order.** `fetch_cells` matches annotations to cells by
+  geometry (first two vertices + vertex count); the server sorts by `_id`, and
+  ObjectIds from different Girder instances in the same second don't follow creation
+  order.
 - **Validate before the first write.** Validated objects are built before a step's
   first server write; a limited upload is represented explicitly (one slot per cell,
   None past `--limit`), never by a shorter array.
@@ -46,7 +55,20 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
   `test_another_datasets_map_is_refused_offline`.
 - A pre-CellMap id file of another dataset (same cell count) is refused by the server
   spot-check — `test_bare_id_file_of_another_dataset`.
-- Fetched ids are vertex-verified against the frame — `test_fetch_verifies_the_frame`.
+- A re-derived map is matched by geometry, whatever the list order (the fake lists in
+  reverse), ignoring other polygons — `test_fetch_matches_the_upload_in_any_order`; a
+  `--limit` upload is re-derivable — `test_a_limited_upload_can_be_re_derived`; a double
+  upload is an error — `test_a_duplicate_upload_is_an_error`; the wrong frame matches
+  nothing — `test_the_wrong_frame_matches_nothing`.
+- Transcripts and regions never default the frame: no `--cells`, a mistyped path or a
+  bare-id file fails with zero writes, on morphology and H&E datasets —
+  `test_cli_bad_input_fails_with_no_writes[...-no frame stated / mistyped cells path /
+  bare-id file as the frame]`, `test_transcripts_never_default_the_frame`; the H&E
+  baselines succeed — `test_cli_baseline_succeeds[transcripts (H&E)]`, `[regions (H&E)]`.
+- The table is uploaded only to its own dataset —
+  `test_spatial_table_upload_checks_the_dataset`.
+- A cells file never unpickles anything but a real `.npy` —
+  `test_a_pickle_passed_as_cells_never_runs`, `test_cells_files_load_without_unpickling`.
 - The cell-type write is read back in one request — `test_cell_types_and_read_back`,
   `test_cell_types_read_back_mismatch`; `get_many` is dataset-scoped —
   `tests/test_annotations.py::TestGetMany::test_scoped_to_the_dataset`.
@@ -80,7 +102,13 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
   in the `fixing-review-findings` skill). When a round's findings come from the last
   round's fixes, add the missing concept instead of another parameter.
 - **Mutation-check contract tables**: delete each guard in a scratch copy and confirm a
-  table row fails; a table that passes with a guard removed is not holding it.
+  table row fails; a table that passes with a guard removed is not holding it. A
+  surviving mutant is either a missing test (the pickle guard needed an execution test,
+  not an error-message test) or redundant code (a CLI dataset check `open_cells` already
+  makes) — add the test or delete the code.
+- **Make the fake hostile, not merely faithful**: `FakeAnnotations.iter_all` lists in
+  reverse creation order, so order-dependent code fails in tests instead of only in a
+  multi-instance production deploy; tags match with `$all` as on the server.
 - **Verify live on real data read-only first**: the 465K-cell kidney H&E dataset checks
   ids, frames and the wrong-file refusal without writing (`open_cells` on
   `ids_he.npy` / `ids_morph.npy`).

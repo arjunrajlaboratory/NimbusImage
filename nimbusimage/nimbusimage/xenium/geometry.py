@@ -54,6 +54,14 @@ def load_alignment(
     return matrix
 
 
+def same_value(a, b) -> bool:
+    """The one comparison of frame values (pixel sizes, matrices): both
+    None, or equal within 1e-9."""
+    if a is None or b is None:
+        return a is None and b is None
+    return bool(np.allclose(a, b, rtol=1e-9, atol=1e-9))
+
+
 def _apply_affine(matrix: np.ndarray, xy: np.ndarray) -> np.ndarray:
     homogeneous = np.column_stack([xy, np.ones(len(xy))])
     return (matrix @ homogeneous.T).T[:, :2]
@@ -102,6 +110,11 @@ class ImageFrame:
         self.alignment = load_alignment(alignment)
         if image == "he" and self.alignment is None:
             raise XeniumError("an H&E dataset needs the H&E alignment")
+        # Morphology px -> this image's px, computed once (it is applied to
+        # every polygon of an upload).
+        self._transform = (
+            None if image == "morphology" else np.linalg.inv(self.alignment)
+        )
 
     @classmethod
     def create(
@@ -125,16 +138,26 @@ class ImageFrame:
     # --- equality and storage (a CellMap saves the frame it was made with)
 
     def matches(self, other: ImageFrame) -> bool:
-        def same(a, b):
-            if a is None or b is None:
-                return a is None and b is None
-            return bool(np.allclose(a, b, rtol=1e-9, atol=1e-9))
-
         return (
             self.image == other.image
-            and same(self.pixel_size, other.pixel_size)
-            and same(self.alignment, other.alignment)
+            and same_value(self.pixel_size, other.pixel_size)
+            and same_value(self.alignment, other.alignment)
         )
+
+    def with_alignment(self, alignment) -> ImageFrame:
+        """This frame plus an alignment it lacks (e.g. so regions drawn in
+        H&E pixels can go on the morphology image). An alignment that
+        differs from the frame's own is an error, never a replacement."""
+        matrix = load_alignment(alignment)
+        if matrix is None:
+            return self
+        if self.alignment is not None:
+            if not same_value(matrix, self.alignment):
+                raise XeniumError(
+                    f"that alignment differs from the one in {self}"
+                )
+            return self
+        return ImageFrame(self.image, self.pixel_size, matrix)
 
     def to_dict(self) -> dict:
         return {
@@ -171,9 +194,7 @@ class ImageFrame:
     def transform(self) -> np.ndarray | None:
         """Morphology px -> this image's px: the INVERSE alignment for H&E,
         None (identity) for morphology."""
-        if self.image == "morphology":
-            return None
-        return np.linalg.inv(self.alignment)
+        return self._transform
 
     def microns_to_pixels(self, xy_um: np.ndarray) -> np.ndarray:
         """[K, 2] microns -> [K, 2] pixels of this image."""

@@ -81,7 +81,8 @@ def decode_cell_groups(
         )
         label = np.zeros(n_cells, dtype=np.int32)
         for k in range(len(pointers) - 1):
-            block = indices[int(pointers[k]):int(pointers[k + 1])]
+            start, end = int(pointers[k]), int(pointers[k + 1])
+            block = indices[start:end]
             if len(block) == 0:
                 continue
             keep = block > 0

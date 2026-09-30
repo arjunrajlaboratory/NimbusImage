@@ -259,9 +259,9 @@ cells.save("cells.npz")                           # later: xenium.open_cells(ds,
 xenium.upload_gene_panel(ds, bundle, cells, ["CD3E", "MS4A1"])
 xenium.upload_clusters(ds, bundle, cells)
 xenium.upload_cell_types(ds, bundle, cells, "cell_types.csv")
-ds.spatial.upload_and_register(
-    xenium.build_spatial_table(bundle, cells, "spatial.zarr.zip"))
-xenium.register_transcripts(ds, bundle, cells.frame)
+table = xenium.build_spatial_table(bundle, cells, "spatial.zarr.zip")
+xenium.upload_spatial_table(ds, cells, table)
+xenium.register_transcripts(ds, bundle, cells)
 ```
 
 ```bash

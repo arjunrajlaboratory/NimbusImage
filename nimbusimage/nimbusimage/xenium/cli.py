@@ -17,12 +17,10 @@ from __future__ import annotations
 
 import argparse
 import logging
-import math
 import os
 import sys
 from pathlib import Path
 
-import numpy as np
 
 from nimbusimage.xenium import ingest
 from nimbusimage.xenium.bundle import (
@@ -37,6 +35,7 @@ from nimbusimage.xenium.geometry import (
     REGION_FRAMES,
     ImageFrame,
     load_alignment,
+    same_value,
 )
 
 logger = logging.getLogger("nimbusimage.xenium")
@@ -75,84 +74,102 @@ def _read_panel(args) -> list[str]:
 
 # --- the dataset's frame and cell map ---
 #
-# Every subcommand resolves the frame through these, BEFORE any server
-# write: the frame saved with --cells when there is one, else the one
-# --alignment/--pixel-size describe, else the bundle's morphology frame.
-# Flags that disagree with a saved frame are an error, never a silent pick.
+# One rule, applied to every subcommand before any server write: a frame
+# comes from the dataset's saved --cells map, or is stated by flags
+# (--image/--alignment/--pixel-size). Flags given alongside a saved map must
+# agree with it (compared by geometry.same_value); only `regions` may add an
+# alignment the map lacks. Defaults are used only where the result is
+# verified against the server (per-cell steps); transcripts and regions,
+# which have nothing to verify against, never guess.
 
 
-def _flag_frame(args, bundle, *, image=None) -> ImageFrame | None:
-    """The frame --alignment/--pixel-size (and ``image``) describe, or None
-    when none of them is given."""
+def _check_flags(args) -> None:
+    """Validate the frame flags before connecting (pixel sizes are checked
+    by argparse)."""
+    load_alignment(getattr(args, "alignment", None))
+
+
+def _stated_frame(args, bundle) -> ImageFrame | None:
+    """The frame the flags state, or None when no frame flag is given."""
+    image = getattr(args, "image", None)
     alignment = getattr(args, "alignment", None)
     pixel_size = getattr(args, "pixel_size", None)
-    if alignment is None and pixel_size is None and image is None:
+    if image is None and alignment is None and pixel_size is None:
         return None
     return ImageFrame.create(
         bundle=bundle, alignment=alignment, pixel_size=pixel_size, image=image
     )
 
 
-def _saved_frame(args, ds) -> ImageFrame | None:
-    """The frame saved in --cells, after checking the file is ``ds``'s."""
-    path = getattr(args, "cells", None)
-    if path is None or not Path(path).exists():
-        return None
-    stored = CellMap.read(path)
-    if not isinstance(stored, CellMap):
-        return None  # a bare-id file from before CellMap: no frame saved
-    if stored.dataset_id != ds.id:
-        raise XeniumError(
-            f"{path} is the cell map of dataset {stored.dataset_id}, "
-            f"not {ds.id}"
-        )
-    return stored.frame
-
-
-def _frame(args, bundle, ds, *, image=None) -> ImageFrame:
-    """The dataset's frame. With a saved --cells frame, that frame wins:
-    flags may only add what it lacks (an alignment, so regions drawn in H&E
-    pixels can go on the morphology image); a flag that contradicts it is
-    an error."""
-    saved = _saved_frame(args, ds)
-    if saved is None:
-        return _flag_frame(args, bundle, image=image) or ImageFrame.create(
-            bundle=bundle
-        )
+def _require_flags_match(args, saved: ImageFrame, *, may_add_alignment=False):
+    image = getattr(args, "image", None)
     alignment = load_alignment(getattr(args, "alignment", None))
     pixel_size = getattr(args, "pixel_size", None)
     conflicts = []
     if image is not None and image != saved.image:
-        conflicts.append(f"--target {image}")
-    if pixel_size is not None and not math.isclose(
-        pixel_size, saved.pixel_size or 0, rel_tol=1e-9
-    ):
+        conflicts.append(f"--image {image}")
+    if pixel_size is not None and not same_value(pixel_size, saved.pixel_size):
         conflicts.append(f"--pixel-size {pixel_size}")
-    if (
-        alignment is not None
-        and saved.alignment is not None
-        and not np.allclose(alignment, saved.alignment)
-    ):
-        conflicts.append("--alignment")
+    if alignment is not None:
+        if saved.alignment is None:
+            if not may_add_alignment:
+                conflicts.append("--alignment (the saved frame has none)")
+        elif not same_value(alignment, saved.alignment):
+            conflicts.append("--alignment")
     if conflicts:
         raise XeniumError(
             f"{', '.join(conflicts)} conflicts with the {saved} saved in "
             f"{args.cells}"
         )
-    if alignment is None or saved.alignment is not None:
-        return saved
-    return ImageFrame(saved.image, saved.pixel_size, alignment)
+
+
+def _saved_map(args) -> CellMap | None:
+    """The saved map in --cells, None for no file / a bare-id file."""
+    path = getattr(args, "cells", None)
+    if path is None or not Path(path).exists():
+        return None
+    stored = CellMap.read(path)
+    return stored if isinstance(stored, CellMap) else None
 
 
 def _dataset_cells(args, bundle):
-    _flag_frame(args, bundle)  # validate the flags before connecting
+    _check_flags(args)
     ds = _connect().dataset(args.dataset)
     logger.info(
         "=== %s (%s cells) ===", ds.name, f"{bundle.number_of_cells:,}"
     )
-    return ds, open_cells(
-        ds, bundle, args.cells, frame=_frame(args, bundle, ds)
-    )
+    saved = _saved_map(args)
+    if saved is not None:
+        # open_cells checks the dataset; here only flags vs the saved frame.
+        _require_flags_match(args, saved.frame)
+        frame = None  # open_cells uses the saved frame
+    else:
+        frame = _stated_frame(args, bundle)  # None: the verified default
+    return ds, open_cells(ds, bundle, args.cells, frame=frame)
+
+
+def _frame_source(args, bundle, ds, *, may_add_alignment=False):
+    """For transcripts and regions: the dataset's saved CellMap, or the
+    frame the flags state — never a default."""
+    if args.cells is not None:
+        stored = CellMap.read(args.cells)  # a missing file is an error
+        if not isinstance(stored, CellMap):
+            raise XeniumError(
+                f"{args.cells} is a bare-id file with no saved frame; state "
+                "the frame with --image/--alignment/--pixel-size instead"
+            )
+        stored.check_dataset(ds)
+        _require_flags_match(
+            args, stored.frame, may_add_alignment=may_add_alignment
+        )
+        return stored
+    stated = _stated_frame(args, bundle)
+    if stated is None:
+        raise XeniumError(
+            "state the dataset's frame: --cells (the map polygons saved), "
+            "or --image/--alignment/--pixel-size"
+        )
+    return stated
 
 
 # --- subcommands ---
@@ -176,7 +193,16 @@ def cmd_morphology(args) -> None:
 
 def cmd_polygons(args) -> None:
     bundle = XeniumBundle(args.bundle_dir)
-    frame = _flag_frame(args, bundle) or ImageFrame.create(bundle=bundle)
+    _check_flags(args)
+    frame = _stated_frame(args, bundle) or ImageFrame.create(bundle=bundle)
+    if args.cells_out is not None:
+        # Checked before the upload: a limited upload's map can be
+        # re-derived, but a lost file should never be the first failure.
+        out = Path(args.cells_out)
+        if out.is_dir() or not out.parent.is_dir():
+            raise XeniumError(f"cannot write the cell map to {out}")
+        if not os.access(out.parent, os.W_OK):
+            raise XeniumError(f"{out.parent} is not writable")
     ds = _connect().dataset(args.dataset)
     # upload_polygons deletes --delete-tag only after reading its inputs.
     cells = ingest.upload_polygons(
@@ -288,7 +314,7 @@ def cmd_spatial_table(args) -> None:
     )
     if args.no_upload:
         return
-    entry = ds.spatial.upload_and_register(out)
+    entry = ingest.upload_spatial_table(ds, cells, out)
     logger.info(
         "  registered: %s cells x %s features (schema v%s)",
         f"{entry['nObs']:,}",
@@ -299,12 +325,12 @@ def cmd_spatial_table(args) -> None:
 
 def cmd_transcripts(args) -> None:
     bundle = XeniumBundle(args.bundle_dir)
-    _flag_frame(args, bundle)  # validate the flags before connecting
+    _check_flags(args)
     ds = _connect().dataset(args.dataset)
-    frame = _frame(args, bundle, ds)
-    logger.info("=== %s === %s", ds.name, frame)
+    source = _frame_source(args, bundle, ds)
+    logger.info("=== %s === %s", ds.name, source)
     # register_transcripts checks its inputs before the multi-GB upload.
-    schema = ingest.register_transcripts(ds, bundle, frame, item_id=args.item)
+    schema = ingest.register_transcripts(ds, bundle, source, item_id=args.item)
     logger.info(
         "  registered: %s molecules, %s genes, %s pyramid levels",
         f"{schema['totalPoints']:,}",
@@ -315,13 +341,15 @@ def cmd_transcripts(args) -> None:
 
 def cmd_regions(args) -> None:
     bundle = XeniumBundle(args.bundle_dir) if args.bundle_dir else None
-    _flag_frame(args, bundle, image=args.target)  # validate before connecting
+    _check_flags(args)
     ds = _connect().dataset(args.dataset)
+    source = _frame_source(args, bundle, ds, may_add_alignment=True)
     ingest.upload_regions(
         ds,
         args.geojson,
-        _frame(args, bundle, ds, image=args.target),
+        source,
         drawn_in=args.drawn_in,
+        alignment=args.alignment if isinstance(source, CellMap) else None,
         tag=args.tag,
     )
 
@@ -370,10 +398,23 @@ def _add_cells_arg(parser, *, required_file: bool = False) -> None:
         default=None,
         help="the dataset's cell map from polygons --cells-out"
         + (
-            "; its frame is reused"
+            "; its frame is reused (or state the frame with --image/"
+            "--alignment/--pixel-size)"
             if required_file
-            else "; fetched, verified and saved here if absent"
+            else "; re-derived, verified and saved here if absent"
         ),
+    )
+
+
+def _add_image_arg(parser, *aliases) -> None:
+    parser.add_argument(
+        "--image",
+        *aliases,
+        dest="image",
+        choices=IMAGES,
+        default=None,
+        help="which image the dataset shows, when there is no --cells "
+        "(--alignment implies he)",
     )
 
 
@@ -556,6 +597,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_dataset_args(p)
     _add_cells_arg(p, required_file=True)
+    _add_image_arg(p)
     _add_frame_args(p, saved=True)
     p.add_argument(
         "--item",
@@ -575,12 +617,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="what the GeoJSON coordinates are (10x ships H&E pixels)",
     )
-    p.add_argument(
-        "--target",
-        choices=IMAGES,
-        default="morphology",
-        help="which image the dataset shows",
-    )
+    _add_image_arg(p, "--target")
     _add_cells_arg(p, required_file=True)
     _add_frame_args(p, saved=True)
     p.add_argument(
