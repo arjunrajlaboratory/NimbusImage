@@ -216,6 +216,17 @@ connections. Check the ordering inside any getter with both a guard and a scan,
 and prefer iterating the **smaller** collection — resolve the few endpoints of N
 connections, don't enumerate all M objects.
 
+#### The fix-the-fix pattern: a missing concept, patched one call site at a time
+
+When each review round's findings are mostly consequences of the previous round's fixes, stop fixing instances — a concept is missing, and every patch opens another path that needs the same patch. The `nimbusimage.xenium` ingest went through four rounds of 10, 10, 7 and 5 findings; round 3's two serious bugs and all of round 4 were caused by round-2 and round-3 fixes. The 32 findings reduced to four root causes:
+
+- **Context travels separately from the data it qualifies.** Annotation ids were a bare array; which dataset they belonged to, the alignment, the pixel size, the polygon set and `--limit` were loose parameters every step re-accepted. Each fix threaded one more fact into one more place (a `pixel_size` here, a `polygon_set` there), and each thread was a new place to miss — threading `polygon_set` through the id helpers even *widened* what they accepted, letting nucleus-ordered ids pass as cell order. **Fix:** a value object that carries the facts *with* the data (`CellMap`: ids + dataset id + frame + polygon set, saved as one file) and one guard every consumer runs (`cells.check(bundle, ds)`).
+- **One input, several forms, each validated on its own path.** Path vs array vs list; CLI vs library. A fix for the array form (`upload_umap`) skipped the `.npy` form, and a check loosened to `>=` to admit one case admitted wrong data. **Fix:** exactly one conversion function per input, run for every form; represent the special case explicitly (a `CellMap` always has one slot per cell, None past `--limit`) instead of loosening a check to tolerate it.
+- **Validation order was per-function convention**, and the CLI had its own second preflight path. **Fix:** validated objects built up front (`ImageFrame` validates pixel size and alignment on construction), so steps receive nothing left to validate late.
+- **Leaves each normalized their own errors.** **Fix:** one choke point (every bundle zarr read goes through `XeniumBundle._open`, which raises the package error for a missing file).
+
+Then **hold the invariants with contract tables**, not one test per finding: every step × every bad input asserts non-zero exit *and zero writes* against an in-memory fake that records writes (`test_cli_bad_input_fails_with_no_writes`, `test_per_cell_steps_refuse_wrong_cell_maps` in `nimbusimage/tests/test_xenium.py`). Two rules keep them honest: each table row's **baseline must succeed** (`test_cli_baseline_succeeds`), or a variant can "fail correctly" for an unrelated reason; and **mutation-check the table** — delete each guard in a scratch copy and confirm some row fails. The first run of the table found a guard the four review rounds had missed (a bundle read that skipped `require`), and the mutation check found a table gap (no row exercised the spot-check of a pre-`CellMap` id file).
+
 When you generalize, check the *shape* of your sweep too, not just its target. A grep for `throw` in action bodies found the deliberate throwers and missed every pure propagator — so the sweep reported "clean" and the next Codex round flagged the one it missed. If a sweep comes back clean, ask what the query structurally cannot see.
 
 ### Codex round mechanics

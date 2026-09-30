@@ -254,21 +254,26 @@ from nimbusimage import xenium
 client = ni.connect()
 bundle = xenium.XeniumBundle("extracted/")
 ds = xenium.upload_morphology(client, bundle, "Lymph node")
-ids = xenium.upload_polygons(ds, bundle)          # annotation ids in cell_index order
-xenium.upload_gene_panel(ds, bundle, ids, ["CD3E", "MS4A1"])
-xenium.upload_clusters(ds, bundle, ids)
-xenium.upload_cell_types(ds, bundle, ids, "cell_types.csv")
+cells = xenium.upload_polygons(ds, bundle)        # a CellMap: ids + dataset + frame
+cells.save("cells.npz")                           # later: xenium.open_cells(ds, bundle, "cells.npz")
+xenium.upload_gene_panel(ds, bundle, cells, ["CD3E", "MS4A1"])
+xenium.upload_clusters(ds, bundle, cells)
+xenium.upload_cell_types(ds, bundle, cells, "cell_types.csv")
 ds.spatial.upload_and_register(
-    xenium.build_spatial_table(bundle, ids, "spatial.zarr.zip", dataset_id=ds.id))
-xenium.register_transcripts(ds, bundle)
+    xenium.build_spatial_table(bundle, cells, "spatial.zarr.zip"))
+xenium.register_transcripts(ds, bundle, cells.frame)
 ```
 
 ```bash
 MORPH=$(nimbusimage-xenium morphology --bundle-dir extracted --name "Lymph node")
-nimbusimage-xenium polygons --bundle-dir extracted --dataset $MORPH --ids-out ids.npy
-nimbusimage-xenium properties --bundle-dir extracted --dataset $MORPH --ids ids.npy \
+nimbusimage-xenium polygons --bundle-dir extracted --dataset $MORPH --cells-out cells.npz
+nimbusimage-xenium properties --bundle-dir extracted --dataset $MORPH --cells cells.npz \
     --what genes,clusters --genes CD3E,MS4A1
 ```
+
+An `ImageFrame` says how microns land on a dataset (image, pixel size, H&E alignment); a
+`CellMap` ties the ids to their dataset and frame. Per-cell steps refuse a map of another
+dataset, of nuclei or of another bundle before writing anything.
 
 The `xenium-ingest` agent skill is the full runbook (coordinate frames, H&E alignment,
 orientation checks, and the traps hit on 709K-cell datasets).

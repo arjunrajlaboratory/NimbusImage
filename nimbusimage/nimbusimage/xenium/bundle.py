@@ -169,6 +169,12 @@ class XeniumBundle:
     def transcripts_zarr(self) -> Path:
         return self.directory / "transcripts.zarr.zip"
 
+    def _open(self, path: Path):
+        """Every zarr read of the bundle goes through here, so a missing
+        file is always a XeniumError, whichever method reads it."""
+        self.require(path)
+        return open_zarr_zip(path)
+
     def require(self, *paths: Path) -> None:
         """Raise ``XeniumError`` naming every missing bundle file.
 
@@ -192,31 +198,29 @@ class XeniumBundle:
 
     @cached_property
     def number_of_cells(self) -> int:
-        self.require(self.cells_zarr)
-        return int(open_zarr_zip(self.cells_zarr).attrs["number_cells"])
+        return int(self._open(self.cells_zarr).attrs["number_cells"])
 
     # --- segmentation ---
 
-    def polygons(self, polygon_set: str = CELL_POLYGON_SET):
-        """``(num_vertices[N], vertices[N, 2*maxV])`` in MICRONS."""
-        self.require(self.cells_zarr)
-        group = open_zarr_zip(self.cells_zarr)
+    def _polygon_set(self, polygon_set: str):
+        """The zarr group of one named polygon set (the one lookup both
+        ``polygons`` and ``first_vertices`` use)."""
+        group = self._open(self.cells_zarr)
         names = list(group.attrs["polygon_set_names"])
         if polygon_set not in names:
             raise XeniumError(f"polygon set {polygon_set!r} not in {names}")
-        polygons = group["polygon_sets"][str(names.index(polygon_set))]
+        return group["polygon_sets"][str(names.index(polygon_set))]
+
+    def polygons(self, polygon_set: str = CELL_POLYGON_SET):
+        """``(num_vertices[N], vertices[N, 2*maxV])`` in MICRONS."""
+        polygons = self._polygon_set(polygon_set)
         return polygons["num_vertices"][:], polygons["vertices"][:]
 
     def first_vertices(self, cells=None) -> np.ndarray:
         """[K, 2] first vertex (MICRONS) of each CELL polygon, or of the
         ``cells`` listed. Reads only the first two vertex columns, not the
         whole padded vertex array."""
-        self.require(self.cells_zarr)
-        group = open_zarr_zip(self.cells_zarr)
-        names = list(group.attrs["polygon_set_names"])
-        vertices = group["polygon_sets"][
-            str(names.index(CELL_POLYGON_SET))
-        ]["vertices"]
+        vertices = self._polygon_set(CELL_POLYGON_SET)["vertices"]
         rows = slice(None) if cells is None else np.asarray(cells, dtype=int)
         return np.asarray(
             vertices.get_orthogonal_selection((rows, slice(0, 2)))
@@ -224,7 +228,7 @@ class XeniumBundle:
 
     def cell_index_by_id(self) -> dict[tuple[int, int], int]:
         """Packed zarr ``cell_id`` -> ``cell_index``."""
-        packed = open_zarr_zip(self.cells_zarr)["cell_id"][:]
+        packed = self._open(self.cells_zarr)["cell_id"][:]
         return {(int(p), int(s)): i for i, (p, s) in enumerate(packed)}
 
     def cell_types(
@@ -277,8 +281,7 @@ class XeniumBundle:
     # --- counts ---
 
     def _feature_matrix(self):
-        self.require(self.feature_matrix_zarr)
-        return open_zarr_zip(self.feature_matrix_zarr)["cell_features"]
+        return self._open(self.feature_matrix_zarr)["cell_features"]
 
     def gene_rows(self, symbols: list[str]) -> dict[str, int]:
         """``{symbol: matrix row}`` for a gene panel, validated.

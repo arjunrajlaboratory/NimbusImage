@@ -5,6 +5,8 @@ Every step is also a subcommand of the `nimbusimage-xenium` command.
 
 ::: nimbusimage.xenium.bundle
 
+::: nimbusimage.xenium.cells
+
 ::: nimbusimage.xenium.ingest
 
 ::: nimbusimage.xenium.geometry

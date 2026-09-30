@@ -364,9 +364,12 @@ annotation-id map; `ds.spatial.upload_and_register` uploads and registers it.
 The 10x matrix is gene-major CSR, which read as `(data, indices, indptr)` with shape
 `(cells, genes)` **is** the cells × genes CSC — no transpose is materialized. The Girder
 worker form of the import wraps this function once the format has settled.
-`nimbusimage.xenium.register_transcripts` (`nimbusimage-xenium transcripts`) uploads the bundle's `transcripts.zarr.zip` unchanged and
-registers it with the bundle's `pixel_size` (and the inverse H&E alignment as `transform`
-for the H&E dataset).
+`nimbusimage.xenium.register_transcripts` (`nimbusimage-xenium transcripts --cells ...`)
+uploads the bundle's `transcripts.zarr.zip` unchanged and registers it with the dataset's
+`ImageFrame` — the one its polygons were drawn with, saved in the cell map: its pixel size
+(the bundle's `pixel_size` unless overridden) and, on the H&E dataset, the inverse H&E
+alignment as `transform`. Reusing the polygons' frame is what keeps molecules and cells
+aligned.
 
 ## Integrity rules (audit, 2026-09-27)
 

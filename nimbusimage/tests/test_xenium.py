@@ -1,10 +1,22 @@
-"""Tests for nimbusimage.xenium against a synthetic four-cell bundle."""
+"""Tests for nimbusimage.xenium against a synthetic four-cell bundle.
+
+Two kinds of tests: behaviour of each piece, and CONTRACT tables that
+state the package's invariants across every step and input at once —
+
+- every per-cell step refuses a cell map of another dataset, of nuclei,
+  of another bundle, or bare ids, before writing anything;
+- every CLI subcommand, given a bad input, exits non-zero with zero server
+  writes, while its valid baseline run succeeds (so a variant can't pass
+  for the wrong reason).
+
+Review rounds on this package kept finding one instance of those
+invariants at a time; the tables hold them for every step and input.
+"""
 
 import json
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -13,14 +25,15 @@ zarr = pytest.importorskip("zarr")
 
 from nimbusimage.xenium import (  # noqa: E402
     PROTEIN_SUFFIX,
+    CellMap,
+    ImageFrame,
     XeniumBundle,
     XeniumError,
     build_spatial_table,
     decode_cell_id,
-    fetch_annotation_ids,
-    load_annotation_ids,
+    fetch_cells,
+    open_cells,
     region_annotations,
-    region_transform,
     register_transcripts,
     upload_cell_types,
     upload_clusters,
@@ -141,6 +154,7 @@ def bundle(tmp_path) -> XeniumBundle:
         f"{c},{t}" for c, t in reversed(list(zip(CELL_IDS, CELL_TYPES)))
     ]
     (tmp_path / "cell_types.csv").write_text("\n".join(rows) + "\n")
+    (tmp_path / "transcripts.zarr.zip").write_bytes(b"shipped as-is")
     return XeniumBundle(tmp_path)
 
 
@@ -149,44 +163,144 @@ def _expected_first_vertex(cell: int) -> tuple[float, float]:
     return x / PIXEL_SIZE, y / PIXEL_SIZE
 
 
-class FakeDataset:
-    """Records writes; ``annotations.create_many`` assigns ids ann_<n>."""
+# --- an in-memory server that records every write ---
 
-    def __init__(self, dataset_id="ds_1"):
-        self.id = dataset_id
-        self.name = "Fake"
-        self.created = []
-        self.batch_sizes = []
-        self.annotations = MagicMock()
-        self.annotations.create_many.side_effect = self._create_many
-        self.properties = MagicMock()
-        self.properties.get_or_create.side_effect = (
-            lambda name, shape: SimpleNamespace(id=f"prop_{name}")
-        )
-        self.spatial = MagicMock()
 
-    def _create_many(self, annotations):
-        self.batch_sizes.append(len(annotations))
-        start = len(self.created)
-        made = [
-            SimpleNamespace(
-                id=f"ann_{start + i}", coordinates=a.coordinates, tags=a.tags
-            )
-            for i, a in enumerate(annotations)
+class FakeServer:
+    """Annotations per dataset, dataset-scoped reads, and a log of writes."""
+
+    def __init__(self):
+        self.annotations = {}  # id -> SimpleNamespace, in creation order
+        self.values = {}  # property id -> {annotation id: value}
+        self.writes = []  # (dataset id, method)
+        self.datasets = {}
+
+    def dataset(self, dataset_id):
+        if dataset_id not in self.datasets:
+            self.datasets[dataset_id] = FakeDataset(self, dataset_id)
+        return self.datasets[dataset_id]
+
+    def write(self, dataset_id, method):
+        self.writes.append((dataset_id, method))
+
+
+class FakeAnnotations:
+    def __init__(self, server, dataset_id):
+        self._server, self._id = server, dataset_id
+
+    def _mine(self):
+        return [
+            a
+            for a in self._server.annotations.values()
+            if a.dataset_id == self._id
         ]
-        self.created.extend(made)
+
+    def create_many(self, annotations):
+        self._server.write(self._id, "create_many")
+        made = []
+        for annotation in annotations:
+            new = SimpleNamespace(
+                id=f"ann_{len(self._server.annotations)}",
+                dataset_id=self._id,
+                coordinates=annotation.coordinates,
+                tags=list(annotation.tags),
+                shape=annotation.shape,
+            )
+            self._server.annotations[new.id] = new
+            made.append(new)
         return made
 
-    def submitted(self, property_id):
-        merged = {}
-        for call in self.properties.submit_values.call_args_list:
-            if call.args[0] == property_id:
-                merged.update(call.args[1])
-        return merged
+    def list(self, shape=None, tags=None, limit=0, offset=0):
+        found = [
+            a
+            for a in self._mine()
+            if (shape is None or a.shape == shape)
+            and (not tags or set(tags) & set(a.tags))
+        ]
+        return found[offset:offset + limit] if limit else found[offset:]
+
+    def count(self, shape=None):
+        return len(self.list(shape=shape))
+
+    def get_many(self, annotation_ids):
+        wanted = {str(i) for i in annotation_ids}
+        return [a for a in self._mine() if a.id in wanted]
+
+    def update_many(self, updates):
+        self._server.write(self._id, "update_many")
+        for annotation_id, change in updates:
+            annotation = self._server.annotations[annotation_id]
+            assert annotation.dataset_id == self._id, "cross-dataset write"
+            annotation.tags = list(change["tags"])
+
+    def delete_many(self, annotation_ids):
+        self._server.write(self._id, "delete_many")
+        for annotation_id in annotation_ids:
+            del self._server.annotations[annotation_id]
 
 
-ALL_IDS = np.array(["ann_0", "ann_1", "ann_2", "ann_3"], dtype=object)
-IDS_WITH_GAP = np.array(["ann_0", "ann_1", None, "ann_3"], dtype=object)
+class FakeProperties:
+    def __init__(self, server, dataset_id):
+        self._server, self._id = server, dataset_id
+
+    def get_or_create(self, name, shape):
+        self._server.write(self._id, "get_or_create")
+        return SimpleNamespace(id=f"prop_{name}")
+
+    def register(self, property_id):
+        self._server.write(self._id, "register")
+
+    def submit_values(self, property_id, values):
+        self._server.write(self._id, "submit_values")
+        for annotation_id in values:
+            owner = self._server.annotations[annotation_id].dataset_id
+            assert owner == self._id, "cross-dataset write"
+        self._server.values.setdefault(property_id, {}).update(values)
+
+    def delete_values(self, property_id):
+        self._server.write(self._id, "delete_values")
+        self._server.values.pop(property_id, None)
+
+
+class FakeSpatial:
+    def __init__(self, server, dataset_id):
+        self._server, self._id = server, dataset_id
+        self.registered = None
+
+    def upload_transcripts(self, path):
+        self._server.write(self._id, "upload_transcripts")
+        return {"_id": "item_tx"}
+
+    def register_transcripts(self, item_id, pixel_size, transform):
+        self._server.write(self._id, "register_transcripts")
+        self.registered = (item_id, pixel_size, transform)
+        return {"totalPoints": 10, "genes": 2, "levels": 1}
+
+    def upload_and_register(self, path):
+        self._server.write(self._id, "upload_and_register")
+        return {"nObs": 3, "nVar": 3, "schemaVersion": 1}
+
+
+class FakeDataset:
+    def __init__(self, server, dataset_id):
+        self.id = dataset_id
+        self.name = f"Fake {dataset_id}"
+        self.annotations = FakeAnnotations(server, dataset_id)
+        self.properties = FakeProperties(server, dataset_id)
+        self.spatial = FakeSpatial(server, dataset_id)
+
+
+@pytest.fixture
+def server():
+    return FakeServer()
+
+
+def _values(server, name):
+    return server.values.get(f"prop_{name}", {})
+
+
+MORPH = "ds_morph"
+OTHER = "ds_other"
 
 
 class TestBundle:
@@ -325,30 +439,6 @@ class TestMorphologyNames:
         )
 
 
-class TestAlignment:
-    def test_accepts_path_or_matrix(self, tmp_path):
-        from nimbusimage.xenium import inverse_alignment, load_alignment
-
-        matrix = np.diag([2.0, 4.0, 1.0])
-        csv = tmp_path / "m.csv"
-        np.savetxt(csv, matrix, delimiter=",")
-        np.testing.assert_allclose(load_alignment(csv), matrix)
-        expected = np.diag([0.5, 0.25, 1.0])
-        np.testing.assert_allclose(inverse_alignment(csv), expected)
-        np.testing.assert_allclose(inverse_alignment(matrix), expected)
-        assert inverse_alignment(None) is None
-
-    def test_bad_alignments(self, tmp_path):
-        from nimbusimage.xenium import inverse_alignment
-
-        with pytest.raises(XeniumError, match="3x3"):
-            inverse_alignment(np.eye(2))
-        with pytest.raises(XeniumError, match="singular"):
-            inverse_alignment(np.zeros((3, 3)))
-        with pytest.raises(XeniumError, match="cannot read"):
-            inverse_alignment(tmp_path / "missing.csv")
-
-
 class TestUmap:
     def test_pca_is_saved_before_umap_runs(
         self, bundle, tmp_path, monkeypatch
@@ -373,40 +463,437 @@ class TestUmap:
         assert not (out / "umap_xy.npy").exists()
 
 
-class TestRegionTransform:
+# --- ImageFrame ---
+
+
+class TestImageFrame:
     M = np.array([[0.0, -2.0, 100.0], [2.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-    XY = np.array([[10.0, 20.0]])
 
-    def _apply(self, matrix, xy):
-        return (matrix @ np.column_stack([xy, np.ones(len(xy))]).T).T[:, :2]
+    @pytest.mark.parametrize(
+        "kwargs, message",
+        [
+            (dict(image="mri", pixel_size=1), "image must be one of"),
+            (dict(image="morphology", pixel_size=0), "must be > 0"),
+            (dict(image="morphology", pixel_size=-0.2), "must be > 0"),
+            (dict(image="morphology", pixel_size=float("nan")), "must be > 0"),
+            (dict(image="morphology", pixel_size="x"), "not a number"),
+            (dict(image="he", pixel_size=1), "needs the H&E alignment"),
+            (dict(image="he", pixel_size=1, alignment=np.eye(2)), "3x3"),
+            (
+                dict(image="he", pixel_size=1, alignment=np.zeros((3, 3))),
+                "singular",
+            ),
+        ],
+    )
+    def test_validated_on_construction(self, kwargs, message):
+        with pytest.raises(XeniumError, match=message):
+            ImageFrame(**kwargs)
 
-    def test_table(self):
+    def test_bad_alignment_file(self, tmp_path):
+        with pytest.raises(XeniumError, match="cannot read alignment"):
+            ImageFrame("he", 1, tmp_path / "missing.csv")
+
+    def test_create_defaults(self, bundle, tmp_path):
+        frame = ImageFrame.create(bundle=bundle)
+        assert (frame.image, frame.pixel_size) == ("morphology", PIXEL_SIZE)
+        assert frame.transform is None
+        csv = tmp_path / "m.csv"
+        np.savetxt(csv, self.M, delimiter=",")
+        he = ImageFrame.create(bundle=bundle, alignment=csv, pixel_size=0.25)
+        assert (he.image, he.pixel_size) == ("he", 0.25)
+        np.testing.assert_allclose(he.transform, np.linalg.inv(self.M))
+        # A pixel size given explicitly needs no bundle.
+        assert ImageFrame.create(pixel_size=0.3).pixel_size == 0.3
+
+    def test_microns_to_pixels(self):
+        xy = np.array([[10.0, 20.0]])
+        morph = ImageFrame("morphology", 0.5)
+        np.testing.assert_allclose(morph.microns_to_pixels(xy), xy / 0.5)
+        he = ImageFrame("he", 0.5, self.M)
+        expected = (np.linalg.inv(self.M) @ [20.0, 40.0, 1.0])[:2]
+        np.testing.assert_allclose(he.microns_to_pixels(xy)[0], expected)
+        with pytest.raises(XeniumError, match="needs a pixel size"):
+            ImageFrame("morphology", None).microns_to_pixels(xy)
+
+    def test_region_transform_table(self):
+        xy = np.array([[10.0, 20.0]])
         inverse = np.linalg.inv(self.M)
+
+        def affine(matrix, points):
+            return (matrix @ np.column_stack([points, [1.0]]).T).T[:, :2]
+
+        morph = ImageFrame("morphology", 0.5, self.M)
+        he = ImageFrame("he", 0.5, self.M)
         cases = {
-            ("he", "he"): self.XY,
-            ("he", "morphology"): self._apply(self.M, self.XY),
-            ("morphology", "morphology"): self.XY,
-            ("morphology", "he"): self._apply(inverse, self.XY),
-            ("microns", "morphology"): self.XY / 0.5,
-            ("microns", "he"): self._apply(inverse, self.XY / 0.5),
+            (he, "he"): xy,
+            (morph, "he"): affine(self.M, xy),
+            (morph, "morphology"): xy,
+            (he, "morphology"): affine(inverse, xy),
+            (morph, "microns"): xy / 0.5,
+            (he, "microns"): affine(inverse, xy / 0.5),
         }
-        for (frame, target), expected in cases.items():
-            actual = region_transform(frame, target, self.M, 0.5)(self.XY)
+        for (frame, drawn_in), expected in cases.items():
             np.testing.assert_allclose(
-                actual, expected, err_msg=f"{frame}->{target}"
+                frame.region_transform(drawn_in)(xy),
+                expected,
+                err_msg=f"{drawn_in} -> {frame.image}",
+            )
+        with pytest.raises(XeniumError, match="need the H&E alignment"):
+            ImageFrame("morphology", 0.5).region_transform("he")
+
+    def test_dict_round_trip_and_matches(self):
+        he = ImageFrame("he", 0.2125, self.M)
+        again = ImageFrame.from_dict(json.loads(json.dumps(he.to_dict())))
+        assert again.matches(he)
+        assert not again.matches(ImageFrame("he", 0.25, self.M))
+        assert not again.matches(ImageFrame("morphology", 0.2125, self.M))
+        assert not ImageFrame("morphology", 1).matches(
+            ImageFrame("morphology", 1, self.M)
+        )
+
+
+# --- CellMap ---
+
+
+def _upload(server, bundle, dataset_id=MORPH, **kwargs):
+    return upload_polygons(server.dataset(dataset_id), bundle, **kwargs)
+
+
+class TestCellMap:
+    def test_save_and_read_need_no_pickle(self, server, bundle, tmp_path):
+        cells = _upload(server, bundle)
+        path = cells.save(tmp_path / "cells.npz")
+        with np.load(path, allow_pickle=False) as raw:
+            assert set(raw.files) == {"ids", "meta"}
+        again = CellMap.read(path)
+        assert again.ids.tolist() == cells.ids.tolist()
+        assert again.dataset_id == MORPH
+        assert again.frame.matches(cells.frame)
+
+    def test_saved_under_the_exact_name(self, server, bundle, tmp_path):
+        path = _upload(server, bundle).save(tmp_path / "ids_morph.npy")
+        assert path.name == "ids_morph.npy" and path.exists()
+        assert isinstance(CellMap.read(path), CellMap)
+
+    def test_check_is_the_one_guard(self, server, bundle):
+        cells = _upload(server, bundle)
+        cells.check(bundle, server.dataset(MORPH))
+        with pytest.raises(XeniumError, match="belong to dataset ds_morph"):
+            cells.check(bundle, server.dataset(OTHER))
+        nuclei = _upload(server, bundle, polygon_set="nucleus")
+        with pytest.raises(XeniumError, match="needs the cell polygons"):
+            nuclei.check(bundle)
+        short = CellMap(MORPH, cells.frame, cells.ids[:3])
+        with pytest.raises(XeniumError, match="3 ids for 4 cells"):
+            short.check(bundle)
+
+
+# --- polygons ---
+
+
+class TestPolygons:
+    def test_one_slot_per_cell_even_with_limit(self, server, bundle):
+        cells = _upload(server, bundle, limit=2)
+        assert cells.ids.tolist() == ["ann_0", "ann_1", None, None]
+        cells = _upload(server, bundle, dataset_id=OTHER)
+        assert cells.ids.tolist() == ["ann_2", "ann_3", None, "ann_4"]
+        assert cells.dataset_id == OTHER
+
+    def test_batches(self, server, bundle):
+        _upload(server, bundle, batch=2)
+        assert server.writes == [(MORPH, "create_many")] * 2
+
+    def test_coordinates_follow_the_frame(self, server, bundle):
+        matrix = np.diag([2.0, 2.0, 1.0])
+        frame = ImageFrame.create(bundle=bundle, alignment=matrix)
+        cells = _upload(server, bundle, frame=frame, limit=1)
+        second = server.annotations[cells.ids[0]].coordinates[1]
+        # (4, 0) um -> 8 morphology px -> 4 H&E px
+        assert (second["x"], second["y"]) == (4.0, 0.0)
+        assert cells.frame is frame
+
+    def test_short_create_raises(self, server, bundle):
+        ds = server.dataset(MORPH)
+        ds.annotations.create_many = lambda batch: batch[:-1]
+        with pytest.raises(XeniumError, match="created 2 of 3"):
+            upload_polygons(ds, bundle)
+
+    def test_delete_tag_only_after_inputs_are_read(self, server, bundle):
+        _upload(server, bundle, tags=["test"])
+        server.writes.clear()
+        for bad in (
+            dict(polygon_set="membrane"),
+            dict(limit=0),
+            dict(batch=0),
+        ):
+            with pytest.raises(XeniumError):
+                _upload(server, bundle, delete_tag="test", **bad)
+        assert server.writes == []
+        _upload(server, bundle, delete_tag="test")
+        assert server.writes[0] == (MORPH, "delete_many")
+        assert len(server.dataset(MORPH).annotations.list()) == 3
+
+
+# --- fetching and opening cell maps ---
+
+
+class TestOpenCells:
+    def test_fetch_matches_the_upload(self, server, bundle):
+        uploaded = CellMap(
+            MORPH,
+            ImageFrame.create(bundle=bundle),
+            ["ann_0", "ann_1", "ann_2", "ann_3"],
+        )
+        ds = server.dataset(MORPH)
+        # no degenerate polygon here: move cell 2 to a real triangle first
+        for i, poly in enumerate(CELL_VERTICES):
+            if len(poly) < 3:
+                continue
+        del uploaded
+        _upload(server, bundle)
+        with pytest.raises(XeniumError, match="only 3 of 4"):
+            fetch_cells(ds, bundle)
+
+    def test_fetch_verifies_the_frame(self, server, bundle, monkeypatch):
+        full = [
+            p if len(p) >= 3 else [(20, 20), (22, 20), (21, 22)]
+            for p in CELL_VERTICES
+        ]
+        monkeypatch.setattr(
+            bundle,
+            "polygons",
+            lambda polygon_set="cell": _polygon_arrays(full),
+        )
+        monkeypatch.setattr(
+            bundle,
+            "first_vertices",
+            lambda cells=None: _polygon_arrays(full)[1][
+                slice(None) if cells is None else cells, :2
+            ],
+        )
+        ds = server.dataset(MORPH)
+        upload_polygons(ds, bundle, ImageFrame.create(pixel_size=0.25))
+        with pytest.raises(XeniumError, match="another frame"):
+            fetch_cells(ds, bundle)
+        cells = fetch_cells(ds, bundle, ImageFrame.create(pixel_size=0.25))
+        assert cells.ids.tolist() == ["ann_0", "ann_1", "ann_2", "ann_3"]
+
+    def test_saved_map_round_trip_verified(self, server, bundle, tmp_path):
+        path = _upload(server, bundle).save(tmp_path / "cells.npz")
+        cells = open_cells(server.dataset(MORPH), bundle, path)
+        assert cells.ids.tolist() == ["ann_0", "ann_1", None, "ann_2"]
+
+    def test_another_datasets_map_is_refused_offline(
+        self, server, bundle, tmp_path
+    ):
+        path = _upload(server, bundle).save(tmp_path / "cells.npz")
+        other = server.dataset(OTHER)
+        other.annotations.get_many = None  # must not be reached
+        with pytest.raises(XeniumError, match="belong to dataset ds_morph"):
+            open_cells(other, bundle, path)
+
+    def test_bare_id_file_of_another_dataset(self, server, bundle, tmp_path):
+        """Pre-CellMap files record no dataset: the spot-check catches the
+        morphology file used for the H&E dataset (same cell count)."""
+        cells = _upload(server, bundle)
+        _upload(server, bundle, dataset_id=OTHER)
+        legacy = tmp_path / "ids_morph.npy"
+        np.save(legacy, cells.ids)
+        with pytest.raises(XeniumError, match="not annotations of dataset"):
+            open_cells(server.dataset(OTHER), bundle, legacy)
+        assert open_cells(server.dataset(MORPH), bundle, legacy)
+
+    def test_bare_id_file_with_the_wrong_frame(self, server, bundle, tmp_path):
+        cells = _upload(server, bundle)
+        legacy = tmp_path / "ids.npy"
+        np.save(legacy, cells.ids)
+        with pytest.raises(XeniumError, match="another frame"):
+            open_cells(
+                server.dataset(MORPH),
+                bundle,
+                legacy,
+                frame=ImageFrame.create(pixel_size=0.25),
             )
 
-    def test_needs_alignment(self):
-        with pytest.raises(XeniumError, match="alignment is required"):
-            region_transform("he", "morphology")
-        with pytest.raises(XeniumError, match="pixel_size"):
-            region_transform("microns", "morphology")
+    def test_a_given_frame_must_match_the_saved_one(
+        self, server, bundle, tmp_path
+    ):
+        path = _upload(server, bundle).save(tmp_path / "cells.npz")
+        with pytest.raises(XeniumError, match="conflicts"):
+            open_cells(
+                server.dataset(MORPH),
+                bundle,
+                path,
+                frame=ImageFrame.create(pixel_size=0.25),
+            )
 
-    def test_singular_alignment_is_a_xenium_error(self):
-        with pytest.raises(XeniumError, match="singular"):
-            region_transform("morphology", "he", np.zeros((3, 3)))
+    def test_empty_map_is_an_error(self, server, bundle, tmp_path):
+        empty = CellMap(MORPH, ImageFrame.create(bundle=bundle), [None] * 4)
+        with pytest.raises(XeniumError, match="holds no annotation ids"):
+            open_cells(
+                server.dataset(MORPH), bundle, empty.save(tmp_path / "e.npz")
+            )
 
-    def test_region_annotations_class_first_and_ring_closed(self):
+
+# --- per-cell steps ---
+
+
+@pytest.fixture
+def uploaded(server, bundle):
+    """The morphology dataset with its cell polygons, and the cell map."""
+    return server.dataset(MORPH), _upload(server, bundle)
+
+
+class TestPerCellSteps:
+    def test_gene_panel_dense_with_same_named_protein(
+        self, server, bundle, uploaded
+    ):
+        ds, cells = uploaded
+        upload_gene_panel(ds, bundle, cells, ["GENEA", "CD3E"], chunk=3)
+        assert _values(server, "Gene Expression") == {
+            "ann_0": {"GENEA": 3, "CD3E": 0},
+            "ann_1": {"GENEA": 0, "CD3E": 5},
+            "ann_2": {"GENEA": 0, "CD3E": 2},
+        }
+
+    def test_gene_panel_sparse_replace_and_limit(
+        self, server, bundle, uploaded
+    ):
+        ds, cells = uploaded
+        upload_gene_panel(
+            ds, bundle, cells, ["GENEA"], dense=False, replace=True, limit=1
+        )
+        assert _values(server, "Gene Expression") == {"ann_0": {"GENEA": 3}}
+        assert (MORPH, "delete_values") in server.writes
+
+    def test_clusters(self, server, bundle, uploaded):
+        ds, cells = uploaded
+        upload_clusters(ds, bundle, cells)
+        assert _values(server, "Clustering") == {
+            "ann_0": {"graphclust": 1},
+            "ann_1": {"graphclust": 2},
+            "ann_2": {"graphclust": 0},
+        }
+
+    def test_umap_array_or_file_with_limit(
+        self, server, bundle, uploaded, tmp_path
+    ):
+        ds, cells = uploaded
+        embedding = np.arange(8, dtype=np.float32).reshape(4, 2)
+        path = tmp_path / "umap_xy.npy"
+        np.save(path, embedding)
+        for source in (embedding, path):
+            upload_umap(ds, bundle, cells, source, limit=2, replace=True)
+            assert _values(server, "UMAP") == {
+                "ann_0": {"x": 0.0, "y": 1.0},
+                "ann_1": {"x": 2.0, "y": 3.0},
+            }
+
+    def test_umap_must_cover_exactly_this_bundle(
+        self, server, bundle, uploaded
+    ):
+        ds, cells = uploaded
+        for shape in [(3, 2), (4, 3), (5, 2)]:
+            with pytest.raises(XeniumError, match=r"expected \(4, 2\)"):
+                upload_umap(ds, bundle, cells, np.zeros(shape))
+
+    def test_cell_types_and_read_back(self, server, bundle, uploaded):
+        ds, cells = uploaded
+        counts = upload_cell_types(
+            ds, bundle, cells, bundle.directory / "cell_types.csv"
+        )
+        tags = {a.id: a.tags for a in ds.annotations.list()}
+        assert tags == {
+            "ann_0": ["cell", "T cell"],
+            "ann_1": ["cell", "B cell"],
+            "ann_2": ["cell", "Macrophage"],
+        }
+        assert counts["T cell"] == 2
+
+    def test_cell_types_read_back_mismatch(self, server, bundle, uploaded):
+        ds, cells = uploaded
+        ds.annotations.update_many = lambda updates: None  # write lost
+        with pytest.raises(XeniumError, match="verify failed"):
+            upload_cell_types(
+                ds, bundle, cells, bundle.directory / "cell_types.csv"
+            )
+
+    def test_cell_types_gaps_only_with_reset(self, server, bundle, uploaded):
+        ds, cells = uploaded
+        labels = ["T cell", None, "B cell", None]
+        with pytest.raises(XeniumError, match="2 cells have no cell-type"):
+            upload_cell_types(ds, bundle, cells, labels)
+        upload_cell_types(ds, bundle, cells, labels, reset=True)
+        assert {tuple(a.tags) for a in ds.annotations.list()} == {("cell",)}
+
+    def test_spatial_table_round_trip(self, bundle, uploaded, tmp_path):
+        anndata = pytest.importorskip("anndata")
+        _, cells = uploaded
+        out = build_spatial_table(
+            bundle,
+            cells,
+            tmp_path / "spatial.zarr.zip",
+            cell_types=bundle.directory / "cell_types.csv",
+            umap=np.arange(8, dtype=np.float32).reshape(4, 2),
+        )
+        extracted = tmp_path / "extracted.zarr"
+        with zipfile.ZipFile(out) as zf:
+            assert "zarr.json" not in zf.namelist()  # zarr v2 for the server
+            zf.extractall(extracted)
+        adata = anndata.read_zarr(extracted)
+        assert adata.obs["annotation_id"].tolist() == [
+            "ann_0",
+            "ann_1",
+            "ann_2",
+        ]
+        assert adata.obs["cell_index"].tolist() == [0, 1, 3]
+        assert adata.obs["cell_type"].tolist() == [
+            "T cell",
+            "B cell",
+            "Macrophage",
+        ]
+        assert adata.obs["graphclust"].tolist() == [1, 2, 0]
+        assert list(adata.var_names) == ["GENEA", "CD3E (protein)", "CD3E"]
+        assert np.asarray(adata.X.todense()).tolist() == [
+            [3, 7, 0],
+            [0, 0, 5],
+            [0, 9, 2],
+        ]
+        assert adata.obsm["X_umap"].tolist() == [[0, 1], [2, 3], [6, 7]]
+        assert adata.uns["nimbus"]["datasetId"] == MORPH
+
+    def test_spatial_table_checks_before_reading_the_matrix(
+        self, bundle, uploaded, tmp_path, monkeypatch
+    ):
+        pytest.importorskip("anndata")
+        _, cells = uploaded
+
+        def matrix_read(*args, **kwargs):
+            raise AssertionError("read the matrix before a cheap check")
+
+        monkeypatch.setattr(bundle, "counts", matrix_read)
+        (bundle.directory / "analysis.zarr.zip").unlink()
+        with pytest.raises(XeniumError, match="missing from the bundle"):
+            build_spatial_table(bundle, cells, tmp_path / "x.zip")
+
+
+class TestTranscriptsAndRegions:
+    def test_transcripts_use_the_frame(self, server, bundle):
+        ds = server.dataset(MORPH)
+        matrix = np.diag([2.0, 2.0, 1.0])
+        frame = ImageFrame.create(pixel_size=0.25, alignment=matrix)
+        register_transcripts(ds, bundle, frame)
+        item, pixel_size, transform = ds.spatial.registered
+        assert (item, pixel_size) == ("item_tx", 0.25)
+        np.testing.assert_allclose(transform, np.diag([0.5, 0.5, 1.0]))
+
+    def test_transcripts_default_and_existing_item(self, server, bundle):
+        ds = server.dataset(MORPH)
+        register_transcripts(ds, bundle, item_id="item_1")
+        assert ds.spatial.registered == ("item_1", PIXEL_SIZE, None)
+        assert (MORPH, "upload_transcripts") not in server.writes
+
+    def test_regions_class_first_and_ring_closed(self):
         geojson = {
             "features": [
                 {
@@ -429,531 +916,310 @@ class TestRegionTransform:
             ]
         }
         annotations = region_annotations(
-            geojson, "ds_1", frame="he", target="he"
+            geojson,
+            MORPH,
+            ImageFrame("morphology", None),
+            drawn_in="morphology",
         )
         assert [a.tags for a in annotations] == [
             ["Tumor", "region"],
             ["Immune", "region"],
         ]
-        assert len(annotations[0].coordinates) == 3  # closing vertex dropped
+        assert len(annotations[0].coordinates) == 3
 
 
-class TestPolygons:
-    def test_upload_in_cell_index_order_skipping_degenerates(self, bundle):
-        ds = FakeDataset()
-        ids = upload_polygons(ds, bundle, batch=2)
-        assert ids.tolist() == ["ann_0", "ann_1", None, "ann_2"]
-        # batches of 2: [0, 1], [3]
-        assert ds.batch_sizes == [2, 1]
-        first = ds.created[2].coordinates[0]
-        assert (first["x"], first["y"]) == _expected_first_vertex(3)
-
-    def test_alignment_applies_the_inverse(self, bundle, tmp_path):
-        matrix = np.array([[2.0, 0, 0], [0, 2.0, 0], [0, 0, 1]])
-        csv = tmp_path / "align.csv"
-        np.savetxt(csv, matrix, delimiter=",")
-        ds = FakeDataset()
-        upload_polygons(ds, bundle, alignment=csv, limit=1)
-        first = ds.created[0].coordinates[1]  # (4, 0) um -> 8 px -> 4 H&E px
-        assert (first["x"], first["y"]) == (4.0, 0.0)
-
-    def test_delete_tag_runs_only_after_inputs_are_read(
-        self, bundle, tmp_path
-    ):
-        ds = FakeDataset()
-        bad = tmp_path / "bad.csv"
-        bad.write_text("1,2\n3,4\n")
-        with pytest.raises(XeniumError, match="3x3"):
-            upload_polygons(ds, bundle, alignment=bad, delete_tag="test")
-        with pytest.raises(XeniumError, match="not in"):
-            upload_polygons(
-                ds, bundle, polygon_set="membrane", delete_tag="test"
-            )
-        ds.annotations.list.assert_not_called()
-        ds.annotations.delete_many.assert_not_called()
-
-    def test_delete_tag_then_upload(self, bundle):
-        ds = FakeDataset()
-        ds.annotations.list.return_value = [SimpleNamespace(id="old_1")]
-        upload_polygons(ds, bundle, delete_tag="test")
-        ds.annotations.list.assert_called_once_with(tags=["test"])
-        ds.annotations.delete_many.assert_called_once_with(["old_1"])
-        assert len(ds.created) == 3
-
-    def test_short_create_raises(self, bundle):
-        ds = FakeDataset()
-        ds.annotations.create_many.side_effect = lambda batch: batch[:-1]
-        with pytest.raises(XeniumError, match="created 2 of 3"):
-            upload_polygons(ds, bundle)
+# --- CONTRACT: every per-cell step refuses a wrong cell map, unwritten ---
 
 
-def _listing_dataset(first_vertices):
-    ds = FakeDataset()
-    listed = [
-        SimpleNamespace(id=f"ann_{i}", coordinates=[{"x": x, "y": y}])
-        for i, (x, y) in enumerate(first_vertices)
+PER_CELL_STEPS = {
+    "gene panel": lambda ds, b, c: upload_gene_panel(ds, b, c, ["GENEA"]),
+    "clusters": lambda ds, b, c: upload_clusters(ds, b, c),
+    "umap": lambda ds, b, c: upload_umap(ds, b, c, np.zeros((4, 2))),
+    "cell types": lambda ds, b, c: upload_cell_types(
+        ds, b, c, b.directory / "cell_types.csv"
+    ),
+}
+
+
+def _wrong_cell_maps(server, bundle):
+    right = _upload(server, bundle)
+    return {
+        "another dataset's": right,  # used against OTHER below
+        "nucleus": _upload(server, bundle, polygon_set="nucleus"),
+        "another bundle's": CellMap(MORPH, right.frame, right.ids[:3]),
+        "bare ids": right.ids,
+    }
+
+
+@pytest.mark.parametrize("step", sorted(PER_CELL_STEPS))
+@pytest.mark.parametrize(
+    "wrong", ["another dataset's", "nucleus", "another bundle's", "bare ids"]
+)
+def test_per_cell_steps_refuse_wrong_cell_maps(server, bundle, step, wrong):
+    cells = _wrong_cell_maps(server, bundle)[wrong]
+    target = OTHER if wrong == "another dataset's" else MORPH
+    server.writes.clear()
+    with pytest.raises(XeniumError):
+        PER_CELL_STEPS[step](server.dataset(target), bundle, cells)
+    assert server.writes == [], f"{step} wrote before refusing {wrong} cells"
+
+
+@pytest.mark.parametrize("step", sorted(PER_CELL_STEPS))
+def test_per_cell_steps_accept_the_right_cell_map(server, bundle, step):
+    """The contract's other half: the same calls succeed with good input."""
+    cells = _upload(server, bundle)
+    PER_CELL_STEPS[step](server.dataset(MORPH), bundle, cells)
+
+
+# --- CONTRACT: every CLI subcommand fails on bad input with zero writes ---
+
+
+@pytest.fixture
+def cli(server, bundle, tmp_path, monkeypatch):
+    """Runs the CLI against the fake server; ``cells.npz`` holds the
+    morphology dataset's cell map, and OTHER has cell polygons too."""
+    client = SimpleNamespace(dataset=server.dataset)
+    monkeypatch.setattr("nimbusimage.xenium.cli._connect", lambda: client)
+    _upload(server, bundle).save(tmp_path / "cells.npz")
+    other = _upload(server, bundle, dataset_id=OTHER)
+    other.save(tmp_path / "other.npz")
+    np.save(tmp_path / "other_ids.npy", other.ids)  # a pre-CellMap file
+    _upload(server, bundle, polygon_set="nucleus").save(
+        tmp_path / "nuclei.npz"
+    )
+    np.save(tmp_path / "umap.npy", np.zeros((4, 2)))
+    np.save(tmp_path / "umap_bad.npy", np.zeros((5, 2)))
+    np.savetxt(tmp_path / "singular.csv", np.zeros((3, 3)), delimiter=",")
+    (tmp_path / "bad_types.csv").write_text("cell_id,group\npppppppp-9,x\n")
+    (tmp_path / "regions.json").write_text(
+        json.dumps(
+            {
+                "features": [
+                    {
+                        "properties": {"name": "R"},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[0, 0], [9, 0], [9, 9]]],
+                        },
+                    },
+                ]
+            }
+        )
+    )
+    (tmp_path / "bad.json").write_text("{not json")
+    server.writes.clear()
+
+    def run(argv):
+        argv = [a.format(tmp=tmp_path, bundle=bundle.directory) for a in argv]
+        try:
+            return cli_main(argv)
+        except SystemExit as exc:  # argparse rejects bad flag values
+            return exc.code
+
+    return run
+
+
+BASE = "--bundle-dir {bundle} --dataset ds_morph".split()
+CLI_COMMANDS = {
+    "polygons": ["polygons", *BASE, "--cells-out", "{tmp}/new.npz"],
+    "properties": [
+        "properties",
+        *BASE,
+        "--cells",
+        "{tmp}/cells.npz",
+        "--what",
+        "genes,clusters,umap",
+        "--genes",
+        "GENEA",
+        "--umap",
+        "{tmp}/umap.npy",
+    ],
+    "cell-types": [
+        "cell-types",
+        *BASE,
+        "--cells",
+        "{tmp}/cells.npz",
+        "--cell-types",
+        "{bundle}/cell_types.csv",
+    ],
+    "transcripts": ["transcripts", *BASE, "--cells", "{tmp}/cells.npz"],
+    "regions": [
+        "regions",
+        "--dataset",
+        "ds_morph",
+        "--geojson",
+        "{tmp}/regions.json",
+        "--drawn-in",
+        "morphology",
+        "--cells",
+        "{tmp}/cells.npz",
+    ],
+}
+if __import__("importlib").util.find_spec("anndata"):
+    CLI_COMMANDS["spatial-table"] = [
+        "spatial-table",
+        *BASE,
+        "--cells",
+        "{tmp}/cells.npz",
+        "--out",
+        "{tmp}/spatial.zarr.zip",
     ]
 
-    def page(shape, limit, offset):
-        return listed[offset:offset + limit]
-
-    ds.annotations.list.side_effect = page
-    # get_many is dataset-scoped: only this dataset's ids come back.
-    by_id = {annotation.id: annotation for annotation in listed}
-    ds.annotations.get_many.side_effect = lambda ann_ids: [
-        by_id[i] for i in ann_ids if i in by_id
-    ]
-    return ds
-
-
-class TestAnnotationIds:
-    def test_fetch_verifies_first_vertices(self, bundle):
-        ds = _listing_dataset([_expected_first_vertex(c) for c in range(4)])
-        ids = fetch_annotation_ids(ds, bundle, page=3)
-        assert ids.tolist() == ALL_IDS.tolist()
-
-    def test_fetch_aborts_on_order_mismatch(self, bundle):
-        firsts = [_expected_first_vertex(c) for c in (1, 0, 2, 3)]
-        with pytest.raises(XeniumError, match="not in cell_index order"):
-            fetch_annotation_ids(_listing_dataset(firsts), bundle)
-
-    def test_fetch_aborts_when_short(self, bundle):
-        ds = _listing_dataset([_expected_first_vertex(0)])
-        with pytest.raises(XeniumError, match="only 1 of 4"):
-            fetch_annotation_ids(ds, bundle)
-
-    def test_cache_round_trip(self, bundle, tmp_path):
-        ds = _listing_dataset([_expected_first_vertex(c) for c in range(4)])
-        cache = tmp_path / "ids.npy"
-        load_annotation_ids(ds, bundle, cache)
-        assert cache.exists()
-        ds.annotations.list.reset_mock()
-        assert (
-            load_annotation_ids(ds, bundle, cache).tolist() == ALL_IDS.tolist()
-        )
-        ds.annotations.list.assert_not_called()
-
-    def test_cached_ids_of_another_dataset_are_rejected(
-        self, bundle, tmp_path
-    ):
-        """Morphology and H&E have the same cell count: length alone would
-        accept the other dataset's ids file and write to the wrong one."""
-        cache = tmp_path / "ids_other.npy"
-        other = [f"other_{c}" for c in range(4)]
-        np.save(cache, np.array(other, dtype=object))
-        ds = _listing_dataset([_expected_first_vertex(c) for c in range(4)])
-        with pytest.raises(XeniumError, match="not annotations of dataset"):
-            load_annotation_ids(ds, bundle, cache)
-
-    def test_cached_ids_with_wrong_vertices_are_rejected(
-        self, bundle, tmp_path
-    ):
-        """Right dataset, wrong alignment/pixel size (or a scrambled file)."""
-        cache = tmp_path / "ids.npy"
-        np.save(cache, ALL_IDS[[1, 0, 2, 3]])
-        ds = _listing_dataset([_expected_first_vertex(c) for c in range(4)])
-        with pytest.raises(XeniumError, match="do not match"):
-            load_annotation_ids(ds, bundle, cache)
-
-    def test_nucleus_uploads_are_not_accepted_as_cell_ids(
-        self, bundle, tmp_path
-    ):
-        """Per-cell steps index ids by cell_index; nucleus order is not it."""
-        uploaded = FakeDataset()
-        upload_polygons(uploaded, bundle, polygon_set="nucleus")
-        firsts = [
-            (a.coordinates[0]["x"], a.coordinates[0]["y"])
-            for a in uploaded.created
-        ]
-        firsts.insert(2, (0.0, 0.0))  # a fourth (degenerate) polygon
-        with pytest.raises(XeniumError, match="as nuclei"):
-            fetch_annotation_ids(_listing_dataset(firsts), bundle)
-
-    def test_first_vertices_match_the_polygons(self, bundle):
-        _, vertices = bundle.polygons()
-        np.testing.assert_array_equal(
-            bundle.first_vertices(), vertices[:, :2]
-        )
-        np.testing.assert_array_equal(
-            bundle.first_vertices([3, 1]), vertices[[3, 1], :2]
-        )
-
-    def test_all_empty_cached_ids_are_a_xenium_error(self, bundle, tmp_path):
-        cache = tmp_path / "ids.npy"
-        np.save(cache, np.array([None] * 4, dtype=object))
-        ds = _listing_dataset([_expected_first_vertex(c) for c in range(4)])
-        with pytest.raises(XeniumError, match="holds no annotation ids"):
-            load_annotation_ids(ds, bundle, cache)
-
-    def test_fetch_honours_a_pixel_size_override(self, bundle):
-        firsts = [
-            tuple(v * PIXEL_SIZE / 0.25 for v in _expected_first_vertex(c))
-            for c in range(4)
-        ]
-        ds = _listing_dataset(firsts)
-        with pytest.raises(XeniumError, match="pixel size"):
-            fetch_annotation_ids(ds, bundle)
-        ids = fetch_annotation_ids(ds, bundle, pixel_size=0.25)
-        assert ids.tolist() == ALL_IDS.tolist()
+# (flag edits, commands they apply to). "set" replaces a flag's value.
+BAD_INPUTS = {
+    "missing bundle": (
+        {"--bundle-dir": "{tmp}/nope"},
+        [
+            "polygons",
+            "properties",
+            "cell-types",
+            "transcripts",
+            "spatial-table",
+        ],
+    ),
+    "unreadable alignment": ({"--alignment": "{tmp}/nope.csv"}, "all"),
+    "singular alignment": ({"--alignment": "{tmp}/singular.csv"}, "all"),
+    "zero pixel size": ({"--pixel-size": "0"}, "all"),
+    "negative pixel size": ({"--pixel-size": "-1"}, "all"),
+    "conflicting pixel size": (
+        {"--pixel-size": "0.3"},
+        [
+            "properties",
+            "cell-types",
+            "transcripts",
+            "regions",
+            "spatial-table",
+        ],
+    ),
+    "another dataset's cells": (
+        {"--cells": "{tmp}/other.npz"},
+        [
+            "properties",
+            "cell-types",
+            "transcripts",
+            "regions",
+            "spatial-table",
+        ],
+    ),
+    "another dataset's bare ids": (
+        {"--cells": "{tmp}/other_ids.npy"},
+        ["properties", "cell-types", "spatial-table"],
+    ),
+    "nucleus cells": (
+        {"--cells": "{tmp}/nuclei.npz"},
+        ["properties", "cell-types", "spatial-table"],
+    ),
+    "zero limit": ({"--limit": "0"}, ["polygons", "properties", "cell-types"]),
+    "zero chunk": ({"--chunk": "0"}, ["properties", "cell-types"]),
+    "unknown gene": ({"--genes": "NOPE"}, ["properties"]),
+    "empty what": ({"--what": ","}, ["properties"]),
+    "wrong-size umap": (
+        {"--umap": "{tmp}/umap_bad.npy"},
+        ["properties", "spatial-table"],
+    ),
+    "unknown cell id": (
+        {"--cell-types": "{tmp}/bad_types.csv"},
+        ["cell-types", "spatial-table"],
+    ),
+    "bad geojson": ({"--geojson": "{tmp}/bad.json"}, ["regions"]),
+    "microns without pixel size": (
+        {"--drawn-in": "microns", "--cells": "{tmp}/absent.npz"},
+        ["regions"],
+    ),
+}
 
 
-class TestProperties:
-    def test_gene_panel_dense_skips_missing_annotations(self, bundle):
-        ds = FakeDataset()
-        upload_gene_panel(ds, bundle, IDS_WITH_GAP, ["GENEA", "CD3E"], chunk=3)
-        assert ds.submitted("prop_Gene Expression") == {
-            "ann_0": {"GENEA": 3, "CD3E": 0},
-            "ann_1": {"GENEA": 0, "CD3E": 5},
-            "ann_3": {"GENEA": 0, "CD3E": 2},
-        }
-        ds.properties.register.assert_called_with("prop_Gene Expression")
-        ds.properties.delete_values.assert_not_called()
-
-    def test_gene_panel_sparse_and_replace(self, bundle):
-        ds = FakeDataset()
-        upload_gene_panel(
-            ds, bundle, ALL_IDS, ["GENEA"], dense=False, replace=True
-        )
-        assert ds.submitted("prop_Gene Expression") == {
-            "ann_0": {"GENEA": 3},
-            "ann_2": {"GENEA": 1},
-        }
-        ds.properties.delete_values.assert_called_once_with(
-            "prop_Gene Expression"
-        )
-
-    def test_clusters(self, bundle):
-        ds = FakeDataset()
-        upload_clusters(ds, bundle, ALL_IDS, limit=2)
-        assert ds.submitted("prop_Clustering") == {
-            "ann_0": {"graphclust": 1},
-            "ann_1": {"graphclust": 2},
-        }
-
-    def test_umap_accepts_limit_truncated_ids(self, bundle):
-        ds = FakeDataset()
-        embedding = np.arange(8, dtype=float).reshape(4, 2)
-        upload_umap(ds, bundle, ALL_IDS[:2], embedding)  # polygons --limit 2
-        assert ds.submitted("prop_UMAP") == {
-            "ann_0": {"x": 0.0, "y": 1.0}, "ann_1": {"x": 2.0, "y": 3.0},
-        }
-
-    def test_umap_from_a_file_with_limit_truncated_ids(self, bundle, tmp_path):
-        ds = FakeDataset()
-        path = tmp_path / "umap_xy.npy"
-        np.save(path, np.arange(8, dtype=np.float32).reshape(4, 2))
-        upload_umap(ds, bundle, ALL_IDS[:2], path)
-        assert ds.submitted("prop_UMAP")["ann_1"] == {"x": 2.0, "y": 3.0}
-
-    def test_umap_shape_checked(self, bundle):
-        ds = FakeDataset()
-        for wrong in [(3, 2), (4, 3), (5, 2)]:  # 5 rows: another bundle's
-            with pytest.raises(XeniumError, match=r"expected \(4, 2\)"):
-                upload_umap(ds, bundle, ALL_IDS, np.zeros(wrong))
-        ds.properties.submit_values.assert_not_called()
-        upload_umap(
-            ds, bundle, ALL_IDS, np.arange(8, dtype=float).reshape(4, 2)
-        )
-        assert ds.submitted("prop_UMAP")["ann_3"] == {"x": 6.0, "y": 7.0}
+def _edit(argv, edits):
+    argv = list(argv)
+    for flag, value in edits.items():
+        if flag in argv:
+            argv[argv.index(flag) + 1] = value
+        else:
+            argv += [flag, value]
+    return argv
 
 
-def _tagged(tags):
-    return lambda ann_ids: [SimpleNamespace(id=i, tags=tags) for i in ann_ids]
+CLI_CASES = [
+    (command, bad)
+    for bad, (_, applies) in BAD_INPUTS.items()
+    for command in CLI_COMMANDS
+    if applies == "all" or command in applies
+]
 
 
-class TestCellTypes:
-    def test_tags_and_read_back(self, bundle):
-        ds = FakeDataset()
-        written = {}
-        ds.annotations.update_many.side_effect = (
-            lambda updates: written.update(updates)
-        )
-        ds.annotations.get_many.side_effect = lambda ann_ids: [
-            SimpleNamespace(id=i, tags=written[i]["tags"]) for i in ann_ids
-        ]
-        counts = upload_cell_types(
-            ds, bundle, IDS_WITH_GAP, bundle.directory / "cell_types.csv"
-        )
-        # One batched read-back, not a GET per sampled annotation.
-        ds.annotations.get_many.assert_called_once()
-        ds.annotations.get.assert_not_called()
-        assert written == {
-            "ann_0": {"tags": ["cell", "T cell"]},
-            "ann_1": {"tags": ["cell", "B cell"]},
-            "ann_3": {"tags": ["cell", "Macrophage"]},
-        }
-        assert counts["T cell"] == 2
-
-    def test_read_back_mismatch_raises(self, bundle):
-        ds = FakeDataset()
-        ds.annotations.get_many.side_effect = _tagged(["cell"])
-        with pytest.raises(XeniumError, match="verify failed"):
-            upload_cell_types(
-                ds, bundle, ALL_IDS, bundle.directory / "cell_types.csv"
-            )
-
-    def test_read_back_missing_annotation_raises(self, bundle):
-        ds = FakeDataset()
-        ds.annotations.get_many.return_value = []
-        with pytest.raises(XeniumError, match="verify failed"):
-            upload_cell_types(
-                ds, bundle, ALL_IDS, bundle.directory / "cell_types.csv"
-            )
-
-    def test_accepts_labels_already_read(self, bundle):
-        ds = FakeDataset()
-        ds.annotations.get_many.side_effect = _tagged(["cell", "X"])
-        upload_cell_types(ds, bundle, ALL_IDS, ["X"] * 4)
-        with pytest.raises(XeniumError, match="3 cell-type labels for 4"):
-            upload_cell_types(ds, bundle, ALL_IDS, ["X"] * 3)
-
-    def test_labels_with_gaps_are_rejected_unless_resetting(self, bundle):
-        ds = FakeDataset()
-        ds.annotations.get_many.side_effect = _tagged(["cell"])
-        labels = ["T cell", None, "B cell", None]
-        with pytest.raises(XeniumError, match="2 cells have no cell-type"):
-            upload_cell_types(ds, bundle, ALL_IDS, labels)
-        ds.annotations.update_many.assert_not_called()
-        upload_cell_types(ds, bundle, ALL_IDS, labels, reset=True)
-
-    def test_reset_writes_base_tags(self, bundle):
-        ds = FakeDataset()
-        ds.annotations.get_many.side_effect = _tagged(["cell"])
-        upload_cell_types(
-            ds,
-            bundle,
-            ALL_IDS,
-            bundle.directory / "cell_types.csv",
-            reset=True,
-        )
-        updates = ds.annotations.update_many.call_args.args[0]
-        assert all(change == {"tags": ["cell"]} for _, change in updates)
+@pytest.mark.parametrize("command", sorted(CLI_COMMANDS))
+def test_cli_baseline_succeeds(cli, server, command):
+    assert cli(CLI_COMMANDS[command]) == 0
+    assert server.writes, f"{command} baseline wrote nothing"
 
 
-class TestSpatialTable:
-    def test_build_round_trip(self, bundle, tmp_path):
-        anndata = pytest.importorskip("anndata")
-        out = build_spatial_table(
-            bundle,
-            IDS_WITH_GAP,
-            tmp_path / "spatial.zarr.zip",
-            dataset_id="ds_1",
-            cell_types=bundle.directory / "cell_types.csv",
-            umap=np.arange(8, dtype=np.float32).reshape(4, 2),
-        )
-        extracted = tmp_path / "extracted.zarr"
-        with zipfile.ZipFile(out) as zf:
-            assert "zarr.json" not in zf.namelist()  # zarr v2 for the server
-            zf.extractall(extracted)
-        adata = anndata.read_zarr(extracted)
-        assert adata.obs["annotation_id"].tolist() == [
-            "ann_0",
-            "ann_1",
-            "ann_3",
-        ]
-        assert adata.obs["cell_index"].tolist() == [0, 1, 3]
-        assert adata.obs["cell_type"].tolist() == [
-            "T cell",
-            "B cell",
-            "Macrophage",
-        ]
-        assert adata.obs["graphclust"].tolist() == [1, 2, 0]
-        assert list(adata.var_names) == ["GENEA", "CD3E (protein)", "CD3E"]
-        assert np.asarray(adata.X.todense()).tolist() == [
-            [3, 7, 0],
-            [0, 0, 5],
-            [0, 9, 2],
-        ]
-        assert adata.obsm["X_umap"].tolist() == [[0, 1], [2, 3], [6, 7]]
-        assert adata.uns["nimbus"]["datasetId"] == "ds_1"
-
-    def test_missing_analysis_fails_before_the_matrix_is_read(
-        self, bundle, tmp_path, monkeypatch
-    ):
-        pytest.importorskip("anndata")
-        (bundle.directory / "analysis.zarr.zip").unlink()
-
-        def counts_must_not_run(*args, **kwargs):
-            raise AssertionError("read the matrix before a cheap check")
-
-        monkeypatch.setattr(bundle, "counts", counts_must_not_run)
-        with pytest.raises(XeniumError, match="missing from the bundle"):
-            build_spatial_table(
-                bundle, ALL_IDS, tmp_path / "x.zip", dataset_id="d"
-            )
-
-    def test_ids_must_cover_every_cell(self, bundle, tmp_path):
-        with pytest.raises(XeniumError, match="3 ids for 4 cells"):
-            build_spatial_table(
-                bundle, ALL_IDS[:3], tmp_path / "x.zip", dataset_id="d"
-            )
+@pytest.mark.parametrize("command, bad", CLI_CASES)
+def test_cli_bad_input_fails_with_no_writes(cli, server, capsys, command, bad):
+    code = cli(_edit(CLI_COMMANDS[command], BAD_INPUTS[bad][0]))
+    assert code not in (0, None), f"{command} accepted {bad}"
+    assert server.writes == [], f"{command} wrote before rejecting {bad}"
+    if code == 1:  # our own errors print cleanly, never a traceback
+        assert "error:" in capsys.readouterr().err
 
 
-class TestTranscripts:
-    def test_registers_inverse_alignment(self, bundle):
-        ds = FakeDataset()
-        matrix = np.diag([2.0, 2.0, 1.0])
-        register_transcripts(ds, bundle, alignment=matrix, item_id="item_1")
-        ds.spatial.upload_transcripts.assert_not_called()
-        item_id, pixel_size, transform = (
-            ds.spatial.register_transcripts.call_args.args
-        )
-        assert (item_id, pixel_size) == ("item_1", PIXEL_SIZE)
-        np.testing.assert_allclose(transform, np.diag([0.5, 0.5, 1.0]))
-
-    def test_bad_inputs_fail_before_the_upload(self, bundle, tmp_path):
-        ds = FakeDataset()
-        (bundle.directory / "transcripts.zarr.zip").write_bytes(b"x")
-        with pytest.raises(XeniumError, match="cannot read alignment"):
-            register_transcripts(ds, bundle, alignment=tmp_path / "nope.csv")
-        (bundle.directory / "experiment.xenium").unlink()
-        fresh = XeniumBundle(bundle.directory)  # pixel_size is cached above
-        with pytest.raises(XeniumError, match="missing from the bundle"):
-            register_transcripts(ds, fresh)
-        ds.spatial.upload_transcripts.assert_not_called()
-
-    def test_pixel_size_override(self, bundle):
-        ds = FakeDataset()
-        register_transcripts(ds, bundle, pixel_size=0.25, item_id="item_1")
-        assert ds.spatial.register_transcripts.call_args.args[1] == 0.25
-
-    def test_uploads_when_no_item(self, bundle):
-        ds = FakeDataset()
-        (bundle.directory / "transcripts.zarr.zip").write_bytes(b"x")
-        ds.spatial.upload_transcripts.return_value = {"_id": "item_2"}
-        register_transcripts(ds, bundle)
-        assert ds.spatial.register_transcripts.call_args.args == (
-            "item_2",
-            PIXEL_SIZE,
-            None,
-        )
+# --- CLI details ---
 
 
 class TestCli:
-    def test_errors_exit_nonzero_without_traceback(
-        self, bundle, monkeypatch, capsys
-    ):
-        monkeypatch.setattr(
-            "nimbusimage.xenium.cli._connect", lambda: MagicMock()
-        )
-        code = cli_main(
-            [
-                "properties",
-                "--bundle-dir",
-                str(bundle.directory),
-                "--dataset",
-                "ds_1",
-                "--what",
-                "genes,bogus",
-            ]
-        )
-        assert code == 1
-        assert "unknown --what entries: ['bogus']" in capsys.readouterr().err
+    def test_polygons_saves_the_cell_map(self, cli, tmp_path):
+        assert cli(CLI_COMMANDS["polygons"]) == 0
+        saved = CellMap.read(tmp_path / "new.npz")
+        assert saved.dataset_id == MORPH
+        assert saved.ids.tolist()[2] is None  # the degenerate cell
 
-    @pytest.mark.parametrize("what", ["", ","])
-    def test_empty_what_is_an_error(self, bundle, monkeypatch, capsys, what):
-        client = MagicMock()
-        monkeypatch.setattr("nimbusimage.xenium.cli._connect", lambda: client)
-        code = cli_main(["properties", "--bundle-dir", str(bundle.directory),
-                         "--dataset", "ds_1", "--what", what])
-        assert code == 1
-        assert "--what is empty" in capsys.readouterr().err
-        client.dataset.assert_not_called()
+    def test_later_steps_reuse_the_saved_frame(self, cli, server, tmp_path):
+        """--pixel-size given once, to polygons, reaches transcripts."""
+        argv = _edit(CLI_COMMANDS["polygons"], {"--pixel-size": "0.25"})
+        argv = _edit(argv, {"--dataset": "ds_new"})
+        assert cli(argv) == 0
+        transcripts = _edit(
+            CLI_COMMANDS["transcripts"],
+            {"--dataset": "ds_new", "--cells": "{tmp}/new.npz"},
+        )
+        assert cli(transcripts) == 0
+        assert server.dataset("ds_new").spatial.registered[1] == 0.25
 
-    def test_cell_types_reset_accepts_a_csv_with_gaps(
-        self, bundle, monkeypatch, tmp_path
+    def test_regions_may_add_an_alignment_to_a_saved_frame(
+        self, cli, server, tmp_path
     ):
+        np.savetxt(tmp_path / "m.csv", np.diag([2.0, 2.0, 1.0]), delimiter=",")
+        argv = _edit(
+            CLI_COMMANDS["regions"],
+            {"--drawn-in": "he", "--alignment": "{tmp}/m.csv"},
+        )
+        assert cli(argv) == 0
+        region = server.dataset(MORPH).annotations.list(tags=["region"])[0]
+        assert region.coordinates[1] == {"x": 18.0, "y": 0.0}
+
+    def test_regions_microns_with_a_pixel_size_needs_no_bundle(
+        self, cli, server
+    ):
+        argv = _edit(
+            CLI_COMMANDS["regions"],
+            {
+                "--drawn-in": "microns",
+                "--cells": "{tmp}/absent.npz",
+                "--pixel-size": "0.5",
+            },
+        )
+        assert cli(argv) == 0
+        region = server.dataset(MORPH).annotations.list(tags=["region"])[0]
+        assert region.coordinates[1] == {"x": 18.0, "y": 0.0}
+
+    def test_cell_types_reset_accepts_gaps(self, cli, server, tmp_path):
         partial = tmp_path / "partial.csv"
         partial.write_text(f"cell_id,group\n{CELL_IDS[0]},T cell\n")
-        ds = _listing_dataset([_expected_first_vertex(c) for c in range(4)])
-        ds.annotations.get_many.side_effect = _tagged(["cell"])
-        client = MagicMock()
-        client.dataset.return_value = ds
-        monkeypatch.setattr("nimbusimage.xenium.cli._connect", lambda: client)
-        argv = ["cell-types", "--bundle-dir", str(bundle.directory),
-                "--dataset", "ds_1", "--cell-types", str(partial)]
-        assert cli_main(argv) == 1  # tagging needs every cell's label
-        ds.annotations.update_many.assert_not_called()
-        assert cli_main(argv + ["--reset"]) == 0
-        updates = ds.annotations.update_many.call_args.args[0]
-        assert all(change == {"tags": ["cell"]} for _, change in updates)
-
-    def test_polygons_saves_ids(self, bundle, monkeypatch, tmp_path):
-        ds = FakeDataset()
-        ds.annotations.count.return_value = 3
-        client = MagicMock()
-        client.dataset.return_value = ds
-        monkeypatch.setattr("nimbusimage.xenium.cli._connect", lambda: client)
-        out = tmp_path / "ids.npy"
-        assert (
-            cli_main(
-                [
-                    "polygons",
-                    "--bundle-dir",
-                    str(bundle.directory),
-                    "--dataset",
-                    "ds_1",
-                    "--ids-out",
-                    str(out),
-                ]
-            )
-            == 0
+        argv = _edit(
+            CLI_COMMANDS["cell-types"], {"--cell-types": str(partial)}
         )
-        assert np.load(out, allow_pickle=True).tolist() == [
-            "ann_0",
-            "ann_1",
-            None,
-            "ann_2",
-        ]
-
-    @pytest.mark.parametrize(
-        "argv, message",
-        [
-            (
-                ["properties", "--what", "genes", "--genes", "NOPE"],
-                "not genes of this panel",
-            ),
-            (
-                ["properties", "--what", "umap", "--umap", "missing.npy"],
-                "cannot read",
-            ),
-            (
-                ["cell-types", "--cell-types", "BAD_CSV"],
-                "not a cell of this bundle",
-            ),
-            (["spatial-table", "--umap", "missing.npy"], "cannot read"),
-            (
-                [
-                    "polygons",
-                    "--delete-tag",
-                    "t",
-                    "--alignment",
-                    "missing.csv",
-                ],
-                "cannot read alignment",
-            ),
-        ],
-    )
-    def test_bad_local_input_fails_before_server_work(
-        self, bundle, monkeypatch, capsys, argv, message
-    ):
-        """A bad input is reported before any id fetch, upload or delete."""
-        bad_csv = bundle.directory / "bad.csv"
-        bad_csv.write_text("cell_id,group\npppppppp-9,T cell\n")
-        client = MagicMock()
-        monkeypatch.setattr("nimbusimage.xenium.cli._connect", lambda: client)
-        argv = [str(bad_csv) if a == "BAD_CSV" else a for a in argv]
-        code = cli_main(
-            argv[:1]
-            + ["--bundle-dir", str(bundle.directory), "--dataset", "ds_1"]
-            + argv[1:]
-        )
-        assert code == 1
-        assert message in capsys.readouterr().err
-        ds = client.dataset.return_value
-        ds.annotations.list.assert_not_called()
-        ds.annotations.delete_many.assert_not_called()
-        ds.annotations.create_many.assert_not_called()
+        assert cli(argv) == 1
+        assert server.writes == []
+        assert cli(argv + ["--reset"]) == 0
 
     def test_main_module_import_does_not_run_the_cli(self):
         import importlib

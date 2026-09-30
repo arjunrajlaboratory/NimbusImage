@@ -6,26 +6,38 @@ NI_TOKEN), or NI_USERNAME + NI_PASSWORD. Progress goes to stderr; the only
 stdout output is ``morphology``'s new dataset id, so it can be captured::
 
     MORPH=$(nimbusimage-xenium morphology --bundle-dir extracted --name LN)
+
+``polygons --cells-out cells.npz`` saves the dataset's cell map (ids, the
+dataset they belong to, and the frame they were drawn with); every later
+step takes it as ``--cells`` and reuses that frame, so ``--alignment`` and
+``--pixel-size`` are given once, to ``polygons``.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
+from nimbusimage.xenium import ingest
 from nimbusimage.xenium.bundle import (
     CELL_POLYGON_SET,
     NUCLEUS_POLYGON_SET,
     XeniumBundle,
 )
+from nimbusimage.xenium.cells import CellMap, open_cells
 from nimbusimage.xenium.errors import XeniumError
-from nimbusimage.xenium.geometry import REGION_FRAMES, REGION_TARGETS
-from nimbusimage.xenium import ingest
+from nimbusimage.xenium.geometry import (
+    IMAGES,
+    REGION_FRAMES,
+    ImageFrame,
+    load_alignment,
+)
 
 logger = logging.getLogger("nimbusimage.xenium")
 
@@ -35,9 +47,8 @@ def _connect():
 
     if os.environ.get("NI_API_KEY") or os.environ.get("NI_TOKEN"):
         return ni.connect()
-    username, password = os.environ.get("NI_USERNAME"), os.environ.get(
-        "NI_PASSWORD"
-    )
+    username = os.environ.get("NI_USERNAME")
+    password = os.environ.get("NI_PASSWORD")
     if not (username and password):
         raise XeniumError(
             "set NI_API_URL and NI_API_KEY (or NI_USERNAME + NI_PASSWORD) "
@@ -62,25 +73,92 @@ def _read_panel(args) -> list[str]:
     return []
 
 
-def _dataset_ids(args, bundle):
+# --- the dataset's frame and cell map ---
+#
+# Every subcommand resolves the frame through these, BEFORE any server
+# write: the frame saved with --cells when there is one, else the one
+# --alignment/--pixel-size describe, else the bundle's morphology frame.
+# Flags that disagree with a saved frame are an error, never a silent pick.
+
+
+def _flag_frame(args, bundle, *, image=None) -> ImageFrame | None:
+    """The frame --alignment/--pixel-size (and ``image``) describe, or None
+    when none of them is given."""
+    alignment = getattr(args, "alignment", None)
+    pixel_size = getattr(args, "pixel_size", None)
+    if alignment is None and pixel_size is None and image is None:
+        return None
+    return ImageFrame.create(
+        bundle=bundle, alignment=alignment, pixel_size=pixel_size, image=image
+    )
+
+
+def _saved_frame(args, ds) -> ImageFrame | None:
+    """The frame saved in --cells, after checking the file is ``ds``'s."""
+    path = getattr(args, "cells", None)
+    if path is None or not Path(path).exists():
+        return None
+    stored = CellMap.read(path)
+    if not isinstance(stored, CellMap):
+        return None  # a bare-id file from before CellMap: no frame saved
+    if stored.dataset_id != ds.id:
+        raise XeniumError(
+            f"{path} is the cell map of dataset {stored.dataset_id}, "
+            f"not {ds.id}"
+        )
+    return stored.frame
+
+
+def _frame(args, bundle, ds, *, image=None) -> ImageFrame:
+    """The dataset's frame. With a saved --cells frame, that frame wins:
+    flags may only add what it lacks (an alignment, so regions drawn in H&E
+    pixels can go on the morphology image); a flag that contradicts it is
+    an error."""
+    saved = _saved_frame(args, ds)
+    if saved is None:
+        return _flag_frame(args, bundle, image=image) or ImageFrame.create(
+            bundle=bundle
+        )
+    alignment = load_alignment(getattr(args, "alignment", None))
+    pixel_size = getattr(args, "pixel_size", None)
+    conflicts = []
+    if image is not None and image != saved.image:
+        conflicts.append(f"--target {image}")
+    if pixel_size is not None and not math.isclose(
+        pixel_size, saved.pixel_size or 0, rel_tol=1e-9
+    ):
+        conflicts.append(f"--pixel-size {pixel_size}")
+    if (
+        alignment is not None
+        and saved.alignment is not None
+        and not np.allclose(alignment, saved.alignment)
+    ):
+        conflicts.append("--alignment")
+    if conflicts:
+        raise XeniumError(
+            f"{', '.join(conflicts)} conflicts with the {saved} saved in "
+            f"{args.cells}"
+        )
+    if alignment is None or saved.alignment is not None:
+        return saved
+    return ImageFrame(saved.image, saved.pixel_size, alignment)
+
+
+def _dataset_cells(args, bundle):
+    _flag_frame(args, bundle)  # validate the flags before connecting
     ds = _connect().dataset(args.dataset)
     logger.info(
         "=== %s (%s cells) ===", ds.name, f"{bundle.number_of_cells:,}"
     )
-    ids = ingest.load_annotation_ids(
-        ds,
-        bundle,
-        args.ids,
-        alignment=args.alignment,
-        pixel_size=args.pixel_size,
+    return ds, open_cells(
+        ds, bundle, args.cells, frame=_frame(args, bundle, ds)
     )
-    return ds, ids
 
 
 # --- subcommands ---
 #
 # Each one reads and validates its local inputs (bundle files, CSVs, the
-# gene panel, the embedding, the alignment) before any slow or destructive
+# gene panel, the embedding, the frame) before any slow or destructive
 # server work — an id fetch, an upload, a delete — so a typo fails in a
 # second. Connecting and opening the dataset first is harmless.
 
@@ -97,13 +175,14 @@ def cmd_morphology(args) -> None:
 
 
 def cmd_polygons(args) -> None:
+    bundle = XeniumBundle(args.bundle_dir)
+    frame = _flag_frame(args, bundle) or ImageFrame.create(bundle=bundle)
     ds = _connect().dataset(args.dataset)
     # upload_polygons deletes --delete-tag only after reading its inputs.
-    ids = ingest.upload_polygons(
+    cells = ingest.upload_polygons(
         ds,
-        XeniumBundle(args.bundle_dir),
-        alignment=args.alignment,
-        pixel_size=args.pixel_size,
+        bundle,
+        frame,
         polygon_set=args.polygon_set,
         tags=_split(args.tags),
         batch=args.batch,
@@ -114,9 +193,9 @@ def cmd_polygons(args) -> None:
         "dataset now has %s polygon annotations",
         f"{ds.annotations.count(shape='polygon'):,}",
     )
-    if args.ids_out:
-        np.save(args.ids_out, ids)
-        logger.info("saved annotation ids to %s", args.ids_out)
+    if args.cells_out:
+        cells.save(args.cells_out)
+        logger.info("saved the cell map to %s", args.cells_out)
 
 
 def cmd_umap(args) -> None:
@@ -157,27 +236,27 @@ def cmd_properties(args) -> None:
         else None
     )
 
-    ds, ids = _dataset_ids(args, bundle)
+    ds, cells = _dataset_cells(args, bundle)
     common = dict(chunk=args.chunk, limit=args.limit, replace=args.replace)
     if panel:
         ingest.upload_gene_panel(
-            ds, bundle, ids, panel, dense=not args.sparse, **common
+            ds, bundle, cells, panel, dense=not args.sparse, **common
         )
     if clusters is not None:
-        ingest.upload_clusters(ds, bundle, ids, labels=clusters, **common)
+        ingest.upload_clusters(ds, bundle, cells, labels=clusters, **common)
     if embedding is not None:
-        ingest.upload_umap(ds, bundle, ids, embedding, **common)
+        ingest.upload_umap(ds, bundle, cells, embedding, **common)
 
 
 def cmd_cell_types(args) -> None:
     bundle = XeniumBundle(args.bundle_dir)
     # --reset writes only --base-tags, so a CSV with gaps is fine there.
     labels = bundle.cell_types(args.cell_types, complete=not args.reset)
-    ds, ids = _dataset_ids(args, bundle)
+    ds, cells = _dataset_cells(args, bundle)
     ingest.upload_cell_types(
         ds,
         bundle,
-        ids,
+        cells,
         labels,
         base_tags=_split(args.base_tags),
         chunk=args.chunk,
@@ -199,12 +278,11 @@ def cmd_spatial_table(args) -> None:
         if args.umap
         else None
     )
-    ds, ids = _dataset_ids(args, bundle)
+    ds, cells = _dataset_cells(args, bundle)
     out = ingest.build_spatial_table(
         bundle,
-        ids,
+        cells,
         args.out or bundle.directory / "spatial.zarr.zip",
-        dataset_id=ds.id,
         cell_types=labels,
         umap=embedding,
     )
@@ -220,41 +298,30 @@ def cmd_spatial_table(args) -> None:
 
 
 def cmd_transcripts(args) -> None:
-    # register_transcripts reads the alignment and pixel size before its
-    # upload, so a bad input fails before the multi-GB transfer.
+    bundle = XeniumBundle(args.bundle_dir)
+    _flag_frame(args, bundle)  # validate the flags before connecting
     ds = _connect().dataset(args.dataset)
-    logger.info("=== %s ===", ds.name)
-    schema = ingest.register_transcripts(
-        ds,
-        XeniumBundle(args.bundle_dir),
-        alignment=args.alignment,
-        pixel_size=args.pixel_size,
-        item_id=args.item,
-    )
+    frame = _frame(args, bundle, ds)
+    logger.info("=== %s === %s", ds.name, frame)
+    # register_transcripts checks its inputs before the multi-GB upload.
+    schema = ingest.register_transcripts(ds, bundle, frame, item_id=args.item)
     logger.info(
-        "  registered: %s molecules, %s genes, %s pyramid levels%s",
+        "  registered: %s molecules, %s genes, %s pyramid levels",
         f"{schema['totalPoints']:,}",
         f"{schema['genes']:,}",
         schema["levels"],
-        " with H&E transform" if args.alignment else "",
     )
 
 
 def cmd_regions(args) -> None:
-    pixel_size = None
-    if args.frame == "microns":
-        if args.bundle_dir is None:
-            raise XeniumError("--frame microns needs --bundle-dir")
-        pixel_size = (
-            args.pixel_size or XeniumBundle(args.bundle_dir).pixel_size
-        )
+    bundle = XeniumBundle(args.bundle_dir) if args.bundle_dir else None
+    _flag_frame(args, bundle, image=args.target)  # validate before connecting
+    ds = _connect().dataset(args.dataset)
     ingest.upload_regions(
-        _connect().dataset(args.dataset),
+        ds,
         args.geojson,
-        frame=args.frame,
-        target=args.target,
-        alignment=args.alignment,
-        pixel_size=pixel_size,
+        _frame(args, bundle, ds, image=args.target),
+        drawn_in=args.drawn_in,
         tag=args.tag,
     )
 
@@ -262,7 +329,55 @@ def cmd_regions(args) -> None:
 # --- parser ---
 
 
-def _add_dataset_args(parser, *, ids: bool = True) -> None:
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {number}")
+    return number
+
+
+def _positive_float(value: str) -> float:
+    number = float(value)
+    if not number > 0:
+        raise argparse.ArgumentTypeError(f"must be > 0, got {value}")
+    return number
+
+
+def _add_frame_args(parser, *, saved: bool) -> None:
+    parser.add_argument(
+        "--alignment",
+        type=Path,
+        default=None,
+        help="*_he_imagealignment.csv (H&E px -> morphology px); makes the "
+        "dataset's frame the H&E image"
+        + ("; not needed with a saved --cells" if saved else ""),
+    )
+    parser.add_argument(
+        "--pixel-size",
+        type=_positive_float,
+        default=None,
+        help="um per morphology px, to override experiment.xenium"
+        + ("; not needed with a saved --cells" if saved else ""),
+    )
+
+
+def _add_cells_arg(parser, *, required_file: bool = False) -> None:
+    parser.add_argument(
+        "--cells",
+        "--ids",
+        dest="cells",
+        type=Path,
+        default=None,
+        help="the dataset's cell map from polygons --cells-out"
+        + (
+            "; its frame is reused"
+            if required_file
+            else "; fetched, verified and saved here if absent"
+        ),
+    )
+
+
+def _add_dataset_args(parser) -> None:
     parser.add_argument(
         "--bundle-dir",
         type=Path,
@@ -272,29 +387,6 @@ def _add_dataset_args(parser, *, ids: bool = True) -> None:
     parser.add_argument(
         "--dataset", required=True, help="NimbusImage dataset (folder) id"
     )
-    parser.add_argument(
-        "--alignment",
-        type=Path,
-        default=None,
-        help="*_he_imagealignment.csv when the dataset is the H&E image "
-        "(also needed there to verify a cached --ids file)",
-    )
-    if ids:
-        parser.add_argument(
-            "--pixel-size",
-            type=float,
-            default=None,
-            help="um/px the polygons were uploaded with, if overridden "
-            "(default: experiment.xenium); used to verify --ids",
-        )
-        parser.add_argument(
-            "--ids",
-            type=Path,
-            default=None,
-            help=".npy of annotation ids in cell_index order "
-            "(from polygons --ids-out); fetched, verified and "
-            "cached here if absent",
-        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -327,22 +419,21 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser(
         "polygons", help="upload segmentation polygons in cell_index order"
     )
-    _add_dataset_args(p, ids=False)
-    p.add_argument(
-        "--pixel-size",
-        type=float,
-        default=None,
-        help="um/px override (default: experiment.xenium)",
-    )
+    _add_dataset_args(p)
+    _add_frame_args(p, saved=False)
     p.add_argument(
         "--polygon-set",
         default=CELL_POLYGON_SET,
         choices=[CELL_POLYGON_SET, NUCLEUS_POLYGON_SET],
+        help="nucleus polygons are for display; per-cell steps need cells",
     )
     p.add_argument("--tags", default="cell", help="comma-separated tags")
-    p.add_argument("--batch", type=int, default=5000)
+    p.add_argument("--batch", type=_positive_int, default=5000)
     p.add_argument(
-        "--limit", type=int, default=None, help="only the first N polygons"
+        "--limit",
+        type=_positive_int,
+        default=None,
+        help="only the first N polygons",
     )
     p.add_argument(
         "--delete-tag",
@@ -350,10 +441,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="first delete every annotation carrying this tag",
     )
     p.add_argument(
+        "--cells-out",
         "--ids-out",
+        dest="cells_out",
         type=Path,
         default=None,
-        help="save the created ids (cell_index order) to this .npy",
+        help="save the cell map (ids + dataset + frame) to this file",
     )
     p.set_defaults(func=cmd_polygons)
 
@@ -362,8 +455,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--bundle-dir", type=Path, required=True)
     p.add_argument("--out", type=Path, default=Path("."))
-    p.add_argument("--components", type=int, default=50)
-    p.add_argument("--n-neighbors", type=int, default=15)
+    p.add_argument("--components", type=_positive_int, default=50)
+    p.add_argument("--n-neighbors", type=_positive_int, default=15)
     p.add_argument("--min-dist", type=float, default=0.3)
     p.add_argument("--seed", type=int, default=0)
     p.set_defaults(func=cmd_umap)
@@ -373,6 +466,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="gene panel, clusterings and UMAP as nested property values",
     )
     _add_dataset_args(p)
+    _add_cells_arg(p)
+    _add_frame_args(p, saved=True)
     p.add_argument(
         "--what",
         default="genes",
@@ -388,9 +483,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="one gene symbol per line (# comments allowed)",
     )
     p.add_argument("--umap", type=Path, default=None, help="umap_xy.npy")
-    p.add_argument("--chunk", type=int, default=20000)
+    p.add_argument("--chunk", type=_positive_int, default=20000)
     p.add_argument(
-        "--limit", type=int, default=None, help="only the first N cells"
+        "--limit",
+        type=_positive_int,
+        default=None,
+        help="only the first N cells",
     )
     p.add_argument(
         "--sparse",
@@ -406,6 +504,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("cell-types", help="cell-type calls as tags")
     _add_dataset_args(p)
+    _add_cells_arg(p)
+    _add_frame_args(p, saved=True)
     p.add_argument(
         "--cell-types", type=Path, required=True, help="*_cell_types.csv"
     )
@@ -414,9 +514,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="cell",
         help="comma-separated tags every cell keeps",
     )
-    p.add_argument("--chunk", type=int, default=5000)
+    p.add_argument("--chunk", type=_positive_int, default=5000)
     p.add_argument(
-        "--limit", type=int, default=None, help="only the first N cells"
+        "--limit",
+        type=_positive_int,
+        default=None,
+        help="only the first N cells",
     )
     p.add_argument(
         "--reset",
@@ -427,10 +530,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "spatial-table",
-        help="build, upload and register the "
-        "full matrix as spatial.zarr.zip",
+        help="build, upload and register the full matrix as spatial.zarr.zip",
     )
     _add_dataset_args(p)
+    _add_cells_arg(p)
+    _add_frame_args(p, saved=True)
     p.add_argument(
         "--cell-types", type=Path, default=None, help="*_cell_types.csv"
     )
@@ -450,18 +554,13 @@ def build_parser() -> argparse.ArgumentParser:
         "transcripts",
         help="upload and register transcripts.zarr.zip as shipped",
     )
-    _add_dataset_args(p, ids=False)
+    _add_dataset_args(p)
+    _add_cells_arg(p, required_file=True)
+    _add_frame_args(p, saved=True)
     p.add_argument(
         "--item",
         default=None,
         help="register this already-uploaded item instead",
-    )
-    p.add_argument(
-        "--pixel-size",
-        type=float,
-        default=None,
-        help="um/px override, as given to polygons "
-        "(default: experiment.xenium)",
     )
     p.set_defaults(func=cmd_transcripts)
 
@@ -471,37 +570,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--dataset", required=True, help="NimbusImage dataset (folder) id"
     )
     p.add_argument(
-        "--frame",
+        "--drawn-in",
         choices=REGION_FRAMES,
         required=True,
-        help="what the GeoJSON is drawn in (10x ships H&E pixels)",
+        help="what the GeoJSON coordinates are (10x ships H&E pixels)",
     )
     p.add_argument(
         "--target",
-        choices=REGION_TARGETS,
+        choices=IMAGES,
         default="morphology",
         help="which image the dataset shows",
     )
-    p.add_argument(
-        "--alignment",
-        type=Path,
-        default=None,
-        help="*_he_imagealignment.csv (H&E px -> morphology px)",
-    )
+    _add_cells_arg(p, required_file=True)
+    _add_frame_args(p, saved=True)
     p.add_argument(
         "--bundle-dir",
         type=Path,
         default=None,
-        help="for --frame microns: reads pixel_size",
+        help="for --drawn-in microns: reads pixel_size",
     )
     p.add_argument("--tag", default=ingest.REGION_TAG)
-    p.add_argument(
-        "--pixel-size",
-        type=float,
-        default=None,
-        help="um/px override, as given to polygons "
-        "(default: experiment.xenium)",
-    )
     p.set_defaults(func=cmd_regions)
     return parser
 

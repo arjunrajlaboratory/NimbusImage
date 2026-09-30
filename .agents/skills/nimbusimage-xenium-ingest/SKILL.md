@@ -47,16 +47,34 @@ from nimbusimage import xenium
 client = ni.connect()
 bundle = xenium.XeniumBundle("extracted")
 ds = xenium.upload_morphology(client, bundle, "Lymph node")
-ids = xenium.upload_polygons(ds, bundle)          # cell_index order; keep them
-xenium.upload_gene_panel(ds, bundle, ids, ["CD3E", "MS4A1"])
-xenium.upload_clusters(ds, bundle, ids)
-xenium.upload_umap(ds, bundle, ids, xenium.compute_umap(bundle))
-xenium.upload_cell_types(ds, bundle, ids, "cell_types.csv")
+cells = xenium.upload_polygons(ds, bundle)        # a CellMap; keep it
+cells.save("cells_morph.npz")                     # later: xenium.open_cells(ds, bundle, path)
+xenium.upload_gene_panel(ds, bundle, cells, ["CD3E", "MS4A1"])
+xenium.upload_clusters(ds, bundle, cells)
+xenium.upload_umap(ds, bundle, cells, xenium.compute_umap(bundle))
+xenium.upload_cell_types(ds, bundle, cells, "cell_types.csv")
 ds.spatial.upload_and_register(xenium.build_spatial_table(
-    bundle, ids, "spatial.zarr.zip", dataset_id=ds.id, cell_types="cell_types.csv"))
-xenium.register_transcripts(ds, bundle)
-xenium.upload_regions(ds, "annotation.geojson", frame="he", alignment="he_align.csv")
+    bundle, cells, "spatial.zarr.zip", cell_types="cell_types.csv"))
+xenium.register_transcripts(ds, bundle, cells.frame)
+morph = xenium.ImageFrame.create(bundle=bundle, alignment="he_align.csv", image="morphology")
+xenium.upload_regions(ds, "annotation.geojson", morph, drawn_in="he")
+
+# the H&E image: its own frame and its own cell map
+he_frame = xenium.ImageFrame.create(bundle=bundle, alignment="he_align.csv")
+he_cells = xenium.upload_polygons(he_ds, bundle, he_frame)
 ```
+
+Two objects carry what the steps share, so nothing has to be passed twice:
+
+- **`ImageFrame`** — how microns land on one dataset's pixels: which image (`morphology`
+  or `he`), the pixel size, the alignment. Validated when built (pixel size > 0, a 3×3
+  invertible alignment). Every coordinate-producing step takes the same frame, so a
+  pixel-size override or an alignment cannot reach one step and miss another.
+- **`CellMap`** — every cell's annotation id, *with* the dataset they belong to, the frame
+  they were drawn with, and the polygon set. Always one slot per cell (None where a
+  polygon was degenerate or past `--limit`). Every per-cell step refuses a map of another
+  dataset, of nuclei, or of another bundle before writing anything, and
+  `open_cells` spot-checks a saved map against the server before it is used.
 
 Every step raises `xenium.XeniumError` instead of writing wrong data (a missing gene, a
 malformed alignment, polygons out of `cell_index` order); the command prints it and exits 1.
@@ -79,26 +97,29 @@ unzip -o outs.zip 'morphology_focus/*' cells.zarr.zip cell_feature_matrix.zarr.z
 # 4. Images: one dataset from morphology_focus/, channels named by stain (§2);
 #    prints the dataset FOLDER id. (Or through the UI, then find the id — §4.)
 MORPH=$($X morphology --bundle-dir extracted --name "Lymph node")
-# 5. Polygons — validate a slice, then all; keep the returned ids
+# 5. Polygons — validate a slice, then all; keep the cell map each one saves.
+#    --alignment/--pixel-size are given HERE only: the cell map records the frame,
+#    and every later step reuses it through --cells.
 $X polygons --bundle-dir extracted --dataset $MORPH --limit 5000 --tags xenium-test
-$X polygons --bundle-dir extracted --dataset $MORPH --delete-tag xenium-test --ids-out ids_morph.npy
-$X polygons --bundle-dir extracted --dataset $HE --alignment he_align.csv --ids-out ids_he.npy
+$X polygons --bundle-dir extracted --dataset $MORPH --delete-tag xenium-test --cells-out cells_morph.npz
+$X polygons --bundle-dir extracted --dataset $HE --alignment he_align.csv --cells-out cells_he.npz
 # 6. UMAP (10x does not ship one) ~6 min for 709k cells
 $X umap --bundle-dir extracted --out umap/
 # 7. Per-cell data as nested properties (marker panel, not the whole matrix)
-$X properties --bundle-dir extracted --dataset $MORPH --ids ids_morph.npy \
+$X properties --bundle-dir extracted --dataset $MORPH --cells cells_morph.npz \
        --what genes,clusters,umap --genes-file panel.txt --umap umap/umap_xy.npy
 # 8. Cell types as tags
 $X cell-types --bundle-dir extracted --cell-types cell_types.csv \
-       --dataset $MORPH --ids ids_morph.npy
+       --dataset $MORPH --cells cells_morph.npz
 # 9. Whole matrix as a spatial table, and the molecules as an overlay (§7b, §7c)
 unzip -o outs.zip transcripts.zarr.zip -d extracted/
-$X spatial-table --bundle-dir extracted --dataset $MORPH --ids ids_morph.npy
-$X transcripts --bundle-dir extracted --dataset $MORPH
+$X spatial-table --bundle-dir extracted --dataset $MORPH --cells cells_morph.npz
+$X transcripts --bundle-dir extracted --dataset $MORPH --cells cells_morph.npz
 # 10. Pathology regions (a *_annotation.geojson, drawn in H&E pixels) as tagged polygons
-$X regions --geojson annotation.geojson --dataset $MORPH \
-       --frame he --target morphology --alignment he_align.csv
-$X regions --geojson annotation.geojson --dataset $HE --frame he --target he
+$X regions --geojson annotation.geojson --dataset $MORPH --cells cells_morph.npz \
+       --drawn-in he --alignment he_align.csv
+$X regions --geojson annotation.geojson --dataset $HE --cells cells_he.npz \
+       --drawn-in he --target he
 ```
 
 Protein panels (XOA 4 "Protein" bundles) quantify antibodies in the same matrix
@@ -161,7 +182,8 @@ Xenium vertices are **microns**. Divide by the *Xenium* `pixel_size` from
 - **Morphology**: `px = µm / pixel_size`, identity orientation.
 - **H&E**: `he_px = M⁻¹ · [µm / pixel_size, 1]` where `M` is the csv. Sanity check: the
   2×2 block's magnitude equals `he_px_size / morph_px_size` (1.289 = 0.2738 / 0.2125
-  here). `--alignment` (every step's `alignment=`) takes the csv as shipped and applies `M⁻¹` for you.
+  here). `--alignment` (`ImageFrame(alignment=...)`) takes the csv as shipped and applies
+  `M⁻¹` for you. A frame built with an alignment is the H&E frame.
 
 **Determine orientation empirically, never by eye.** Fetch a ~600 px thumbnail
 (`GET item/{id}/tiles/region?width=600&...&encoding=PNG`), threshold it into a tissue
@@ -171,7 +193,7 @@ for morphology; 0.88 vs 0.21 for `M⁻¹` vs `M`). Do this before uploading 700k
 
 The kidney's `M` is a 90° rotation with scale 0.7754 (H&E px → morphology px): a
 by-eye guess would have put every cell on the wrong axis. The same `M` carries regions
-and molecules onto the H&E (`--alignment`), and a transformed transcript registration
+and molecules onto the H&E (through `cells_he.npz`'s frame), and a transformed transcript registration
 shows points only (no density heat map).
 
 Pre-upload checklist: centroid px range ⊂ `[0, W] × [0, H]`; correlation winner has a
@@ -190,11 +212,14 @@ folder_id = view["datasetId"]           # pass this as --dataset
 ## 5. Polygons (`polygons`, `xenium.upload_polygons`)
 
 Uploads in `cell_index` order via `create_many` in batches of 5,000 — ~100 s for 709k
-polygons. A per-annotation loop would be 709k requests; never do that. `--ids-out` saves
-the server-assigned ids in `cell_index` order; keep that file, every later step wants
-it (`--ids`; `xenium.load_annotation_ids` re-derives and verifies it when absent, and
-spot-checks a cached file against the dataset, so the H&E dataset's file can't be used
-for the morphology dataset by mistake — both have the same cell count). Upload is fast; viewer rendering at this scale is handled by NimbusImage's lazy
+polygons. A per-annotation loop would be 709k requests; never do that. `--cells-out`
+saves the cell map (ids + dataset + frame); every later step takes it as `--cells`.
+Without the file, `open_cells` re-derives it from the server and verifies every first
+vertex (only possible after a full, unlimited upload). A saved map is checked against
+the dataset before use, so the H&E dataset's file can't be used for the morphology
+dataset by mistake — both have the same cell count. Files written by the older
+`--ids-out` (a bare id array) still load, spot-checked with `--alignment`/`--pixel-size`.
+Upload is fast; viewer rendering at this scale is handled by NimbusImage's lazy
 annotation loading. Nucleus polygons are `--polygon-set nucleus` (more nuclei than cells
 is normal: multinucleate cells). They are for display only: every later step joins per-cell
 data by `cell_index`, so run those on a dataset's cell polygons.
@@ -237,7 +262,7 @@ uploaded into the dataset folder and registered with the `upenncontrast_spatial`
 
 ```bash
 nimbusimage-xenium spatial-table --bundle-dir extracted --dataset $MORPH \
-       --ids ids_morph.npy --cell-types cell_types.csv --umap umap/umap_xy.npy \
+       --cells cells_morph.npz --cell-types cell_types.csv --umap umap/umap_xy.npy \
        --out spatial.zarr.zip          # 709k x 4,624 genes -> ~630 MB, a few minutes
 ```
 
@@ -270,12 +295,14 @@ selection, filter, or gate). `--no-upload` builds the file only. Requires `annda
 
 `transcripts.zarr.zip` is registered **as shipped**: it is already a tile pyramid
 (`grids/{level}/{gx},{gy}`, 250 µm × 2^level) with a per-gene 10 µm density grid. Upload is
-the slow part (4.7 GB for the lymph node); registration only records the scale:
+the slow part (4.7 GB for the lymph node); registration only records the scale — the
+frame saved with the dataset's polygons, so molecules and cells line up even with a
+pixel-size override:
 
 ```bash
-nimbusimage-xenium transcripts --bundle-dir extracted --dataset $MORPH
-nimbusimage-xenium transcripts --bundle-dir extracted --dataset $HE \
-       --alignment he_align.csv          # H&E: the inverse alignment as the transform
+nimbusimage-xenium transcripts --bundle-dir extracted --dataset $MORPH --cells cells_morph.npz
+nimbusimage-xenium transcripts --bundle-dir extracted --dataset $HE --cells cells_he.npz
+#   (the H&E map's frame carries the alignment: its inverse is the transform)
 ```
 
 In the app a **Transcripts** palette appears for such datasets: pick up to 8 genes, set the
@@ -312,8 +339,9 @@ composition by type and mean expression of picked genes. From Python:
 ## 7f. Regions of interest (`regions`, `xenium.upload_regions`, or the UI)
 
 10x ships a pathologist's layer (`*_annotation.geojson`, QuPath style) in **H&E pixels**.
-`nimbusimage-xenium regions --frame {he,morphology,microns} --target {he,morphology}`
-transforms it (H&E→morphology applies `M`; morphology→H&E `M⁻¹`; microns divide by
+`nimbusimage-xenium regions --drawn-in {he,morphology,microns} --target {he,morphology}`
+(with the dataset's `--cells`, whose frame it reuses; `--alignment` adds the matrix a
+morphology frame lacks, for H&E-drawn regions) transforms it (H&E→morphology applies `M`; morphology→H&E `M⁻¹`; microns divide by
 `pixel_size`) and uploads each outer ring as a polygon tagged `[<class>, "region"]` — class
 first, because GeoJSON export writes the first tag as QuPath's `classification`.
 
@@ -350,9 +378,10 @@ included, and cannot be undone.
 3. **`ds.properties.list()` is server-wide.** A dataset that never received values still
    "has" the property. Check `ds.collections.get_raw()["meta"]["propertyIds"]` and read
    one annotation's values.
-4. **Verify the `cell_index → annotation_id` map.** `xenium.fetch_annotation_ids` compares
-   every annotation's first vertex with the one recomputed from `cells.zarr` and aborts
-   on any mismatch (push through `M⁻¹` on the H&E dataset via `--alignment`).
+4. **Verify the `cell_index → annotation_id` map.** `xenium.fetch_cells` compares every
+   annotation's first vertex with the one the frame puts it at and aborts on any
+   mismatch; `open_cells` spot-checks a saved map the same way. Keep the `--cells-out`
+   file: it records which dataset and frame the ids belong to.
 5. **Morphology is one image in four files**; never import file 0001–0003 as separate
    images. **H&E is a separate grid**; never assume co-registration.
 6. **Categorical data are tags, not property values.**
