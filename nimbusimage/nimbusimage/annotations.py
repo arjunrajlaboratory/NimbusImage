@@ -128,21 +128,25 @@ class AnnotationAccessor:
         data = self._gc.get(f"upenn_annotation/{annotation_id}")
         return Annotation.from_dict(data)
 
-    def get_many(self, annotation_ids: list[str]) -> list[Annotation]:
-        """Fetch annotations by id in one request (``POST
+    def get_many(self, annotation_ids) -> list[Annotation]:
+        """Fetch this dataset's annotations by id in one request (``POST
         upenn_annotation/hydrate``).
 
-        The server checks read access on every dataset involved. Ids that
-        do not exist are simply absent from the result, so compare ids
-        rather than lengths. One request takes at most the server's
+        Scoped like every other method here: an id of another dataset is
+        dropped from the result, as is an id that does not exist, so
+        compare ids rather than lengths. Accepts any iterable of ids
+        (e.g. a numpy array). One request takes at most the server's
         ``MAX_ANNOTATION_IDS``; chunk larger lists.
         """
+        annotation_ids = [str(i) for i in annotation_ids]
         if not annotation_ids:
             return []
-        data = self._gc.post(
-            "upenn_annotation/hydrate", json=list(annotation_ids)
-        )
-        return [Annotation.from_dict(d) for d in data]
+        data = self._gc.post("upenn_annotation/hydrate", json=annotation_ids)
+        return [
+            annotation
+            for annotation in (Annotation.from_dict(d) for d in data)
+            if annotation.dataset_id == self._dataset_id
+        ]
 
     def count(
         self,

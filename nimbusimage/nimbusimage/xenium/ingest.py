@@ -80,7 +80,8 @@ def cell_indices_with_annotations(
 def load_embedding(
     embedding: np.ndarray | str | os.PathLike, n_cells: int
 ) -> np.ndarray:
-    """A [n_cells, 2] embedding from an array or ``.npy``, shape-checked."""
+    """A [n_cells, 2] embedding (row i = cell_index i) from an array or
+    ``.npy``, shape-checked against the bundle's cell count."""
     if not isinstance(embedding, np.ndarray):
         try:
             embedding = np.load(embedding)
@@ -104,6 +105,9 @@ def _cell_type_labels(
                 f"{len(cell_types)} cell-type labels for "
                 f"{bundle.number_of_cells} cells"
             )
+        missing = sum(1 for label in cell_types if label is None)
+        if complete and missing:
+            raise XeniumError(f"{missing} cells have no cell-type label")
         return list(cell_types)
     return bundle.cell_types(cell_types, complete=complete)
 
@@ -271,6 +275,7 @@ def fetch_annotation_ids(
     bundle: XeniumBundle,
     *,
     alignment=None,
+    pixel_size: float | None = None,
     polygon_set: str = CELL_POLYGON_SET,
     page: int = 20000,
 ) -> np.ndarray:
@@ -282,8 +287,11 @@ def fetch_annotation_ids(
     annotation's first vertex is checked against the vertex recomputed from
     cells.zarr. Only valid for a dataset whose every polygon came from one
     full ``upload_polygons`` (no skipped cells, no other polygons first).
+    Pass the ``alignment``, ``pixel_size`` and ``polygon_set`` that upload
+    used.
     """
     inverse = inverse_alignment(alignment)
+    pixel_size = pixel_size or bundle.pixel_size
     n_vertices, vertices = bundle.polygons(polygon_set)
     n_cells = len(n_vertices)
     ids = np.empty(n_cells, dtype=object)
@@ -309,12 +317,13 @@ def fetch_annotation_ids(
         raise XeniumError(
             f"only {offset} of {n_cells} annotations exist in the dataset"
         )
-    expected = microns_to_pixels(vertices[:, :2], bundle.pixel_size, inverse)
+    expected = microns_to_pixels(vertices[:, :2], pixel_size, inverse)
     mismatches = int(np.sum(np.any(np.abs(expected - firsts) > 0.01, axis=1)))
     if mismatches:
         raise XeniumError(
-            f"{mismatches} annotations' first vertex != their cell's; "
-            "the dataset's polygons are not in cell_index order"
+            f"{mismatches} annotations' first vertex != their cell's: the "
+            "polygons are not in cell_index order, or were uploaded with a "
+            "different alignment, pixel size or polygon set"
         )
     logger.info(
         "  verified %s annotations map to their cell_index", f"{n_cells:,}"
@@ -328,26 +337,76 @@ def load_annotation_ids(
     ids_path: str | os.PathLike | None = None,
     *,
     alignment=None,
+    pixel_size: float | None = None,
+    polygon_set: str = CELL_POLYGON_SET,
+    verify_sample: int = 50,
 ) -> np.ndarray:
     """``ids`` from a cached ``.npy`` when present and complete; otherwise
-    ``fetch_annotation_ids`` and cache the result at ``ids_path``."""
+    ``fetch_annotation_ids`` and cache the result at ``ids_path``.
+
+    A cached file is spot-checked before use: ``verify_sample`` of its ids
+    must be annotations of ``ds`` whose first vertex is their cell's. That
+    catches the likely mix-up — the morphology and H&E datasets have the
+    same cell count, so the other dataset's file passes a length check.
+    """
     ids_path = Path(ids_path) if ids_path else None
+    n_cells = len(bundle.polygons(polygon_set)[0])
     if ids_path and ids_path.exists():
         ids = np.load(ids_path, allow_pickle=True)
-        if len(ids) == bundle.number_of_cells:
+        if len(ids) == n_cells:
+            _verify_ids_sample(
+                ds, bundle, ids, ids_path, alignment, pixel_size,
+                polygon_set, verify_sample,
+            )
             logger.info("  using cached annotation ids from %s", ids_path)
             return ids
         logger.info(
             "  %s holds %d ids, expected %d; refetching",
             ids_path,
             len(ids),
-            bundle.number_of_cells,
+            n_cells,
         )
-    ids = fetch_annotation_ids(ds, bundle, alignment=alignment)
+    ids = fetch_annotation_ids(
+        ds, bundle, alignment=alignment, pixel_size=pixel_size,
+        polygon_set=polygon_set,
+    )
     if ids_path:
         np.save(ids_path, ids)
         logger.info("  cached annotation ids to %s", ids_path)
     return ids
+
+
+def _verify_ids_sample(
+    ds, bundle, ids, ids_path, alignment, pixel_size, polygon_set, sample
+) -> None:
+    present = [c for c in range(len(ids)) if ids[c] is not None]
+    rng = np.random.default_rng(0)
+    cells = rng.choice(present, size=min(sample, len(present)), replace=False)
+    found = {
+        annotation.id: annotation
+        for annotation in ds.annotations.get_many(ids[cells])
+    }
+    missing = [c for c in cells if ids[c] not in found]
+    if missing:
+        raise XeniumError(
+            f"{len(missing)} of {len(cells)} sampled ids in {ids_path} are "
+            f"not annotations of dataset {ds.id} (another dataset's ids?)"
+        )
+    n_vertices, vertices = bundle.polygons(polygon_set)
+    expected = microns_to_pixels(
+        vertices[cells, :2],
+        pixel_size or bundle.pixel_size,
+        inverse_alignment(alignment),
+    )
+    firsts = np.array([
+        (found[ids[c]].coordinates[0]["x"], found[ids[c]].coordinates[0]["y"])
+        for c in cells
+    ])
+    if np.any(np.abs(expected - firsts) > 0.01):
+        raise XeniumError(
+            f"ids in {ids_path} do not match this bundle's cells on dataset "
+            f"{ds.id} (wrong --alignment, pixel size or ids file?)"
+        )
 
 
 # --- per-cell data as nested property values ---
@@ -476,8 +535,19 @@ def upload_umap(
     limit: int | None = None,
     replace: bool = False,
 ) -> Property:
-    """A 2-D embedding (``compute_umap``) as ``{"x": ..., "y": ...}``."""
-    embedding = load_embedding(embedding, len(ids))
+    """A 2-D embedding (``compute_umap``) as ``{"x": ..., "y": ...}``.
+
+    ``embedding`` covers the whole bundle (row i = cell_index i); ``ids``
+    may be shorter, e.g. from ``upload_polygons(..., limit=2000)``.
+    """
+    if not isinstance(embedding, np.ndarray):
+        embedding = load_embedding(embedding, len(ids))
+    if embedding.ndim != 2 or embedding.shape[1] != 2:
+        raise XeniumError(f"embedding is {embedding.shape}, expected (N, 2)")
+    if len(embedding) < len(ids):
+        raise XeniumError(
+            f"embedding has {len(embedding)} rows for {len(ids)} ids"
+        )
     prop = _prepare_property(ds, property_name, replace)
     stop = _stop(ids, limit)
     for c0, c1 in _chunks(stop, chunk):
@@ -522,7 +592,7 @@ def upload_cell_types(
     ``bundle.cell_types`` returned. Returns the label counts.
     """
     base_tags = ["cell"] if base_tags is None else base_tags
-    labels = _cell_type_labels(bundle, cell_types)
+    labels = _cell_type_labels(bundle, cell_types, complete=not reset)
     counts = Counter(labels)
     logger.info(
         "%s cell-type labels in %d groups", f"{len(labels):,}", len(counts)
@@ -629,6 +699,7 @@ def build_spatial_table(
         else _cell_type_labels(bundle, cell_types, complete=False)
     )
     embedding = None if umap is None else load_embedding(umap, n_cells)
+    groups = bundle.cell_groups()
     with_annotation = np.array([value is not None for value in ids])
     kept = np.flatnonzero(with_annotation)
     if len(kept) < n_cells:
@@ -659,7 +730,7 @@ def build_spatial_table(
     obs["cell_index"] = kept.astype(np.int64)
     if labels is not None:
         obs["cell_type"] = pd.Categorical([labels[i] for i in kept])
-    for name, label in bundle.cell_groups().items():
+    for name, label in groups.items():
         obs[name] = label[with_annotation].astype(np.int32)
 
     var = pd.DataFrame(index=pd.Index(symbols, name="symbol"))

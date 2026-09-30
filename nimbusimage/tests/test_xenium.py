@@ -397,6 +397,10 @@ class TestRegionTransform:
         with pytest.raises(XeniumError, match="pixel_size"):
             region_transform("microns", "morphology")
 
+    def test_singular_alignment_is_a_xenium_error(self):
+        with pytest.raises(XeniumError, match="singular"):
+            region_transform("morphology", "he", np.zeros((3, 3)))
+
     def test_region_annotations_class_first_and_ring_closed(self):
         geojson = {
             "features": [
@@ -489,6 +493,11 @@ def _listing_dataset(first_vertices):
         return listed[offset:offset + limit]
 
     ds.annotations.list.side_effect = page
+    # get_many is dataset-scoped: only this dataset's ids come back.
+    by_id = {annotation.id: annotation for annotation in listed}
+    ds.annotations.get_many.side_effect = lambda ann_ids: [
+        by_id[i] for i in ann_ids if i in by_id
+    ]
     return ds
 
 
@@ -518,6 +527,39 @@ class TestAnnotationIds:
             load_annotation_ids(ds, bundle, cache).tolist() == ALL_IDS.tolist()
         )
         ds.annotations.list.assert_not_called()
+
+    def test_cached_ids_of_another_dataset_are_rejected(
+        self, bundle, tmp_path
+    ):
+        """Morphology and H&E have the same cell count: length alone would
+        accept the other dataset's ids file and write to the wrong one."""
+        cache = tmp_path / "ids_other.npy"
+        other = [f"other_{c}" for c in range(4)]
+        np.save(cache, np.array(other, dtype=object))
+        ds = _listing_dataset([_expected_first_vertex(c) for c in range(4)])
+        with pytest.raises(XeniumError, match="not annotations of dataset"):
+            load_annotation_ids(ds, bundle, cache)
+
+    def test_cached_ids_with_wrong_vertices_are_rejected(
+        self, bundle, tmp_path
+    ):
+        """Right dataset, wrong alignment/pixel size (or a scrambled file)."""
+        cache = tmp_path / "ids.npy"
+        np.save(cache, ALL_IDS[[1, 0, 2, 3]])
+        ds = _listing_dataset([_expected_first_vertex(c) for c in range(4)])
+        with pytest.raises(XeniumError, match="do not match"):
+            load_annotation_ids(ds, bundle, cache)
+
+    def test_fetch_honours_a_pixel_size_override(self, bundle):
+        firsts = [
+            tuple(v * PIXEL_SIZE / 0.25 for v in _expected_first_vertex(c))
+            for c in range(4)
+        ]
+        ds = _listing_dataset(firsts)
+        with pytest.raises(XeniumError, match="pixel size"):
+            fetch_annotation_ids(ds, bundle)
+        ids = fetch_annotation_ids(ds, bundle, pixel_size=0.25)
+        assert ids.tolist() == ALL_IDS.tolist()
 
 
 class TestProperties:
@@ -553,10 +595,20 @@ class TestProperties:
             "ann_1": {"graphclust": 2},
         }
 
+    def test_umap_accepts_limit_truncated_ids(self, bundle):
+        ds = FakeDataset()
+        embedding = np.arange(8, dtype=float).reshape(4, 2)
+        upload_umap(ds, ALL_IDS[:2], embedding)  # e.g. polygons --limit 2
+        assert ds.submitted("prop_UMAP") == {
+            "ann_0": {"x": 0.0, "y": 1.0}, "ann_1": {"x": 2.0, "y": 3.0},
+        }
+
     def test_umap_shape_checked(self, bundle):
         ds = FakeDataset()
-        with pytest.raises(XeniumError, match="expected"):
+        with pytest.raises(XeniumError, match="3 rows for 4 ids"):
             upload_umap(ds, ALL_IDS, np.zeros((3, 2)))
+        with pytest.raises(XeniumError, match=r"expected \(N, 2\)"):
+            upload_umap(ds, ALL_IDS, np.zeros((4, 3)))
         upload_umap(ds, ALL_IDS, np.arange(8, dtype=float).reshape(4, 2))
         assert ds.submitted("prop_UMAP")["ann_3"] == {"x": 6.0, "y": 7.0}
 
@@ -611,6 +663,15 @@ class TestCellTypes:
         with pytest.raises(XeniumError, match="3 cell-type labels for 4"):
             upload_cell_types(ds, bundle, ALL_IDS, ["X"] * 3)
 
+    def test_labels_with_gaps_are_rejected_unless_resetting(self, bundle):
+        ds = FakeDataset()
+        ds.annotations.get_many.side_effect = _tagged(["cell"])
+        labels = ["T cell", None, "B cell", None]
+        with pytest.raises(XeniumError, match="2 cells have no cell-type"):
+            upload_cell_types(ds, bundle, ALL_IDS, labels)
+        ds.annotations.update_many.assert_not_called()
+        upload_cell_types(ds, bundle, ALL_IDS, labels, reset=True)
+
     def test_reset_writes_base_tags(self, bundle):
         ds = FakeDataset()
         ds.annotations.get_many.side_effect = _tagged(["cell"])
@@ -661,6 +722,21 @@ class TestSpatialTable:
         ]
         assert adata.obsm["X_umap"].tolist() == [[0, 1], [2, 3], [6, 7]]
         assert adata.uns["nimbus"]["datasetId"] == "ds_1"
+
+    def test_missing_analysis_fails_before_the_matrix_is_read(
+        self, bundle, tmp_path, monkeypatch
+    ):
+        pytest.importorskip("anndata")
+        (bundle.directory / "analysis.zarr.zip").unlink()
+
+        def counts_must_not_run(*args, **kwargs):
+            raise AssertionError("read the matrix before a cheap check")
+
+        monkeypatch.setattr(bundle, "counts", counts_must_not_run)
+        with pytest.raises(XeniumError, match="missing from the bundle"):
+            build_spatial_table(
+                bundle, ALL_IDS, tmp_path / "x.zip", dataset_id="d"
+            )
 
     def test_ids_must_cover_every_cell(self, bundle, tmp_path):
         with pytest.raises(XeniumError, match="3 ids for 4 cells"):
@@ -724,6 +800,16 @@ class TestCli:
         )
         assert code == 1
         assert "unknown --what entries: ['bogus']" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("what", ["", ","])
+    def test_empty_what_is_an_error(self, bundle, monkeypatch, capsys, what):
+        client = MagicMock()
+        monkeypatch.setattr("nimbusimage.xenium.cli._connect", lambda: client)
+        code = cli_main(["properties", "--bundle-dir", str(bundle.directory),
+                         "--dataset", "ds_1", "--what", what])
+        assert code == 1
+        assert "--what is empty" in capsys.readouterr().err
+        client.dataset.assert_not_called()
 
     def test_polygons_saves_ids(self, bundle, monkeypatch, tmp_path):
         ds = FakeDataset()

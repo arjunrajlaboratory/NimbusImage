@@ -143,7 +143,7 @@ def region_transform(
 
     if target == "morphology":
         return scale
-    inverse = np.linalg.inv(needs_alignment())
+    inverse = inverse_alignment(needs_alignment())
     return lambda xy: _apply_affine(inverse, scale(xy))
 
 

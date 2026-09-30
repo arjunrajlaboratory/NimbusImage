@@ -73,6 +73,7 @@ curl -sL -C - --retry 5 -o he.ome.tif "<prefix>_he_image.ome.tif"
 curl -sL -o he_align.csv "<prefix>_he_imagealignment.csv"
 curl -sL -o cell_types.csv "<prefix>_cell_types.csv"
 # 3. Extract only what is needed
+#    (transcripts.zarr.zip, ~4.7 GB, only for the step-9 overlay: add it then)
 unzip -o outs.zip 'morphology_focus/*' cells.zarr.zip cell_feature_matrix.zarr.zip \
       analysis.zarr.zip experiment.xenium -d extracted/
 # 4. Images: one dataset from morphology_focus/, channels named by stain (§2);
@@ -91,6 +92,7 @@ $X properties --bundle-dir extracted --dataset $MORPH --ids ids_morph.npy \
 $X cell-types --bundle-dir extracted --cell-types cell_types.csv \
        --dataset $MORPH --ids ids_morph.npy
 # 9. Whole matrix as a spatial table, and the molecules as an overlay (§7b, §7c)
+unzip -o outs.zip transcripts.zarr.zip -d extracted/
 $X spatial-table --bundle-dir extracted --dataset $MORPH --ids ids_morph.npy
 $X transcripts --bundle-dir extracted --dataset $MORPH
 # 10. Pathology regions (a *_annotation.geojson, drawn in H&E pixels) as tagged polygons
@@ -190,7 +192,9 @@ folder_id = view["datasetId"]           # pass this as --dataset
 Uploads in `cell_index` order via `create_many` in batches of 5,000 — ~100 s for 709k
 polygons. A per-annotation loop would be 709k requests; never do that. `--ids-out` saves
 the server-assigned ids in `cell_index` order; keep that file, every later step wants
-it (`--ids`; `xenium.load_annotation_ids` re-derives and verifies it when absent). Upload is fast; viewer rendering at this scale is handled by NimbusImage's lazy
+it (`--ids`; `xenium.load_annotation_ids` re-derives and verifies it when absent, and
+spot-checks a cached file against the dataset, so the H&E dataset's file can't be used
+for the morphology dataset by mistake — both have the same cell count). Upload is fast; viewer rendering at this scale is handled by NimbusImage's lazy
 annotation loading. Nucleus polygons are `--polygon-set nucleus` (more nuclei than cells
 is normal: multinucleate cells).
 

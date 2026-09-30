@@ -68,7 +68,11 @@ def _dataset_ids(args, bundle):
         "=== %s (%s cells) ===", ds.name, f"{bundle.number_of_cells:,}"
     )
     ids = ingest.load_annotation_ids(
-        ds, bundle, args.ids, alignment=args.alignment
+        ds,
+        bundle,
+        args.ids,
+        alignment=args.alignment,
+        pixel_size=args.pixel_size,
     )
     return ds, ids
 
@@ -76,8 +80,9 @@ def _dataset_ids(args, bundle):
 # --- subcommands ---
 #
 # Each one reads and validates its local inputs (bundle files, CSVs, the
-# gene panel, the embedding) BEFORE connecting, so a typo fails in a second
-# instead of after a long id fetch, an upload, or a delete.
+# gene panel, the embedding, the alignment) before any slow or destructive
+# server work — an id fetch, an upload, a delete — so a typo fails in a
+# second. Connecting and opening the dataset first is harmless.
 
 
 def cmd_morphology(args) -> None:
@@ -129,6 +134,8 @@ def cmd_umap(args) -> None:
 
 def cmd_properties(args) -> None:
     what = set(_split(args.what))
+    if not what:
+        raise XeniumError("--what is empty; pick from genes,clusters,umap")
     unknown = what - {"genes", "clusters", "umap"}
     if unknown:
         raise XeniumError(f"unknown --what entries: {sorted(unknown)}")
@@ -265,9 +272,17 @@ def _add_dataset_args(parser, *, ids: bool = True) -> None:
         "--alignment",
         type=Path,
         default=None,
-        help="*_he_imagealignment.csv when the dataset is the " "H&E image",
+        help="*_he_imagealignment.csv when the dataset is the H&E image "
+        "(also needed there to verify a cached --ids file)",
     )
     if ids:
+        parser.add_argument(
+            "--pixel-size",
+            type=float,
+            default=None,
+            help="um/px the polygons were uploaded with, if overridden "
+            "(default: experiment.xenium); used to verify --ids",
+        )
         parser.add_argument(
             "--ids",
             type=Path,
@@ -306,7 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_morphology)
 
     p = sub.add_parser(
-        "polygons", help="upload segmentation polygons in " "cell_index order"
+        "polygons", help="upload segmentation polygons in cell_index order"
     )
     _add_dataset_args(p, ids=False)
     p.add_argument(
@@ -351,7 +366,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "properties",
-        help="gene panel, clusterings and UMAP as " "nested property values",
+        help="gene panel, clusterings and UMAP as nested property values",
     )
     _add_dataset_args(p)
     p.add_argument(
@@ -429,7 +444,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "transcripts",
-        help="upload and register " "transcripts.zarr.zip as shipped",
+        help="upload and register transcripts.zarr.zip as shipped",
     )
     _add_dataset_args(p, ids=False)
     p.add_argument(
