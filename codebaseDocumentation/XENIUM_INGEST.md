@@ -44,6 +44,54 @@ what has broken before.
   first server write; a limited upload is represented explicitly (one slot per cell,
   None past `--limit`), never by a shorter array.
 
+## Live verification
+
+Unit tests use an in-memory fake; they can't see what only a real server and real vendor
+files do (the mouse `Tex19.1` symbol the SpatialPlugin refuses, zarr 3 opening zips
+lazily, a recompute writing provenance as attributes). Before merging a change to the
+ingest, run `nimbusimage/tests/integration/xenium_live.py` (not collected by pytest). It
+takes about 2 minutes on the 10x "tiny" bundles and exits 0 only if every check passes.
+
+**Prerequisites**
+- A backend built from the branch (`docker compose build girder && docker compose up -d
+  --no-build girder` from the checkout that owns the compose project; the SpatialPlugin
+  must be in the image — `GET /api/v1/spatial/...` routes exist).
+- The package with its extras, in a venv: `pip install -e 'nimbusimage[dev,xenium-umap]'`.
+- MongoDB reachable as a docker container (`nimbusimage-mongodb-1`), read by `mongosh` to
+  check stored values independently of the API.
+- Extracted bundles: each a directory with `cells.zarr.zip`, `cell_feature_matrix.zarr.zip`,
+  `analysis.zarr.zip`, `experiment.xenium`, `transcripts.zarr.zip`, `morphology_focus/`.
+  Use more than one XOA version (the lab's set: XOA 3 mouse ileum, XOA 4 ovary, XOA 4
+  protein kidney, in `~/Downloads/xenium-tiny/`).
+
+**Run** (from outside the repository root, which would shadow the package):
+
+```bash
+XENIUM_LIVE_BUNDLES=~/Downloads/xenium-tiny \
+  python /path/to/NimbusImage/nimbusimage/tests/integration/xenium_live.py
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `XENIUM_LIVE_BUNDLES` | — (required) | directory of extracted bundles; every subdirectory is run |
+| `NI_API_URL` / `NI_TEST_USER` / `NI_TEST_PASS` | localhost / admin / password | server and login (same as the other integration tests) |
+| `XENIUM_LIVE_CLI` | `nimbusimage-xenium` on `PATH` | the CLI under test |
+| `XENIUM_LIVE_MONGO` | `nimbusimage-mongodb-1` | MongoDB container |
+| `XENIUM_LIVE_WORK` | a new temp dir | where cell maps, CSVs and tables are written |
+| `XENIUM_LIVE_BIG_BUNDLE`, `_DATASET`, `_ALIGNMENT`, `_IDS` | unset (skipped) | a large real H&E dataset for a read-only geometry-match check (the lab's: `~/Downloads/xenium-kidney-full`, dataset `6ab9574f635c1c4a679411e6`, its `*_he_imagealignment.csv`, `ids_he.npy`) |
+
+**What it checks** (53 checks with three bundles and the large dataset):
+1. Per bundle, on a fresh dataset and an H&E-like one (synthetic alignment): every step
+   through the CLI, then every property value, tag, table column, molecule count,
+   transform and region vertex compared with the bundle.
+2. Every bug class from the review rounds reproduced live; each must print a clean
+   `error:` and leave annotation, property-value and item counts and the transcript
+   registration unchanged. Add a row to `refusals()` whenever a review finds a new one.
+3. Tables go only to their own dataset, including a real recompute version.
+4. Optionally, the geometry match on 465K real cells equals the original ids.
+
+It leaves its datasets (`live e2e <bundle> <time>`) on the server.
+
 ## Regression checklist
 
 Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
