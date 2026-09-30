@@ -73,6 +73,17 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
 - `region`-tagged polygons are never matched as cells, even when identical to one —
   `test_a_region_identical_to_a_cell_is_never_the_cell`; stored vertices within 0.01 px
   match (older uploads used float32) — `test_matching_tolerates_float_arithmetic_only`.
+- Without `--cells`, regions always need `--image` — no flag (not `--alignment`, not
+  `--pixel-size`) implies which image the dataset is; a guess puts every region on H&E in
+  the wrong place — `test_cli_bad_input_fails_with_no_writes[regions-regions pixel size
+  without --image or --cells]`. (Round 7 loosened this to "only with `--alignment`";
+  round 8 showed the loosening was itself the bug.)
+- An unreadable, damaged or foreign spatial table is a clean error with no writes —
+  `test_unreadable_tables_are_a_xenium_error`; regions always keep `region`, deduplicated,
+  never empty — `test_region_tags_are_deduplicated_and_never_empty`; the in-app GeoJSON
+  importer warns when its extra tag isn't `region` —
+  `src/components/AnnotationBrowser/GeoJsonImportDialog.test.ts` ("warns when the extra
+  tag is not region").
 - For regions, `--alignment` never implies the H&E image —
   `test_cli_bad_input_fails_with_no_writes[regions-regions alignment without --image or
   --cells]`, `TestCli::test_regions_he_drawn_onto_morphology_without_cells`.

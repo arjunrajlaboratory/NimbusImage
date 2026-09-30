@@ -102,10 +102,11 @@ def _stated_frame(args, bundle, *, infer_image=True) -> ImageFrame | None:
     pixel_size = getattr(args, "pixel_size", None)
     if image is None and alignment is None and pixel_size is None:
         return None
-    if image is None and alignment is not None and not infer_image:
+    if image is None and not infer_image:
         raise XeniumError(
-            "--image is required with --alignment but no --cells: for "
-            "regions the alignment alone could mean either image"
+            "regions need --image (or --target) without --cells: whether "
+            "the dataset is the H&E or the morphology image decides where "
+            "every region lands, and no flag implies it"
         )
     return ImageFrame.create(
         bundle=bundle, alignment=alignment, pixel_size=pixel_size, image=image
@@ -376,15 +377,23 @@ def _positive_float(value: str) -> float:
     return number
 
 
-def _add_frame_args(parser, *, saved: bool) -> None:
+def _add_frame_args(parser, *, saved: bool, regions: bool = False) -> None:
+    if regions:
+        alignment_help = (
+            "*_he_imagealignment.csv (H&E px -> morphology px): for regions "
+            "drawn in H&E pixels on the morphology image, or with --image he"
+        )
+    else:
+        alignment_help = (
+            "*_he_imagealignment.csv (H&E px -> morphology px): marks the "
+            "dataset as the H&E image"
+            + ("; not needed with a saved --cells" if saved else "")
+        )
     parser.add_argument(
         "--alignment",
         type=Path,
         default=None,
-        help="*_he_imagealignment.csv (H&E px -> morphology px): marks the "
-        "dataset as the H&E image (for regions: with --image, or added to "
-        "a saved morphology --cells frame for H&E-drawn regions)"
-        + ("; otherwise not needed with a saved --cells" if saved else ""),
+        help=alignment_help,
     )
     parser.add_argument(
         "--pixel-size",
@@ -419,9 +428,8 @@ def _add_image_arg(parser, *aliases) -> None:
         dest="image",
         choices=IMAGES,
         default=None,
-        help="which image the dataset shows, when there is no --cells; "
-        "required for regions with --alignment (for transcripts, "
-        "--alignment alone implies he)",
+        help="which image the dataset shows, when there is no --cells "
+        "(transcripts: --alignment alone implies he; regions: required)",
     )
 
 
@@ -626,7 +634,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_image_arg(p, "--target")
     _add_cells_arg(p, required_file=True)
-    _add_frame_args(p, saved=True)
+    _add_frame_args(p, saved=True, regions=True)
     p.add_argument(
         "--bundle-dir",
         type=Path,

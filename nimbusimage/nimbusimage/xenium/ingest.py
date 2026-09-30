@@ -24,6 +24,7 @@ import os
 import tempfile
 import time
 import zipfile
+import zlib
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -661,23 +662,39 @@ def spatial_table_dataset(path: str | os.PathLike) -> str:
     dataset's annotation ids. ``build_spatial_table`` records it as the
     AnnData array ``uns/nimbus/datasetId``; the SpatialPlugin's recompute
     as the attribute ``uns.attrs["nimbus"]["datasetId"]``. Both count."""
+    if not Path(path).is_file():
+        raise XeniumError(f"no spatial table at {path}")
+    store = None
     try:
+        # zarr 3 opens the zip lazily (inside open_group), so every read,
+        # not just the constructor, is inside this try.
         store = zarr.storage.ZipStore(str(path), mode="r")
-    except (OSError, ValueError, zipfile.BadZipFile) as exc:
-        raise XeniumError(f"{path} is not a spatial table: {exc}") from exc
-    try:
         uns = zarr.open_group(store=store, mode="r")["uns"]
-        recorded = (uns.attrs.get("nimbus") or {}).get("datasetId")
+        nimbus = uns.attrs.get("nimbus")
+        recorded = (
+            nimbus.get("datasetId") if isinstance(nimbus, dict) else None
+        )
         if recorded is None:
             recorded = uns["nimbus"]["datasetId"][()]
         return str(recorded)
-    except (KeyError, ValueError) as exc:
+    except (
+        OSError,
+        KeyError,
+        ValueError,
+        TypeError,
+        zipfile.BadZipFile,
+        zlib.error,
+    ) as exc:
         raise XeniumError(
             f"{path} is not a spatial table that records its dataset "
             f"(uns/nimbus/datasetId): {exc}"
         ) from exc
     finally:
-        store.close()
+        if store is not None:
+            try:
+                store.close()
+            except AttributeError:
+                pass  # zarr 3: a store whose open failed has nothing to close
 
 
 def upload_spatial_table(ds: Dataset, path: str | os.PathLike) -> dict:
@@ -747,6 +764,8 @@ def region_annotations(
     (``"he"``, ``"morphology"`` px or ``"microns"``); ``frame`` is the
     dataset's (see ``ImageFrame.region_transform``).
     """
+    if not str(tag).strip():
+        raise XeniumError("the region tag can't be empty")
     to_pixels = frame.region_transform(drawn_in)
     annotations = []
     for feature in geojson.get("features", []):
@@ -754,8 +773,8 @@ def region_annotations(
         # REGION_TAG is always kept (a custom ``tag`` is added to it):
         # without it every spatial analysis, and the cell match, would
         # treat the polygon as a cell.
-        tags = ([name] if name else []) + list(
-            dict.fromkeys([tag, REGION_TAG])
+        tags = list(
+            dict.fromkeys(([name] if name else []) + [tag, REGION_TAG])
         )
         for ring in geojson_outer_rings(feature.get("geometry") or {}):
             xy = to_pixels(np.asarray(ring, dtype=np.float64)[:, :2])

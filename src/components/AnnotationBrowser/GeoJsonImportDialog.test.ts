@@ -107,6 +107,19 @@ describe("GeoJsonImportDialog", () => {
     expect(wrapper.vm.parseError).toMatch(/not valid JSON/);
   });
 
+  it("warns when the extra tag is not region", async () => {
+    // Spatial analyses leave out only "region"-tagged polygons.
+    const wrapper = await mountWithFile(regions);
+    expect(wrapper.vm.extraTag).toBe("region");
+    expect(wrapper.vm.extraTagHint).toBe("");
+    wrapper.vm.extraTag = "pathology";
+    await flushPromises();
+    expect(wrapper.vm.extraTagHint).toMatch(/treat these polygons as cells/);
+    wrapper.vm.extraTag = "";
+    await flushPromises();
+    expect(wrapper.vm.extraTagHint).toMatch(/need the tag "region"/);
+  });
+
   it("cannot import a file with nothing importable", async () => {
     const wrapper = await mountWithFile({
       type: "FeatureCollection",

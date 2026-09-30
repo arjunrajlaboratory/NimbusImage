@@ -67,7 +67,9 @@
             variant="outlined"
             density="compact"
             :disabled="isImporting"
-            hide-details
+            :hint="extraTagHint"
+            persistent-hint
+            :hide-details="!extraTagHint"
             class="mb-3"
           />
 
@@ -193,6 +195,14 @@ const parseError = ref("");
 const parsed = ref<IGeoJsonParseResult | null>(null);
 const layerId = ref<string | null>(null);
 const extraTag = ref("region");
+// Spatial analyses (neighborhoods, region summaries, recompute) leave out
+// only polygons tagged "region"; imported regions without it count as cells.
+const extraTagHint = computed(() =>
+  extraTag.value.trim() === "region"
+    ? ""
+    : 'Regions of interest need the tag "region": without it, spatial ' +
+      "analyses treat these polygons as cells.",
+);
 const isImporting = ref(false);
 const importProgress = ref(0);
 const importError = ref("");
@@ -343,6 +353,7 @@ async function submit() {
 defineExpose({
   dialog,
   file,
+  extraTagHint,
   parsed,
   parseError,
   layerId,

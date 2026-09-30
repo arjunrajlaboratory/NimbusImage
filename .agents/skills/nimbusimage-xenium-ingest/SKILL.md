@@ -232,7 +232,10 @@ dataset by mistake — both have the same cell count. Files written by the older
 `--ids-out` (a bare id array) still work for the per-cell steps, spot-checked with
 `--alignment`/`--pixel-size`; they save no frame, so `transcripts` and `regions` refuse
 them — pass those the frame flags, or write a full map once with
-`xenium.open_cells(ds, bundle, "cells.npz")` (a new path: it re-derives and saves).
+`xenium.open_cells(ds, bundle, "cells.npz", frame=frame)` (a new path: it re-derives and
+saves) — with the frame the polygons were drawn with, e.g.
+`xenium.ImageFrame.create(bundle=bundle, alignment="he_align.csv")` for the H&E dataset;
+without `frame` it assumes the morphology frame and matches nothing on H&E.
 Upload is fast; viewer rendering at this scale is handled by NimbusImage's lazy
 annotation loading. Nucleus polygons are `--polygon-set nucleus` (more nuclei than cells
 is normal: multinucleate cells). They are for display only: every later step joins per-cell
@@ -353,7 +356,7 @@ composition by type and mean expression of picked genes. From Python:
 ## 7f. Regions of interest (`regions`, `xenium.upload_regions`, or the UI)
 
 10x ships a pathologist's layer (`*_annotation.geojson`, QuPath style) in **H&E pixels**.
-`nimbusimage-xenium regions --drawn-in {he,morphology,microns} --target {he,morphology}`
+`nimbusimage-xenium regions --drawn-in {he,morphology,microns}` with `--cells` or `--image {he,morphology}` (required without `--cells`)
 (with the dataset's `--cells`, whose frame it reuses; `--alignment` adds the matrix a
 morphology frame lacks, for H&E-drawn regions) transforms it (H&E→morphology applies `M`; morphology→H&E `M⁻¹`; microns divide by
 `pixel_size`) and uploads each outer ring as a polygon tagged `[<class>, "region"]` (a custom `--tag`
