@@ -53,7 +53,7 @@ xenium.upload_clusters(ds, bundle, ids)
 xenium.upload_umap(ds, ids, xenium.compute_umap(bundle))
 xenium.upload_cell_types(ds, bundle, ids, "cell_types.csv")
 ds.spatial.upload_and_register(xenium.build_spatial_table(
-    bundle, ids, "spatial.zarr.zip", dataset_id=ds.id, cell_types_csv="cell_types.csv"))
+    bundle, ids, "spatial.zarr.zip", dataset_id=ds.id, cell_types="cell_types.csv"))
 xenium.register_transcripts(ds, bundle)
 xenium.upload_regions(ds, "annotation.geojson", frame="he", alignment="he_align.csv")
 ```

@@ -47,8 +47,10 @@ CELL_IDS = ["aaaaaaaa-1", "aaaaaaab-1", "aaaaaaba-1", "aaaaaabb-1"]
 FEATURES = [
     ("GENEA", "gene", [3, 0, 1, 0]),
     ("NegCtrl", "negative_control_probe", [1, 1, 1, 1]),
-    ("CD3E", "gene", [0, 5, 0, 2]),
+    # The protein row comes FIRST: a lookup by name alone would find it and
+    # reject the gene CD3E as "not a gene".
     ("CD3E", "protein", [7, 0, 0, 9]),
+    ("CD3E", "gene", [0, 5, 0, 2]),
 ]
 CELL_TYPES = ["T cell", "B cell", "T cell", "Macrophage"]
 
@@ -237,21 +239,51 @@ class TestBundle:
         assert values.tolist() == [3, 1]
 
     def test_gene_counts_rejects_missing_and_non_genes(self, bundle):
-        with pytest.raises(XeniumError, match="not in this panel"):
+        with pytest.raises(XeniumError, match="not genes of this panel"):
             bundle.gene_counts(["NOPE"])
-        with pytest.raises(XeniumError, match="not a gene"):
+        with pytest.raises(XeniumError, match=r"\['NegCtrl'\]"):
             bundle.gene_counts(["NegCtrl"])
+
+    def test_gene_lookup_skips_a_same_named_protein(self, bundle):
+        assert bundle.gene_rows(["CD3E"]) == {"CD3E": 3}
+        cells, values = bundle.gene_counts(["CD3E"])["CD3E"]
+        assert (cells.tolist(), values.tolist()) == ([1, 3], [5, 2])
+
+    def test_missing_files_raise_xenium_error(self, tmp_path):
+        empty = XeniumBundle(tmp_path)
+        for read in (
+            lambda: empty.pixel_size,
+            lambda: empty.number_of_cells,
+            lambda: empty.polygons(),
+            lambda: empty.cell_groups(),
+            lambda: empty.gene_rows(["A"]),
+        ):
+            with pytest.raises(XeniumError, match="missing from the bundle"):
+                read()
+
+    def test_unknown_or_malformed_cell_id_raises_xenium_error(self, bundle):
+        for bad in ("pppppppp-9", "not-an-id-at-all"):
+            csv = bundle.directory / "bad.csv"
+            csv.write_text(f"cell_id,group\n{bad},T cell\n")
+            with pytest.raises(XeniumError, match="not a cell of this bundle"):
+                bundle.cell_types(csv, complete=False)
+
+    def test_cell_types_needs_its_columns(self, bundle):
+        csv = bundle.directory / "cols.csv"
+        csv.write_text("barcode,label\nx,y\n")
+        with pytest.raises(XeniumError, match="cell_id and group"):
+            bundle.cell_types(csv)
 
     def test_counts_are_cells_by_features_and_name_proteins(self, bundle):
         csc, symbols, feature_ids, kinds = bundle.counts()
-        assert symbols == ["GENEA", "CD3E", "CD3E" + PROTEIN_SUFFIX]
-        assert kinds == ["gene", "gene", "protein"]
+        assert symbols == ["GENEA", "CD3E" + PROTEIN_SUFFIX, "CD3E"]
+        assert kinds == ["gene", "protein", "gene"]
         assert feature_ids == ["ID0", "ID2", "ID3"]
         assert csc.toarray().tolist() == [
-            [3, 0, 7],
-            [0, 5, 0],
+            [3, 7, 0],
+            [0, 0, 5],
             [1, 0, 0],
-            [0, 2, 9],
+            [0, 9, 2],
         ]
 
 
@@ -286,6 +318,54 @@ class TestMorphologyNames:
             staged_channel_file_name(0, "Alpha SMA_x")
             == "c00-Alpha-SMA-x.ome.tif"
         )
+
+
+class TestAlignment:
+    def test_accepts_path_or_matrix(self, tmp_path):
+        from nimbusimage.xenium import inverse_alignment, load_alignment
+
+        matrix = np.diag([2.0, 4.0, 1.0])
+        csv = tmp_path / "m.csv"
+        np.savetxt(csv, matrix, delimiter=",")
+        np.testing.assert_allclose(load_alignment(csv), matrix)
+        expected = np.diag([0.5, 0.25, 1.0])
+        np.testing.assert_allclose(inverse_alignment(csv), expected)
+        np.testing.assert_allclose(inverse_alignment(matrix), expected)
+        assert inverse_alignment(None) is None
+
+    def test_bad_alignments(self, tmp_path):
+        from nimbusimage.xenium import inverse_alignment
+
+        with pytest.raises(XeniumError, match="3x3"):
+            inverse_alignment(np.eye(2))
+        with pytest.raises(XeniumError, match="singular"):
+            inverse_alignment(np.zeros((3, 3)))
+        with pytest.raises(XeniumError, match="cannot read"):
+            inverse_alignment(tmp_path / "missing.csv")
+
+
+class TestUmap:
+    def test_pca_is_saved_before_umap_runs(
+        self, bundle, tmp_path, monkeypatch
+    ):
+        """A UMAP failure (the slow, memory-heavy step) keeps pca.npy."""
+        pytest.importorskip("sklearn")
+        import sys
+        import types
+
+        from nimbusimage.xenium import compute_umap
+
+        def failing_umap(**kwargs):
+            raise MemoryError("umap ran out of memory")
+
+        monkeypatch.setitem(
+            sys.modules, "umap", types.SimpleNamespace(UMAP=failing_umap)
+        )
+        out = tmp_path / "nested" / "umap"
+        with pytest.raises(MemoryError):
+            compute_umap(bundle, out, components=1)
+        assert np.load(out / "pca.npy").shape == (4, 1)
+        assert not (out / "umap_xy.npy").exists()
 
 
 class TestRegionTransform:
@@ -368,6 +448,29 @@ class TestPolygons:
         first = ds.created[0].coordinates[1]  # (4, 0) um -> 8 px -> 4 H&E px
         assert (first["x"], first["y"]) == (4.0, 0.0)
 
+    def test_delete_tag_runs_only_after_inputs_are_read(
+        self, bundle, tmp_path
+    ):
+        ds = FakeDataset()
+        bad = tmp_path / "bad.csv"
+        bad.write_text("1,2\n3,4\n")
+        with pytest.raises(XeniumError, match="3x3"):
+            upload_polygons(ds, bundle, alignment=bad, delete_tag="test")
+        with pytest.raises(XeniumError, match="not in"):
+            upload_polygons(
+                ds, bundle, polygon_set="membrane", delete_tag="test"
+            )
+        ds.annotations.list.assert_not_called()
+        ds.annotations.delete_many.assert_not_called()
+
+    def test_delete_tag_then_upload(self, bundle):
+        ds = FakeDataset()
+        ds.annotations.list.return_value = [SimpleNamespace(id="old_1")]
+        upload_polygons(ds, bundle, delete_tag="test")
+        ds.annotations.list.assert_called_once_with(tags=["test"])
+        ds.annotations.delete_many.assert_called_once_with(["old_1"])
+        assert len(ds.created) == 3
+
     def test_short_create_raises(self, bundle):
         ds = FakeDataset()
         ds.annotations.create_many.side_effect = lambda batch: batch[:-1]
@@ -381,9 +484,11 @@ def _listing_dataset(first_vertices):
         SimpleNamespace(id=f"ann_{i}", coordinates=[{"x": x, "y": y}])
         for i, (x, y) in enumerate(first_vertices)
     ]
-    ds.annotations.list.side_effect = lambda shape, limit, offset: listed[
-        offset:offset + limit
-    ]
+
+    def page(shape, limit, offset):
+        return listed[offset:offset + limit]
+
+    ds.annotations.list.side_effect = page
     return ds
 
 
@@ -456,6 +561,10 @@ class TestProperties:
         assert ds.submitted("prop_UMAP")["ann_3"] == {"x": 6.0, "y": 7.0}
 
 
+def _tagged(tags):
+    return lambda ann_ids: [SimpleNamespace(id=i, tags=tags) for i in ann_ids]
+
+
 class TestCellTypes:
     def test_tags_and_read_back(self, bundle):
         ds = FakeDataset()
@@ -463,12 +572,15 @@ class TestCellTypes:
         ds.annotations.update_many.side_effect = (
             lambda updates: written.update(updates)
         )
-        ds.annotations.get.side_effect = lambda ann_id: SimpleNamespace(
-            tags=written[ann_id]["tags"]
-        )
+        ds.annotations.get_many.side_effect = lambda ann_ids: [
+            SimpleNamespace(id=i, tags=written[i]["tags"]) for i in ann_ids
+        ]
         counts = upload_cell_types(
             ds, bundle, IDS_WITH_GAP, bundle.directory / "cell_types.csv"
         )
+        # One batched read-back, not a GET per sampled annotation.
+        ds.annotations.get_many.assert_called_once()
+        ds.annotations.get.assert_not_called()
         assert written == {
             "ann_0": {"tags": ["cell", "T cell"]},
             "ann_1": {"tags": ["cell", "B cell"]},
@@ -478,15 +590,30 @@ class TestCellTypes:
 
     def test_read_back_mismatch_raises(self, bundle):
         ds = FakeDataset()
-        ds.annotations.get.return_value = SimpleNamespace(tags=["cell"])
+        ds.annotations.get_many.side_effect = _tagged(["cell"])
         with pytest.raises(XeniumError, match="verify failed"):
             upload_cell_types(
                 ds, bundle, ALL_IDS, bundle.directory / "cell_types.csv"
             )
 
+    def test_read_back_missing_annotation_raises(self, bundle):
+        ds = FakeDataset()
+        ds.annotations.get_many.return_value = []
+        with pytest.raises(XeniumError, match="verify failed"):
+            upload_cell_types(
+                ds, bundle, ALL_IDS, bundle.directory / "cell_types.csv"
+            )
+
+    def test_accepts_labels_already_read(self, bundle):
+        ds = FakeDataset()
+        ds.annotations.get_many.side_effect = _tagged(["cell", "X"])
+        upload_cell_types(ds, bundle, ALL_IDS, ["X"] * 4)
+        with pytest.raises(XeniumError, match="3 cell-type labels for 4"):
+            upload_cell_types(ds, bundle, ALL_IDS, ["X"] * 3)
+
     def test_reset_writes_base_tags(self, bundle):
         ds = FakeDataset()
-        ds.annotations.get.return_value = SimpleNamespace(tags=["cell"])
+        ds.annotations.get_many.side_effect = _tagged(["cell"])
         upload_cell_types(
             ds,
             bundle,
@@ -506,7 +633,7 @@ class TestSpatialTable:
             IDS_WITH_GAP,
             tmp_path / "spatial.zarr.zip",
             dataset_id="ds_1",
-            cell_types_csv=bundle.directory / "cell_types.csv",
+            cell_types=bundle.directory / "cell_types.csv",
             umap=np.arange(8, dtype=np.float32).reshape(4, 2),
         )
         extracted = tmp_path / "extracted.zarr"
@@ -526,11 +653,11 @@ class TestSpatialTable:
             "Macrophage",
         ]
         assert adata.obs["graphclust"].tolist() == [1, 2, 0]
-        assert list(adata.var_names) == ["GENEA", "CD3E", "CD3E (protein)"]
+        assert list(adata.var_names) == ["GENEA", "CD3E (protein)", "CD3E"]
         assert np.asarray(adata.X.todense()).tolist() == [
-            [3, 0, 7],
-            [0, 5, 0],
-            [0, 2, 9],
+            [3, 7, 0],
+            [0, 0, 5],
+            [0, 9, 2],
         ]
         assert adata.obsm["X_umap"].tolist() == [[0, 1], [2, 3], [6, 7]]
         assert adata.uns["nimbus"]["datasetId"] == "ds_1"
@@ -553,6 +680,17 @@ class TestTranscripts:
         )
         assert (item_id, pixel_size) == ("item_1", PIXEL_SIZE)
         np.testing.assert_allclose(transform, np.diag([0.5, 0.5, 1.0]))
+
+    def test_bad_inputs_fail_before_the_upload(self, bundle, tmp_path):
+        ds = FakeDataset()
+        (bundle.directory / "transcripts.zarr.zip").write_bytes(b"x")
+        with pytest.raises(XeniumError, match="cannot read alignment"):
+            register_transcripts(ds, bundle, alignment=tmp_path / "nope.csv")
+        (bundle.directory / "experiment.xenium").unlink()
+        fresh = XeniumBundle(bundle.directory)  # pixel_size is cached above
+        with pytest.raises(XeniumError, match="missing from the bundle"):
+            register_transcripts(ds, fresh)
+        ds.spatial.upload_transcripts.assert_not_called()
 
     def test_uploads_when_no_item(self, bundle):
         ds = FakeDataset()
@@ -614,6 +752,60 @@ class TestCli:
             None,
             "ann_2",
         ]
+
+    @pytest.mark.parametrize(
+        "argv, message",
+        [
+            (
+                ["properties", "--what", "genes", "--genes", "NOPE"],
+                "not genes of this panel",
+            ),
+            (
+                ["properties", "--what", "umap", "--umap", "missing.npy"],
+                "cannot read",
+            ),
+            (
+                ["cell-types", "--cell-types", "BAD_CSV"],
+                "not a cell of this bundle",
+            ),
+            (["spatial-table", "--umap", "missing.npy"], "cannot read"),
+            (
+                [
+                    "polygons",
+                    "--delete-tag",
+                    "t",
+                    "--alignment",
+                    "missing.csv",
+                ],
+                "cannot read alignment",
+            ),
+        ],
+    )
+    def test_bad_local_input_fails_before_server_work(
+        self, bundle, monkeypatch, capsys, argv, message
+    ):
+        """A bad input is reported before any id fetch, upload or delete."""
+        bad_csv = bundle.directory / "bad.csv"
+        bad_csv.write_text("cell_id,group\npppppppp-9,T cell\n")
+        client = MagicMock()
+        monkeypatch.setattr("nimbusimage.xenium.cli._connect", lambda: client)
+        argv = [str(bad_csv) if a == "BAD_CSV" else a for a in argv]
+        code = cli_main(
+            argv[:1]
+            + ["--bundle-dir", str(bundle.directory), "--dataset", "ds_1"]
+            + argv[1:]
+        )
+        assert code == 1
+        assert message in capsys.readouterr().err
+        ds = client.dataset.return_value
+        ds.annotations.list.assert_not_called()
+        ds.annotations.delete_many.assert_not_called()
+        ds.annotations.create_many.assert_not_called()
+
+    def test_main_module_import_does_not_run_the_cli(self):
+        import importlib
+
+        importlib.import_module("nimbusimage.xenium.__main__")
 
     def test_missing_credentials(self, monkeypatch):
         for name in ("NI_API_KEY", "NI_TOKEN", "NI_USERNAME", "NI_PASSWORD"):

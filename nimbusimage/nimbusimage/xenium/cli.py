@@ -54,7 +54,10 @@ def _read_panel(args) -> list[str]:
     if args.genes:
         return _split(args.genes)
     if args.genes_file:
-        lines = args.genes_file.read_text().splitlines()
+        try:
+            lines = args.genes_file.read_text().splitlines()
+        except OSError as exc:
+            raise XeniumError(f"cannot read {args.genes_file}: {exc}") from exc
         return [s for s in (line.split("#")[0].strip() for line in lines) if s]
     return []
 
@@ -71,6 +74,10 @@ def _dataset_ids(args, bundle):
 
 
 # --- subcommands ---
+#
+# Each one reads and validates its local inputs (bundle files, CSVs, the
+# gene panel, the embedding) BEFORE connecting, so a typo fails in a second
+# instead of after a long id fetch, an upload, or a delete.
 
 
 def cmd_morphology(args) -> None:
@@ -86,11 +93,7 @@ def cmd_morphology(args) -> None:
 
 def cmd_polygons(args) -> None:
     ds = _connect().dataset(args.dataset)
-    if args.delete_tag:
-        removed = ingest.delete_tagged(ds, args.delete_tag)
-        logger.info(
-            "removed %d annotations tagged %r", removed, args.delete_tag
-        )
+    # upload_polygons deletes --delete-tag only after reading its inputs.
     ids = ingest.upload_polygons(
         ds,
         XeniumBundle(args.bundle_dir),
@@ -100,6 +103,7 @@ def cmd_polygons(args) -> None:
         tags=_split(args.tags),
         batch=args.batch,
         limit=args.limit,
+        delete_tag=args.delete_tag,
     )
     logger.info(
         "dataset now has %s polygon annotations",
@@ -137,26 +141,36 @@ def cmd_properties(args) -> None:
         )
 
     bundle = XeniumBundle(args.bundle_dir)
+    if panel:
+        bundle.gene_rows(panel)
+    clusters = bundle.cell_groups() if "clusters" in what else None
+    embedding = (
+        ingest.load_embedding(args.umap, bundle.number_of_cells)
+        if "umap" in what
+        else None
+    )
+
     ds, ids = _dataset_ids(args, bundle)
     common = dict(chunk=args.chunk, limit=args.limit, replace=args.replace)
-    if "genes" in what:
+    if panel:
         ingest.upload_gene_panel(
             ds, bundle, ids, panel, dense=not args.sparse, **common
         )
-    if "clusters" in what:
-        ingest.upload_clusters(ds, bundle, ids, **common)
-    if "umap" in what:
-        ingest.upload_umap(ds, ids, args.umap, **common)
+    if clusters is not None:
+        ingest.upload_clusters(ds, bundle, ids, labels=clusters, **common)
+    if embedding is not None:
+        ingest.upload_umap(ds, ids, embedding, **common)
 
 
 def cmd_cell_types(args) -> None:
     bundle = XeniumBundle(args.bundle_dir)
+    labels = bundle.cell_types(args.cell_types)
     ds, ids = _dataset_ids(args, bundle)
     ingest.upload_cell_types(
         ds,
         bundle,
         ids,
-        args.cell_types,
+        labels,
         base_tags=_split(args.base_tags),
         chunk=args.chunk,
         limit=args.limit,
@@ -166,14 +180,25 @@ def cmd_cell_types(args) -> None:
 
 def cmd_spatial_table(args) -> None:
     bundle = XeniumBundle(args.bundle_dir)
+    bundle.require(bundle.feature_matrix_zarr, bundle.analysis_zarr)
+    labels = (
+        bundle.cell_types(args.cell_types, complete=False)
+        if args.cell_types
+        else None
+    )
+    embedding = (
+        ingest.load_embedding(args.umap, bundle.number_of_cells)
+        if args.umap
+        else None
+    )
     ds, ids = _dataset_ids(args, bundle)
     out = ingest.build_spatial_table(
         bundle,
         ids,
         args.out or bundle.directory / "spatial.zarr.zip",
         dataset_id=ds.id,
-        cell_types_csv=args.cell_types,
-        umap=args.umap,
+        cell_types=labels,
+        umap=embedding,
     )
     if args.no_upload:
         return
@@ -187,6 +212,8 @@ def cmd_spatial_table(args) -> None:
 
 
 def cmd_transcripts(args) -> None:
+    # register_transcripts reads the alignment and pixel size before its
+    # upload, so a bad input fails before the multi-GB transfer.
     ds = _connect().dataset(args.dataset)
     logger.info("=== %s ===", ds.name)
     schema = ingest.register_transcripts(

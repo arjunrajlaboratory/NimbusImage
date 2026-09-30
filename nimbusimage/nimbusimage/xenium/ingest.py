@@ -38,6 +38,7 @@ from nimbusimage.xenium.errors import XeniumError
 from nimbusimage.xenium.geometry import (
     geojson_class_name,
     geojson_outer_rings,
+    inverse_alignment,
     load_alignment,
     microns_to_pixels,
     polygon_coordinates,
@@ -53,17 +54,6 @@ logger = logging.getLogger("nimbusimage.xenium")
 
 SPATIAL_TABLE_SCHEMA_VERSION = 1
 REGION_TAG = "region"
-
-
-def _alignment_matrix(alignment) -> np.ndarray | None:
-    if alignment is None or isinstance(alignment, np.ndarray):
-        return alignment
-    return load_alignment(alignment)
-
-
-def _inverse_alignment(alignment) -> np.ndarray | None:
-    matrix = _alignment_matrix(alignment)
-    return None if matrix is None else np.linalg.inv(matrix)
 
 
 def _polygon_annotation(
@@ -85,6 +75,37 @@ def cell_indices_with_annotations(
     """Cell indices in [start, stop) that have an annotation (skips the None
     slots left by degenerate polygons)."""
     return [c for c in range(start, stop) if ids[c] is not None]
+
+
+def load_embedding(
+    embedding: np.ndarray | str | os.PathLike, n_cells: int
+) -> np.ndarray:
+    """A [n_cells, 2] embedding from an array or ``.npy``, shape-checked."""
+    if not isinstance(embedding, np.ndarray):
+        try:
+            embedding = np.load(embedding)
+        except (OSError, ValueError) as exc:
+            raise XeniumError(f"cannot read {embedding}: {exc}") from exc
+    if embedding.shape != (n_cells, 2):
+        raise XeniumError(
+            f"embedding is {embedding.shape}, expected ({n_cells}, 2)"
+        )
+    return embedding
+
+
+def _cell_type_labels(
+    bundle: XeniumBundle, cell_types, *, complete: bool = True
+) -> list:
+    """Labels per ``cell_index`` from a ``*_cell_types.csv`` path, or the
+    list ``bundle.cell_types`` already returned."""
+    if isinstance(cell_types, (list, tuple)):
+        if len(cell_types) != bundle.number_of_cells:
+            raise XeniumError(
+                f"{len(cell_types)} cell-type labels for "
+                f"{bundle.number_of_cells} cells"
+            )
+        return list(cell_types)
+    return bundle.cell_types(cell_types, complete=complete)
 
 
 def _chunks(stop: int, chunk: int):
@@ -174,16 +195,20 @@ def upload_polygons(
     tags: list[str] | None = None,
     batch: int = 5000,
     limit: int | None = None,
+    delete_tag: str | None = None,
 ) -> np.ndarray:
     """Bulk-create the segmentation polygons in ``cell_index`` order.
 
     Pass ``alignment`` when ``ds`` is the H&E image. Polygons with fewer than
-    three vertices are skipped. Returns the created ids in ``cell_index``
-    order (None for skipped cells) — keep them; every later step wants them.
+    three vertices are skipped. ``delete_tag`` first removes the annotations
+    of an earlier test upload — only once every input has been read, so a
+    bad path never deletes them without uploading replacements. Returns the
+    created ids in ``cell_index`` order (None for skipped cells) — keep them;
+    every later step wants them.
     """
     tags = ["cell"] if tags is None else tags
     pixel_size = pixel_size or bundle.pixel_size
-    inverse = _inverse_alignment(alignment)
+    inverse = inverse_alignment(alignment)
     n_vertices, vertices = bundle.polygons(polygon_set)
     logger.info(
         "%s %s polygons, pixel size %s um/px, %s transform",
@@ -192,6 +217,9 @@ def upload_polygons(
         pixel_size,
         "H&E inverse-affine" if inverse is not None else "identity",
     )
+    if delete_tag:
+        removed = delete_tagged(ds, delete_tag)
+        logger.info("removed %d annotations tagged %r", removed, delete_tag)
 
     stop = min(limit or len(n_vertices), len(n_vertices))
     ids = np.empty(stop, dtype=object)
@@ -255,7 +283,7 @@ def fetch_annotation_ids(
     cells.zarr. Only valid for a dataset whose every polygon came from one
     full ``upload_polygons`` (no skipped cells, no other polygons first).
     """
-    inverse = _inverse_alignment(alignment)
+    inverse = inverse_alignment(alignment)
     n_vertices, vertices = bundle.polygons(polygon_set)
     n_cells = len(n_vertices)
     ids = np.empty(n_cells, dtype=object)
@@ -408,10 +436,13 @@ def upload_clusters(
     chunk: int = 20000,
     limit: int | None = None,
     replace: bool = False,
+    labels: dict[str, np.ndarray] | None = None,
 ) -> Property:
     """Every clustering as one nested property:
-    ``{"graphclust": 12, "kmeans_2_clusters": 1, ...}``, 0 = unassigned."""
-    labels = bundle.cell_groups()
+    ``{"graphclust": 12, "kmeans_2_clusters": 1, ...}``, 0 = unassigned.
+
+    ``labels`` reuses a ``bundle.cell_groups()`` already read."""
+    labels = bundle.cell_groups() if labels is None else labels
     for name, label in labels.items():
         logger.info(
             "  %s: %d clusters, %d unassigned",
@@ -446,12 +477,7 @@ def upload_umap(
     replace: bool = False,
 ) -> Property:
     """A 2-D embedding (``compute_umap``) as ``{"x": ..., "y": ...}``."""
-    if not isinstance(embedding, np.ndarray):
-        embedding = np.load(embedding)
-    if embedding.shape != (len(ids), 2):
-        raise XeniumError(
-            f"embedding is {embedding.shape}, expected ({len(ids)}, 2)"
-        )
+    embedding = load_embedding(embedding, len(ids))
     prop = _prepare_property(ds, property_name, replace)
     stop = _stop(ids, limit)
     for c0, c1 in _chunks(stop, chunk):
@@ -478,7 +504,7 @@ def upload_cell_types(
     ds: Dataset,
     bundle: XeniumBundle,
     ids: np.ndarray,
-    cell_types_csv: str | os.PathLike,
+    cell_types: str | os.PathLike | list,
     *,
     base_tags: list[str] | None = None,
     chunk: int = 5000,
@@ -492,10 +518,11 @@ def upload_cell_types(
     Categorical data are tags, not property values. Tags are REPLACED on
     every touched annotation; ``reset=True`` writes ``base_tags`` only, which
     undoes this. A random sample is read back (the bulk update returns no
-    body). Returns the label counts.
+    body). ``cell_types`` is the ``*_cell_types.csv`` path or the labels
+    ``bundle.cell_types`` returned. Returns the label counts.
     """
     base_tags = ["cell"] if base_tags is None else base_tags
-    labels = bundle.cell_types(cell_types_csv)
+    labels = _cell_type_labels(bundle, cell_types)
     counts = Counter(labels)
     logger.info(
         "%s cell-type labels in %d groups", f"{len(labels):,}", len(counts)
@@ -524,11 +551,18 @@ def upload_cell_types(
 
     tagged = cell_indices_with_annotations(ids, 0, stop)
     rng = np.random.default_rng(0)
-    for c in rng.choice(
+    sample = rng.choice(
         tagged, size=min(verify_sample, len(tagged)), replace=False
-    ):
-        actual = ds.annotations.get(str(ids[c])).tags
-        if sorted(actual) != sorted(tags_for(c)):
+    )
+    read_back = {
+        annotation.id: annotation.tags
+        for annotation in ds.annotations.get_many(
+            [str(ids[c]) for c in sample]
+        )
+    }
+    for c in sample:
+        actual = read_back.get(str(ids[c]))
+        if actual is None or sorted(actual) != sorted(tags_for(c)):
             raise XeniumError(
                 f"verify failed for cell {c}: {actual!r} != {tags_for(c)!r}"
             )
@@ -559,7 +593,7 @@ def build_spatial_table(
     out: str | os.PathLike,
     *,
     dataset_id: str,
-    cell_types_csv: str | os.PathLike | None = None,
+    cell_types: str | os.PathLike | list | None = None,
     umap: np.ndarray | str | os.PathLike | None = None,
 ) -> Path:
     """Write the dataset's ``spatial.zarr.zip`` (AnnData, zarr v2, zipped).
@@ -575,7 +609,9 @@ def build_spatial_table(
         uns/nimbus     schemaVersion, datasetId, source bundle, created
 
     Cells without an annotation are dropped. Proteins are features named
-    ``"<key> (protein)"``. Needs ``anndata`` and ``pandas``.
+    ``"<key> (protein)"``. ``cell_types`` is a ``*_cell_types.csv`` path or
+    the labels ``bundle.cell_types`` returned. Needs ``anndata`` and
+    ``pandas``.
     """
     import anndata as ad
     import pandas as pd
@@ -586,6 +622,13 @@ def build_spatial_table(
     n_cells = bundle.number_of_cells
     if len(ids) != n_cells:
         raise XeniumError(f"{len(ids)} ids for {n_cells} cells")
+    # The small inputs first: a bad one fails before the matrix is read.
+    labels = (
+        None
+        if cell_types is None
+        else _cell_type_labels(bundle, cell_types, complete=False)
+    )
+    embedding = None if umap is None else load_embedding(umap, n_cells)
     with_annotation = np.array([value is not None for value in ids])
     kept = np.flatnonzero(with_annotation)
     if len(kept) < n_cells:
@@ -614,8 +657,7 @@ def build_spatial_table(
         [str(v) for v in ids[with_annotation]], dtype=object
     )
     obs["cell_index"] = kept.astype(np.int64)
-    if cell_types_csv:
-        labels = bundle.cell_types(cell_types_csv, complete=False)
+    if labels is not None:
         obs["cell_type"] = pd.Categorical([labels[i] for i in kept])
     for name, label in bundle.cell_groups().items():
         obs[name] = label[with_annotation].astype(np.int32)
@@ -626,12 +668,7 @@ def build_spatial_table(
 
     adata = ad.AnnData(X=counts, obs=obs, var=var)
     adata.layers["X_csr"] = counts.tocsr()
-    if umap is not None:
-        embedding = umap if isinstance(umap, np.ndarray) else np.load(umap)
-        if embedding.shape != (n_cells, 2):
-            raise XeniumError(
-                f"umap is {embedding.shape}, expected ({n_cells}, 2)"
-            )
+    if embedding is not None:
         adata.obsm["X_umap"] = embedding[with_annotation].astype(np.float32)
     adata.uns["nimbus"] = {
         "schemaVersion": SPATIAL_TABLE_SCHEMA_VERSION,
@@ -669,17 +706,20 @@ def register_transcripts(
     registration records the bundle's pixel size and, for the H&E dataset
     (``alignment``), the inverse alignment as the transform. ``item_id``
     registers an item already in the folder and skips the (slow) upload.
+    The alignment and pixel size are read first, so a bad one fails before
+    a multi-GB upload.
     """
+    pixel_size = bundle.pixel_size
+    transform = inverse_alignment(alignment)
     if item_id is None:
         path = bundle.transcripts_zarr
+        bundle.require(path)
         logger.info(
             "  uploading %s (%.1f GB)", path, os.path.getsize(path) / 1e9
         )
         item_id = ds.spatial.upload_transcripts(path)["_id"]
         logger.info("  uploaded as item %s", item_id)
-    return ds.spatial.register_transcripts(
-        item_id, bundle.pixel_size, _inverse_alignment(alignment)
-    )
+    return ds.spatial.register_transcripts(item_id, pixel_size, transform)
 
 
 # --- regions ---
@@ -702,7 +742,7 @@ def region_annotations(
     ``classification``. See ``region_transform`` for ``frame``/``target``.
     """
     to_pixels = region_transform(
-        frame, target, _alignment_matrix(alignment), pixel_size
+        frame, target, load_alignment(alignment), pixel_size
     )
     annotations = []
     for feature in geojson.get("features", []):
@@ -741,7 +781,10 @@ def upload_regions(
     as cells. ``pixel_size`` is needed for ``frame="microns"``.
     """
     if not isinstance(geojson, dict):
-        geojson = json.loads(Path(geojson).read_text())
+        try:
+            geojson = json.loads(Path(geojson).read_text())
+        except (OSError, ValueError) as exc:
+            raise XeniumError(f"cannot read GeoJSON {geojson}: {exc}") from exc
     annotations = region_annotations(
         geojson,
         ds.id,

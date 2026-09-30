@@ -36,6 +36,10 @@ def compute_umap(
     from sklearn.decomposition import TruncatedSVD
     import umap
 
+    if out_dir is not None:
+        # Created up front: an unwritable path fails before minutes of work.
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
     counts, _, _, _ = bundle.counts(feature_types=("gene",))
     logger.info(
@@ -54,6 +58,10 @@ def compute_umap(
         n_components=components, random_state=seed, algorithm="randomized"
     )
     reduced = svd.fit_transform(cells).astype(np.float32)
+    if out_dir is not None:
+        # Saved before UMAP (the slow, memory-heavy step), so a failure there
+        # can be retried from pca.npy without redoing the SVD.
+        np.save(out_dir / "pca.npy", reduced)
     logger.info(
         "SVD done: explained variance %.3f (%.0fs)",
         svd.explained_variance_ratio_.sum(),
@@ -73,9 +81,6 @@ def compute_umap(
     )
     logger.info("UMAP done (%.0fs total)", time.time() - started)
     if out_dir is not None:
-        out_dir = Path(out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        np.save(out_dir / "pca.npy", reduced)
         np.save(out_dir / "umap_xy.npy", embedding)
         logger.info("  wrote %s", out_dir / "umap_xy.npy")
     return embedding

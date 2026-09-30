@@ -169,23 +169,37 @@ class XeniumBundle:
     def transcripts_zarr(self) -> Path:
         return self.directory / "transcripts.zarr.zip"
 
+    def require(self, *paths: Path) -> None:
+        """Raise ``XeniumError`` naming every missing bundle file.
+
+        Steps call this before any server work, so a mistyped
+        ``--bundle-dir`` fails at once instead of after an upload.
+        """
+        missing = [str(path) for path in paths if not path.exists()]
+        if missing:
+            raise XeniumError(f"missing from the bundle: {missing}")
+
     # --- manifest ---
 
     @cached_property
     def pixel_size(self) -> float:
         """``pixel_size`` (um/px) from experiment.xenium — the scale every
         micron-to-pixel transform uses (not whatever NimbusImage reports)."""
-        with (self.directory / "experiment.xenium").open() as fh:
+        manifest = self.directory / "experiment.xenium"
+        self.require(manifest)
+        with manifest.open() as fh:
             return float(json.load(fh)["pixel_size"])
 
     @cached_property
     def number_of_cells(self) -> int:
+        self.require(self.cells_zarr)
         return int(open_zarr_zip(self.cells_zarr).attrs["number_cells"])
 
     # --- segmentation ---
 
     def polygons(self, polygon_set: str = CELL_POLYGON_SET):
         """``(num_vertices[N], vertices[N, 2*maxV])`` in MICRONS."""
+        self.require(self.cells_zarr)
         group = open_zarr_zip(self.cells_zarr)
         names = list(group.attrs["polygon_set_names"])
         if polygon_set not in names:
@@ -209,9 +223,23 @@ class XeniumBundle:
         """
         index_of = self.cell_index_by_id()
         labels: list[str | None] = [None] * len(index_of)
-        with Path(cell_types_csv).open(newline="", encoding="utf-8") as fh:
-            for row in csv.DictReader(fh):
-                index = index_of[decode_cell_id(row["cell_id"])]
+        path = Path(cell_types_csv)
+        self.require(path)
+        with path.open(newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            if not {"cell_id", "group"} <= set(reader.fieldnames or []):
+                raise XeniumError(
+                    f"{path} needs cell_id and group columns, "
+                    f"has {reader.fieldnames}"
+                )
+            for row in reader:
+                try:
+                    index = index_of[decode_cell_id(row["cell_id"])]
+                except (KeyError, ValueError) as exc:
+                    raise XeniumError(
+                        f"cell_id {row.get('cell_id')!r} in {cell_types_csv} "
+                        "is not a cell of this bundle"
+                    ) from exc
                 if complete and labels[index] is not None:
                     raise XeniumError(
                         f"duplicate cell_id {row['cell_id']} "
@@ -228,35 +256,48 @@ class XeniumBundle:
 
     def cell_groups(self) -> dict[str, np.ndarray]:
         """Clusterings from analysis.zarr.zip (see ``decode_cell_groups``)."""
+        self.require(self.analysis_zarr)
         return decode_cell_groups(self.analysis_zarr, self.number_of_cells)
 
     # --- counts ---
 
     def _feature_matrix(self):
+        self.require(self.feature_matrix_zarr)
         return open_zarr_zip(self.feature_matrix_zarr)["cell_features"]
+
+    def gene_rows(self, symbols: list[str]) -> dict[str, int]:
+        """``{symbol: matrix row}`` for a gene panel, validated.
+
+        Every symbol must name a ``feature_type == "gene"`` row: development
+        panels omit canonical markers, so a missing one raises rather than
+        silently uploading nothing. Protein panels reuse gene names (CD3E
+        gene and CD3E antibody), so only gene rows are searched.
+        """
+        attrs = dict(self._feature_matrix().attrs)
+        keys, types = attrs["feature_keys"], attrs["feature_types"]
+        gene_row = {
+            key: row
+            for row, (key, kind) in enumerate(zip(keys, types))
+            if kind == "gene"
+        }
+        missing = [symbol for symbol in symbols if symbol not in gene_row]
+        if missing:
+            raise XeniumError(
+                f"not genes of this panel: {missing} — substitute and retry"
+            )
+        return {symbol: gene_row[symbol] for symbol in symbols}
 
     def gene_counts(
         self, symbols: list[str]
     ) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         """``{symbol: (cell_indices, counts)}`` for a gene panel.
 
-        Every symbol must be a ``feature_type == "gene"`` row: development
-        panels omit canonical markers, so a missing one raises rather than
-        silently uploading nothing. Gene-major CSR makes one gene across all
-        cells one contiguous slice, so a panel reads without the full matrix.
+        Gene-major CSR makes one gene across all cells one contiguous slice,
+        so a panel reads without the full matrix. See ``gene_rows`` for the
+        validation.
         """
+        rows = self.gene_rows(symbols)
         matrix = self._feature_matrix()
-        attrs = dict(matrix.attrs)
-        keys, types = list(attrs["feature_keys"]), list(attrs["feature_types"])
-        missing = [symbol for symbol in symbols if symbol not in keys]
-        if missing:
-            raise XeniumError(
-                f"not in this panel: {missing} — substitute and retry"
-            )
-        rows = {symbol: keys.index(symbol) for symbol in symbols}
-        for symbol, row in rows.items():
-            if types[row] != "gene":
-                raise XeniumError(f"{symbol} is a {types[row]}, not a gene")
         indptr = matrix["indptr"][:]
         data, indices = matrix["data"], matrix["indices"]
         result = {}

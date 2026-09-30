@@ -248,8 +248,10 @@ a UMAP, cell types as tags, the full matrix as the spatial table, the transcript
 and pathology regions. Each step is a function and a `nimbusimage-xenium` subcommand.
 
 ```python
+import nimbusimage as ni
 from nimbusimage import xenium
 
+client = ni.connect()
 bundle = xenium.XeniumBundle("extracted/")
 ds = xenium.upload_morphology(client, bundle, "Lymph node")
 ids = xenium.upload_polygons(ds, bundle)          # annotation ids in cell_index order

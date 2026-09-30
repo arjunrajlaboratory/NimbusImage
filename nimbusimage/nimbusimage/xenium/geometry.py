@@ -19,23 +19,44 @@ REGION_FRAMES = ("he", "morphology", "microns")
 REGION_TARGETS = ("morphology", "he")
 
 
-def load_alignment(alignment_csv: str | Path) -> np.ndarray:
-    """The 3x3 ``*_he_imagealignment.csv`` matrix (H&E px -> morphology px)."""
-    matrix = np.loadtxt(alignment_csv, delimiter=",")
+def load_alignment(
+    alignment: str | Path | np.ndarray | None,
+) -> np.ndarray | None:
+    """The 3x3 H&E alignment (H&E px -> morphology px) AS SHIPPED, or None.
+
+    Takes the ``*_he_imagealignment.csv`` path or the matrix itself.
+    """
+    if alignment is None:
+        return None
+    if isinstance(alignment, np.ndarray):
+        matrix = alignment
+    else:
+        try:
+            matrix = np.loadtxt(alignment, delimiter=",")
+        except (OSError, ValueError) as exc:
+            raise XeniumError(
+                f"cannot read alignment {alignment}: {exc}"
+            ) from exc
     if matrix.shape != (3, 3):
         raise XeniumError(f"alignment matrix must be 3x3, got {matrix.shape}")
     return matrix
 
 
-def inverse_alignment(alignment_csv: str | Path | None) -> np.ndarray | None:
-    """The inverse of the H&E alignment, or None without one.
+def inverse_alignment(
+    alignment: str | Path | np.ndarray | None,
+) -> np.ndarray | None:
+    """The inverse of the H&E alignment (path or matrix), or None.
 
     Annotations live in morphology px, so drawing them on the H&E image
     needs the INVERSE of the shipped matrix.
     """
-    if alignment_csv is None:
+    matrix = load_alignment(alignment)
+    if matrix is None:
         return None
-    return np.linalg.inv(load_alignment(alignment_csv))
+    try:
+        return np.linalg.inv(matrix)
+    except np.linalg.LinAlgError as exc:
+        raise XeniumError("alignment matrix is singular") from exc
 
 
 def _apply_affine(matrix: np.ndarray, xy: np.ndarray) -> np.ndarray:
