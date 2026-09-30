@@ -688,6 +688,25 @@ class TestOpenCells:
             with pytest.raises(XeniumError, match="none of the 3 polygon"):
                 fetch_cells(ds, bundle, uploaded.frame)
 
+    def test_a_region_identical_to_a_cell_is_never_the_cell(
+        self, server, bundle
+    ):
+        """E.g. cells exported as GeoJSON and re-imported as regions."""
+        uploaded = _upload(server, bundle, limit=1)
+        ds = server.dataset(MORPH)
+        cell_1 = uploaded.frame.polygon_coordinates(bundle.polygons()[1][1], 3)
+        ds.annotations.create_many(
+            [
+                SimpleNamespace(
+                    shape="polygon",
+                    tags=["R", "region"],
+                    coordinates=cell_1,
+                )
+            ]
+        )
+        fetched = fetch_cells(ds, bundle, uploaded.frame)
+        assert fetched.ids.tolist() == ["ann_0", None, None, None]
+
     def test_a_limited_upload_can_be_re_derived(self, server, bundle):
         uploaded = _upload(server, bundle, limit=2)
         fetched = fetch_cells(server.dataset(MORPH), bundle, uploaded.frame)
@@ -748,6 +767,16 @@ class TestOpenCells:
         with pytest.raises(XeniumError, match="not a cells file"):
             CellMap.read(hostile)
         assert not marker.exists(), "a pickle in a cells file was executed"
+
+    def test_a_damaged_cells_file_is_a_xenium_error(
+        self, server, bundle, tmp_path
+    ):
+        path = _upload(server, bundle).save(tmp_path / "cells.npz")
+        data = bytearray(path.read_bytes())
+        data[60:80] = b"\x00" * 20  # corrupt a member, keep the zip index
+        path.write_bytes(bytes(data))
+        with pytest.raises(XeniumError, match="not a cells file"):
+            CellMap.read(path)
 
     @pytest.mark.parametrize("content", ["other", "no meta", "bad meta"])
     def test_foreign_files_are_a_xenium_error(self, tmp_path, content):
@@ -1010,13 +1039,20 @@ class TestTranscriptsAndRegions:
         with pytest.raises(XeniumError, match="differs"):
             he.with_alignment(np.diag([3.0, 3.0, 1.0]))
 
-    def test_spatial_table_upload_checks_the_dataset(
+    def test_spatial_table_goes_only_to_its_dataset(
         self, server, bundle, tmp_path
     ):
-        cells = _upload(server, bundle)
-        with pytest.raises(XeniumError, match="belong to dataset ds_morph"):
-            upload_spatial_table(server.dataset(OTHER), cells, tmp_path / "t")
-        assert server.writes[-1][1] == "create_many"
+        """The table records the dataset its join keys belong to."""
+        pytest.importorskip("anndata")
+        table = build_spatial_table(
+            bundle, _upload(server, bundle), tmp_path / "t.zarr.zip"
+        )
+        with pytest.raises(XeniumError, match="built for dataset ds_morph"):
+            upload_spatial_table(server.dataset(OTHER), table)
+        assert (OTHER, "upload_and_register") not in server.writes
+        upload_spatial_table(server.dataset(MORPH), table)
+        with pytest.raises(XeniumError, match="not a spatial table"):
+            upload_spatial_table(server.dataset(MORPH), bundle.cells_zarr)
 
     def test_regions_class_first_and_ring_closed(self):
         geojson = {
@@ -1110,6 +1146,9 @@ def cli(server, bundle, tmp_path, monkeypatch):
     other.save(tmp_path / "other.npz")
     np.save(tmp_path / "other_ids.npy", other.ids)  # a pre-CellMap file
     np.savetxt(tmp_path / "diag.csv", np.diag([2.0, 2.0, 1.0]), delimiter=",")
+    np.savetxt(tmp_path / "diag3.csv", np.diag([3.0, 3.0, 1.0]), delimiter=",")
+    (tmp_path / "readonly.npz").write_bytes(b"")
+    (tmp_path / "readonly.npz").chmod(0o444)
     he_frame = ImageFrame.create(
         bundle=bundle, alignment=tmp_path / "diag.csv"
     )
@@ -1299,12 +1338,21 @@ BAD_INPUTS = {
         ["properties", "cell-types", "transcripts", "spatial-table"],
     ),
     "a different alignment than the saved one": (
-        {"--alignment": "{tmp}/singular.csv"},
+        {"--alignment": "{tmp}/diag3.csv"},
         ["transcripts (H&E)", "regions (H&E)"],
     ),
     "conflicting image": (
         {"--image": "he"},
         ["transcripts", "regions"],
+    ),
+    # For regions --alignment can mean either image: never inferred.
+    "regions alignment without --image or --cells": (
+        {"--cells": None, "--alignment": "{tmp}/diag.csv", "--drawn-in": "he"},
+        ["regions"],
+    ),
+    "read-only existing cells-out": (
+        {"--cells-out": "{tmp}/readonly.npz"},
+        ["polygons"],
     ),
     "unwritable cells-out": (
         {"--cells-out": "{tmp}/no_such_dir/cells.npz"},
@@ -1385,6 +1433,20 @@ class TestCli:
         assert cli(argv) == 0
         region = server.dataset(MORPH).annotations.list(tags=["region"])[0]
         assert region.coordinates[1] == {"x": 18.0, "y": 0.0}
+
+    def test_regions_he_drawn_onto_morphology_without_cells(self, cli, server):
+        argv = _edit(
+            CLI_COMMANDS["regions"],
+            {
+                "--cells": None,
+                "--image": "morphology",
+                "--alignment": "{tmp}/diag.csv",
+                "--drawn-in": "he",
+            },
+        )
+        assert cli(argv) == 0
+        region = server.dataset(MORPH).annotations.list(tags=["region"])[0]
+        assert region.coordinates[1] == {"x": 18.0, "y": 0.0}  # M applied
 
     def test_regions_microns_with_a_pixel_size_needs_no_bundle(
         self, cli, server

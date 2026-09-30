@@ -217,15 +217,19 @@ class XeniumBundle:
         polygons = self._polygon_set(polygon_set)
         return polygons["num_vertices"][:], polygons["vertices"][:]
 
-    def first_vertices(self, cells=None) -> np.ndarray:
-        """[K, 2] first vertex (MICRONS) of each CELL polygon, or of the
-        ``cells`` listed. Reads only the first two vertex columns, not the
-        whole padded vertex array."""
+    def first_vertices(self, cells=None, *, count: int = 1) -> np.ndarray:
+        """[K, 2*count] leading vertices (MICRONS, ``x0 y0 x1 y1 ...``) of
+        each CELL polygon, or of the ``cells`` listed. Reads only those
+        columns, not the whole padded vertex array."""
         vertices = self._polygon_set(CELL_POLYGON_SET)["vertices"]
         rows = slice(None) if cells is None else np.asarray(cells, dtype=int)
         return np.asarray(
-            vertices.get_orthogonal_selection((rows, slice(0, 2)))
+            vertices.get_orthogonal_selection((rows, slice(0, 2 * count)))
         )
+
+    def vertex_counts(self) -> np.ndarray:
+        """Vertices per CELL polygon (without reading the vertices)."""
+        return self._polygon_set(CELL_POLYGON_SET)["num_vertices"][:]
 
     def cell_index_by_id(self) -> dict[tuple[int, int], int]:
         """Packed zarr ``cell_id`` -> ``cell_index``."""

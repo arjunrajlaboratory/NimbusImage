@@ -22,7 +22,7 @@ Example:
     xenium.upload_clusters(ds, bundle, cells)
     xenium.upload_cell_types(ds, bundle, cells, "cell_types.csv")
     table = xenium.build_spatial_table(bundle, cells, "spatial.zarr.zip")
-    xenium.upload_spatial_table(ds, cells, table)
+    xenium.upload_spatial_table(ds, table)  # refuses another dataset's table
     xenium.register_transcripts(ds, bundle, cells)
 
     # the H&E image: its own frame, its own cell map
@@ -57,6 +57,7 @@ from nimbusimage.xenium.ingest import (
     load_embedding,
     region_annotations,
     register_transcripts,
+    spatial_table_dataset,
     upload_cell_types,
     upload_clusters,
     upload_gene_panel,
@@ -88,6 +89,7 @@ __all__ = [
     "open_cells",
     "read_frame",
     "region_annotations",
+    "spatial_table_dataset",
     "register_transcripts",
     "upload_cell_types",
     "upload_clusters",

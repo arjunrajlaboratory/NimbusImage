@@ -28,7 +28,7 @@ from nimbusimage.xenium.bundle import (
     NUCLEUS_POLYGON_SET,
     XeniumBundle,
 )
-from nimbusimage.xenium.cells import CellMap, open_cells
+from nimbusimage.xenium.cells import CellMap, open_cells, read_frame
 from nimbusimage.xenium.errors import XeniumError
 from nimbusimage.xenium.geometry import (
     IMAGES,
@@ -89,13 +89,24 @@ def _check_flags(args) -> None:
     load_alignment(getattr(args, "alignment", None))
 
 
-def _stated_frame(args, bundle) -> ImageFrame | None:
-    """The frame the flags state, or None when no frame flag is given."""
+def _stated_frame(args, bundle, *, infer_image=True) -> ImageFrame | None:
+    """The frame the flags state, or None when no frame flag is given.
+
+    ``--alignment`` alone means "the dataset is the H&E image" — except for
+    regions (``infer_image=False``), where it can also be the matrix that
+    carries H&E-drawn regions onto the morphology image. There the image is
+    never inferred: ``--image`` must say which it is.
+    """
     image = getattr(args, "image", None)
     alignment = getattr(args, "alignment", None)
     pixel_size = getattr(args, "pixel_size", None)
     if image is None and alignment is None and pixel_size is None:
         return None
+    if image is None and not infer_image:
+        raise XeniumError(
+            "--image is required without --cells: say which image the "
+            "dataset shows (an --alignment alone could mean either)"
+        )
     return ImageFrame.create(
         bundle=bundle, alignment=alignment, pixel_size=pixel_size, image=image
     )
@@ -148,22 +159,16 @@ def _dataset_cells(args, bundle):
     return ds, open_cells(ds, bundle, args.cells, frame=frame)
 
 
-def _frame_source(args, bundle, ds, *, may_add_alignment=False):
-    """For transcripts and regions: the dataset's saved CellMap, or the
-    frame the flags state — never a default."""
+def _frame_source(args, bundle, ds, *, regions=False) -> ImageFrame:
+    """For transcripts and regions, the dataset's frame: the one saved in
+    its --cells map (read by cells.read_frame, which checks the dataset),
+    or the one the flags state — never a default. For regions, --alignment
+    may add the matrix a saved morphology frame lacks."""
     if args.cells is not None:
-        stored = CellMap.read(args.cells)  # a missing file is an error
-        if not isinstance(stored, CellMap):
-            raise XeniumError(
-                f"{args.cells} is a bare-id file with no saved frame; state "
-                "the frame with --image/--alignment/--pixel-size instead"
-            )
-        stored.check_dataset(ds)
-        _require_flags_match(
-            args, stored.frame, may_add_alignment=may_add_alignment
-        )
-        return stored
-    stated = _stated_frame(args, bundle)
+        saved = read_frame(args.cells, ds)
+        _require_flags_match(args, saved, may_add_alignment=regions)
+        return saved.with_alignment(args.alignment) if regions else saved
+    stated = _stated_frame(args, bundle, infer_image=not regions)
     if stated is None:
         raise XeniumError(
             "state the dataset's frame: --cells (the map polygons saved), "
@@ -201,8 +206,10 @@ def cmd_polygons(args) -> None:
         out = Path(args.cells_out)
         if out.is_dir() or not out.parent.is_dir():
             raise XeniumError(f"cannot write the cell map to {out}")
-        if not os.access(out.parent, os.W_OK):
-            raise XeniumError(f"{out.parent} is not writable")
+        if not os.access(out.parent, os.W_OK) or (
+            out.exists() and not os.access(out, os.W_OK)
+        ):
+            raise XeniumError(f"cannot write the cell map to {out}")
     ds = _connect().dataset(args.dataset)
     # upload_polygons deletes --delete-tag only after reading its inputs.
     cells = ingest.upload_polygons(
@@ -314,7 +321,7 @@ def cmd_spatial_table(args) -> None:
     )
     if args.no_upload:
         return
-    entry = ingest.upload_spatial_table(ds, cells, out)
+    entry = ingest.upload_spatial_table(ds, out)
     logger.info(
         "  registered: %s cells x %s features (schema v%s)",
         f"{entry['nObs']:,}",
@@ -343,13 +350,11 @@ def cmd_regions(args) -> None:
     bundle = XeniumBundle(args.bundle_dir) if args.bundle_dir else None
     _check_flags(args)
     ds = _connect().dataset(args.dataset)
-    source = _frame_source(args, bundle, ds, may_add_alignment=True)
     ingest.upload_regions(
         ds,
         args.geojson,
-        source,
+        _frame_source(args, bundle, ds, regions=True),
         drawn_in=args.drawn_in,
-        alignment=args.alignment if isinstance(source, CellMap) else None,
         tag=args.tag,
     )
 

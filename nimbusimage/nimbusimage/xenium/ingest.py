@@ -37,7 +37,7 @@ from nimbusimage.xenium.bundle import (
     XeniumBundle,
     staged_channel_file_name,
 )
-from nimbusimage.xenium.cells import CellMap
+from nimbusimage.xenium.cells import REGION_TAG, CellMap
 from nimbusimage.xenium.errors import XeniumError
 from nimbusimage.xenium.geometry import (
     ImageFrame,
@@ -53,7 +53,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger("nimbusimage.xenium")
 
 SPATIAL_TABLE_SCHEMA_VERSION = 1
-REGION_TAG = "region"
 
 
 def _polygon_annotation(
@@ -656,13 +655,30 @@ def build_spatial_table(
     return out
 
 
-def upload_spatial_table(
-    ds: Dataset, cells: CellMap, path: str | os.PathLike
-) -> dict:
-    """Upload and register a table ``build_spatial_table`` wrote from
-    ``cells`` — on ``cells``'s dataset only, since its join keys are that
-    dataset's annotation ids."""
-    cells.check_dataset(ds)
+def spatial_table_dataset(path: str | os.PathLike) -> str:
+    """The dataset a ``build_spatial_table`` file was built for
+    (``uns/nimbus/datasetId``) — its join keys are that dataset's ids."""
+    from nimbusimage.xenium.bundle import open_zarr_zip
+
+    try:
+        group = open_zarr_zip(path)
+        return str(group["uns"]["nimbus"]["datasetId"][()])
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
+        raise XeniumError(
+            f"{path} is not a spatial table built by build_spatial_table "
+            f"(no uns/nimbus/datasetId): {exc}"
+        ) from exc
+
+
+def upload_spatial_table(ds: Dataset, path: str | os.PathLike) -> dict:
+    """Upload and register a ``build_spatial_table`` file on ``ds`` — only
+    if the file was built for ``ds``: the table records its dataset, and
+    its join keys match nothing anywhere else."""
+    built_for = spatial_table_dataset(path)
+    if built_for != ds.id:
+        raise XeniumError(
+            f"{path} was built for dataset {built_for}, not {ds.id}"
+        )
     return ds.spatial.upload_and_register(path)
 
 

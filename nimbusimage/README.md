@@ -260,7 +260,7 @@ xenium.upload_gene_panel(ds, bundle, cells, ["CD3E", "MS4A1"])
 xenium.upload_clusters(ds, bundle, cells)
 xenium.upload_cell_types(ds, bundle, cells, "cell_types.csv")
 table = xenium.build_spatial_table(bundle, cells, "spatial.zarr.zip")
-xenium.upload_spatial_table(ds, cells, table)
+xenium.upload_spatial_table(ds, table)  # only onto the dataset it was built for
 xenium.register_transcripts(ds, bundle, cells)
 ```
 

@@ -33,6 +33,9 @@ what has broken before.
   vertices. Transcripts and regions have nothing to verify against, so they take the
   dataset's `CellMap` (checked against the dataset) or an explicit `ImageFrame` —
   never a default; a missing or bare-id `--cells` file is an error there.
+- **One input, one meaning.** Where a flag can mean two things (`--alignment` in
+  `regions`: the dataset is H&E, or the matrix for H&E-drawn regions), nothing is
+  inferred from it; the caller states the other fact (`--image`).
 - **Never rely on server list order.** `fetch_cells` matches annotations to cells by
   geometry (first two vertices + vertex count); the server sorts by `_id`, and
   ObjectIds from different Girder instances in the same second don't follow creation
@@ -65,8 +68,14 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
   `test_cli_bad_input_fails_with_no_writes[...-no frame stated / mistyped cells path /
   bare-id file as the frame]`, `test_transcripts_never_default_the_frame`; the H&E
   baselines succeed — `test_cli_baseline_succeeds[transcripts (H&E)]`, `[regions (H&E)]`.
-- The table is uploaded only to its own dataset —
-  `test_spatial_table_upload_checks_the_dataset`.
+- The table is uploaded only to the dataset recorded in it (`uns/nimbus/datasetId`) —
+  `test_spatial_table_goes_only_to_its_dataset`.
+- `region`-tagged polygons are never matched as cells, even when identical to one —
+  `test_a_region_identical_to_a_cell_is_never_the_cell`; stored vertices within 0.01 px
+  match (older uploads used float32) — `test_matching_tolerates_float_arithmetic_only`.
+- For regions, `--alignment` never implies the H&E image —
+  `test_cli_bad_input_fails_with_no_writes[regions-regions alignment without --image or
+  --cells]`, `TestCli::test_regions_he_drawn_onto_morphology_without_cells`.
 - A cells file never unpickles anything but a real `.npy` —
   `test_a_pickle_passed_as_cells_never_runs`, `test_cells_files_load_without_unpickling`.
 - The cell-type write is read back in one request — `test_cell_types_and_read_back`,

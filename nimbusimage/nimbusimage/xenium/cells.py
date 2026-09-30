@@ -20,6 +20,7 @@ import logging
 import os
 import pickle
 import zipfile
+import zlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("nimbusimage.xenium")
 
 CELLS_FILE_FORMAT = 1
+# Polygons carrying this tag are regions of interest, never cells: every
+# spatial analysis (and the cell match below) leaves them out.
+REGION_TAG = "region"
 # How far a stored vertex may sit from where the frame puts it. Uploads by
 # different code versions differ by ~1e-3 px at H&E scale (float32 vs
 # float64 arithmetic), so matching is by tolerance, never exact equality.
@@ -171,6 +175,8 @@ class CellMap:
             TypeError,
             EOFError,
             pickle.UnpicklingError,
+            zipfile.BadZipFile,
+            zlib.error,
         ) as exc:
             raise XeniumError(f"{path} is not a cells file: {exc}") from exc
         if not isinstance(ids, np.ndarray) or ids.ndim != 1:
@@ -216,11 +222,12 @@ def fetch_cells(
     cells with the same geometry, is an error. ``frame`` is the one the
     upload used.
     """
-    n_vertices, vertices = bundle.polygons()
+    n_vertices = bundle.vertex_counts()
+    leading = bundle.first_vertices(count=2)  # [N, 4]: x0 y0 x1 y1, microns
     usable = np.flatnonzero(n_vertices >= 3)
     # Each cell's first two vertices, where the frame draws them.
-    first = frame.microns_to_pixels(vertices[usable, 0:2])
-    second = frame.microns_to_pixels(vertices[usable, 2:4])
+    first = frame.microns_to_pixels(leading[usable, 0:2])
+    second = frame.microns_to_pixels(leading[usable, 2:4])
     buckets: dict[tuple[int, int], list[int]] = {}
     for row, (x, y) in enumerate(first):
         key = (int(x // MATCH_BUCKET_PX), int(y // MATCH_BUCKET_PX))
@@ -250,8 +257,8 @@ def fetch_cells(
     for annotation in ds.annotations.iter_all(shape="polygon", page_size=page):
         seen += 1
         coordinates = annotation.coordinates
-        if len(coordinates) < 3:
-            continue
+        if len(coordinates) < 3 or REGION_TAG in (annotation.tags or ()):
+            continue  # regions are never cells, whatever their outline
         cell = cell_of(
             np.array([coordinates[0]["x"], coordinates[0]["y"]]),
             np.array([coordinates[1]["x"], coordinates[1]["y"]]),
@@ -262,7 +269,9 @@ def fetch_cells(
         if ids[cell] is not None:
             raise XeniumError(
                 f"cell {cell} has two annotations ({ids[cell]}, "
-                f"{annotation.id}): the polygons were uploaded twice"
+                f"{annotation.id}): the cells were uploaded twice, or nuclei "
+                "identical to their cells were uploaded too — keep the file "
+                "polygons --cells-out wrote"
             )
         ids[cell] = annotation.id
     cells = CellMap(ds.id, frame, ids)

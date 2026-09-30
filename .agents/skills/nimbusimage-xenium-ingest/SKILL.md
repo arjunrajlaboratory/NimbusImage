@@ -55,7 +55,7 @@ xenium.upload_umap(ds, bundle, cells, xenium.compute_umap(bundle))
 xenium.upload_cell_types(ds, bundle, cells, "cell_types.csv")
 table = xenium.build_spatial_table(bundle, cells, "spatial.zarr.zip",
                                    cell_types="cell_types.csv")
-xenium.upload_spatial_table(ds, cells, table)     # refuses another dataset's table
+xenium.upload_spatial_table(ds, table)            # refuses a table built for another dataset
 xenium.register_transcripts(ds, bundle, cells)     # the polygons' frame; checked vs ds
 xenium.upload_regions(ds, "annotation.geojson", cells, drawn_in="he",
                       alignment="he_align.csv")    # adds M to the morphology frame
@@ -188,7 +188,10 @@ Xenium vertices are **microns**. Divide by the *Xenium* `pixel_size` from
 - **H&E**: `he_px = M⁻¹ · [µm / pixel_size, 1]` where `M` is the csv. Sanity check: the
   2×2 block's magnitude equals `he_px_size / morph_px_size` (1.289 = 0.2738 / 0.2125
   here). `--alignment` (`ImageFrame(alignment=...)`) takes the csv as shipped and applies
-  `M⁻¹` for you. A frame built with an alignment is the H&E frame.
+  `M⁻¹` for you. For `polygons`, `transcripts` and the per-cell steps, `--alignment`
+  alone means the dataset is the H&E image. For `regions` it can also mean "carry
+  H&E-drawn regions onto the morphology image", so there the image is never inferred:
+  pass `--cells` (whose frame says which image it is) or `--image`.
 
 **Determine orientation empirically, never by eye.** Fetch a ~600 px thumbnail
 (`GET item/{id}/tiles/region?width=600&...&encoding=PNG`), threshold it into a tissue
@@ -226,7 +229,9 @@ order) — so regions or nuclei in the dataset are ignored, a `--limit` upload m
 cells it has, and a double upload is an error. A saved map is checked against
 the dataset before use, so the H&E dataset's file can't be used for the morphology
 dataset by mistake — both have the same cell count. Files written by the older
-`--ids-out` (a bare id array) still load, spot-checked with `--alignment`/`--pixel-size`.
+`--ids-out` (a bare id array) still work for the per-cell steps, spot-checked with
+`--alignment`/`--pixel-size`; they save no frame, so `transcripts` and `regions` refuse
+them — pass those the frame flags, or re-save the map with `open_cells`.
 Upload is fast; viewer rendering at this scale is handled by NimbusImage's lazy
 annotation loading. Nucleus polygons are `--polygon-set nucleus` (more nuclei than cells
 is normal: multinucleate cells). They are for display only: every later step joins per-cell
