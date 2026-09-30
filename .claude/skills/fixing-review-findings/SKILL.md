@@ -232,6 +232,11 @@ The next review round found the same root cause one level up — the value objec
 - **Defaults only where the result is verified.** A default is safe where something downstream checks the answer (`open_cells` verifies every map against the server's vertices, so a wrong default frame is refused). Where nothing checks it (registering a transform), a missing input must be an error, never a guess.
 - **Make the fake hostile, not merely faithful.** The in-memory fake returned creation order, so no test could see that re-deriving ids depended on list order — which the real server does not promise (it sorts by `_id`, and ObjectIds from different instances in the same second don't follow creation order). The fake now lists in *reverse* order, and the fix matches by geometry instead of position. When a fake stands in for a server, give it the server's weakest guarantees, not its most convenient behaviour.
 
+Two gaps the contract tables still had, found by round 9 of the same review:
+
+- **A CLI contract table doesn't hold the library.** Every CLI row passed, yet `chunk=0, replace=True` and a frame without a pixel size still deleted data through the Python API: argparse rejected them before the library's own check ran, so the library's check was in the wrong place and nothing saw it. When a package has both a CLI and a public API, the "fails before any write" table needs API rows too.
+- **A check inside a generator runs at the first iteration, not at the call.** `for c in _chunks(n, 0)` raised only after the preceding `delete_values` had run. Return a list, or validate outside the generator, when the check must precede a side effect.
+
 When you generalize, check the *shape* of your sweep too, not just its target. A grep for `throw` in action bodies found the deliberate throwers and missed every pure propagator — so the sweep reported "clean" and the next Codex round flagged the one it missed. If a sweep comes back clean, ask what the query structurally cannot see.
 
 ### Codex round mechanics

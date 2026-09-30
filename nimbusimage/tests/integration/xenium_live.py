@@ -51,6 +51,7 @@ It creates datasets named ``live e2e <bundle> <time>`` and leaves them.
 Exit status 0 only if every check passed.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -69,6 +70,9 @@ from nimbusimage.xenium import (
     XeniumBundle,
     XeniumError,
     fetch_cells,
+    upload_clusters,
+    upload_morphology,
+    upload_polygons,
 )
 from nimbusimage.xenium.bundle import open_zarr_zip
 
@@ -267,20 +271,29 @@ def pipeline(bundle_dir, work):
     from nimbusimage.xenium.bundle import safe_symbol
 
     col = {safe_symbol(s): symbols.index(safe_symbol(s)) for s in panel}
-    bad = 0
+    bad = incomplete = 0
     for ann, vals in stored.items():
         i = pos[ann]
+        kinds = []
+        # Each value is recognised by its exact keys, and every cell must
+        # have all three: a step that wrote nothing can't pass unseen.
         for v in vals.values():
-            if set(col) <= set(v):
+            if set(v) == set(col):
+                kinds.append("genes")
                 bad += any(v[g] != dense[i, col[g]] for g in col)
-            elif "x" in v:
+            elif set(v) == {"x", "y"}:
+                kinds.append("umap")
                 bad += not np.allclose([v["x"], v["y"]], umap[i], atol=1e-5)
-            else:
+            elif set(v) == set(groups):
+                kinds.append("clusters")
                 bad += any(v[k] != int(groups[k][i]) for k in v)
+            else:
+                bad += 1
+        incomplete += sorted(kinds) != ["clusters", "genes", "umap"]
     check(
         "property values match the bundle (genes, clusterings, UMAP)",
-        len(stored) == cells.count() and bad == 0,
-        f"{len(stored)} cells, {bad} mismatches",
+        len(stored) == cells.count() and bad == 0 and incomplete == 0,
+        f"{len(stored)} cells, {bad} mismatches, {incomplete} incomplete",
     )
     tags = {a.id: a.tags for a in ds.annotations.list(tags=["cell"])}
     check(
@@ -454,18 +467,30 @@ def pipeline(bundle_dir, work):
     return bundle, ds, he, cells_path, he_cells
 
 
+def _digest(collection, dataset_id, fields):
+    """A hash of every document's ``fields``, in _id order: counts alone
+    miss a refusal that rewrote tags or values before failing."""
+    projection = ", ".join(f"{f}: 1" for f in fields)
+    raw = mongo(
+        f"print(JSON.stringify(db.{collection}.find("
+        f"{{datasetId: ObjectId('{dataset_id}')}}, {{{projection}}})"
+        f".sort({{_id: 1}}).toArray()))"
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def snapshot(*datasets):
     counts = []
     for d in datasets:
         counts.append(
             (
-                mongo(
-                    f"print(db.upenn_annotation.countDocuments({{datasetId:"
-                    f"ObjectId('{d.id}')}}))"
+                _digest(
+                    "upenn_annotation", d.id, ["tags", "coordinates", "shape"]
                 ),
-                mongo(
-                    f"print(db.annotation_property_values.countDocuments("
-                    f"{{datasetId:ObjectId('{d.id}')}}))"
+                _digest(
+                    "annotation_property_values",
+                    d.id,
+                    ["annotationId", "propertyId", "values"],
                 ),
                 mongo(
                     f"print(db.item.countDocuments({{folderId:"
@@ -508,7 +533,44 @@ def refusals(bundle_dir, ds, he, cells_path, he_cells, work):
             )
         ]
     )
+    (work / "not_geojson.json").write_text("[3]")
+    rows = (work / "types.csv").read_text().splitlines()
+    (work / "dup_types.csv").write_text(
+        "\n".join(rows + [rows[1].split(",")[0] + ",Another type"]) + "\n"
+    )
     cases = [
+        (
+            "R9 spatial-table with a duplicated cell id in the CSV",
+            [
+                "spatial-table",
+                "--bundle-dir",
+                b,
+                "--dataset",
+                ds.id,
+                "--cells",
+                cells_path,
+                "--cell-types",
+                work / "dup_types.csv",
+                "--out",
+                work / "dup_table.zarr.zip",
+            ],
+        ),
+        (
+            "R9 regions from JSON that is not GeoJSON: clean error",
+            [
+                "regions",
+                "--bundle-dir",
+                b,
+                "--dataset",
+                ds.id,
+                "--cells",
+                cells_path,
+                "--drawn-in",
+                "morphology",
+                "--geojson",
+                work / "not_geojson.json",
+            ],
+        ),
         (
             "R1 polygons --delete-tag with a bad alignment keeps the tagged",
             [
@@ -720,10 +782,57 @@ def refusals(bundle_dir, ds, he, cells_path, he_cells, work):
             clean and before == after,
             (r.stderr.strip().splitlines() or ["(no output)"])[-1][:110],
         )
+    bundle = XeniumBundle(bundle_dir)
+    api_cases = [
+        (
+            "R9 API clusters chunk=0 replace=True keeps the old values",
+            lambda: upload_clusters(
+                ds, bundle, CellMap.read(cells_path), chunk=0, replace=True
+            ),
+        ),
+        (
+            "R9 API polygons without a pixel size keeps the tagged",
+            lambda: upload_polygons(
+                ds,
+                bundle,
+                ImageFrame("morphology", None),
+                delete_tag="keepme",
+            ),
+        ),
+    ]
+    for name, call in api_cases:
+        before = snapshot(ds, he)
+        try:
+            call()
+            refused = False
+        except XeniumError:
+            refused = True
+        check(name, refused and before == snapshot(ds, he))
     check(
         "R1 the tagged annotations survived",
         len(ds.annotations.list(tags=["keepme"])) == 1,
     )
+
+
+def one_channel_bundle(bundle_dir, work):
+    """R9: a bundle with a single morphology file (a DAPI-only run) makes a
+    one-channel dataset instead of failing after the upload."""
+    staged = work / "one_channel"
+    (staged / "morphology_focus").mkdir(parents=True)
+    for path in bundle_dir.iterdir():
+        if path.name != "morphology_focus":
+            (staged / path.name).symlink_to(path.resolve())
+    first = sorted((bundle_dir / "morphology_focus").glob("*.ome.tif"))[0]
+    (staged / "morphology_focus" / first.name).symlink_to(first.resolve())
+    try:
+        ds = upload_morphology(
+            client, XeniumBundle(staged), f"live e2e one channel {RUN}"
+        )
+        check("R9 a one-file morphology makes a 1-channel dataset",
+              ds.num_channels == 1, ds.id)
+    except XeniumError as exc:
+        check("R9 a one-file morphology makes a 1-channel dataset", False,
+              str(exc)[:110])
 
 
 def tables(ds, he, work):
@@ -804,6 +913,7 @@ def main():
     bundle_dir, work, bundle, ds, he, cells_path, he_cells = last
     print(f"\n=== regressions, live, on {bundle_dir.name} ===", flush=True)
     refusals(bundle_dir, ds, he, cells_path, he_cells, work)
+    one_channel_bundle(bundle_dir, work)
     tables(ds, he, work)
     big_dataset_check()
 

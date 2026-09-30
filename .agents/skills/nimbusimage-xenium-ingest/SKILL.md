@@ -13,7 +13,7 @@ description: >
 
 # NimbusImage — Xenium ingest
 
-End-to-end runbook for getting a **10x Xenium** output bundle (XOA 1–4, including Prime 5K
+End-to-end runbook for getting a **10x Xenium** output bundle (XOA 1.3–4, including Prime 5K
 and the XOA 4 protein panels) into NimbusImage as images + cell polygons + per-cell data.
 Every step below was measured on one of these:
 

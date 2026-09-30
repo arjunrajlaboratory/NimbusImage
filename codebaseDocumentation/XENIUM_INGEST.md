@@ -40,9 +40,12 @@ what has broken before.
   geometry (first two vertices + vertex count); the server sorts by `_id`, and
   ObjectIds from different Girder instances in the same second don't follow creation
   order.
-- **Validate before the first write.** Validated objects are built before a step's
-  first server write; a limited upload is represented explicitly (one slot per cell,
-  None past `--limit`), never by a shorter array.
+- **Validate before the first write — in the API function, not only the CLI.** Validated
+  objects are built before a step's first server write; a limited upload is represented
+  explicitly (one slot per cell, None past `--limit`), never by a shorter array. argparse
+  checks don't count: round 9 found `chunk=0, replace=True` and a frame without a pixel
+  size deleting data through the API that the CLI had already refused. Anything checked
+  inside a generator is checked late, so `_chunks` returns a list.
 
 ## Live verification
 
@@ -80,13 +83,15 @@ XENIUM_LIVE_BUNDLES=~/Downloads/xenium-tiny \
 | `XENIUM_LIVE_WORK` | a new temp dir | where cell maps, CSVs and tables are written |
 | `XENIUM_LIVE_BIG_BUNDLE`, `_DATASET`, `_ALIGNMENT`, `_IDS` | unset (skipped) | a large real H&E dataset for a read-only geometry-match check (the lab's: `~/Downloads/xenium-kidney-full`, dataset `6ab9574f635c1c4a679411e6`, its `*_he_imagealignment.csv`, `ids_he.npy`) |
 
-**What it checks** (53 checks with three bundles and the large dataset):
+**What it checks** (every check is listed as it runs; all must pass):
 1. Per bundle, on a fresh dataset and an H&E-like one (synthetic alignment): every step
    through the CLI, then every property value, tag, table column, molecule count,
    transform and region vertex compared with the bundle.
-2. Every bug class from the review rounds reproduced live; each must print a clean
-   `error:` and leave annotation, property-value and item counts and the transcript
-   registration unchanged. Add a row to `refusals()` whenever a review finds a new one.
+2. Every bug class from the review rounds reproduced live, through the CLI and (for
+   API-only paths) the API; each must fail cleanly and leave every annotation's tags and
+   coordinates, every property value (hashed from MongoDB), the item count and the
+   transcript registration unchanged. Add a row to `refusals()` whenever a review finds
+   a new one. A one-file morphology bundle must make a one-channel dataset.
 3. Tables go only to their own dataset, including a real recompute version.
 4. Optionally, the geometry match on 465K real cells equals the original ids.
 
@@ -151,8 +156,12 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
 - Region transforms for every drawn-in × image pair — `test_region_transform_table`.
 
 **Ordering and destructive actions**
-- `--delete-tag` deletes only after every input is read —
-  `TestPolygons::test_delete_tag_only_after_inputs_are_read`.
+- `--delete-tag` deletes only after every input is read, including a frame that can
+  convert microns — `TestPolygons::test_delete_tag_only_after_inputs_are_read`.
+- A bad `chunk` is refused before `replace` deletes the old values, in every per-cell
+  step — `test_per_cell_steps_check_the_chunk_before_writing`.
+- A one-file morphology bundle configures without a channel assignment —
+  `TestUploadMorphology::test_one_or_several_channel_files`.
 - The spatial table checks its small inputs before reading the matrix —
   `test_spatial_table_checks_before_reading_the_matrix`.
 - UMAP keeps `pca.npy` when UMAP fails — `TestUmap::test_pca_is_saved_before_umap_runs`.
@@ -166,7 +175,16 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
 - A protein named like a gene doesn't block the gene —
   `TestBundle::test_gene_lookup_skips_a_same_named_protein`.
 - Cell types join on the decoded id, not row order —
-  `TestBundle::test_cell_types_join_on_id_not_row_order`.
+  `TestBundle::test_cell_types_join_on_id_not_row_order`; a duplicated id is refused
+  whether or not gaps are allowed — `TestBundle::test_cell_types_duplicate_raises`;
+  integer ids (before XOA 1.3) are a clean error —
+  `TestBundle::test_integer_cell_ids_are_a_xenium_error`.
+- Gene counts are placed by cell index whether or not CSR indices are sorted —
+  `test_gene_panel_does_not_assume_sorted_indices`.
+- GeoJSON as a FeatureCollection, an array of Features (QuPath), one Feature or one
+  geometry — `test_regions_accept_every_geojson_shape`; anything else is a clean error
+  with no writes — `test_malformed_geojson_is_a_xenium_error`,
+  `test_cli_bad_input_fails_with_no_writes[regions-json that is not geojson]`.
 
 ## Process rules this feature proved
 

@@ -1,4 +1,4 @@
-"""Read a 10x Xenium output bundle (XOA 1-4) without touching the server.
+"""Read a 10x Xenium output bundle (XOA 1.3-4) without touching the server.
 
 The files a bundle holds, and the traps in reading them::
 
@@ -246,6 +246,11 @@ class XeniumBundle:
     def cell_index_by_id(self) -> dict[tuple[int, int], int]:
         """Packed zarr ``cell_id`` -> ``cell_index``."""
         packed = self._open(self.cells_zarr)["cell_id"][:]
+        if packed.ndim != 2 or packed.shape[1] != 2:
+            raise XeniumError(
+                f"{self.cells_zarr} stores cell ids of shape {packed.shape}, "
+                "not (prefix, suffix) pairs: cell ids need XOA 1.3 or later"
+            )
         return {(int(p), int(s)): i for i, (p, s) in enumerate(packed)}
 
     def cell_types(
@@ -254,8 +259,9 @@ class XeniumBundle:
         """Group label per ``cell_index`` from ``*_cell_types.csv``.
 
         Rows are joined on the decoded ``cell_id``; row order is not trusted.
-        With ``complete`` (the default) a duplicate or a missing cell raises;
-        otherwise missing cells are None.
+        A duplicate row always raises (which label would win?). With
+        ``complete`` (the default) a missing cell raises too; otherwise
+        missing cells are None.
         """
         index_of = self.cell_index_by_id()
         labels: list[str | None] = [None] * len(index_of)
@@ -276,7 +282,7 @@ class XeniumBundle:
                         f"cell_id {row.get('cell_id')!r} in {cell_types_csv} "
                         "is not a cell of this bundle"
                     ) from exc
-                if complete and labels[index] is not None:
+                if labels[index] is not None:
                     raise XeniumError(
                         f"duplicate cell_id {row['cell_id']} "
                         f"in {cell_types_csv}"

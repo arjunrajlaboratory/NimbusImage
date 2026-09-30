@@ -45,6 +45,7 @@ from nimbusimage.xenium.errors import XeniumError
 from nimbusimage.xenium.geometry import (
     ImageFrame,
     geojson_class_name,
+    geojson_features,
     geojson_outer_rings,
 )
 
@@ -106,11 +107,13 @@ def _cell_type_labels(
     return bundle.cell_types(cell_types, complete=complete)
 
 
-def _chunks(stop: int, chunk: int):
+def _chunks(stop: int, chunk: int) -> list[tuple[int, int]]:
+    """``[(c0, c1), ...]`` covering ``range(stop)``. A list, not a
+    generator, so a bad ``chunk`` raises where this is called — before any
+    server write — not at the first iteration."""
     if chunk < 1:
         raise XeniumError(f"chunk/batch size must be >= 1, got {chunk}")
-    for c0 in range(0, stop, chunk):
-        yield c0, min(c0 + chunk, stop)
+    return [(c0, min(c0 + chunk, stop)) for c0 in range(0, stop, chunk)]
 
 
 def _frame_for(ds: Dataset, source) -> ImageFrame:
@@ -183,6 +186,21 @@ def upload_morphology(
             ).symlink_to(path.resolve())
         dataset.upload(stage)
 
+    if len(files) == 1:
+        # One channel (a DAPI-only run): no filename token varies, so there
+        # is no channel axis to pin.
+        result = dataset.configure()
+    else:
+        result = _configure_channels(dataset, len(files))
+    logger.info("  channels: %s", result.config["channels"])
+    if result.job_id and wait:
+        logger.info("  waiting for the transcode job")
+        if not client.job(result.job_id).wait():
+            raise XeniumError("transcode job failed")
+    return dataset
+
+
+def _configure_channels(dataset: Dataset, n_files: int):
     # The staged names have one varying token; make it the channel axis
     # whatever the filename heuristics guessed for it.
     dry = dataset.configure(dry_run=True)
@@ -190,25 +208,19 @@ def upload_morphology(
         (
             v
             for v in dry.variables
-            if v.get("source") == "filename" and v.get("size") == len(files)
+            if v.get("source") == "filename" and v.get("size") == n_files
         ),
         None,
     )
     if variable is None:
         raise XeniumError(
-            f"no filename variable of size {len(files)}: {dry.variables}"
+            f"no filename variable of size {n_files}: {dry.variables}"
         )
-    result = dataset.configure(
+    return dataset.configure(
         assignments={
             "C": {"source": variable["source"], "guess": variable["guess"]},
         }
     )
-    logger.info("  channels: %s", result.config["channels"])
-    if result.job_id and wait:
-        logger.info("  waiting for the transcode job")
-        if not client.job(result.job_id).wait():
-            raise XeniumError("transcode job failed")
-    return dataset
 
 
 # --- polygons and the cell_index -> annotation id map ---
@@ -259,6 +271,7 @@ def upload_polygons(
         frame.image,
         frame.pixel_size,
     )
+    frame.require_pixel_size()
     if delete_tag:
         removed = delete_tagged(ds, delete_tag)
         logger.info("removed %d annotations tagged %r", removed, delete_tag)
@@ -361,17 +374,18 @@ def upload_gene_panel(
     keys = {symbol: safe_symbol(symbol) for symbol in genes}
     if len(set(keys.values())) < len(keys):
         raise XeniumError(f"{genes} repeat a gene once '.'/'$' are replaced")
+    chunks = _chunks(stop, chunk)
     prop = _prepare_property(ds, property_name, replace)
     started = time.time()
-    for c0, c1 in _chunks(stop, chunk):
+    for c0, c1 in chunks:
         buckets = [
             ({keys[symbol]: 0 for symbol in genes} if dense else {})
             for _ in range(c1 - c0)
         ]
         for symbol, (expressing, values) in gene_counts.items():
-            lo = np.searchsorted(expressing, c0)
-            hi = np.searchsorted(expressing, c1)
-            for cell, value in zip(expressing[lo:hi], values[lo:hi]):
+            # A mask, not searchsorted: CSR indices need not be sorted.
+            here = (expressing >= c0) & (expressing < c1)
+            for cell, value in zip(expressing[here], values[here]):
                 buckets[cell - c0][keys[symbol]] = int(value)
         _submit(
             ds,
@@ -416,8 +430,9 @@ def upload_clusters(
             int(label.max()),
             int((label == 0).sum()),
         )
+    chunks = _chunks(stop, chunk)
     prop = _prepare_property(ds, property_name, replace)
-    for c0, c1 in _chunks(stop, chunk):
+    for c0, c1 in chunks:
         _submit(
             ds,
             prop,
@@ -451,8 +466,9 @@ def upload_umap(
     """
     stop = _per_cell_stop(ds, bundle, cells, limit)
     embedding = load_embedding(embedding, bundle.number_of_cells)
+    chunks = _chunks(stop, chunk)
     prop = _prepare_property(ds, property_name, replace)
-    for c0, c1 in _chunks(stop, chunk):
+    for c0, c1 in chunks:
         _submit(
             ds,
             prop,
@@ -494,6 +510,7 @@ def upload_cell_types(
     ``bundle.cell_types`` returned. Returns the label counts.
     """
     stop = _per_cell_stop(ds, bundle, cells, limit)
+    chunks = _chunks(stop, chunk)
     base_tags = ["cell"] if base_tags is None else base_tags
     labels = _cell_type_labels(bundle, cell_types, complete=not reset)
     counts = Counter(labels)
@@ -507,7 +524,7 @@ def upload_cell_types(
         return base_tags if reset else [*base_tags, labels[cell]]
 
     started = time.time()
-    for c0, c1 in _chunks(stop, chunk):
+    for c0, c1 in chunks:
         ds.annotations.update_many(
             [
                 (cells.ids[c], {"tags": tags_for(c)})
@@ -763,14 +780,16 @@ def register_transcripts(
 
 
 def region_annotations(
-    geojson: dict,
+    geojson: dict | list,
     dataset_id: str,
     frame: ImageFrame,
     *,
     drawn_in: str,
     tag: str = REGION_TAG,
 ) -> list[Annotation]:
-    """Tagged polygon annotations from a GeoJSON FeatureCollection.
+    """Tagged polygon annotations from GeoJSON (a FeatureCollection, an
+    array of Features, one Feature or one geometry; see
+    ``geojson_features``).
 
     Each outer ring becomes one polygon tagged ``[<class>, tag, "region"]``
     (``"region"`` always kept, whatever ``tag`` is) — class first,
@@ -783,7 +802,7 @@ def region_annotations(
         raise XeniumError("the region tag can't be empty")
     to_pixels = frame.region_transform(drawn_in)
     annotations = []
-    for feature in geojson.get("features", []):
+    for feature in geojson_features(geojson):
         name = geojson_class_name(feature.get("properties") or {})
         # REGION_TAG is always kept (a custom ``tag`` is added to it):
         # without it every spatial analysis, and the cell match, would
@@ -791,8 +810,11 @@ def region_annotations(
         tags = list(
             dict.fromkeys(([name] if name else []) + [tag, REGION_TAG])
         )
-        for ring in geojson_outer_rings(feature.get("geometry") or {}):
-            xy = to_pixels(np.asarray(ring, dtype=np.float64)[:, :2])
+        geometry = feature.get("geometry") or {}
+        if not isinstance(geometry, dict):
+            raise XeniumError("a GeoJSON feature's geometry must be an object")
+        for ring in geojson_outer_rings(geometry):
+            xy = to_pixels(ring)
             if len(xy) >= 2 and np.allclose(xy[0], xy[-1]):
                 xy = xy[:-1]  # GeoJSON rings repeat their first vertex
             if len(xy) < 3:
@@ -826,7 +848,7 @@ def upload_regions(
     one (one that differs from the frame's own is an error).
     """
     frame = _frame_for(ds, frame).with_alignment(alignment)
-    if not isinstance(geojson, dict):
+    if isinstance(geojson, (str, os.PathLike)):
         try:
             geojson = json.loads(Path(geojson).read_text())
         except (OSError, ValueError) as exc:

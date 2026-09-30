@@ -39,6 +39,7 @@ from nimbusimage.xenium import (  # noqa: E402
     upload_cell_types,
     upload_clusters,
     upload_gene_panel,
+    upload_morphology,
     upload_polygons,
     upload_regions,
     upload_spatial_table,
@@ -361,8 +362,9 @@ class TestBundle:
     def test_cell_types_duplicate_raises(self, bundle):
         csv = bundle.directory / "dup.csv"
         csv.write_text(f"cell_id,group\n{CELL_IDS[0]},A\n{CELL_IDS[0]},B\n")
-        with pytest.raises(XeniumError, match="duplicate"):
-            bundle.cell_types(csv)
+        for complete in (True, False):
+            with pytest.raises(XeniumError, match="duplicate"):
+                bundle.cell_types(csv, complete=complete)
 
     def test_cell_groups_handles_zero_padding(self, bundle):
         labels = bundle.cell_groups()
@@ -404,6 +406,18 @@ class TestBundle:
             csv.write_text(f"cell_id,group\n{bad},T cell\n")
             with pytest.raises(XeniumError, match="not a cell of this bundle"):
                 bundle.cell_types(csv, complete=False)
+
+    def test_integer_cell_ids_are_a_xenium_error(self, bundle):
+        # Bundles before XOA 1.3 store plain integer ids; unsupported, but
+        # refused cleanly rather than crashing mid-join.
+        _write_zarr_zip(
+            bundle.directory / "cells.zarr.zip",
+            lambda group: _array(
+                group, "cell_id", np.arange(1, 5, dtype=np.uint32)
+            ),
+        )
+        with pytest.raises(XeniumError, match="XOA 1.3"):
+            bundle.cell_types(bundle.directory / "cell_types.csv")
 
     def test_cell_types_needs_its_columns(self, bundle):
         csv = bundle.directory / "cols.csv"
@@ -463,6 +477,53 @@ class TestMorphologyNames:
             staged_channel_file_name(0, "Alpha SMA_x")
             == "c00-Alpha-SMA-x.ome.tif"
         )
+
+
+class TestUploadMorphology:
+    """The dataset's configure calls, against the server's real answers for
+    one file (no filename variable) and several (one varying token)."""
+
+    def _client(self, n_files):
+        calls = []
+        variables = [{"source": "images", "guess": "Z", "size": 1}]
+        if n_files > 1:
+            variables.append({"source": "filename", "guess": "Z",
+                              "size": n_files})
+
+        class Dataset:
+            def upload(self, stage):
+                calls.append(("upload", sorted(os.listdir(stage))))
+
+            def configure(self, **kwargs):
+                calls.append(("configure", kwargs))
+                return SimpleNamespace(
+                    variables=variables, config={"channels": []}, job_id=None
+                )
+
+        client = SimpleNamespace(
+            create_dataset=lambda name, parent_folder_id=None: Dataset()
+        )
+        return client, calls
+
+    @pytest.mark.parametrize("n_files", [1, 2])
+    def test_one_or_several_channel_files(self, bundle, n_files):
+        tifffile = pytest.importorskip("tifffile")
+        focus = bundle.directory / "morphology_focus"
+        focus.mkdir()
+        for index in range(n_files):
+            tifffile.imwrite(
+                focus / f"morphology_focus_000{index}.ome.tif",
+                np.zeros((2, 2), np.uint16),
+            )
+        client, calls = self._client(n_files)
+        upload_morphology(client, bundle, "name")
+        configures = [kwargs for call, kwargs in calls if call == "configure"]
+        if n_files == 1:
+            assert configures == [{}]
+        else:
+            assert configures[-1] == {
+                "assignments": {"C": {"source": "filename", "guess": "Z"}}
+            }
 
 
 class TestUmap:
@@ -651,6 +712,7 @@ class TestPolygons:
             dict(polygon_set="membrane"),
             dict(limit=0),
             dict(batch=0),
+            dict(frame=ImageFrame("morphology", None)),
         ):
             with pytest.raises(XeniumError):
                 _upload(server, bundle, delete_tag="test", **bad)
@@ -904,6 +966,24 @@ class TestPerCellSteps:
         upload_gene_panel(ds, bundle, cells, ["Tex19.1"], dense=False)
         assert _values(server, "Gene Expression") == {
             "ann_2": {"Tex19_1": 4},  # cell 3's annotation
+        }
+
+    def test_gene_panel_does_not_assume_sorted_indices(
+        self, server, bundle, uploaded, monkeypatch
+    ):
+        # CSR does not require sorted indices within a row.
+        monkeypatch.setattr(
+            bundle,
+            "gene_counts",
+            lambda symbols: {"GENEA": (np.array([2, 0]), np.array([1, 3]))},
+        )
+        ds, cells = uploaded
+        upload_gene_panel(ds, bundle, cells, ["GENEA"], chunk=2)
+        # Cell 2 (the count of 1) has no polygon.
+        assert _values(server, "Gene Expression") == {
+            "ann_0": {"GENEA": 3},
+            "ann_1": {"GENEA": 0},
+            "ann_2": {"GENEA": 0},
         }
 
     def test_gene_panel_sparse_replace_and_limit(
@@ -1190,6 +1270,59 @@ class TestTranscriptsAndRegions:
         )
         assert annotation.tags == ["T", "roi", "region"]
 
+    @pytest.mark.parametrize(
+        "shape", ["collection", "array", "feature", "geometry"]
+    )
+    def test_regions_accept_every_geojson_shape(self, shape):
+        geometry = {
+            "type": "Polygon",
+            "coordinates": [[[0, 0], [4, 0], [4, 4]]],
+        }
+        feature = {
+            "type": "Feature",
+            "properties": {"name": "T"},
+            "geometry": geometry,
+        }
+        geojson = {
+            "collection": {"type": "FeatureCollection", "features": [feature]},
+            "array": [feature],
+            "feature": feature,
+            "geometry": geometry,
+        }[shape]
+        [annotation] = region_annotations(
+            geojson,
+            MORPH,
+            ImageFrame("morphology", None),
+            drawn_in="morphology",
+        )
+        assert annotation.coordinates[1] == {"x": 4.0, "y": 0.0}
+
+    @pytest.mark.parametrize(
+        "geojson",
+        [
+            "text",
+            3,
+            [3],
+            {"type": "Point", "coordinates": [0, 0]},
+            {"features": 3},
+            {"features": [{"geometry": {"type": "Polygon"}}]},
+            {"features": [{"geometry": {"type": "Polygon",
+                                        "coordinates": [["a"]]}}]},
+            {"type": "Polygon", "coordinates": [[[1], [2], [3]]]},
+            {"type": "Polygon", "coordinates": [[1, 2, 3]]},
+            [{"properties": {"classification": "T"}, "geometry": 3}],
+        ],
+    )
+    def test_malformed_geojson_is_a_xenium_error(self, server, geojson):
+        with pytest.raises(XeniumError):
+            upload_regions(
+                server.dataset(MORPH),
+                geojson,
+                ImageFrame("morphology", None),
+                drawn_in="morphology",
+            )
+        assert server.writes == []
+
     def test_regions_class_first_and_ring_closed(self):
         geojson = {
             "features": [
@@ -1229,11 +1362,15 @@ class TestTranscriptsAndRegions:
 
 
 PER_CELL_STEPS = {
-    "gene panel": lambda ds, b, c: upload_gene_panel(ds, b, c, ["GENEA"]),
-    "clusters": lambda ds, b, c: upload_clusters(ds, b, c),
-    "umap": lambda ds, b, c: upload_umap(ds, b, c, np.zeros((4, 2))),
-    "cell types": lambda ds, b, c: upload_cell_types(
-        ds, b, c, b.directory / "cell_types.csv"
+    "gene panel": lambda ds, b, c, **kw: upload_gene_panel(
+        ds, b, c, ["GENEA"], **kw
+    ),
+    "clusters": lambda ds, b, c, **kw: upload_clusters(ds, b, c, **kw),
+    "umap": lambda ds, b, c, **kw: upload_umap(
+        ds, b, c, np.zeros((4, 2)), **kw
+    ),
+    "cell types": lambda ds, b, c, **kw: upload_cell_types(
+        ds, b, c, b.directory / "cell_types.csv", **kw
     ),
 }
 
@@ -1259,6 +1396,19 @@ def test_per_cell_steps_refuse_wrong_cell_maps(server, bundle, step, wrong):
     with pytest.raises(XeniumError):
         PER_CELL_STEPS[step](server.dataset(target), bundle, cells)
     assert server.writes == [], f"{step} wrote before refusing {wrong} cells"
+
+
+@pytest.mark.parametrize("step", sorted(PER_CELL_STEPS))
+def test_per_cell_steps_check_the_chunk_before_writing(server, bundle, step):
+    """A bad chunk must fail before --replace deletes the old values."""
+    cells = _upload(server, bundle)
+    server.writes.clear()
+    options = {"chunk": 0}
+    if step != "cell types":
+        options["replace"] = True
+    with pytest.raises(XeniumError, match="chunk"):
+        PER_CELL_STEPS[step](server.dataset(MORPH), bundle, cells, **options)
+    assert server.writes == [], f"{step} wrote before refusing chunk=0"
 
 
 @pytest.mark.parametrize("step", sorted(PER_CELL_STEPS))
@@ -1316,6 +1466,8 @@ def cli(server, bundle, tmp_path, monkeypatch):
         )
     )
     (tmp_path / "bad.json").write_text("{not json")
+    # Valid JSON, not GeoJSON: must be an error message, not a traceback.
+    (tmp_path / "not_geojson.json").write_text("[3]")
     server.writes.clear()
 
     def run(argv):
@@ -1451,6 +1603,10 @@ BAD_INPUTS = {
         ["cell-types", "spatial-table"],
     ),
     "bad geojson": ({"--geojson": "{tmp}/bad.json"}, ["regions"]),
+    "json that is not geojson": (
+        {"--geojson": "{tmp}/not_geojson.json"},
+        ["regions"],
+    ),
     "microns without pixel size": (
         {"--drawn-in": "microns", "--cells": None, "--image": "morphology"},
         ["regions"],

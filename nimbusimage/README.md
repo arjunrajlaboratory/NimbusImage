@@ -242,7 +242,7 @@ importer's default) and off cell polygons. The end-to-end Xenium runbook is the
 
 ## Xenium ingest (`nimbusimage.xenium`)
 
-Loads a 10x Xenium output bundle (XOA 1–4, protein panels included) into NimbusImage:
+Loads a 10x Xenium output bundle (XOA 1.3–4, protein panels included) into NimbusImage:
 morphology images with stain-named channels, cell polygons, a gene panel, clusterings,
 a UMAP, cell types as tags, the full matrix as the spatial table, the transcript overlay,
 and pathology regions. Each step is a function and a `nimbusimage-xenium` subcommand.

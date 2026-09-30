@@ -185,7 +185,8 @@ class ImageFrame:
 
     # --- transforms
 
-    def _need_pixel_size(self) -> float:
+    def require_pixel_size(self) -> float:
+        """The pixel size; raises if this frame can't convert microns."""
         if self.pixel_size is None:
             raise XeniumError("converting microns needs a pixel size")
         return self.pixel_size
@@ -198,7 +199,7 @@ class ImageFrame:
 
     def microns_to_pixels(self, xy_um: np.ndarray) -> np.ndarray:
         """[K, 2] microns -> [K, 2] pixels of this image."""
-        xy = np.asarray(xy_um, dtype=float) / self._need_pixel_size()
+        xy = np.asarray(xy_um, dtype=float) / self.require_pixel_size()
         transform = self.transform
         return xy if transform is None else _apply_affine(transform, xy)
 
@@ -243,7 +244,7 @@ class ImageFrame:
             matrix = self.alignment
             return lambda xy: _apply_affine(matrix, xy)
         if drawn_in == "microns":
-            pixel_size = self._need_pixel_size()
+            pixel_size = self.require_pixel_size()
 
             def scale(xy):
                 return xy / pixel_size
@@ -259,16 +260,54 @@ class ImageFrame:
         return lambda xy: _apply_affine(transform, scale(xy))
 
 
+def geojson_features(geojson) -> list[dict]:
+    """The features of any GeoJSON shape a tool writes: a FeatureCollection,
+    a bare array of Features (QuPath without "Export as FeatureCollection"),
+    one Feature, or one bare geometry."""
+    if isinstance(geojson, list):
+        features = geojson
+    elif isinstance(geojson, dict) and "features" in geojson:
+        features = geojson["features"]
+    elif isinstance(geojson, dict) and geojson.get("type") == "Feature":
+        features = [geojson]
+    elif isinstance(geojson, dict) and "coordinates" in geojson:
+        features = [{"geometry": geojson}]
+    else:
+        raise XeniumError("the GeoJSON is not a feature or a collection")
+    if not isinstance(features, list) or not all(
+        isinstance(feature, dict) for feature in features
+    ):
+        raise XeniumError("GeoJSON features must be a list of objects")
+    return features
+
+
 def geojson_class_name(properties: dict) -> str | None:
     """QuPath's ``classification.name``, else a plain ``name``."""
-    classification = properties.get("classification") or {}
-    return classification.get("name") or properties.get("name")
+    if not isinstance(properties, dict):
+        return None
+    classification = properties.get("classification")
+    if isinstance(classification, dict) and classification.get("name"):
+        return str(classification["name"])
+    name = properties.get("name")
+    return str(name) if name else None
 
 
 def geojson_outer_rings(geometry: dict) -> Iterator[list]:
-    """Outer ring of a Polygon, or of every polygon of a MultiPolygon."""
-    if geometry.get("type") == "Polygon":
-        yield geometry["coordinates"][0]
-    elif geometry.get("type") == "MultiPolygon":
-        for polygon in geometry["coordinates"]:
-            yield polygon[0]
+    """Outer ring of a Polygon, or of every polygon of a MultiPolygon, as a
+    [K, 2] float array."""
+    kind = geometry.get("type")
+    if kind not in ("Polygon", "MultiPolygon"):
+        return
+    try:
+        polygons = geometry["coordinates"]
+        if kind == "Polygon":
+            rings = [polygons[0]]
+        else:
+            rings = [polygon[0] for polygon in polygons]
+        arrays = [np.asarray(ring, dtype=np.float64) for ring in rings]
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise XeniumError(f"malformed GeoJSON {kind}: {exc}") from exc
+    for xy in arrays:
+        if xy.ndim != 2 or xy.shape[1] < 2:
+            raise XeniumError(f"malformed GeoJSON {kind} ring")
+        yield xy[:, :2]
