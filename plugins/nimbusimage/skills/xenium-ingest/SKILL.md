@@ -50,7 +50,7 @@ ds = xenium.upload_morphology(client, bundle, "Lymph node")
 ids = xenium.upload_polygons(ds, bundle)          # cell_index order; keep them
 xenium.upload_gene_panel(ds, bundle, ids, ["CD3E", "MS4A1"])
 xenium.upload_clusters(ds, bundle, ids)
-xenium.upload_umap(ds, ids, xenium.compute_umap(bundle))
+xenium.upload_umap(ds, bundle, ids, xenium.compute_umap(bundle))
 xenium.upload_cell_types(ds, bundle, ids, "cell_types.csv")
 ds.spatial.upload_and_register(xenium.build_spatial_table(
     bundle, ids, "spatial.zarr.zip", dataset_id=ds.id, cell_types="cell_types.csv"))
@@ -196,7 +196,8 @@ it (`--ids`; `xenium.load_annotation_ids` re-derives and verifies it when absent
 spot-checks a cached file against the dataset, so the H&E dataset's file can't be used
 for the morphology dataset by mistake — both have the same cell count). Upload is fast; viewer rendering at this scale is handled by NimbusImage's lazy
 annotation loading. Nucleus polygons are `--polygon-set nucleus` (more nuclei than cells
-is normal: multinucleate cells).
+is normal: multinucleate cells). They are for display only: every later step joins per-cell
+data by `cell_index`, so run those on a dataset's cell polygons.
 
 ## 6. Per-cell data as nested properties (`properties`, `xenium.upload_gene_panel` / `upload_clusters` / `upload_umap`)
 

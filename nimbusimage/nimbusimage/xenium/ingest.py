@@ -276,7 +276,6 @@ def fetch_annotation_ids(
     *,
     alignment=None,
     pixel_size: float | None = None,
-    polygon_set: str = CELL_POLYGON_SET,
     page: int = 20000,
 ) -> np.ndarray:
     """Annotation ids in ``cell_index`` order, VERIFIED against cells.zarr.
@@ -287,13 +286,14 @@ def fetch_annotation_ids(
     annotation's first vertex is checked against the vertex recomputed from
     cells.zarr. Only valid for a dataset whose every polygon came from one
     full ``upload_polygons`` (no skipped cells, no other polygons first).
-    Pass the ``alignment``, ``pixel_size`` and ``polygon_set`` that upload
-    used.
+    Pass the ``alignment`` and ``pixel_size`` the upload used. Cell polygons
+    only: every per-cell step indexes ``ids`` by ``cell_index``, which a
+    nucleus upload does not follow (a cell can have several nuclei).
     """
     inverse = inverse_alignment(alignment)
     pixel_size = pixel_size or bundle.pixel_size
-    n_vertices, vertices = bundle.polygons(polygon_set)
-    n_cells = len(n_vertices)
+    first_um = bundle.first_vertices()
+    n_cells = len(first_um)
     ids = np.empty(n_cells, dtype=object)
     firsts = np.empty((n_cells, 2))
     offset = 0
@@ -317,13 +317,13 @@ def fetch_annotation_ids(
         raise XeniumError(
             f"only {offset} of {n_cells} annotations exist in the dataset"
         )
-    expected = microns_to_pixels(vertices[:, :2], pixel_size, inverse)
+    expected = microns_to_pixels(first_um, pixel_size, inverse)
     mismatches = int(np.sum(np.any(np.abs(expected - firsts) > 0.01, axis=1)))
     if mismatches:
         raise XeniumError(
             f"{mismatches} annotations' first vertex != their cell's: the "
             "polygons are not in cell_index order, or were uploaded with a "
-            "different alignment, pixel size or polygon set"
+            "different alignment or pixel size, or as nuclei"
         )
     logger.info(
         "  verified %s annotations map to their cell_index", f"{n_cells:,}"
@@ -338,7 +338,6 @@ def load_annotation_ids(
     *,
     alignment=None,
     pixel_size: float | None = None,
-    polygon_set: str = CELL_POLYGON_SET,
     verify_sample: int = 50,
 ) -> np.ndarray:
     """``ids`` from a cached ``.npy`` when present and complete; otherwise
@@ -350,13 +349,13 @@ def load_annotation_ids(
     same cell count, so the other dataset's file passes a length check.
     """
     ids_path = Path(ids_path) if ids_path else None
-    n_cells = len(bundle.polygons(polygon_set)[0])
+    n_cells = bundle.number_of_cells
     if ids_path and ids_path.exists():
         ids = np.load(ids_path, allow_pickle=True)
         if len(ids) == n_cells:
             _verify_ids_sample(
                 ds, bundle, ids, ids_path, alignment, pixel_size,
-                polygon_set, verify_sample,
+                verify_sample,
             )
             logger.info("  using cached annotation ids from %s", ids_path)
             return ids
@@ -367,8 +366,7 @@ def load_annotation_ids(
             n_cells,
         )
     ids = fetch_annotation_ids(
-        ds, bundle, alignment=alignment, pixel_size=pixel_size,
-        polygon_set=polygon_set,
+        ds, bundle, alignment=alignment, pixel_size=pixel_size
     )
     if ids_path:
         np.save(ids_path, ids)
@@ -377,9 +375,11 @@ def load_annotation_ids(
 
 
 def _verify_ids_sample(
-    ds, bundle, ids, ids_path, alignment, pixel_size, polygon_set, sample
+    ds, bundle, ids, ids_path, alignment, pixel_size, sample
 ) -> None:
     present = [c for c in range(len(ids)) if ids[c] is not None]
+    if not present:
+        raise XeniumError(f"{ids_path} holds no annotation ids")
     rng = np.random.default_rng(0)
     cells = rng.choice(present, size=min(sample, len(present)), replace=False)
     found = {
@@ -392,9 +392,8 @@ def _verify_ids_sample(
             f"{len(missing)} of {len(cells)} sampled ids in {ids_path} are "
             f"not annotations of dataset {ds.id} (another dataset's ids?)"
         )
-    n_vertices, vertices = bundle.polygons(polygon_set)
     expected = microns_to_pixels(
-        vertices[cells, :2],
+        bundle.first_vertices(cells),
         pixel_size or bundle.pixel_size,
         inverse_alignment(alignment),
     )
@@ -527,6 +526,7 @@ def upload_clusters(
 
 def upload_umap(
     ds: Dataset,
+    bundle: XeniumBundle,
     ids: np.ndarray,
     embedding: np.ndarray | str | os.PathLike,
     *,
@@ -537,17 +537,11 @@ def upload_umap(
 ) -> Property:
     """A 2-D embedding (``compute_umap``) as ``{"x": ..., "y": ...}``.
 
-    ``embedding`` covers the whole bundle (row i = cell_index i); ``ids``
+    ``embedding`` (an array or ``.npy``) must cover exactly this bundle's
+    cells (row i = cell_index i), which catches another run's file; ``ids``
     may be shorter, e.g. from ``upload_polygons(..., limit=2000)``.
     """
-    if not isinstance(embedding, np.ndarray):
-        embedding = load_embedding(embedding, len(ids))
-    if embedding.ndim != 2 or embedding.shape[1] != 2:
-        raise XeniumError(f"embedding is {embedding.shape}, expected (N, 2)")
-    if len(embedding) < len(ids):
-        raise XeniumError(
-            f"embedding has {len(embedding)} rows for {len(ids)} ids"
-        )
+    embedding = load_embedding(embedding, bundle.number_of_cells)
     prop = _prepare_property(ds, property_name, replace)
     stop = _stop(ids, limit)
     for c0, c1 in _chunks(stop, chunk):
@@ -769,18 +763,20 @@ def register_transcripts(
     bundle: XeniumBundle,
     *,
     alignment=None,
+    pixel_size: float | None = None,
     item_id: str | None = None,
 ) -> dict:
     """Upload ``transcripts.zarr.zip`` as shipped and register it.
 
     The file is already a level-of-detail pyramid, so nothing is rebuilt;
     registration records the bundle's pixel size and, for the H&E dataset
-    (``alignment``), the inverse alignment as the transform. ``item_id``
+    (``alignment``), the inverse alignment as the transform; pass the
+    ``pixel_size`` override the polygons used, if any. ``item_id``
     registers an item already in the folder and skips the (slow) upload.
     The alignment and pixel size are read first, so a bad one fails before
     a multi-GB upload.
     """
-    pixel_size = bundle.pixel_size
+    pixel_size = pixel_size or bundle.pixel_size
     transform = inverse_alignment(alignment)
     if item_id is None:
         path = bundle.transcripts_zarr

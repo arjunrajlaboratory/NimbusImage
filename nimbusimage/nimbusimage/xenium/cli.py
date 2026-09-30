@@ -166,12 +166,13 @@ def cmd_properties(args) -> None:
     if clusters is not None:
         ingest.upload_clusters(ds, bundle, ids, labels=clusters, **common)
     if embedding is not None:
-        ingest.upload_umap(ds, ids, embedding, **common)
+        ingest.upload_umap(ds, bundle, ids, embedding, **common)
 
 
 def cmd_cell_types(args) -> None:
     bundle = XeniumBundle(args.bundle_dir)
-    labels = bundle.cell_types(args.cell_types)
+    # --reset writes only --base-tags, so a CSV with gaps is fine there.
+    labels = bundle.cell_types(args.cell_types, complete=not args.reset)
     ds, ids = _dataset_ids(args, bundle)
     ingest.upload_cell_types(
         ds,
@@ -227,6 +228,7 @@ def cmd_transcripts(args) -> None:
         ds,
         XeniumBundle(args.bundle_dir),
         alignment=args.alignment,
+        pixel_size=args.pixel_size,
         item_id=args.item,
     )
     logger.info(
@@ -243,7 +245,9 @@ def cmd_regions(args) -> None:
     if args.frame == "microns":
         if args.bundle_dir is None:
             raise XeniumError("--frame microns needs --bundle-dir")
-        pixel_size = XeniumBundle(args.bundle_dir).pixel_size
+        pixel_size = (
+            args.pixel_size or XeniumBundle(args.bundle_dir).pixel_size
+        )
     ingest.upload_regions(
         _connect().dataset(args.dataset),
         args.geojson,
@@ -452,6 +456,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="register this already-uploaded item instead",
     )
+    p.add_argument(
+        "--pixel-size",
+        type=float,
+        default=None,
+        help="um/px override, as given to polygons "
+        "(default: experiment.xenium)",
+    )
     p.set_defaults(func=cmd_transcripts)
 
     p = sub.add_parser("regions", help="GeoJSON regions as tagged polygons")
@@ -484,6 +495,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="for --frame microns: reads pixel_size",
     )
     p.add_argument("--tag", default=ingest.REGION_TAG)
+    p.add_argument(
+        "--pixel-size",
+        type=float,
+        default=None,
+        help="um/px override, as given to polygons "
+        "(default: experiment.xenium)",
+    )
     p.set_defaults(func=cmd_regions)
     return parser
 

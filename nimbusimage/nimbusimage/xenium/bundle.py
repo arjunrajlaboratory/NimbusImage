@@ -207,6 +207,21 @@ class XeniumBundle:
         polygons = group["polygon_sets"][str(names.index(polygon_set))]
         return polygons["num_vertices"][:], polygons["vertices"][:]
 
+    def first_vertices(self, cells=None) -> np.ndarray:
+        """[K, 2] first vertex (MICRONS) of each CELL polygon, or of the
+        ``cells`` listed. Reads only the first two vertex columns, not the
+        whole padded vertex array."""
+        self.require(self.cells_zarr)
+        group = open_zarr_zip(self.cells_zarr)
+        names = list(group.attrs["polygon_set_names"])
+        vertices = group["polygon_sets"][
+            str(names.index(CELL_POLYGON_SET))
+        ]["vertices"]
+        rows = slice(None) if cells is None else np.asarray(cells, dtype=int)
+        return np.asarray(
+            vertices.get_orthogonal_selection((rows, slice(0, 2)))
+        )
+
     def cell_index_by_id(self) -> dict[tuple[int, int], int]:
         """Packed zarr ``cell_id`` -> ``cell_index``."""
         packed = open_zarr_zip(self.cells_zarr)["cell_id"][:]

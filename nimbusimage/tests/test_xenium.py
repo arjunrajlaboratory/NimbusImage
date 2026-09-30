@@ -42,6 +42,11 @@ CELL_VERTICES = [
     [(20, 20), (21, 21)],
     [(30, 30), (34, 30), (34, 34), (30, 34), (32, 36)],
 ]
+# Nuclei sit inside their cells: a distinct first vertex, so nucleus ids
+# can't pass as cell ids.
+NUCLEUS_VERTICES = [
+    [(x + 1, y + 1) for x, y in polygon] for polygon in CELL_VERTICES
+]
 CELL_IDS = ["aaaaaaaa-1", "aaaaaaab-1", "aaaaaaba-1", "aaaaaabb-1"]
 # feature x cell counts (gene-major, like the 10x matrix)
 FEATURES = [
@@ -90,7 +95,7 @@ def bundle(tmp_path) -> XeniumBundle:
         group.attrs["number_cells"] = len(CELL_VERTICES)
         group.attrs["polygon_set_names"] = ["nucleus", "cell"]
         sets = group.create_group("polygon_sets")
-        for index, polygons in enumerate([CELL_VERTICES, CELL_VERTICES]):
+        for index, polygons in enumerate([NUCLEUS_VERTICES, CELL_VERTICES]):
             n_vertices, vertices = _polygon_arrays(polygons)
             polygon_set = sets.create_group(str(index))
             _array(polygon_set, "num_vertices", n_vertices)
@@ -550,6 +555,36 @@ class TestAnnotationIds:
         with pytest.raises(XeniumError, match="do not match"):
             load_annotation_ids(ds, bundle, cache)
 
+    def test_nucleus_uploads_are_not_accepted_as_cell_ids(
+        self, bundle, tmp_path
+    ):
+        """Per-cell steps index ids by cell_index; nucleus order is not it."""
+        uploaded = FakeDataset()
+        upload_polygons(uploaded, bundle, polygon_set="nucleus")
+        firsts = [
+            (a.coordinates[0]["x"], a.coordinates[0]["y"])
+            for a in uploaded.created
+        ]
+        firsts.insert(2, (0.0, 0.0))  # a fourth (degenerate) polygon
+        with pytest.raises(XeniumError, match="as nuclei"):
+            fetch_annotation_ids(_listing_dataset(firsts), bundle)
+
+    def test_first_vertices_match_the_polygons(self, bundle):
+        _, vertices = bundle.polygons()
+        np.testing.assert_array_equal(
+            bundle.first_vertices(), vertices[:, :2]
+        )
+        np.testing.assert_array_equal(
+            bundle.first_vertices([3, 1]), vertices[[3, 1], :2]
+        )
+
+    def test_all_empty_cached_ids_are_a_xenium_error(self, bundle, tmp_path):
+        cache = tmp_path / "ids.npy"
+        np.save(cache, np.array([None] * 4, dtype=object))
+        ds = _listing_dataset([_expected_first_vertex(c) for c in range(4)])
+        with pytest.raises(XeniumError, match="holds no annotation ids"):
+            load_annotation_ids(ds, bundle, cache)
+
     def test_fetch_honours_a_pixel_size_override(self, bundle):
         firsts = [
             tuple(v * PIXEL_SIZE / 0.25 for v in _expected_first_vertex(c))
@@ -598,18 +633,27 @@ class TestProperties:
     def test_umap_accepts_limit_truncated_ids(self, bundle):
         ds = FakeDataset()
         embedding = np.arange(8, dtype=float).reshape(4, 2)
-        upload_umap(ds, ALL_IDS[:2], embedding)  # e.g. polygons --limit 2
+        upload_umap(ds, bundle, ALL_IDS[:2], embedding)  # polygons --limit 2
         assert ds.submitted("prop_UMAP") == {
             "ann_0": {"x": 0.0, "y": 1.0}, "ann_1": {"x": 2.0, "y": 3.0},
         }
 
+    def test_umap_from_a_file_with_limit_truncated_ids(self, bundle, tmp_path):
+        ds = FakeDataset()
+        path = tmp_path / "umap_xy.npy"
+        np.save(path, np.arange(8, dtype=np.float32).reshape(4, 2))
+        upload_umap(ds, bundle, ALL_IDS[:2], path)
+        assert ds.submitted("prop_UMAP")["ann_1"] == {"x": 2.0, "y": 3.0}
+
     def test_umap_shape_checked(self, bundle):
         ds = FakeDataset()
-        with pytest.raises(XeniumError, match="3 rows for 4 ids"):
-            upload_umap(ds, ALL_IDS, np.zeros((3, 2)))
-        with pytest.raises(XeniumError, match=r"expected \(N, 2\)"):
-            upload_umap(ds, ALL_IDS, np.zeros((4, 3)))
-        upload_umap(ds, ALL_IDS, np.arange(8, dtype=float).reshape(4, 2))
+        for wrong in [(3, 2), (4, 3), (5, 2)]:  # 5 rows: another bundle's
+            with pytest.raises(XeniumError, match=r"expected \(4, 2\)"):
+                upload_umap(ds, bundle, ALL_IDS, np.zeros(wrong))
+        ds.properties.submit_values.assert_not_called()
+        upload_umap(
+            ds, bundle, ALL_IDS, np.arange(8, dtype=float).reshape(4, 2)
+        )
         assert ds.submitted("prop_UMAP")["ann_3"] == {"x": 6.0, "y": 7.0}
 
 
@@ -768,6 +812,11 @@ class TestTranscripts:
             register_transcripts(ds, fresh)
         ds.spatial.upload_transcripts.assert_not_called()
 
+    def test_pixel_size_override(self, bundle):
+        ds = FakeDataset()
+        register_transcripts(ds, bundle, pixel_size=0.25, item_id="item_1")
+        assert ds.spatial.register_transcripts.call_args.args[1] == 0.25
+
     def test_uploads_when_no_item(self, bundle):
         ds = FakeDataset()
         (bundle.directory / "transcripts.zarr.zip").write_bytes(b"x")
@@ -810,6 +859,24 @@ class TestCli:
         assert code == 1
         assert "--what is empty" in capsys.readouterr().err
         client.dataset.assert_not_called()
+
+    def test_cell_types_reset_accepts_a_csv_with_gaps(
+        self, bundle, monkeypatch, tmp_path
+    ):
+        partial = tmp_path / "partial.csv"
+        partial.write_text(f"cell_id,group\n{CELL_IDS[0]},T cell\n")
+        ds = _listing_dataset([_expected_first_vertex(c) for c in range(4)])
+        ds.annotations.get_many.side_effect = _tagged(["cell"])
+        client = MagicMock()
+        client.dataset.return_value = ds
+        monkeypatch.setattr("nimbusimage.xenium.cli._connect", lambda: client)
+        argv = ["cell-types", "--bundle-dir", str(bundle.directory),
+                "--dataset", "ds_1", "--cell-types", str(partial)]
+        assert cli_main(argv) == 1  # tagging needs every cell's label
+        ds.annotations.update_many.assert_not_called()
+        assert cli_main(argv + ["--reset"]) == 0
+        updates = ds.annotations.update_many.call_args.args[0]
+        assert all(change == {"tags": ["cell"]} for _, change in updates)
 
     def test_polygons_saves_ids(self, bundle, monkeypatch, tmp_path):
         ds = FakeDataset()
