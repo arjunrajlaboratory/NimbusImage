@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+import zarr
 
 from nimbusimage.models import Annotation, Location
 from nimbusimage.xenium.bundle import (
@@ -656,18 +657,27 @@ def build_spatial_table(
 
 
 def spatial_table_dataset(path: str | os.PathLike) -> str:
-    """The dataset a ``build_spatial_table`` file was built for
-    (``uns/nimbus/datasetId``) — its join keys are that dataset's ids."""
-    from nimbusimage.xenium.bundle import open_zarr_zip
-
+    """The dataset a spatial table was built for — its join keys are that
+    dataset's annotation ids. ``build_spatial_table`` records it as the
+    AnnData array ``uns/nimbus/datasetId``; the SpatialPlugin's recompute
+    as the attribute ``uns.attrs["nimbus"]["datasetId"]``. Both count."""
     try:
-        group = open_zarr_zip(path)
-        return str(group["uns"]["nimbus"]["datasetId"][()])
-    except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
+        store = zarr.storage.ZipStore(str(path), mode="r")
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        raise XeniumError(f"{path} is not a spatial table: {exc}") from exc
+    try:
+        uns = zarr.open_group(store=store, mode="r")["uns"]
+        recorded = (uns.attrs.get("nimbus") or {}).get("datasetId")
+        if recorded is None:
+            recorded = uns["nimbus"]["datasetId"][()]
+        return str(recorded)
+    except (KeyError, ValueError) as exc:
         raise XeniumError(
-            f"{path} is not a spatial table built by build_spatial_table "
-            f"(no uns/nimbus/datasetId): {exc}"
+            f"{path} is not a spatial table that records its dataset "
+            f"(uns/nimbus/datasetId): {exc}"
         ) from exc
+    finally:
+        store.close()
 
 
 def upload_spatial_table(ds: Dataset, path: str | os.PathLike) -> dict:
@@ -730,8 +740,9 @@ def region_annotations(
 ) -> list[Annotation]:
     """Tagged polygon annotations from a GeoJSON FeatureCollection.
 
-    Each outer ring becomes one polygon tagged ``[<class>, tag]`` — class
-    first, because GeoJSON export writes the first tag as QuPath's
+    Each outer ring becomes one polygon tagged ``[<class>, tag, "region"]``
+    (``"region"`` always kept, whatever ``tag`` is) — class first,
+    because GeoJSON export writes the first tag as QuPath's
     ``classification``. ``drawn_in`` is what the file's coordinates are
     (``"he"``, ``"morphology"`` px or ``"microns"``); ``frame`` is the
     dataset's (see ``ImageFrame.region_transform``).
@@ -740,7 +751,12 @@ def region_annotations(
     annotations = []
     for feature in geojson.get("features", []):
         name = geojson_class_name(feature.get("properties") or {})
-        tags = ([name] if name else []) + [tag]
+        # REGION_TAG is always kept (a custom ``tag`` is added to it):
+        # without it every spatial analysis, and the cell match, would
+        # treat the polygon as a cell.
+        tags = ([name] if name else []) + list(
+            dict.fromkeys([tag, REGION_TAG])
+        )
         for ring in geojson_outer_rings(feature.get("geometry") or {}):
             xy = to_pixels(np.asarray(ring, dtype=np.float64)[:, :2])
             if len(xy) >= 2 and np.allclose(xy[0], xy[-1]):
@@ -787,7 +803,9 @@ def upload_regions(
     if not annotations:
         raise XeniumError("no polygons in the GeoJSON")
     created = ds.annotations.create_many(annotations)
-    classes = sorted({t for a in annotations for t in a.tags} - {tag})
+    classes = sorted(
+        {t for a in annotations for t in a.tags} - {tag, REGION_TAG}
+    )
     logger.info(
         "created %d region polygons tagged %r (%s)",
         len(created),

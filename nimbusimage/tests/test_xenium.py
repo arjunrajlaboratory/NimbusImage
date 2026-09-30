@@ -14,6 +14,7 @@ invariants at a time; the tables hold them for every step and input.
 """
 
 import json
+import os
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -768,6 +769,20 @@ class TestOpenCells:
             CellMap.read(hostile)
         assert not marker.exists(), "a pickle in a cells file was executed"
 
+    def test_a_damaged_compressed_npz_is_a_xenium_error(self, tmp_path):
+        """Third-party npz files may be deflated: damage raises zlib.error."""
+        path = tmp_path / "compressed.npz"
+        meta = {"format": 1, "datasetId": MORPH, "polygonSet": "cell",
+                "frame": ImageFrame("morphology", 1).to_dict()}
+        np.savez_compressed(
+            path, ids=np.array(["a"] * 500), meta=np.array(json.dumps(meta))
+        )
+        data = bytearray(path.read_bytes())
+        data[80:120] = b"\xff" * 40
+        path.write_bytes(bytes(data))
+        with pytest.raises(XeniumError, match="not a cells file"):
+            CellMap.read(path)
+
     def test_a_damaged_cells_file_is_a_xenium_error(
         self, server, bundle, tmp_path
     ):
@@ -1053,6 +1068,41 @@ class TestTranscriptsAndRegions:
         upload_spatial_table(server.dataset(MORPH), table)
         with pytest.raises(XeniumError, match="not a spatial table"):
             upload_spatial_table(server.dataset(MORPH), bundle.cells_zarr)
+
+    def test_a_recomputed_table_records_its_dataset_as_attrs(
+        self, server, tmp_path
+    ):
+        """The SpatialPlugin's recompute writes uns.attrs["nimbus"]."""
+
+        def recomputed(group):
+            group.create_group("uns").attrs["nimbus"] = {"datasetId": MORPH}
+
+        path = tmp_path / "recomputed.zarr.zip"
+        _write_zarr_zip(path, recomputed)
+        with pytest.raises(XeniumError, match="built for dataset ds_morph"):
+            upload_spatial_table(server.dataset(OTHER), path)
+        upload_spatial_table(server.dataset(MORPH), path)
+
+    def test_a_custom_region_tag_keeps_region(self):
+        geojson = {
+            "features": [
+                {
+                    "properties": {"name": "T"},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[0, 0], [4, 0], [4, 4]]],
+                    },
+                }
+            ]
+        }
+        [annotation] = region_annotations(
+            geojson,
+            MORPH,
+            ImageFrame("morphology", None),
+            drawn_in="morphology",
+            tag="roi",
+        )
+        assert annotation.tags == ["T", "roi", "region"]
 
     def test_regions_class_first_and_ring_closed(self):
         geojson = {
@@ -1350,9 +1400,15 @@ BAD_INPUTS = {
         {"--cells": None, "--alignment": "{tmp}/diag.csv", "--drawn-in": "he"},
         ["regions"],
     ),
-    "read-only existing cells-out": (
-        {"--cells-out": "{tmp}/readonly.npz"},
-        ["polygons"],
+    **(
+        {}
+        if os.geteuid() == 0  # root ignores file permissions
+        else {
+            "read-only existing cells-out": (
+                {"--cells-out": "{tmp}/readonly.npz"},
+                ["polygons"],
+            )
+        }
     ),
     "unwritable cells-out": (
         {"--cells-out": "{tmp}/no_such_dir/cells.npz"},
@@ -1447,6 +1503,14 @@ class TestCli:
         assert cli(argv) == 0
         region = server.dataset(MORPH).annotations.list(tags=["region"])[0]
         assert region.coordinates[1] == {"x": 18.0, "y": 0.0}  # M applied
+
+    def test_regions_pixel_size_alone_needs_no_image(self, cli, server):
+        """Only --alignment is ambiguous for regions."""
+        argv = _edit(
+            CLI_COMMANDS["regions"],
+            {"--drawn-in": "microns", "--cells": None, "--pixel-size": "0.5"},
+        )
+        assert cli(argv) == 0
 
     def test_regions_microns_with_a_pixel_size_needs_no_bundle(
         self, cli, server

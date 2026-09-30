@@ -231,7 +231,8 @@ the dataset before use, so the H&E dataset's file can't be used for the morpholo
 dataset by mistake — both have the same cell count. Files written by the older
 `--ids-out` (a bare id array) still work for the per-cell steps, spot-checked with
 `--alignment`/`--pixel-size`; they save no frame, so `transcripts` and `regions` refuse
-them — pass those the frame flags, or re-save the map with `open_cells`.
+them — pass those the frame flags, or write a full map once with
+`xenium.open_cells(ds, bundle, "cells.npz")` (a new path: it re-derives and saves).
 Upload is fast; viewer rendering at this scale is handled by NimbusImage's lazy
 annotation loading. Nucleus polygons are `--polygon-set nucleus` (more nuclei than cells
 is normal: multinucleate cells). They are for display only: every later step joins per-cell
@@ -355,7 +356,8 @@ composition by type and mean expression of picked genes. From Python:
 `nimbusimage-xenium regions --drawn-in {he,morphology,microns} --target {he,morphology}`
 (with the dataset's `--cells`, whose frame it reuses; `--alignment` adds the matrix a
 morphology frame lacks, for H&E-drawn regions) transforms it (H&E→morphology applies `M`; morphology→H&E `M⁻¹`; microns divide by
-`pixel_size`) and uploads each outer ring as a polygon tagged `[<class>, "region"]` — class
+`pixel_size`) and uploads each outer ring as a polygon tagged `[<class>, "region"]` (a custom `--tag`
+is added; `region` is always kept) — class
 first, because GeoJSON export writes the first tag as QuPath's `classification`.
 
 In the app the same file goes in through **Import/export → Import GeoJSON…** (preview,

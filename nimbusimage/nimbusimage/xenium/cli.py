@@ -102,10 +102,10 @@ def _stated_frame(args, bundle, *, infer_image=True) -> ImageFrame | None:
     pixel_size = getattr(args, "pixel_size", None)
     if image is None and alignment is None and pixel_size is None:
         return None
-    if image is None and not infer_image:
+    if image is None and alignment is not None and not infer_image:
         raise XeniumError(
-            "--image is required without --cells: say which image the "
-            "dataset shows (an --alignment alone could mean either)"
+            "--image is required with --alignment but no --cells: for "
+            "regions the alignment alone could mean either image"
         )
     return ImageFrame.create(
         bundle=bundle, alignment=alignment, pixel_size=pixel_size, image=image
@@ -381,9 +381,10 @@ def _add_frame_args(parser, *, saved: bool) -> None:
         "--alignment",
         type=Path,
         default=None,
-        help="*_he_imagealignment.csv (H&E px -> morphology px); makes the "
-        "dataset's frame the H&E image"
-        + ("; not needed with a saved --cells" if saved else ""),
+        help="*_he_imagealignment.csv (H&E px -> morphology px): marks the "
+        "dataset as the H&E image (for regions: with --image, or added to "
+        "a saved morphology --cells frame for H&E-drawn regions)"
+        + ("; otherwise not needed with a saved --cells" if saved else ""),
     )
     parser.add_argument(
         "--pixel-size",
@@ -418,8 +419,9 @@ def _add_image_arg(parser, *aliases) -> None:
         dest="image",
         choices=IMAGES,
         default=None,
-        help="which image the dataset shows, when there is no --cells "
-        "(--alignment implies he)",
+        help="which image the dataset shows, when there is no --cells; "
+        "required for regions with --alignment (for transcripts, "
+        "--alignment alone implies he)",
     )
 
 
@@ -631,7 +633,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="for --drawn-in microns: reads pixel_size",
     )
-    p.add_argument("--tag", default=ingest.REGION_TAG)
+    p.add_argument(
+        "--tag",
+        default=ingest.REGION_TAG,
+        help="extra tag for the regions; 'region' is always kept, since "
+        "spatial analyses treat polygons without it as cells",
+    )
     p.set_defaults(func=cmd_regions)
     return parser
 
