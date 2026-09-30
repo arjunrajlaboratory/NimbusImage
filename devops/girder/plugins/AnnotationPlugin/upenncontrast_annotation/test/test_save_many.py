@@ -1,6 +1,9 @@
+import json
 import threading
 
 import pytest
+from bson.objectid import ObjectId
+from pytest_girder.assertions import assertStatus
 
 from girder.exceptions import ValidationException
 from pymongo.errors import BulkWriteError
@@ -229,3 +232,95 @@ class TestConcurrentDocumentReplacement:
             assert errors == []
             stored = list(Annotation().find({"_id": {"$in": ids}}))
             assert len(stored) == len(ids)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestPropertyValueDatasetBinding:
+    """Writes are authorized per datasetId, so each annotation must belong
+    to the dataset its entry names (Codex P1 on PR #1358)."""
+
+    def _victim(self, admin):
+        # Admin's private dataset holding an annotation with a stored value.
+        folder = utilities.createPrivateFolder(
+            admin, "victim", upenn_utilities.datasetMetadata
+        )
+        annotation = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        AnnotationPropertyValues().appendValues(
+            {"propA": 1}, annotation["_id"], folder["_id"]
+        )
+        return folder, annotation
+
+    def _storedValues(self, annotation):
+        return [
+            doc["values"] for doc in AnnotationPropertyValues().find(
+                {"annotationId": annotation["_id"]})
+        ]
+
+    def testMultipleRejectsAnnotationFromAnotherDataset(
+        self, admin, user, server
+    ):
+        _, annotation = self._victim(admin)
+        own = utilities.createFolder(
+            user, "own", upenn_utilities.datasetMetadata
+        )
+        resp = server.request(
+            path="/annotation_property_values/multiple",
+            method="POST",
+            user=user,
+            body=json.dumps([{
+                "annotationId": str(annotation["_id"]),
+                "datasetId": str(own["_id"]),
+                "values": {"propA": 666},
+            }]),
+            type="application/json",
+        )
+        assertStatus(resp, 400)
+        assert "does not belong to dataset" in resp.json["message"]
+        assert self._storedValues(annotation) == [{"propA": 1}]
+
+    def testSingleRejectsAnnotationFromAnotherDataset(
+        self, admin, user, server
+    ):
+        _, annotation = self._victim(admin)
+        own = utilities.createFolder(
+            user, "own", upenn_utilities.datasetMetadata
+        )
+        resp = server.request(
+            path="/annotation_property_values",
+            method="POST",
+            user=user,
+            body=json.dumps({"propA": 666}),
+            type="application/json",
+            params={
+                "annotationId": str(annotation["_id"]),
+                "datasetId": str(own["_id"]),
+            },
+        )
+        assertStatus(resp, 400)
+        assert "does not belong to dataset" in resp.json["message"]
+        assert self._storedValues(annotation) == [{"propA": 1}]
+
+    def testRejectsNonexistentAnnotation(self, admin):
+        folder, _ = _makeAnnotations(admin, 1)
+        with pytest.raises(ValidationException) as excinfo:
+            AnnotationPropertyValues().appendMultipleValues([{
+                "annotationId": ObjectId(),
+                "datasetId": folder["_id"],
+                "values": {"propA": 1},
+            }])
+        assert "does not belong to dataset" in str(excinfo.value)
+
+    def testRejectedBatchWritesNothing(self, admin):
+        folder, annotations = _makeAnnotations(admin, 2)
+        other, _ = self._victim(admin)
+        with pytest.raises(ValidationException):
+            AnnotationPropertyValues().appendMultipleValues([
+                {"annotationId": annotations[0]["_id"],
+                 "datasetId": folder["_id"], "values": {"propB": 2}},
+                {"annotationId": annotations[1]["_id"],
+                 "datasetId": other["_id"], "values": {"propB": 2}},
+            ])
+        assert self._storedValues(annotations[0]) == []

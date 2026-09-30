@@ -410,6 +410,12 @@ sibling's values.
 - **`BulkWriteError.details` / `WriteError.details` are dicts.** Format them
   (`"%s" % ...`) and `raise ... from e`; `"msg" + e.details` turned the real
   error into a `TypeError` 500 (issue #1357).
+- **Authorize by the key the write matches on.** The endpoint checked WRITE
+  on the body's `datasetId`, but the upsert matched by `annotationId` alone,
+  so WRITE on your own dataset let you overwrite another dataset's values
+  (Codex P1, PR #1358). When the check and the write key differ, verify
+  they agree first (batch-load the annotations' `datasetId`s and reject
+  mismatches) — see `_requireAnnotationsInDatasets`.
 - **Test with real threads + a `threading.Barrier`** over a few hundred
   documents and several rounds (`test/test_save_many.py`). It fails reliably
   without the fix; a single-threaded test cannot see the race.
