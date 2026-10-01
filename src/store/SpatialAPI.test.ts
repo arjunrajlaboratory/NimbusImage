@@ -3,12 +3,36 @@ import { AxiosError, AxiosHeaders } from "axios";
 
 import SpatialAPI from "./SpatialAPI";
 
-function makeApi(impl: { get?: any; post?: any }) {
+// `get` answers system/loaded_plugins itself (with `plugins`), so a test's
+// `impl.get` only ever sees the spatial routes it is about.
+function makeApi(impl: {
+  get?: any;
+  post?: any;
+  plugins?: string[] | (() => Promise<any>);
+}) {
+  const plugins = impl.plugins ?? [
+    "upenncontrast_annotation",
+    "upenncontrast_spatial",
+  ];
   const client = {
-    get: vi.fn(impl.get),
+    apiRoot: "http://a/api/v1",
+    get: vi.fn((path: string, ...rest: any[]) => {
+      if (path === "system/loaded_plugins") {
+        return typeof plugins === "function"
+          ? plugins()
+          : Promise.resolve({ data: plugins });
+      }
+      return impl.get(path, ...rest);
+    }),
     post: vi.fn(impl.post),
   } as any;
   return { api: new SpatialAPI(client), client };
+}
+
+function spatialCalls(client: any) {
+  return client.get.mock.calls.filter(
+    ([path]: [string]) => path !== "system/loaded_plugins",
+  );
 }
 
 function axios404() {
@@ -30,6 +54,51 @@ describe("SpatialAPI", () => {
       get: async () => Promise.reject(new Error("network")),
     });
     await expect(failing.fetchInfo("ds")).rejects.toThrow("network");
+  });
+
+  it("answers 'no table' without asking when the plugin is not loaded", async () => {
+    // Without the plugin the spatial routes are unregistered and reach a
+    // cross-origin client as a network error, so they must never be asked.
+    const { api, client } = makeApi({
+      plugins: ["upenncontrast_annotation"],
+      get: async () => Promise.reject(new Error("network")),
+    });
+    expect(await api.fetchInfo("ds")).toBeNull();
+    expect(await api.fetchTranscriptsSchema("ds")).toBeNull();
+    expect(spatialCalls(client)).toEqual([]);
+  });
+
+  it("asks for the plugin list once and retries only after a failure", async () => {
+    let fail = true;
+    const { api, client } = makeApi({
+      plugins: async () => {
+        if (fail) {
+          throw new Error("offline");
+        }
+        return { data: ["upenncontrast_spatial"] };
+      },
+      get: async () => ({ data: { features: 1 } }),
+    });
+    await expect(api.fetchInfo("ds")).rejects.toThrow("offline");
+    fail = false;
+    await api.fetchInfo("ds");
+    await api.fetchTranscriptsSchema("ds");
+    const lookups = client.get.mock.calls.filter(
+      ([path]: [string]) => path === "system/loaded_plugins",
+    );
+    expect(lookups).toHaveLength(2);
+    expect(spatialCalls(client)).toHaveLength(2);
+  });
+
+  it("asks again after the client moves to another server", async () => {
+    const { api, client } = makeApi({ get: async () => ({ data: {} }) });
+    await api.fetchInfo("ds");
+    client.apiRoot = "http://b/api/v1";
+    await api.fetchInfo("ds");
+    const lookups = client.get.mock.calls.filter(
+      ([path]: [string]) => path === "system/loaded_plugins",
+    );
+    expect(lookups).toHaveLength(2);
   });
 
   it("searchFeatures passes search and limit as query params", async () => {

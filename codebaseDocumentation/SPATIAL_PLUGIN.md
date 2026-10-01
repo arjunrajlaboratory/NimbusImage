@@ -355,6 +355,14 @@ cells); a cell's **type** is its first tag not in `excludeTags` (default `["cell
   `MaterializeGenesDialog.vue` (Measurements tab → **Add genes**, only when a table is
   registered; polls the job), and an **Expression** section in the selection summary
   (mean count and % expressing for picked genes over the same scope, in the CSV too).
+- The plugin is optional, and the annotation plugin never imports it (the only coupling is
+  the `registerValueProvider` hook it calls at load). Without it the server runs normally;
+  a `["spatial", …]` path is then an ordinary path with no values. The frontend asks
+  `GET system/loaded_plugins` once per server (`SpatialAPI.isPluginLoaded`) and, when the
+  plugin is absent, `fetchInfo`/`fetchTranscriptsSchema` answer "no table" without
+  calling the spatial routes. Relying on their 404 does not work: an unregistered Girder
+  route answers with no CORS headers, so a cross-origin client sees a network error and
+  showed a "could not read the spatial table" Transcripts button on every dataset.
 
 ## Import
 
@@ -413,6 +421,12 @@ The V2 feature list (what users ask for, ranked) is in `SPATIAL_V2_ROADMAP.md`.
 
 ## Regression checklist
 
+- A server without the plugin shows no spatial UI and never calls a spatial route —
+  `SpatialAPI.test.ts` _"answers 'no table' without asking when the plugin is not loaded"_;
+  the list is asked once per server, and a failed lookup is retried —
+  _"asks for the plugin list once and retries only after a failure"_,
+  _"asks again after the client moves to another server"_; the backend reports the plugin
+  only when it is installed — `test_loaded_plugins.py` (both plugins' suites).
 - "Every cell" is the live cells, not the table rows: after a cell is deleted, the
   unfiltered aggregate, an unfiltered virtual-path summary and differential's implicit B
   all count one fewer — `test_phase2.py::testEveryCellMeansTheLiveCellsNotTheTableRows`

@@ -616,6 +616,20 @@ validated link"). When you swap or re-token the client, assert on an API class's
 client, and check live with `store.state.main.api.client.get('user/me')` — not with
 `girderRest`.
 
+### An optional plugin's missing route is a network error, not a 404
+
+A Girder route that was never registered (its plugin is not installed) gets
+cherrypy's bare 404 **without CORS headers**, and its preflight gets 405. From the
+dev server or any cross-origin frontend the browser blocks it, so axios reports
+`Network Error` with no `error.response`. Code that maps 404 to "nothing here" therefore
+reads "plugin missing" as "could not ask". This put a Transcripts error button on every
+dataset when the server lacked `upenncontrast_spatial`. Don't probe an optional
+plugin's routes to discover it. Ask `GET system/loaded_plugins` (public, cached per
+`apiRoot`; see `SpatialAPI.isPluginLoaded`) and skip the calls when it is absent. To
+test, run a second Girder from the same image with the plugin `pip uninstall`ed on another
+port, and point a dev server at it with `VITE_GIRDER_URL` plus the persisted `girderUrl`
+localStorage key, which overrides the env var.
+
 ## Palette content stays mounted: gate server work on visibility
 
 `FloatingPalette` hides a closed palette with `display: none`; its content is

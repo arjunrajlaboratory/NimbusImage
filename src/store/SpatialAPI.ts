@@ -32,19 +32,55 @@ export interface ITranscriptDensityUrlOptions {
   registration?: string;
 }
 
+// The Girder plugin name GET system/loaded_plugins reports for this API.
+export const SPATIAL_PLUGIN_NAME = "upenncontrast_spatial";
+
 // Client for the upenncontrast_spatial plugin: a dataset's expression table
 // (SPATIAL_PLUGIN.md). Filters are the list-filter object the Objects tab
 // sends, so a gate means the same thing here as in the selection summary.
 export default class SpatialAPI {
   private readonly client: RestClientInstance;
+  // Per server: logging in to another domain swaps the client underneath.
+  private readonly pluginLoaded = new Map<string, Promise<boolean>>();
 
   constructor(client: RestClientInstance) {
     this.client = client;
   }
 
-  /** The registered table, or null when the dataset has none (404). Other
-   * failures propagate: "no table" and "could not ask" must stay distinct. */
+  /**
+   * Whether this server runs the spatial plugin, asked once per server.
+   *
+   * The plugin is optional. Without it the spatial routes do not exist, and
+   * Girder answers an unregistered route with no CORS headers, so a
+   * cross-origin client sees a bare network error rather than a 404 — which
+   * would read as "could not ask" on every dataset. A failed lookup is not
+   * cached, so the next call asks again.
+   */
+  isPluginLoaded(): Promise<boolean> {
+    const apiRoot = this.client.apiRoot;
+    let loaded = this.pluginLoaded.get(apiRoot);
+    if (loaded === undefined) {
+      loaded = this.client
+        .get("system/loaded_plugins")
+        .then((response) =>
+          (response.data as string[]).includes(SPATIAL_PLUGIN_NAME),
+        )
+        .catch((error) => {
+          this.pluginLoaded.delete(apiRoot);
+          throw error;
+        });
+      this.pluginLoaded.set(apiRoot, loaded);
+    }
+    return loaded;
+  }
+
+  /** The registered table, or null when the dataset has none (404) or the
+   * server does not run the plugin. Other failures propagate: "no table" and
+   * "could not ask" must stay distinct. */
   async fetchInfo(datasetId: string): Promise<ISpatialInfo | null> {
+    if (!(await this.isPluginLoaded())) {
+      return null;
+    }
     try {
       const response = await this.client.get(`spatial/${datasetId}`);
       return response.data as ISpatialInfo;
@@ -132,10 +168,14 @@ export default class SpatialAPI {
 
   // ---- transcripts (per-molecule store) ----
 
-  /** The transcript pyramid, or null when the dataset has none (404). */
+  /** The transcript pyramid, or null when the dataset has none (404) or the
+   * server does not run the plugin. */
   async fetchTranscriptsSchema(
     datasetId: string,
   ): Promise<ISpatialTranscriptsSchema | null> {
+    if (!(await this.isPluginLoaded())) {
+      return null;
+    }
     try {
       const response = await this.client.get(
         `spatial/${datasetId}/transcripts`,

@@ -12,6 +12,7 @@ from girder.api.describe import Description, autoDescribeRoute
 from girder.api.rest import boundHandler, filtermodel
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
+from girder.plugin import loadedPlugins
 from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.item import Item
@@ -58,6 +59,10 @@ def addSystemEndpoints(apiRoot):
     apiRoot.system.route(
         "GET", ("authenticated_users",), getAuthenticatedUsers
     )
+    # Public: lets the client tell "optional plugin not installed" from "no
+    # data", since a route that was never registered answers without CORS
+    # headers and reaches a cross-origin client as a bare network error.
+    apiRoot.system.route("GET", ("loaded_plugins",), getLoadedPlugins)
 
     # Also bind some events
     events.bind(
@@ -138,6 +143,20 @@ def _parseAuthenticatedUsersWindow(window):
             "window is too large; the maximum is 366d.", code=400
         )
     return seconds
+
+
+@access.public
+@autoDescribeRoute(
+    Description("List the names of the Girder plugins this server loaded.")
+    .notes(
+        "Unlike GET /system/plugins this is public and returns only the "
+        "names, so the client can leave out the UI of an optional plugin "
+        "(e.g. upenncontrast_spatial) that this deployment does not install."
+    )
+)
+@boundHandler()
+def getLoadedPlugins(self):
+    return sorted(loadedPlugins())
 
 
 @access.admin
