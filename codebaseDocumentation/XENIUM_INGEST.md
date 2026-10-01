@@ -103,37 +103,37 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
 
 **Wrong data never reaches the server**
 - Every per-cell step refuses another dataset's, a nucleus, another bundle's cell map, or
-  bare ids, with zero writes — `test_per_cell_steps_refuse_wrong_cell_maps`.
+  bare ids, with zero writes — _"test_per_cell_steps_refuse_wrong_cell_maps"_.
 - Every CLI subcommand, given a bad input, exits non-zero with zero writes —
-  `test_cli_bad_input_fails_with_no_writes`; its valid baseline succeeds —
-  `test_cli_baseline_succeeds`.
+  _"test_cli_bad_input_fails_with_no_writes"_; its valid baseline succeeds —
+  _"test_cli_baseline_succeeds"_.
 - A saved cell map of another dataset is refused offline, before any request —
-  `test_another_datasets_map_is_refused_offline`.
+  _"test_another_datasets_map_is_refused_offline"_.
 - A pre-CellMap id file of another dataset (same cell count) is refused by the server
-  spot-check — `test_bare_id_file_of_another_dataset`.
+  spot-check — _"test_bare_id_file_of_another_dataset"_.
 - A re-derived map is matched by geometry, whatever the list order (the fake lists in
-  reverse), ignoring other polygons — `test_fetch_matches_the_upload_in_any_order`; a
-  `--limit` upload is re-derivable — `test_a_limited_upload_can_be_re_derived`; a double
-  upload is an error — `test_a_duplicate_upload_is_an_error`; the wrong frame matches
-  nothing — `test_the_wrong_frame_matches_nothing`.
+  reverse), ignoring other polygons — _"test_fetch_matches_the_upload_in_any_order"_; a
+  `--limit` upload is re-derivable — _"test_a_limited_upload_can_be_re_derived"_; a double
+  upload is an error — _"test_a_duplicate_upload_is_an_error"_; the wrong frame matches
+  nothing — _"test_the_wrong_frame_matches_nothing"_.
 - Transcripts and regions never default the frame: no `--cells`, a mistyped path or a
   bare-id file fails with zero writes, on morphology and H&E datasets —
   `test_cli_bad_input_fails_with_no_writes[...-no frame stated / mistyped cells path /
-  bare-id file as the frame]`, `test_transcripts_never_default_the_frame`; the H&E
+  bare-id file as the frame]`, _"test_transcripts_never_default_the_frame"_; the H&E
   baselines succeed — `test_cli_baseline_succeeds[transcripts (H&E)]`, `[regions (H&E)]`.
 - The table is uploaded only to the dataset recorded in it (`uns/nimbus/datasetId`) —
-  `test_spatial_table_goes_only_to_its_dataset`.
+  _"test_spatial_table_goes_only_to_its_dataset"_.
 - `region`-tagged polygons are never matched as cells, even when identical to one —
-  `test_a_region_identical_to_a_cell_is_never_the_cell`; stored vertices within 0.01 px
-  match (older uploads used float32) — `test_matching_tolerates_float_arithmetic_only`.
+  _"test_a_region_identical_to_a_cell_is_never_the_cell"_; stored vertices within 0.01 px
+  match (older uploads used float32) — _"test_matching_tolerates_float_arithmetic_only"_.
 - Without `--cells`, regions always need `--image` — no flag (not `--alignment`, not
   `--pixel-size`) implies which image the dataset is; a guess puts every region on H&E in
   the wrong place — `test_cli_bad_input_fails_with_no_writes[regions-regions pixel size
   without --image or --cells]`. (Round 7 loosened this to "only with `--alignment`";
   round 8 showed the loosening was itself the bug.)
 - An unreadable, damaged or foreign spatial table is a clean error with no writes —
-  `test_unreadable_tables_are_a_xenium_error`; regions always keep `region`, deduplicated,
-  never empty — `test_region_tags_are_deduplicated_and_never_empty`; the in-app GeoJSON
+  _"test_unreadable_tables_are_a_xenium_error"_; regions always keep `region`, deduplicated,
+  never empty — _"test_region_tags_are_deduplicated_and_never_empty"_; the in-app GeoJSON
   importer warns when its extra tag isn't `region` —
   `src/components/AnnotationBrowser/GeoJsonImportDialog.test.ts` ("warns when the extra
   tag is not region").
@@ -141,9 +141,9 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
   `test_cli_bad_input_fails_with_no_writes[regions-regions alignment without --image or
   --cells]`, `TestCli::test_regions_he_drawn_onto_morphology_without_cells`.
 - A cells file never unpickles anything but a real `.npy` —
-  `test_a_pickle_passed_as_cells_never_runs`, `test_cells_files_load_without_unpickling`.
-- The cell-type write is read back in one request — `test_cell_types_and_read_back`,
-  `test_cell_types_read_back_mismatch`; `get_many` is dataset-scoped —
+  _"test_a_pickle_passed_as_cells_never_runs"_, _"test_cells_files_load_without_unpickling"_.
+- The cell-type write is read back in one request — _"test_cell_types_and_read_back"_,
+  _"test_cell_types_read_back_mismatch"_; `get_many` is dataset-scoped —
   `tests/test_annotations.py::TestGetMany::test_scoped_to_the_dataset`.
 
 **Coordinates**
@@ -153,24 +153,24 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
 - Flags conflicting with a saved frame are an error; an alignment may be added for
   H&E-drawn regions — `test_cli_bad_input_fails_with_no_writes[...-conflicting pixel
   size]`, `TestCli::test_regions_may_add_an_alignment_to_a_saved_frame`.
-- Region transforms for every drawn-in × image pair — `test_region_transform_table`.
+- Region transforms for every drawn-in × image pair — _"test_region_transform_table"_.
 
 **Ordering and destructive actions**
 - `--delete-tag` deletes only after every input is read, including a frame that can
   convert microns — `TestPolygons::test_delete_tag_only_after_inputs_are_read`.
 - A bad `chunk` is refused before `replace` deletes the old values, in every per-cell
-  step — `test_per_cell_steps_check_the_chunk_before_writing`.
+  step — _"test_per_cell_steps_check_the_chunk_before_writing"_.
 - A one-file morphology bundle configures without a channel assignment —
   `TestUploadMorphology::test_one_or_several_channel_files`.
 - The spatial table checks its small inputs before reading the matrix —
-  `test_spatial_table_checks_before_reading_the_matrix`.
+  _"test_spatial_table_checks_before_reading_the_matrix"_.
 - UMAP keeps `pca.npy` when UMAP fails — `TestUmap::test_pca_is_saved_before_umap_runs`.
 
 **Vendor formats**
 - Symbols with `.`/`$` (mouse panels) are stored as `safe_symbol` in the table and the
   panel sub-keys, originals in `var/feature_name` —
   `TestBundle::test_stored_symbols_have_no_dot_or_dollar`,
-  `test_gene_panel_sub_keys_are_stored_symbols`, `test_spatial_table_round_trip`.
+  _"test_gene_panel_sub_keys_are_stored_symbols"_, _"test_spatial_table_round_trip"_.
 - `cell_groups` zero-padding — `TestBundle::test_cell_groups_handles_zero_padding`.
 - A protein named like a gene doesn't block the gene —
   `TestBundle::test_gene_lookup_skips_a_same_named_protein`.
@@ -180,10 +180,10 @@ Tests are in `nimbusimage/tests/test_xenium.py` unless noted.
   integer ids (before XOA 1.3) are a clean error —
   `TestBundle::test_integer_cell_ids_are_a_xenium_error`.
 - Gene counts are placed by cell index whether or not CSR indices are sorted —
-  `test_gene_panel_does_not_assume_sorted_indices`.
+  _"test_gene_panel_does_not_assume_sorted_indices"_.
 - GeoJSON as a FeatureCollection, an array of Features (QuPath), one Feature or one
-  geometry — `test_regions_accept_every_geojson_shape`; anything else is a clean error
-  with no writes — `test_malformed_geojson_is_a_xenium_error`,
+  geometry — _"test_regions_accept_every_geojson_shape"_; anything else is a clean error
+  with no writes — _"test_malformed_geojson_is_a_xenium_error"_,
   `test_cli_bad_input_fails_with_no_writes[regions-json that is not geojson]`.
 
 ## Process rules this feature proved
