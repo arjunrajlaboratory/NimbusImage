@@ -106,8 +106,8 @@ importers:
         specifier: ^8.3.1
         version: 8.3.4
       axios:
-        specifier: ^1.18.0
-        version: 1.18.1
+        specifier: ^1.20.0
+        version: 1.20.0
       bluebird:
         specifier: ^3.7.2
         version: 3.7.2
@@ -2054,8 +2054,8 @@ packages:
     peerDependencies:
       postcss: ^8.5.18
 
-  axios@1.18.1:
-    resolution: {integrity: sha512-3nTvFlvpn9Zu/RkHUqtc7/+al4UpRW5az71ap5zccp6e8RAYEzhMTecX8Dz1wWDYrPpUoB1HAQEGEAEvUr7S9g==}
+  axios@1.20.0:
+    resolution: {integrity: sha512-r8aOh8j9cGKpgQAqpzrUHnSIc6a59Y3Xf/cv8sy1DrHCkZHzQGEuoq1tARk6qSyDdtQGSDgpb9kFlruzPvrgwg==}
 
   babel-plugin-polyfill-corejs2@0.4.17:
     resolution: {integrity: sha512-aTyf30K/rqAsNwN76zYrdtx8obu0E4KoUME29B1xj+B3WxgvWkp943vYQ+z8Mv3lw9xHXMHpvSPOBxzAkIa94w==}
@@ -5738,7 +5738,7 @@ snapshots:
       '@fontsource/roboto': 5.2.7
       '@mdi/font': 7.4.47
       '@vueuse/core': 14.2.1(vue@3.5.28(typescript@5.9.3))
-      axios: 1.18.1
+      axios: 1.20.0
       js-cookie: 3.0.8
       markdown-it: 14.3.0
       mitt: 3.0.1
@@ -5808,7 +5808,7 @@ snapshots:
 
   '@itk-wasm/dam@1.1.1':
     dependencies:
-      axios: 1.18.1
+      axios: 1.20.0
       commander: 10.0.1
       decompress: 4.2.1
       files-from-path: 1.0.4
@@ -6748,7 +6748,7 @@ snapshots:
       postcss: 8.5.23
       postcss-value-parser: 4.2.0
 
-  axios@1.18.1:
+  axios@1.20.0:
     dependencies:
       follow-redirects: 1.16.0
       form-data: 4.0.6
@@ -8083,7 +8083,7 @@ snapshots:
       '@itk-wasm/dam': 1.1.1
       '@thewtex/zstddec': 0.2.0
       '@types/emscripten': 1.39.10
-      axios: 1.18.1
+      axios: 1.20.0
       comlink: 4.4.1
       commander: 11.1.0
       fs-extra: 11.2.0
