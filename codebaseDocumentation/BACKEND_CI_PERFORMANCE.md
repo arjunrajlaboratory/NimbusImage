@@ -84,27 +84,42 @@ locally.
 
 ## Regression checklist
 
-Setup cost:
-- [ ] No stale singletons survive into a test's `db` setup —
-      `test_model_state_reset.py::testNoStaleModelsAtTestStart`
-- [ ] Stale instances and the handlers bound to them are dropped, other
-      handlers kept —
-      `test_model_state_reset.py::testDropsStaleModelsAndTheirHandlers`
-- [ ] Full suite stays near 2 minutes locally; a sharp rise means the leak is
-      back (check `len(model_base._modelSingletons)` at setup) — no test;
-      watch the CI duration
+Run `tox` in `devops/girder/plugins/AnnotationPlugin` (the whole suite: the
+invariants below only bite when many tests run in one session).
 
-Stale references (any of these failing only in a full run, never alone,
-points at a cached model instance):
-- [ ] Recorded endpoints write history through the live History model —
-      `test_import.py::TestDataImportEndpoint::testImportedDataIsRecordedAndUndoable`
-- [ ] Bulk annotation delete cleans property values without a live
-      `Connections` instance —
-      `test_server_list.py::TestPropertyValueCleanup::testBulkDeleteRemovesPropertyValues`
+### Setup cost stays flat
 
-Process:
-- [ ] Never cache `Model()` in code that runs once at import (decorator
-      `__init__`, module globals, class attributes); call it at the point of
-      use. Resource and model `__init__` are fine (rebuilt per plugin load).
-- [ ] When a test passes alone but fails in the full suite, suspect a stale
-      model reference before suspecting test order.
+- [ ] **A model left by one test is gone before the next test's `db`
+      setup.** The leak itself; the first test exists only to leave one
+      behind. — *"testLeavesAModelBehind"*, *"testNoStaleModelsAtTestStart"*
+- [ ] **Stale instances and the handlers bound to them are dropped; other
+      handlers are kept.** Pruning without unbinding lets a stale instance
+      handle events against a closed client. —
+      *"testDropsStaleModelsAndTheirHandlers"*
+- [ ] **The full suite stays near 2 minutes locally (about 4 in CI).** A
+      sharp rise means the leak is back; check
+      `len(model_base._modelSingletons)` at setup. No test can hold this;
+      watch the CI duration.
+
+### No stale model references
+
+These fail only in a full run, never alone, when something caches a model
+instance across tests.
+
+- [ ] **Recorded endpoints write history through the live History model.**
+      `@recordable` used to cache the import-time instance. —
+      *"testImportedDataIsRecordedAndUndoable"*
+- [ ] **Bulk annotation delete cleans property values without a live
+      `Connections` instance.** The test that exposed the stale-handler
+      problem. — *"testBulkDeleteRemovesPropertyValues"*
+
+### Process
+
+- Never cache `Model()` in code that runs once at import (decorator
+  `__init__`, module globals, class attributes); call it at the point of use.
+  Resource and model `__init__` are fine, since they're rebuilt per plugin
+  load.
+- When a test passes alone but fails in the full suite, suspect a stale
+  model reference before suspecting test order.
+- Run `pnpm test src/__tests__/regressionChecklist.test.ts` after editing
+  this checklist: it checks every cited test name exists.
