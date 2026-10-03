@@ -22,8 +22,6 @@ import { IProviderContext } from "./context";
 // snapshot, property or worker image adds its command with no extra wiring.
 // None of them reads per-annotation state: these lists stay small.
 
-export type { IProviderContext };
-
 /**
  * `key` as a hint if v-mousetrap currently binds it with this help-overlay
  * description. `boundKeys` holds no handlers, so it can only annotate a

@@ -27,19 +27,33 @@ const OTHER_KEY_NAMES: Record<string, string> = {
   shift: "Shift",
 };
 
-/** "mod+shift+z" → "⌘⇧Z" on a Mac, "Ctrl+Shift+Z" elsewhere. */
-export function formatHotkey(binding: string, mac = isMacPlatform()): string {
+function formatKey(key: string, names: Record<string, string>): string {
+  if (names[key]) {
+    return names[key];
+  }
+  return key.length <= 1
+    ? key.toUpperCase()
+    : key[0].toUpperCase() + key.slice(1);
+}
+
+function formatCombo(combo: string, mac: boolean): string {
   const names = mac ? MAC_KEY_NAMES : OTHER_KEY_NAMES;
-  const parts = binding
-    .split("+")
-    .map((part) =>
-      names[part]
-        ? names[part]
-        : part.length === 1
-          ? part.toUpperCase()
-          : part[0].toUpperCase() + part.slice(1),
-    );
-  return parts.join(mac ? "" : "+");
+  // Split on "+" separators only, so the plus key itself survives:
+  // "+" → ["+"], "ctrl++" → ["ctrl", "+"].
+  const keys = combo.split(/\+(?=.)/);
+  return keys.map((key) => formatKey(key, names)).join(mac ? "" : "+");
+}
+
+/**
+ * "mod+shift+z" → "⌘⇧Z" on a Mac, "Ctrl+Shift+Z" elsewhere. A Mousetrap
+ * sequence ("g i") keeps its steps apart.
+ */
+export function formatHotkey(binding: string, mac = isMacPlatform()): string {
+  return binding
+    .split(" ")
+    .filter(Boolean)
+    .map((combo) => formatCombo(combo, mac))
+    .join(" then ");
 }
 
 /**

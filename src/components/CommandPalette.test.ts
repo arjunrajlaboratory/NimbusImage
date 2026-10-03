@@ -62,8 +62,9 @@ function command(id: string, title: string, group: any = "Actions"): ICommand {
 let unregister: () => void;
 let wrapper: VueWrapper<any>;
 
-function mountPalette(open = true) {
+function mountPalette(open = true, attachTo?: HTMLElement) {
   wrapper = mount(CommandPalette, {
+    attachTo,
     props: {
       modelValue: open,
       "onUpdate:modelValue": (value: boolean) =>
@@ -255,5 +256,67 @@ describe("CommandPalette", () => {
     expect(rowTitles()).toEqual(["Cost probe"]);
     expect(provider.mock.calls.length).toBe(callsAfterOpen);
     unregisterProbe();
+  });
+
+  it("ignores Enter that confirms an IME composition", async () => {
+    mountPalette();
+    await type("dapi");
+    await press("Enter", { isComposing: true });
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+    await leave();
+    expect(runs).toEqual([]);
+  });
+
+  it("keeps focus in the search field on Tab", async () => {
+    mountPalette();
+    const input = wrapper.find("input");
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      cancelable: true,
+      bubbles: true,
+    });
+    input.element.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(
+      wrapper
+        .findAll("[data-command-row]")
+        .every((row) => row.attributes("tabindex") === "-1"),
+    ).toBe(true);
+  });
+
+  it("stops its own toggle key, so the app-wide binding can't reopen it", async () => {
+    // Attached, so an unstopped event really would bubble to the document.
+    mountPalette(true, document.body);
+    const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+    const reachedDocument = vi.fn();
+    document.addEventListener("keydown", reachedDocument);
+    const input = wrapper.find("input").element;
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "k",
+        bubbles: true,
+        cancelable: true,
+        ...(mac ? { metaKey: true } : { ctrlKey: true }),
+      }),
+    );
+    document.removeEventListener("keydown", reachedDocument);
+    expect(reachedDocument).not.toHaveBeenCalled();
+  });
+
+  it("moves the highlight on real pointer movement only", async () => {
+    mountPalette();
+    await type("open");
+    await press("ArrowDown");
+    const chosen = rowTitles()[wrapper.vm.activeIndex];
+    const rows = wrapper.findAll("[data-command-row]");
+    // First move over row 0 takes the highlight...
+    await rows[0].trigger("mousemove", { clientX: 10, clientY: 10 });
+    expect(wrapper.vm.activeIndex).toBe(0);
+    await press("ArrowDown");
+    expect(rowTitles()[wrapper.vm.activeIndex]).toBe(chosen);
+    // ...but a mousemove at the same spot (the list scrolled under a resting
+    // pointer) does not take it back.
+    await rows[0].trigger("mousemove", { clientX: 10, clientY: 10 });
+    expect(rowTitles()[wrapper.vm.activeIndex]).toBe(chosen);
   });
 });

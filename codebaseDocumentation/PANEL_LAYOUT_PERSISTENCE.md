@@ -19,23 +19,25 @@ Secondary goal: turn the hand-written palette bookkeeping in `App.vue` into a
 small **panel registry** module that other features (the command palette, a
 future minimize-to-chip mode) can read.
 
-## Current state (as of 2026-10)
+## Current state (as of 2026-10, after Part 1)
 
-All viewer chrome lives in `src/App.vue`.
+All viewer chrome lives in `src/App.vue`; the palette definitions and rules
+live in `src/utils/panelRegistry.ts`.
 
-- **Open/closed state** is a set of local `ref`s (`annotationPanel`,
+- **Open/closed state** is a set of local `ref`s in App.vue (`annotationPanel`,
   `filtersPanel`, `analysisPanel`, `snapshotPanel`, `settingsPanel`,
-  `navigatorPanel`, `toolsPanel`, `layersPanel`). They are collected in the
-  `paletteOpen` record, next to `paletteRoles` (search App.vue for
-  `const paletteRoles`).
-- **Placement rules** are in `paletteRoles`, `openPalette()`,
-  `togglePalette()` and `closeAllPalettes()`:
+  `navigatorPanel`, `toolsPanel`, `layersPanel`), collected in its
+  `paletteOpen` record.
+- **Placement rules** are `PANELS` and `applyOpen()` in the registry; App.vue's
+  `openPalette()`, `togglePalette()` and `closeAllPalettes()` apply them to
+  the refs:
   - Right zone: one *primary* at a time. Filters is a *companion* that can
     share the column only with its listed `hosts` (Object Browser, Analysis).
   - Left zone (Navigator / Layers / Tools): an independent vertical stack.
 - **Reset on every entry.** `datasetChanged()` closes everything when you
-  leave the viewer. On entry it forces Navigator, Tools and Layers open. This
-  hard-coded default is what we're replacing.
+  leave the viewer. On entry it opens every panel marked `defaultOpen`
+  (Navigator, Tools, Layers). Part 2 replaces this default with the saved
+  layout.
 - **Opening from other components.** Components outside App.vue use
   `store.paletteOpenRequests` / `store.requestPaletteOpen([...])` (ids typed by
   `TRequestablePalette` in `src/store/model.ts`) and the older

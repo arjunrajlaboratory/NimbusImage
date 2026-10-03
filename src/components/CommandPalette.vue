@@ -37,9 +37,10 @@
             :data-command-row="row.command.id"
             color="primary"
             role="option"
+            tabindex="-1"
             :aria-selected="row.index === activeIndex"
             @click="choose(row.command)"
-            @mousemove="activeCommandId = row.command.id"
+            @mousemove="onRowPointerMove($event, row.command)"
           >
             <template #prepend v-if="row.command.icon">
               <v-icon size="18">{{ row.command.icon }}</v-icon>
@@ -239,15 +240,26 @@ function moveActive(delta: number) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  // The app-wide ⌘K binding (v-mousetrap) ignores keys typed into inputs, so
-  // the palette's own field handles closing it — and claims Ctrl+K from the
-  // browser's search-bar shortcut.
+  // Enter that confirms an IME composition (Japanese, Chinese, Korean input)
+  // belongs to the composition, not to the list.
+  if (event.isComposing) {
+    return;
+  }
+  // Closing from the field is handled here and stopped, so the app-wide ⌘K
+  // binding (which also fires inside inputs) doesn't toggle it straight back.
   if (isPaletteToggleKey(event)) {
     event.preventDefault();
+    event.stopPropagation();
     open.value = false;
     return;
   }
   switch (event.key) {
+    // Focus stays in the field: app hotkeys (layer digits, tool keys,
+    // ⌘⌫ delete) are muted only while a text field has focus, and they would
+    // otherwise act on the viewer behind the palette.
+    case "Tab":
+      event.preventDefault();
+      break;
     case "ArrowDown":
       event.preventDefault();
       moveActive(1);
@@ -267,6 +279,18 @@ function onKeydown(event: KeyboardEvent) {
     default:
       break;
   }
+}
+
+// Only a real pointer move changes the highlight. Scrolling the list under a
+// resting pointer (the arrow keys do) also emits mousemove, and must not pull
+// the highlight away from the keyboard's choice.
+let lastPointer: { x: number; y: number } | null = null;
+function onRowPointerMove(event: MouseEvent, command: ICommand) {
+  if (lastPointer?.x === event.clientX && lastPointer?.y === event.clientY) {
+    return;
+  }
+  lastPointer = { x: event.clientX, y: event.clientY };
+  activeCommandId.value = command.id;
 }
 
 // Close first, run once the dialog has fully left: a command that opens a

@@ -1077,8 +1077,11 @@ const appHotkeys: IHotkey[] = [
   },
   {
     bind: COMMAND_PALETTE_BINDING,
-    // v-mousetrap calls handlers as (element, event). Ctrl+K is the browser's
-    // own search-bar shortcut on Windows/Linux, so claim the key.
+    // Works from inside any text field too: Ctrl+K is the browser's own
+    // search-bar shortcut on Windows/Linux, so it must be claimed everywhere.
+    // (The palette's own field handles the key itself and stops it.)
+    allowInInputs: true,
+    // v-mousetrap calls handlers as (element, event).
     handler: (_el: HTMLElement, event?: KeyboardEvent) => {
       event?.preventDefault();
       commandPaletteOpen.value = !commandPaletteOpen.value;

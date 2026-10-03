@@ -176,7 +176,6 @@ const overwriteProperties = ref(false);
 const overwritePropertiesDialog = ref(false);
 
 const canImport = computed(() => !!store.dataset);
-const isLoggedIn = computed(() => store.isLoggedIn);
 
 watch(jsonFile, () => {
   isJsonLoaded.value = false;
@@ -259,7 +258,6 @@ async function submit() {
 }
 
 defineExpose({
-  isLoggedIn,
   canImport,
   importAnnotations,
   importConnections,

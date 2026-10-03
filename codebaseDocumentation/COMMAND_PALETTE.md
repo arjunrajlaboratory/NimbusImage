@@ -246,8 +246,14 @@ Departures from the spec, and why:
   Before this, only mounting the Add-tool dialog fetched it, so
   "Add tool: Cellpose-SAM…" would have been missing until the user had opened
   that dialog once.
-- **The hotkey is `mod+k`** (⌘K / Ctrl+K). Because v-mousetrap ignores keys
-  typed in text fields, the palette's own input handles ⌘K to close itself.
+- **The hotkey is `mod+k`** (⌘K / Ctrl+K), bound with v-mousetrap's
+  `allowInInputs` flag so it works from inside any text field too (and claims
+  Ctrl+K from the browser's search-bar shortcut everywhere). The palette's own
+  field handles the key itself and stops it, so the global binding doesn't
+  toggle the palette straight back open.
+- **Focus stays in the search field** (Tab is swallowed, rows are
+  `tabindex="-1"`): app hotkeys are muted only while a text field has focus,
+  and would otherwise act on the viewer behind the palette.
 
 ## Verified in the browser
 
@@ -281,7 +287,7 @@ and creating one would write to a shared configuration). It is covered by
 Each line names an invariant and the test that holds it, so a change here means
 re-checking the list rather than rediscovering it.
 
-Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components/DataIOMenu.test.ts src/App.commands.test.ts src/App.test.ts src/utils/panelRegistry.test.ts src/tools/creation/toolTypeCatalog.test.ts src/tools/toolsets/Toolset.test.ts src/components/Snapshots.test.ts src/components/AnnotationBrowser/ColorByPropertyDialog.test.ts`.
+Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components/DataIOMenu.test.ts src/utils/v-mousetrap.test.ts src/App.commands.test.ts src/App.test.ts src/utils/panelRegistry.test.ts src/tools/creation/toolTypeCatalog.test.ts src/tools/toolsets/Toolset.test.ts src/components/Snapshots.test.ts src/components/AnnotationBrowser/ColorByPropertyDialog.test.ts`.
 
 ### Self-updating
 
@@ -302,6 +308,12 @@ Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components
 - [ ] **Reopening mid-close still runs the chosen command** (after-leave never comes once the leave is cancelled). — _"still runs the chosen command if reopened before it finished closing"_
 - [ ] **The highlight follows the command, not the row number**, so a list that re-derives under the user (the worker list landing) can't make Enter run something else, and a vanished command falls back to the first row. — _"keeps the highlighted command when the list re-derives under it"_, _"falls back to the first row when the highlighted command disappears"_
 - [ ] **⌘K / Ctrl+K typed in the search field closes the palette.** v-mousetrap ignores keys in inputs, so the field handles it (and claims Ctrl+K from the browser). — _"closes on its own toggle key typed in the search field"_
+- [ ] **⌘K / Ctrl+K opens the palette from inside any text field**, and only that binding fires there. — *"fires an allowInInputs hotkey from inside a text field, and only that one"*
+- [ ] **The field's own toggle key is stopped**, so the app-wide binding can't immediately reopen it. — *"stops its own toggle key, so the app-wide binding can't reopen it"*
+- [ ] **Focus can't leave the field for a row**, so viewer hotkeys stay muted behind the palette. — *"keeps focus in the search field on Tab"*
+- [ ] **Enter that confirms an IME composition runs nothing.** — *"ignores Enter that confirms an IME composition"*
+- [ ] **Only real pointer movement moves the highlight**; a list scrolling under a resting pointer doesn't. — *"moves the highlight on real pointer movement only"*
+- [ ] **Hotkey hints render the plus key and sequences** instead of throwing in the row render. — *"keeps the plus key instead of throwing on it"*, *"keeps the steps of a sequence apart"*
 - [ ] **Data dialogs mount closed, then open.** Their on-open work (CSV preview, dimension labels) is a non-immediate watcher, which a dialog created already open never fires. — _"opens each dialog after mounting it, so its on-open watcher fires the first time"_
 - [ ] **The data dialogs render no activator of their own.** An empty `#activator` template rendered each dialog's fallback "Export CSV"-style button into the app bar once it mounted. — *"its dialogs render no activator of their own"*
 - [ ] **Same-named layers show their own hotkey**, read by position, not looked up by name. — _"gives same-named layers their own key, not the first one's"_
