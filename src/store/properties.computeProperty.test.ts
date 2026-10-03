@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   computeProperty: vi.fn(),
+  computeProperties: vi.fn(),
   getPropertyValues: vi.fn(),
   addJob: vi.fn(),
   createProgress: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("@/store/index", () => ({
     scales: {},
     propertiesAPI: {
       computeProperty: (...args: any[]) => mocks.computeProperty(...args),
+      computeProperties: (...args: any[]) => mocks.computeProperties(...args),
       getPropertyValues: (...args: any[]) => mocks.getPropertyValues(...args),
     },
     scheduleAnnotationBrowserSave: vi.fn(),
@@ -83,6 +85,9 @@ describe("property compute lifecycle", () => {
     properties.resetPropertyState();
     mocks.createProgress.mockResolvedValue("progress-1");
     mocks.computeProperty.mockResolvedValue({ data: [{ _id: "job-1" }] });
+    mocks.computeProperties.mockResolvedValue([
+      { propertyId: property.id, jobs: [{ _id: "job-1" }] },
+    ]);
     mocks.addJob.mockResolvedValue(true);
     mocks.getPropertyValues.mockResolvedValue({});
     mocks.updateHistograms.mockResolvedValue(undefined);
@@ -179,8 +184,8 @@ describe("property compute lifecycle", () => {
     expect(mocks.completeProgress).toHaveBeenCalledWith("progress-1");
   });
 
-  it("cleans up batch state when every submission rejects", async () => {
-    mocks.computeProperty.mockRejectedValue(new Error("backend unavailable"));
+  it("cleans up batch state when the batch API rejects", async () => {
+    mocks.computeProperties.mockRejectedValue(new Error("batch unavailable"));
     const secondProperty = {
       ...property,
       id: "property-2",
@@ -201,16 +206,17 @@ describe("property compute lifecycle", () => {
     expect(status().errorInfo?.errors).toEqual([
       expect.objectContaining({
         title: "Property submission failed",
-        error: "backend unavailable",
+        error: "batch unavailable",
       }),
     ]);
     expect(mocks.completeProgress).toHaveBeenCalledWith("progress-1");
-    // Shared-cause failures collapse to a single notification.
     expect(mocks.createNotification).toHaveBeenCalledTimes(1);
   });
 
   it("cleans up batch state when the server omits a job", async () => {
-    mocks.computeProperty.mockResolvedValue({ data: [] });
+    mocks.computeProperties.mockResolvedValue([
+      { propertyId: property.id, jobs: [] },
+    ]);
 
     const result = await properties.computeProperties([property]);
 
@@ -245,24 +251,23 @@ describe("property compute lifecycle", () => {
     expect(status().errorInfo?.errors).toEqual([
       expect.objectContaining({ error: "progress store failed" }),
     ]);
-    expect(mocks.computeProperty).not.toHaveBeenCalled();
+    expect(mocks.computeProperties).not.toHaveBeenCalled();
   });
 
-  it("submits at most 100 properties per compute-all run", async () => {
+  it("submits at most 100 properties so the client matches the server limit", async () => {
     const requested = Array.from({ length: 101 }, (_, index) => ({
       ...property,
       id: `property-${index}`,
       name: `Property ${index}`,
     }));
+    mocks.computeProperties.mockResolvedValue([]);
 
     await properties.computeProperties(requested);
 
-    expect(mocks.computeProperty).toHaveBeenCalledTimes(100);
-    expect(mocks.computeProperty).not.toHaveBeenCalledWith(
-      "property-100",
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
+    expect(mocks.computeProperties).toHaveBeenCalledWith(
+      "dataset-1",
+      requested.slice(0, 100),
+      {},
     );
   });
 });

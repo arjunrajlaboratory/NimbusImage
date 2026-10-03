@@ -31,6 +31,11 @@ export type TPropertyValueEntry = {
   values: IAnnotationPropertyValues[string];
 };
 
+export type TPropertyComputeSubmission = {
+  propertyId: string;
+  jobs: { _id?: string }[];
+};
+
 export default class PropertiesAPI {
   private readonly client: RestClientInstance;
 
@@ -114,6 +119,21 @@ export default class PropertiesAPI {
       `annotation_property/${propertyId}/compute?datasetId=${datasetId}`,
       params,
     );
+  }
+
+  async computeProperties(
+    datasetId: string,
+    properties: IAnnotationProperty[],
+    scales: IScales,
+  ): Promise<TPropertyComputeSubmission[]> {
+    const response = await this.client.post("annotation_property/compute", {
+      datasetId,
+      properties: properties.map((property) => ({
+        id: property.id,
+        parameters: { ...property, scales },
+      })),
+    });
+    return response.data;
   }
 
   async getPropertyValues(
