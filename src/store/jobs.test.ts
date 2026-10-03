@@ -72,22 +72,17 @@ vi.stubGlobal("WebSocket", FakeSocket);
 
 import store from "./root";
 import jobs, { stopJobPolling, unseenLogSuffix } from "./jobs";
-import { jobStates } from "./jobConstants";
+import { jobStates, UNFINISHED_JOB_STATUSES } from "./jobConstants";
 
-// What the server knows about each job; GET job lists the finished ones and
-// GET job/:id returns one.
+// What the server knows about each job; GET job lists the unfinished ones
+// and GET job/:id returns one.
 let serverJobs: { [jobId: string]: { status: number; log?: string[] } } = {};
-const finishedStatuses = [
-  jobStates.success,
-  jobStates.error,
-  jobStates.cancelled,
-];
 async function restGet(path: string, config?: any) {
   if (path === "job") {
-    expect(JSON.parse(config.params.statuses)).toEqual(finishedStatuses);
+    expect(JSON.parse(config.params.statuses)).toEqual(UNFINISHED_JOB_STATUSES);
     return {
       data: Object.entries(serverJobs)
-        .filter(([, job]) => finishedStatuses.includes(job.status))
+        .filter(([, job]) => UNFINISHED_JOB_STATUSES.includes(job.status))
         .map(([_id, job]) => ({ _id, status: job.status })),
     };
   }
@@ -165,6 +160,10 @@ describe("unseenLogSuffix", () => {
     expect(unseenLogSuffix("a\nb\n", "a\nb\n")).toBe("");
     expect(unseenLogSuffix("a\nb\nc\n", "b\nc\n")).toBe("");
     expect(unseenLogSuffix("a\n", "")).toBe("");
+  });
+
+  it("compares by UTF-16 code unit, like the slicing", () => {
+    expect(unseenLogSuffix("a\u{1F600}", "\u{1F600}b")).toBe("b");
   });
 });
 
@@ -351,7 +350,7 @@ describe("jobs notification recovery", () => {
     expect(jobs.getJobLog(jobId)).toBe("");
   });
 
-  it("checks jobs that go quiet with one list of finished jobs", async () => {
+  it("checks jobs that go quiet with one list of unfinished jobs", async () => {
     await openStream();
     const jobId = nextJobId();
     const otherJobId = nextJobId();
@@ -420,6 +419,47 @@ describe("jobs notification recovery", () => {
     streamEvent(socket(), { _id: jobId, status: jobStates.success });
     await tick();
     expect(job.settled).toBe(true);
+  });
+
+  it("opens one stream for several jobs added while it is down", async () => {
+    await openStream();
+    socket().drop(); // a reconnect is now pending
+    const jobIds = [nextJobId(), nextJobId(), nextJobId()];
+    for (const jobId of jobIds) {
+      serverJobs[jobId] = { status: jobStates.running };
+    }
+    const tracked = jobIds.map((jobId) => track(jobId));
+    await tick();
+    expect(FakeSocket.instances).toHaveLength(2);
+    expect(listCalls()).toHaveLength(1);
+    // The pending reconnect was cancelled: no further socket appears.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeSocket.instances).toHaveLength(2);
+    // One at a time: under fake timers, concurrent dynamic imports of the
+    // (mocked) progress module never resolve -- a harness artifact.
+    for (const jobId of jobIds) {
+      streamEvent(socket(), { _id: jobId, status: jobStates.success });
+      await tick();
+    }
+    expect(tracked.map((job) => job.settled)).toEqual([true, true, true]);
+  });
+
+  it("settles a job missing from the unfinished list only once it ended", async () => {
+    await openStream();
+    const jobId = nextJobId();
+    // Not in the user's list (e.g. it was cut off by the limit): it is read
+    // directly, and stays tracked while it is still running.
+    serverJobs[jobId] = { status: jobStates.running };
+    mocks.get.mockImplementation(async (path: string, config?: any) =>
+      path === "job" ? { data: [] } : restGet(path, config),
+    );
+    const job = track(jobId);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(jobCalls()).toEqual([[`job/${jobId}`]]);
+    expect(job.settled).toBeUndefined();
+    serverJobs[jobId] = { status: jobStates.cancelled };
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(job.settled).toBe(false);
   });
 
   it("cancels a pending reconnect on a deliberate close", async () => {

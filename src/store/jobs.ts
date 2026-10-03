@@ -21,7 +21,11 @@ import main from "./index";
 
 import { logError } from "@/utils/log";
 import { quotaExceededMessage } from "@/utils/quota";
-import { isTerminalJobStatus, jobStates } from "./jobConstants";
+import {
+  isTerminalJobStatus,
+  jobStates,
+  UNFINISHED_JOB_STATUSES,
+} from "./jobConstants";
 
 export { jobStates };
 
@@ -140,10 +144,10 @@ const STABLE_CONNECTION_MS = 10000;
 // drop and reconnect while the job's request was in flight, a stream that
 // stays open but goes silent, giving up on reconnecting): every
 // JOB_POLL_INTERVAL_MS, jobs quiet for JOB_QUIET_MS are checked against one
-// list of the user's recently finished jobs.
+// list of the user's unfinished jobs.
 const JOB_POLL_INTERVAL_MS = 15000;
 const JOB_QUIET_MS = 30000;
-const RECENT_FINISHED_JOBS_LIMIT = 100;
+const UNFINISHED_JOBS_LIMIT = 100;
 
 // Timer handles are not store state.
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -181,13 +185,14 @@ export function unseenLogSuffix(seenLog: string, serverLog: string): string {
   if (serverLog.startsWith(seenLog)) {
     return serverLog.slice(seenLog.length);
   }
-  if (!serverLog) {
-    return "";
-  }
+  // Only our last `length` characters can overlap the start of its log, and
+  // only its first `length` can be the overlap.
+  const length = Math.min(seenLog.length, serverLog.length);
+  const seenEnd = seenLog.slice(seenLog.length - length);
   // prefix[i]: length of the longest proper prefix of serverLog[0..i] that
   // is also a suffix of it.
-  const prefix = new Array<number>(serverLog.length).fill(0);
-  for (let i = 1; i < serverLog.length; ++i) {
+  const prefix = new Int32Array(length);
+  for (let i = 1; i < length; ++i) {
     let k = prefix[i - 1];
     while (k > 0 && serverLog[i] !== serverLog[k]) {
       k = prefix[k - 1];
@@ -197,22 +202,55 @@ export function unseenLogSuffix(seenLog: string, serverLog: string): string {
     }
     prefix[i] = k;
   }
-  // Only our last serverLog.length characters can overlap its start (so a
-  // full match can only end at our end).
+  // A full match can only end at our end, since seenEnd is `length` long.
   let matched = 0;
-  for (
-    let i = Math.max(0, seenLog.length - serverLog.length);
-    i < seenLog.length;
-    ++i
-  ) {
-    while (matched > 0 && seenLog[i] !== serverLog[matched]) {
+  for (let i = 0; i < length; ++i) {
+    while (matched > 0 && seenEnd[i] !== serverLog[matched]) {
       matched = prefix[matched - 1];
     }
-    if (seenLog[i] === serverLog[matched]) {
+    if (seenEnd[i] === serverLog[matched]) {
       matched += 1;
     }
   }
   return serverLog.slice(matched);
+}
+
+// Tell the user how a job ended.
+async function notifyJobEnd(jobEvent: IJobEventData, log: string) {
+  const jobTitle = jobEvent.title || "Job";
+  const status = jobEvent.status;
+  if (status === jobStates.success) {
+    const { default: progress } = await import("./progress");
+    progress.createNotification({
+      type: NotificationType.INFO,
+      title: "Job Completed Successfully",
+      message: `${jobTitle} has completed successfully.`,
+      timeout: 5, // Auto-dismiss after 5 seconds
+    });
+    return;
+  }
+  logError(
+    `Compute job with id ${jobEvent._id} ${
+      status === jobStates.cancelled ? "cancelled" : "failed"
+    }`,
+  );
+  if (status === jobStates.error) {
+    // Surface the failure to the user. In particular, detect storage
+    // quota breaches: server-side uploads (transcoding jobs, worker
+    // outputs) fail with a quota message that only appears in the job
+    // log, and would otherwise be invisible to the user.
+    const quotaMessage = quotaExceededMessage(log);
+    const { default: progress } = await import("./progress");
+    progress.createNotification({
+      type: NotificationType.ERROR,
+      title: quotaMessage ? "Storage Quota Exceeded" : "Job Failed",
+      message: quotaMessage ?? `${jobTitle} failed.`,
+      info: quotaMessage
+        ? undefined
+        : "See the job log for details about the failure.",
+      timeout: 0, // Requires manual dismissal
+    });
+  }
 }
 
 @Module({ dynamic: true, store, name: "jobs" })
@@ -405,8 +443,12 @@ export class Jobs extends VuexModule {
   }
 
   // Settle tracked jobs that have finished without our hearing of it, with
-  // one request for the user's recently finished jobs (there is no batch
-  // status endpoint) and a full read only of the ones that did finish.
+  // one request listing the user's unfinished jobs (there is no batch status
+  // endpoint) and a full read only of tracked jobs missing from that list.
+  // Listing the unfinished rather than the finished jobs means a job that
+  // ended long ago, behind many newer ones, is still found. A job missing
+  // for another reason (the list was cut at its limit, someone else's job)
+  // just costs a read that shows it still running.
   // With onlyQuiet, only jobs with no news for JOB_QUIET_MS are considered.
   @Action
   async reconcileTrackedJobs(onlyQuiet: boolean) {
@@ -422,28 +464,26 @@ export class Jobs extends VuexModule {
     for (const jobId of jobIds) {
       this.jobInfoMap[jobId].lastEventAt = now;
     }
-    let finished: Set<string>;
+    let unfinished: Set<string>;
     try {
+      // Newest first (the default sort), so tracked jobs come before old
+      // ones left behind.
       const response = await main.girderRest.get("job", {
         params: {
-          statuses: JSON.stringify([
-            jobStates.success,
-            jobStates.error,
-            jobStates.cancelled,
-          ]),
-          sort: "updated",
-          sortdir: -1,
-          limit: RECENT_FINISHED_JOBS_LIMIT,
+          statuses: JSON.stringify(UNFINISHED_JOB_STATUSES),
+          limit: UNFINISHED_JOBS_LIMIT,
         },
       });
-      finished = new Set(response.data.map((job: { _id: string }) => job._id));
+      unfinished = new Set(
+        response.data.map((job: { _id: string }) => job._id),
+      );
     } catch (error) {
-      logError("Failed to list recently finished jobs");
+      logError("Failed to list unfinished jobs");
       return;
     }
     await Promise.all(
       jobIds
-        .filter((jobId) => finished.has(jobId))
+        .filter((jobId) => !unfinished.has(jobId))
         .map((jobId) => this.reconcileJob(jobId)),
     );
   }
@@ -552,43 +592,14 @@ export class Jobs extends VuexModule {
     jobInfo.settled = true;
 
     const success = status === jobStates.success;
-    if (!success) {
-      logError(
-        `Compute job with id ${jobId} ${
-          status === jobStates.cancelled ? "cancelled" : "failed"
-        }`,
-      );
-      if (status === jobStates.error) {
-        // Surface the failure to the user. In particular, detect storage
-        // quota breaches: server-side uploads (transcoding jobs, worker
-        // outputs) fail with a quota message that only appears in the job
-        // log, and would otherwise be invisible to the user.
-        const jobTitle = jobEvent.title || "Job";
-        const quotaMessage = quotaExceededMessage(jobInfo.log);
-        const { default: progress } = await import("./progress");
-        progress.createNotification({
-          type: NotificationType.ERROR,
-          title: quotaMessage ? "Storage Quota Exceeded" : "Job Failed",
-          message: quotaMessage ?? `${jobTitle} failed.`,
-          info: quotaMessage
-            ? undefined
-            : "See the job log for details about the failure.",
-          timeout: 0, // Requires manual dismissal
-        });
-      }
-    } else {
-      // Create success notification
-      const jobTitle = jobEvent.title || "Job";
-      const { default: progress } = await import("./progress");
-      progress.createNotification({
-        type: NotificationType.INFO,
-        title: "Job Completed Successfully",
-        message: `${jobTitle} has completed successfully.`,
-        timeout: 5, // Auto-dismiss after 5 seconds
-      });
+    try {
+      await notifyJobEnd(jobEvent, jobInfo.log);
+    } finally {
+      // Whatever happens to the notification (its chunk may fail to load),
+      // the job must settle: it is marked settled, so nothing else will.
+      jobInfo.successResolve(success);
+      this.removeJobInfo(jobId);
     }
-    jobInfo.successResolve(success);
-    this.removeJobInfo(jobId);
     // A job is done, add badge to annotation panel if it is closed
     if (!main.isAnnotationPanelOpen) {
       main.setAnnotationPanelBadge(true);
@@ -649,8 +660,13 @@ export class Jobs extends VuexModule {
 
   @Action
   async initializeNotificationSubscription() {
+    // No await anywhere here: the new socket is in place before any other
+    // caller (e.g. several addJobs at once) can look, so they share it
+    // instead of each opening one.
     // Also cancels a pending reconnect: this is the connection now.
-    await this.closeNotificationSubscription();
+    cancelReconnect();
+    cancelStableTimer();
+    const previousSource = this.notificationSource;
     const apiRoot = import.meta.env.VITE_GIRDER_URL || main.girderRest.apiRoot;
     let notificationURL = apiRoot.endsWith("/api/v1")
       ? apiRoot.slice(0, -6)
@@ -665,7 +681,9 @@ export class Jobs extends VuexModule {
     notificationSource.onerror = this.handleError;
     notificationSource.onopen = this.handleOpen;
     notificationSource.onclose = this.handleClose;
+    // Replaced before closing, so handleClose sees a deliberate close.
     this.setNotificationSource(notificationSource);
+    previousSource?.close();
   }
 
   @Action
@@ -687,4 +705,10 @@ export default getModule(Jobs);
 // the dynamic module (which causes duplicate getters and state overwrites).
 if (import.meta.hot) {
   import.meta.hot.accept();
+  // The re-run module starts with fresh timer handles; stop the old timers.
+  import.meta.hot.dispose(() => {
+    stopJobPolling();
+    cancelReconnect();
+    cancelStableTimer();
+  });
 }
