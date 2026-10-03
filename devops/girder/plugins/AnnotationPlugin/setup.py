@@ -27,7 +27,9 @@ setup(
         "girder-worker>5",
         "girder-plugin-worker>5",
         "girder-worker-utils",  # Doesn't follow Girder's version schema
-        "girder-jobs>5",
+        # 5.0.19 adds the "List and read jobs" API key scope that lets a
+        # custom-scoped key poll its own jobs (girder/girder#3937).
+        "girder-jobs>=5.0.19",
         "girder-user-quota>5",
         "girder-import-tracker>5",
         "fastjsonschema",
