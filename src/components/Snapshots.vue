@@ -701,6 +701,7 @@ import {
   getBaseURLFromDownloadParameters,
 } from "@/utils/screenshot";
 import { logError } from "@/utils/log";
+import { snapshotLoadRequest } from "@/commands/requests";
 
 interface ISnapshotItem {
   name: string;
@@ -2984,6 +2985,24 @@ function drawScalebarOnCanvas(
 }
 
 // --- Watchers ---
+
+// "Go to snapshot: …" from the command palette: load it exactly as clicking
+// its row does. Cleared once taken, so asking twice is still a change.
+watch(snapshotLoadRequest, (snapshot) => {
+  if (!snapshot) {
+    return;
+  }
+  snapshotLoadRequest.value = null;
+  loadSnapshot(new Event("command"), {
+    item: {
+      name: snapshot.name,
+      datasetName: "",
+      key: snapshotKey(snapshot),
+      record: snapshot,
+      modified: "",
+    },
+  });
+});
 
 watch(
   () => props.snapshotVisible,

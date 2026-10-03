@@ -182,7 +182,9 @@ import {
 } from "@/store/model";
 import { logError } from "@/utils/log";
 
-const importDialog = ref(false);
+// Bindable as `v-model:open` (DataIOMenu opens it for the command palette);
+// without a binding it is local state toggled by the activator.
+const importDialog = defineModel<boolean>("open", { default: false });
 
 const jsonFile = ref<File | null>(null);
 const isLoadingFile = ref(false);

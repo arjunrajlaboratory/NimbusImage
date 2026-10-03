@@ -618,9 +618,10 @@ main store instead: `store.requestPaletteOpen(["analysisPanel",
 in order, and clears the list. Order matters — open the *primary* palette
 first, then its companion (Filters hosts alongside Analysis and the Object
 Browser); the other order closes the palette just opened.
-`TRequestablePalette` in `model.ts` is a subset of App.vue's `PaletteId`, so
-keep them in step — that is what makes a renamed palette a compile error
-rather than a click that does nothing. Same shape as the older
+`TRequestablePalette` in `model.ts` is an alias of `PanelId` from
+`src/utils/panelRegistry.ts` (the single list of palettes and their
+primary/companion rules), so a renamed palette is a compile error rather than
+a click that does nothing. Same shape as the older
 `isAnnotationPanelOpen` hatch used by the Timelapse panel.
 
 ## A count computed after filtering must say it was filtered

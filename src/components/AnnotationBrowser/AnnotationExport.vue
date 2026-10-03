@@ -148,7 +148,9 @@ import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
 import { useCollectionDatasets } from "@/utils/useCollectionDatasets";
 
-const dialog = ref(false);
+// Bindable as `v-model:open` (DataIOMenu opens it for the command palette);
+// without a binding it is local state toggled by the activator.
+const dialog = defineModel<boolean>("open", { default: false });
 const exporting = ref(false);
 const exportProgress = ref(0);
 

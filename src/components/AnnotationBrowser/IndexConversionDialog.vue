@@ -144,7 +144,9 @@ import Papa from "papaparse";
 import { downloadToClient } from "@/utils/download";
 import { logError } from "@/utils/log";
 
-const dialog = ref(false);
+// Bindable as `v-model:open` (DataIOMenu opens it for the command palette);
+// without a binding it is local state toggled by the activator.
+const dialog = defineModel<boolean>("open", { default: false });
 const dimensionLabels = ref<{
   xy: string[] | null;
   z: string[] | null;

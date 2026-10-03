@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { enableAutoUnmount, mount } from "@vue/test-utils";
 
 // Reactive so computeds over the store (e.g. selectedToolId) track mutations
 // made mid-test, as they would against the real Vuex store.
@@ -32,9 +32,16 @@ vi.mock("vuedraggable", () => ({
   default: { name: "draggable", template: "<div><slot /></div>" },
 }));
 
+import { nextTick } from "vue";
 import store from "@/store";
 import toolSuggestionsStore from "@/store/toolSuggestions";
 import Toolset from "./Toolset.vue";
+import { toolCreationRequest } from "@/commands/requests";
+import { allCommands } from "@/commands/registry";
+
+// Toolset registers palette commands and watches a module-level request, so a
+// mount left over from an earlier test would answer this test's request.
+enableAutoUnmount(afterEach);
 
 function mountComponent() {
   return mount(Toolset, {
@@ -384,6 +391,57 @@ describe("Toolset", () => {
         true,
       );
       removeSpy.mockRestore();
+    });
+  });
+
+  describe("command palette", () => {
+    const request = {
+      template: { name: "Manual object tool", interface: [] } as any,
+      defaultValues: { shape: "point" },
+      selectedItem: { text: "Point" } as any,
+    };
+
+    beforeEach(() => {
+      toolCreationRequest.value = null;
+    });
+
+    it("opens tool creation pre-selected for an Add-tool request, then clears it", async () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      toolCreationRequest.value = request;
+      await nextTick();
+      expect(vm.selectedToolType).toEqual(request);
+      expect(vm.toolCreationDialogOpen).toBe(true);
+      expect(toolCreationRequest.value).toBeNull();
+      wrapper.unmount();
+    });
+
+    it("honours a request made before it mounted", () => {
+      toolCreationRequest.value = request;
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).toolCreationDialogOpen).toBe(true);
+      wrapper.unmount();
+    });
+
+    it("drops the request without opening when logged out", async () => {
+      (store as any).isLoggedIn = false;
+      const wrapper = mountComponent();
+      toolCreationRequest.value = request;
+      await nextTick();
+      expect((wrapper.vm as any).toolCreationDialogOpen).toBe(false);
+      expect(toolCreationRequest.value).toBeNull();
+      wrapper.unmount();
+    });
+
+    it("registers its Pipelines and Suggest-tools commands while mounted", () => {
+      const wrapper = mountComponent();
+      const ids = allCommands.value.map((command) => command.id);
+      expect(ids).toContain("tools.pipelines");
+      expect(ids).toContain("tools.suggest");
+      wrapper.unmount();
+      expect(allCommands.value.map((command) => command.id)).not.toContain(
+        "tools.pipelines",
+      );
     });
   });
 });

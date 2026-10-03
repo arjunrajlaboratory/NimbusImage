@@ -343,7 +343,9 @@ const fieldToCopy = ref<ComponentPublicInstance>();
 
 const filename = ref("");
 
-const dialog = ref(false);
+// Bindable as `v-model:open` (DataIOMenu opens it for the command palette);
+// without a binding it is local state toggled by the activator.
+const dialog = defineModel<boolean>("open", { default: false });
 const text = ref("");
 const displayText = ref("");
 

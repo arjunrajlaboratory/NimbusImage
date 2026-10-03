@@ -33,6 +33,7 @@
             class="tool-suggestions-ai-btn"
             :class="{ 'tool-suggestions-glow': toolSuggestionsGlow }"
             aria-label="Suggest tools with AI"
+            data-command-id="tools.suggest"
             :disabled="!isLoggedIn || toolSuggestionsLoading"
             :loading="toolSuggestionsLoading"
             @click="openToolSuggestions"
@@ -50,6 +51,7 @@
             color="primary"
             size="small"
             aria-label="Pipelines"
+            data-command-id="tools.pipelines"
             :disabled="!isLoggedIn"
             @click="openPipelines"
           >
@@ -179,6 +181,8 @@ import ToolTypeSelection from "@/tools/creation/ToolTypeSelection.vue";
 import ToolItem from "./ToolItem.vue";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import toolSuggestionsStore from "@/store/toolSuggestions";
+import { useCommand } from "@/commands/registry";
+import { toolCreationRequest } from "@/commands/requests";
 
 // Lists tools from a toolset, allows selecting a tool from the list, and adding new tools
 
@@ -258,6 +262,46 @@ function handleToolTypeSelected(toolType: any) {
   toolTypeDialogOpen.value = false;
   toolCreationDialogOpen.value = true;
 }
+
+// "Add tool: …" from the command palette: open tool creation pre-selected,
+// exactly as picking that card in the tool-type dialog does. Cleared once
+// honoured, so asking for the same tool twice is still a change.
+watch(
+  toolCreationRequest,
+  (request) => {
+    if (!request) {
+      return;
+    }
+    toolCreationRequest.value = null;
+    if (!isLoggedIn.value) {
+      return;
+    }
+    handleToolTypeSelected(request);
+  },
+  { immediate: true },
+);
+
+useCommand(() => [
+  {
+    id: "tools.suggest",
+    title: "Suggest tools with AI",
+    group: "Actions",
+    keywords: ["recommend", "ai", "claude", "auto"],
+    icon: "mdi-lightbulb-on-outline",
+    enabled: () => isLoggedIn.value && !toolSuggestionsLoading.value,
+    run: openToolSuggestions,
+  },
+  {
+    id: "tools.pipelines",
+    title: "Open pipelines…",
+    group: "Actions",
+    description: "Chain worker steps and run them in sequence",
+    keywords: ["workflow", "batch", "chain", "steps"],
+    icon: "mdi-sitemap",
+    enabled: () => isLoggedIn.value,
+    run: openPipelines,
+  },
+]);
 
 function openToolSuggestions() {
   stopToolSuggestionsGlow();
