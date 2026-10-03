@@ -204,6 +204,172 @@ class TestIterFrames:
         assert frames[0][1].shape == (768, 1024)
 
 
+def _mock_gradient_region_endpoint(mock_gc):
+    """Serve tiles/region requests from a synthetic linear gradient.
+
+    The master image has pixel values master[r, c] = 2*c + 3*r, i.e. the
+    continuous field g(x, y) = 2*(x - 0.5) + 3*(y - 0.5) at pixel centers.
+    Linear fields are reproduced exactly by bilinear interpolation and by
+    center-aligned downsampling, so tests can assert exact values.
+
+    Returns the list of captured request parameter dicts.
+    """
+    captured = []
+
+    def side_effect(path, parameters=None, jsonResp=True):
+        captured.append(parameters)
+        p = parameters
+        left, top = p["left"], p["top"]
+        width = p.get("width", int(round(p["right"] - left)))
+        height = p.get("height", int(round(p["bottom"] - top)))
+        scale_x = width / (p["right"] - left)
+        scale_y = height / (p["bottom"] - top)
+        cols, rows = np.meshgrid(np.arange(width), np.arange(height))
+        x = left + (cols + 0.5) / scale_x
+        y = top + (rows + 0.5) / scale_y
+        arr = 2.0 * (x - 0.5) + 3.0 * (y - 0.5)
+        response = MagicMock()
+        response.content = pickle.dumps(arr)
+        return response
+
+    mock_gc.get.side_effect = side_effect
+    return captured
+
+
+def _gradient(x, y):
+    """The continuous field matching _mock_gradient_region_endpoint."""
+    return 2.0 * (np.asarray(x) - 0.5) + 3.0 * (np.asarray(y) - 0.5)
+
+
+class TestLineScan:
+    def test_straight_line_values_and_distances(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        ds = _make_dataset(mock_gc, sample_tiles_metadata)
+        _mock_gradient_region_endpoint(mock_gc)
+
+        result = ds.images.line_scan([(5, 10), (15, 10)])
+
+        # ~1 sample per pixel of length: 10 px -> 11 samples
+        assert len(result.distances) == 11
+        np.testing.assert_allclose(result.distances, np.arange(11.0))
+        np.testing.assert_allclose(
+            result.values, _gradient(np.linspace(5, 15, 11), 10)
+        )
+        np.testing.assert_allclose(result.points[:, 1], 10.0)
+
+    def test_polyline_distances_and_corner(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        ds = _make_dataset(mock_gc, sample_tiles_metadata)
+        _mock_gradient_region_endpoint(mock_gc)
+
+        result = ds.images.line_scan([(10, 10), (20, 10), (20, 20)])
+
+        assert result.distances[-1] == 20.0
+        assert np.all(np.diff(result.distances) > 0)
+        # Sample at distance 10 is the corner vertex (20, 10)
+        corner = np.argmin(np.abs(result.distances - 10.0))
+        np.testing.assert_allclose(result.points[corner], [20.0, 10.0])
+        np.testing.assert_allclose(
+            result.values[corner], _gradient(20.0, 10.0)
+        )
+
+    def test_outside_image_is_nan(self, mock_gc, sample_tiles_metadata):
+        ds = _make_dataset(mock_gc, sample_tiles_metadata)
+        _mock_gradient_region_endpoint(mock_gc)
+
+        result = ds.images.line_scan([(-20, 5), (10, 5)])
+
+        outside = result.points[:, 0] < 0
+        assert outside.any()
+        assert np.isnan(result.values[outside]).all()
+        inside = result.points[:, 0] >= 1
+        assert np.isfinite(result.values[inside]).all()
+        np.testing.assert_allclose(
+            result.values[inside],
+            _gradient(result.points[inside, 0], 5),
+        )
+
+    def test_large_region_downsampled(self, mock_gc):
+        tiles = {
+            "sizeX": 5000, "sizeY": 4000, "dtype": "uint16",
+            "frames": [],
+        }
+        ds = _make_dataset(mock_gc, tiles)
+        captured = _mock_gradient_region_endpoint(mock_gc)
+
+        result = ds.images.line_scan([(0, 0), (4000, 3000)])
+
+        # 5000 px long line, capped at 2000 samples
+        assert len(result.distances) == 2000
+        # The region request must be capped to max_region_dim per side
+        params = captured[0]
+        assert params["width"] == 2048
+        assert max(params["width"], params["height"]) == 2048
+        # Values still map back to image coordinates exactly
+        finite = np.isfinite(result.values)
+        np.testing.assert_allclose(
+            result.values[finite],
+            _gradient(
+                result.points[finite, 0], result.points[finite, 1]
+            ),
+        )
+
+    def test_short_line_sample_count(self, mock_gc, sample_tiles_metadata):
+        ds = _make_dataset(mock_gc, sample_tiles_metadata)
+        _mock_gradient_region_endpoint(mock_gc)
+
+        result = ds.images.line_scan([(10, 10), (14.2, 10)])
+        # ceil(4.2) + 1 = 6 samples
+        assert len(result.distances) == 6
+
+    def test_frame_selection(self, mock_gc, sample_tiles_metadata):
+        ds = _make_dataset(mock_gc, sample_tiles_metadata)
+        captured = _mock_gradient_region_endpoint(mock_gc)
+
+        ds.images.line_scan([(5, 10), (15, 10)], channel=1, z=1)
+
+        # channel=1, z=1 -> frame 3 in sample metadata
+        assert captured[0]["frame"] == 3
+
+    def test_multiband_region_averaged(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        ds = _make_dataset(mock_gc, sample_tiles_metadata)
+
+        def side_effect(path, parameters=None, jsonResp=True):
+            p = parameters
+            width = int(round(p["right"] - p["left"]))
+            height = int(round(p["bottom"] - p["top"]))
+            cols, rows = np.meshgrid(np.arange(width), np.arange(height))
+            band = _gradient(p["left"] + cols + 0.5, p["top"] + rows + 0.5)
+            # Three bands offset by 0, 3, 6 -> mean is band + 3
+            arr = np.stack([band, band + 3, band + 6], axis=-1)
+            response = MagicMock()
+            response.content = pickle.dumps(arr)
+            return response
+
+        mock_gc.get.side_effect = side_effect
+        result = ds.images.line_scan([(5, 10), (15, 10)])
+        np.testing.assert_allclose(
+            result.values, _gradient(result.points[:, 0], 10) + 3
+        )
+
+    def test_invalid_inputs_raise(self, mock_gc, sample_tiles_metadata):
+        import pytest
+
+        ds = _make_dataset(mock_gc, sample_tiles_metadata)
+        with pytest.raises(ValueError, match="at least 2"):
+            ds.images.line_scan([(5, 10)])
+        with pytest.raises(ValueError, match="zero length"):
+            ds.images.line_scan([(5, 10), (5, 10)])
+        with pytest.raises(ValueError, match="at least 2"):
+            ds.images.line_scan([5, 10])
+        with pytest.raises(ValueError, match="outside the image"):
+            ds.images.line_scan([(-50, -50), (-10, -10)])
+
+
 class TestParseColor:
     def test_white(self):
         assert _parse_color("white") == (1.0, 1.0, 1.0)

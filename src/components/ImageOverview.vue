@@ -16,6 +16,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { debounce } from "lodash";
 import geojs from "geojs";
 
 import store from "@/store";
@@ -320,13 +321,25 @@ async function onUrlChanged() {
   }
 }
 
+// Refreshing the overview image re-renders the whole image region on the
+// backend, so we debounce it. This keeps the minimap from firing a fetch on
+// every intermediate frame while a navigation slider is being scrubbed; it
+// updates once scrubbing settles. The main image view is unaffected. The
+// outline rectangle (onParentPan) stays responsive and is not debounced.
+const OVERVIEW_UPDATE_DEBOUNCE_MS = 250;
+const debouncedOnUrlChanged = debounce(
+  onUrlChanged,
+  OVERVIEW_UPDATE_DEBOUNCE_MS,
+);
+
 watch(dataset, () => create());
 watch(() => props.parentCameraInfo, onParentPan);
-watch([urlPromise, osmLayer], onUrlChanged);
+watch([urlPromise, osmLayer], debouncedOnUrlChanged);
 
 onMounted(() => create());
 
 onBeforeUnmount(() => {
+  debouncedOnUrlChanged.cancel();
   if (observer.value) {
     observer.value.disconnect();
     observer.value = null;
@@ -350,6 +363,11 @@ defineExpose({
 <style scoped lang="scss">
 .wrapper {
   position: absolute;
+  // Default to the top-right of the canvas, aligned with the palette column.
+  // Palettes (z 1006) sit in front, so the minimap is acceptably obscured
+  // when one is open. Users can still drag it or snap it to another corner.
+  top: 72px;
+  right: 16px;
   background: black;
   border: 1px solid white;
   z-index: 100;

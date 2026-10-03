@@ -55,10 +55,12 @@ vi.mock("@/store/datasetMetadataImport", () => ({
 }));
 
 vi.mock("@/store/ZenodoAPI", () => ({
-  default: vi.fn().mockImplementation(() => ({
-    filterImageFiles: mockFilterImageFiles,
-    downloadFile: mockDownloadFile,
-  })),
+  default: vi.fn(function () {
+    return {
+      filterImageFiles: mockFilterImageFiles,
+      downloadFile: mockDownloadFile,
+    };
+  }),
   IZenodoRecord: {},
   IZenodoFile: {},
 }));
@@ -73,8 +75,7 @@ vi.mock("@/components/GirderLocationChooser.vue", () => ({
 
 vi.mock("@/utils/strings", () => ({
   stripHtml: vi.fn((s: string) => s),
-  getTourStepId: vi.fn().mockReturnValue("test-tourstep"),
-  getTourTriggerId: vi.fn().mockReturnValue("test-tourtrigger"),
+  getTourAnchorId: vi.fn().mockReturnValue("test"),
 }));
 
 vi.mock("@/utils/log", () => ({

@@ -1,0 +1,4 @@
+interface:
+  display_name: "NimbusImage Images"
+  short_description: "Fetch frames, stacks, crops, and composites"
+  default_prompt: "Use the NimbusImage images skill to retrieve image arrays from a dataset."

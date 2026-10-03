@@ -111,3 +111,48 @@ class TestLiveComposite:
         assert rgb.dtype == np.float64
         assert rgb.min() >= 0.0
         assert rgb.max() <= 1.0
+
+
+class TestLiveLineScan:
+    def test_line_scan_matches_raw_pixels(self, dataset_with_collection):
+        """A horizontal scan sampled at pixel centers must reproduce the
+        raw pixel row exactly — validates the coordinate convention against
+        a real backend, not just a mock."""
+        ds = dataset_with_collection
+        img = ds.images.get(channel=0, z=0, time=0)
+        h, w = img.shape
+        row = h // 2
+        right = min(w - 1, 200)
+        result = ds.images.line_scan(
+            [(10.5, row + 0.5), (right + 0.5, row + 0.5)],
+            channel=0, z=0, time=0,
+        )
+        expected = img[row, 10:right + 1].astype(np.float64)
+        assert len(result.values) == len(expected)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-6)
+
+    def test_line_scan_outside_image_is_nan(self, dataset_with_collection):
+        ds = dataset_with_collection
+        h, _ = ds.images.get(channel=0, z=0, time=0).shape
+        result = ds.images.line_scan(
+            [(-30.0, h // 2), (30.0, h // 2)], channel=0, z=0, time=0,
+        )
+        assert np.isnan(result.values[result.points[:, 0] < 0]).all()
+        assert np.isfinite(
+            result.values[result.points[:, 0] >= 1]
+        ).all()
+
+    def test_line_scan_downsampled_long_line(self, dataset_with_collection):
+        """A line across the whole image forces the server-side downsample
+        path; values must still track a full-resolution scan."""
+        ds = dataset_with_collection
+        h, w = ds.images.get(channel=0, z=0, time=0).shape
+        line = [(0, 0), (w - 1, h - 1)]
+        low = ds.images.line_scan(
+            line, channel=0, z=0, time=0, max_region_dim=256
+        )
+        full = ds.images.line_scan(line, channel=0, z=0, time=0)
+        both = np.isfinite(low.values) & np.isfinite(full.values)
+        assert both.sum() > 0.8 * len(low.values)
+        corr = np.corrcoef(low.values[both], full.values[both])[0, 1]
+        assert corr > 0.8

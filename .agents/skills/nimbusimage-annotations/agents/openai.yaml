@@ -1,0 +1,4 @@
+interface:
+  display_name: "NimbusImage Annotations"
+  short_description: "Create and manage scientific image annotations"
+  default_prompt: "Use the NimbusImage annotations skill to create, filter, update, or delete annotations."

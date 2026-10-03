@@ -3,12 +3,36 @@ entryPoint: datasetview
 popular: false
 category: Introduction
 steps:
-  - id: tag-picker-tourstep3
+  # The tag picker lives in the tool-creation panel, so open it interactively
+  # first (open tool browser -> pick a tool type) before pointing at the tags.
+  - id: add-tool-tourstep
     route: datasetview
-    element: "#tool-creation-tag-picker-tourstep"
+    element: '[data-tour="add-tool"]'
+    title: "Working with tags"
+    text: "Tags label and organize your objects. Let's see where you set them — click 'Add new tool' to open the tool browser."
+    position: "right"
+    waitForElement: 2000
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "add-tool"
+
+  - id: blob-type-tourstep
+    route: datasetview
+    element: '[data-tour="blob"]'
+    title: "Pick a tool type"
+    text: "Choose the 'Blob' tool to configure it."
+    position: "right"
+    waitForElement: 5000
+    modalOverlay: true
+    showNextButton: false
+    onTriggerEvent: "blob"
+
+  - id: tag-picker-tourstep
+    route: datasetview
+    element: '[data-tour="tool-creation-tag-picker"]'
     title: "Tagging"
-    text: "Tags are a way to label the objects in your dataset. Every object can have one or more tags. These are ways to organize your data and analyses. You can pick which tags to show and which to quantify, allowing you complete flexibility."
-    position: "bottom"
-    waitForElement: 1000
+    text: "Tags label the objects this tool creates. Every object can have one or more tags — a flexible way to organize your data and analyses. You choose which tags to show and which to quantify."
+    position: "right"
+    waitForElement: 5000
     modalOverlay: false
     showNextButton: true

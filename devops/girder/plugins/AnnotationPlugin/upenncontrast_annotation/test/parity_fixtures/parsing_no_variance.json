@@ -1,0 +1,13 @@
+{
+  "name": "parsing_no_variance",
+  "description": "Two identical names: no column combination spans the rows, so parsing returns no variables.",
+  "input": {
+    "filenames": [
+      "frame.tif",
+      "frame.tif"
+    ]
+  },
+  "expected": {
+    "variables": []
+  }
+}

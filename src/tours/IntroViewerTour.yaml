@@ -14,7 +14,7 @@ steps:
 
   - id: navigation-toolbar-tourstep
     route: datasetview
-    element: "#viewer-toolbar-tourstep"
+    element: '[data-tour="viewer-toolbar"]'
     title: "Multi-dimensional navigation"
     text: "Here you can navigate through your dataset using the sliders. Use hotkeys (w/r for XY, d/e for Z, s/f for Time) for quick navigation."
     position: "right"
@@ -22,7 +22,7 @@ steps:
 
   - id: layer-controls-tourstep
     route: datasetview
-    element: "#layer-controls-tourstep"
+    element: '[data-tour="layer-controls"]'
     title: "Layer Controls"
     text: "You can toggle layers on and off using the checkboxes here. Quick tip: Use number keys 1-9 to quickly toggle individual layers!"
     position: "right"
@@ -35,7 +35,7 @@ steps:
     text: "Use your mouse wheel or trackpad to zoom in and out of the image."
     position: "left"
     modalOverlay: false
-    
+
   - id: pan-instruction-tourstep
     route: datasetview
     title: "Panning the Image"
@@ -47,22 +47,23 @@ steps:
   - id: rotation-instruction-tourstep
     route: datasetview
     title: "Rotation"
-    text: "Use a two-finger pinch gesture on your trackpad to rotate the image."
+    text: "Use a two-finger pinch gesture on your trackpad (or drag with the rotate handle) to rotate the image, then click Next."
     position: "left"
     modalOverlay: false
+    showNextButton: true
 
   - id: reset-rotation-tourstep
     route: datasetview
-    element: "#reset-rotation-tourstep"
+    element: '[data-tour="reset-rotation"]'
     title: "Reset Rotation"
     text: "Click here to reset the image rotation back to 0 degrees."
     position: "top"
-    waitForElement: 1000
+    waitForElement: 5000
     modalOverlay: false
 
   - id: lock-view-tourstep
     route: datasetview
-    element: "#lock-view-tourstep"
+    element: '[data-tour="lock-view"]'
     title: "Lock View"
     text: "Click here to lock/unlock the view. When locked, you cannot pan, zoom, or rotate."
     position: "top"
@@ -71,7 +72,7 @@ steps:
 
   - id: contrast-palette-tourstep
     route: datasetview
-    element: "#layer-info-tourstep"
+    element: '[data-tour="layer-info"]'
     title: "Layer Controls"
     text: "Click here to adjust contrast settings for each layer."
     position: "left"

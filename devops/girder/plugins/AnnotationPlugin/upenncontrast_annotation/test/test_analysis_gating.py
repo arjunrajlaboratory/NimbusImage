@@ -1,0 +1,1272 @@
+"""Server-side analysis gating (SERVER_GATING.md).
+
+The pure gating maths in ``server/helpers/analysis.py`` is the Python half of
+a two-implementation feature: the TypeScript client resolves gates below the
+plot cap, this module resolves them above it, and a dataset that grows past
+the cap must not change gate membership by switching resolvers. Parity is
+pinned by ``fixtures/analysis_gating_parity.json``, GENERATED from the
+TypeScript reference implementation (see analysisGatingParity.test.ts) — if a
+test here disagrees with the fixture, fix this module, not the fixture.
+"""
+
+import json
+import math
+import os
+
+import numpy as np
+import pytest
+
+from bson import ObjectId
+from pytest_girder.assertions import assertStatus, assertStatusOk
+
+from upenncontrast_annotation.server.helpers import analysis
+from upenncontrast_annotation.server.models.annotation import Annotation
+from upenncontrast_annotation.server.models.propertyValues import (
+    AnnotationPropertyValues,
+)
+
+from . import girder_utilities as utilities
+from . import upenn_testing_utilities as upenn_utilities
+
+
+FIXTURE_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "analysis_gating_parity.json"
+)
+
+
+def loadFixture():
+    with open(FIXTURE_PATH) as fixtureFile:
+        return json.load(fixtureFile)
+
+
+def fixtureDocs(case):
+    # Fixture annotations already have the doc shape the helpers consume:
+    # id, tags, shape, channel, location.
+    return case["annotations"]
+
+
+class TestJitterParity:
+    def testScalarJitterMatchesFixtureBitExactly(self):
+        for case in loadFixture()["jitterCases"]:
+            actual = analysis.jitter_from_id(case["id"], case["salt"])
+            assert actual == case["expected"], (
+                f"jitter({case['id']!r}, {case['salt']}) = {actual!r}, "
+                f"TS reference says {case['expected']!r}"
+            )
+
+    def testVectorizedJitterMatchesScalar(self):
+        cases = loadFixture()["jitterCases"]
+        for salt in (analysis.X_JITTER_SALT, analysis.Y_JITTER_SALT):
+            ids = [case["id"] for case in cases]
+            vectorized = analysis.jitter_from_ids(ids, salt)
+            for annotationId, value in zip(ids, vectorized):
+                assert value == analysis.jitter_from_id(annotationId, salt)
+
+    def testEmptyIdListYieldsEmptyArray(self):
+        assert analysis.jitter_from_ids([], 17).shape == (0,)
+
+    def testJitterIsBounded(self):
+        for case in loadFixture()["jitterCases"]:
+            assert abs(case["expected"]) < 0.29
+
+
+class TestEncodeCategoryKey:
+    def testMatchesJavascriptJsonStringify(self):
+        assert analysis.encode_category_key(["A", "B"]) == 'v1:["A","B"]'
+        assert analysis.encode_category_key([]) == "v1:[]"
+        assert analysis.encode_category_key("polygon") == 'v1:"polygon"'
+        assert analysis.encode_category_key(3) == "v1:3"
+
+    def testDoesNotEscapeNonAscii(self):
+        # JSON.stringify emits astral characters raw; json.dumps must not
+        # \u-escape them or the keys stop matching the client's.
+        assert analysis.encode_category_key(["💥boom"]) == 'v1:["💥boom"]'
+
+    def testTagSortUsesUtf16CodeUnits(self):
+        # JS Array.sort compares UTF-16 code units: an astral character
+        # (surrogate pair, first unit 0xD83D) sorts BELOW U+FFFD. Python's
+        # code-point comparison would order these the other way around.
+        tags = ["�", "💥"]
+        assert analysis.sort_tags(tags) == ["💥", "�"]
+
+    def testTagSortMatchesPlainSortForBmpStrings(self):
+        tags = ["beta", "alpha", "Alpha", "0"]
+        assert analysis.sort_tags(tags) == sorted(tags)
+
+
+class TestPointsInPolygon:
+    SQUARE = [
+        {"x": 0, "y": 0},
+        {"x": 10, "y": 0},
+        {"x": 10, "y": 10},
+        {"x": 0, "y": 10},
+    ]
+
+    def testInsideAndOutside(self):
+        xs = np.array([5.0, 50.0, -1.0])
+        ys = np.array([5.0, 5.0, 5.0])
+        assert analysis.points_in_polygon(xs, ys, self.SQUARE).tolist() == [
+            True,
+            False,
+            False,
+        ]
+
+    def testConcavePolygonUsesContainmentNotBoundingBox(self):
+        vShape = [
+            {"x": 0, "y": 0},
+            {"x": 10, "y": 0},
+            {"x": 10, "y": 10},
+            {"x": 5, "y": 2},
+            {"x": 0, "y": 10},
+        ]
+        xs = np.array([1.0, 5.0, 9.0])
+        ys = np.array([8.0, 8.0, 8.0])
+        assert analysis.points_in_polygon(xs, ys, vShape).tolist() == [
+            True,
+            False,
+            True,
+        ]
+
+    def testDegeneratePolygonMatchesNothing(self):
+        xs = np.array([5.0])
+        ys = np.array([5.0])
+        assert analysis.points_in_polygon(
+            xs, ys, self.SQUARE[:2]
+        ).tolist() == [False]
+
+    def testNanCoordinatesNeverMatch(self):
+        xs = np.array([np.nan, 5.0])
+        ys = np.array([5.0, np.nan])
+        assert analysis.points_in_polygon(xs, ys, self.SQUARE).tolist() == [
+            False,
+            False,
+        ]
+
+    def testEmptyInput(self):
+        empty = np.empty(0)
+        assert analysis.points_in_polygon(empty, empty, self.SQUARE).shape == (
+            0,
+        )
+
+
+class TestAxisCoordinates:
+    DOCS = [
+        {
+            "id": "0123456789abcdef01234567",
+            "tags": ["A"],
+            "shape": "point",
+            "channel": 2,
+            "location": {"XY": 0, "Z": 4, "Time": 1},
+        }
+    ]
+
+    def testNestedPropertyPath(self):
+        values = {
+            "0123456789abcdef01234567": {"p": {"Centroid": {"x": 7.5}}}
+        }
+        coords = analysis.axis_coordinates(
+            self.DOCS,
+            values,
+            {"type": "property", "path": ["p", "Centroid", "x"]},
+            None,
+            analysis.X_JITTER_SALT,
+        )
+        assert coords.tolist() == [7.5]
+
+    @pytest.mark.parametrize(
+        "value", [None, "5", True, False, float("nan"), float("inf"), [5]]
+    )
+    def testNonNumericPropertyValuesAreMissing(self, value):
+        values = {"0123456789abcdef01234567": {"p": {"Area": value}}}
+        coords = analysis.axis_coordinates(
+            self.DOCS,
+            values,
+            {"type": "property", "path": ["p", "Area"]},
+            None,
+            analysis.X_JITTER_SALT,
+        )
+        assert math.isnan(coords[0])
+
+    def testMissingValueDocIsMissing(self):
+        coords = analysis.axis_coordinates(
+            self.DOCS,
+            {},
+            {"type": "property", "path": ["p", "Area"]},
+            None,
+            analysis.X_JITTER_SALT,
+        )
+        assert math.isnan(coords[0])
+
+    def testCategoricalCoordinateIsIndexPlusJitter(self):
+        pinned = [
+            analysis.encode_category_key(["Z-other"]),
+            analysis.encode_category_key(["A"]),
+        ]
+        coords = analysis.axis_coordinates(
+            self.DOCS,
+            {},
+            {"type": "categorical", "key": "tags"},
+            pinned,
+            analysis.X_JITTER_SALT,
+        )
+        expected = 1 + analysis.jitter_from_id(
+            "0123456789abcdef01234567", analysis.X_JITTER_SALT
+        )
+        assert coords.tolist() == [expected]
+
+    def testUnknownCategoryIsMissing(self):
+        pinned = [analysis.encode_category_key(["something-else"])]
+        coords = analysis.axis_coordinates(
+            self.DOCS,
+            {},
+            {"type": "categorical", "key": "tags"},
+            pinned,
+            analysis.X_JITTER_SALT,
+        )
+        assert math.isnan(coords[0])
+
+    @pytest.mark.parametrize(
+        ("key", "expectedRaw"),
+        [
+            ("tags", ["A"]),
+            ("shape", "point"),
+            ("channel", 2),
+            ("xy", 0),
+            ("z", 4),
+            ("time", 1),
+        ],
+    )
+    def testEveryCategoricalKeyReadsItsField(self, key, expectedRaw):
+        pinned = [analysis.encode_category_key(expectedRaw)]
+        coords = analysis.axis_coordinates(
+            self.DOCS,
+            {},
+            {"type": "categorical", "key": key},
+            pinned,
+            analysis.Y_JITTER_SALT,
+        )
+        assert not math.isnan(coords[0])
+
+
+class TestGateResolutionParity:
+    def testEveryFixtureCaseResolvesIdentically(self):
+        fixture = loadFixture()
+        assert len(fixture["gateCases"]) >= 7
+        for case in fixture["gateCases"]:
+            docs = fixtureDocs(case)
+            for plotIndex, plot in enumerate(case["plots"]):
+                resolved = analysis.resolve_gate_ids(
+                    docs, case["values"], plot
+                )
+                assert resolved == case["expected"][plotIndex], (
+                    f"{case['name']} plot {plotIndex}: {resolved} != "
+                    f"{case['expected'][plotIndex]}"
+                )
+
+
+# --- Endpoint: POST /upenn_annotation/analysis/gate_ids ---
+
+
+def postJson(server, user, path, body):
+    return server.request(
+        path=path, method="POST", user=user,
+        body=json.dumps(body), type="application/json",
+    )
+
+
+def makeAnnotation(datasetId, tags=None, channel=0, location=None):
+    ann = upenn_utilities.getSampleAnnotation(datasetId)
+    if tags is not None:
+        ann["tags"] = tags
+    ann["channel"] = channel
+    if location is not None:
+        ann["location"] = location
+    return Annotation().create(ann)
+
+
+def propertyPlot(plotId, vertices):
+    return {
+        "id": plotId,
+        "xAxis": {"type": "property", "path": ["p", "Area"]},
+        "yAxis": {"type": "property", "path": ["p", "Mean"]},
+        "gate": {
+            "categoryKeyVersion": 1,
+            "vertices": vertices,
+            "xCategories": None,
+            "yCategories": None,
+        },
+    }
+
+
+BOX_0_10 = [
+    {"x": 0, "y": 0}, {"x": 10, "y": 0},
+    {"x": 10, "y": 10}, {"x": 0, "y": 10},
+]
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestAnalysisGateIdsEndpoint:
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        anns = []
+        for area, mean, tags in (
+            (5, 5, ["in"]),
+            (50, 5, ["out"]),
+            (5, 50, ["in"]),
+        ):
+            a = makeAnnotation(folder["_id"], tags=tags)
+            pv.appendValues(
+                {"p": {"Area": area, "Mean": mean}}, a["_id"], folder["_id"]
+            )
+            anns.append(a)
+        noValues = makeAnnotation(folder["_id"], tags=["in"])
+        return folder, anns, noValues
+
+    def testPropertyGateResolvesPureMembership(self, admin, server):
+        folder, anns, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [propertyPlot("plot-1", BOX_0_10)],
+            },
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"] == {"plot-1": [str(anns[0]["_id"])]}
+
+    def testPlotsResolveIndependentlyNotChained(self, admin, server):
+        # Two plots whose polygons overlap on one annotation: each answer is
+        # the pure predicate over the whole dataset — the second plot's list
+        # is NOT narrowed by the first plot's gate.
+        folder, anns, _ = self._setup(admin)
+        wideBox = [
+            {"x": 0, "y": 0}, {"x": 100, "y": 0},
+            {"x": 100, "y": 100}, {"x": 0, "y": 100},
+        ]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [
+                    propertyPlot("narrow", BOX_0_10),
+                    propertyPlot("wide", wideBox),
+                ],
+            },
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"]["narrow"] == [str(anns[0]["_id"])]
+        assert sorted(resp.json["gateIds"]["wide"]) == sorted(
+            str(a["_id"]) for a in anns
+        )
+
+    def testCategoricalGateReadsAnnotationFields(self, admin, server):
+        folder, anns, noValues = self._setup(admin)
+        inKey = analysis.encode_category_key(["in"])
+        outKey = analysis.encode_category_key(["out"])
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [{
+                    "id": "cat",
+                    "xAxis": {"type": "categorical", "key": "tags"},
+                    "yAxis": {"type": "categorical", "key": "channel"},
+                    "gate": {
+                        "categoryKeyVersion": 1,
+                        "vertices": [
+                            {"x": -0.4, "y": -0.4},
+                            {"x": 0.4, "y": -0.4},
+                            {"x": 0.4, "y": 0.4},
+                            {"x": -0.4, "y": 0.4},
+                        ],
+                        "xCategories": [inKey, outKey],
+                        "yCategories": [analysis.encode_category_key(0)],
+                    },
+                }],
+            },
+        )
+        assertStatusOk(resp)
+        expected = sorted(
+            [str(anns[0]["_id"]), str(anns[2]["_id"]),
+             str(noValues["_id"])]
+        )
+        assert sorted(resp.json["gateIds"]["cat"]) == expected
+
+    def testOrphanValueDocNeverProducesAnId(self, admin, server):
+        # A property-value doc whose annotation is gone must not resolve:
+        # annotation docs anchor existence (unlike listIds' PV-driven path).
+        folder, anns, _ = self._setup(admin)
+        AnnotationPropertyValues().appendValues(
+            {"p": {"Area": 5, "Mean": 5}}, ObjectId(), folder["_id"]
+        )
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [propertyPlot("plot-1", BOX_0_10)],
+            },
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"] == {"plot-1": [str(anns[0]["_id"])]}
+
+    def testEmptyGateIsARealAnswer(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        farBox = [
+            {"x": 1000, "y": 1000}, {"x": 1001, "y": 1000},
+            {"x": 1001, "y": 1001}, {"x": 1000, "y": 1001},
+        ]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [propertyPlot("empty", farBox)],
+            },
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"] == {"empty": []}
+
+    def testDegenerateGateMatchesNothingWithoutError(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [propertyPlot("degenerate", BOX_0_10[:2])],
+            },
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"] == {"degenerate": []}
+
+    def testEmptyPlotsResolvesToNothing(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]), "plots": []},
+        )
+        assertStatusOk(resp)
+        assert resp.json["gateIds"] == {}
+
+    def testRequiresReadAccess(self, admin, user, server):
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        resp = postJson(
+            server, user, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [propertyPlot("plot-1", BOX_0_10)],
+            },
+        )
+        assertStatus(resp, 403)
+
+    def testUnknownDatasetIs400(self, admin, server):
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": "not-an-id", "plots": []},
+        )
+        assertStatus(resp, 400)
+
+    @pytest.mark.parametrize("mutate", [
+        lambda p: p.pop("id"),
+        lambda p: p.update(id=7),
+        lambda p: p.update(xAxis="Area"),
+        lambda p: p.update(xAxis={"type": "nope"}),
+        lambda p: p.update(
+            xAxis={"type": "property", "path": ["bad.dot"]}
+        ),
+        lambda p: p.update(
+            xAxis={"type": "categorical", "key": "name"}
+        ),
+        lambda p: p.update(gate=None),
+        lambda p: p["gate"].update(categoryKeyVersion=2),
+        lambda p: p["gate"].update(vertices="nope"),
+        lambda p: p["gate"].update(vertices=[{"x": 0, "y": True}] * 3),
+        lambda p: p["gate"].update(vertices=[{"x": 0}] * 3),
+        lambda p: p["gate"].update(xCategories=["k"]),
+        lambda p: p["gate"].pop("vertices"),
+    ])
+    def testMalformedPlotIs400Not500(self, admin, server, mutate):
+        folder, _, _ = self._setup(admin)
+        plot = propertyPlot("plot-1", BOX_0_10)
+        mutate(plot)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]), "plots": [plot]},
+        )
+        assertStatus(resp, 400)
+
+    def testCategoricalAxisRequiresPinnedCategories(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [{
+                    "id": "cat",
+                    "xAxis": {"type": "categorical", "key": "tags"},
+                    "yAxis": {"type": "property", "path": ["p", "Mean"]},
+                    "gate": {
+                        "categoryKeyVersion": 1,
+                        "vertices": BOX_0_10,
+                        "xCategories": None,
+                        "yCategories": None,
+                    },
+                }],
+            },
+        )
+        assertStatus(resp, 400)
+
+    def testNonListPlotsIs400(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]), "plots": {"id": "x"}},
+        )
+        assertStatus(resp, 400)
+
+    def testTooManyPlotsIs400(self, admin, server, monkeypatch):
+        from upenncontrast_annotation.server.helpers import validation
+        monkeypatch.setattr(validation, "MAX_ANALYSIS_PLOTS", 1)
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {
+                "datasetId": str(folder["_id"]),
+                "plots": [
+                    propertyPlot("a", BOX_0_10),
+                    propertyPlot("b", BOX_0_10),
+                ],
+            },
+        )
+        assertStatus(resp, 400)
+
+
+# --- Endpoint: POST /upenn_annotation/analysis/histogram2d ---
+
+
+def histogramBody(datasetId, **overrides):
+    body = {
+        "datasetId": str(datasetId),
+        "xAxis": {"type": "property", "path": ["p", "Area"]},
+        "yAxis": {"type": "property", "path": ["p", "Mean"]},
+        "xCategories": None,
+        "yCategories": None,
+        "bins": {"x": 2, "y": 2},
+        "upstreamGates": [],
+        "filters": {},
+        "gate": None,
+    }
+    body.update(overrides)
+    return body
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestAnalysisHistogramEndpoint:
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        anns = []
+        # Four quadrants of the (Area, Mean) plane in [0,10]²: one point per
+        # quadrant, plus one annotation with no values at all.
+        for area, mean, tags in (
+            (1, 1, ["low"]),
+            (9, 1, ["high"]),
+            (1, 9, ["low"]),
+            (9, 9, ["high"]),
+        ):
+            a = makeAnnotation(folder["_id"], tags=tags)
+            pv.appendValues(
+                {"p": {"Area": area, "Mean": mean}}, a["_id"], folder["_id"]
+            )
+            anns.append(a)
+        noValues = makeAnnotation(folder["_id"], tags=["low"])
+        return folder, anns, noValues
+
+    def testNumericHistogramBinsAndCounts(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"]),
+        )
+        assertStatusOk(resp)
+        result = resp.json
+        assert result["inputCount"] == 5
+        assert result["plottedCount"] == 4
+        assert len(result["xEdges"]) == 3
+        assert len(result["yEdges"]) == 3
+        assert result["xCategories"] is None
+        # counts rows are y bins, columns are x bins; one point per cell.
+        assert result["counts"] == [[1, 1], [1, 1]]
+        assert result["gateCount"] is None
+
+    def testCategoricalAxisBinsPerCategory(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        lowKey = analysis.encode_category_key(["low"])
+        highKey = analysis.encode_category_key(["high"])
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                xAxis={"type": "categorical", "key": "tags"},
+                xCategories=[lowKey, highKey],
+                bins={"x": 7, "y": 1},
+            ),
+        )
+        assertStatusOk(resp)
+        result = resp.json
+        # A categorical axis bins one category per index, ignoring bins.x.
+        assert result["xCategories"] == [lowKey, highKey]
+        assert result["xEdges"] is None
+        # Rows = the single y bin; columns = categories. The no-values
+        # annotation is plottable on tags x but not on Mean y.
+        assert result["counts"] == [[2, 2]]
+        assert result["inputCount"] == 5
+        assert result["plottedCount"] == 4
+
+    def testUnknownCategoriesAppendSortedByKey(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        lowKey = analysis.encode_category_key(["low"])
+        highKey = analysis.encode_category_key(["high"])
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                xAxis={"type": "categorical", "key": "tags"},
+                xCategories=[lowKey],
+                bins={"x": 1, "y": 1},
+            ),
+        )
+        assertStatusOk(resp)
+        # Pinned first, then unknowns in deterministic (key) order.
+        assert resp.json["xCategories"] == [lowKey, highKey]
+
+    def testUpstreamGatesNarrowTheInput(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        # Upstream gate keeps only Area < 5 (the two "low x" quadrants).
+        leftHalf = {
+            "xAxis": {"type": "property", "path": ["p", "Area"]},
+            "yAxis": {"type": "property", "path": ["p", "Mean"]},
+            "gate": {
+                "categoryKeyVersion": 1,
+                "vertices": [
+                    {"x": 0, "y": 0}, {"x": 5, "y": 0},
+                    {"x": 5, "y": 10}, {"x": 0, "y": 10},
+                ],
+                "xCategories": None,
+                "yCategories": None,
+            },
+        }
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], upstreamGates=[leftHalf]),
+        )
+        assertStatusOk(resp)
+        assert resp.json["inputCount"] == 2
+        assert resp.json["plottedCount"] == 2
+
+    def testFiltersNarrowTheInput(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                filters={"tags": {"values": ["high"], "exclusive": False}},
+            ),
+        )
+        assertStatusOk(resp)
+        assert resp.json["inputCount"] == 2
+
+    def testOwnGateCountUsesChainedInput(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        ownGate = {
+            "categoryKeyVersion": 1,
+            "vertices": [
+                {"x": 0, "y": 0}, {"x": 5, "y": 0},
+                {"x": 5, "y": 10}, {"x": 0, "y": 10},
+            ],
+            "xCategories": None,
+            "yCategories": None,
+        }
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                gate=ownGate,
+                filters={"tags": {"values": ["low"], "exclusive": False}},
+            ),
+        )
+        assertStatusOk(resp)
+        # Filters keep the two valued "low" annotations (plus the no-values
+        # one); the gate keeps the two with Area < 5.
+        assert resp.json["inputCount"] == 3
+        assert resp.json["gateCount"] == 2
+
+    def testDegenerateNumericRangeIsASingleBin(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "flat", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        for _ in range(3):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues(
+                {"p": {"Area": 7, "Mean": 7}}, a["_id"], folder["_id"]
+            )
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], bins={"x": 128, "y": 128}),
+        )
+        assertStatusOk(resp)
+        assert resp.json["counts"] == [[3]]
+        assert len(resp.json["xEdges"]) == 2
+
+    def testEmptyPopulationIsARealAnswer(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "empty", upenn_utilities.datasetMetadata
+        )
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], bins={"x": 2, "y": 2}),
+        )
+        assertStatusOk(resp)
+        assert resp.json["inputCount"] == 0
+        assert resp.json["plottedCount"] == 0
+        assert sum(sum(row) for row in resp.json["counts"]) == 0
+
+    def testBinsAreClamped(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], bins={"x": 100000, "y": 1}),
+        )
+        assertStatusOk(resp)
+        assert len(resp.json["xEdges"]) - 1 <= 512
+
+    def testRequiresReadAccess(self, admin, user, server):
+        folder = utilities.createPrivateFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        resp = postJson(
+            server, user, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"]),
+        )
+        assertStatus(resp, 403)
+
+    @pytest.mark.parametrize("mutate", [
+        lambda b: b.update(xAxis={"type": "nope"}),
+        lambda b: b.update(bins="many"),
+        lambda b: b.update(bins={"x": "many", "y": 1}),
+        lambda b: b.update(xCategories=["k"]),
+        lambda b: b.update(upstreamGates={"gate": None}),
+        lambda b: b.update(filters={"idConstraints": [[]]}),
+        lambda b: b.update(gate={"vertices": "nope"}),
+        # Display categories may be null (the server derives them for a
+        # gateless categorical plot) but never a non-list value.
+        lambda b: b.update(
+            xAxis={"type": "categorical", "key": "tags"},
+            xCategories=42,
+        ),
+    ])
+    def testMalformedRequestIs400Not500(self, admin, server, mutate):
+        folder, _, _ = self._setup(admin)
+        body = histogramBody(folder["_id"])
+        mutate(body)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d", body,
+        )
+        assertStatus(resp, 400)
+
+
+# --- Codex review findings (PR #1302) ---
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestAnalysisGatingReviewFindings:
+    """Regression tests for the three findings on PR #1302."""
+
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        return folder
+
+    def testGateCountExcludesAppendedCategories(self, admin, server):
+        """P2: the histogram's gateCount fast path must apply the same
+        unknown-category exclusion resolve_gate_ids does.
+
+        A gate pinned to one category, on a dataset that has since gained a
+        second: the appended category is display-only and can never be inside
+        the gate, however far the polygon reaches.
+        """
+        folder = self._setup(admin)
+        makeAnnotation(folder["_id"], tags=["known"])
+        makeAnnotation(folder["_id"], tags=["appeared-later"])
+        knownKey = analysis.encode_category_key(["known"])
+        gate = {
+            "categoryKeyVersion": 1,
+            # Spans well past the pinned column, over the appended one too.
+            "vertices": [
+                {"x": -0.5, "y": -0.5}, {"x": 9, "y": -0.5},
+                {"x": 9, "y": 0.5}, {"x": -0.5, "y": 0.5},
+            ],
+            "xCategories": [knownKey],
+            "yCategories": [analysis.encode_category_key(0)],
+        }
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                xAxis={"type": "categorical", "key": "tags"},
+                yAxis={"type": "categorical", "key": "channel"},
+                xCategories=[knownKey],
+                yCategories=[analysis.encode_category_key(0)],
+                bins={"x": 1, "y": 1},
+                gate=gate,
+            ),
+        )
+        assertStatusOk(resp)
+        # Both plot (the unknown is appended for display)...
+        assert resp.json["plottedCount"] == 2
+        assert len(resp.json["xCategories"]) == 2
+        # ...but only the pinned one is inside the gate.
+        assert resp.json["gateCount"] == 1
+        # And it must agree with the authoritative resolver.
+        gateResp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]), "plots": [{
+                "id": "p", "xAxis": {"type": "categorical", "key": "tags"},
+                "yAxis": {"type": "categorical", "key": "channel"},
+                "gate": gate}]},
+        )
+        assertStatusOk(gateResp)
+        assert len(gateResp.json["gateIds"]["p"]) == resp.json["gateCount"]
+
+    def testHugeCategoricalGridIsRejected(self, admin, server):
+        """P1: a public request must not be able to allocate a 10k x 10k
+        histogram (~800MB) just by listing many categories."""
+        folder = self._setup(admin)
+        makeAnnotation(folder["_id"], tags=["a"])
+        many = [analysis.encode_category_key([f"c{i}"]) for i in range(3000)]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"],
+                xAxis={"type": "categorical", "key": "tags"},
+                yAxis={"type": "categorical", "key": "shape"},
+                xCategories=many,
+                yCategories=many,
+                bins={"x": 1, "y": 1},
+            ),
+        )
+        assertStatus(resp, 400)
+
+    def testDataDerivedCategoriesAreAlsoBounded(self, admin, server):
+        """The same explosion is reachable without a hostile request: a
+        dataset whose annotations each carry a distinct tag makes
+        derive_axis_categories produce one column per annotation."""
+        folder = self._setup(admin)
+        for i in range(40):
+            makeAnnotation(folder["_id"], tags=[f"tag{i}"])
+        # Bound well below the real cap so the test stays fast.
+        original = analysis.MAX_HISTOGRAM_CELLS
+        analysis.MAX_HISTOGRAM_CELLS = 100
+        try:
+            resp = postJson(
+                server, admin, "/upenn_annotation/analysis/histogram2d",
+                histogramBody(
+                    folder["_id"],
+                    xAxis={"type": "categorical", "key": "tags"},
+                    yAxis={"type": "categorical", "key": "tags"},
+                    xCategories=None, yCategories=None,
+                    bins={"x": 1, "y": 1},
+                ),
+            )
+            # 40 x 40 = 1600 cells > 100: must degrade, not allocate.
+            assertStatus(resp, 400)
+        finally:
+            analysis.MAX_HISTOGRAM_CELLS = original
+
+    def testSingleCategoricalAxisIsCappedIndependently(self, admin, server):
+        """Codex round 2: a product-only cell check lets one axis carry
+        MAX_HISTOGRAM_CELLS categories when the other collapses to a single
+        bin. The response returns every category and the client installs
+        each as an explicit Plotly tick, so an ordinary distinct-tag dataset
+        against a constant property could ship hundreds of thousands of
+        labels and lock the browser while staying inside the cell budget."""
+        from upenncontrast_annotation.server.helpers import analysis as an
+        folder = self._setup(admin)
+        pv = AnnotationPropertyValues()
+        for i in range(40):
+            a = makeAnnotation(folder["_id"], tags=[f"tag{i}"])
+            # Constant property value => the numeric axis collapses to 1 bin.
+            pv.appendValues({"p": {"Area": 7}}, a["_id"], folder["_id"])
+        original = an.MAX_HISTOGRAM_AXIS_CATEGORIES
+        an.MAX_HISTOGRAM_AXIS_CATEGORIES = 10
+        try:
+            resp = postJson(
+                server, admin, "/upenn_annotation/analysis/histogram2d",
+                histogramBody(
+                    folder["_id"],
+                    xAxis={"type": "categorical", "key": "tags"},
+                    yAxis={"type": "property", "path": ["p", "Area"]},
+                    xCategories=None, yCategories=None,
+                    bins={"x": 1, "y": 1},
+                ),
+            )
+            # 40 categories x 1 numeric bin = 40 cells, well inside the cell
+            # budget — only a per-axis limit catches this.
+            assertStatus(resp, 400)
+        finally:
+            an.MAX_HISTOGRAM_AXIS_CATEGORIES = original
+
+    def testTotalVertexBudgetIsEnforced(self, admin, server):
+        """Codex round 3: point_in_polygon does one full-length numpy pass
+        per vertex, so vertices x plots x annotations is unbounded CPU that
+        no Mongo timeout covers. Measured: 10,000 vertices over 708,983
+        points is ~10s per gate, ~3.5 min across the allowed plots."""
+        folder = self._setup(admin)
+        # 20 plots x 600 vertices = 12,000, over the 10,000 total budget,
+        # while each gate stays inside the per-gate cap.
+        many = [{"x": float(i), "y": float(i)} for i in range(600)]
+        plots = [propertyPlot(f"p{i}", many) for i in range(20)]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]), "plots": plots},
+        )
+        # 20 x 400 = 8,000 vertices, over the total budget.
+        assertStatus(resp, 400)
+
+    def testPerGateVertexCapIsRealistic(self, admin, server):
+        """A drawn lasso is tens to a few hundred vertices; the old 10,000
+        cap was 30-100x real use and bought only CPU burn."""
+        from upenncontrast_annotation.server.helpers import validation
+        assert validation.MAX_GATE_VERTICES <= 1000
+        folder = self._setup(admin)
+        tooMany = [{"x": 0.0, "y": 0.0}] * (validation.MAX_GATE_VERTICES + 1)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]),
+             "plots": [propertyPlot("p", tooMany)]},
+        )
+        assertStatus(resp, 400)
+
+    def testGateResponseIdBudgetIsEnforced(self, admin, server):
+        """Codex round 3: the resolved-id response had no aggregate budget.
+        20 plots each matching most of a 700K dataset is ~14M ids and
+        hundreds of MB of JSON, which lands on both Girder and the browser.
+        """
+        from upenncontrast_annotation.server.models import annotation as mod
+        folder = self._setup(admin)
+        pv = AnnotationPropertyValues()
+        for _ in range(3):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": 5, "Mean": 5}},
+                            a["_id"], folder["_id"])
+        original = mod.MAX_GATE_RESPONSE_IDS
+        mod.MAX_GATE_RESPONSE_IDS = 2
+        try:
+            plots = [propertyPlot(f"p{i}", BOX_0_10) for i in range(3)]
+            resp = postJson(
+                server, admin, "/upenn_annotation/analysis/gate_ids",
+                {"datasetId": str(folder["_id"]), "plots": plots},
+            )
+            assertStatus(resp, 400)
+        finally:
+            mod.MAX_GATE_RESPONSE_IDS = original
+
+    def testBudgetErrorsDoNotRecommendNarrowingFilters(self, admin, server):
+        """Both id-budget messages told the user to "narrow the filters".
+
+        A gate is a PURE predicate resolved over the whole dataset before any
+        tag/property/frame filter is applied, so narrowing those cannot change
+        the resolved id count by one — the advice sent the user round a loop
+        that kept returning the same 400. The message has to name the thing
+        that actually helps: redraw a gate smaller, or disable one.
+
+        Asserted on the message text because the message IS the defect; the
+        400 itself was already correct.
+        """
+        from upenncontrast_annotation.server.models import annotation as mod
+        folder = self._setup(admin)
+        pv = AnnotationPropertyValues()
+        # Three inside BOX_0_10 and two outside, so the gate keeps a MINORITY
+        # and resolveListGateConstraints takes the `$in` branch. With all of
+        # them inside, the complement is empty, the `$nin` branch carries zero
+        # ids, and the list budget is never reached.
+        for area, mean in ((5, 5), (5, 5), (5, 5), (50, 50), (50, 50)):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": area, "Mean": mean}},
+                            a["_id"], folder["_id"])
+
+        def messageFor(endpoint, body, constant):
+            original = getattr(mod, constant)
+            setattr(mod, constant, 2)
+            try:
+                resp = postJson(server, admin, endpoint, body)
+                assertStatus(resp, 400)
+                return resp.json["message"]
+            finally:
+                setattr(mod, constant, original)
+
+        responseMessage = messageFor(
+            "/upenn_annotation/analysis/gate_ids",
+            {"datasetId": str(folder["_id"]),
+             "plots": [propertyPlot(f"p{i}", BOX_0_10) for i in range(3)]},
+            "MAX_GATE_RESPONSE_IDS",
+        )
+        listMessage = messageFor(
+            "/upenn_annotation/list/ids",
+            {"datasetId": str(folder["_id"]),
+             "filters": {"analysisGates": [{
+                 "xAxis": {"type": "property", "path": ["p", "Area"]},
+                 "yAxis": {"type": "property", "path": ["p", "Mean"]},
+                 "gate": {"categoryKeyVersion": 1, "vertices": BOX_0_10,
+                          "xCategories": None, "yCategories": None},
+             }]}},
+            "MAX_GATE_CONSTRAINT_IDS",
+        )
+        for message in (responseMessage, listMessage):
+            assert "narrow the filters" not in message.lower()
+            assert "whole dataset" in message.lower()
+            assert "redraw" in message.lower()
+        # The two paths differ in what "disable" achieves, so they must not
+        # give the same advice. The list path is fed
+        # activeAnalysisGateDefinitions, which is enabled-only, so unchecking
+        # a gate genuinely removes it. gate_ids receives resolutionPlots,
+        # which deliberately keeps DISABLED drawn gates while the panel is
+        # open so their counts can be shown — there, unchecking the box
+        # leaves the request identical and the retry fails the same way.
+        assert "disable" in listMessage.lower()
+        assert "disable" not in responseMessage.lower()
+        assert "remove a plot" in responseMessage.lower()
+
+    def testHistogramUpstreamGatesShareTheVertexBudget(self, admin, server):
+        """Codex round 4: the aggregate vertex budget was applied only to
+        gate_ids. histogram2d validates each upstream gate individually but
+        never their total, so 20 upstream gates x 1,000 vertices was an
+        accepted request buying ~20s of polygon passes."""
+        folder = self._setup(admin)
+        many = [{"x": float(i), "y": float(i)} for i in range(600)]
+        upstream = [{
+            "xAxis": {"type": "property", "path": ["p", "Area"]},
+            "yAxis": {"type": "property", "path": ["p", "Mean"]},
+            "gate": {"categoryKeyVersion": 1, "vertices": many,
+                     "xCategories": None, "yCategories": None},
+        } for _ in range(20)]
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], upstreamGates=upstream),
+        )
+        assertStatus(resp, 400)
+
+    def testListFilterGatesShareTheVertexBudget(self, admin, server):
+        """Same omission on the list path."""
+        folder = self._setup(admin)
+        many = [{"x": float(i), "y": float(i)} for i in range(600)]
+        gates = [{
+            "xAxis": {"type": "property", "path": ["p", "Area"]},
+            "yAxis": {"type": "property", "path": ["p", "Mean"]},
+            "gate": {"categoryKeyVersion": 1, "vertices": many,
+                     "xCategories": None, "yCategories": None},
+        } for _ in range(20)]
+        resp = postJson(
+            server, admin, "/upenn_annotation/list/ids",
+            {"datasetId": str(folder["_id"]),
+             "filters": {"analysisGates": gates}},
+        )
+        assertStatus(resp, 400)
+
+    def testHistogramRejectsFilterGates(self, admin, server):
+        """Codex round 5: histogram2d ran filters through validateListInputs,
+        which accepts `analysisGates` under its OWN budget — a second gate
+        channel with a second ceiling. Worse, analysisHistogram calls listIds
+        directly without resolveListGateConstraints, so those gates were
+        validated and then SILENTLY IGNORED: an accepted request whose
+        picture quietly ignores a filter. Gating on this endpoint travels
+        through upstreamGates; filter gates are rejected outright."""
+        folder = self._setup(admin)
+        gate = {
+            "xAxis": {"type": "property", "path": ["p", "Area"]},
+            "yAxis": {"type": "property", "path": ["p", "Mean"]},
+            "gate": {"categoryKeyVersion": 1, "vertices": BOX_0_10,
+                     "xCategories": None, "yCategories": None},
+        }
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(folder["_id"], filters={"analysisGates": [gate]}),
+        )
+        assertStatus(resp, 400)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestBranchReviewFindings:
+    """Regression tests for the self-review of the analysis-gating branch."""
+
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        makeAnnotation(folder["_id"], tags=["a"])
+        return folder
+
+    @pytest.mark.parametrize("clauses", [
+        "x",
+        5,
+        # Would match nothing if it reached the query, so the assertion below
+        # distinguishes "stripped" from "applied and happened to agree".
+        [{"tags": "no-annotation-has-this-tag"}],
+        [{"tags": {"$regex": "(zz+)+$"}}],
+    ])
+    def testListRejectsClientSuppliedGateMatchClauses(
+        self, admin, server, clauses
+    ):
+        """`gateMatchClauses` is INTERNAL: resolveListGateConstraints writes
+        it and _buildListMatchStages splices its contents straight into the
+        aggregation `$match.$and`. validateListInputs allowlisted the keys it
+        knew but never stripped unknown ones, and the resolver *appends* to
+        the key (setdefault) rather than replacing it — so a client-supplied
+        value survived into the query on three public endpoints. A string
+        produced `{"$and": ["x"]}` -> OperationFailure -> uncaught 500, and a
+        list of real clauses ANDed an arbitrary operator into the match (a
+        catastrophic-backtracking $regex burns up to AGGREGATION_MAX_TIME_MS
+        of Mongo CPU per unauthenticated request, and the result is a boolean
+        oracle over annotation fields).
+
+        Stripped, not rejected: it is not part of the client-facing filter
+        shape, so the request succeeds and simply ignores the key.
+        """
+        folder = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/list/ids",
+            {"datasetId": str(folder["_id"]),
+             "filters": {"gateMatchClauses": clauses}},
+        )
+        assertStatusOk(resp)
+        # Ignored entirely — the dataset's one annotation still comes back.
+        assert resp.json["total"] == 1
+
+    def testHistogramRejectsClientSuppliedGateMatchClauses(
+        self, admin, server
+    ):
+        """The same channel reaches histogram2d, whose validated filters are
+        handed to listIds."""
+        folder = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/analysis/histogram2d",
+            histogramBody(
+                folder["_id"], filters={"gateMatchClauses": "x"}
+            ),
+        )
+        assertStatusOk(resp)
+
+    def testCategoricalIdentityToleratesMissingLocation(self):
+        """`locationSchema` declares XY/Z/Time without a `required` list, so
+        `POST /upenn_annotation` with `"location": {}` is a valid write.
+        Indexing it raised KeyError — an uncaught 500 on /list, which breaks
+        every page of the Objects tab, not just the analysis panel.
+
+        The coerced value must be None, matching the client's `?? null`: the
+        two encoders have to agree bit-exactly or those annotations belong to
+        different categories on the two sides of the parity contract.
+        """
+        doc = {"id": "a1", "tags": [], "shape": "point", "channel": 0,
+               "location": {}}
+        for key in ("xy", "z", "time"):
+            assert analysis.categorical_raw_identity(doc, key) is None
+            assert analysis.encode_category_key(
+                analysis.categorical_raw_identity(doc, key)
+            ) == "v1:null"
+        # A document with no `location` key at all behaves the same way.
+        assert analysis.categorical_raw_identity(
+            {"id": "a1"}, "xy"
+        ) is None
+
+    def testAxisCategoryCapIsCheckedWhileAccumulating(self):
+        """The cap has to fire before the full distinct set (and the float64
+        coordinate arrays behind it) is materialized: the count can come from
+        the DATA — one distinct tag per annotation — not just from a hostile
+        request, so checking afterwards meant allocating hundreds of MB on
+        the way to returning the 400 that says it was too big.
+        """
+        docs = [
+            {"id": "a%d" % i, "tags": ["tag-%d" % i]}
+            for i in range(analysis.MAX_HISTOGRAM_AXIS_CATEGORIES + 50)
+        ]
+        with pytest.raises(ValueError, match="distinct categories"):
+            analysis.derive_axis_categories(docs, "tags", None, "x")
+        # Just under the cap is still fine.
+        ok = analysis.derive_axis_categories(
+            docs[: analysis.MAX_HISTOGRAM_AXIS_CATEGORIES], "tags", None, "x"
+        )
+        assert len(ok) == analysis.MAX_HISTOGRAM_AXIS_CATEGORIES
+
+    def testAxisCategoriesEncodeOncePerCategory(self, monkeypatch):
+        """derive_axis_categories called encode_category_key once per
+        DOCUMENT, which is the json.dumps cost _category_key_encoder's memo
+        was introduced to remove (~1s per axis per request at 700K).
+        """
+        calls = []
+        real = analysis.encode_category_key
+
+        def counting(raw):
+            calls.append(raw)
+            return real(raw)
+
+        monkeypatch.setattr(analysis, "encode_category_key", counting)
+        docs = [
+            {"id": "a%d" % i, "shape": "point" if i % 2 else "polygon"}
+            for i in range(500)
+        ]
+        analysis.derive_axis_categories(docs, "shape", None, "x")
+        # Two distinct categories over 500 documents.
+        assert len(calls) == 2
+
+    @pytest.mark.parametrize("filters,label", [
+        ({"shape": {"$ne": "polygon"}}, "shape operator"),
+        ({"shape": {"$nope": 1}}, "shape unknown operator"),
+        ({"shape": 5}, "shape non-string"),
+        ({"location": {"XY": {"$nope": 1}}}, "location operator"),
+        ({"location": {"Z": "0"}}, "location non-integer"),
+        ({"tags": {"values": [{"$ne": "x"}]}}, "tag operator"),
+    ])
+    def testListRejectsOperatorsInScalarFilterLeaves(
+        self, admin, server, filters, label
+    ):
+        """The siblings of the gateMatchClauses hole, in the same validator.
+
+        _buildListMatchStages assigns these values straight into the
+        aggregation `$match`, so validating only the CONTAINER shape left the
+        leaves as an operator channel. Confirmed live before the fix:
+        `{"shape": {"$ne": "polygon"}}` was APPLIED (total 0 instead of
+        52,282) and `{"shape": {"$nope": 1}}` reached MongoDB as an unknown
+        operator -> OperationFailure -> uncaught 500 on three @access.public
+        endpoints. Generalizing the first finding to one key and stopping was
+        the "one of two symmetric paths" trap.
+        """
+        folder = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/list/ids",
+            {"datasetId": str(folder["_id"]), "filters": filters},
+        )
+        assertStatus(resp, 400)
+
+    def testScalarFilterLeavesStillAcceptLegitimateValues(self, admin, server):
+        """The guard must not reject the shapes the client actually sends."""
+        folder = self._setup(admin)
+        resp = postJson(
+            server, admin, "/upenn_annotation/list/ids",
+            {"datasetId": str(folder["_id"]),
+             "filters": {"shape": "point",
+                         "location": {"XY": 0, "Z": 0, "Time": 0},
+                         "tags": {"values": ["a"], "exclusive": False}}},
+        )
+        assertStatusOk(resp)
+        assert resp.json["total"] == 1

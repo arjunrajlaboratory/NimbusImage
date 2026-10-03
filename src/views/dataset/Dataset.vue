@@ -4,7 +4,7 @@
     <v-overlay
       :model-value="isLoading"
       contained
-      scrim="white"
+      scrim="background"
       :opacity="0.8"
       z-index="9999"
       class="d-flex align-center justify-center"
@@ -87,10 +87,10 @@ defineExpose({ isReady, isLoading, datasetReady, loadDataset });
 }
 
 .loading-text {
-  color: #424242; /* Dark gray text for contrast on white background */
-  font-size: 1.5rem; /* Larger text */
-  font-weight: 500; /* Medium weight for better visibility */
-  margin-top: 16px; /* Space between spinner and text */
+  color: rgb(var(--v-theme-on-background));
+  font-size: 1.5rem;
+  font-weight: 500;
+  margin-top: 16px;
   text-align: center;
 }
 </style>

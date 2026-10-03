@@ -1,148 +1,155 @@
 <template>
-  <div>
-    <v-expansion-panel>
-      <v-expansion-panel-title> Viewer settings </v-expansion-panel-title>
-      <v-expansion-panel-text>
-        <v-container>
-          <v-switch
-            hide-details
-            density="compact"
-            v-model="showXYLabels"
-            label="Show XY position labels"
-            title="Display coordinate labels for XY positions"
-          />
-          <v-switch
-            hide-details
-            density="compact"
-            v-model="showZLabels"
-            label="Show Z position labels"
-            title="Display coordinate labels for Z positions"
-          />
-          <v-switch
-            hide-details
-            density="compact"
-            v-model="showTimeLabels"
-            label="Show time labels"
-            title="Display time labels"
-          />
-          <v-divider class="my-2" />
-          <v-switch
-            hide-details
-            density="compact"
-            v-model="valueOnHover"
-            label="Show channel values on hover"
-            title="Show pixel intensity values when hovering cursor over image"
-            v-description="{
-              section: 'Viewer settings',
-              title: 'Show channel values on hover',
-              description:
-                'Show pixel values for each layer when hovering over the image',
-            }"
-          />
-          <v-switch
-            hide-details
-            density="compact"
-            v-model="overview"
-            label="Show minimap"
-            v-description="{
-              section: 'Viewer settings',
-              title: 'Show minimap',
-              description: 'Show the overview panel',
-            }"
-          />
-          <v-switch
-            hide-details
-            density="compact"
-            v-model="showScalebar"
-            label="Show scalebar"
-            title="Show the scalebar on top of the image"
-            v-description="{
-              section: 'Viewer settings',
-              title: 'Show scalebar',
-              description:
-                'Show the scalebar widget at the bottom right of the image; click scalebar to edit settings',
-            }"
-          />
-          <pixel-scale-bar-setting />
-          <span class="d-flex align-center">
-            Scale bar style:
-            <color-picker-menu
-              v-model="scalebarColor"
-              class="mx-2 scale-bar-color-picker"
-              style="min-width: 200px"
-            />
-          </span>
-          <v-switch
-            hide-details
-            density="compact"
-            v-model="scaleAnnotationsWithZoom"
-            label="Scale points with zoom"
-            title="Make point annotations scale with zoom level or stay a fixed size"
-            v-description="{
-              section: 'Viewer settings',
-              title: 'Scale points with zoom',
-              description:
-                'Set size of the point annotations and allow to scale with zoom level or stay a fixed size',
-            }"
-          />
-          <v-slider
-            v-model="annotationsRadius"
-            :thumb-label="true"
-            min="1"
-            max="100"
-            label="Point annotations radius"
-          />
-          <v-slider
-            v-model="annotationOpacity"
-            :thumb-label="true"
-            min="0"
-            max="1"
-            step="0.1"
-            label="Annotation opacity"
-          />
-          <v-select
-            hide-details
-            label="Compositing mode"
-            v-model="compositionMode"
-            :items="compositionItemsList"
-            item-title="text"
-            item-value="value"
-          >
-            <template #item="{ item: listItem }">
-              <div style="width: 100%">
-                <strong>
-                  {{ (listItem as any).text }}
-                </strong>
-                <div class="body-2 text-medium-emphasis">
-                  {{ (listItem as any).help }}
-                </div>
-                <v-divider />
-              </div>
-            </template>
-          </v-select>
-          <v-select
-            label="Background color"
-            v-model="backgroundColor"
-            :items="backgroundItems"
-            item-title="text"
-            item-value="value"
-          />
-
-          <v-divider class="my-4" />
-
-          <v-btn
-            variant="flat"
-            color="primary"
-            size="small"
-            block
-            @click="showColorDialog = true"
-          >
-            <v-icon start>mdi-palette</v-icon>
-            Customize Default Channel Colors
-          </v-btn>
-        </v-container>
-      </v-expansion-panel-text>
-    </v-expansion-panel>
+  <section class="settings-section">
+    <h4 class="settings-section-title">Viewer</h4>
+    <div class="settings-section-body">
+      <v-switch
+        hide-details
+        density="compact"
+        v-model="showXYLabels"
+        label="Show XY position labels"
+        title="Display coordinate labels for XY positions"
+      />
+      <v-switch
+        hide-details
+        density="compact"
+        v-model="showZLabels"
+        label="Show Z position labels"
+        title="Display coordinate labels for Z positions"
+      />
+      <v-switch
+        hide-details
+        density="compact"
+        v-model="showTimeLabels"
+        label="Show time labels"
+        title="Display time labels"
+      />
+      <v-divider class="settings-divider" />
+      <v-switch
+        hide-details
+        density="compact"
+        v-model="valueOnHover"
+        label="Show channel values on hover"
+        title="Show pixel intensity values when hovering cursor over image"
+        v-description="{
+          section: 'Viewer settings',
+          title: 'Show channel values on hover',
+          description:
+            'Show pixel values for each layer when hovering over the image',
+        }"
+      />
+      <v-switch
+        hide-details
+        density="compact"
+        v-model="overview"
+        label="Show minimap"
+        v-description="{
+          section: 'Viewer settings',
+          title: 'Show minimap',
+          description: 'Show the overview panel',
+        }"
+      />
+      <v-switch
+        hide-details
+        density="compact"
+        v-model="showScalebar"
+        label="Show scalebar"
+        title="Show the scalebar on top of the image"
+        v-description="{
+          section: 'Viewer settings',
+          title: 'Show scalebar',
+          description:
+            'Show the scalebar widget at the bottom right of the image; click scalebar to edit settings',
+        }"
+      />
+      <pixel-scale-bar-setting />
+      <div class="settings-inline">
+        <span class="settings-inline-label">Scale bar style</span>
+        <color-picker-menu
+          v-model="scalebarColor"
+          class="scale-bar-color-picker"
+        />
+      </div>
+      <v-divider class="settings-divider" />
+      <v-switch
+        hide-details
+        density="compact"
+        v-model="scaleAnnotationsWithZoom"
+        label="Scale points with zoom"
+        title="Make point annotations scale with zoom level or stay a fixed size"
+        v-description="{
+          section: 'Viewer settings',
+          title: 'Scale points with zoom',
+          description:
+            'Set size of the point annotations and allow to scale with zoom level or stay a fixed size',
+        }"
+      />
+      <v-slider
+        v-model="annotationsRadius"
+        :thumb-label="true"
+        min="1"
+        max="100"
+        label="Point annotations radius"
+        density="compact"
+        hide-details
+        class="settings-slider"
+      />
+      <v-slider
+        v-model="annotationOpacity"
+        :thumb-label="true"
+        min="0"
+        max="1"
+        step="0.1"
+        label="Annotation opacity"
+        density="compact"
+        hide-details
+        class="settings-slider"
+      />
+      <v-select
+        hide-details
+        label="Compositing mode"
+        v-model="compositionMode"
+        :items="compositionItemsList"
+        item-title="text"
+        item-value="value"
+        density="compact"
+        variant="outlined"
+        class="mt-2"
+      >
+        <template #item="{ item: listItem }">
+          <div style="width: 100%">
+            <strong>
+              {{ (listItem as any).text }}
+            </strong>
+            <div class="body-2 text-medium-emphasis">
+              {{ (listItem as any).help }}
+            </div>
+            <v-divider />
+          </div>
+        </template>
+      </v-select>
+      <v-select
+        label="Background color"
+        v-model="backgroundColor"
+        :items="backgroundItems"
+        item-title="text"
+        item-value="value"
+        density="compact"
+        variant="outlined"
+        hide-details
+        class="mt-2"
+      />
+      <v-btn
+        variant="flat"
+        color="primary"
+        size="small"
+        block
+        class="mt-3"
+        @click="showColorDialog = true"
+      >
+        <v-icon start size="16">mdi-palette</v-icon>
+        Customize default channel colors
+      </v-btn>
+    </div>
 
     <!-- Channel Color Customization Dialog -->
     <v-dialog v-model="showColorDialog" max-width="800">
@@ -151,7 +158,7 @@
         @close="showColorDialog = false"
       />
     </v-dialog>
-  </div>
+  </section>
 </template>
 
 <script setup lang="ts">

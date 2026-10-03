@@ -201,7 +201,7 @@ ds.annotations.create_many(annotation_list)                               # → 
 ds.annotations.create_many(annotation_list,
                            connect_to={'tags': ['cell'], 'channel': 0})   # create + auto-connect
 ds.annotations.update(annotation_id, updates)                             # → Annotation
-ds.annotations.update_many([(id1, updates1), (id2, updates2), ...])        # → list[Annotation]
+ds.annotations.update_many([(id1, updates1), (id2, updates2), ...])        # bulk update (no return)
 ds.annotations.delete(annotation_id)
 ds.annotations.delete_many([id1, id2, ...])
 ```
@@ -209,7 +209,7 @@ ds.annotations.delete_many([id1, id2, ...])
 - `list()` defaults to `limit=0` (unlimited — the server interprets 0 as no limit)
 - `create_many()` with `connect_to` does bulk create then `connect_to_nearest` (two HTTP calls); returns only the created annotations (connections are a side effect)
 - `update()` uses the single `PUT /upenn_annotation/{id}` endpoint, which returns no body — the method fetches the annotation after updating to return current state
-- `update_many()` uses `PUT /upenn_annotation/multiple` — **known bug** ([#780](https://github.com/arjunrajlaboratory/NimbusImage/issues/780)): the bulk endpoint expects `"id"` (not `"_id"`) and `"datasetId"` per entry, and may return internal server errors. Prefer single `update()` in a loop until this is fixed.
+- `update_many()` uses `PUT /upenn_annotation/multiple` and applies all updates in a single HTTP request. The endpoint accepts either `"id"` or `"_id"` per entry and returns no body, so the method returns `None` — call `get()` if you need the updated annotations back.
 - All methods accept/return `Annotation` dataclass instances
 
 ### ConnectionAccessor — `ds.connections`

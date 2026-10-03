@@ -106,12 +106,14 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         from .server.api.property import AnnotationProperty
         from .server.api.workerInterfaces import WorkerInterfaces
         from .server.api.workerPreviews import WorkerPreviews
+        from .server.api.dataset import Dataset
         from .server.api.datasetView import DatasetView
         from .server.api.history import History
         from .server.api.user_assetstore import UserAssetstore
         from .server.api.user_colors import UserColors
         from .server.api.resource import CustomResource
         from .server.api.export import Export
+        from .server.api.dataImport import DataImport
         from .server.api.project import Project
         from .server.api.zenodo import Zenodo
         from .server.api.zenodo_credentials import ZenodoCredentials
@@ -167,11 +169,13 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].annotation_property = AnnotationProperty()
         info["apiRoot"].worker_interface = WorkerInterfaces()
         info["apiRoot"].worker_preview = WorkerPreviews()
+        info["apiRoot"].dataset = Dataset()
         info["apiRoot"].dataset_view = DatasetView()
         info["apiRoot"].history = History()
         info["apiRoot"].user_assetstore = UserAssetstore()
         info["apiRoot"].user_colors = UserColors()
         info["apiRoot"].export = Export()
+        info["apiRoot"].annotation_import = DataImport()
         info["apiRoot"].project = Project()
         info["apiRoot"].zenodo = Zenodo()
         info["apiRoot"].zenodo_credentials = ZenodoCredentials()

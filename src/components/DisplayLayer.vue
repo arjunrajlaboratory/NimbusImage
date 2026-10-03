@@ -334,6 +334,14 @@ defineExpose({
   opacity: 0.5;
 }
 
+/* Tighten the collapsed layer row — Vuetify's default expansion-panel-title
+   min-height leaves a lot of dead vertical space per layer. */
+.displayLayerHeader {
+  min-height: 36px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
 .layer-title-row {
   display: flex;
   align-items: center;

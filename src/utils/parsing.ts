@@ -330,3 +330,15 @@ export function collectFilenameMetadata2(filenames: string[]) {
   const assignments = assignUniqueCategorizations(df, allComplementaryLists);
   return structuredAssignments(df, allComplementaryLists, assignments);
 }
+
+/**
+ * Parses a form-field value into a number, mapping empty/absent/invalid
+ * input to null (e.g. for optional numeric filters where "" means "unset").
+ */
+export function toNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const num = Number(value);
+  return Number.isNaN(num) ? null : num;
+}

@@ -31,7 +31,7 @@ class ExportAccessor:
             f"{'true' if include_property_values else 'false'}"
         )
         return self._gc.get(
-            f"/export/json?datasetId={self._dataset_id}&{params}"
+            f"export/json?datasetId={self._dataset_id}&{params}"
         )
 
     def to_csv(
@@ -39,6 +39,7 @@ class ExportAccessor:
         property_paths: list[list[str]],
         delimiter: str = ",",
         undefined_value: str = "",
+        sanitize_column_names: bool = False,
         path: str | None = None,
     ) -> bytes:
         """Export dataset as CSV.
@@ -48,6 +49,8 @@ class ExportAccessor:
                 (e.g., [["propId", "Area"]]).
             delimiter: CSV delimiter.
             undefined_value: Value for undefined fields.
+            sanitize_column_names: Replace spaces, slashes, commas, and other
+                non-alphanumeric column-name characters with underscores.
             path: If provided, write to this file path.
 
         Returns:
@@ -58,11 +61,12 @@ class ExportAccessor:
             "propertyPaths": property_paths,
             "delimiter": delimiter,
             "undefinedValue": undefined_value,
+            "sanitizeColumnNames": sanitize_column_names,
         }
         import json as json_mod
 
         response = self._gc.sendRestRequest(
-            "POST", "/export/csv",
+            "POST", "export/csv",
             data=json_mod.dumps(body),
             headers={"Content-Type": "application/json"},
             jsonResp=False,

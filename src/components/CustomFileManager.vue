@@ -359,7 +359,7 @@ async function itemToChips(selectable: IGirderSelectAble) {
   const chipOption = chipOptions[type];
   const headerChip: IChipAttrs = {
     text: chipOption.text,
-    color: "grey",
+    color: type === "dataset" ? "dataset" : "collection",
   };
   if (props.clickableChips) {
     headerChip.to = {
@@ -442,7 +442,7 @@ async function flushBatchResolve() {
     if (!current) return;
 
     const extra: IChipAttrs = {
-      color: type === "dataset" ? "#4baeff" : "#e57373",
+      color: type === "dataset" ? "collection" : "dataset",
       text: chipText,
       to: props.clickableChips
         ? {
@@ -771,18 +771,18 @@ onBeforeUnmount(() => {
 // so we target it via the file manager wrapper, not .itemRow.
 .custom-file-manager-wrapper .v-icon.mdi-package {
   // datasets - teal to match primary theme color
-  color: #26a69a;
+  color: rgb(var(--v-theme-primary));
 }
 .custom-file-manager-wrapper .v-icon.mdi-file-tree {
   // configurations - teal to match primary theme color
-  color: #26a69a;
+  color: rgb(var(--v-theme-primary));
 }
 </style>
 
 <style lang="scss" scoped>
 .type-indicator {
   border-radius: 4px; // More rectangular
-  font-family: "Roboto Mono", monospace; // Monospace font
+  font-family: var(--nimbus-font-mono);
   font-size: 9px;
   letter-spacing: 0.5px;
   height: 16px;

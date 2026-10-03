@@ -1,10 +1,10 @@
 <template>
   <div class="collection-list-wrapper">
     <!-- Current folder path display -->
-    <div class="folder-path-display pa-2 grey lighten-5">
+    <div class="folder-path-display pa-2">
       <div class="d-flex align-center">
-        <v-icon class="mr-2" size="20" color="grey-darken-2">mdi-folder</v-icon>
-        <span class="text-body-2 mr-2" style="color: #424242"
+        <v-icon class="mr-2" size="20" color="secondary">mdi-folder</v-icon>
+        <span class="text-body-2 text-medium-emphasis mr-2"
           >Collections in:</span
         >
         <girder-breadcrumb
@@ -14,7 +14,7 @@
           readonly
           class="folder-breadcrumb"
         />
-        <span v-else class="text-body-2" style="color: #424242">{{
+        <span v-else class="text-body-2 text-medium-emphasis">{{
           fallbackFolderPath
         }}</span>
       </div>
@@ -41,9 +41,11 @@
         v-if="!loading && filteredCollections.length === 0"
         class="text-center pa-4"
       >
-        <v-icon size="64" color="grey">mdi-file-tree</v-icon>
-        <div class="text-h6 text-grey mt-2">No collections found</div>
-        <div class="text-body-2 text-grey">
+        <v-icon size="64" color="secondary">mdi-file-tree</v-icon>
+        <div class="text-body-1 font-weight-medium text-medium-emphasis mt-2">
+          No collections found
+        </div>
+        <div class="text-body-2 text-medium-emphasis">
           {{
             searchQuery
               ? "Try adjusting your search terms"
@@ -60,7 +62,7 @@
           class="collection-item"
           :class="{ 'collection-item-hover': !loading }"
         >
-          <v-icon color="#4baeff" size="24">mdi-file-tree</v-icon>
+          <v-icon color="collection" size="24">mdi-file-tree</v-icon>
 
           <v-list-item-title class="collection-title">
             {{ collection.name }}
@@ -313,7 +315,7 @@ async function collectionToChips(collection: IUPennCollection) {
 
       const chip: IChipAttrs = {
         text: datasetInfo.name,
-        color: "#e57373",
+        color: "dataset",
       };
 
       chip.to = {
@@ -402,7 +404,7 @@ async function bulkCollectionsToChips(
 
         const chip: IChipAttrs = {
           text: datasetInfo.name,
-          color: "#e57373",
+          color: "dataset",
           to: {
             name: "dataset",
             params: { datasetId: String(view.datasetId) },
@@ -495,26 +497,24 @@ defineExpose({
 }
 
 .collection-item {
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--nimbus-border);
   transition: background-color 0.2s;
   cursor: pointer;
 
   &:hover.collection-item-hover {
-    background-color: #f5f5f5;
+    background-color: var(--nimbus-glass-hover);
   }
 }
 
 .collection-title {
   font-weight: 500;
-  color: #1976d2;
-}
-
-.collection-item-hover:hover .collection-title {
-  color: #1565c0;
+  color: rgb(var(--v-theme-collection));
 }
 
 .folder-path-display {
   margin-bottom: 4px;
+  background: var(--nimbus-glass);
+  border-radius: var(--nimbus-radius-sm);
 }
 
 .folder-breadcrumb {
@@ -526,10 +526,10 @@ defineExpose({
 }
 
 .folder-breadcrumb :deep(.v-breadcrumbs__divider) {
-  color: #999;
+  color: var(--nimbus-text-faint);
 }
 
 .folder-breadcrumb :deep(.v-breadcrumbs__item) {
-  color: #424242;
+  color: var(--nimbus-text-secondary);
 }
 </style>

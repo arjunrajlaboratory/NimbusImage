@@ -308,3 +308,36 @@ export type OutputNode<T> = ComputeNode<
   any[],
   (...args: any[]) => T | Promise<T>
 >;
+
+/**
+ * Reads a ManualInputNode's current value, falling back when it has none yet
+ * (i.e. its output is still NoOutput). Shared by pipelines that read a
+ * debounced input's latest value outside of the normal parent/child wiring
+ * (e.g. to build a "current params" snapshot for a sibling computation).
+ */
+export function readManualInputOr<T>(node: ManualInputNode<T>, fallback: T): T {
+  const value = node.output;
+  return value === NoOutput ? fallback : value;
+}
+
+/**
+ * Wraps a node function so any thrown/rejected error is reported through
+ * `reportError` (which pipelines use to update reactive tool-state status)
+ * before being re-thrown. ComputeNode.compute() already treats a thrown
+ * error as "no output" (it logs it and leaves the node's output at
+ * NoOutput) - this just adds a side-channel so tool state can also surface
+ * the error message.
+ */
+export function withErrorReporting<Args extends any[], TResult>(
+  fn: (...args: Args) => Promise<TResult> | TResult,
+  reportError: (error: Error) => void,
+): (...args: Args) => Promise<TResult> {
+  return async (...args: Args) => {
+    try {
+      return await fn(...args);
+    } catch (error) {
+      reportError(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    }
+  };
+}

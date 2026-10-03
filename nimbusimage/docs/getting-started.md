@@ -25,7 +25,14 @@ client = ni.connect("http://localhost:8080/api/v1", username="admin", password="
 
 # Option 3: Environment variables (NI_API_URL, NI_TOKEN)
 client = ni.connect()
+
+# Option 4: Anonymous — public datasets only, no credentials needed
+client = ni.connect("http://localhost:8080/api/v1", anonymous=True)
 ```
+
+Anonymous connections can read and measure **public** datasets (for
+example, running `ds.images.line_scan(...)` on published data) but cannot
+access private resources.
 
 ## Working with datasets
 
@@ -116,11 +123,9 @@ ann = ni.Annotation.from_polygon(poly, channel=0, tags=["cell"], dataset_id=ds.i
 ## Properties
 
 ```python
-# Create or find a property definition
+# Create or find a property definition. New properties are
+# automatically registered with the dataset's configurations.
 prop = ds.properties.get_or_create("Area", shape="polygon")
-
-# Register it with the dataset's configuration
-ds.properties.register(prop.id)
 
 # Submit computed values
 values = {}
@@ -196,9 +201,8 @@ job.wait()
 ### Run a property worker
 
 ```python
-# Create and register a property
+# Create a property (auto-registered with the dataset's configurations)
 prop = ds.properties.get_or_create("Blob Intensity", shape="polygon")
-ds.properties.register(prop.id)
 
 # Run the property worker
 job = ds.properties.compute(
@@ -228,6 +232,41 @@ try:
 except TimeoutError:
     print("Job timed out")
 ```
+
+### Rate limits (HTTP 429)
+
+The production server (app.nimbusimage.com) rate-limits worker submissions from this client, per
+session (each `ni.connect()` is a new session): **1 GPU-queue job and 10
+CPU-queue jobs per 60 s**. GPU workers start on demand and take minutes to spin
+up, so a tight loop of `compute()` calls would otherwise flood the queue. The
+browser front-end is not limited.
+
+Over the limit, `ds.annotations.compute()` / `ds.properties.compute()` raise
+`girder_client.HttpError` with `status == 429`, and the `Retry-After` header is
+the exact number of seconds until the next job is accepted. A request the
+server rejects for another reason (e.g. a 400 for bad parameters) does not
+count against the limit.
+
+```python
+import time
+from girder_client import HttpError
+
+def submit(fn, retries=5):
+    for _ in range(retries):
+        try:
+            return fn()
+        except HttpError as e:
+            if e.status != 429:
+                raise
+            time.sleep(int(e.response.headers.get("Retry-After", 60)))
+    raise RuntimeError("still rate-limited")
+
+job = submit(lambda: ds.annotations.compute(image=img, assignment=..., worker_interface=params))
+```
+
+Prefer **one job over a wide range** (`assignment={"XY": "0-99", ...}`) to many
+small jobs: it does the same work and counts as a single job. Do not open new
+sessions to get around the limit.
 
 ## Export
 

@@ -297,7 +297,7 @@ describe("CollectionList", () => {
     });
     expect(result.chips).toHaveLength(2);
     expect(result.chips[0].text).toBe("Dataset A");
-    expect(result.chips[0].color).toBe("#e57373");
+    expect(result.chips[0].color).toBe("dataset");
     expect(result.chips[0].to).toEqual({
       name: "dataset",
       params: { datasetId: "ds1" },

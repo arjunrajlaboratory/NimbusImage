@@ -1,4 +1,7 @@
+import json
+
 import pytest
+from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models.connections import (
@@ -12,7 +15,11 @@ from upenncontrast_annotation.server.models.collection import Collection
 from upenncontrast_annotation.server.models.datasetView import (
     DatasetView as DatasetViewModel
 )
-from upenncontrast_annotation.server.api.export import Export
+from upenncontrast_annotation.server.api.export import (
+    Export,
+    _deduplicateColumnNames,
+    sanitizeCsvColumnName,
+)
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -144,6 +151,123 @@ class TestExport:
         ann1_id = str(annotations[0]["_id"])
         assert ann1_id in result["annotationPropertyValues"]
         assert "test_property" in result["annotationPropertyValues"][ann1_id]
+
+    def testIterAnnotationsDistinguishesNoneFromEmpty(self, admin):
+        """An omitted ID filter exports all; an empty subset exports none."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+        export = Export()
+
+        assert len(list(export._iterAnnotations(dataset["_id"], None))) == 2
+
+        picked = [annotations[0]["_id"]]
+        assert [
+            annotation["_id"]
+            for annotation in export._iterAnnotations(
+                dataset["_id"], picked
+            )
+        ] == picked
+
+        assert list(export._iterAnnotations(dataset["_id"], [])) == []
+
+    def testExportCsvPreservesExactAnnotationSubset(
+        self, admin, server
+    ):
+        """The endpoint distinguishes all, one, and no annotations."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+        baseBody = {
+            "datasetId": str(dataset["_id"]),
+            "propertyPaths": [],
+        }
+
+        def exportLines(annotationIds="omitted"):
+            body = baseBody.copy()
+            if annotationIds != "omitted":
+                body["annotationIds"] = annotationIds
+            response = server.request(
+                path="/export/csv",
+                method="POST",
+                user=admin,
+                body=json.dumps(body),
+                type="application/json",
+                isJson=False,
+            )
+            assertStatusOk(response)
+            return b"".join(response.body).decode().splitlines()
+
+        assert len(exportLines()) == 3
+        assert len(exportLines([str(annotations[0]["_id"])])) == 2
+        assert len(exportLines([])) == 1
+
+    def testEmptySubsetSkipsPropertyValueFetch(self, admin, monkeypatch):
+        """An explicitly empty subset must not scan property values."""
+        dataset, _, _ = createDatasetWithData(admin)
+        export = Export()
+
+        def failFetch(datasetId):
+            raise AssertionError(
+                "property values fetched for an empty subset"
+            )
+
+        monkeypatch.setattr(export, "_getPropertyValues", failFetch)
+        lines = list(export._generateCsvLines(
+            dataset["_id"], [], parsedAnnotationIds=[]
+        ))
+        assert len(lines) == 1  # header only
+
+    def testExportCsvRejectsMalformedInput(self, admin, server):
+        """Malformed ids must be a clean 400 on this public endpoint."""
+        dataset, _, _ = createDatasetWithData(admin)
+
+        def postCsv(body):
+            return server.request(
+                path="/export/csv",
+                method="POST",
+                user=admin,
+                body=json.dumps(body),
+                type="application/json",
+                isJson=False,
+            )
+
+        datasetId = str(dataset["_id"])
+        # Non-list annotationIds is caught by the jsonParam schema.
+        assertStatus(
+            postCsv({"datasetId": datasetId, "annotationIds": False}), 400
+        )
+        # A malformed id string passes the schema but must not 500.
+        assertStatus(
+            postCsv({"datasetId": datasetId, "annotationIds": ["nope"]}),
+            400,
+        )
+        assertStatus(postCsv({"datasetId": "nope"}), 400)
+        assertStatus(
+            postCsv({"datasetId": datasetId, "propertyPaths": [["nope"]]}),
+            400,
+        )
+
+    def testExportJsonRejectsMalformedIds(self, admin, server):
+        """The JSON export twin gets the same boundary validation."""
+        dataset, _, _ = createDatasetWithData(admin)
+
+        response = server.request(
+            path="/export/json",
+            method="GET",
+            user=admin,
+            params={"datasetId": "nope"},
+            isJson=False,
+        )
+        assertStatus(response, 400)
+
+        response = server.request(
+            path="/export/json",
+            method="GET",
+            user=admin,
+            params={
+                "datasetId": str(dataset["_id"]),
+                "configurationId": "nope",
+            },
+            isJson=False,
+        )
+        assertStatus(response, 400)
 
     def testExportJsonWithConfiguration(self, admin):
         """Test export with a specific configuration."""
@@ -663,6 +787,88 @@ class TestCSVExport:
         # Test empty path
         assert export._getPropertyColumnName([], propertyNameMap) is None
 
+    def testSanitizeCsvColumnName(self, admin):
+        """Column names can be normalized for R-friendly CSV headers."""
+        assert sanitizeCsvColumnName(
+            "cell, fibroblast/Blob Metrics (%) / Mean Area (um^2)"
+        ) == "cell_fibroblast_Blob_Metrics_Mean_Area_um_2"
+        assert sanitizeCsvColumnName("already_ok_123") == "already_ok_123"
+        assert sanitizeCsvColumnName("///") == "_"
+
+    def testDeduplicateColumnNames(self, admin):
+        """Repeated column names are suffixed _2, _3, ... in order."""
+        assert _deduplicateColumnNames(["A", "B", "A"]) == ["A", "B", "A_2"]
+        assert _deduplicateColumnNames(["A", "A", "A"]) == ["A", "A_2", "A_3"]
+        assert _deduplicateColumnNames(["A", "B"]) == ["A", "B"]
+        assert _deduplicateColumnNames([]) == []
+
+    def testDeduplicateColumnNamesSkipsExistingSuffixCollisions(
+        self, admin
+    ):
+        """Suffixed candidate that already exists is skipped."""
+        # Naive count-based suffixing would emit two "Area_2"s here.
+        assert _deduplicateColumnNames(
+            ["Area", "Area_2", "Area"]
+        ) == ["Area", "Area_2", "Area_3"]
+        assert _deduplicateColumnNames(
+            ["A", "A_2", "A_3", "A"]
+        ) == ["A", "A_2", "A_3", "A_4"]
+        # Pre-existing _2 that isn't tied to a collision is left alone;
+        # subsequent "X" collision walks past the taken _2.
+        assert _deduplicateColumnNames(
+            ["X_2", "X", "X"]
+        ) == ["X_2", "X", "X_3"]
+
+    def testBuildCsvColumnsDeduplicatesAfterSanitization(self, admin):
+        """Collisions from sanitization get unique suffixes."""
+        export = Export()
+        propertyNameMap = {
+            "p1": "Mean Area (um^2)",
+            "p2": "Mean/Area/um/2",
+        }
+        columns, includedPaths = export._buildCsvColumns(
+            [["p1"], ["p2"]],
+            propertyNameMap,
+            sanitizeColumnNames=True,
+        )
+        names = [c.name for c in columns]
+        # Two property columns sanitize to the same token; the second
+        # must be suffixed to keep header names unique.
+        assert "Mean_Area_um_2" in names
+        assert "Mean_Area_um_2_2" in names
+        assert len(names) == len(set(names))
+
+    def testBuildCsvColumnsPreservesFixedColumnQuotingWhenSanitized(
+        self, admin
+    ):
+        """Fixed-column quoting is preserved through sanitization.
+
+        Fixed-column is_quoted controls value quoting too (Tags joins
+        multiple tags with ', ', Name is freeform user text), so it must
+        not change just because the column NAME no longer has commas.
+        """
+        export = Export()
+        columns, _ = export._buildCsvColumns(
+            [], {}, sanitizeColumnNames=True
+        )
+        fixed = {c.name: c.is_quoted for c in columns}
+        assert fixed["Id"] is True
+        assert fixed["Tags"] is True
+        assert fixed["Shape"] is True
+        assert fixed["Name"] is True
+        assert fixed["Channel"] is False
+
+    def testGetPropertyColumnNameSanitized(self, admin):
+        """Sanitized property columns replace delimiters and punctuation."""
+        export = Export()
+        propertyNameMap = {"prop123": "cell, fibroblast/Blob Metrics (%)"}
+
+        assert export._getPropertyColumnName(
+            ["prop123", "Mean Area (um^2)"],
+            propertyNameMap,
+            sanitizeColumnNames=True,
+        ) == "cell_fibroblast_Blob_Metrics_Mean_Area_um_2"
+
     def testPropertyColumnQuotedWhenNameContainsComma(self, admin):
         """Property columns with commas in name are quoted in CSV."""
         dataset, annotations, _ = createDatasetWithData(admin)
@@ -701,6 +907,92 @@ class TestCSVExport:
         # Verify a column without comma is not quoted
         col_no_comma = CsvColumn("Area", is_quoted=',' in "Area")
         assert col_no_comma.is_quoted is False
+
+    def testExportCsvGeneratedHeaderSanitizesColumnNames(self, admin):
+        """CSV generation applies sanitized column names when requested."""
+        dataset, annotations, _ = createDatasetWithData(admin)
+
+        prop = AnnotationProperty().save({
+            "name": "cell, fibroblast/Blob Metrics (%)",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+        propId = str(prop["_id"])
+
+        PropertyValuesModel = AnnotationPropertyValues()
+        PropertyValuesModel.appendValues(
+            {propId: {"Mean Area (um^2)": 100}},
+            annotations[0]["_id"],
+            dataset["_id"]
+        )
+
+        export = Export()
+        lines = list(export._generateCsvLines(
+            dataset["_id"],
+            [[propId, "Mean Area (um^2)"]],
+            sanitizeColumnNames=True,
+        ))
+
+        header = lines[0].strip()
+        assert "cell_fibroblast_Blob_Metrics_Mean_Area_um_2" in header
+        assert "cell, fibroblast" not in header
+        assert "/" not in header
+        assert "(" not in header
+
+    def testExportCsvSanitizedQuotesMultiTagValues(self, admin):
+        """Tags with multiple values keep CSV quoting under sanitization.
+
+        Tags render as ', '.join(tags). Without quoting, a multi-tag
+        value like 'red, blue' would split the row across columns when a
+        real CSV parser reads it. Parse the output with csv.reader to
+        verify the round-trip rather than just substring-matching.
+        """
+        import csv as csv_module
+        import io
+
+        dataset = utilities.createFolder(
+            admin, "multi_tag_dataset", upenn_utilities.datasetMetadata
+        )
+        ann_data = upenn_utilities.getSampleAnnotation(dataset["_id"])
+        ann_data["tags"] = ["red", "blue"]
+        Annotation().create(ann_data)
+
+        export = Export()
+        csv_output = "".join(export._generateCsvLines(
+            dataset["_id"], [], sanitizeColumnNames=True,
+        ))
+
+        rows = list(csv_module.reader(io.StringIO(csv_output)))
+        assert len(rows) == 2
+        header, data_row = rows
+        assert len(data_row) == len(header)
+        tags_idx = header.index("Tags")
+        assert data_row[tags_idx] == "red, blue"
+
+    def testExportCsvGeneratedHeaderKeepsColumnNamesByDefault(self, admin):
+        """CSV generation preserves existing header format by default."""
+        dataset, _, _ = createDatasetWithData(admin)
+
+        prop = AnnotationProperty().save({
+            "name": "cell, fibroblast/Blob Metrics (%)",
+            "image": "properties/test:latest",
+            "tags": {"exclusive": False, "tags": ["polygon"]},
+            "shape": "polygon",
+            "workerInterface": {}
+        })
+        propId = str(prop["_id"])
+
+        export = Export()
+        lines = list(export._generateCsvLines(
+            dataset["_id"],
+            [[propId, "Mean Area (um^2)"]],
+        ))
+
+        header = lines[0].strip()
+        assert '"cell, fibroblast/Blob Metrics (%) / Mean Area (um^2)"' \
+            in header
 
     def testPropertyColumnNotQuotedWhenNoComma(self, admin):
         """Property columns without commas are not quoted."""

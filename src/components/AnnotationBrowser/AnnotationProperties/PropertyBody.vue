@@ -93,7 +93,7 @@
     <!-- Log Dialog -->
     <v-dialog v-model="showLogDialog" max-width="800px">
       <v-card>
-        <v-card-title class="headline">
+        <v-card-title class="d-flex align-center">
           Job Log: {{ property.name }}
           <v-spacer></v-spacer>
           <v-tooltip location="bottom">
@@ -250,7 +250,7 @@ defineExpose({
   min-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
-  font-family: monospace;
+  font-family: var(--nimbus-font-mono, monospace);
   font-size: 12px;
   background-color: rgba(0, 0, 0, 0.05);
   padding: 12px;

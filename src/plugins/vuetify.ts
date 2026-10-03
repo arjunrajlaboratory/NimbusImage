@@ -4,15 +4,56 @@ import Persister from "@/store/Persister";
 
 const vuetify = createVuetify({
   defaults: {
+    // Tooltips below their trigger and wrapped to a sane width, rather than
+    // Vuetify's default of growing sideways off "end". Tooltips that set an
+    // explicit `location`/`max-width` still override these.
+    VTooltip: { location: "bottom", maxWidth: 280 },
     VBtn: { variant: "tonal", rounded: "lg" },
     VCard: { variant: "flat", rounded: "lg" },
     VAlert: { variant: "tonal", rounded: "lg" },
-    VSwitch: { color: "primary" },
-    VCheckbox: { color: "primary", density: "comfortable" },
-    VCheckboxBtn: { density: "comfortable" },
-    VList: { density: "comfortable" },
-    VListItem: { density: "comfortable" },
+    VSwitch: { color: "primary", density: "compact", hideDetails: "auto" },
+    VCheckbox: { color: "primary", density: "compact", hideDetails: "auto" },
+    VCheckboxBtn: { density: "compact" },
+    VRadio: { color: "primary", density: "compact" },
+    VRadioGroup: { density: "compact" },
+    VSlider: { color: "primary", density: "compact", hideDetails: "auto" },
+    VSelect: {
+      density: "compact",
+      variant: "outlined",
+      hideDetails: "auto",
+      menuProps: { density: "compact" },
+    },
+    VAutocomplete: {
+      density: "compact",
+      variant: "outlined",
+      hideDetails: "auto",
+      menuProps: { density: "compact" },
+    },
+    VCombobox: {
+      density: "compact",
+      variant: "outlined",
+      hideDetails: "auto",
+      menuProps: { density: "compact" },
+    },
+    VTextField: {
+      density: "compact",
+      variant: "outlined",
+      hideDetails: "auto",
+    },
+    VTextarea: {
+      density: "compact",
+      variant: "outlined",
+      hideDetails: "auto",
+    },
+    VList: { density: "compact" },
+    VListItem: { density: "compact" },
     VChip: { rounded: "pill" },
+    VProgressLinear: { color: "primary", rounded: "pill", bgOpacity: 0.15 },
+    // NB: no global VProgressCircular color default. VBtn renders its
+    // loading spinner as a VProgressCircular with color:undefined, which
+    // would inherit a global default and turn teal-on-teal (invisible) on
+    // filled/elevated color="primary" buttons. Standalone spinners that need
+    // a color should set it explicitly.
   },
   theme: {
     defaultTheme: Persister.get("theme", "dark") === "dark" ? "dark" : "light",
@@ -32,6 +73,10 @@ const vuetify = createVuetify({
           success: "#27a644",
           warning: "#d4a72c",
           info: "#5b9bd5",
+          // Resource accents shared across chips/icons app-wide
+          dataset: "#e57373",
+          collection: "#4baeff",
+          project: "#8e24aa",
         },
       },
       light: {
@@ -49,6 +94,10 @@ const vuetify = createVuetify({
           success: "#16a34a",
           warning: "#ca8a04",
           info: "#2563eb",
+          // Resource accents shared across chips/icons app-wide
+          dataset: "#e57373",
+          collection: "#1e88e5",
+          project: "#8e24aa",
         },
       },
     },

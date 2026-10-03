@@ -2,6 +2,7 @@ from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.constants import AccessType, TokenScope
 from girder.api.rest import Resource, loadmodel
+from ..helpers.validation import requireObjectBody
 from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from girder.exceptions import RestException, AccessException
@@ -63,7 +64,9 @@ class AnnotationProperty(Resource):
         datasetId = params.get("datasetId", None)
         if datasetId and id:
             return self._propertyModel.compute(
-                annotation_property, datasetId, self.getBodyJson()
+                annotation_property,
+                datasetId,
+                requireObjectBody(self.getBodyJson(), "Parameters"),
             )
         return {}
 

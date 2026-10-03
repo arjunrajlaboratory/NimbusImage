@@ -1,0 +1,218 @@
+# Automatic Tool Suggestions
+
+> **Status: first pass / scaffold.** This feature works end-to-end but was
+> built quickly and deliberately left rough in a few places (timing, prompt
+> tuning, tests). This doc is written so Opus (or anyone) can pick it up and
+> polish it later. Search the code for `AUTO_TOOL_SUGGESTIONS.md` to find the
+> touch points that reference this doc.
+
+## What it does
+
+When a user opens a **freshly created collection** (a configuration with no
+tools yet), NimbusImage:
+
+1. Takes a screenshot of the image in the viewport.
+2. Sends it, plus a catalog of the tools it can set up, the dataset's channel
+   names, and display-layer metadata (layer color + visibility), to a backend
+   endpoint. The layer metadata lets Claude map rendered colors back to channel
+   names without cloning the full browser UI.
+3. Claude (Sonnet 5.5) looks at the image and returns a structured list of
+   suggested tools (e.g. Cellpose-SAM on the nuclear channel if it sees nuclei,
+   a blob tool if it sees blobs, Piscis if it sees spots).
+4. The frontend resolves each suggestion into a ready-to-add
+   `IToolConfiguration` and shows them in a small floating panel in the viewer.
+   The user clicks **Add** (or **Add all**) to add them to the toolset, or
+   **Not now** to dismiss.
+
+Suggestions are human-in-the-loop by design: nothing is added to the
+configuration until the user accepts it.
+
+## Files
+
+### Backend — `devops/girder/plugins/girder-claude-chat/girder_claude_chat/__init__.py`
+
+- `CLAUDE_MODEL` — single constant for the model id. **This is where the model
+  is set for the whole plugin.** Currently `claude-sonnet-5-5` (migrated from
+  `claude-sonnet-5`, before that `claude-sonnet-4-6`).
+- `ClaudeChatResource` (existing chat endpoint, `POST /claude_chat`) — updated
+  to use `CLAUDE_MODEL`, `max_tokens=8192`, and to collect **text blocks** from
+  the response instead of assuming `content[0]` is text (Sonnet 5 runs adaptive
+  thinking by default, so a thinking block can come first).
+- `ClaudeSuggestToolsResource` (new endpoint, `POST /claude_suggest_tools`) —
+  takes `{ images, catalog, channels, layers }`, builds a single user message
+  with the image blocks + a text description, and uses **structured output**
+  (`output_config.format` with a JSON schema) at `effort: 'low'` with adaptive
+  thinking on. Returns `{ suggestions: [...] }`. A non-`end_turn` stop
+  (refusal, `max_tokens`) returns `{ error }`, not an empty list: the frontend
+  permanently records an empty result as "suggested", while an error lets a
+  later layers-ready retry.
+  - `SUGGEST_TOOLS_SYSTEM_PROMPT` — inline system prompt (the chat endpoint
+    loads its prompt from `system_prompt_2.txt`; this one is inline for now — a
+    follow-up could move it to a file for consistency).
+  - `SUGGEST_TOOLS_SCHEMA` — the JSON schema for the structured output.
+
+### Frontend
+
+- `src/utils/interfaceCapture.ts` — shared screenshot helpers
+  (`captureInterfaceScreenshot`, `captureViewportScreenshot`,
+  `dataUrlToBase64`) used by both chat and automatic tool suggestions.
+  (The name is `interfaceCapture` because `utils/screenshot.ts` already exists
+  and is about image *download* URLs, unrelated to this.)
+- `src/store/ChatAPI.ts` —
+  `getToolSuggestions({ images, catalog, channels, layers })` posts to
+  `claude_suggest_tools` and returns the raw suggestions.
+- `src/store/model.ts` — new types: `IToolSuggestionCatalogEntry`,
+  `IToolSuggestion`, `IResolvedToolSuggestion`, `TToolSuggestionStatus`.
+- `src/store/toolSuggestions.ts` — new Vuex module. This is the brain:
+  - `AUTO_SUGGEST_ENABLED` — feature flag (top of file).
+  - `buildCatalog()` — catalog from `properties.workerImageList` (annotation
+    workers) + a fixed `MANUAL_CATALOG` (the blob tool).
+  - `buildToolConfiguration()` — turns a catalog entry + suggestion into an
+    `IToolConfiguration`, mirroring what `ToolTypeSelection.vue` does (drops the
+    `dockerImage` submenu element for worker tools, seeds `values.image.image`,
+    builds the annotation setup, and maps a suggested channel name to a
+    configuration layer id).
+  - `maybeSuggestForCurrentConfiguration()` — the guarded entry point. Runs only
+    if: feature enabled, configuration + dataset present, configuration has **no
+    tools**, and we haven't already suggested for this configuration id this
+    session (`seenConfigurationIds`).
+  - `suggestForCurrentConfiguration()` — captures the viewport screenshot,
+    sends display-layer context, calls the API, resolves suggestions. It only
+    falls back to a full-interface screenshot if the viewport screenshot is not
+    available, because `html2canvas` can trip on browser-extension CSS.
+  - `acceptSuggestion()` / `acceptAllSuggestions()` — call
+    `main.addToolToConfiguration()`.
+- `src/components/ToolSuggestions.vue` — the floating panel (loading / error /
+  list states, Add / Add all / Not now / dismiss).
+- `src/views/datasetView/Viewer.vue` — renders `<tool-suggestions />` and calls
+  `maybeSuggestForCurrentConfiguration()` when `ImageViewer` emits `layers-ready`
+  (fired on the layers' `onIdle` false→true transition, i.e. once the image has
+  actually finished rendering).
+- `src/components/ImageViewer.vue` — emits `layers-ready` when its `layersReady`
+  computed (derived from per-layer `onIdle` callbacks) first becomes true with
+  at least one layer present.
+
+## Data flow
+
+```
+Viewer.vue (config changes, map ready, empty tools, unseen)
+  -> toolSuggestions.maybeSuggestForCurrentConfiguration()
+     -> capture viewport screenshot (interfaceCapture.ts)
+     -> buildCatalog() from worker images + manual tools
+     -> buildLayerContext() from current display layers
+     -> ChatAPI.getToolSuggestions({ images, catalog, channels, layers })
+        -> POST /claude_suggest_tools
+           -> Sonnet 5.5 structured output -> { suggestions: [{toolId, channelName, reason, confidence}] }
+     -> resolve each suggestion -> IResolvedToolSuggestion { suggestion, catalogEntry, tool }
+  -> ToolSuggestions.vue shows them
+     -> user clicks Add -> main.addToolToConfiguration(tool)
+```
+
+## How the mapping works
+
+- **Worker tools** (Cellpose-SAM, Piscis, etc.): discovered from
+  `properties.workerImageList` — any image whose labels have
+  `isAnnotationWorker` defined. Catalog id is `worker:<image>`. Claude matches
+  "nuclei"→Cellpose-SAM and "spots"→Piscis by the worker's `interfaceName` /
+  `description` labels, so the quality of those labels matters.
+- **Blob tool**: a fixed `MANUAL_CATALOG` entry (`manual:blob`) that builds a
+  manual `create` tool with polygon shape.
+- **Channel targeting**: if Claude sets `channelName`, the frontend finds the
+  dataset channel with that name (`dataset.channelNames`) and the configuration
+  layer on that channel, and sets it as the annotation setup's `layer`.
+
+## Resolved from Codex review (PR #1224)
+
+- **Empty worker catalog on first open.** `properties.fetchWorkerImageList()`
+  is otherwise only called by the tool-picker / worker-menu UI, so on a first
+  open `workerImageList` was `{}` and the catalog contained only `manual:blob`
+  — Cellpose/Piscis could never be suggested. `suggestForCurrentConfiguration`
+  now awaits `fetchWorkerImageList()` before building the catalog.
+- **Stale results after switching collections.** The action now captures the
+  configuration id at the start and discards the result (status → idle) if
+  `main.configuration` changed while the request was in flight, so suggestions
+  computed for the old collection's channels/layers aren't applied to a new one.
+
+## Known rough edges / TODO for the polish pass
+
+1. ~~**Screenshot timing.** Fixed delay after the map appears.~~ **Done** — the
+   trigger is now driven by `ImageViewer`'s `layers-ready` event, which fires
+   off the layers' `onIdle` callbacks, so we capture once tiles have actually
+   rendered rather than guessing with a timer.
+2. **Trigger definition.** "New collection" is approximated as "configuration
+   with zero tools that we haven't seen this session." That also fires for any
+   pre-existing empty collection the user opens. If a stricter "just created"
+   signal is wanted, thread a flag through the collection-creation flow
+   (`DatasetInfo.createDefaultView` / `NewDataset.vue`).
+3. **`seenConfigurationIds` is session-only** (Vuex state, lost on reload).
+   Consider persisting per-configuration "already suggested / dismissed" so it
+   doesn't re-prompt across reloads.
+4. **Prompt tuning.** The system prompt is a first draft. The nuclei / blobs /
+   spots guidance is hard-coded; consider deriving it from the catalog
+   descriptions instead so new worker types get sensible treatment for free.
+5. ~~**Structured output.**~~ **Done** — the Sonnet 5.5 migration forced the
+   switch from a forced tool call to `output_config.format`, which keeps
+   adaptive thinking on.
+6. ~~**Duplication.** `ChatComponent.vue` still has its own screenshot
+   functions.~~ **Done** — `ChatComponent.vue` now uses
+   `utils/interfaceCapture.ts` (a thin `captureViewportScreenshot` wrapper is
+   kept there so the component's no-arg exposed method still works for its
+   test).
+7. ~~**Tests.**~~ **Done (frontend).** `src/store/toolSuggestions.test.ts` and
+   `src/components/ToolSuggestions.test.ts` cover the guards, resolution logic,
+   accept flow, visibility, and confidence sort/chip. The **backend**
+   `/claude_suggest_tools` endpoint is covered by
+   `testSuggestToolsUsesStructuredOutput` (request shape + stop-reason
+   handling) and the malformed-request tests.
+8. ~~**Confidence field** is returned but unused in the UI.~~ **Done** — the
+   panel now shows a confidence chip and sorts high→medium→low. Could still
+   additionally *filter out* low-confidence suggestions if desired.
+
+## Model migration note
+
+Both Claude calls in the plugin now use `claude-sonnet-5-5` via the
+`CLAUDE_MODEL` constant. When migrating again, change that one constant, then
+check the new model's breaking changes against both call sites. Specifics that
+affected this code:
+
+- Adaptive thinking is on by default → the chat endpoint must collect `text`
+  blocks rather than reading `content[0].text`.
+- Sonnet 5 → 5.5: `thinking={'type': 'disabled'}` and forced `tool_choice`
+  both return a 400, so the suggestion endpoint dropped its forced tool call
+  for `output_config.format` structured output at `effort: 'low'`.
+
+## Regression checklist
+
+Invariants from the Sonnet 5.5 migration (PR #1353) and the feature's earlier
+reviews, each with the test that holds it. Re-check these whenever
+`CLAUDE_MODEL` changes or the suggestion call or its trigger logic is touched.
+
+Request shape (`test_plugin.py`):
+
+- The suggestion call gets its JSON from `output_config.format` and sends no
+  `tool_choice` and no `thinking` setting. Sonnet 5.5 returns a 400 for both
+  forced `tool_choice` and `thinking: disabled` —
+  *"testSuggestToolsUsesStructuredOutput"*.
+- The installed SDK has `output_config` and the other interfaces the plugin
+  calls, and `setup.py` declares `anthropic>=1.8.0` —
+  *"testAnthropicSdkSupportsTheApisThePluginCalls"*.
+- Malformed request bodies get a 400 before any Claude call —
+  *"testSuggestToolsRejectsMalformedRequests"*.
+
+Failure paths stay retryable:
+
+- A non-`end_turn` stop (refusal, `max_tokens`) returns `{error}`, never an
+  empty list. The refusal and `max_tokens` cases of
+  *"testSuggestToolsUsesStructuredOutput"* fail without the fix.
+- `ToolSuggestionsAPI` throws on an `{error}` body instead of resolving it as
+  no suggestions (`ToolSuggestionsAPI.test.ts`) —
+  *"throws on an {error} body so the store takes its retryable failure path"*.
+- An errored run un-marks the configuration, so a later layers-ready retries;
+  only a `done` run is persisted as "suggested" (`toolSuggestions.test.ts`) —
+  *"un-marks the configuration seen when the request errors, so a later trigger retries"*.
+- A run that starts before its preconditions are loaded is a no-op and is not
+  persisted — *"is a no-op (retryable) when tool templates are not loaded yet"*
+  and *"is a no-op (retryable) when the user is not logged in yet"*.
+
+Process rule: an empty result is persisted forever, so any new way for the
+backend to fail must surface as `{error}`, not as `{ suggestions: [] }`.

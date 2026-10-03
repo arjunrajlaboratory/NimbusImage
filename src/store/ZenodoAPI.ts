@@ -1,6 +1,7 @@
 import { RestClientInstance, IGirderSelectAble } from "@/girder";
 import { logError } from "@/utils/log";
 import store from "@/store";
+import { jobStates } from "@/store/jobConstants";
 
 // --- Zenodo Publish/Credential types ---
 
@@ -36,6 +37,15 @@ export interface IZenodoPublishResponse {
   message: string;
   doi: string;
   url: string;
+}
+
+/**
+ * Minimal shape of a `zenodo_upload` Girder job, as returned by the
+ * /job listing endpoint. Only the fields the frontend reads are typed.
+ */
+export interface IZenodoUploadJob {
+  _id: string;
+  kwargs?: { projectId?: string };
 }
 
 /**
@@ -514,5 +524,29 @@ export default class ZenodoAPI {
   async discardDraft(projectId: string): Promise<{ message: string }> {
     const response = await this.client.post(`zenodo/discard/${projectId}`);
     return response.data;
+  }
+
+  /**
+   * Find an in-flight (queued or running) `zenodo_upload` job for the
+   * given project. Used by the frontend to re-subscribe to job progress
+   * after a page reload mid-upload. Returns null if none is found.
+   *
+   * The Girder /job endpoint cannot filter by `kwargs.projectId`, so we
+   * fetch the recent active zenodo_upload jobs and match client-side.
+   */
+  async findActiveUploadJob(
+    projectId: string,
+  ): Promise<IZenodoUploadJob | null> {
+    const response = await this.client.get("job", {
+      params: {
+        types: JSON.stringify(["zenodo_upload"]),
+        statuses: JSON.stringify([jobStates.queued, jobStates.running]),
+        limit: 5,
+        sort: "created",
+        sortdir: -1,
+      },
+    });
+    const jobs: IZenodoUploadJob[] = response.data;
+    return jobs.find((j) => j.kwargs?.projectId === projectId) ?? null;
   }
 }

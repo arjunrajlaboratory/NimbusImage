@@ -1,5 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
+
+vi.mock("@/utils/log", () => ({
+  logError: vi.fn(),
+  logWarning: vi.fn(),
+}));
 
 vi.mock("@/store", () => ({
   default: {
@@ -19,10 +24,16 @@ vi.mock("@/girder/index", () => ({
 
 import LargeImageDropdown from "./LargeImageDropdown.vue";
 import store from "@/store";
+import { logError } from "@/utils/log";
 
 function mountComponent() {
   return shallowMount(LargeImageDropdown, {});
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("LargeImageDropdown", () => {
   it("shouldShow is true when largeImages.length > 1", () => {
@@ -66,6 +77,72 @@ describe("LargeImageDropdown", () => {
     expect(wrapper.vm.formatMeta({ tool: "SAM", size: "large" })).toBe(
       "tool: SAM; size: large",
     );
+  });
+
+  it("formatMeta renders nested objects instead of [object Object]", () => {
+    const wrapper = mountComponent();
+    expect(
+      wrapper.vm.formatMeta({
+        tool: "Stitch Refinement",
+        worker_version: "1.0.0",
+        refinement: { method: "cross-correlation", overlap: 0.1 },
+      }),
+    ).toBe(
+      "tool: Stitch Refinement; " +
+        "refinement: {method: cross-correlation, overlap: 0.1}; " +
+        "worker_version: 1.0.0",
+    );
+  });
+
+  it("formatMeta renders an object-valued tool key without [object Object]", () => {
+    const wrapper = mountComponent();
+    expect(wrapper.vm.formatMeta({ tool: { name: "SAM", version: 2 } })).toBe(
+      "tool: {name: SAM, version: 2}",
+    );
+  });
+
+  it("formatMeta renders arrays and deep nesting", () => {
+    const wrapper = mountComponent();
+    expect(
+      wrapper.vm.formatMeta({
+        channels: [0, 1],
+        source: { item: { name: "Well_2" } },
+      }),
+    ).toBe("channels: [0, 1]; source: {item: {name: Well_2}}");
+  });
+
+  it("formatMeta returns an empty string for empty meta, hiding the subtitle", () => {
+    const wrapper = mountComponent();
+    expect(wrapper.vm.formatMeta({})).toBe("");
+  });
+
+  it("formattedLargeImages precomputes metaText per image", () => {
+    const wrapper = mountComponent();
+    const [original, output] = wrapper.vm.formattedLargeImages;
+    expect(original.metaText).toBe("");
+    expect(output.metaText).toBe("tool: SAM");
+  });
+
+  it("copyMetaText copies the full text and shows transient feedback", async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const wrapper = mountComponent();
+    await wrapper.vm.copyMetaText({ _id: "img2", metaText: "tool: SAM" });
+    expect(writeText).toHaveBeenCalledWith("tool: SAM");
+    expect(wrapper.vm.copiedImageId).toBe("img2");
+    vi.advanceTimersByTime(2000);
+    expect(wrapper.vm.copiedImageId).toBe(null);
+  });
+
+  it("copyMetaText logs and shows no feedback when the clipboard fails", async () => {
+    vi.stubGlobal("navigator", {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    const wrapper = mountComponent();
+    await wrapper.vm.copyMetaText({ _id: "img2", metaText: "tool: SAM" });
+    expect(logError).toHaveBeenCalled();
+    expect(wrapper.vm.copiedImageId).toBe(null);
   });
 
   it("mounted sets previousNumberOfImages", () => {

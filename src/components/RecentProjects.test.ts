@@ -65,8 +65,8 @@ describe("RecentProjects", () => {
     const wrapper = mountComponent();
     expect(wrapper.vm.getStatusColor("exported")).toBe("success");
     expect(wrapper.vm.getStatusColor("exporting")).toBe("warning");
-    expect(wrapper.vm.getStatusColor("draft")).toBe("grey");
-    expect(wrapper.vm.getStatusColor("unknown")).toBe("grey");
+    expect(wrapper.vm.getStatusColor("draft")).toBe("secondary");
+    expect(wrapper.vm.getStatusColor("unknown")).toBe("secondary");
   });
 
   it("emits project-clicked when a project is clicked", async () => {

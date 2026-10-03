@@ -5,15 +5,18 @@
   >
     <!-- Notifications section -->
     <div v-if="hasNotifications" class="notifications-group">
-      <v-alert
+      <div
         v-for="notification in activeNotifications"
         :key="notification.id"
-        :type="notification.type"
-        density="compact"
-        closable
-        class="mb-2 notification"
-        @click:close="dismissNotification(notification.id)"
+        class="notification"
+        role="alert"
       >
+        <v-icon
+          :color="notification.type"
+          size="18"
+          class="notification-icon"
+          :icon="notificationIcon(notification.type)"
+        />
         <div class="notification-content">
           <div class="notification-title">{{ notification.title }}</div>
           <div class="notification-message">{{ notification.message }}</div>
@@ -21,7 +24,17 @@
             {{ notification.info }}
           </div>
         </div>
-      </v-alert>
+        <v-btn
+          icon
+          variant="text"
+          size="x-small"
+          class="notification-close"
+          aria-label="Dismiss notification"
+          @click="dismissNotification(notification.id)"
+        >
+          <v-icon size="16">mdi-close</v-icon>
+        </v-btn>
+      </div>
     </div>
 
     <!-- Progress bars section -->
@@ -32,45 +45,48 @@
     >
       <!-- Single progress or multiple indeterminate with same title -->
       <template v-if="group.display === 'single'">
-        <v-progress-linear
-          :indeterminate="group.indeterminate"
-          :model-value="group.value"
-          color="primary"
-          height="16"
-        >
-          <strong>
-            {{ group.title }}
-            <template v-if="group.total !== undefined">
-              ({{ group.progress }}/{{ group.total }})
-            </template>
-            <template v-if="group.count > 1">
-              ({{ group.count }} remaining)
-            </template>
-          </strong>
-        </v-progress-linear>
+        <div class="progress-item">
+          <div class="progress-label">
+            <span class="progress-title">{{ group.title }}</span>
+            <span v-if="group.total !== undefined" class="progress-detail">
+              {{ group.progress }}/{{ group.total }}
+            </span>
+            <span v-else-if="group.count > 1" class="progress-detail">
+              {{ group.count }} remaining
+            </span>
+          </div>
+          <v-progress-linear
+            :indeterminate="group.indeterminate"
+            :model-value="group.value"
+            height="6"
+            rounded-bar
+          />
+        </div>
       </template>
 
       <!-- Multiple progresses that need individual display -->
       <template v-else>
         <div class="stacked-progress">
-          <v-progress-linear
+          <div
             v-for="progress in group.items"
             :key="progress.id"
-            :indeterminate="progress.total === 0"
-            :model-value="
-              progress.total ? (100 * progress.progress) / progress.total : 0
-            "
-            color="primary"
-            height="10"
-            class="mb-1"
+            class="progress-item"
           >
-            <strong class="caption">
-              {{ progress.title }}
-              <template v-if="progress.total > 0">
-                ({{ progress.progress }}/{{ progress.total }})
-              </template>
-            </strong>
-          </v-progress-linear>
+            <div class="progress-label">
+              <span class="progress-title">{{ progress.title }}</span>
+              <span v-if="progress.total > 0" class="progress-detail">
+                {{ progress.progress }}/{{ progress.total }}
+              </span>
+            </div>
+            <v-progress-linear
+              :indeterminate="progress.total === 0"
+              :model-value="
+                progress.total ? (100 * progress.progress) / progress.total : 0
+              "
+              height="4"
+              rounded-bar
+            />
+          </div>
         </div>
       </template>
     </div>
@@ -80,7 +96,12 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import progressStore from "@/store/progress";
-import { ProgressType, IProgress, IProgressGroup } from "@/store/model";
+import {
+  ProgressType,
+  IProgress,
+  IProgressGroup,
+  NotificationType,
+} from "@/store/model";
 
 const activeProgresses = computed(() => progressStore.activeProgresses);
 const activeNotifications = computed(() => progressStore.activeNotifications);
@@ -89,6 +110,16 @@ const hasNotifications = computed(() => activeNotifications.value.length > 0);
 
 function dismissNotification(id: string) {
   progressStore.dismissNotification(id);
+}
+
+const notificationIcons: Record<NotificationType, string> = {
+  [NotificationType.INFO]: "mdi-information",
+  [NotificationType.WARNING]: "mdi-alert",
+  [NotificationType.ERROR]: "mdi-alert-circle",
+};
+
+function notificationIcon(type: NotificationType): string {
+  return notificationIcons[type] ?? "mdi-information";
 }
 
 const progressGroups = computed<IProgressGroup[]>(() => {
@@ -153,67 +184,133 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 <style lang="scss" scoped>
 .progress-container {
   position: absolute;
-  bottom: 50px;
-  left: 20px;
+  // Sit just above the bottom-left button cluster (palette / lock / fit-to-window
+  // at bottom:10px in ImageViewer) and align to its left edge, so progress bars
+  // and notifications never land on top of the left palette stack (Tools panel).
+  bottom: 56px;
+  left: 10px;
   z-index: 2000;
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 400px;
   max-width: 400px;
+  // Animate the palette-driven shift via transform (GPU-composited, doesn't
+  // trigger layout) rather than `left`.
+  transition: transform 0.2s ease;
+}
+
+/* When the whole left palette stack is open it reaches the bottom-left corner
+   and would cover this stack; slide it right of the column, mirroring the
+   bottom-left button cluster (same 10 px gap to the palette's right edge via
+   `--nimbus-left-palette-clear-x`). `.left-palettes-open` is set on `<v-app>`
+   by App.vue (an ancestor); scoped CSS adds the data-v attribute to the last
+   compound selector only, so the ancestor class still matches. */
+.left-palettes-open .progress-container {
+  transform: translateX(calc(var(--nimbus-left-palette-clear-x) - 10px));
+}
+
+%floating-card {
+  background: rgba(var(--v-theme-surface), 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.1);
+  padding: 10px 14px;
+  border-radius: 10px;
+  color: rgb(var(--v-theme-on-surface));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
 .progress-group {
-  background: rgba(0, 0, 0, 0.7);
-  padding: 4px;
-  border-radius: 4px;
-  color: white;
+  @extend %floating-card;
+}
+
+.progress-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.progress-title {
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-detail {
+  color: rgb(var(--v-theme-on-surface-variant));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .notifications-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
 .notification {
-  margin-bottom: 0;
+  @extend %floating-card;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
 
-  :deep(.v-alert__content) {
-    display: flex;
-    flex: 1;
-  }
+.notification-icon {
+  // Optically align the icon with the title's first line.
+  margin-top: 1px;
 }
 
 .notification-content {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 
 .notification-title {
-  font-weight: bold;
+  font-weight: 500;
 }
 
 .notification-message {
   margin-top: 2px;
+  color: rgb(var(--v-theme-on-surface-variant));
+  overflow-wrap: break-word;
 }
 
 .notification-info {
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   margin-top: 2px;
+  color: rgb(var(--v-theme-on-surface-variant));
   opacity: 0.85;
+  overflow-wrap: break-word;
+}
+
+.notification-close {
+  // Pull the button back toward the card edge so its tap target doesn't
+  // inflate the padding visually.
+  margin: -4px -6px 0 0;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 
 .stacked-progress {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 10px;
 
-  :deep(.v-progress-linear) {
-    font-size: 0.7rem;
+  .progress-label {
+    font-size: 0.75rem;
   }
-}
-
-:deep(.v-progress-linear) {
-  font-size: 0.75rem;
 }
 </style>

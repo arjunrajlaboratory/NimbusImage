@@ -1,6 +1,6 @@
 <template>
   <v-container>
-    <div class="headline py-4">
+    <div class="page-title py-4">
       Copy one or several existing collections to add to dataset
       {{ datasetName }}
     </div>

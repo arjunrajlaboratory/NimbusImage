@@ -19,12 +19,17 @@ setup(
     description='A Girder plugin for Claude chat functionality',
     install_requires=[
         'girder[mount]>5',
-        'anthropic'
+        # 1.8.0: beta.messages with thinking.block_binding, and
+        # output_config structured output (both used by this plugin).
+        'anthropic>=1.8.0'
     ],
     license='Apache Software License 2.0',
     long_description=readme,
     long_description_content_type='text/x-rst',
     include_package_data=True,
+    package_data={
+        'girder_claude_chat': ['*.txt', '*.json', '*.md', 'help/*.md'],
+    },
     keywords='girder-plugin, claude_chat',
     packages=find_packages(exclude=['test', 'test.*']),
     url='https://github.com/girder/girder_claude_chat',

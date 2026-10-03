@@ -1,12 +1,333 @@
 import pytest
-import os
+from types import SimpleNamespace
 
-from girder_claude_chat import ClaudeChatResource
+from girder.api.rest import RestException
+
+from girder_claude_chat import (
+    ClaudeAgentResource, ClaudeSuggestToolsResource,
+    CLAUDE_MODEL
+)
 
 
 @pytest.mark.plugin('girder_claude_chat')
-def testClaudeChatImplementation():
-    os.environ['ANTHROPIC_API_KEY'] = 'FAKE_API_KEY'
-    resource = ClaudeChatResource()
-    # Of course the API errors, we have a fake API key
-    assert 'error' in resource.query_claude_imp({'messages': ['Hi Claude !']})
+def testAgentEndpointLoadsPackagedAssets(monkeypatch):
+    # The agent system prompt and tool schema must ship INSIDE the installed
+    # package (loaded from PACKAGE_DIR), not the plugin source root. A
+    # non-editable install (like this tox distribution) otherwise gets an
+    # empty toolset and the endpoint 503s. Regression guard: this runs against
+    # the installed distribution, so it fails if the assets are not packaged.
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeAgentResource()
+    assert resource.system_prompt, 'agent system prompt not packaged'
+    assert len(resource.tools) > 0, 'agent tool definitions not packaged'
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
+    # AGENT_MAX_TOKENS is above the SDK's non-streaming ceiling (~21k), so the
+    # agent endpoint must use the streaming API (client.beta.messages.stream)
+    # or the SDK raises "Streaming is required...". It still aggregates
+    # server-side and returns one JSON response with the same shape as before.
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeAgentResource()
+
+    final_message = SimpleNamespace(
+        content=[
+            SimpleNamespace(
+                model_dump=lambda exclude=None: {'type': 'text', 'text': 'ok'},
+            ),
+        ],
+        stop_reason='end_turn',
+        usage=SimpleNamespace(input_tokens=11, output_tokens=7),
+    )
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get_final_message(self):
+            return final_message
+
+    class FakeMessages:
+        stream_kwargs = None
+
+        def stream(self, **kwargs):
+            self.stream_kwargs = kwargs
+            return FakeStream()
+
+        def create(self, **kwargs):
+            raise AssertionError(
+                'agent endpoint must stream, not call create (max_tokens '
+                'exceeds the non-streaming ceiling)'
+            )
+
+    fake_messages = FakeMessages()
+    resource.client = SimpleNamespace(
+        beta=SimpleNamespace(messages=fake_messages)
+    )
+
+    result = resource._stream_agent_response(
+        [{'role': 'user', 'content': 'hi'}]
+    )
+
+    assert result == {
+        'content': [{'type': 'text', 'text': 'ok'}],
+        'stop_reason': 'end_turn',
+        'usage': {'input_tokens': 11, 'output_tokens': 7},
+    }
+    assert fake_messages.stream_kwargs['model'] == CLAUDE_MODEL
+    # The frontend prunes old screenshots (a history edit), so the agent must
+    # ask the API to drop invalidated thinking blocks rather than 400.
+    assert fake_messages.stream_kwargs['thinking'] == {
+        'type': 'adaptive',
+        'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
+    }
+    assert fake_messages.stream_kwargs['betas'] == [
+        'thinking-binding-controls-2026-08-01'
+    ]
+    assert (
+        fake_messages.stream_kwargs['max_tokens']
+        == resource.AGENT_MAX_TOKENS
+    )
+    # The bump the whole change is about; also keeps us above the non-streaming
+    # ceiling so streaming stays mandatory.
+    assert resource.AGENT_MAX_TOKENS > 21333
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAgentEndpointStripsApiExcludedBlockFields(monkeypatch):
+    # The streaming API returns ParsedTextBlocks carrying an output-only
+    # `parsed_output` field (marked __api_exclude__). Those content blocks are
+    # echoed straight back as the assistant turn on the next request, so they
+    # must be serialized without parsed_output or the API rejects the request
+    # with "Extra inputs are not permitted".
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeAgentResource()
+
+    class FakeParsedTextBlock:
+        __api_exclude__ = {'parsed_output'}
+
+        def model_dump(self, exclude=None):
+            data = {
+                'type': 'text',
+                'text': 'ok',
+                'parsed_output': {'anything': 1},
+            }
+            for key in exclude or set():
+                data.pop(key, None)
+            return data
+
+    final_message = SimpleNamespace(
+        content=[FakeParsedTextBlock()],
+        stop_reason='end_turn',
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get_final_message(self):
+            return final_message
+
+    class FakeMessages:
+        def stream(self, **kwargs):
+            return FakeStream()
+
+    resource.client = SimpleNamespace(
+        beta=SimpleNamespace(messages=FakeMessages())
+    )
+
+    result = resource._stream_agent_response(
+        [{'role': 'user', 'content': 'x'}]
+    )
+    assert result['content'] == [{'type': 'text', 'text': 'ok'}]
+    assert 'parsed_output' not in result['content'][0]
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testSuggestToolsIncludesLayerContext(monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeSuggestToolsResource()
+
+    content = resource._build_user_content({
+        'images': [],
+        'catalog': [{'id': 'manual:blob', 'name': 'Blob'}],
+        'channels': ['DAPI', 'TRITC'],
+        'layers': [
+            {
+                'id': 'layer-0',
+                'name': 'TRITC',
+                'channel': 1,
+                'channelName': 'TRITC',
+                'color': '#FFFF00',
+                'visible': True,
+            },
+        ],
+    })
+
+    text = content[-1]['text']
+    assert 'The displayed layers are (JSON)' in text
+    assert '"channelName": "TRITC"' in text
+    assert '"color": "#FFFF00"' in text
+    assert 'map colored objects' in text
+
+
+@pytest.mark.plugin('girder_claude_chat')
+@pytest.mark.parametrize(
+    ('stop_reason', 'expected'),
+    [
+        (
+            'end_turn',
+            {'suggestions': [
+                {'toolId': 'manual:blob', 'reason': 'Blobs seen.'}
+            ]},
+        ),
+        # A refusal or truncation carries no valid JSON. It must be an error,
+        # not an empty list, or the frontend records the configuration as
+        # suggested and never retries.
+        ('refusal', {'error': 'Tool suggestion stopped early (refusal)'}),
+        (
+            'max_tokens',
+            {'error': 'Tool suggestion stopped early (max_tokens)'},
+        ),
+    ],
+)
+def testSuggestToolsUsesStructuredOutput(monkeypatch, stop_reason, expected):
+    # Sonnet 5.5 400s on forced tool_choice and on disabled thinking, so the
+    # suggestion call must get its JSON from output_config.format instead.
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeSuggestToolsResource()
+
+    class FakeMessages:
+        create_kwargs = None
+
+        def create(self, **kwargs):
+            self.create_kwargs = kwargs
+            return SimpleNamespace(
+                stop_reason=stop_reason,
+                content=[
+                    # Adaptive thinking may lead with an empty thinking block.
+                    SimpleNamespace(type='thinking', thinking=''),
+                    SimpleNamespace(
+                        type='text',
+                        text='{"suggestions": [{"toolId": "manual:blob", '
+                             '"reason": "Blobs seen."}]}',
+                    ),
+                ],
+            )
+
+    fake_messages = FakeMessages()
+    resource.client = SimpleNamespace(messages=fake_messages)
+
+    result = resource.suggest_tools_imp({'catalog': [], 'channels': []})
+
+    assert result == expected
+    kwargs = fake_messages.create_kwargs
+    assert kwargs['model'] == CLAUDE_MODEL
+    assert 'tool_choice' not in kwargs
+    assert 'thinking' not in kwargs
+    assert kwargs['output_config']['format']['type'] == 'json_schema'
+
+
+@pytest.mark.plugin('girder_claude_chat')
+@pytest.mark.parametrize(
+    ('payload', 'message'),
+    [
+        (None, 'Request body must be a JSON object'),
+        ({'images': 'not-a-list'}, 'images must be a list'),
+        ({'images': ['not-an-object']}, 'images entries must be objects'),
+        (
+            {'images': [{'data': 'AAAA'}, {'data': 'BBBB'}, {'data': 'CCCC'}]},
+            'images contains too many screenshots',
+        ),
+        ({'catalog': {}}, 'catalog must be a list'),
+        ({'channels': {}}, 'channels must be a list'),
+        ({'layers': {}}, 'layers must be a list'),
+    ],
+)
+def testSuggestToolsRejectsMalformedRequests(monkeypatch, payload, message):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeSuggestToolsResource()
+
+    with pytest.raises(RestException) as excinfo:
+        resource.suggest_tools_imp(payload)
+
+    assert excinfo.value.code == 400
+    assert message in str(excinfo.value)
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAgentHelpTopicsPackagedAndValidated(monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeAgentResource()
+    # Help topics ship inside the package and load.
+    assert resource.help_topics, 'help topics not packaged'
+    # The concepts core is folded into the cached system prompt.
+    assert 'object' in resource.system_prompt.lower()
+    # The topic index lists slugs so the model can choose one.
+    a_slug = sorted(resource.help_topics)[0]
+    assert a_slug in resource.system_prompt
+    # A known topic returns markdown; unknown/garbage 400s.
+    assert resource.get_help_topic_markdown(a_slug)
+    with pytest.raises(RestException) as excinfo:
+        resource.get_help_topic_markdown('does-not-exist')
+    assert excinfo.value.code == 400
+    with pytest.raises(RestException):
+        resource.get_help_topic_markdown(123)
+
+
+@pytest.mark.plugin('girder_claude_chat')
+@pytest.mark.parametrize(
+    'payload',
+    [
+        None,                    # body was JSON null
+        'just a string',         # body was a bare string
+        {},                      # object without "messages"
+        {'messages': 'x'},       # messages not a list
+        {'messages': []},        # messages empty
+        {'messages': ['x']},     # message entries not objects
+    ],
+)
+def testAgentRejectsMalformedBodies(payload):
+    # A malformed body must produce a clean 400, not an uncaught 500 from an
+    # AttributeError in _parse_agent_messages/_add_message_cache_breakpoint.
+    with pytest.raises(RestException) as excinfo:
+        ClaudeAgentResource._parse_agent_messages(payload)
+    assert excinfo.value.code == 400
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAgentParsesValidBody():
+    messages = [{'role': 'user', 'content': 'hi'}]
+    assert ClaudeAgentResource._parse_agent_messages(
+        {'messages': messages}
+    ) == messages
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAnthropicSdkSupportsTheApisThePluginCalls():
+    # The unit tests above replace the SDK client with fakes, so they can't
+    # catch an SDK too old for the real calls. Guard both halves: the
+    # installed distribution declares the floor, and the installed SDK
+    # exposes every interface the plugin uses.
+    import inspect
+    from importlib.metadata import requires
+
+    from anthropic import Anthropic
+    from anthropic.types.beta import BetaThinkingConfigAdaptiveParam
+
+    assert 'anthropic>=1.8.0' in requires('girder-claude-chat')
+
+    client = Anthropic(api_key='FAKE_API_KEY')
+    agent_params = inspect.signature(client.beta.messages.stream).parameters
+    assert {'betas', 'thinking'} <= set(agent_params)
+    assert 'block_binding' in BetaThinkingConfigAdaptiveParam.__annotations__
+    suggest_params = inspect.signature(client.messages.create).parameters
+    assert 'output_config' in suggest_params

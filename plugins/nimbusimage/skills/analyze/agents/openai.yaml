@@ -1,0 +1,4 @@
+interface:
+  display_name: "NimbusImage Analyze"
+  short_description: "Compute, export, connect, and share data"
+  default_prompt: "Use the NimbusImage analyze skill for properties, exports, connections, sharing, and history."

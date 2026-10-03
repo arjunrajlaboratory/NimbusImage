@@ -50,6 +50,59 @@ class TestLiveAnnotations:
         ids = [a.id for a in created]
         ds.annotations.delete_many(ids)
 
+    def test_iter_all_walks_after_id_cursor(self, test_dataset):
+        """NIM-002: iter_all() pages the real afterId cursor and returns
+        every record exactly once, in ascending _id order."""
+        ds = test_dataset
+
+        anns = [
+            ni.Annotation(
+                id=None, shape="point", tags=["iterall"],
+                channel=0, location=ni.Location(),
+                coordinates=[{"x": float(i), "y": float(i)}],
+                dataset_id=ds.id,
+            )
+            for i in range(7)
+        ]
+        created = ds.annotations.create_many(anns)
+        created_ids = sorted(a.id for a in created)
+
+        try:
+            seen = [
+                a.id
+                for a in ds.annotations.iter_all(tags=["iterall"], page_size=2)
+            ]
+            assert sorted(seen) == created_ids
+            assert len(seen) == len(set(seen))  # no duplicates
+            assert seen == sorted(seen)  # ascending _id order
+        finally:
+            ds.annotations.delete_many([a.id for a in created])
+
+    def test_iter_all_safe_during_deletion(self, test_dataset):
+        """NIM-002: deleting each record as it is yielded must not skip
+        any (the offset-pagination bug the cursor fixes)."""
+        ds = test_dataset
+
+        anns = [
+            ni.Annotation(
+                id=None, shape="point", tags=["iterdel"],
+                channel=0, location=ni.Location(),
+                coordinates=[{"x": float(i), "y": float(i)}],
+                dataset_id=ds.id,
+            )
+            for i in range(7)
+        ]
+        created = ds.annotations.create_many(anns)
+        expected = sorted(a.id for a in created)
+
+        seen = []
+        for a in ds.annotations.iter_all(tags=["iterdel"], page_size=2):
+            seen.append(a.id)
+            ds.annotations.delete(a.id)
+
+        assert sorted(seen) == expected
+        assert ds.annotations.count(tags=["iterdel"]) == 0
+
     def test_update(self, test_dataset):
         ds = test_dataset
 

@@ -3,8 +3,8 @@
     <v-progress-linear v-if="loading" indeterminate />
 
     <div v-else-if="projects.length === 0" class="empty-state pa-4 text-center">
-      <v-icon size="48" color="grey">mdi-folder-star-outline</v-icon>
-      <div class="text-body-2 text-grey mt-2">
+      <v-icon size="48" color="secondary">mdi-folder-star-outline</v-icon>
+      <div class="text-body-2 text-medium-emphasis mt-2">
         No projects yet. Create one to organize datasets for export.
       </div>
     </div>
@@ -17,7 +17,7 @@
               @click="handleProjectClick(project)"
               v-bind="activatorProps"
             >
-              <v-icon color="#8e24aa">mdi-folder-star</v-icon>
+              <v-icon color="project">mdi-folder-star</v-icon>
               <v-list-item-title>
                 {{ project.name }}
               </v-list-item-title>
@@ -43,7 +43,7 @@
                 </template>
               </v-list-item-subtitle>
               <span class="my-0 d-flex flex-column justify-center">
-                <div class="text-caption text-grey text-left">
+                <div class="text-caption text-medium-emphasis text-left">
                   <div>Updated:</div>
                   <div style="line-height: 1.1">
                     {{ formatDate(project.updated) }}
@@ -91,7 +91,7 @@ function getStatusColor(status: string): string {
     case "exporting":
       return "warning";
     default:
-      return "grey";
+      return "secondary";
   }
 }
 

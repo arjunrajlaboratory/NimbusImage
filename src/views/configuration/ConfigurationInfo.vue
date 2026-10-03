@@ -128,7 +128,6 @@
                 :key="index"
                 size="small"
                 color="warning"
-                text-color="white"
                 class="mr-1 mb-1"
               >
                 <v-icon size="small" start>mdi-alert</v-icon>

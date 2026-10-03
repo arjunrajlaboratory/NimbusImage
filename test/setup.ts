@@ -3,6 +3,26 @@ import { createVuetify } from "vuetify";
 import { reactive } from "vue";
 import { vi } from "vitest";
 
+// jsdom's CSS parser cannot handle Vuetify 4's stylesheet (cascade layers,
+// nested selectors), so EVERY component mount logs "Could not parse CSS
+// stylesheet" followed by the entire sheet — about 5,500 lines, ~150KB, per
+// mount. With ~2,000 mounts across the suite the reporter buffers hundreds of
+// megabytes of it and the run dies with a heap OOM once the suite grows a
+// little. The error tells us nothing (styles are irrelevant to these tests), so
+// drop exactly this one message and let everything else through.
+// Vitest 4's jsdom errors go through a host console that is distinct from the
+// test's console. Filter the virtual-console event before its existing handlers
+// forward it; replacing console.error in the test realm no longer catches it.
+const virtualConsole = (globalThis as any).jsdom.virtualConsole;
+for (const listener of virtualConsole.listeners("jsdomError")) {
+  virtualConsole.removeListener("jsdomError", listener);
+  virtualConsole.on("jsdomError", (error: Error) => {
+    if (error.message !== "Could not parse CSS stylesheet") {
+      listener(error);
+    }
+  });
+}
+
 // Polyfill visualViewport for jsdom (required by Vuetify 3 overlay components)
 if (typeof globalThis.visualViewport === "undefined") {
   (globalThis as any).visualViewport = {

@@ -7,14 +7,52 @@
     <v-card>
       <v-card-title>Zenodo API Token</v-card-title>
       <v-card-text>
-        <p class="text-body-2 mb-4">
-          Enter your Zenodo personal access token. You can create one at
-          <strong
-            >Zenodo &gt; Account Settings &gt; Applications &gt; New
-            Token</strong
-          >. Required scopes: <code>deposit:write</code> and
-          <code>deposit:actions</code>.
+        <p class="text-body-2 mb-2">
+          Paste a Zenodo personal access token. NimbusImage uses it to upload
+          this project on your behalf.
         </p>
+        <v-alert
+          type="info"
+          variant="tonal"
+          density="compact"
+          class="mb-4 zenodo-instructions"
+        >
+          <div class="text-body-2 mb-1">
+            <strong
+              >How to create a token on
+              <a :href="zenodoBaseUrl" target="_blank" rel="noopener">{{
+                zenodoHost
+              }}</a></strong
+            >
+          </div>
+          <ol class="zenodo-steps">
+            <li>
+              Click your username (top-right) →
+              <strong>Applications</strong>
+            </li>
+            <li>
+              Under <strong>Personal access tokens</strong>, click
+              <strong>+ New Token</strong>
+              (or
+              <a :href="tokensUrl" target="_blank" rel="noopener"
+                >open the token page directly</a
+              >)
+            </li>
+            <li>Give the token a name (e.g., <em>NimbusImage</em>)</li>
+            <li>
+              Check
+              <strong>all</strong>
+              of these scopes:
+              <code>deposit:actions</code>, <code>deposit:write</code>,
+              <code>user:email</code>
+            </li>
+            <li>
+              Click <strong>Create</strong>, then copy the token —
+              <strong>Zenodo only shows it once</strong>, so save a copy in your
+              password manager before pasting it below.
+            </li>
+          </ol>
+        </v-alert>
         <v-text-field
           v-model="token"
           label="API Token"
@@ -67,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import store from "@/store";
 import { logError } from "@/utils/log";
 
@@ -86,6 +124,16 @@ const showToken = ref(false);
 const saving = ref(false);
 const deleting = ref(false);
 const hasExistingToken = ref(false);
+
+const zenodoBaseUrl = computed(() =>
+  sandbox.value ? "https://sandbox.zenodo.org" : "https://zenodo.org",
+);
+const zenodoHost = computed(() =>
+  sandbox.value ? "sandbox.zenodo.org" : "zenodo.org",
+);
+const tokensUrl = computed(
+  () => `${zenodoBaseUrl.value}/account/settings/applications/tokens/new/`,
+);
 
 async function checkExistingToken() {
   try {
@@ -145,3 +193,28 @@ onMounted(() => {
   }
 });
 </script>
+
+<style lang="scss" scoped>
+.zenodo-instructions {
+  .zenodo-steps {
+    margin: 0 0 0 1.25rem;
+    padding: 0;
+
+    li {
+      margin-bottom: 4px;
+      line-height: 1.4;
+
+      &:last-child {
+        margin-bottom: 0;
+      }
+    }
+
+    code {
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 0.85em;
+      background: rgba(127, 127, 127, 0.15);
+    }
+  }
+}
+</style>

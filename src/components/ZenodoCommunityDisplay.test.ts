@@ -12,10 +12,12 @@ vi.mock("@/store", () => ({
 }));
 
 vi.mock("@/store/ZenodoAPI", () => ({
-  default: vi.fn().mockImplementation(() => ({
-    getCommunity: mockGetCommunity,
-    getCommunityRecords: mockGetCommunityRecords,
-  })),
+  default: vi.fn(function () {
+    return {
+      getCommunity: mockGetCommunity,
+      getCommunityRecords: mockGetCommunityRecords,
+    };
+  }),
 }));
 
 vi.mock("@/utils/log", () => ({
@@ -23,8 +25,7 @@ vi.mock("@/utils/log", () => ({
 }));
 
 vi.mock("@/utils/strings", () => ({
-  getTourStepId: vi.fn().mockReturnValue("test-tourstep"),
-  getTourTriggerId: vi.fn().mockReturnValue("test-tourtrigger"),
+  getTourAnchorId: vi.fn().mockReturnValue("test"),
 }));
 
 import ZenodoCommunityDisplay from "./ZenodoCommunityDisplay.vue";

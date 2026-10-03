@@ -1,5 +1,5 @@
 <template>
-  <v-card variant="flat" class="pa-0 ma-0">
+  <v-card variant="flat" class="pa-0 ma-0 tool-config-item-card">
     <v-card-title v-if="item.name && item.name.length" class="px-4 py-2 ma-0">
       {{ item.name }}
     </v-card-title>
@@ -15,6 +15,7 @@
               v-model="componentValue"
               ref="innerComponent"
               return-object
+              :item-title="item.type === 'select' ? 'text' : undefined"
               @update:model-value="changed"
               density="compact"
             >
@@ -44,6 +45,7 @@ import {
 import AnnotationConfiguration from "@/tools/creation/templates/AnnotationConfiguration.vue";
 import TagAndLayerRestriction from "@/tools/creation/templates/TagAndLayerRestriction.vue";
 import DockerImage from "@/tools/creation/templates/DockerImage.vue";
+import OptionalLayerSelect from "@/tools/creation/templates/OptionalLayerSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
 
 // Used to determine :is="" value from template interface type
@@ -56,6 +58,7 @@ const typeToComponentName: Record<string, any> = {
   text: VTextField,
   dockerImage: DockerImage,
   tags: TagPicker,
+  layerSelect: OptionalLayerSelect,
 };
 
 type TComponentType = keyof typeof typeToComponentName;
@@ -106,3 +109,13 @@ function changed() {
 
 defineExpose({ componentValue, typeToComponentName, changed, innerComponent });
 </script>
+
+<style lang="scss" scoped>
+/* Inner section card inside the glass-treated tool-creation dialog. Let the
+   parent glass show through with a faint inset tint + border, instead of
+   Vuetify's opaque surface background. */
+.tool-config-item-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+}
+</style>

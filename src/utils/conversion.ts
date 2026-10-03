@@ -1,4 +1,4 @@
-import { TUnitLength, TUnitTime } from "@/store/model";
+import { TUnitLength, TUnitTime, unitLengthOptions } from "@/store/model";
 
 const oneUnitToMeterConversion = {
   nm: 1e-9,
@@ -15,6 +15,26 @@ export function convertLength(
   const multiplier =
     oneUnitToMeterConversion[oldUnit] / oneUnitToMeterConversion[newUnit];
   return multiplier * value;
+}
+
+/**
+ * Format a physical length as a human-readable string, picking the unit in
+ * which the value reads best (the largest unit where it is at least 1).
+ */
+export function formatLength(value: number, unit: TUnitLength): string {
+  // unitLengthOptions is ordered from smallest (nm) to largest (m)
+  let bestUnit = unitLengthOptions[0];
+  for (const candidate of unitLengthOptions) {
+    if (convertLength(value, unit, candidate) >= 1) {
+      bestUnit = candidate;
+    }
+  }
+  const bestValue = convertLength(value, unit, bestUnit);
+  const formatted =
+    bestValue >= 100
+      ? Math.round(bestValue).toString()
+      : bestValue.toPrecision(3);
+  return `${formatted} ${bestUnit}`;
 }
 
 const oneUnitToSecondConversion = {

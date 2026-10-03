@@ -898,7 +898,7 @@ describe("Home", () => {
   // 18. handleDrop
   // =========================================================================
   describe("handleDrop", () => {
-    it("sets pendingFiles and shows upload dialog from drop event", () => {
+    it("sets pendingFiles and shows upload dialog from drop event", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.isDragging = true;
@@ -909,7 +909,7 @@ describe("Home", () => {
         dataTransfer: { files: [file] },
       } as unknown as DragEvent;
 
-      vm.handleDrop(event);
+      await vm.handleDrop(event);
 
       expect(vm.isDragging).toBe(false);
       expect(vm.pendingFiles).toHaveLength(1);
@@ -917,13 +917,13 @@ describe("Home", () => {
       expect(vm.showUploadDialog).toBe(true);
     });
 
-    it("does nothing when no files in drop event", () => {
+    it("does nothing when no files in drop event", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.isDragging = true;
 
       const event = { dataTransfer: { files: [] } } as any;
-      vm.handleDrop(event);
+      await vm.handleDrop(event);
 
       expect(vm.isDragging).toBe(false);
       expect(vm.showUploadDialog).toBe(false);
