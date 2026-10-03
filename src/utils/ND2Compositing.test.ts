@@ -145,6 +145,18 @@ describe("canCompositeByStagePosition", () => {
     expect(coordinates[0]).toMatchObject({ s11: -1, s12: 0, s21: 0, s22: -1 });
   });
 
+  it("refuses a singular matrix on any file, not just the first", () => {
+    // det([2, 2, 1, 1.006]) = 0.012 passes; [2, 2, 1, 1] is within 0.01 of
+    // it but singular.
+    expect(
+      canCompositeByStagePosition(
+        [tile(2), tile(2)],
+        [stages([[0, 0]], [2, 2, 1, 1.006]), stages([[1000, 0]], [2, 2, 1, 1])],
+        2,
+      ),
+    ).toBe(false);
+  });
+
   it("refuses a singular camera matrix", () => {
     expect(
       canCompositeByStagePosition(

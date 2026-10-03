@@ -605,3 +605,14 @@ class TestCompositingRobustness:
             [_tile(2)], [_stages([(0, 0)], [2, 2, 1, 1])],
         )
         assert result["compositing"] is False
+
+    def test_singular_matrix_on_a_later_file_cannot_composite(self):
+        # det([2, 2, 1, 1.006]) = 0.012 passes; [2, 2, 1, 1] is within 0.01
+        # of it but singular.
+        from helpers.multi_source import _can_composite  # noqa: E402
+        assert _can_composite(
+            [_tile(2), _tile(2)],
+            [_stages([(0, 0)], [2, 2, 1, 1.006]),
+             _stages([(1000, 0)], [2, 2, 1, 1])],
+            2,
+        ) is False

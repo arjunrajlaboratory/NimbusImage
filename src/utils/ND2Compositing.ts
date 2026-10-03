@@ -191,23 +191,26 @@ export function canCompositeByStagePosition(
   ) {
     return false;
   }
-  const firstTransform = cameraTransform(internalMetadata[0]);
-  const footprint = tileFootprint(
-    firstTransform,
-    tilesMetadata[0].sizeX,
-    tilesMetadata[0].sizeY,
-  );
+  const transforms = internalMetadata.map(cameraTransform);
   if (
-    // A singular matrix (all zeros, or rank one like [2, 2, 1, 1]) maps the
-    // tile onto a point or a line.
-    Math.abs(
-      firstTransform.s11 * firstTransform.s22 -
-        firstTransform.s12 * firstTransform.s21,
-    ) < CAMERA_MATRIX_TOLERANCE ||
-    !(footprint.width > 0 && footprint.height > 0) ||
-    !internalMetadata.every((meta) =>
-      sameTransform(cameraTransform(meta), firstTransform),
-    )
+    !transforms.every((transform, itemIdx) => {
+      // A singular matrix (all zeros, or rank one like [2, 2, 1, 1]) maps
+      // the tile onto a point or a line. Checked for every file: one that
+      // is merely close to a usable first matrix can still be singular.
+      const footprint = tileFootprint(
+        transform,
+        tilesMetadata[itemIdx].sizeX,
+        tilesMetadata[itemIdx].sizeY,
+      );
+      return (
+        Math.abs(
+          transform.s11 * transform.s22 - transform.s12 * transform.s21,
+        ) >= CAMERA_MATRIX_TOLERANCE &&
+        footprint.width > 0 &&
+        footprint.height > 0 &&
+        sameTransform(transform, transforms[0])
+      );
+    })
   ) {
     return false;
   }

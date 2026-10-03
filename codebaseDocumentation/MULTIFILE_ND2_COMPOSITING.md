@@ -462,6 +462,8 @@ hand.
   *"treats a malformed camera matrix as the identity"*,
   *"refuses a camera matrix that collapses the tile"*,
   *"refuses a singular camera matrix"*,
+  *"refuses a singular matrix on any file, not just the first"*,
+  *"test_singular_matrix_on_a_later_file_cannot_composite"*,
   *"test_singular_camera_matrix_cannot_composite"*,
   *"keeps a shear whose diagonal is the identity"*,
   *"still snaps a nearly -I Nikon matrix to -I"*,

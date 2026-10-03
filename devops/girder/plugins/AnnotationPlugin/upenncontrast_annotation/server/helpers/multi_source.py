@@ -787,20 +787,24 @@ def _can_composite(tiles_metadata, internal_metadata, xy_assignment_size):
         )
     ):
         return False
-    first_transform = _camera_transform(internal_metadata[0])
-    width, height, _min_x, _min_y = _tile_footprint(
-        first_transform, tiles_metadata[0]["sizeX"],
-        tiles_metadata[0]["sizeY"],
-    )
-    # A singular matrix (all zeros, or rank one like [2, 2, 1, 1]) maps the
-    # tile onto a point or a line.
-    determinant = (first_transform["s11"] * first_transform["s22"]
-                   - first_transform["s12"] * first_transform["s21"])
-    if abs(determinant) < CAMERA_MATRIX_TOLERANCE:
-        return False
-    if not (width > 0 and height > 0) or not all(
-        _same_transform(_camera_transform(meta), first_transform)
-        for meta in internal_metadata
+    transforms = [_camera_transform(meta) for meta in internal_metadata]
+
+    def usable(transform, tile):
+        # A singular matrix (all zeros, or rank one like [2, 2, 1, 1]) maps
+        # the tile onto a point or a line. Checked for every file: one that
+        # is merely close to a usable first matrix can still be singular.
+        determinant = (transform["s11"] * transform["s22"]
+                       - transform["s12"] * transform["s21"])
+        width, height, _min_x, _min_y = _tile_footprint(
+            transform, tile["sizeX"], tile["sizeY"],
+        )
+        return (abs(determinant) >= CAMERA_MATRIX_TOLERANCE
+                and width > 0 and height > 0
+                and _same_transform(transform, transforms[0]))
+
+    if not all(
+        usable(transform, tile)
+        for transform, tile in zip(transforms, tiles_metadata)
     ):
         return False
     if len(tiles_metadata) == 1:
