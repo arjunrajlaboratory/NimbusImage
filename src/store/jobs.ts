@@ -5,6 +5,7 @@ import {
   Mutation,
   VuexModule,
 } from "vuex-module-decorators";
+import { toRaw } from "vue";
 import store from "./root";
 import {
   IComputeJob,
@@ -109,7 +110,22 @@ interface IJobInfo {
   successPromise: Promise<boolean>;
   successResolve: (success: boolean) => void;
   log: string;
+  // Set once a terminal status has been handled. The same outcome can
+  // arrive twice -- from the notification stream and from a status check --
+  // and must only be acted on once.
+  settled?: boolean;
 }
+
+const TERMINAL_JOB_STATES: number[] = [
+  jobStates.cancelled,
+  jobStates.success,
+  jobStates.error,
+];
+
+// Reconnect delay after the notification stream closes unexpectedly:
+// doubles per consecutive failure, capped.
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 30000;
 
 @Module({ dynamic: true, store, name: "jobs" })
 export class Jobs extends VuexModule {
@@ -245,7 +261,58 @@ export class Jobs extends VuexModule {
       }
       this.clearStoredMessages(job.jobId);
     }
+    // The job may have finished before its events could reach us: a
+    // request that runs the job in-process (e.g. transcoding with
+    // localJob=true) only returns once it is done, and if the notification
+    // stream was down meanwhile (a server restart, a network drop) the
+    // terminal event is gone for good. Ask the server once.
+    if (this.jobInfoMap[job.jobId]) {
+      await this.reconcileJob(job.jobId);
+    }
     return successPromise;
+  }
+
+  // The job record straight from the server, or null when it could not be
+  // read (network failure, deleted job, bad id).
+  @Action
+  async fetchJob(jobId: string): Promise<IJobEventData | null> {
+    try {
+      return (await main.girderRest.get(`job/${jobId}`)).data;
+    } catch (error) {
+      logError(`Failed to get job ${jobId}`);
+      return null;
+    }
+  }
+
+  // Settle a tracked job from its server record if it has already finished;
+  // used when its terminal event may have been missed.
+  @Action
+  async reconcileJob(jobId: string) {
+    if (!this.jobInfoMap[jobId]) {
+      return;
+    }
+    const job: any = await this.fetchJob(jobId);
+    const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
+    if (
+      !job ||
+      !jobInfo ||
+      jobInfo.settled ||
+      !TERMINAL_JOB_STATES.includes(job.status)
+    ) {
+      return;
+    }
+    // Deliver whatever part of the log has not been seen, so listeners
+    // (progress, quota detection) see the same text the stream would have
+    // carried.
+    const serverLog = Array.isArray(job.log) ? job.log.join("") : "";
+    const unseenLog = serverLog.startsWith(jobInfo.log)
+      ? serverLog.slice(jobInfo.log.length)
+      : serverLog;
+    await this.handleJobEventImp({
+      ...job,
+      _id: jobId,
+      text: unseenLog || undefined,
+    });
   }
 
   @Mutation
@@ -329,7 +396,7 @@ export class Jobs extends VuexModule {
   async handleJobEventImp(jobEvent: IJobEventData) {
     const jobId = jobEvent._id;
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
-    if (!jobInfo) return;
+    if (!jobInfo || jobInfo.settled) return;
     // Append to the log if there's text
     if (jobEvent.text && typeof jobEvent.text === "string") {
       jobInfo.log = jobInfo.log + jobEvent.text;
@@ -340,14 +407,11 @@ export class Jobs extends VuexModule {
       listener.errorCallback?.(jobEvent);
     }
     const status = jobEvent.status;
-    if (
-      !status ||
-      ![jobStates.cancelled, jobStates.success, jobStates.error].includes(
-        status,
-      )
-    ) {
+    if (!status || !TERMINAL_JOB_STATES.includes(status)) {
       return;
     }
+    // Before any await, so a second terminal report is ignored.
+    jobInfo.settled = true;
 
     const success = status === jobStates.success;
     if (!success) {
@@ -395,24 +459,42 @@ export class Jobs extends VuexModule {
 
   @Action
   async handleError(event: Event) {
-    logError(
-      "[jobs] WebSocket error, attempt:",
-      this.connectionErrors + 1,
-      event,
+    // A close always follows an error; reconnecting is handleClose's job.
+    logError("[jobs] WebSocket error", event);
+  }
+
+  // The stream closed without us asking (server restart, network drop):
+  // reconnect with backoff. Events sent meanwhile are lost, so handleOpen
+  // re-checks every tracked job once the stream is back.
+  @Action
+  async handleClose(event: CloseEvent) {
+    // toRaw: the state may hold a reactive proxy of the socket.
+    if (event.target !== toRaw(this.notificationSource)) {
+      return; // closed deliberately, or superseded by a newer connection
+    }
+    this.setNotificationSource(null);
+    const delay = Math.min(
+      RECONNECT_MAX_MS,
+      RECONNECT_BASE_MS * 2 ** this.connectionErrors,
     );
     this.setConnectionErrors(this.connectionErrors + 1);
-    if (this.connectionErrors <= 3) {
-      await this.initializeNotificationSubscription();
-    } else {
-      // Can't connect after 3 attempts
-      logError("Can't connect to girder notification stream");
-      await this.closeNotificationSubscription();
-    }
+    setTimeout(() => {
+      // Unless something else reconnected in the meantime.
+      if (!this.notificationSource) {
+        this.initializeNotificationSubscription();
+      }
+    }, delay);
   }
 
   @Action
   async handleOpen() {
+    const reconnected = this.connectionErrors > 0;
     this.setConnectionErrors(0);
+    if (reconnected) {
+      for (const jobId of Object.keys(this.jobInfoMap)) {
+        await this.reconcileJob(jobId);
+      }
+    }
   }
 
   @Action
@@ -431,14 +513,17 @@ export class Jobs extends VuexModule {
     notificationSource.onmessage = this.handleJobEvent;
     notificationSource.onerror = this.handleError;
     notificationSource.onopen = this.handleOpen;
+    notificationSource.onclose = this.handleClose;
     this.setNotificationSource(notificationSource);
   }
 
   @Action
   async closeNotificationSubscription() {
-    if (this.notificationSource) {
-      this.notificationSource.close();
+    const source = this.notificationSource;
+    if (source) {
+      // Cleared first, so handleClose sees a deliberate close.
       this.setNotificationSource(null);
+      source.close();
     }
   }
 }
