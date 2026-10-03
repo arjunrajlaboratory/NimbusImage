@@ -74,14 +74,22 @@ files that each have C frames. It breaks as soon as files have Z or T frames,
 or their frame counts differ. Positions should be keyed explicitly by
 (item, XY frame), not inferred from the source's place in the list.
 
-**3. The filename parser guesses the tile index as Channel, not XY.**
+**3. (Not a blocker) The filename parser guesses the tile index as Channel,
+not XY.**
 `collect_filename_metadata()` on these 144 names returns a single variable,
 `{guess: 'C', values: ['2753', …]}`. The spanning token is a bare number,
 `2753`. Its common substring hits no trigger, so `_categorize_substring` falls
 back to `"chan"`. `Point`, `Seq`, `tile`, `field`, `fov` and `site` aren't in
 the `xy` trigger list, and the parser reads the bare-number column before the
-`Seq2753` column anyway. The user has to move the variable to XY by hand
-before compositing could even apply.
+`Seq2753` column anyway.
+
+This is only a wrong default. In Advanced Import, the user can drag the
+filename variable from C to XY in a couple of seconds, and nobody has to
+rename files. Expect real tile exports to look like this: Nikon NIS writes
+`…_Point1_0000_…_Seq0000.nd2`, and labs won't rename thousands of files. The
+real blocker is #1: even after the variable is moved to XY, the Composite
+checkbox never appears, because the gate looks at the number of files rather
+than at the assignment.
 
 **4. (Minor) Non-image files in the folder aren't filtered.**
 `initializeImplementation()` takes every item in the folder. Our first upload
@@ -102,6 +110,17 @@ canDoCompositing =
   and every item has the same sizeX, sizeY, mm_x, mm_y
   and the XY assignment has size > 1   # i.e. there is something to lay out
 ```
+
+**The gate must react to the user's assignments, not to the parser's guess.**
+`canDoCompositing` has to recompute when the user reassigns a filename
+variable from C to XY, so the checkbox appears right after that drag. With
+that, the manual path works end to end with no filename changes:
+1. Upload the folder.
+2. Move the tile-index variable to XY.
+3. Tick **Composite**.
+
+The same holds for the API: an `assignments` override that puts the filename
+variable on XY, together with `enableCompositing: true`, must composite.
 
 Then build positions per source rather than per frame of item 0:
 
@@ -138,9 +157,10 @@ The geometry was confirmed independently by template-matching 40x tiles
 against 10x tiles of the same well. The scripts are in the Raj lab vault's
 OPS project, not in this repo.
 
-### B. Guess XY when files carry distinct stage positions
+### B. Guess XY when files carry distinct stage positions (nice to have)
 
-When every file has exactly one `nd2_frame_metadata` entry and the stage
+Change B only saves the manual step from A. It isn't needed for correctness,
+and A should ship first. When every file has exactly one `nd2_frame_metadata` entry and the stage
 positions are distinct, the variable that distinguishes the files is almost
 certainly XY. Two options:
 
