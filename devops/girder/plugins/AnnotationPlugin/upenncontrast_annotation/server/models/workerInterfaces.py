@@ -78,4 +78,14 @@ class WorkerInterfaceModel(ProxiedModel):
         )
 
     def requestWorkerUpdate(self, image):
-        return runJobRequest(image, None, {"image": image}, "interface")
+        # This job only asks the worker which parameters it accepts, so it
+        # has no tool or property name to borrow a title from. Name it
+        # explicitly, otherwise users see an unexplained job appear right
+        # before the run that triggered the interface fetch.
+        return runJobRequest(
+            image,
+            None,
+            {"image": image},
+            "interface",
+            jobTitle="Pulled worker interface for {}".format(image),
+        )

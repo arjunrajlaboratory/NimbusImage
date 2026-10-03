@@ -130,6 +130,9 @@
         Cannot create datasets in this location. Please select a subfolder
         within your user directory or group folder.
       </v-alert>
+      <v-alert v-if="storageWarningMessage" variant="tonal" type="warning">
+        {{ storageWarningMessage }}
+      </v-alert>
 
       <div
         class="button-bar d-flex justify-space-between align-center"
@@ -141,6 +144,9 @@
           >
           <span v-if="maxApiKeyFileSize" class="mr-2">
             (using special permission code)</span
+          >
+          <span v-if="storageUsageString" class="mr-2">
+            {{ storageUsageString }}</span
           >
         </div>
         <div>
@@ -221,11 +227,25 @@
         :autoDatasetRoute="false"
         @log="configurationLogs = $event"
         @generatedJson="generationDone"
+        @generationError="generationFailed"
       />
     </template>
 
     <!-- Quick import and auto-processing batch mode -->
     <template v-if="(isQuickImport || isBatchMode) && !showConfigAtTop">
+      <v-alert v-if="processingError" type="error" variant="tonal" class="mb-4">
+        <div class="mb-2">{{ processingError }}</div>
+        <v-btn
+          v-if="configurationLogs"
+          size="small"
+          variant="text"
+          color="info"
+          @click="showLogDialog = true"
+        >
+          <v-icon size="small" start>mdi-text-box-outline</v-icon>
+          View Log
+        </v-btn>
+      </v-alert>
       <template v-if="configuring && datasetId">
         <!-- Mount MultiSourceConfiguration for auto-processing -->
         <multi-source-configuration
@@ -234,6 +254,7 @@
           :autoDatasetRoute="false"
           @log="configurationLogs = $event"
           @generatedJson="generationDone"
+          @generationError="generationFailed"
           class="d-none"
         />
         <!-- Show status text and spinner when auto-processing -->
@@ -392,7 +413,7 @@ import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
 import { UploadManager } from "@girder/components";
 import FileDropzone from "@/components/Files/FileDropzone.vue";
 import { Upload as GirderUpload } from "@/girder/components";
-import { IDataset } from "@/store/model";
+import { IDataset, IUserStorageQuota } from "@/store/model";
 import { triggersPerCategory } from "@/utils/parsing";
 import { formatDate } from "@/utils/date";
 import MultiSourceConfiguration from "./MultiSourceConfiguration.vue";
@@ -533,6 +554,8 @@ const skippedDatasets = ref<number[]>([]);
 const fileSizeExceeded = ref(false);
 const fileSizeExceededMessage = ref("");
 const maxApiKeyFileSize = ref<number | null>(null);
+const processingError = ref<string | null>(null);
+const storageQuota = ref<IUserStorageQuota | null>(null);
 const allFiles = ref<File[]>([]);
 const currentDatasetIndex = ref(0);
 
@@ -624,6 +647,48 @@ const totalSizeString = computed(() => {
 const maxTotalFileSizeString = computed(() =>
   formatSize(maxTotalFileSize.value),
 );
+
+const storageUsageString = computed(() => {
+  const quotaInfo = storageQuota.value;
+  if (!quotaInfo || quotaInfo.quota == null) {
+    return null;
+  }
+  return `Storage used: ${formatSize(quotaInfo.used)} of ${formatSize(
+    quotaInfo.quota,
+  )}`;
+});
+
+// Warn ahead of the upload when the selected files won't fit in the user's
+// remaining storage quota (or when transcoding might not fit, since it
+// creates an additional optimized copy of the dataset). The actual
+// enforcement happens on the backend; this is advance feedback only.
+const storageWarningMessage = computed(() => {
+  const quotaInfo = storageQuota.value;
+  if (!quotaInfo || quotaInfo.quota == null || files.value.length === 0) {
+    return null;
+  }
+  const totalBytes = files.value.reduce((sum, file) => sum + file.size, 0);
+  const remaining = Math.max(0, quotaInfo.quota - quotaInfo.used);
+  if (totalBytes > remaining) {
+    return (
+      `The selected files (${formatSize(totalBytes)}) are larger than your ` +
+      `remaining storage (${formatSize(remaining)} of ` +
+      `${formatSize(quotaInfo.quota)}). The upload will fail unless you ` +
+      `free up space by deleting datasets you no longer need, or upgrade ` +
+      `your account for more storage.`
+    );
+  }
+  if (2 * totalBytes > remaining) {
+    return (
+      `The selected files (${formatSize(totalBytes)}) fit in your ` +
+      `remaining storage (${formatSize(remaining)}), but transcoding ` +
+      `creates an additional optimized copy of the dataset, which may ` +
+      `exceed your storage quota. If the import fails, free up space or ` +
+      `turn off the transcode option.`
+    );
+  }
+  return null;
+});
 
 const isQuickImport = computed((): boolean =>
   store.uploadWorkflow.active
@@ -920,6 +985,7 @@ async function advanceToNextDataset() {
   configuring.value = false;
   configurationLogs.value = "";
   transcodeProgress.value = undefined;
+  processingError.value = null;
 
   if (!store.uploadWorkflow.originalPath) {
     logError(
@@ -955,6 +1021,15 @@ function navigateToCollection() {
       name: "root",
     });
   }
+}
+
+// Called when MultiSourceConfiguration fails to configure/transcode the
+// dataset (e.g. the transcoding job failed because the storage quota was
+// exceeded). Stops the spinner and surfaces the reason to the user.
+function generationFailed(message: string) {
+  configuring.value = false;
+  processingError.value = message;
+  handleBatchError(message);
 }
 
 function handleBatchError(message: string) {
@@ -1241,6 +1316,12 @@ onMounted(async () => {
   }
 
   maxApiKeyFileSize.value = await getMaxUploadSize();
+
+  if (store.girderUser) {
+    storageQuota.value = await store.api.getUserStorageQuota(
+      store.girderUser._id,
+    );
+  }
 });
 
 // --- Expose for tests and external access ---
@@ -1277,6 +1358,11 @@ defineExpose({
   fileSizeExceeded,
   fileSizeExceededMessage,
   maxApiKeyFileSize,
+  processingError,
+  storageQuota,
+  storageUsageString,
+  storageWarningMessage,
+  generationFailed,
   allFiles,
   currentDatasetIndex,
   maxTotalFileSize,

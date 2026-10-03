@@ -51,6 +51,11 @@ describe("annotationListServer.fetchPage stale-response guard", () => {
     fetchAnnotationListPage.mockReset();
     (annotationListServer as any).setPageResult({ rows: [], total: 0 });
     (annotationListServer as any).setLoading(false);
+    (annotationListServer as any).setOptions({
+      page: 1,
+      pageSize: 10,
+      sort: null,
+    });
   });
 
   it("ignores an older response that resolves after a newer one", async () => {
@@ -84,6 +89,73 @@ describe("annotationListServer.fetchPage stale-response guard", () => {
     });
     await annotationListServer.fetchPage();
     expect(annotationListServer.total).toBe(5);
+    expect(annotationListServer.loading).toBe(false);
+  });
+
+  it("loads and applies the page containing an anchor annotation", async () => {
+    fetchAnnotationListPage.mockResolvedValueOnce({
+      total: 100,
+      offset: 40,
+      rows: [{ id: "target" }],
+    });
+
+    const found = await annotationListServer.fetchPageContaining("target");
+
+    expect(found).toBe(true);
+    expect(fetchAnnotationListPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anchorId: "target",
+        offset: 0,
+        limit: 10,
+      }),
+    );
+    expect(annotationListServer.page).toBe(5);
+    expect(annotationListServer.rows.map((r: any) => r.id)).toEqual(["target"]);
+    expect(annotationListServer.loading).toBe(false);
+  });
+
+  it("preserves the current page when the anchor is filtered out", async () => {
+    (annotationListServer as any).setPageResult({
+      rows: [{ id: "current" }],
+      total: 10,
+    });
+    fetchAnnotationListPage.mockResolvedValueOnce({
+      total: 10,
+      offset: null,
+      rows: [],
+    });
+
+    const found = await annotationListServer.fetchPageContaining("missing");
+
+    expect(found).toBe(false);
+    expect(annotationListServer.page).toBe(1);
+    expect(annotationListServer.rows.map((r: any) => r.id)).toEqual([
+      "current",
+    ]);
+    expect(annotationListServer.loading).toBe(false);
+  });
+
+  it("drops an anchor response canceled by a newer hover", async () => {
+    (annotationListServer as any).setPageResult({
+      rows: [{ id: "current" }],
+      total: 10,
+    });
+    const request = deferred<any>();
+    fetchAnnotationListPage.mockReturnValueOnce(request.promise);
+
+    const pending = annotationListServer.fetchPageContaining("old-target");
+    annotationListServer.cancelPendingNavigation();
+    request.resolve({
+      total: 100,
+      offset: 50,
+      rows: [{ id: "old-target" }],
+    });
+
+    expect(await pending).toBe(false);
+    expect(annotationListServer.page).toBe(1);
+    expect(annotationListServer.rows.map((r: any) => r.id)).toEqual([
+      "current",
+    ]);
     expect(annotationListServer.loading).toBe(false);
   });
 });

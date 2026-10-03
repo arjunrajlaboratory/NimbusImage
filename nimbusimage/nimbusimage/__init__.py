@@ -25,6 +25,7 @@ from nimbusimage.models import (
     Connection,
     FrameInfo,
     Location,
+    MultiSourceConfiguration,
     PixelSize,
     Property,
 )
@@ -106,6 +107,7 @@ __all__ = [
     "Location",
     "PixelSize",
     "FrameInfo",
+    "MultiSourceConfiguration",
     # Filters
     "filter_by_tags",
     "filter_by_location",

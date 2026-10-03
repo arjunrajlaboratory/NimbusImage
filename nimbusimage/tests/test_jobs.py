@@ -394,7 +394,7 @@ class TestClientWorkers:
 
         workers = client.list_workers()
         assert "myworker:latest" in workers
-        mock_gc.get.assert_called_with("/worker_interface/available")
+        mock_gc.get.assert_called_with("worker_interface/available")
 
     def test_get_worker_interface_cached(self, mock_gc):
         mock_gc.get.return_value = {

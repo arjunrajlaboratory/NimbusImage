@@ -1,0 +1,34 @@
+{
+  "name": "parsing_zstack",
+  "description": "Three-digit z-stack tokens (z001..z005); categorized as Z via the 'z' trigger (3 digits avoid the XY single-letter+digits pattern).",
+  "input": {
+    "filenames": [
+      "img_z001.tif",
+      "img_z002.tif",
+      "img_z003.tif",
+      "img_z004.tif",
+      "img_z005.tif"
+    ]
+  },
+  "expected": {
+    "variables": [
+      {
+        "guess": "Z",
+        "valueIdxPerFilename": {
+          "img_z001.tif": 0,
+          "img_z002.tif": 1,
+          "img_z003.tif": 2,
+          "img_z004.tif": 3,
+          "img_z005.tif": 4
+        },
+        "values": [
+          "z001",
+          "z002",
+          "z003",
+          "z004",
+          "z005"
+        ]
+      }
+    ]
+  }
+}

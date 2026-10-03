@@ -1,6 +1,6 @@
 <template>
   <v-container class="pa-0">
-    <v-row class="my-0" dense>
+    <v-row class="my-0" density="comfortable">
       <v-col cols="8" class="py-1">
         <v-text-field
           v-model="name"
@@ -19,7 +19,7 @@
       </v-col>
     </v-row>
 
-    <v-row class="my-0" dense>
+    <v-row class="my-0" density="comfortable">
       <v-col class="py-1">
         <docker-image-select v-model="image" :imageFilter="imageFilter" />
       </v-col>
@@ -43,7 +43,7 @@
       </v-row>
     </template>
     <template v-else>
-      <v-row class="my-0" dense>
+      <v-row class="my-0" density="comfortable">
         <v-col cols="6" class="py-1">
           <v-select
             label="Shape"

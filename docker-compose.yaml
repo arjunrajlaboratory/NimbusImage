@@ -45,6 +45,9 @@ services:
 
   worker:
     image: girder/girder_worker
+    # The dispatcher routes jobs to the "cpu"/"gpu" queues; locally one
+    # worker consumes all of them, plus the legacy default queue.
+    command: -Q celery,cpu,gpu
     links:
       - girder
     volumes:

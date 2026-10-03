@@ -39,6 +39,7 @@ vi.mock("@/store/filters", () => ({
 
 import propertyStore from "@/store/properties";
 import PropertyList from "./PropertyList.vue";
+import ComputeAllStatus from "./ComputeAllStatus.vue";
 
 function mountComponent(props = {}) {
   return mount(PropertyList, {
@@ -59,9 +60,9 @@ describe("PropertyList", () => {
       { id: "prop-1", name: "Prop 1" },
       { id: "prop-2", name: "Prop 2" },
     ];
-    (propertyStore as any).uncomputedAnnotationsPerProperty = {
-      "prop-1": ["ann-1"],
-      "prop-2": [],
+    (propertyStore as any).uncomputedCountByProperty = {
+      "prop-1": 1,
+      "prop-2": 0,
     };
     (propertyStore as any).propertyStatuses = {
       "prop-1": { running: false },
@@ -74,36 +75,24 @@ describe("PropertyList", () => {
     expect(wrapper.vm.properties).toHaveLength(2);
   });
 
-  it("uncomputedProperties filters those with uncomputed annotations", () => {
+  it("renders the shared compute-all status in the header", () => {
     const wrapper = mountComponent();
-    expect(wrapper.vm.uncomputedProperties).toHaveLength(1);
-    expect(wrapper.vm.uncomputedProperties[0].id).toBe("prop-1");
+    expect(wrapper.findComponent(ComputeAllStatus).exists()).toBe(true);
   });
 
-  it("uncomputedRunning counts running properties", () => {
-    const wrapper = mountComponent();
-    expect(wrapper.vm.uncomputedRunning).toBe(0);
-  });
-
-  it("uncomputedRunning counts running properties when some are running", () => {
-    (propertyStore as any).propertyStatuses = {
-      "prop-1": { running: true },
-      "prop-2": { running: false },
-    };
-    const wrapper = mountComponent();
-    expect(wrapper.vm.uncomputedRunning).toBe(1);
-  });
-
-  it("computeUncomputedProperties calls computeProperty for each", () => {
-    const wrapper = mountComponent();
-    wrapper.vm.computeUncomputedProperties();
-    expect(propertyStore.computeProperty).toHaveBeenCalledTimes(1);
-  });
-
-  it("computeUncomputedProperties with applyToAllDatasets emits compute-properties-batch", () => {
+  it("forwards applyToAllDatasets to the compute-all status", () => {
     const wrapper = mountComponent({ applyToAllDatasets: true });
-    wrapper.vm.computeUncomputedProperties();
-    expect(wrapper.emitted("compute-properties-batch")).toBeTruthy();
-    expect(propertyStore.computeProperty).not.toHaveBeenCalled();
+    expect(
+      wrapper.findComponent(ComputeAllStatus).props("applyToAllDatasets"),
+    ).toBe(true);
+  });
+
+  it("forwards compute-properties-batch from the compute-all status", () => {
+    const wrapper = mountComponent({ applyToAllDatasets: true });
+    const batch = [{ id: "prop-1", name: "Prop 1" }];
+    wrapper
+      .findComponent(ComputeAllStatus)
+      .vm.$emit("compute-properties-batch", batch);
+    expect(wrapper.emitted("compute-properties-batch")).toEqual([[batch]]);
   });
 });

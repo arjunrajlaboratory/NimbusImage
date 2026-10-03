@@ -73,7 +73,22 @@ import {
   NotificationType,
   IDimensionStrategy,
   IVisibilityConfig,
+  IAnnotationOverviewConfig,
+  IAnnotationBrowserConfig,
+  IColorByPropertyState,
+  IUserStorageQuota,
+  TAnnotationBrowserTab,
+  TRequestablePalette,
 } from "./model";
+import {
+  buildAnnotationBrowserConfig,
+  resolveAnnotationBrowserConfig,
+} from "@/utils/annotationBrowserConfig";
+import { IUnrollGrid, unrollGridSize } from "@/utils/unroll";
+import {
+  storageSeverityFromPercentage,
+  TStorageSeverity,
+} from "@/utils/storage";
 
 import persister from "./Persister";
 import store from "./root";
@@ -83,6 +98,7 @@ export { default as store } from "./root";
 // NOTE: router is imported lazily where needed to avoid circular dependency with main.ts
 
 import { Debounce } from "@/utils/debounce";
+import { quotaExceededMessage } from "@/utils/quota";
 import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
 import {
@@ -131,6 +147,11 @@ function apiRootFromGirderUrl(girderUrl: string) {
 // `{ apiRoot, token }` JSON so a token issued by one Girder server is never
 // replayed to a different one when the user switches domains.
 const TOKEN_STORAGE_KEY = "nimbus.girderToken";
+
+// Per-configuration chain serializing EVERY colorByProperty write (current
+// path and direct path alike — see saveColorByPropertyFor). File scope, not
+// module state: it holds promises, which must never become reactive.
+const directColorByPropertyWrites = new Map<string, Promise<void>>();
 
 interface StoredAuth {
   apiRoot: string;
@@ -212,6 +233,10 @@ function createGirderRestClient(options: {
 // overwrite the result of a newer request.
 let recentDatasetViewsRequestId = 0;
 
+// Annotation-browser persistence bookkeeping. Module-level rather than Vuex
+// state because the debounce timer is never read by the UI.
+let annotationBrowserSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
   girderRest = createGirderRestClient({
@@ -254,6 +279,7 @@ export class Main extends VuexModule {
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
   hasUserLoggedOut: boolean = false;
+  userStorageInfo: IUserStorageQuota | null = null;
 
   history: IHistoryEntry[] = [];
 
@@ -381,18 +407,23 @@ export class Main extends VuexModule {
   unrollZ: boolean = false;
   unrollT: boolean = false;
 
-  showTimelapseMode: boolean = false;
-  timelapseModeWindow: number = 10;
-  timelapseTags: string[] = [];
-  showTimelapseLabels: boolean = true;
+  // Timelapse mode's state lives in `src/store/timelapse.ts`.
 
   maps: IMapEntry[] = [];
 
   isAnnotationPanelOpen: boolean = false;
+  annotationBrowserTab: TAnnotationBrowserTab = "objects";
+  // Palettes something has asked App.vue to open, in the order they should be
+  // opened (a companion palette after its host stays open alongside it).
+  // Same escape hatch as isAnnotationPanelOpen, for components with no path to
+  // the palette registry — here, the render-coverage HUD deep inside
+  // ImageViewer. App.vue opens them and clears the list.
+  paletteOpenRequests: TRequestablePalette[] = [];
   annotationPanelBadge: boolean = false;
   isHelpPanelOpen: boolean = false;
   isAnalyzeDialogOpen: boolean = false;
   isPipelineDialogOpen: boolean = false;
+  isColorByPropertyDialogOpen: boolean = false;
   // True while a layer is being dragged (reordered/grouped). Used to suppress
   // palette re-layout that would otherwise re-render the draggable mid-drag.
   isLayerDragging: boolean = false;
@@ -466,6 +497,30 @@ export class Main extends VuexModule {
     return this.unrollXY || this.unrollZ || this.unrollT;
   }
 
+  /**
+   * The unrolled grid `ImageViewer` lays the tiles out on (issue #1280).
+   *
+   * `ImageViewer` owns the layout — it sizes its maps and places its frame
+   * labels from it — but anything that has to reason about where an annotation
+   * is *drawn* needs the same numbers, and the component's `unrollW` ref is
+   * reachable only by the children it passes it to as a prop. This reads the
+   * same `layerStackImages` entry through the same `unrollGridSize`, so the two
+   * are the same grid by construction rather than by coincidence.
+   */
+  get unrollGrid(): IUnrollGrid {
+    // Same entry `ImageViewer.draw` lays the tiles out from. Nothing loaded yet
+    // degenerates to a 1×1 grid inside unrollGridSize, so no guard is needed
+    // here — one fallback, in one place.
+    const cellImages = this.layerStackImages.find(
+      (lsi) => lsi.images[0],
+    )?.images;
+    return unrollGridSize(
+      cellImages?.length ?? 0,
+      cellImages?.[0]?.sizeX ?? 0,
+      cellImages?.[0]?.sizeY ?? 0,
+    );
+  }
+
   get userName() {
     return this.girderUser ? this.girderUser.login : "anonymous";
   }
@@ -492,6 +547,33 @@ export class Main extends VuexModule {
       this.datasetView != null &&
       (this.datasetView._accessLevel ?? 0) >= 1
     );
+  }
+
+  // Percentage of the storage quota currently used, or null when there is
+  // no quota (unlimited) or usage hasn't been fetched yet.
+  get storageUsagePercentage(): number | null {
+    const info = this.userStorageInfo;
+    // A null quota means unlimited storage — there is no percentage to show.
+    // A zero quota is a real "no storage allowed" limit (girder-user-quota
+    // blocks every upload against it), so any usage is at/over it: report
+    // 100% (this also avoids dividing by zero).
+    if (!info || info.quota == null) {
+      return null;
+    }
+    if (info.quota <= 0) {
+      return 100;
+    }
+    return (info.used / info.quota) * 100;
+  }
+
+  // Severity of the current storage usage, escalating from "ok" to "warning"
+  // to "error" at the shared thresholds in @/utils/storage.
+  get storageSeverity(): TStorageSeverity {
+    return storageSeverityFromPercentage(this.storageUsagePercentage);
+  }
+
+  get isNearStorageLimit(): boolean {
+    return this.storageSeverity !== "ok";
   }
 
   get userChannelColors() {
@@ -681,26 +763,6 @@ export class Main extends VuexModule {
   }
 
   @Mutation
-  public setShowTimelapseMode(value: boolean) {
-    this.showTimelapseMode = value;
-  }
-
-  @Mutation
-  public setTimelapseModeWindow(value: number) {
-    this.timelapseModeWindow = value;
-  }
-
-  @Mutation
-  public setTimelapseTags(value: string[]) {
-    this.timelapseTags = value;
-  }
-
-  @Mutation
-  public setShowTimelapseLabels(value: boolean) {
-    this.showTimelapseLabels = value;
-  }
-
-  @Mutation
   public setFilteredAnnotationTooltips(value: boolean) {
     this.filteredAnnotationTooltips = value;
   }
@@ -869,8 +931,27 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
-  addToolToConfiguration(tool: IToolConfiguration) {
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
+  async addToolToConfiguration(
+    // Accept a bare tool or {tool, throwOnError}. throwOnError lets the AI
+    // panel surface a failed persist (issue #1239); existing callers pass the
+    // bare tool and keep the swallow behavior.
+    payload:
+      | IToolConfiguration
+      | {
+          tool: IToolConfiguration;
+          throwOnError?: boolean;
+        },
+  ) {
+    // Discriminate on a field the bare tool is REQUIRED to have rather than on
+    // "tool" in payload: the latter would silently misroute (with no type
+    // error, since both union members would match) if IToolConfiguration ever
+    // gained a "tool" field.
+    const isWrapped = !("template" in payload);
+    const tool = isWrapped ? payload.tool : payload;
+    const throwOnError = isWrapped ? payload.throwOnError ?? false : false;
     if (this.configuration) {
       this.setConfigurationTools([...this.configuration.tools, tool]);
       // Fetch the worker interface for this new tool if there is one
@@ -878,7 +959,7 @@ export class Main extends VuexModule {
       if (image) {
         this.context.dispatch("requestWorkerInterface", image);
       }
-      this.syncConfiguration("tools");
+      await this.syncConfiguration({ key: "tools", throwOnError });
     }
   }
 
@@ -932,11 +1013,61 @@ export class Main extends VuexModule {
     if (toolIdx < 0) {
       return;
     }
-    configurationTools.splice(toolIdx, 1, tool);
+    // The pin is owned by setToolPinned. Editors can hand in a copy taken
+    // before a pin toggle (AnnotationWorkerMenu debounces its save of
+    // props.tool), so keep the stored pin rather than let a late edit undo it.
+    const { pinned } = configurationTools[toolIdx];
+    const editedTool = tool.pinned === pinned ? tool : { ...tool, pinned };
+    configurationTools.splice(toolIdx, 1, editedTool);
     if (this.selectedTool?.configuration.id === tool.id) {
-      this.setSelectedToolImpl(tool);
+      this.setSelectedToolImpl(editedTool);
     }
     this.syncConfiguration("tools");
+  }
+
+  // Pinning only changes where the Tools palette lists a tool: one write of
+  // the tools key, and a selected tool keeps its state (setSelectedToolImpl
+  // only swaps the configuration for the same id).
+  @Action
+  async setToolPinned({ toolId, pinned }: { toolId: string; pinned: boolean }) {
+    const tool = this.tools.find((t) => t?.id === toolId);
+    if (!this.configuration || !tool || !!tool.pinned === pinned) {
+      return;
+    }
+    const pinnedTool = { ...tool, pinned };
+    this.setConfigurationTools(
+      this.tools.map((t) => (t?.id === toolId ? pinnedTool : t)),
+    );
+    if (this.selectedTool?.configuration.id === toolId) {
+      this.setSelectedToolImpl(pinnedTool);
+    }
+    await this.syncConfiguration("tools");
+  }
+
+  // Reorder the toolset to `toolIds`. The ids must be exactly the current
+  // tools: a list computed before a tool was added or removed is dropped
+  // rather than applied, so a stale drag can never delete or resurrect a
+  // tool. The current tool objects are reused, never the caller's copies.
+  @Action
+  async setToolOrder(toolIds: string[]) {
+    if (!this.configuration) {
+      return;
+    }
+    const currentTools = this.tools.filter(Boolean);
+    const toolsById = new Map(currentTools.map((tool) => [tool.id, tool]));
+    if (
+      toolIds.length !== toolsById.size ||
+      new Set(toolIds).size !== toolIds.length ||
+      toolIds.some((id) => !toolsById.has(id))
+    ) {
+      return;
+    }
+    const reorderedTools = toolIds.map((id) => toolsById.get(id)!);
+    if (reorderedTools.every((tool, index) => tool === currentTools[index])) {
+      return;
+    }
+    this.setConfigurationTools(reorderedTools);
+    await this.syncConfiguration("tools");
   }
 
   @Action
@@ -962,6 +1093,7 @@ export class Main extends VuexModule {
         this.loadUserColors().catch((error) => {
           logError("Failed to load user colors during login:", error);
         }),
+        this.fetchUserStorageInfo(),
       );
     } else {
       this.setAssetstores([]);
@@ -986,8 +1118,34 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  protected setUserStorageInfo(info: IUserStorageQuota | null) {
+    this.userStorageInfo = info;
+  }
+
+  @Action
+  async fetchUserStorageInfo() {
+    const user = this.girderUser;
+    if (!user) {
+      this.setUserStorageInfo(null);
+      return;
+    }
+    const userId = user._id;
+    // getUserStorageQuota returns null when the quota cannot be fetched
+    // (e.g. the user_quota plugin is not enabled on the backend).
+    const info = await this.api.getUserStorageQuota(userId);
+    // This action fires on login and on every profile-menu open, so a slow
+    // response can resolve after the user logged out or switched accounts.
+    // Discard it in that case so we never show one user's quota to another.
+    if (this.girderUser?._id !== userId) {
+      return;
+    }
+    this.setUserStorageInfo(info);
+  }
+
+  @Mutation
   protected loggedOut() {
     this.girderUser = null;
+    this.userStorageInfo = null;
     this.selectedDatasetId = null;
     this.dataset = null;
     this.selectedConfigurationId = null;
@@ -1134,6 +1292,8 @@ export class Main extends VuexModule {
   }) {
     this.setConfigurationImpl({ id, data });
     this.context.dispatch("loadVisibilityConfig", data?.visibilityConfig);
+    this.context.dispatch("loadOverviewConfig", data?.overviewConfig);
+    this.hydrateAnnotationBrowserState();
     // Warm the SAM model cache in the background: encoder downloads are
     // large, this way they are usually cached before a SAM tool is selected
     const samModels = new Set(
@@ -1168,6 +1328,13 @@ export class Main extends VuexModule {
   private setConfigurationVisibilityConfig(config: IVisibilityConfig) {
     if (this.configuration) {
       this.configuration.visibilityConfig = { ...config };
+    }
+  }
+
+  @Mutation
+  private setConfigurationOverviewConfig(config: IAnnotationOverviewConfig) {
+    if (this.configuration) {
+      this.configuration.overviewConfig = { ...config };
     }
   }
 
@@ -1222,6 +1389,40 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  public setAnnotationBrowserTab(value: TAnnotationBrowserTab) {
+    this.annotationBrowserTab = value;
+  }
+
+  /**
+   * Open the Object Browser on a specific tab.
+   *
+   * `isAnnotationPanelOpen` is normally written BY App.vue (which owns palette
+   * visibility) rather than read by it; App.vue watches it back so a component
+   * with no path to the palette registry — the Timelapse panel — can still ask
+   * for the browser.
+   */
+  @Action
+  public openAnnotationBrowserTab(tab: TAnnotationBrowserTab) {
+    this.setAnnotationBrowserTab(tab);
+    this.setIsAnnotationPanelOpen(true);
+  }
+
+  @Mutation
+  public setPaletteOpenRequests(palettes: TRequestablePalette[]) {
+    this.paletteOpenRequests = palettes;
+  }
+
+  /**
+   * Ask App.vue to open these palettes (see `paletteOpenRequests`). App.vue
+   * clears the request once it has honoured it, so asking for the same palette
+   * twice in a row still opens it the second time.
+   */
+  @Action
+  public requestPaletteOpen(palettes: TRequestablePalette[]) {
+    this.setPaletteOpenRequests(palettes);
+  }
+
+  @Mutation
   public setIsHelpPanelOpen(value: boolean) {
     this.isHelpPanelOpen = value;
   }
@@ -1234,6 +1435,11 @@ export class Main extends VuexModule {
   @Mutation
   public setIsPipelineDialogOpen(value: boolean) {
     this.isPipelineDialogOpen = value;
+  }
+
+  @Mutation
+  public setIsColorByPropertyDialogOpen(value: boolean) {
+    this.isColorByPropertyDialogOpen = value;
   }
 
   @Mutation
@@ -1393,7 +1599,13 @@ export class Main extends VuexModule {
     await this.initFromUrl();
   }
 
-  @Action
+  // rawError: true because the catch below turns the server's response into a
+  // user-facing message ("login already in use", ...) that
+  // UserMenuLoginForm.vue renders in its error alert. A bare @Action would
+  // replace it with vuex-module-decorators' generic
+  // ERR_ACTION_ACCESS_UNDEFINED text, so the user would see that instead of
+  // the reason their sign-up failed. See syncConfiguration.
+  @Action({ rawError: true })
   async signUp({
     domain,
     ...user
@@ -1452,9 +1664,16 @@ export class Main extends VuexModule {
     // this.dataset still holds the previously selected dataset here (setDataset
     // runs later), so this detects a genuine switch vs. a same-dataset refresh.
     const datasetChanged = id !== this.dataset?.id;
+    // Persist any pending annotation-browser change before the resets below
+    // wipe the state it would capture.
+    await this.flushAnnotationBrowserSave();
     this.api.flushCaches();
     this.context.dispatch("resetAnnotationState");
     this.context.dispatch("resetPropertyState");
+    // Connection-list selection/hover/expansion reference ids from the
+    // outgoing dataset. Dispatched by name (actions register unnamespaced) to
+    // avoid an import cycle with the connectionList module, which imports main.
+    this.context.dispatch("resetConnectionListState");
     // Filters hold unrecoverable user state (tag/property/ROI/ID filters), so
     // only reset them on an actual dataset change. refreshDataset() re-runs
     // setSelectedDataset with the same id (e.g. NavigatorPanel unroll toggles);
@@ -1463,6 +1682,10 @@ export class Main extends VuexModule {
     // are repopulated by the reload that follows.
     if (datasetChanged) {
       this.context.dispatch("resetFilterState");
+      // Track bounds and the object-hiding opt-in are unrecoverable user
+      // state like the filters above; the unconditional connection-list reset
+      // deliberately leaves them alone.
+      this.context.dispatch("resetConnectionTrackFilters");
     }
     if (!id) {
       this.setDataset({ id, data: null });
@@ -1480,6 +1703,11 @@ export class Main extends VuexModule {
       });
       this.setDataset({ id, data: r });
       await this.loadLargeImages();
+      // setConfiguration only re-fires when the configuration changes; on a
+      // same-dataset refresh (unroll toggles) or a switch that keeps the same
+      // configuration, re-hydrate here to restore the browser state the
+      // resets above wiped.
+      this.hydrateAnnotationBrowserState();
       sync.setLoading(false);
       sync.setDatasetLoading(false);
     } catch (error) {
@@ -1501,6 +1729,13 @@ export class Main extends VuexModule {
     try {
       sync.setLoading(true);
       const configuration = await this.context.dispatch("getConfiguration", id);
+      // Flush any pending annotation-browser save while the previous
+      // configuration is still loaded.
+      // setConfiguration below flips this.configuration to the new one, after
+      // which the debounced save would write to the wrong configuration. This
+      // matters for same-dataset configuration switches within the 500 ms
+      // debounce window, which never pass through setSelectedDataset.
+      await this.flushAnnotationBrowserSave();
       if (!configuration) {
         this.setConfiguration({ id: null, data: null });
       } else {
@@ -1758,7 +1993,12 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true is required here because this action throws on failure
+  // (e.g. a storage quota breach) and callers rely on reading the original
+  // Error's message. Without it, vuex-module-decorators wraps any thrown
+  // error in a generic "ERR_ACTION_ACCESS_UNDEFINED" message, discarding the
+  // actual failure reason.
+  @Action({ rawError: true })
   async addMultiSourceMetadata({
     parentId,
     metadata,
@@ -1809,19 +2049,32 @@ export class Main extends VuexModule {
             "Failed to transcode the large image: no job received",
           );
         }
+        // Accumulate the job log so that on failure we can tell the user
+        // why the job failed (e.g. a storage quota breach during the
+        // server-side upload of the transcoded file).
+        let jobLog = "";
         const success = await jobs.addJob({
           jobId,
           datasetId: parentId,
-          eventCallback,
+          eventCallback: (jobData: IJobEventData) => {
+            if (typeof jobData.text === "string") {
+              jobLog += jobData.text;
+            }
+            eventCallback?.(jobData);
+          },
         });
         if (!success) {
-          throw new Error("Failed to transcode the large image: job failed");
+          throw new Error(
+            quotaExceededMessage(jobLog) ??
+              "Failed to transcode the large image: the transcoding job " +
+                "failed. See the transcoding log for details.",
+          );
         }
       }
       return itemId;
     } catch (error) {
       sync.setSaving(error as Error);
-      return null;
+      throw error;
     }
   }
 
@@ -2000,7 +2253,10 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true because this rolls back and rethrows so the caller can
+  // report the real reason (see syncConfiguration). Third link in the
+  // create_property chain the AI panel reports on (#1239).
+  @Action({ rawError: true })
   async updateConfigurationProperties(propertyIds: string[]) {
     const configuration = this.configuration;
     if (!configuration) {
@@ -2016,7 +2272,11 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true because this rolls back and rethrows so the caller can
+  // report the real reason. The pipeline UI shows generic text but logs the
+  // error, so without this the log holds the ERR_ACTION_ACCESS_UNDEFINED blob
+  // instead of the failure. Mirrors updateConfigurationProperties.
+  @Action({ rawError: true })
   async updateConfigurationPipelines(pipelines: IPipeline[]) {
     const configuration = this.configuration;
     if (!configuration) {
@@ -2032,7 +2292,13 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true is required because the throwOnError path rethrows the
+  // backend error and callers (the AI panel) read the original message.
+  // Without it, vuex-module-decorators replaces the error with a generic
+  // "ERR_ACTION_ACCESS_UNDEFINED" message. Same rationale as
+  // addMultiSourceMetadata. It is a no-op for the default swallow path,
+  // which never throws.
+  @Action({ rawError: true })
   async syncConfiguration(
     payload:
       | keyof IDatasetConfigurationBase
@@ -2055,9 +2321,16 @@ export class Main extends VuexModule {
       return;
     }
     sync.setSaving(true);
+    // Capture before the await: a configuration switch during the PUT must
+    // invalidate the configuration that was WRITTEN in girderResources —
+    // reading this.configuration.id afterwards invalidates the newly opened
+    // one instead, leaving the written one's cached copy stale (switching
+    // back in-session would restore an obsolete legend or any other stale
+    // key). Also keeps a mid-PUT dataset close from dereferencing null.
+    const configurationId = this.configuration.id;
     try {
       await this.api.updateConfigurationKey(this.configuration, key);
-      this.context.dispatch("ressourceChanged", this.configuration.id);
+      this.context.dispatch("ressourceChanged", configurationId);
       sync.setSaving(false);
     } catch (error) {
       sync.setSaving(error as Error);
@@ -2074,6 +2347,277 @@ export class Main extends VuexModule {
     }
     this.setConfigurationVisibilityConfig(config);
     await this.syncConfiguration("visibilityConfig");
+  }
+
+  @Action
+  async saveOverviewConfig(config: IAnnotationOverviewConfig) {
+    if (!this.configuration) {
+      return;
+    }
+    this.setConfigurationOverviewConfig(config);
+    await this.syncConfiguration("overviewConfig");
+  }
+
+  // Debounced entry point called by the properties/filters stores whenever
+  // the user changes displayed columns or property filters. Debounced because
+  // dragging a filter histogram slider emits a continuous stream of updates.
+  @Action
+  scheduleAnnotationBrowserSave() {
+    // Anonymous viewers can filter and gate; their state just stays
+    // session-only. Without this, syncConfiguration's own isLoggedIn branch
+    // fires createNotLoggedInNotification, so every lasso drag or filter tweak
+    // popped a login notification for a read-only visitor.
+    if (!this.isLoggedIn) {
+      return;
+    }
+    if (annotationBrowserSaveTimer !== null) {
+      clearTimeout(annotationBrowserSaveTimer);
+    }
+    annotationBrowserSaveTimer = setTimeout(() => {
+      annotationBrowserSaveTimer = null;
+      this.saveAnnotationBrowserConfig();
+    }, 500);
+  }
+
+  // Run any pending debounced save immediately. Called before dataset-switch
+  // resets wipe the state the save would capture.
+  @Action
+  async flushAnnotationBrowserSave() {
+    if (annotationBrowserSaveTimer === null) {
+      return;
+    }
+    clearTimeout(annotationBrowserSaveTimer);
+    annotationBrowserSaveTimer = null;
+    await this.saveAnnotationBrowserConfig();
+  }
+
+  @Action
+  private async saveAnnotationBrowserConfig() {
+    const configuration = this.configuration;
+    if (!configuration) {
+      return;
+    }
+    // index.ts cannot statically import the properties/filters/connectionList
+    // modules (they import this one), so pull their typed instances lazily.
+    // buildAnnotationBrowserConfig keeps only the filters backing a visible
+    // row.
+    const properties = (await import("./properties")).default;
+    const filters = (await import("./filters")).default;
+    const connectionList = (await import("./connectionList")).default;
+    this.setConfigurationAnnotationBrowserConfig(
+      buildAnnotationBrowserConfig(
+        properties.displayedPropertyPaths,
+        filters.filterPaths,
+        filters.propertyFilters,
+        filters.analysisPlots,
+        connectionList.trackLabelPath,
+      ),
+    );
+    await this.syncConfiguration("annotationBrowserConfig");
+  }
+
+  @Mutation
+  private setConfigurationAnnotationBrowserConfig(
+    config: IAnnotationBrowserConfig,
+  ) {
+    if (this.configuration) {
+      this.configuration.annotationBrowserConfig = config;
+    }
+  }
+
+  // The color-by-property record for the dataset currently open, or null when
+  // its colors don't come from a property mapping. Keyed by dataset because a
+  // configuration is reusable across datasets while this state describes one
+  // dataset's values (see TColorByPropertyByDataset).
+  get colorByPropertyForCurrentDataset(): IColorByPropertyState | null {
+    const datasetId = this.dataset?.id;
+    if (!datasetId) {
+      return null;
+    }
+    return this.configuration?.colorByProperty?.[datasetId] ?? null;
+  }
+
+  @Mutation
+  private setConfigurationColorByProperty(payload: {
+    datasetId: string;
+    state: IColorByPropertyState | null;
+  }) {
+    if (!this.configuration) {
+      return;
+    }
+    // Replace the map rather than mutate it so dependents recompute, and drop
+    // the key when clearing so "absent" and "cleared" are one state.
+    const next = { ...(this.configuration.colorByProperty ?? {}) };
+    if (payload.state === null) {
+      delete next[payload.datasetId];
+    } else {
+      next[payload.datasetId] = payload.state;
+    }
+    this.configuration.colorByProperty = next;
+  }
+
+  // Persist (or clear, with null) the record of the last color-by-property
+  // apply for the dataset currently open. Non-null means that dataset's
+  // annotation colors reflect the property mapping; the annotation store
+  // clears it whenever colors are assigned by any other means, which is what
+  // keeps the viewer legend honest.
+  //
+  // Best-effort by design: the colors are already written on the backend, so a
+  // failed metadata write must not fail the operation that wrote them. The
+  // global sync indicator surfaces it; the worst case is a legend missing
+  // after a reload, never a wrong legend.
+  @Action
+  async saveColorByProperty(state: IColorByPropertyState | null) {
+    const datasetId = this.dataset?.id;
+    const configurationId = this.configuration?.id;
+    if (!configurationId || !datasetId) {
+      return;
+    }
+    // Delegates so that EVERY legend write joins the per-configuration
+    // chain: an unchained current-path write (e.g. the legend collapse
+    // toggle) could otherwise land inside a direct write's read window and
+    // be erased by its older full-key PUT.
+    await this.saveColorByPropertyFor({ datasetId, configurationId, state });
+  }
+
+  // Persist (state) or retire (null) the legend for a specific
+  // dataset+configuration pair, which may no longer be the pair on screen: a
+  // recolor takes seconds and can outlive a dataset or configuration switch,
+  // and the colors it wrote belong to the captured pair regardless of what
+  // is open when it completes. Skipping the write then leaves the captured
+  // dataset's configuration WRONG in both directions — a manual recolor
+  // leaves a legend claiming property colors that were just overwritten, and
+  // a property apply leaves an older legend describing colors the dataset no
+  // longer has. Same best-effort contract as saveColorByProperty: the
+  // recolor already happened, a failed metadata write must not fail it.
+  @Action
+  async saveColorByPropertyFor({
+    datasetId,
+    configurationId,
+    state,
+  }: {
+    datasetId: string;
+    configurationId: string;
+    state: IColorByPropertyState | null;
+  }) {
+    // EVERY write for a configuration — current-path and direct alike —
+    // joins one per-configuration chain, and the current-vs-direct decision
+    // happens INSIDE the chained task, at execution time. Serializing only
+    // the direct writes was the classic one-of-two-symmetric-paths miss:
+    // a current-path write completed during a direct write's awaited read
+    // still lost to the direct task's older full-key PUT landing last.
+    // Chained, the newer write runs after the older one and reads its
+    // result; and a task that finds its configuration reopened simply takes
+    // the live path. Two overlapping direct writes are covered for the same
+    // reason (each re-reads girderResources inside the chain — every write
+    // path evicts it).
+    const previousWrite =
+      directColorByPropertyWrites.get(configurationId) ?? Promise.resolve();
+    const write = previousWrite.then(async () => {
+      if (this.configuration?.id === configurationId) {
+        if (
+          state === null &&
+          !this.configuration.colorByProperty?.[datasetId]
+        ) {
+          // Nothing to retire; writing would only churn the configuration.
+          return;
+        }
+        // The mutation takes the CAPTURED dataset id: a configuration is
+        // reusable across datasets, so "same configuration" does not imply
+        // the captured dataset is still the one open.
+        this.setConfigurationColorByProperty({ datasetId, state });
+        await this.syncConfiguration("colorByProperty");
+        return;
+      }
+      // The recolor outlived a configuration switch, so there is no live
+      // store copy to mutate: write to the captured configuration directly.
+      const configuration =
+        await girderResources.getConfiguration(configurationId);
+      if (!configuration) {
+        return;
+      }
+      const basedOn = configuration.colorByProperty?.[datasetId];
+      const colorByProperty = { ...(configuration.colorByProperty ?? {}) };
+      if (state === null) {
+        if (!(datasetId in colorByProperty)) {
+          return;
+        }
+        delete colorByProperty[datasetId];
+      } else {
+        colorByProperty[datasetId] = state;
+      }
+      await this.api.updateConfigurationKey(
+        { ...configuration, colorByProperty },
+        "colorByProperty",
+      );
+      // The user can REOPEN the captured configuration while the PUT is in
+      // flight; the copy they reopened predates the write, and the cache
+      // eviction below only helps the NEXT load. Patch the live slot so the
+      // session doesn't keep showing the stale legend the backend no longer
+      // has. The basedOn equality check is defense-in-depth, not a live
+      // race guard: every legend write joins this chain, so a newer write
+      // cannot touch the slot mid-flight, and any reachable slot value
+      // equals basedOn. It only matters if a future writer bypasses the
+      // chain — then it keeps this older patch from clobbering that value.
+      if (
+        this.configuration?.id === configurationId &&
+        JSON.stringify(
+          this.configuration.colorByProperty?.[datasetId] ?? null,
+        ) === JSON.stringify(basedOn ?? null)
+      ) {
+        this.setConfigurationColorByProperty({ datasetId, state });
+      }
+      this.context.dispatch("ressourceChanged", configurationId);
+    });
+    // Store settled so one failed write can't wedge the chain.
+    const chained = write.then(
+      () => undefined,
+      () => undefined,
+    );
+    directColorByPropertyWrites.set(configurationId, chained);
+    try {
+      await write;
+    } catch (error) {
+      sync.setSaving(error as Error);
+    } finally {
+      if (directColorByPropertyWrites.get(configurationId) === chained) {
+        directColorByPropertyWrites.delete(configurationId);
+      }
+    }
+  }
+
+  // Push the configuration's persisted annotation-browser state into the
+  // properties and filters stores. Idempotent; called both when a
+  // configuration loads and at the end of
+  // setSelectedDataset, which covers the paths where setConfiguration never
+  // re-fires (same-dataset refresh, or a dataset switch that keeps the same
+  // configuration).
+  @Action
+  hydrateAnnotationBrowserState() {
+    const configuration = this.configuration;
+    if (!configuration) {
+      return;
+    }
+    const config = resolveAnnotationBrowserConfig(
+      configuration.annotationBrowserConfig,
+      configuration.propertyIds,
+    );
+    this.context.dispatch(
+      "hydrateDisplayedPropertyPaths",
+      config.displayedPropertyPaths,
+    );
+    this.context.dispatch("hydrateAnnotationBrowserFilters", {
+      filterPaths: config.filterPaths,
+      propertyFilters: config.propertyFilters,
+    });
+    // Dispatched by name (actions register unnamespaced) to avoid an import
+    // cycle with the connectionList module, which imports main.
+    this.context.dispatch("hydrateTrackLabelPath", config.trackLabelPath ?? []);
+    // Restored gates hold polygons, not ids. Hydration only seeds the plots;
+    // Viewer owns resolution through its analysisInputSignature watcher, which
+    // reacts to this state change in both 2D and 3D. Dispatching here as well
+    // issued the same property-values request twice on dataset open.
+    this.context.dispatch("hydrateAnalysisPlots", config.analysisPlots ?? []);
   }
 
   @Action
@@ -2216,8 +2760,20 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
-  async setLayerMode(mode: TLayerMode) {
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
+  async setLayerMode(
+    // Accept either a bare mode or {mode, throwOnError}, mirroring
+    // syncConfiguration's payload shape. throwOnError lets the AI panel
+    // surface a failed persist instead of reporting success (issue #1239);
+    // existing callers pass the bare mode and keep the swallow behavior.
+    payload: TLayerMode | { mode: TLayerMode; throwOnError?: boolean },
+  ) {
+    const mode = typeof payload === "string" ? payload : payload.mode;
+    const throwOnError =
+      typeof payload === "string" ? false : payload.throwOnError ?? false;
+
     // Store current visibility state before changing mode
     this.storeLayerVisibility(mode);
 
@@ -2234,7 +2790,7 @@ export class Main extends VuexModule {
 
     // Sync the configuration with the backend
     if (this.isLoggedIn) {
-      await this.syncConfiguration("layers");
+      await this.syncConfiguration({ key: "layers", throwOnError });
     }
   }
 
@@ -2282,36 +2838,76 @@ export class Main extends VuexModule {
     });
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async saveContrastInConfiguration({
     layerId,
     contrast,
+    delta,
+    throwOnError,
   }: {
     layerId: string;
     contrast: IContrast;
+    // Extra layer fields to write in the SAME configuration sync as the
+    // contrast. The AI panel's update_layer can change colour/name/visibility
+    // and a collection-scoped contrast in one call; sending them as two
+    // changeLayer calls wrote the "layers" key twice and could leave the
+    // collection partially updated when the second failed (Codex P2 on
+    // PR #1262).
+    delta?: Partial<IDisplayLayer>;
+    // See changeLayer: opt-in error propagation for the AI panel (#1239).
+    throwOnError?: boolean;
   }) {
-    this.changeLayer({ layerId, delta: { contrast }, sync: true });
+    await this.changeLayer({
+      layerId,
+      delta: { ...delta, contrast },
+      sync: true,
+      throwOnError,
+    });
     if (this.datasetView) {
       delete this.datasetView.layerContrasts[layerId];
       if (this.canEditDatasetView) {
-        this.api.updateDatasetView(this.datasetView);
+        const update = this.api.updateDatasetView(this.datasetView);
+        if (throwOnError) {
+          await update;
+        }
       }
     }
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async saveContrastInView({
     layerId,
     contrast,
+    throwOnError,
   }: {
     layerId: string;
     contrast: IContrast;
+    // See changeLayer: opt-in error propagation for the AI panel (#1239).
+    throwOnError?: boolean;
   }) {
     if (this.datasetView) {
       this.datasetView.layerContrasts[layerId] = contrast;
       if (this.canEditDatasetView) {
-        this.api.updateDatasetView(this.datasetView);
+        const update = this.api.updateDatasetView(this.datasetView);
+        if (throwOnError) {
+          await update;
+        }
+      } else if (throwOnError) {
+        // The local override was applied, but it can't be persisted (a
+        // read-only / public dataset view). Callers opting into throwOnError
+        // (the AI panel) must not report success for a change that won't
+        // survive a reload -- see issue #1239.
+        throw new Error(
+          "Cannot save the contrast: you do not have permission to edit " +
+            "this dataset view",
+        );
       }
+    } else if (throwOnError) {
+      throw new Error("Cannot save the contrast: no dataset view is open");
     }
   }
 
@@ -2328,7 +2924,10 @@ export class Main extends VuexModule {
   // Replace the whole per-view contrast override map in one backend sync,
   // instead of one saveContrastInView call (and dataset-view update) per
   // layer. Used by the AI panel's revert-view-changes.
-  @Action
+  // rawError: true because this action propagates a failed persist to its only
+  // caller (the AI panel's revert) rather than swallowing it, and that caller
+  // logs the reason (see syncConfiguration).
+  @Action({ rawError: true })
   async setViewContrastOverrides(layerContrasts: {
     [layerId: string]: IContrast;
   }) {
@@ -2341,18 +2940,49 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
-  saveScaleInConfiguration({
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
+  async saveScaleInConfiguration({
     itemId,
     scale,
+    throwOnError,
   }: {
     itemId: keyof IScales;
     scale: IScaleInformation<TUnitLength | TUnitTime>;
+    // Opt-in error propagation for the AI panel (issue #1239); existing
+    // callers omit it and keep the swallow behavior.
+    throwOnError?: boolean;
   }) {
     if (this.configuration) {
       (this.configuration.scales as any)[itemId] = scale;
-      this.syncConfiguration("scales");
+      await this.syncConfiguration({ key: "scales", throwOnError });
     }
+  }
+
+  // Batch sibling of saveScaleInConfiguration: assigns every provided scale
+  // and syncs once. The AI panel's set_scale can set pixelSize, zStep and
+  // tStep in a single call; saving them one at a time issued a backend write
+  // per field and could leave the collection partially updated when a later
+  // one failed (Codex P2 on PR #1262). The interactive UI edits one field at
+  // a time and keeps using the singular action.
+  @Action({ rawError: true })
+  async saveScalesInConfiguration({
+    scales,
+    throwOnError,
+  }: {
+    scales: Partial<
+      Record<keyof IScales, IScaleInformation<TUnitLength | TUnitTime>>
+    >;
+    throwOnError?: boolean;
+  }) {
+    if (!this.configuration) {
+      return;
+    }
+    for (const [itemId, scale] of Object.entries(scales)) {
+      (this.configuration.scales as any)[itemId] = scale;
+    }
+    await this.syncConfiguration({ key: "scales", throwOnError });
   }
 
   @Action
@@ -2401,15 +3031,25 @@ export class Main extends VuexModule {
     confLayers.splice(index, 1, Object.assign({}, layer, delta));
   }
 
-  @Action
+  // rawError: true so a throwOnError rejection keeps its original message
+  // (see syncConfiguration).
+  @Action({ rawError: true })
   async changeLayer(args: {
     layerId: string;
     delta: Partial<IDisplayLayer>;
     sync?: boolean;
+    // Opt-in: propagate a failed backend persist to the caller (default is
+    // the app-wide swallow-and-surface-in-the-saving-indicator behavior).
+    // Used by the AI panel so a rejected write isn't reported as success
+    // (issue #1239).
+    throwOnError?: boolean;
   }) {
     this.changeLayerImpl(args);
     if (args.sync !== false && this.isLoggedIn) {
-      await this.syncConfiguration("layers");
+      await this.syncConfiguration({
+        key: "layers",
+        throwOnError: args.throwOnError,
+      });
     }
   }
 
@@ -2857,7 +3497,9 @@ export class Main extends VuexModule {
     }
   }
 
-  @Action
+  // rawError: true because this logs and rethrows so the caller sees the real
+  // reason (UserColorSettings.vue logs it). See syncConfiguration.
+  @Action({ rawError: true })
   async saveUserColors(channelColors: {
     [key: string]: string;
   }): Promise<void> {

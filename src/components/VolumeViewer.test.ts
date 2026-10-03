@@ -236,7 +236,9 @@ vi.mock("@/store/volumeView", () => {
   return { default: state };
 });
 vi.mock("@/store/VolumeAPI", () => ({
-  TileFrameVolumeSource: vi.fn(() => ({ buildVolume: h.buildVolume })),
+  TileFrameVolumeSource: vi.fn(function () {
+    return { buildVolume: h.buildVolume };
+  }),
   defaultTimeStepUm: vi.fn(() => 5),
 }));
 vi.mock("@/utils/annotationsTo3D", () => ({

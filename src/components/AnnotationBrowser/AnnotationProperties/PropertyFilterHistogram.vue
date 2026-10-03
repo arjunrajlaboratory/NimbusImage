@@ -105,14 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import {
-  ref,
-  computed,
-  watch,
-  onMounted,
-  onBeforeUnmount,
-  nextTick,
-} from "vue";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { arePathEquals } from "@/utils/paths";
@@ -124,6 +117,7 @@ import { IPropertyAnnotationFilter, PropertyFilterMode } from "@/store/model";
 import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
 import { area as d3Area, curveStepBefore } from "d3-shape";
 import { v4 as uuidv4 } from "uuid";
+import { logError } from "@/utils/log";
 
 import { scaleLinear, scaleSymlog } from "d3-scale";
 import debounce from "lodash/debounce";
@@ -142,7 +136,11 @@ const width = ref(400);
 const height = ref(60);
 const useLog = ref(false);
 const useCDF = ref(false);
-const defaultMinMax = ref(true);
+const defaultMinMax = ref(
+  !filterStore.propertyFilters.some((filter) =>
+    arePathEquals(filter.propertyPath, props.propertyPath),
+  ),
+);
 const valuesInput = ref("");
 
 const histToPixel = computed(() => {
@@ -370,29 +368,10 @@ onMounted(() => {
     valuesInput.value = propertyFilter.value.values.join(", ");
   }
 
-  filterStore.updateHistograms();
-  if (!propertyFilter.value.enabled) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      enabled: true,
-    });
-  }
+  void filterStore
+    .updateHistograms()
+    .catch((error) => logError("Failed to refresh property histograms", error));
   initializeHandles();
-});
-
-onBeforeUnmount(() => {
-  // Disabling on unmount is load-bearing: when a filter is removed
-  // (removeFilter drops its path from filterPaths but leaves the entry in
-  // propertyFilters), this is what stops the orphaned entry from continuing
-  // to filter. Do not remove it. Side effect: on a dataset switch,
-  // resetFilterState clears propertyFilters first, then this re-adds one
-  // disabled (inert) orphan — see filters.ts resetFilterStateImpl.
-  if (propertyFilter.value.enabled) {
-    filterStore.updatePropertyFilter({
-      ...propertyFilter.value,
-      enabled: false,
-    });
-  }
 });
 
 defineExpose({

@@ -17,7 +17,18 @@ logger = logging.getLogger(__name__)
 
 # Claude model used for all chat completions. Centralized here so that
 # additional call sites in this plugin share a single source of truth.
-CLAUDE_MODEL = 'claude-sonnet-5'
+CLAUDE_MODEL = 'claude-sonnet-5-5'
+# Sonnet 5.5 binds each thinking block to the exact history before it, and
+# the frontend edits earlier turns (pruneOldScreenshots swaps old images for
+# a placeholder). Accounts created on/after 2026-08-31 get a 400 for that
+# edit; drop_block tells the API to drop the affected thinking blocks
+# instead. Setting the field opts older accounts in too, so behavior is the
+# same whatever account the key belongs to.
+THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
+AGENT_THINKING = {
+    'type': 'adaptive',
+    'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
+}
 MAX_TOOL_SUGGESTION_IMAGES = 2
 MAX_TOOL_SUGGESTION_IMAGE_DATA_CHARS = 12 * 1024 * 1024
 
@@ -67,53 +78,50 @@ SUGGEST_TOOLS_SYSTEM_PROMPT = (
     'list. If the image is empty or you are unsure, return an empty list.'
 )
 
-# Forced tool schema: makes Claude return a structured, validated list of
-# suggestions instead of free-form prose we would have to parse.
-SUGGEST_TOOLS_TOOL = {
-    'name': 'suggest_tools',
-    'description': (
-        'Report the annotation tools to suggest for this dataset.'
-    ),
-    'input_schema': {
-        'type': 'object',
-        'properties': {
-            'suggestions': {
-                'type': 'array',
-                'items': {
-                    'type': 'object',
-                    'properties': {
-                        'toolId': {
-                            'type': 'string',
-                            'description': (
-                                'The exact id of a tool from the catalog.'
-                            ),
-                        },
-                        'channelName': {
-                            'type': 'string',
-                            'description': (
-                                'The channel this tool should run on, '
-                                'matching one of the provided channel '
-                                'names. Omit if not channel-specific.'
-                            ),
-                        },
-                        'reason': {
-                            'type': 'string',
-                            'description': (
-                                'One short sentence on what was seen in the '
-                                'image that justifies this suggestion.'
-                            ),
-                        },
-                        'confidence': {
-                            'type': 'string',
-                            'enum': ['low', 'medium', 'high'],
-                        },
+# Structured-output schema: makes Claude return a validated list of
+# suggestions instead of free-form prose we would have to parse. (Sonnet 5.5
+# rejects forced tool_choice, so this replaced a forced suggest_tools call.)
+SUGGEST_TOOLS_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'suggestions': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'toolId': {
+                        'type': 'string',
+                        'description': (
+                            'The exact id of a tool from the catalog.'
+                        ),
                     },
-                    'required': ['toolId', 'reason'],
+                    'channelName': {
+                        'type': 'string',
+                        'description': (
+                            'The channel this tool should run on, '
+                            'matching one of the provided channel '
+                            'names. Omit if not channel-specific.'
+                        ),
+                    },
+                    'reason': {
+                        'type': 'string',
+                        'description': (
+                            'One short sentence on what was seen in the '
+                            'image that justifies this suggestion.'
+                        ),
+                    },
+                    'confidence': {
+                        'type': 'string',
+                        'enum': ['low', 'medium', 'high'],
+                    },
                 },
+                'required': ['toolId', 'reason'],
+                'additionalProperties': False,
             },
         },
-        'required': ['suggestions'],
     },
+    'required': ['suggestions'],
+    'additionalProperties': False,
 }
 
 
@@ -158,7 +166,11 @@ class ClaudeAgentResource(Resource):
     # API_RATE_LIMITING_AUDIT.md); limiter semantics and the
     # single-process caveat are documented in rate_limit.py.
     RATE_LIMIT_WINDOW_SECONDS = 60
-    RATE_LIMIT_MAX_REQUESTS = 30
+    # Must stay above the frontend's per-message loop cap
+    # (MAX_TOOL_ITERATIONS in src/store/aiPanel.ts, currently 30): a single
+    # legitimate multi-step turn spends one request per iteration, and it must
+    # not be able to 429 itself partway through.
+    RATE_LIMIT_MAX_REQUESTS = 45
     # Reject conversations whose JSON-serialized messages exceed this size
     # (base64 screenshots dominate; the frontend prunes old ones).
     MAX_BODY_BYTES = 25 * 1024 * 1024
@@ -345,9 +357,11 @@ class ClaudeAgentResource(Resource):
         return it in one response, so the wire contract is unchanged: the
         browser owns the tool loop and never sees a token stream.
         """
-        with self.client.messages.stream(
+        with self.client.beta.messages.stream(
             model=CLAUDE_MODEL,
             max_tokens=self.AGENT_MAX_TOKENS,
+            betas=[THINKING_BINDING_BETA],
+            thinking=AGENT_THINKING,
             system=[
                 {
                     'type': 'text',
@@ -359,6 +373,16 @@ class ClaudeAgentResource(Resource):
             messages=messages,
         ) as stream:
             response = stream.get_final_message()
+        dropped = [
+            t for t in (getattr(response, 'input_transformations', None) or [])
+            if getattr(t, 'type', None) == 'thinking_dropped'
+        ]
+        if dropped:
+            logger.info(
+                'claude_agent: API dropped %d thinking block(s) (%s)',
+                len(dropped),
+                ', '.join(sorted({str(t.reason) for t in dropped})),
+            )
         return {
             # Streaming returns ParsedTextBlocks with an output-only
             # `parsed_output` field (marked __api_exclude__). These blocks are
@@ -385,7 +409,7 @@ class ClaudeSuggestToolsResource(Resource):
     The frontend captures a rendered viewport screenshot, builds a catalog of
     the tools it knows how to set up, and posts display-layer context here. We
     ask Claude to look at the image and pick which tools to suggest, returning
-    a structured list via a forced tool call.
+    a structured list via structured JSON output.
     """
 
     def __init__(self):
@@ -465,7 +489,7 @@ class ClaudeSuggestToolsResource(Resource):
                 f'{json.dumps(layers)}'
                 '\n\nUse the displayed layer colors and visibility to map '
                 'colored objects in the screenshot(s) to channelName. Then '
-                'call suggest_tools with your suggestions.'
+                'return your suggestions.'
             ),
         })
         return content
@@ -481,14 +505,17 @@ class ClaudeSuggestToolsResource(Resource):
         try:
             response = self.client.messages.create(
                 model=CLAUDE_MODEL,
-                max_tokens=2048,
-                # Structured extraction, not reasoning — disable thinking
-                # so we can force the tool call (forced tool_choice is
-                # incompatible with extended thinking).
-                thinking={'type': 'disabled'},
+                # Thinking counts toward max_tokens; low effort keeps it short
+                # for this structured-extraction call.
+                max_tokens=8000,
+                output_config={
+                    'effort': 'low',
+                    'format': {
+                        'type': 'json_schema',
+                        'schema': SUGGEST_TOOLS_SCHEMA,
+                    },
+                },
                 system=SUGGEST_TOOLS_SYSTEM_PROMPT,
-                tools=[SUGGEST_TOOLS_TOOL],
-                tool_choice={'type': 'tool', 'name': 'suggest_tools'},
                 messages=[
                     {
                         'role': 'user',
@@ -496,10 +523,23 @@ class ClaudeSuggestToolsResource(Resource):
                     }
                 ],
             )
+            # A refusal or a max_tokens cut carries no valid JSON. Report it
+            # as an error, not an empty list: the frontend permanently
+            # records an empty result as "suggested" and never retries.
+            if response.stop_reason != 'end_turn':
+                logger.warning(
+                    'suggest_tools stopped with %s', response.stop_reason
+                )
+                return {
+                    'error': 'Tool suggestion stopped early '
+                             f'({response.stop_reason})'
+                }
             for block in response.content:
-                if block.type == 'tool_use' and block.name == 'suggest_tools':
-                    return {'suggestions': block.input.get('suggestions', [])}
-            return {'suggestions': []}
+                if block.type == 'text':
+                    return {
+                        'suggestions': json.loads(block.text)['suggestions']
+                    }
+            return {'error': 'Tool suggestion returned no result'}
         except APIError as e:
             logger.error(
                 f'Error in suggest_tools endpoint: {str(e)}', exc_info=True

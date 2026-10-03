@@ -1,37 +1,5 @@
 <template>
   <v-dialog v-model="importDialog">
-    <template v-slot:activator="activatorBinding">
-      <slot name="activator" v-bind="activatorBinding">
-        <v-btn
-          v-bind="{ ...activatorBinding.props, ...$attrs }"
-          variant="outlined"
-          size="small"
-          :disabled="!isLoggedIn"
-          :color="showSuccess ? 'success' : 'primary'"
-          v-description="{
-            section: 'Object list actions',
-            title: 'Import from JSON',
-            description:
-              'Import a set of annotations and connections from a JSON file',
-          }"
-        >
-          <v-fade-transition leave-absolute>
-            <span
-              v-if="showSuccess"
-              key="success"
-              class="d-inline-flex align-center"
-            >
-              <v-icon class="mr-1">mdi-check-circle</v-icon>
-              Imported
-            </span>
-            <span v-else key="default" class="d-inline-flex align-center">
-              <v-icon class="mr-1">mdi-import</v-icon>
-              Import from JSON
-            </span>
-          </v-fade-transition>
-        </v-btn>
-      </slot>
-    </template>
     <v-card class="pa-2" :disabled="!canImport">
       <v-card-title> Import </v-card-title>
       <v-card-text class="pt-5 pb-0">
@@ -165,7 +133,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from "vue";
+import { ref, computed, watch } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
@@ -182,7 +150,9 @@ import {
 } from "@/store/model";
 import { logError } from "@/utils/log";
 
-const importDialog = ref(false);
+// Opened by its owner through `v-model:open` (DataIOMenu, from its menu or the
+// command palette); the dialog renders no activator of its own.
+const importDialog = defineModel<boolean>("open", { default: false });
 
 const jsonFile = ref<File | null>(null);
 const isLoadingFile = ref(false);
@@ -205,28 +175,7 @@ const overwriteAnnotationsDialog = ref(false);
 const overwriteProperties = ref(false);
 const overwritePropertiesDialog = ref(false);
 
-const showSuccess = ref(false);
-let successTimer: ReturnType<typeof setTimeout> | null = null;
-
-function flashSuccess() {
-  showSuccess.value = true;
-  if (successTimer) {
-    clearTimeout(successTimer);
-  }
-  successTimer = setTimeout(() => {
-    showSuccess.value = false;
-    successTimer = null;
-  }, 2500);
-}
-
-onBeforeUnmount(() => {
-  if (successTimer) {
-    clearTimeout(successTimer);
-  }
-});
-
 const canImport = computed(() => !!store.dataset);
-const isLoggedIn = computed(() => store.isLoggedIn);
 
 watch(jsonFile, () => {
   isJsonLoaded.value = false;
@@ -301,7 +250,6 @@ async function submit() {
   try {
     await importAnnotationsFromData(serializedData, options);
     reset();
-    flashSuccess();
   } catch (error) {
     logError("Error importing annotations:", error);
   } finally {
@@ -310,7 +258,6 @@ async function submit() {
 }
 
 defineExpose({
-  isLoggedIn,
   canImport,
   importAnnotations,
   importConnections,

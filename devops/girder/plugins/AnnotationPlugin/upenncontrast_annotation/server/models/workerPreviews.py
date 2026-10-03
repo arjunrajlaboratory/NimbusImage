@@ -1,5 +1,5 @@
 from ..helpers.proxiedModel import ProxiedModel
-from girder.exceptions import ValidationException, RestException
+from girder.exceptions import ValidationException
 from girder.constants import AccessType
 from ..helpers.tasks import runJobRequest
 
@@ -73,10 +73,8 @@ class WorkerPreviewModel(ProxiedModel):
         return self.findOne(query)
 
     def requestPreviewUpdate(self, image, datasetId, parameters, user):
-        dataset = Folder().load(datasetId, user=user, level=AccessType.WRITE)
-        if not dataset:
-            raise RestException(
-                code=500, message="Invalid dataset id in annotation"
-            )
-
+        # Matches annotation.compute: a bad dataset id is caller error, so
+        # let Girder raise it (ValidationException -> 400, AccessException
+        # -> 403) rather than a RestException 500 from inside a model.
+        Folder().load(datasetId, user=user, level=AccessType.WRITE, exc=True)
         return runJobRequest(image, datasetId, parameters, "preview")

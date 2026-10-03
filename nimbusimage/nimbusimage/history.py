@@ -15,17 +15,17 @@ class HistoryAccessor:
     def list(self) -> list[dict]:
         """List history entries for this dataset."""
         return self._gc.get(
-            f"/history?datasetId={self._dataset_id}"
+            f"history?datasetId={self._dataset_id}"
         )
 
     def undo(self) -> None:
         """Undo the last action."""
         self._gc.put(
-            f"/history/undo?datasetId={self._dataset_id}"
+            f"history/undo?datasetId={self._dataset_id}"
         )
 
     def redo(self) -> None:
         """Redo the last undone action."""
         self._gc.put(
-            f"/history/redo?datasetId={self._dataset_id}"
+            f"history/redo?datasetId={self._dataset_id}"
         )

@@ -13,6 +13,7 @@
           <div class="panel-section-title mb-1">Girder domain</div>
           <p>{{ girderUrlFromApiRoot(store.girderRest.apiRoot) }}</p>
         </div>
+        <storage-usage-section />
         <v-btn variant="flat" color="error" size="small" @click="logout">
           Logout
         </v-btn>
@@ -24,6 +25,7 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
+import StorageUsageSection from "@/components/StorageUsageSection.vue";
 
 const router = useRouter();
 

@@ -51,6 +51,8 @@ import {
 } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
+import connectionListStore from "@/store/connectionList";
+import timelapseStore from "@/store/timelapse";
 import propertiesStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import lineScanStore from "@/store/lineScan";
@@ -60,6 +62,29 @@ import { snapCoordinates } from "@/utils/itk";
 
 import { throttle, debounce } from "lodash";
 const THROTTLE = 100;
+
+// Highlight for the connection selected in the Connections tab / by clicking a
+// line. Bright and distinct from both the per-track colors (hash-derived) and
+// the red time-jump lines, so a selected link reads at a glance.
+const CONNECTION_SELECTED_COLOR = "#00e5ff";
+// Deliberately the same cyan: inside timelapse mode a selected dot and a
+// selected track segment must read as one state, not two.
+const TIMELAPSE_POINT_SELECTED_COLOR = CONNECTION_SELECTED_COLOR;
+
+// The unselected appearance of a normal-mode connection line. These values
+// reproduce GeoJS's own line-annotation defaults (blue, width 3), which is what
+// connections rendered with before they became restyleable — so restyling an
+// untouched line is a visual no-op.
+// `stroke: true` is mandatory here. GeoJS supplies it via its own annotation
+// defaults, but assigning `options("style", …)` REPLACES the style object
+// rather than merging, so a style that omits it produces a line that is present
+// in layer.annotations(), correctly positioned, and completely unpainted.
+const CONNECTION_BASE_STYLE = {
+  stroke: true,
+  strokeColor: "#0000ff",
+  strokeWidth: 3,
+  strokeOpacity: 1,
+};
 
 // Incremental draw (clearOldAnnotations): GeoJS removeAnnotation is ~O(n) per
 // call, so when more than this fraction of drawn features must be removed (e.g. a
@@ -74,7 +99,6 @@ import {
   IAnnotation,
   ITimelapseAnnotation,
   IAnnotationConnection,
-  IAnnotationLocation,
   IDisplayLayer,
   IGeoJSAnnotation,
   IGeoJSAnnotationLayer,
@@ -82,10 +106,10 @@ import {
   IGeoJSFeatureLayer,
   IGeoJSLineFeatureStyle,
   IGeoJSMap,
+  IGeoJSOsmLayer,
   IGeoJSPosition,
   IGeoJSPointFeatureStyle,
   IGeoJSPolygonFeatureStyle,
-  IImage,
   IMapEntry,
   IMouseState,
   IRestrictTagsAndLayer,
@@ -112,7 +136,6 @@ import { logError, logWarning } from "@/utils/log";
 import {
   pointDistance,
   getAnnotationStyleFromBaseStyle,
-  unrollIndexFromImages,
   geojsAnnotationFactory,
   tagFilterFunction,
   ellipseToPolygonCoordinates,
@@ -122,7 +145,18 @@ import {
   geometryKeyForRender,
   shouldRetainFeature,
 } from "@/utils/annotation";
+import {
+  IUnrollLayout,
+  unrollLayoutFor,
+  unrolledCoordinates,
+} from "@/utils/unroll";
 import { annotationSpatialIndex } from "@/utils/spatialIndex";
+import {
+  TRACK_UNIFORM_COLOR,
+  findConnectedComponents,
+  trackColor,
+  trackKeyFromIndex,
+} from "@/utils/connections";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import {
   mouseStateToSamPrompt,
@@ -139,6 +173,15 @@ import { editPolygonAnnotation as editPolygonAnnotationUtil } from "@/utils/poly
 import { stubPerf } from "@/utils/stubPerf";
 import { visibilityBudgetForZoom } from "@/utils/visibilityBudget";
 import { cameraRefreshNeeded } from "@/utils/camera";
+import {
+  annotationMatchesRasterSelector,
+  annotationMatchesRasterSelectors,
+  annotationOverviewRasterActive,
+  annotationRasterSelectorForLayer,
+  annotationRasterSelectorsForLayers,
+  annotationRasterSelectorsSupported,
+  stableRandomSampleById,
+} from "@/utils/annotationOverview";
 import RBush from "rbush";
 
 // Module-level helpers
@@ -196,31 +239,6 @@ function filterAnnotations<T extends TAnnotationOrStub>(
   return output;
 }
 
-// Custom class to ensure type safety for the parent map
-class ParentMap {
-  private map = new Map<string, string>();
-
-  set(key: string, value: string) {
-    this.map.set(key, value);
-  }
-
-  get(key: string): string {
-    const value = this.map.get(key);
-    if (value === undefined) {
-      throw new Error(`Key not found in ParentMap: ${key}`);
-    }
-    return value;
-  }
-
-  has(key: string): boolean {
-    return this.map.has(key);
-  }
-
-  forEach(callback: (value: string, key: string) => void) {
-    this.map.forEach(callback);
-  }
-}
-
 // ---- Props ----
 
 const props = withDefaults(
@@ -233,6 +251,7 @@ const props = withDefaults(
     timelapseLayer: IGeoJSAnnotationLayer;
     timelapseTextLayer: IGeoJSFeatureLayer;
     interactionLayer: IGeoJSAnnotationLayer;
+    annotationOverviewLayer?: IGeoJSOsmLayer;
     unrollH: number;
     unrollW: number;
     maps: IMapEntry[];
@@ -240,13 +259,21 @@ const props = withDefaults(
     tileHeight: number;
     lowestLayer: number;
     layerCount: number;
+    allowSharedVisibilitySuppression?: boolean;
   }>(),
-  { maps: () => [] },
+  { maps: () => [], allowSharedVisibilitySuppression: true },
 );
+const emit = defineEmits<{
+  (
+    event: "annotation-overview-visibility-change",
+    state: { visible: boolean; opacity: number },
+  ): void;
+}>();
 
 // ---- Refs (data fields) ----
 
 const isDragging = ref(false);
+const rasterActive = ref(false);
 const dragStartPosition = ref<IGeoJSPosition | null>(null);
 const draggedAnnotation = ref<IAnnotation | null>(null);
 // IGeoJSAnnotation instances are heavy native objects whose internals must
@@ -336,14 +363,41 @@ const hoveredAnnotationId = computed(() => annotationStore.hoveredAnnotationId);
 const selectedAnnotationIds = computed(
   () => annotationStore.selectedAnnotationIds,
 );
-const shouldDrawAnnotations = computed((): boolean => store.drawAnnotations);
-const shouldDrawConnections = computed(
-  (): boolean => store.drawAnnotationConnections,
+const selectedConnectionIds = computed(
+  () => connectionListStore.selectedConnectionIds,
 );
-const showTooltips = computed((): boolean => store.showTooltips);
-const showTimelapseMode = computed((): boolean => store.showTimelapseMode);
-const timelapseModeWindow = computed((): number => store.timelapseModeWindow);
-const showTimelapseLabels = computed((): boolean => store.showTimelapseLabels);
+const hoveredConnectionId = computed(
+  () => connectionListStore.hoveredConnectionId,
+);
+// The list and both draw paths share this one predicate, so what the
+// Connections tab hides under a track filter disappears from the canvas too.
+// A stable always-true constant while no filter is active, so the common case
+// adds no per-draw cost.
+const connectionPassesTrackFilters = computed(
+  () => connectionListStore.connectionPassesTrackFilters,
+);
+// The object half of the same lens. Consumed by BOTH display twins — the
+// drawn set (displayableAnnotations) and the visibility refresh
+// (updateVisibility's filteredIds), which drives the stub-mode budget,
+// hydration, and the HUD's viewport counts. Narrowing one without the other
+// spends budget on objects the draw path then discards.
+const annotationPassesTrackFilters = computed(
+  () => connectionListStore.annotationPassesTrackFilters,
+);
+const shouldDrawAnnotations = computed(
+  (): boolean =>
+    store.drawAnnotations &&
+    (!rasterActive.value || selectedAnnotationIds.value.size > 0),
+);
+const shouldDrawConnections = computed(
+  (): boolean => store.drawAnnotationConnections && !rasterActive.value,
+);
+const showTooltips = computed(
+  (): boolean => store.showTooltips && !rasterActive.value,
+);
+const showTimelapseMode = computed((): boolean => timelapseStore.showMode);
+const timelapseModeWindow = computed((): number => timelapseStore.modeWindow);
+const showTimelapseLabels = computed((): boolean => timelapseStore.showLabels);
 const filteredAnnotationTooltips = computed(
   (): boolean => store.filteredAnnotationTooltips,
 );
@@ -356,6 +410,29 @@ const propertyValues = computed(() => propertiesStore.propertyValues);
 const pendingStoreAnnotation = computed(
   () => annotationStore.pendingAnnotation,
 );
+
+function updateAnnotationOverviewMode() {
+  const layer = props.annotationOverviewLayer;
+  const nextActive =
+    layer && annotationRasterSelectorsSupported(rasterSelectors.value)
+      ? annotationOverviewRasterActive({
+          config: annotationStore.overviewConfig,
+          unitsPerPixel: props.map.unitsPerPixel(props.map.zoom()),
+          wasActive: rasterActive.value,
+          unrolling: unrolling.value,
+        })
+      : false;
+  if (nextActive !== rasterActive.value) {
+    rasterActive.value = nextActive;
+  }
+  if (!layer) {
+    return;
+  }
+  emit("annotation-overview-visibility-change", {
+    visible: nextActive && store.drawAnnotations,
+    opacity: annotationStore.overviewConfig.opacity,
+  });
+}
 
 const selectedToolConfiguration = computed(
   (): IToolConfiguration | null => store.selectedTool?.configuration ?? null,
@@ -457,9 +534,20 @@ const displayableAnnotations = computed(() => {
   if (!props.annotationLayer || !shouldDrawAnnotations.value) {
     return [];
   }
-  return store.filteredDraw
+  const base = store.filteredDraw
     ? filteredAnnotations.value
     : annotationStore.annotationsForIteration;
+  // Opt-in track-filter object hiding. This is the single source every
+  // display surface derives from — per-channel maps, layer maps, displayed
+  // ids, the timelapse sets, connection gating AND retention — so filtering
+  // here keeps draw and removal symmetric by construction. Off (the default)
+  // returns the base array untouched; the predicate is then a stable
+  // constant, so this adds no dependency on the track metrics.
+  if (!connectionListStore.trackFilterHidesObjects) {
+    return base;
+  }
+  const passesTrackFilters = annotationPassesTrackFilters.value;
+  return base.filter(({ id }) => passesTrackFilters(id));
 });
 
 const displayableAnnotationsByChannel = computed(() => {
@@ -484,6 +572,14 @@ const validLayers = computed(() =>
   layers.value.slice(props.lowestLayer, props.lowestLayer + props.layerCount),
 );
 
+const rasterSelectors = computed(() =>
+  annotationRasterSelectorsForLayers({
+    layers: validLayers.value,
+    showHiddenLayers: showAnnotationsFromHiddenLayers.value,
+    layerSliceIndexes: store.layerSliceIndexes,
+  }),
+);
+
 const isLayerIdValid = computed(() => {
   const validLayerIds: Set<string> = new Set();
   for (const layer of validLayers.value) {
@@ -492,12 +588,83 @@ const isLayerIdValid = computed(() => {
   return (id: string) => validLayerIds.has(id);
 });
 
+// Whether the raster overview can represent this configuration at all, i.e.
+// whether hiding unhydrated stub dots is backed by a raster. Deliberately not
+// rasterActive: the stub-free handoff must also hold while zoomed in (raster
+// inactive but available), where stubs drive visibility and hydration without
+// flashing approximate dots.
+const stubFreeRasterHandoff = computed(
+  () =>
+    annotationStore.overviewConfig.enabled &&
+    !unrolling.value &&
+    annotationRasterSelectorsSupported(rasterSelectors.value),
+);
+
 // A map: map<layer id, map<annotation id, annotation or stub>>
 const layerAnnotations = computed(() => {
   const layerIdToAnnotationIds: Map<
     string,
     Map<string, TAnnotationOrStub>
   > = new Map();
+  for (const layer of validLayers.value) {
+    layerIdToAnnotationIds.set(layer.id, new Map());
+  }
+
+  // While the raster represents the complete frame, draw only a bounded,
+  // stable pseudo-random sample of selected stubs as interaction feedback.
+  // Iterating selected ids instead of annotationsForIteration is important
+  // here: the latter can contain hundreds of thousands of unselected stubs.
+  // Prefer the stub even when geometry is hydrated so this overlay remains a
+  // cheap centroid indicator rather than duplicating shapes already
+  // represented by the raster.
+  if (rasterActive.value) {
+    const limit = Math.max(1, annotationStore.visibilityConfig.minimumVisible);
+    type RasterSelectionCandidate = {
+      annotationId: string;
+      annotation: TAnnotationOrStub;
+      layerIds: string[];
+    };
+    function* rasterSelectionCandidates(): Iterable<RasterSelectionCandidate> {
+      for (const annotationId of selectedAnnotationIds.value) {
+        const annotation =
+          annotationStore.annotationStubs?.get(annotationId) ??
+          annotationStore.getStub(annotationId) ??
+          getAnnotationFromId.value(annotationId);
+        if (!annotation) {
+          continue;
+        }
+        const layerIds: string[] = [];
+        for (const layer of validLayers.value) {
+          const selector = annotationRasterSelectorForLayer({
+            layer,
+            showHiddenLayers: showAnnotationsFromHiddenLayers.value,
+            layerSliceIndexes: store.layerSliceIndexes,
+          });
+          if (
+            selector &&
+            annotationMatchesRasterSelector(annotation, selector)
+          ) {
+            layerIds.push(layer.id);
+          }
+        }
+        if (layerIds.length > 0) {
+          yield { annotationId, annotation, layerIds };
+        }
+      }
+    }
+
+    for (const { annotationId, annotation, layerIds } of stableRandomSampleById(
+      rasterSelectionCandidates(),
+      limit,
+      (candidate) => candidate.annotationId,
+    )) {
+      for (const layerId of layerIds) {
+        layerIdToAnnotationIds.get(layerId)!.set(annotationId, annotation);
+      }
+    }
+    return layerIdToAnnotationIds;
+  }
+
   const stubsSize = annotationStore.annotationStubs?.size ?? 0;
   const { maxVisible, globalThreshold } = annotationStore.visibilityConfig;
   // Direct reads create reactive dependencies so layerAnnotations
@@ -511,7 +678,6 @@ const layerAnnotations = computed(() => {
   const layerFrameAnnotations: Map<string, TAnnotationOrStub[]> = new Map();
   let totalFrameCount = 0;
   for (const layer of validLayers.value) {
-    layerIdToAnnotationIds.set(layer.id, new Map());
     if (layer.visible || showAnnotationsFromHiddenLayers.value) {
       const layerChannelAnnotations =
         displayableAnnotationsByChannel.value.get(layer.channel) || [];
@@ -556,6 +722,16 @@ const layerAnnotations = computed(() => {
           annotationStore.annotationStubs?.get(annotation.id) ??
           annotation
         : annotation;
+      // The raster overview already represents every annotation while zoomed
+      // out. During its vector handoff, keep stubs as the source of visibility
+      // and hydration decisions but do not flash their approximate dots before
+      // the full geometry arrives. When no raster is available — overview
+      // disabled, unroll mode, or a selector set the raster contract rejects —
+      // preserve normal stub rendering instead of hiding dots with nothing
+      // behind them.
+      if (stubFreeRasterHandoff.value && !isHydratedAnnotation(renderData)) {
+        continue;
+      }
       annotationIdsSet.set(annotation.id, renderData);
     }
   }
@@ -625,20 +801,46 @@ const selectedToolRadius = computed(
   (): number | undefined => selectedToolConfiguration.value?.values?.radius,
 );
 
+/**
+ * How to place a frame-local point on the unrolled grid, for the DRAW path
+ * (issue #1280). Navigation needs the same answer and builds its own from
+ * `store.unrollGrid`; the geometry itself lives in `@/utils/unroll` so the two
+ * cannot disagree.
+ *
+ * `unrollW` comes from the prop rather than `store.unrollGrid` — see
+ * `unrollLayoutFor` for why.
+ *
+ * A computed, and NOT rebuilt inside the loops below: `unrolledCoordinates` runs
+ * once per annotation per draw, so constructing a layout there would allocate two
+ * objects per annotation — including on the un-unrolled path, which is supposed
+ * to allocate nothing at all.
+ */
+const unrollLayout = computed<IUnrollLayout>(() =>
+  unrollLayoutFor({
+    flags: {
+      unrollXY: store.unrollXY,
+      unrollZ: store.unrollZ,
+      unrollT: store.unrollT,
+    },
+    unrollW: props.unrollW,
+    image: store.dataset?.anyImage(),
+    dataset: store.dataset,
+  }),
+);
+
 const unrolledCentroidCoordinates = computed(() => {
   const centroidMap: { [annotationId: string]: IGeoJSPosition } = {};
   const annotationCentroids = annotationStore.annotationCentroids;
 
-  const anyImage = store.dataset?.anyImage();
-  if (anyImage) {
+  // No sized frame yet ⇒ nothing is drawable, so don't build a map for it.
+  if (store.dataset?.anyImage()) {
+    const layout = unrollLayout.value;
     for (const annotation of annotationStore.annotationsForIteration) {
-      const centroid = annotationCentroids[annotation.id];
-      const unrolledCentroid = unrolledCoordinates(
-        [centroid],
+      centroidMap[annotation.id] = unrolledCoordinates(
+        [annotationCentroids[annotation.id]],
         annotation.location,
-        anyImage,
+        layout,
       )[0];
-      centroidMap[annotation.id] = unrolledCentroid;
     }
   }
 
@@ -666,55 +868,6 @@ function getAnnotationStyle(
     hovered,
     selected,
   );
-}
-
-function unrollIndex(
-  XY: number,
-  Z: number,
-  Time: number,
-  unrollXY: boolean,
-  unrollZ: boolean,
-  unrollT: boolean,
-) {
-  const images = store.dataset?.images(
-    unrollZ ? -1 : Z,
-    unrollT ? -1 : Time,
-    unrollXY ? -1 : XY,
-    0,
-  );
-  if (!images) {
-    return 0;
-  }
-  return unrollIndexFromImages(XY, Z, Time, images);
-}
-
-function unrolledCoordinates(
-  coordinates: IGeoJSPosition[],
-  location: IAnnotationLocation,
-  image: IImage,
-) {
-  const tileW = image.sizeX;
-  const tileH = image.sizeY;
-  if (unrolling.value) {
-    const locationIdx = unrollIndex(
-      location.XY,
-      location.Z,
-      location.Time,
-      store.unrollXY,
-      store.unrollZ,
-      store.unrollT,
-    );
-
-    const tileX = Math.floor(locationIdx % props.unrollW);
-    const tileY = Math.floor(locationIdx / props.unrollW);
-
-    return coordinates.map((point: IGeoJSPosition) => ({
-      x: tileW * tileX + point.x,
-      y: tileH * tileY + point.y,
-      z: point.z,
-    }));
-  }
-  return coordinates;
 }
 
 // --- Retained-feature cache (frame-scrub optimization) -----------------------
@@ -885,7 +1038,7 @@ function drawAnnotationsAndTooltips() {
   drawAnnotations();
   drawTooltips();
   if (showTimelapseMode.value) {
-    drawTimelapseConnectionsAndCentroids();
+    drawTimelapseThrottled();
   }
 }
 
@@ -1047,15 +1200,21 @@ function clearOldAnnotations(clearAll = false, redraw = true) {
       }
 
       if (isConnection) {
-        const parent = getAnnotationFromId.value(parentId);
-        const child = getAnnotationFromId.value(childId);
+        // Retention MUST use the same criteria as drawNewConnections. It used
+        // to require getAnnotationFromId for both endpoints, which returns
+        // undefined for unhydrated annotations in stub-only mode — so on a
+        // lazily-loaded dataset every draw pass removed the very lines the draw
+        // path had just created (measured: 10 of 11 removed at 4/12 endpoints
+        // hydrated), churning GeoJS features on every pan.
+        const centroids = unrolledCentroidCoordinates.value;
         if (
           !connectionIdsSet.value.has(girderId) ||
           !shouldDrawConnections.value ||
-          !parent ||
-          !child ||
-          !displayedAnnotationIds.value.has(parent.id) ||
-          !displayedAnnotationIds.value.has(child.id)
+          !displayedAnnotationIds.value.has(parentId) ||
+          !displayedAnnotationIds.value.has(childId) ||
+          !centroids[parentId] ||
+          !centroids[childId] ||
+          !connectionPassesTrackFilters.value({ parentId })
         ) {
           toRemove.push(geoJsAnnotation);
         }
@@ -1180,7 +1339,17 @@ function drawNewAnnotations(
         isStub,
         annotationShape,
         stubRadius,
+        isConnection,
       } = geoJSAnnotation.options();
+      // Connection lines also carry a girderId, so they land in this map — but
+      // they are object-annotation logic from here down. They never set
+      // isHovered/isSelected, and `undefined != false` is true, so without this
+      // guard every redraw would fire the branch below and overwrite a selected
+      // connection's cyan with getAnnotationStyle(connectionId, …). Connections
+      // are styled at construction and by restyleAnnotations' own branch.
+      if (isConnection) {
+        continue;
+      }
       if (isHovered != isHoveredGT || isSelected != isSelectedGT) {
         const layer = store.getLayerFromId(layerId);
         const newStyle = drawnFeatureUsesDotStyle(isStub, annotationShape)
@@ -1205,7 +1374,8 @@ function drawNewConnections(
   drawnGeoJSAnnotations: Map<string, IGeoJSAnnotation[]>,
 ) {
   const dispAnnotationIds = displayedAnnotationIds.value;
-  const getAnnotation = getAnnotationFromId.value;
+  const unrolledCentroids = unrolledCentroidCoordinates.value;
+  const passesTrackFilters = connectionPassesTrackFilters.value;
   const connections = annotationConnections.value;
   const len = connections.length;
   for (let i = 0; i < len; i++) {
@@ -1213,92 +1383,51 @@ function drawNewConnections(
     if (
       drawnGeoJSAnnotations.has(connection.id) ||
       !dispAnnotationIds.has(connection.parentId) ||
-      !dispAnnotationIds.has(connection.childId)
+      !dispAnnotationIds.has(connection.childId) ||
+      !passesTrackFilters(connection)
     ) {
       continue;
     }
-    const childAnnotation = getAnnotation(connection.childId);
-    const parentAnnotation = getAnnotation(connection.parentId);
-    if (!childAnnotation || !parentAnnotation) {
+    // Gate on the centroids this actually draws from, NOT on
+    // getAnnotationFromId. In stub-only mode that getter returns undefined for
+    // every unhydrated non-point annotation, so on a lazily-loaded dataset it
+    // silently dropped nearly every connection: measured on the 709K-object
+    // Xenium dataset, only 4 of 12 endpoints resolved and just 1 of 11 lines
+    // was drawn, even though all 12 centroids were present.
+    const parentCentroid = unrolledCentroids[connection.parentId];
+    const childCentroid = unrolledCentroids[connection.childId];
+    if (!parentCentroid || !childCentroid) {
       continue;
     }
     drawGeoJSAnnotationFromConnection(
       connection,
-      childAnnotation,
-      parentAnnotation,
+      parentCentroid,
+      childCentroid,
     );
   }
 }
 
-function findConnectedComponents(
-  connections: IAnnotationConnection[],
-): { annotations: Set<string>; connections: IAnnotationConnection[] }[] {
-  const parent = new ParentMap();
-
-  function find(x: string): string {
-    if (!parent.has(x)) {
-      parent.set(x, x);
-      return x;
-    }
-    const currentParent = parent.get(x);
-    if (currentParent === x) {
-      return x;
-    }
-    const root = find(currentParent);
-    if (root !== currentParent) {
-      parent.set(x, root);
-    }
-    return root;
-  }
-
-  function union(x: string, y: string): void {
-    parent.set(find(x), find(y));
-  }
-
-  connections.forEach((conn) => {
-    union(conn.parentId, conn.childId);
-  });
-
-  const components = new Map<
-    string,
-    {
-      annotations: Set<string>;
-      connections: IAnnotationConnection[];
-    }
-  >();
-
-  parent.forEach((_, node) => {
-    const root = find(node);
-    if (!components.has(root)) {
-      components.set(root, {
-        annotations: new Set(),
-        connections: [],
-      });
-    }
-    components.get(root)!.annotations.add(node);
-  });
-
-  connections.forEach((conn) => {
-    const root = find(conn.parentId);
-    components.get(root)!.connections.push(conn);
-  });
-
-  return Array.from(components.values());
-}
-
 function getDisplayedAnnotationIdsAcrossTime(): Set<string> {
   const totalAnnotationIdsSet: Set<string> = new Set();
+  // Hoisted out of the per-annotation loop: layerSliceIndexes computes a fresh
+  // result on every call and is invariant per layer, and the unroll flags are
+  // invariant for the whole pass. Calling the getter per annotation measured
+  // ~67 ms of a ~490 ms timelapse rebuild at 45K annotations.
+  const showHidden = showAnnotationsFromHiddenLayers.value;
+  const unrollXY = store.unrollXY;
+  const unrollZ = store.unrollZ;
   for (const layer of validLayers.value) {
-    if (layer.visible || showAnnotationsFromHiddenLayers.value) {
+    if (layer.visible || showHidden) {
+      const sliceIndexes = store.layerSliceIndexes(layer);
+      const xyIndex = sliceIndexes?.xyIndex;
+      const zIndex = sliceIndexes?.zIndex;
       const channelAnnotations =
         displayableAnnotationsByChannel.value.get(layer.channel) || [];
       for (const annotation of channelAnnotations) {
         if (annotation.channel === layer.channel) {
-          const sliceIndexes = store.layerSliceIndexes(layer);
           if (
-            (store.unrollXY ||
-              annotation.location.XY === sliceIndexes?.xyIndex) &&
-            (store.unrollZ || annotation.location.Z === sliceIndexes?.zIndex)
+            (unrollXY || annotation.location.XY === xyIndex) &&
+            (unrollZ || annotation.location.Z === zIndex)
           ) {
             totalAnnotationIdsSet.add(annotation.id);
           }
@@ -1309,32 +1438,298 @@ function getDisplayedAnnotationIdsAcrossTime(): Set<string> {
   return totalAnnotationIdsSet;
 }
 
-function getDisplayedAnnotationsAcrossTime(): Set<IAnnotation> {
-  const displayedIds = getDisplayedAnnotationIdsAcrossTime();
-  return new Set(
-    Array.from(displayedIds)
-      .map((id) => getAnnotationFromId.value(id))
-      .filter((a): a is IAnnotation => a !== undefined),
-  );
+// One timelapse rebuild pass. Features are keyed (`tlKey`) by what they
+// represent — `c|<pairId>` for a track segment, `p|<annotationId>` for a
+// centroid dot — and carry their raw (ingcs) geometry as `tlGeom` so a kept
+// feature is provably drawing the same thing. Anything on the layer that this
+// pass does not re-claim is removed at the end.
+interface ITimelapseDiff {
+  existingByKey: Map<string, IGeoJSAnnotation>;
+  staleFeatures: IGeoJSAnnotation[];
+  newFeatures: IGeoJSAnnotation[];
+}
+
+// Counts mode-on rebuild passes. Rebuilds used to be observable through
+// removeAllAnnotations, which the diff-based pass no longer calls; tests that
+// assert "rebuilt exactly once" / "hover never rebuilds" read this instead.
+// A pass skipped by the input snapshot below does NOT count — nothing ran.
+const timelapseRebuildCount = ref(0);
+
+// EVERY input the rebuild pass reads, snapshotted after each successful pass.
+// The two-phase visibility update re-fires the displayedAnnotations watcher
+// ~250 ms after a frame change with nothing the timelapse pass reads having
+// changed, and that zero-churn second pass still cost the full desired-set
+// computation (~500 ms at 100K connections). When every field matches, the
+// pass is skipped outright — the layer already shows exactly this state.
+//
+// THE INVARIANT THIS ENCODES: a new input read by the pass (or by
+// drawTimelapseTrack / drawTimelapseAnnotationCentroidsAndLabels) must be
+// added here AND to timelapsePassInputsEqual, or a stale skip silently freezes
+// the overlay. Same discipline as the timelapse watch list — see the
+// regression checklist's "identical-pass skip" row. Comparisons are by
+// identity/value only (all these are replaced on change, and mutationCounter
+// covers in-place annotation edits); displayedIds is compared by content
+// because the second wave replaces the array identity without changing it.
+interface ITimelapsePassInputs {
+  // The OUTPUT layers, not just inputs: recreating a GeoJS map at an existing
+  // v-for index reuses this component instance with fresh, EMPTY layers, and a
+  // skip against those would leave the overlay blank until some other input
+  // changed (Codex round 4 on PR #1341).
+  layer: IGeoJSAnnotationLayer;
+  textLayer: IGeoJSFeatureLayer;
+  displayedIds: Set<string>;
+  connections: IAnnotationConnection[];
+  mutationCounter: number;
+  currentTime: number;
+  modeWindow: number;
+  tags: string[];
+  coloring: string;
+  colorSeed: number;
+  passesTrackFilters: (connection: IAnnotationConnection) => boolean;
+  resolveAnnotation: (id: string) => IAnnotation | undefined;
+  unrolledCentroids: { [annotationId: string]: IGeoJSPosition };
+  selectedConnections: Set<string>;
+  // Hover and object selection are usually reflected between passes by
+  // restyleTimelapseFeatures in place, so a change since the last pass defeats
+  // the skip even though the layer's PAINT already shows it. Deliberate: the
+  // extra pass is merely conservative, the cost only bites in the rare case of
+  // paint state changing between the two visibility waves of one frame change,
+  // and connection hover genuinely affects materialization (it picks the
+  // representative duplicate). Do not "optimize" these out of the snapshot.
+  hoveredConnectionId: string | null;
+  selectedObjects: Set<string>;
+  hoveredObjectId: string | null;
+  showLabels: boolean;
+}
+let lastTimelapsePassInputs: ITimelapsePassInputs | null = null;
+
+function timelapsePassInputsEqual(
+  a: ITimelapsePassInputs,
+  b: ITimelapsePassInputs,
+): boolean {
+  if (
+    a.layer !== b.layer ||
+    a.textLayer !== b.textLayer ||
+    a.connections !== b.connections ||
+    a.mutationCounter !== b.mutationCounter ||
+    a.currentTime !== b.currentTime ||
+    a.modeWindow !== b.modeWindow ||
+    a.tags !== b.tags ||
+    a.coloring !== b.coloring ||
+    a.colorSeed !== b.colorSeed ||
+    a.passesTrackFilters !== b.passesTrackFilters ||
+    a.resolveAnnotation !== b.resolveAnnotation ||
+    a.unrolledCentroids !== b.unrolledCentroids ||
+    a.selectedConnections !== b.selectedConnections ||
+    a.hoveredConnectionId !== b.hoveredConnectionId ||
+    a.selectedObjects !== b.selectedObjects ||
+    a.hoveredObjectId !== b.hoveredObjectId ||
+    a.showLabels !== b.showLabels ||
+    a.displayedIds.size !== b.displayedIds.size
+  ) {
+    return false;
+  }
+  for (const id of b.displayedIds) {
+    if (!a.displayedIds.has(id)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Shallow structural equality for option values: scalars, arrays of scalars,
+// and flat objects (whose values may be scalars or arrays). Exactly the shapes
+// the timelapse features store: connectionIds, tlGeom, the two base-style
+// bags, and style fields including lineDash.
+function timelapseValueEquals(a: any, b: any): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) {
+      return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const aKeys = Object.keys(a);
+    if (aKeys.length !== Object.keys(b).length) {
+      return false;
+    }
+    for (const key of aKeys) {
+      if (!timelapseValueEquals(a[key], b[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+// The complete option bags a timelapse feature carries. These interfaces ARE
+// the enforcement of the diff's core invariant: any new option baked into a
+// segment or dot must be declared here, so the materializer's compare-and-
+// update loop (which iterates these keys) keeps it fresh on kept features. An
+// option set on a feature some other way goes stale the first time the
+// feature is reused.
+interface ITimelapseSegmentOptions {
+  style: ReturnType<typeof getTimelapseSegmentStyle>;
+  isConnection: true;
+  girderId: string;
+  timelapseBaseStyle: ITimelapseSegmentBaseStyle;
+  connectionIds: string[];
+}
+interface ITimelapsePointOptions {
+  style: ReturnType<typeof getTimelapsePointStyle>;
+  time: number;
+  girderId: string;
+  isTimelapsePoint: true;
+  timelapsePointBaseStyle: ITimelapsePointBaseStyle;
+}
+type TTimelapseFeatureOptions =
+  | ITimelapseSegmentOptions
+  | ITimelapsePointOptions;
+
+// Claim the feature for `key` if a matching one is already on the layer,
+// updating only the options that changed (options() marks the layer modified,
+// so an unchanged feature must not be touched at all); otherwise construct a
+// fresh feature and queue it for a single batched add. The desired `style` is
+// merged over the feature's current style so GeoJS's own defaults
+// (stroke/fill flags) survive — options("style", …) replaces, never merges.
+function materializeTimelapseFeature(
+  diff: ITimelapseDiff,
+  key: string,
+  shape: AnnotationShape,
+  coordinates: IGeoJSPosition[],
+  geometry: number[],
+  typedOptions: TTimelapseFeatureOptions,
+) {
+  const options = typedOptions as Record<string, any>;
+  const existing = diff.existingByKey.get(key);
+  if (existing && timelapseValueEquals(existing.options("tlGeom"), geometry)) {
+    diff.existingByKey.delete(key);
+    const current = existing.options();
+    for (const optionKey of Object.keys(options)) {
+      const desired = options[optionKey];
+      if (optionKey === "style") {
+        const currentStyle = current.style;
+        let covered = currentStyle != null;
+        if (covered) {
+          for (const styleKey of Object.keys(desired)) {
+            if (
+              !timelapseValueEquals(currentStyle[styleKey], desired[styleKey])
+            ) {
+              covered = false;
+              break;
+            }
+          }
+        }
+        if (!covered) {
+          existing.options("style", Object.assign({}, currentStyle, desired));
+        }
+      } else if (!timelapseValueEquals(current[optionKey], desired)) {
+        existing.options(optionKey, desired);
+      }
+    }
+    return;
+  }
+  // Style goes through the factory so GeoJS merges it over its own defaults
+  // at construction; the other options are set explicitly on the feature,
+  // matching how the pre-diff code tagged segments.
+  const feature = geojsAnnotationFactory(shape, coordinates, {
+    style: options.style,
+  });
+  if (feature) {
+    for (const optionKey of Object.keys(options)) {
+      if (optionKey !== "style") {
+        feature.options(optionKey, options[optionKey]);
+      }
+    }
+    feature.options("tlKey", key);
+    feature.options("tlGeom", geometry);
+    diff.newFeatures.push(feature);
+  }
 }
 
 function drawTimelapseConnectionsAndCentroids() {
-  props.timelapseLayer.removeAllAnnotations(undefined, undefined, false);
-  props.timelapseTextLayer.features([]);
-
   if (!showTimelapseMode.value) {
+    lastTimelapsePassInputs = null;
+    props.timelapseTextLayer.features([]);
+    props.timelapseLayer.removeAllAnnotations(undefined, undefined, false);
     props.timelapseLayer.draw();
     props.timelapseTextLayer.draw();
     return;
   }
 
-  const tlModeWindow = timelapseModeWindow.value;
-  const currentTime = time.value;
-  const timelapseTags = store.timelapseTags;
+  // Gather every input the pass reads (see ITimelapsePassInputs). The pass
+  // destructures its working values FROM this object so the snapshot cannot
+  // drift from what was actually consumed.
+  const inputs: ITimelapsePassInputs = {
+    layer: props.timelapseLayer,
+    textLayer: props.timelapseTextLayer,
+    displayedIds: getDisplayedAnnotationIdsAcrossTime(),
+    connections: annotationConnections.value,
+    mutationCounter: annotationStore.mutationCounter,
+    currentTime: time.value,
+    modeWindow: timelapseModeWindow.value,
+    tags: timelapseStore.tags,
+    coloring: timelapseStore.trackColoring,
+    colorSeed: timelapseStore.colorSeed,
+    passesTrackFilters: connectionPassesTrackFilters.value,
+    resolveAnnotation: getAnnotationFromId.value,
+    unrolledCentroids: unrolledCentroidCoordinates.value,
+    selectedConnections: selectedConnectionIds.value,
+    hoveredConnectionId: hoveredConnectionId.value,
+    selectedObjects: selectedAnnotationIds.value,
+    hoveredObjectId: hoveredAnnotationId.value,
+    showLabels: showTimelapseLabels.value,
+  };
+  // Identical inputs ⇒ the layer already shows exactly this state: skip the
+  // whole pass. The displayedAnnotations watcher re-fires ~250 ms after each
+  // frame change (two-phase visibility update) with nothing this pass reads
+  // having changed, and the zero-churn pass still cost the full desired-set
+  // computation (~500 ms at 100K connections).
+  if (
+    lastTimelapsePassInputs !== null &&
+    timelapsePassInputsEqual(lastTimelapsePassInputs, inputs)
+  ) {
+    return;
+  }
+  timelapseRebuildCount.value++;
+  props.timelapseTextLayer.features([]);
 
-  const displayedIds = getDisplayedAnnotationIdsAcrossTime();
+  // Diff-based rebuild: tearing the layer down and reconstructing every
+  // feature cost ~250 ms per time-scrub step at Gia-scale connection counts
+  // (51,665 connections → ~10K features), and a scrub step actually changes
+  // only the features entering/leaving the mode window plus the ones whose
+  // time-relative styling flips. Keep every feature whose key and geometry
+  // still match, restyle the changed ones in place (options() marks the layer
+  // modified), and add/remove only the churn.
+  const diff: ITimelapseDiff = {
+    existingByKey: new Map(),
+    staleFeatures: [],
+    newFeatures: [],
+  };
+  for (const feature of props.timelapseLayer.annotations()) {
+    const key = feature.options("tlKey");
+    if (key !== undefined && !diff.existingByKey.has(key)) {
+      diff.existingByKey.set(key, feature);
+    } else {
+      diff.staleFeatures.push(feature);
+    }
+  }
 
-  const connections = annotationConnections.value;
+  const tlModeWindow = inputs.modeWindow;
+  const currentTime = inputs.currentTime;
+  const timelapseTags = inputs.tags;
+  const displayedIds = inputs.displayedIds;
+
+  const connections = inputs.connections;
   const connectionsLength = connections.length;
   const filteredConnections: IAnnotationConnection[] = [];
   for (let i = 0; i < connectionsLength; i++) {
@@ -1343,27 +1738,53 @@ function drawTimelapseConnectionsAndCentroids() {
       filteredConnections.push(conn);
     }
   }
-
   const components = findConnectedComponents(filteredConnections);
 
-  components.forEach((component) => {
-    const componentAnnotations: ITimelapseAnnotation[] = [];
-    let color: string = "#FFFFFF";
-    if (component.annotations.size > 0) {
-      const hash = Array.from(component.annotations)[0]
-        .split("")
-        .reduce((acc, char) => {
-          return char.charCodeAt(0) + ((acc << 5) - acc);
-        }, 0);
-      color = `#${Math.abs(hash).toString(16).slice(0, 6).padEnd(6, "0")}`;
-    }
+  const coloring = inputs.coloring;
+  const colorSeed = inputs.colorSeed;
+  // Vuex caches this global analysis against `annotationConnections`. Reads
+  // during scope changes and time scrubs reuse it; only connection CRUD
+  // invalidates it. Uniform coloring does not need the index at all.
+  const trackKeyByAnnotationId =
+    coloring === "track"
+      ? connectionListStore.trackAnalysis.trackKeyByAnnotationId
+      : undefined;
 
-    const annotations = Array.from(component.annotations);
-    const len = annotations.length;
-    for (let i = 0; i < len; i++) {
-      const id = annotations[i];
-      const annotation = getAnnotationFromId.value(id);
+  const passesTrackFilters = inputs.passesTrackFilters;
+  const resolveAnnotation = inputs.resolveAnnotation;
+
+  components.forEach((component) => {
+    // A displayed fragment's connections all belong to one dataset-wide
+    // track, so its first connection decides for the whole component. A
+    // filtered-out track is skipped here but its members stay in
+    // `connectedIds` below: they must vanish from the overlay entirely, not
+    // be recast as orphan dots — the graph didn't change, the view did.
+    if (!passesTrackFilters(component.connections[0])) {
+      return;
+    }
+    const componentAnnotations: ITimelapseAnnotation[] = [];
+    // Resolve the displayed fragment through the complete connection graph.
+    // A hidden endpoint must not make the same track change color.
+    const color =
+      coloring === "uniform"
+        ? TRACK_UNIFORM_COLOR
+        : trackColor(
+            trackKeyFromIndex(component.annotations, trackKeyByAnnotationId),
+            colorSeed,
+          );
+
+    // Check the window BEFORE cloning: members outside it are dropped anyway,
+    // and spread-cloning every member of every track measured as a main cost
+    // of the rebuild at 42K tracked annotations per pass.
+    for (const id of component.annotations) {
+      const annotation = resolveAnnotation(id);
       if (!annotation) {
+        continue;
+      }
+      if (
+        annotation.location.Time < currentTime - tlModeWindow ||
+        annotation.location.Time > currentTime + tlModeWindow
+      ) {
         continue;
       }
       if (
@@ -1372,59 +1793,65 @@ function drawTimelapseConnectionsAndCentroids() {
       ) {
         continue;
       }
-      const timelapseAnnotation: ITimelapseAnnotation = {
+      componentAnnotations.push({
         ...(annotation as IAnnotation),
         trackPositionType: TrackPositionType.INTERIOR,
-      };
-      if (
-        annotation.location.Time >= currentTime - tlModeWindow &&
-        annotation.location.Time <= currentTime + tlModeWindow
-      ) {
-        componentAnnotations.push(timelapseAnnotation);
-      }
+      });
     }
 
     if (componentAnnotations.length === 0) {
       return;
     }
 
+    // One pass over the component's connections instead of two .some() scans
+    // per member (O(members × connections) — 1.75M comparisons per rebuild on
+    // the Gia-scale fixture). Self-connections don't count for either side.
+    const membersWithEarlier = new Set<string>();
+    const membersWithLater = new Set<string>();
+    for (const conn of component.connections) {
+      if (conn.parentId !== conn.childId) {
+        membersWithEarlier.add(conn.childId);
+        membersWithLater.add(conn.parentId);
+      }
+    }
     for (const annotation of componentAnnotations) {
-      const isStart = !component.connections.some(
-        (conn) =>
-          conn.childId === annotation.id && conn.parentId !== annotation.id,
-      );
-      const isEnd = !component.connections.some(
-        (conn) =>
-          conn.parentId === annotation.id && conn.childId !== annotation.id,
-      );
       if (annotation.location.Time === currentTime) {
         annotation.trackPositionType = TrackPositionType.CURRENT;
-      } else if (isStart) {
+      } else if (!membersWithEarlier.has(annotation.id)) {
         annotation.trackPositionType = TrackPositionType.START;
-      } else if (isEnd) {
+      } else if (!membersWithLater.has(annotation.id)) {
         annotation.trackPositionType = TrackPositionType.END;
       }
     }
 
-    drawTimelapseTrack(componentAnnotations, component.connections, color);
-    drawTimelapseAnnotationCentroidsAndLabels(componentAnnotations);
+    drawTimelapseTrack(
+      diff,
+      componentAnnotations,
+      component.connections,
+      color,
+    );
+    drawTimelapseAnnotationCentroidsAndLabels(diff, componentAnnotations);
   });
 
   const orphanAnnotations: ITimelapseAnnotation[] = [];
-  const connectedIds = new Set<string>(
-    Array.from(components).flatMap((component) =>
-      Array.from(component.annotations),
-    ),
-  );
+  const connectedIds = new Set<string>();
+  for (const component of components) {
+    for (const id of component.annotations) {
+      connectedIds.add(id);
+    }
+  }
 
-  const displayedAnns = getDisplayedAnnotationsAcrossTime();
-
-  const annsArray = Array.from(displayedAnns);
-  const annsLen = annsArray.length;
-  for (let i = 0; i < annsLen; i++) {
-    const annotation = annsArray[i];
+  // Orphans are the displayed ids WITHOUT a connection. Reuse the id set
+  // computed above rather than re-scanning every annotation (the scan is the
+  // most expensive step of this rebuild), and resolve only the unconnected
+  // ids — on a heavily-tracked dataset that is a small fraction of the total.
+  for (const id of displayedIds) {
+    if (connectedIds.has(id)) {
+      continue;
+    }
+    const annotation = resolveAnnotation(id);
     if (
-      !connectedIds.has(annotation.id) &&
+      annotation &&
       annotation.location.Time >= currentTime - tlModeWindow &&
       annotation.location.Time <= currentTime + tlModeWindow &&
       (timelapseTags.length === 0 ||
@@ -1438,14 +1865,56 @@ function drawTimelapseConnectionsAndCentroids() {
   }
 
   if (orphanAnnotations.length > 0) {
-    drawTimelapseAnnotationCentroidsAndLabels(orphanAnnotations);
+    drawTimelapseAnnotationCentroidsAndLabels(diff, orphanAnnotations);
+  }
+
+  // Sweep: whatever was on the layer and was not re-claimed by this pass is
+  // stale. Adds and removals with update=false do not bump the layer's
+  // modified timestamp, so mark it ourselves when the feature set changed —
+  // in-place restyles already marked it through options().
+  let removedCount = 0;
+  for (const staleFeature of diff.staleFeatures) {
+    props.timelapseLayer.removeAnnotation(staleFeature, false);
+    removedCount++;
+  }
+  for (const staleFeature of diff.existingByKey.values()) {
+    props.timelapseLayer.removeAnnotation(staleFeature, false);
+    removedCount++;
+  }
+  if (diff.newFeatures.length > 0) {
+    props.timelapseLayer.addMultipleAnnotations(
+      diff.newFeatures,
+      undefined,
+      false,
+    );
+  }
+  if (removedCount > 0 || diff.newFeatures.length > 0) {
+    props.timelapseLayer.modified();
   }
 
   props.timelapseLayer.draw();
   props.timelapseTextLayer.draw();
+  // Snapshot only after a completed pass, so an exception can never leave a
+  // half-updated layer marked as current.
+  lastTimelapsePassInputs = inputs;
 }
 
+// The displayedAnnotations watcher fires 2-3 times per frame change (the
+// two-phase visibility update), and each fire reached the timelapse rebuild
+// directly while drawAnnotations right beside it was throttled — bundling 2-3
+// full layer rebuilds into ONE long main-thread task per time-scrub step
+// (measured 157 ms at 9,965 connections; a single rebuild is ~57 ms).
+// Trailing-only: every fire inside the window coalesces into one rebuild
+// against the FINAL state. A leading call would run against the mid-update
+// visible set and still pay a second rebuild at the trailing edge.
+const drawTimelapseThrottled = throttle(
+  drawTimelapseConnectionsAndCentroids,
+  THROTTLE,
+  { leading: false },
+);
+
 function drawTimelapseTrack(
+  diff: ITimelapseDiff,
   annotations: ITimelapseAnnotation[],
   connections: IAnnotationConnection[],
   color?: string,
@@ -1455,6 +1924,10 @@ function drawTimelapseTrack(
   const currentTime = time.value;
   const drawnLines = new Set<string>();
   const unrolledCentroids = unrolledCentroidCoordinates.value;
+  // Hoisted: these are Vuex getter reads, paid per segment otherwise (several
+  // per segment across ~5K segments per rebuild at Gia scale).
+  const isConnectionSelected = connectionListStore.isConnectionSelected;
+  const hoveredConnectionId = connectionListStore.hoveredConnectionId;
   const annotationsById = new Map<string, ITimelapseAnnotation>();
   const connectionsByAnnotationId = new Map<string, IAnnotationConnection[]>();
 
@@ -1476,7 +1949,6 @@ function drawTimelapseTrack(
     connectionsByAnnotationId.set(connection.childId, childConnections);
   }
 
-  let lines: IGeoJSAnnotation[] = [];
   for (const annotation of annotations) {
     const relevantConnections =
       connectionsByAnnotationId.get(annotation.id) || [];
@@ -1488,9 +1960,19 @@ function drawTimelapseTrack(
           : connection.parentId;
 
       const otherAnnotation = annotationsById.get(otherId);
+      if (!otherAnnotation) {
+        continue;
+      }
+      // Each undirected segment is drawn from exactly one of its two endpoints:
+      // normally the later one. Equal-time links — which "Connect selected"
+      // creates for same-frame pairs — used to be skipped from BOTH sides and
+      // so never appeared in timelapse mode at all, despite the UI advertising
+      // tie handling. Break the tie on id so exactly one traversal draws them.
+      const otherTime = otherAnnotation.location.Time;
+      const thisTime = annotation.location.Time;
       if (
-        !otherAnnotation ||
-        otherAnnotation.location.Time >= annotation.location.Time
+        otherTime > thisTime ||
+        (otherTime === thisTime && otherId >= annotation.id)
       ) {
         continue;
       }
@@ -1499,78 +1981,143 @@ function drawTimelapseTrack(
       if (drawnLines.has(lineId)) continue;
       drawnLines.add(lineId);
 
-      const points = [
-        unrolledCentroids[annotation.id],
-        unrolledCentroids[otherId],
-      ];
+      // One segment is drawn per endpoint PAIR, but the schema allows several
+      // connection documents for the same pair (this repo's own datasets have
+      // them). Whichever record the segment carries is the only one that can be
+      // highlighted or resolved by a click, so prefer a selected duplicate as
+      // the representative — otherwise selecting the second of two identical
+      // links could never turn its segment cyan.
+      const pairConnections = relevantConnections.filter(
+        (candidate) =>
+          (candidate.parentId === annotation.id
+            ? candidate.childId
+            : candidate.parentId) === otherId,
+      );
+      // Selected wins, then hovered, then the first. Without the hovered
+      // branch, hovering a later duplicate's row triggered a full redraw whose
+      // segment neither widened nor carried that connection's id.
+      const representative =
+        pairConnections.find(({ id }) => isConnectionSelected(id)) ??
+        pairConnections.find(({ id }) => id === hoveredConnectionId) ??
+        connection;
+
+      const pointA = unrolledCentroids[annotation.id];
+      const pointB = unrolledCentroids[otherId];
+      if (!pointA || !pointB) {
+        continue;
+      }
 
       const timeDiff = annotation.location.Time - otherAnnotation.location.Time;
       const isTimeJump = timeDiff > 1;
 
       const isBeforeCurrent = annotation.location.Time <= currentTime;
-      const line = geojsAnnotationFactory(AnnotationShape.Line, points, {
-        style: {
-          strokeColor: isTimeJump ? "#ff6b6b" : color,
-          strokeWidth: isBeforeCurrent ? 3 : 6,
-          strokeOpacity: isTimeJump ? 0.7 : 1,
-          lineDash: isTimeJump ? [5, 5] : undefined,
+      // Everything that depends on the track rather than on the user's
+      // selection or hover. Kept on the feature so the segment can be restyled
+      // in place later without knowing which track it came from — a hover
+      // change must not have to rebuild the layer to be visible.
+      // A time jump keeps the track's colour. It used to be forced to #ff6b6b,
+      // which broke both colouring controls: "uniform" left those segments red
+      // among white ones, so it was not uniform, and under per-track colouring a
+      // track whose drawn segments are all jumps showed a hue swatch against red
+      // lines. The jump is still unmistakable — the dash and the reduced opacity
+      // below are two independent cues that no other segment has — so the colour
+      // was a third, redundant signal that happened to be the one contradicting
+      // the swatch. Dropping it makes the swatch match the line unconditionally,
+      // which is a claim the UI now makes in both modes.
+      const baseStyle: ITimelapseSegmentBaseStyle = {
+        strokeColor: color,
+        strokeWidth: isBeforeCurrent ? 3 : 6,
+        strokeOpacity: isTimeJump ? 0.7 : 1,
+        lineDash: isTimeJump ? [5, 5] : undefined,
+      };
+      const pairIds = pairConnections.map(({ id }) => id);
+      // Options a kept segment must stay in sync on:
+      // - isConnection + girderId tag the segment with its representative so a
+      //   click resolves to exactly that link (the layer draws one line per
+      //   connection, not one polyline per track);
+      // - timelapseBaseStyle and connectionIds let a hover/selection change be
+      //   restyled in place — the base to rebuild the unhighlighted appearance
+      //   from, and EVERY id sharing this pair, so a duplicate that is not the
+      //   representative still lights its segment up.
+      materializeTimelapseFeature(
+        diff,
+        "c|" + lineId,
+        AnnotationShape.Line,
+        [pointA, pointB],
+        [pointA.x, pointA.y, pointB.x, pointB.y],
+        {
+          style: getTimelapseSegmentStyle(
+            baseStyle,
+            pairIds.some(isConnectionSelected),
+            pairIds.includes(hoveredConnectionId ?? ""),
+          ),
+          isConnection: true,
+          girderId: representative.id,
+          timelapseBaseStyle: baseStyle,
+          connectionIds: pairIds,
         },
-      });
-
-      if (line) {
-        lines.push(line);
-      }
+      );
     }
   }
-  props.timelapseLayer.addMultipleAnnotations(lines, undefined, false);
 }
 
 function drawTimelapseAnnotationCentroidsAndLabels(
+  diff: ITimelapseDiff,
   annotations: ITimelapseAnnotation[],
 ) {
   const currentTime = time.value;
 
-  const styleObj = {
-    scaled: 1,
-    fill: true,
+  const hoveredId = hoveredAnnotationId.value;
+  const isSelected = isAnnotationSelected.value;
+  // Mutated and re-read each iteration; safe because the factory copies the
+  // options it is handed (verified: 1,425 points hold 1,425 distinct style
+  // objects), so later iterations can't retroactively restyle earlier points.
+  const baseStyle: ITimelapsePointBaseStyle = {
     fillColor: "white",
     fillOpacity: 1,
-    stroke: true,
-    strokeColor: "black",
-    strokeWidth: 1,
     strokeOpacity: 1,
     radius: 0.09,
   };
-  let points: IGeoJSAnnotation[] = [];
+  const unrolledCentroids = unrolledCentroidCoordinates.value;
   const len = annotations.length;
   for (let i = 0; i < len; i++) {
     const annotation = annotations[i];
     const locationTime = annotation.location.Time;
 
-    styleObj.fillColor =
+    baseStyle.fillColor =
       annotation.trackPositionType === TrackPositionType.ORPHAN
         ? "gray"
         : "white";
-    styleObj.fillOpacity = locationTime < currentTime ? 0.5 : 1;
-    styleObj.strokeOpacity = locationTime < currentTime ? 0.5 : 1;
-    styleObj.radius = locationTime === currentTime ? 0.16 : 0.09;
+    baseStyle.fillOpacity = locationTime < currentTime ? 0.5 : 1;
+    baseStyle.strokeOpacity = locationTime < currentTime ? 0.5 : 1;
+    baseStyle.radius = locationTime === currentTime ? 0.16 : 0.09;
 
-    const pointAnnotation = geojsAnnotationFactory(
+    const centroid = unrolledCentroids[annotation.id];
+    if (!centroid) {
+      continue;
+    }
+    materializeTimelapseFeature(
+      diff,
+      "p|" + annotation.id,
       AnnotationShape.Point,
-      [unrolledCentroidCoordinates.value[annotation.id]],
+      [centroid],
+      [centroid.x, centroid.y],
       {
         time: annotation.location.Time,
         girderId: annotation.id,
         isTimelapsePoint: true,
-        style: styleObj,
+        // Kept on the feature for the same reason as timelapseBaseStyle on a
+        // segment: the unhighlighted appearance has to be recoverable so a
+        // selection change can be repainted without rebuilding the layer.
+        timelapsePointBaseStyle: { ...baseStyle },
+        style: getTimelapsePointStyle(
+          baseStyle,
+          isSelected(annotation.id),
+          annotation.id === hoveredId,
+        ),
       },
     );
-
-    if (pointAnnotation) {
-      points.push(pointAnnotation);
-    }
   }
-  props.timelapseLayer.addMultipleAnnotations(points, undefined, false);
 
   if (showTimelapseLabels.value) {
     const textPoints: IGeoJSPosition[] = [];
@@ -1667,12 +2214,8 @@ function createGeoJSAnnotation(
   annotation: TAnnotationOrStub,
   layerId?: string,
 ) {
-  if (!store.dataset || !store.dataset.anyImage()) {
-    return null;
-  }
-
-  const anyImage = store.dataset.anyImage();
-  if (!anyImage) {
+  // No sized frame ⇒ no tile size to place the shape against.
+  if (!store.dataset?.anyImage()) {
     return null;
   }
 
@@ -1684,14 +2227,14 @@ function createGeoJSAnnotation(
     coordinates = unrolledCoordinates(
       annotation.coordinates,
       annotation.location,
-      anyImage,
+      unrollLayout.value,
     );
     renderShape = annotation.shape;
   } else {
     coordinates = unrolledCoordinates(
       [annotation.centroid],
       annotation.location,
-      anyImage,
+      unrollLayout.value,
     );
     renderShape = AnnotationShape.Point;
   }
@@ -1739,15 +2282,28 @@ function createGeoJSAnnotation(
 
 function drawGeoJSAnnotationFromConnection(
   connection: IAnnotationConnection,
-  parent: IAnnotation,
-  child: IAnnotation,
+  parentCentroid: IGeoJSPosition,
+  childCentroid: IGeoJSPosition,
 ) {
-  const pA = { ...unrolledCentroidCoordinates.value[child.id] };
+  // Takes centroids rather than annotations: the line only ever needed the two
+  // positions, and looking annotations up here coupled drawing to hydration.
+  const pA = { ...childCentroid };
   delete pA.z;
-  const pB = { ...unrolledCentroidCoordinates.value[parent.id] };
+  const pB = { ...parentCentroid };
   delete pB.z;
   const line = geojs.annotation.lineAnnotation();
   line.options("vertices", [pA, pB]);
+  // Style at construction, not only via restyleAnnotations: a selected
+  // connection that gets torn down and rebuilt (panning away and back, or
+  // toggling connection rendering) would otherwise come back default-blue and
+  // stay that way until the next selection or hover change.
+  line.options("style", {
+    ...line.options("style"),
+    ...getConnectionStyle(
+      connectionListStore.isConnectionSelected(connection.id),
+      connection.id === connectionListStore.hoveredConnectionId,
+    ),
+  });
   line.options("isConnection", true);
   line.options("childId", connection.childId);
   line.options("parentId", connection.parentId);
@@ -1800,9 +2356,42 @@ function restyleAnnotations() {
           )
         : getAnnotationStyle(girderId, customColor, layer?.color);
       geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
+    } else if (girderId && isConnection) {
+      // Normal-mode connection lines are restyled in place. (Timelapse track
+      // lines are rebuilt on every draw instead, so they pick up the selection
+      // at build time in drawTimelapseTrack.)
+      geoJSAnnotation.options(
+        "style",
+        Object.assign(
+          {},
+          style,
+          getConnectionStyle(
+            connectionListStore.isConnectionSelected(girderId),
+            girderId === connectionListStore.hoveredConnectionId,
+          ),
+        ),
+      );
     }
   }
   props.annotationLayer.draw();
+}
+
+function getConnectionStyle(isSelected: boolean, isHovered: boolean) {
+  if (isSelected) {
+    return {
+      stroke: true,
+      strokeColor: CONNECTION_SELECTED_COLOR,
+      strokeWidth: 6,
+      strokeOpacity: 1,
+    };
+  }
+  // Every branch must set strokeColor AND strokeWidth: restyle merges over the
+  // feature's existing style, so a branch that omits strokeColor would leave a
+  // deselected line stuck on the selection highlight.
+  return {
+    ...CONNECTION_BASE_STYLE,
+    strokeWidth: isHovered ? 5 : CONNECTION_BASE_STYLE.strokeWidth,
+  };
 }
 
 // C4: restyle iterates every drawn feature and redraws the layer, so rapid
@@ -1811,6 +2400,172 @@ function restyleAnnotations() {
 // leading edge keeps the first change instant, the trailing edge coalesces a
 // burst into one final restyle with the latest state.
 const restyleAnnotationsThrottled = throttle(restyleAnnotations, THROTTLE);
+
+// A timelapse track segment's appearance minus the highlight: colour from its
+// connected component (or the red of a skipped frame), width from whether its
+// frame is before or after the current one. Stored on the feature so a
+// selection or hover change can repaint it without knowing its track.
+interface ITimelapseSegmentBaseStyle {
+  strokeColor?: string;
+  strokeWidth: number;
+  strokeOpacity: number;
+  lineDash?: number[];
+}
+
+// A timelapse centroid dot's appearance minus the highlight: fill from its
+// track position (orphan vs member), opacity and radius from its timepoint
+// relative to the current one.
+interface ITimelapsePointBaseStyle {
+  fillColor: string;
+  fillOpacity: number;
+  strokeOpacity: number;
+  radius: number;
+}
+
+/**
+ * Style for a timelapse centroid dot.
+ *
+ * The dots had NO selection or hover branch at all, so selecting a track's
+ * objects — which is exactly what the Connections tab's per-track Select
+ * action does — produced no visible change anywhere in timelapse mode. Only
+ * connections reacted to selection there, which made a working object
+ * selection read as "it selected the links instead". Selected dots take the
+ * same cyan as selected segments so one colour means "selected" throughout the
+ * mode.
+ *
+ * Every branch sets every key: this object REPLACES the feature's style rather
+ * than merging, so an omitted key strands the previous highlight.
+ */
+function getTimelapsePointStyle(
+  base: ITimelapsePointBaseStyle,
+  isSelected: boolean,
+  isHovered: boolean,
+) {
+  return {
+    scaled: 1,
+    fill: true,
+    fillColor: base.fillColor,
+    // A selected dot is fully opaque even in the past, or the highlight fades
+    // out on exactly the frames a track is being reviewed on.
+    fillOpacity: isSelected || isHovered ? 1 : base.fillOpacity,
+    stroke: true,
+    strokeColor: isSelected
+      ? TIMELAPSE_POINT_SELECTED_COLOR
+      : isHovered
+        ? "white"
+        : "black",
+    strokeWidth: isSelected ? 3 : isHovered ? 2 : 1,
+    strokeOpacity: isSelected || isHovered ? 1 : base.strokeOpacity,
+    // Grown so the ring reads at the 0.09 radius the non-current frames use.
+    radius: isSelected ? base.radius + 0.05 : base.radius,
+  };
+}
+
+function getTimelapseSegmentStyle(
+  base: ITimelapseSegmentBaseStyle,
+  isSelected: boolean,
+  isHovered: boolean,
+) {
+  // Every branch sets every key, for the same reason as getConnectionStyle:
+  // this object replaces the feature's style rather than merging into it, so an
+  // omitted key strands the previous highlight — and an omitted `stroke` leaves
+  // the segment present, correctly positioned and completely unpainted.
+  return {
+    stroke: true,
+    strokeColor: isSelected ? CONNECTION_SELECTED_COLOR : base.strokeColor,
+    strokeWidth: base.strokeWidth + (isSelected ? 3 : isHovered ? 2 : 0),
+    strokeOpacity: isSelected || isHovered ? 1 : base.strokeOpacity,
+    lineDash: base.lineDash,
+  };
+}
+
+// The timelapse counterpart of restyleAnnotations, covering BOTH kinds of
+// feature the layer holds: track segments and centroid dots.
+//
+// Connection selection additionally runs the diff-based rebuild pass (it
+// decides which duplicate represents a pair, a materialization-time choice),
+// but hover changes continuously as the pointer runs down the connection list,
+// and running the full desired-set computation per row made the list feel
+// sluggish — so hover repaints in place. Not a cosmetic nicety: clicking a row
+// HIGHLIGHTS rather than selects, so without it the main way of finding a
+// connection has no visible effect at all in timelapse mode.
+//
+// Dots go through the same in-place path. `restyleAnnotations` only ever
+// touches `annotationLayer`, so before this the timelapse dots had no restyle
+// route of any kind and object selection was invisible in the mode.
+function restyleTimelapseFeatures() {
+  const annotations = props.timelapseLayer.annotations();
+  const len = annotations.length;
+  const hoveredConnectionId = connectionListStore.hoveredConnectionId;
+  const isConnectionSelected = connectionListStore.isConnectionSelected;
+  const hoveredObjectId = hoveredAnnotationId.value;
+  const isObjectSelected = isAnnotationSelected.value;
+  let restyled = false;
+  for (let i = 0; i < len; i++) {
+    const geoJSAnnotation = annotations[i];
+    const {
+      isConnection,
+      connectionIds,
+      timelapseBaseStyle,
+      isTimelapsePoint,
+      timelapsePointBaseStyle,
+      girderId,
+      style,
+    } = geoJSAnnotation.options();
+
+    // Assigning a style marks the layer modified, which makes GeoJS rebuild
+    // every feature's render data on the next draw. Usually only a handful of
+    // features change, so each branch compares exactly the keys IT sets and
+    // leaves the rest untouched — the draw is skipped entirely when nothing
+    // changed.
+    let newStyle;
+    if (isConnection && connectionIds && timelapseBaseStyle) {
+      const segmentStyle = getTimelapseSegmentStyle(
+        timelapseBaseStyle,
+        connectionIds.some((id: string) => isConnectionSelected(id)),
+        hoveredConnectionId !== null &&
+          connectionIds.includes(hoveredConnectionId),
+      );
+      if (
+        style?.strokeColor === segmentStyle.strokeColor &&
+        style?.strokeWidth === segmentStyle.strokeWidth &&
+        style?.strokeOpacity === segmentStyle.strokeOpacity
+      ) {
+        continue;
+      }
+      newStyle = segmentStyle;
+    } else if (isTimelapsePoint && timelapsePointBaseStyle && girderId) {
+      const pointStyle = getTimelapsePointStyle(
+        timelapsePointBaseStyle,
+        isObjectSelected(girderId),
+        girderId === hoveredObjectId,
+      );
+      if (
+        style?.strokeColor === pointStyle.strokeColor &&
+        style?.strokeWidth === pointStyle.strokeWidth &&
+        style?.strokeOpacity === pointStyle.strokeOpacity &&
+        style?.fillOpacity === pointStyle.fillOpacity &&
+        style?.radius === pointStyle.radius
+      ) {
+        continue;
+      }
+      newStyle = pointStyle;
+    } else {
+      continue;
+    }
+
+    geoJSAnnotation.options("style", Object.assign({}, style, newStyle));
+    restyled = true;
+  }
+  if (restyled) {
+    props.timelapseLayer.draw();
+  }
+}
+
+const restyleTimelapseFeaturesThrottled = throttle(
+  restyleTimelapseFeatures,
+  THROTTLE,
+);
 
 function pointNearPoint(
   selectionPosition: IGeoJSPosition,
@@ -1824,6 +2579,83 @@ function pointNearPoint(
   return (
     pointDistance(selectionPosition, annotationPosition) < annotationRadius
   );
+}
+
+// Click tolerance for connection lines, in display pixels. Deliberately not
+// routed through pointNearLine: that helper compares a *squared* distance
+// against an unsquared width, so its effective tolerance shrinks as you zoom
+// out and connection lines become unclickable. Existing callers depend on that
+// behavior, so connections get their own correct comparison instead.
+const CONNECTION_CLICK_TOLERANCE_PX = 6;
+
+/**
+ * Squared distance from `position` to the nearest segment of `linePoints`, or
+ * `null` when every segment is outside the click tolerance.
+ *
+ * Returns the distance rather than a boolean so callers can pick the CLOSEST
+ * line among several within tolerance — with parallel or dense tracks, taking
+ * the first match selects whichever happened to be drawn earlier and leaves
+ * some links unreachable from the canvas entirely.
+ */
+function connectionLineHitDistance(
+  position: IGeoJSPosition,
+  linePoints: IGeoJSPosition[],
+  unitsPerPixel: number,
+): number | null {
+  const tolerance = CONNECTION_CLICK_TOLERANCE_PX * unitsPerPixel;
+  const toleranceSquared = tolerance * tolerance;
+  let best: number | null = null;
+  for (let i = 0; i < linePoints.length - 1; i++) {
+    const distanceSquared = geojs.util.distance2dToLineSquared(
+      position,
+      linePoints[i],
+      linePoints[i + 1],
+    );
+    if (distanceSquared < toleranceSquared) {
+      best = best === null ? distanceSquared : Math.min(best, distanceSquared);
+    }
+  }
+  return best;
+}
+
+/**
+ * The connection whose drawn line is under `position`, or null.
+ *
+ * Timelapse mode draws its own connection lines on a separate layer; when it is
+ * on, those are what the user sees, so search it first.
+ */
+function findConnectionIdAtPoint(position: IGeoJSPosition): string | null {
+  const unitsPerPixel = getMapUnitsPerPixel();
+  const layers = showTimelapseMode.value
+    ? [props.timelapseLayer, props.annotationLayer]
+    : [props.annotationLayer];
+  for (const layer of layers) {
+    const geoAnnotations = layer.annotations();
+    // Closest wins WITHIN a layer; layer order still decides between layers,
+    // because in timelapse mode the track lines are what the user can see.
+    let closestId: string | null = null;
+    let closestDistance = Infinity;
+    for (let i = 0; i < geoAnnotations.length; i++) {
+      const geoJSAnnotation = geoAnnotations[i];
+      const { girderId, isConnection } = geoJSAnnotation.options();
+      if (!isConnection || !girderId) {
+        continue;
+      }
+      const distance = connectionLineHitDistance(
+        position,
+        geoJSAnnotation.coordinates(),
+        unitsPerPixel,
+      );
+      if (distance !== null && distance < closestDistance) {
+        closestDistance = distance;
+        closestId = girderId;
+      }
+    }
+    if (closestId) {
+      return closestId;
+    }
+  }
+  return null;
 }
 
 function pointNearLine(
@@ -1926,19 +2758,24 @@ function shouldSelectStub(
   annotationStyle: IGeoJSPointFeatureStyle,
   unitsPerPixel: number,
 ): boolean {
-  return pointNearPoint(
-    clickPosition,
-    stub.centroid,
-    (annotationStyle.radius as number) ?? 0,
-    (annotationStyle.strokeWidth as number) ?? 0,
-    unitsPerPixel,
-  );
+  // Unlike a normal point feature (whose radius is in display pixels), the stub
+  // dot renders world-locked: its style.radius is estimatedRadius in world
+  // (image-pixel) units, via `scaled` (getStubStyleFromBaseStyle). clickPosition
+  // and stub.centroid are also world units, so compare directly — do NOT route
+  // through pointNearPoint, which multiplies the radius by unitsPerPixel and
+  // would shrink/expand the hit area relative to the rendered dot at any zoom
+  // where unitsPerPixel !== 1. Only strokeWidth is in display pixels, so convert
+  // just that term.
+  const radius = (annotationStyle.radius as number) ?? 0;
+  const strokeWidth = (annotationStyle.strokeWidth as number) ?? 0;
+  const hitRadius = radius + strokeWidth * unitsPerPixel;
+  return pointDistance(clickPosition, stub.centroid) < hitRadius;
 }
 
 function getSelectedAnnotationsFromAnnotation(
   selectAnnotation: IGeoJSAnnotation,
 ) {
-  if (!shouldDrawAnnotations.value) {
+  if (!store.drawAnnotations) {
     return [];
   }
   const coordinates = selectAnnotation.coordinates();
@@ -2024,12 +2861,7 @@ function getSelectedAnnotationsFromAnnotation(
       if (!candidate) {
         continue;
       }
-      // Check if annotation is on the current frame
-      if (
-        candidate.location.XY !== xy.value ||
-        candidate.location.Z !== z.value ||
-        candidate.location.Time !== time.value
-      ) {
+      if (!annotationMatchesRasterSelectors(candidate, rasterSelectors.value)) {
         continue;
       }
       if (!selectionCandidateInPolygon(candidate, coordinates)) {
@@ -2169,6 +3001,38 @@ function selectAnnotations(selectAnnotation: IGeoJSAnnotation) {
   }
   const selected = getSelectedAnnotationsFromAnnotation(selectAnnotation);
   const selectedIds = selected.map((a) => a.id);
+
+  // Connections are only selectable by CLICK — drag/lasso never selects them,
+  // because a box select is for objects and letting it grab lines would make
+  // every one of them ambiguous.
+  if (selectAnnotation.type() === AnnotationShape.Point) {
+    const clickPosition = selectAnnotation.coordinates()[0];
+    const connectionId = clickPosition
+      ? findConnectionIdAtPoint(clickPosition)
+      : null;
+    // Objects normally win, so a line crossing an object never steals its
+    // click. Timelapse mode inverts that for the same reason the hover path
+    // does: the track segments are the visual and the annotation dots sit
+    // underneath, so a segment almost always overlaps one and object-first
+    // would make most track links unselectable. Keep the two paths in step —
+    // this rule has to hold for shift+click and the select tool, not just for
+    // plain-click highlighting.
+    const connectionWins =
+      connectionId && (selectedIds.length === 0 || showTimelapseMode.value);
+    if (connectionWins) {
+      connectionListStore.setSelectedConnectionIds([connectionId]);
+      props.interactionLayer.removeAnnotation(selectAnnotation);
+      return;
+    }
+    // Clicking empty space clears the connection selection, matching how
+    // clicking away deselects annotations.
+    if (
+      selectedIds.length === 0 &&
+      connectionListStore.selectedConnectionIds.size > 0
+    ) {
+      connectionListStore.setSelectedConnectionIds([]);
+    }
+  }
 
   switch (annotationSelectionType.value) {
     case AnnotationSelectionTypes.ADD:
@@ -2961,27 +3825,37 @@ function handleInteractionModeChange(evt: any) {
 function setHoveredAnnotationFromCoordinates(gcsCoordinates: IGeoJSPosition) {
   const geoAnnotations: IGeoJSAnnotation[] =
     props.annotationLayer.annotations();
-  let annotationToToggle: IAnnotation | null = null;
+  let annotationToToggle: TAnnotationOrStub | null = null;
+  const unitsPerPixel = getMapUnitsPerPixel();
   for (let i = 0; i < geoAnnotations.length; ++i) {
     const geoAnnotation = geoAnnotations[i];
-    const id = geoAnnotation.options("girderId");
-    if (!id) {
+    const { girderId, isConnection } = geoAnnotation.options();
+    if (!girderId || isConnection) {
       continue;
     }
-    const annotation = getAnnotationFromId.value(id);
-    if (!annotation) {
+    // Mirror the point-click selection path: unhydrated annotations render as
+    // stub dots, so resolve to the stub and hit-test the dot — otherwise every
+    // stub-rendered annotation is silently unclickable.
+    const candidate = resolveSelectionCandidate(girderId);
+    if (!candidate) {
       continue;
     }
-    const unitsPerPixel = getMapUnitsPerPixel();
-    const shouldSelect = shouldSelectAnnotation(
-      AnnotationShape.Point,
-      [gcsCoordinates],
-      annotation,
-      geoAnnotation.style(),
-      unitsPerPixel,
-    );
-    if (shouldSelect) {
-      annotationToToggle = annotation;
+    const hit = isHydratedAnnotation(candidate)
+      ? shouldSelectAnnotation(
+          AnnotationShape.Point,
+          [gcsCoordinates],
+          candidate,
+          geoAnnotation.style(),
+          unitsPerPixel,
+        )
+      : shouldSelectStub(
+          gcsCoordinates,
+          candidate,
+          geoAnnotation.style(),
+          unitsPerPixel,
+        );
+    if (hit) {
+      annotationToToggle = candidate;
       break;
     }
   }
@@ -2993,6 +3867,31 @@ function setHoveredAnnotationFromCoordinates(gcsCoordinates: IGeoJSPosition) {
   } else {
     annotationStore.setHoveredAnnotationId(annotationToToggle.id);
   }
+
+  // Connections get the same plain-click affordance as objects. Without this a
+  // plain click highlights an object but does nothing whatsoever on a
+  // connection line — the line is skipped above — which reads as the feature
+  // being broken. Objects still win: connections are only considered when the
+  // click hit no object.
+  // Objects normally win, so a line crossing an object never steals its click.
+  // TIMELAPSE MODE INVERTS THAT: there the track segments are the thing being
+  // looked at and the annotation-layer dots sit underneath them, so a segment
+  // almost always crosses a dot and clicking a track did nothing at all for the
+  // connection. Prefer the connection there, and only fall back to the object.
+  const connectionId = findConnectionIdAtPoint(gcsCoordinates);
+  if (annotationToToggle && !(showTimelapseMode.value && connectionId)) {
+    connectionListStore.setHoveredConnectionId(null);
+    return;
+  }
+  if (annotationToToggle) {
+    // The connection won: undo the object hover set above.
+    annotationStore.setHoveredAnnotationId(null);
+  }
+  connectionListStore.setHoveredConnectionId(
+    connectionId && connectionId !== connectionListStore.hoveredConnectionId
+      ? connectionId
+      : null,
+  );
 }
 
 function getMapUnitsPerPixel(): number {
@@ -3233,6 +4132,11 @@ function onAnnotationStateChanged() {
 }
 
 function onTimelapseModeChanged() {
+  // A watcher-driven trailing rebuild may still be queued (e.g. changing a
+  // track filter both fires the primary watcher AND clears a non-empty
+  // selection, which lands here). This direct pass renders the same final
+  // state now, so drop the queued one — otherwise the ~100 ms pass runs twice.
+  drawTimelapseThrottled.cancel();
   drawTimelapseConnectionsAndCentroids();
 }
 
@@ -4025,15 +4929,67 @@ async function handleDragEnd(evt: IGeoJSMouseState) {
 // rendered an empty/incorrect frame momentarily and forced layerAnnotations to
 // recompute twice per frame change (the dominant residual cost of the scrub
 // freeze once feature reconstruction is cached).
+// connectionPassesTrackFilters rather than the raw trackFilters state: the
+// predicate is what the draw paths read, and watching it also covers a metric
+// changing under an active filter (e.g. a connection delete changing a track's
+// length). While no filter is active it is a stable constant, so this adds no
+// firing to the common case.
 watch(
-  [annotationConnections, shouldDrawAnnotations, shouldDrawConnections],
+  [
+    annotationConnections,
+    shouldDrawAnnotations,
+    shouldDrawConnections,
+    connectionPassesTrackFilters,
+  ],
   () => {
     onPrimaryChange();
   },
 );
 
+// Object selection/hover has to reach BOTH layers. `restyleAnnotations` (via
+// onAnnotationStateChanged) only ever touches `annotationLayer`, so the timelapse
+// centroid dots need their own pass — without it, selecting a whole track's
+// objects from the Connections tab changed nothing on screen while its links did
+// light up, making a correct object selection read as "it selected the
+// connections instead". In place rather than a rebuild: a selection can be
+// hundreds of objects, and unlike a connection duplicate's representative, a
+// dot's identity is not a draw-time choice.
+//
+// One watcher, not two on the same pair: this file has already been bitten by
+// "everything that must happen on event X" being spread across the file rather
+// than enumerated (see the cancel list in onBeforeUnmount).
 watch([hoveredAnnotationId, selectedAnnotationIds], () => {
   onAnnotationStateChanged();
+  if (showTimelapseMode.value) {
+    restyleTimelapseFeaturesThrottled();
+  }
+});
+
+// Connection selection/hover restyles normal-mode connection lines in place —
+// that path is throttled and touches only the affected features.
+watch([selectedConnectionIds, hoveredConnectionId], () => {
+  onAnnotationStateChanged();
+});
+
+// The timelapse layer's styling is decided during its rebuild pass, so the two
+// highlight channels are reflected differently there. SELECTION runs the
+// (diff-based) rebuild pass: it also decides which duplicate represents an
+// endpoint pair, which is a materialization-time choice. HOVER restyles the
+// drawn segments in place — it changes continuously while the pointer moves
+// down the connection list, and running the full desired-set computation per
+// row made the list feel sluggish. Both must do something: a row click
+// highlights via hover, so leaving hover unhandled made clicking a connection
+// look broken in timelapse mode while it worked everywhere else.
+watch(selectedConnectionIds, () => {
+  if (showTimelapseMode.value) {
+    onTimelapseModeChanged();
+  }
+});
+
+watch(hoveredConnectionId, () => {
+  if (showTimelapseMode.value) {
+    restyleTimelapseFeaturesThrottled();
+  }
 });
 
 // Rebuild spatial index asynchronously when displayed annotations change
@@ -4041,13 +4997,25 @@ watch(displayedAnnotations, (annotations) => {
   buildSpatialIndex(annotations);
 });
 
-// Timelapse mode: 4 sources (fixes timelapseTags bug by watching store directly)
+// Timelapse mode: every draw input (watching the store directly fixes an older
+// timelapseTags bug). Track colour is baked into the line features at build
+// time — there is no restyle-in-place path for it, the way there is for
+// hover — so the colouring controls MUST appear here or they change nothing
+// until the next unrelated redraw.
 watch(
   [
     showTimelapseMode,
     timelapseModeWindow,
-    () => store.timelapseTags,
+    () => timelapseStore.tags,
     showTimelapseLabels,
+    () => timelapseStore.trackColoring,
+    () => timelapseStore.colorSeed,
+    // connectionPassesTrackFilters is deliberately NOT here: the PRIMARY
+    // watcher observes it, and its drawAnnotationsAndTooltips already
+    // rebuilds the timelapse layer directly — a second entry here made every
+    // filter keystroke reconstruct all track features twice (three times with
+    // the selection-clearing watcher). This list is for inputs the primary
+    // watcher does NOT observe.
   ],
   () => {
     onTimelapseModeChanged();
@@ -4107,12 +5075,46 @@ let lastCameraEvent: { zoom: number; center: IGeoJSPosition } | null = null;
 
 // Visibility and hydration updates
 function updateVisibility() {
+  if (rasterActive.value && props.allowSharedVisibilitySuppression) {
+    annotationStore.updateVisibilityAndHydration({
+      currentFrameLocation: { XY: xy.value, Z: z.value, Time: time.value },
+      suppress: true,
+    });
+    lastRefreshCamera = {
+      zoom: store.cameraInfo.zoom,
+      center: store.cameraInfo.center,
+    };
+    return;
+  }
   // Only materialize an id array when a client filter is active. Without one,
   // omit it and let the store derive ids from its own stub map, avoiding a
   // full-dataset id array allocation per frame change (Finding 15).
-  const ids = store.filteredDraw
-    ? filteredAnnotations.value.map((a: TAnnotationOrStub) => a.id)
-    : undefined;
+  //
+  // The track-filter object opt-in composes here exactly as it does in
+  // displayableAnnotations — the two are twins: this id set drives the
+  // stub-mode visibility budget, hydration, and the HUD's viewport counts, so
+  // narrowing only the drawn set would spend budget slots on objects the draw
+  // path then discards and leave the HUD counting hidden objects. The
+  // full-array materialization in the opt-in-only branch is the same
+  // filteredDraw tradeoff, paid only while the opt-in narrows.
+  const passesTrackFilters = annotationPassesTrackFilters.value;
+  const trackNarrowing = connectionListStore.trackFilterHidesObjects;
+  let ids: string[] | undefined;
+  if (store.filteredDraw) {
+    const filtered = filteredAnnotations.value;
+    ids = (
+      trackNarrowing
+        ? filtered.filter((a: TAnnotationOrStub) => passesTrackFilters(a.id))
+        : filtered
+    ).map((a: TAnnotationOrStub) => a.id);
+  } else if (trackNarrowing) {
+    ids = [];
+    for (const annotation of annotationStore.annotationsForIteration) {
+      if (passesTrackFilters(annotation.id)) {
+        ids.push(annotation.id);
+      }
+    }
+  }
   // Zoom-adaptive budget (C4): render fewer objects when zoomed out (where they
   // overlap into noise and the heavy redraw briefly locks the UI), ramping up to
   // the full configured cap as the user zooms in. The zoomed-out floor is
@@ -4157,9 +5159,32 @@ function updateVisibility() {
 }
 const updateVisibilityDebounced = debounce(updateVisibility, 250);
 
+watch(rasterActive, updateVisibility);
+watch(() => props.allowSharedVisibilitySuppression, updateVisibility);
+
+watch(
+  [
+    () => store.cameraInfo.zoom,
+    () => annotationStore.overviewConfig,
+    unrolling,
+    () => props.annotationOverviewLayer,
+    () => store.drawAnnotations,
+    rasterSelectors,
+  ],
+  updateAnnotationOverviewMode,
+  { immediate: true },
+);
+
 // Frame changes (XY, Z, Time) and annotation list changes update immediately
 // to avoid flash of empty frame while debounce waits
-watch([filteredAnnotations, xy, z, time], updateVisibility);
+// annotationPassesTrackFilters: the object opt-in narrows the visibility id
+// set (see updateVisibility), so toggling it — or a metric changing under an
+// active bound — must refresh visibility like any filter change. A stable
+// constant while the opt-in is off, so no extra firing in the common case.
+watch(
+  [filteredAnnotations, xy, z, time, annotationPassesTrackFilters],
+  updateVisibility,
+);
 
 // Camera changes (pan/zoom) are debounced since they fire rapidly. Pan refreshes
 // on any amount (a new region is revealed); zoom keeps a magnification
@@ -4406,7 +5431,9 @@ onMounted(() => {
   bindTimelapseEvents();
   bindInteractionEvents();
   updateValueOnHover();
-  filterStore.updateHistograms();
+  void filterStore
+    .updateHistograms()
+    .catch((error) => logError("Failed to refresh property histograms", error));
   addHoverCallback();
   updateVisibilityDebounced();
 });
@@ -4418,17 +5445,29 @@ onBeforeUnmount(() => {
   // Cancel pending debounced/throttled callbacks so a trailing fire after
   // teardown (e.g. navigating away right after a pan) can't run against a dead
   // layer / torn-down view (Finding 4).
+  // Every throttled/debounced function in this file belongs here. The list is
+  // covered by a test that DISCOVERS them rather than naming them, because an
+  // enumerated list is how the two below went missing in the first place.
   updateVisibilityDebounced.cancel();
   restyleAnnotationsThrottled.cancel();
+  restyleTimelapseFeaturesThrottled.cancel();
+  drawTimelapseThrottled.cancel();
   drawAnnotations.cancel();
   drawTooltips.cancel();
   handleValueOnMouseMoveDebounce.cancel();
+  handleLineScanMouseMove.cancel();
   lineScanStore.setToolLineType(null);
   lineScanStore.clearLine();
   if (spatialIndexRequestId !== null) {
     cancelIdleCallback(spatialIndexRequestId);
   }
   clearRetainedFeatureCache();
+  if (props.annotationOverviewLayer) {
+    emit("annotation-overview-visibility-change", {
+      visible: false,
+      opacity: annotationStore.overviewConfig.opacity,
+    });
+  }
 });
 
 // ---- Expose ----
@@ -4440,6 +5479,7 @@ defineExpose({
   filterStore,
   // Refs
   isDragging,
+  rasterActive,
   dragStartPosition,
   draggedAnnotation,
   dragGhostAnnotation,
@@ -4463,6 +5503,7 @@ defineExpose({
   showColorDialog,
   geometryNotLoadedSnackbar,
   // Computed
+  unrollLayout,
   unrolledCentroidCoordinates,
   annotationSelectionType,
   roiFilter,
@@ -4520,8 +5561,6 @@ defineExpose({
   // Functions
   getAnyLayerForChannel,
   getAnnotationStyle,
-  unrollIndex,
-  unrolledCoordinates,
   drawAnnotationsAndTooltips,
   drawAnnotationsNoThrottle,
   drawAnnotations,
@@ -4529,13 +5568,15 @@ defineExpose({
   drawTooltips,
   updateVisibilityDebounced,
   restyleAnnotationsThrottled,
+  restyleTimelapseFeatures,
+  restyleTimelapseFeaturesThrottled,
   clearOldAnnotations,
   drawNewAnnotations,
   drawNewConnections,
   findConnectedComponents,
   getDisplayedAnnotationIdsAcrossTime,
-  getDisplayedAnnotationsAcrossTime,
   drawTimelapseConnectionsAndCentroids,
+  timelapseRebuildCount,
   drawTimelapseTrack,
   drawTimelapseAnnotationCentroidsAndLabels,
   createGeoJSAnnotation,
@@ -4544,7 +5585,9 @@ defineExpose({
   restyleAnnotations,
   pointNearPoint,
   pointNearLine,
+  findConnectionIdAtPoint,
   shouldSelectAnnotation,
+  shouldSelectStub,
   getSelectedAnnotationsFromAnnotation,
   shouldSelectGeoJSAnnotation,
   getTimelapseAnnotationsFromAnnotation,

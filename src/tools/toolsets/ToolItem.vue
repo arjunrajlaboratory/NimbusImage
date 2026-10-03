@@ -39,15 +39,39 @@
       <v-icon v-else-if="statusIcon">{{ statusIcon }}</v-icon>
     </v-list-item-title>
     <template #append>
-      <v-btn
-        size="x-small"
-        variant="text"
-        icon
-        @click.stop="editDialog = true"
-        v-show="isHovering"
-      >
-        <v-icon size="14">mdi-pen</v-icon>
-      </v-btn>
+      <div v-show="isHovering" class="tool-item__actions">
+        <v-btn
+          size="x-small"
+          variant="text"
+          icon
+          :aria-label="tool.pinned ? 'Unpin tool' : 'Pin tool'"
+          class="tool-item__pin"
+          @click.stop="togglePinned"
+        >
+          <v-icon size="14">
+            {{ tool.pinned ? "mdi-pin-off-outline" : "mdi-pin-outline" }}
+          </v-icon>
+        </v-btn>
+        <v-btn
+          size="x-small"
+          variant="text"
+          icon
+          aria-label="Edit tool"
+          @click.stop="editDialog = true"
+        >
+          <v-icon size="14">mdi-pen</v-icon>
+        </v-btn>
+        <!-- Drag handle for the Toolset's per-section sortable; clicking it
+             must not toggle the tool. -->
+        <v-icon
+          size="14"
+          class="tool-item__drag-handle"
+          aria-hidden="true"
+          @click.stop
+        >
+          mdi-drag-vertical
+        </v-icon>
+      </div>
     </template>
     <v-dialog v-model="editDialog">
       <tool-edition :tool="tool" @close="editDialog = false" />
@@ -70,7 +94,10 @@ const props = defineProps<{
 
 const isHovering = ref(false);
 const editDialog = ref(false);
-const statusIcon = ref<string | null>(null);
+
+function togglePinned() {
+  store.setToolPinned({ toolId: props.tool.id, pinned: !props.tool.pinned });
+}
 
 function toggleTool() {
   if (isToolSelected.value) {
@@ -92,15 +119,29 @@ const jobId = computed((): string | null => {
   return jobs.jobIdForToolId[props.tool.id] ?? null;
 });
 
+const statusIcon = computed((): string | null => {
+  const success = jobs.toolJobOutcome(props.tool.id);
+  if (success === undefined) {
+    return null;
+  }
+  return success ? "mdi-check" : "mdi-close";
+});
+
 function onJobChanged() {
   if (!jobId.value) {
     return;
   }
+  // Capture the scope now: a job that finishes after the user switched
+  // dataset, collection or account must not report into the new one.
+  const toolId = props.tool.id;
+  const scope = jobs.toolJobScope;
+  // Undefined if the job already settled (the jobs store drops finished
+  // entries), in which case there is no outcome left to show an icon for.
+  // The outcome goes to the store so it survives this item remounting.
   jobs
     .getPromiseForJobId(jobId.value)
-    .then(
-      (success: boolean) =>
-        (statusIcon.value = success ? "mdi-check" : "mdi-close"),
+    ?.then((success: boolean) =>
+      jobs.setToolJobOutcome({ toolId, scope, success }),
     );
 }
 
@@ -111,6 +152,7 @@ defineExpose({
   editDialog,
   statusIcon,
   toggleTool,
+  togglePinned,
   isToolSelected,
   isToolLoading,
   jobId,
@@ -160,6 +202,16 @@ defineExpose({
   height: 6px;
   border-radius: 50%;
   background-color: rgb(var(--v-theme-primary));
+}
+
+.tool-item__actions {
+  display: flex;
+  align-items: center;
+}
+
+.tool-item__drag-handle {
+  cursor: grab;
+  opacity: 0.6;
 }
 
 .tool-item :deep(.v-list-item__prepend) {

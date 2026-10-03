@@ -38,6 +38,9 @@ vi.mock("@/store/properties", () => ({
 vi.mock("@/store/annotation", () => ({
   default: {
     annotations: [] as any[],
+    annotationsForIteration: [] as any[],
+    annotationCount: 0,
+    getAnnotationOrStubFromId: () => undefined,
     selectedAnnotationIds: new Set<string>(),
   },
 }));
@@ -110,6 +113,36 @@ const samplePropertyPaths = [
   ["propC", "sub3"],
 ];
 
+// defineProperty (not plain assignment) so a test that swapped a member for a
+// throwing accessor can still be reset by the next helper call.
+function defineStoreMember(key: string, value: any) {
+  Object.defineProperty(annotationStore, key, {
+    value,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+}
+
+function setStoreItems(items: any[], { stubOnly = false } = {}) {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  defineStoreMember("annotations", stubOnly ? [] : items);
+  defineStoreMember("annotationsForIteration", items);
+  defineStoreMember("annotationCount", items.length);
+  defineStoreMember("getAnnotationOrStubFromId", (id: string) => byId.get(id));
+}
+
+// In full mode annotations, annotationsForIteration, and annotationCount all
+// describe the same collection; set them together so the mock can't drift.
+function setStoreAnnotations(annotations: any[]) {
+  setStoreItems(annotations);
+}
+
+// Stub-only mode: annotations[] is empty by design, metadata lives in stubs.
+function setStoreStubs(stubs: any[]) {
+  setStoreItems(stubs, { stubOnly: true });
+}
+
 function mountComponent(propsOverrides: any = {}) {
   return shallowMount(AnnotationCSVDialog, {
     props: {
@@ -136,7 +169,7 @@ describe("AnnotationCSVDialog", () => {
       batchFetchResources: vi.fn().mockResolvedValue(undefined),
       watchFolder: vi.fn().mockReturnValue({ name: "Folder" }),
     };
-    (annotationStore as any).annotations = sampleAnnotations;
+    setStoreAnnotations(sampleAnnotations);
     (annotationStore as any).selectedAnnotationIds = new Set<string>();
     (propertyStore as any).displayedPropertyPaths = [["propA", "sub1"]];
     (propertyStore as any).getFullNameFromPath = vi.fn((path: string[]) => {
@@ -168,7 +201,7 @@ describe("AnnotationCSVDialog", () => {
       datasetId: "ds1",
       color: null,
     }));
-    (annotationStore as any).annotations = manyAnnotations;
+    setStoreAnnotations(manyAnnotations);
     const wrapper = mountComponent({ annotations: manyAnnotations });
     const vm = wrapper.vm as any;
     expect(vm.isTooLargeForPreview).toBe(true);
@@ -294,6 +327,7 @@ describe("AnnotationCSVDialog", () => {
       datasetId: "ds1",
       color: null,
     }));
+    setStoreAnnotations(manyAnnotations);
     const wrapper = mountComponent({ annotations: manyAnnotations });
     const vm = wrapper.vm as any;
     vm.dialog = true;
@@ -339,6 +373,153 @@ describe("AnnotationCSVDialog", () => {
     // When exporting all annotations (not a subset), annotationIds is omitted
     // to avoid exceeding MongoDB's BSON size limit
     expect(arg.annotationIds).toBeUndefined();
+  });
+
+  it("download sends the selected subset's ids", async () => {
+    (annotationStore as any).selectedAnnotationIds = new Set(["ann1"]);
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.annotationScope = "selected";
+    vm.propertyExportMode = "all";
+    await vm.download();
+    const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+    expect(arg.annotationIds).toEqual(["ann1"]);
+  });
+
+  describe("stub-only mode", () => {
+    // In stub-only mode annotationStore.annotations is empty by design; the
+    // dialog must derive scopes from the stub-aware store members instead.
+    const sampleStubs = ["s1", "s2", "s3"].map((id) => ({
+      id,
+      centroid: { x: 0, y: 0 },
+      location: { XY: 0, Z: 0, Time: 0 },
+      shape: "polygon",
+      channel: 0,
+      tags: [],
+      color: null,
+    }));
+
+    beforeEach(() => {
+      setStoreStubs(sampleStubs);
+    });
+
+    it("selected scope sends the selected ids, not an omitted field", async () => {
+      (annotationStore as any).selectedAnnotationIds = new Set(["s1", "s3"]);
+      const wrapper = mountComponent({ annotations: sampleStubs });
+      const vm = wrapper.vm as any;
+      vm.annotationScope = "selected";
+      vm.propertyExportMode = "all";
+      await vm.download();
+      const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+      expect(arg.annotationIds).toEqual(["s1", "s3"]);
+    });
+
+    it("all scope still omits annotationIds", async () => {
+      const wrapper = mountComponent({ annotations: sampleStubs });
+      const vm = wrapper.vm as any;
+      vm.annotationScope = "all";
+      vm.propertyExportMode = "all";
+      await vm.download();
+      const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+      expect(arg.annotationIds).toBeUndefined();
+    });
+
+    it("filtered scope sends the filtered ids", async () => {
+      const filteredStubs = sampleStubs.slice(0, 2);
+      const wrapper = mountComponent({ annotations: filteredStubs });
+      const vm = wrapper.vm as any;
+      vm.annotationScope = "filtered";
+      vm.propertyExportMode = "all";
+      await vm.download();
+      const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+      expect(arg.annotationIds).toEqual(["s1", "s2"]);
+    });
+
+    it("selected-scope download never materializes the stub iteration array", async () => {
+      // On a large dataset annotationsForIteration is an Array.from over the
+      // whole stub map; the download path already has the ids and must not
+      // pay that dataset-sized allocation-and-scan.
+      (annotationStore as any).selectedAnnotationIds = new Set(["s2"]);
+      Object.defineProperty(annotationStore, "annotationsForIteration", {
+        get() {
+          throw new Error("annotationsForIteration was materialized");
+        },
+        configurable: true,
+      });
+      const wrapper = mountComponent({ annotations: sampleStubs });
+      const vm = wrapper.vm as any;
+      vm.annotationScope = "selected";
+      vm.propertyExportMode = "all";
+      await vm.download();
+      const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+      expect(arg.annotationIds).toEqual(["s2"]);
+    });
+
+    it("selected-scope preview resolves stubs by id lookup", async () => {
+      (annotationStore as any).selectedAnnotationIds = new Set(["s1", "s3"]);
+      const wrapper = mountComponent({ annotations: sampleStubs });
+      const vm = wrapper.vm as any;
+      vm.annotationScope = "selected";
+      vm.propertyExportMode = "all";
+      const csv = await vm.generateCSVStringForAnnotations();
+      expect(csv).toContain("s1");
+      expect(csv).toContain("s3");
+      expect(csv).not.toContain("s2");
+    });
+
+    it("filtered-scope count/preview guard never allocates the id array", async () => {
+      // Twin of the selected-scope allocation test: with a filter matching
+      // hundreds of thousands of stubs, the count and preview-limit checks
+      // must read props.annotations.length only; the dataset-sized id array
+      // may be built exactly once, at download time.
+      const filteredStubs = sampleStubs.slice(0, 2);
+      let mapCalls = 0;
+      const spiedAnnotations = Object.assign([...filteredStubs], {
+        map(...args: Parameters<typeof Array.prototype.map>) {
+          mapCalls++;
+          return Array.prototype.map.apply(this, args);
+        },
+      });
+      const wrapper = mountComponent({ annotations: spiedAnnotations });
+      const vm = wrapper.vm as any;
+      vm.annotationScope = "filtered";
+      vm.propertyExportMode = "all";
+      expect(vm.exportAnnotationCount).toBe(2);
+      expect(vm.isTooLargeForPreview).toBe(false);
+      expect(mapCalls).toBe(0);
+      await vm.download();
+      const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+      expect(arg.annotationIds).toEqual(["s1", "s2"]);
+      expect(mapCalls).toBe(1);
+    });
+
+    it("stale selected ids never widen the export to the whole dataset", async () => {
+      // A deleted annotation can linger in selectedAnnotationIds (e.g. a
+      // context-menu delete, or an undo). If stale ids counted toward the
+      // "is this the whole dataset" comparison, selecting 1 live + 1 stale
+      // id in a 2-annotation dataset would omit annotationIds and export
+      // everything.
+      setStoreStubs(sampleStubs.slice(0, 2)); // s1, s2 live
+      (annotationStore as any).selectedAnnotationIds = new Set([
+        "s1",
+        "deleted-id",
+      ]);
+      const wrapper = mountComponent({ annotations: sampleStubs.slice(0, 2) });
+      const vm = wrapper.vm as any;
+      vm.annotationScope = "selected";
+      vm.propertyExportMode = "all";
+      await vm.download();
+      const arg = (store.exportAPI.exportCsv as any).mock.calls[0][0];
+      expect(arg.annotationIds).toEqual(["s1"]);
+    });
+
+    it("counts come from the stub-aware annotationCount", () => {
+      const wrapper = mountComponent({ annotations: sampleStubs.slice(0, 1) });
+      const vm = wrapper.vm as any;
+      expect(vm.allAnnotationCount).toBe(3);
+      // One of three passes the filter, so the filtered radio is enabled.
+      expect(vm.hasActiveFilter).toBe(true);
+    });
   });
 
   it("generateCSVStringForAnnotations produces CSV with headers", async () => {

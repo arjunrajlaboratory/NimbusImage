@@ -34,7 +34,9 @@ import {
   TJobType,
   IDatasetConfigurationCompatibility,
   IJob,
+  IUserStorageQuota,
   resolveVisibilityConfig,
+  resolveAnnotationOverviewConfig,
 } from "@/store/model";
 import {
   toStyle,
@@ -506,6 +508,16 @@ export default class GirderAPI {
       .then((r) => asDatasetView(r.data));
   }
 
+  async getSnapshotImage(url: URL): Promise<ArrayBuffer> {
+    const response = await this.client.get<ArrayBuffer>(url.href, {
+      responseType: "arraybuffer",
+    });
+    if (response.data.byteLength === 0) {
+      throw new Error("Snapshot crop contains no image data.");
+    }
+    return response.data;
+  }
+
   getDatasetView(id: string) {
     return this.client
       .get(`dataset_view/${id}`)
@@ -828,7 +840,16 @@ export default class GirderAPI {
   }
 
   deleteDataset(dataset: IDataset): Promise<IDataset> {
-    return this.client.delete(`/folder/${dataset.id}`).then(() => dataset);
+    // DELETE /resource, not DELETE /folder/:id. Since Girder 5.0.11 the folder
+    // endpoint hands deletion to a Celery task on the "local" queue and returns
+    // 503 when no worker consumes it; /resource removes the folder in-request
+    // through the same Folder().remove(), as the dataset browser (deleteItems)
+    // already does.
+    return this.client
+      .delete("resource", {
+        params: { resources: JSON.stringify({ folder: [dataset.id] }) },
+      })
+      .then(() => dataset);
   }
 
   async createConfigurationFromBase(
@@ -1121,6 +1142,23 @@ export default class GirderAPI {
     }
   }
 
+  // Fetch the user's storage usage and quota from the girder-user-quota
+  // plugin. `quota` is null when the user has no quota (unlimited storage).
+  // Returns null if the quota information cannot be fetched (e.g. the
+  // user-quota plugin is not enabled on the backend).
+  async getUserStorageQuota(userId: string): Promise<IUserStorageQuota | null> {
+    try {
+      const response = await this.client.get(`user/${userId}/quota`);
+      return {
+        used: response.data.size ?? 0,
+        quota: response.data.quota?._currentFileSizeQuota ?? null,
+      };
+    } catch (error) {
+      logError("Failed to fetch user storage quota");
+      return null;
+    }
+  }
+
   async getUserColors(): Promise<{ [key: string]: string }> {
     const response = await this.client.get("user_colors");
     if (response.status !== 200) {
@@ -1290,6 +1328,12 @@ export function setBaseCollectionValues(
       );
       continue;
     }
+    if (key === "overviewConfig") {
+      config.overviewConfig = resolveAnnotationOverviewConfig(
+        item.meta.overviewConfig,
+      );
+      continue;
+    }
     config[key] =
       key in item.meta ? item.meta[key] : exampleConfigurationBase()[key];
   }
@@ -1328,6 +1372,7 @@ export interface IHistogramOptions {
 
 export interface ITileMeta {
   [x: string]: any;
+  dtype?: string;
   IndexRange: any;
   levels: number;
   magnification: number;

@@ -92,6 +92,7 @@ Plugin endpoints use custom names that differ from what you might expect:
 | `/annotation_property` | `server/api/property.py` | Property definitions |
 | `/worker_interface` | `server/api/workerInterfaces.py` | Docker worker registration |
 | `/worker_preview` | `server/api/workerPreviews.py` | Worker preview images |
+| `/dataset` | `server/api/dataset.py` | Multi-source dataset configuration (`POST /dataset/{id}/multi_source`) |
 | `/dataset_view` | `server/api/datasetView.py` | Per-user view state |
 | `/history` | `server/api/history.py` | Undo/redo history |
 | `/user_assetstore` | `server/api/user_assetstore.py` | Per-user storage |

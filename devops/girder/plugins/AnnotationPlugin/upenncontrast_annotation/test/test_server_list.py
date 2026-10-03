@@ -39,6 +39,37 @@ def postList(server, user, path, body):
     )
 
 
+def assertAnchorPagesSelfConsistent(server, admin, datasetId, annotationIds,
+                                    sort, limit, filters=None,
+                                    propertyPaths=None):
+    """For every annotation: the anchor page must be page-aligned, contain
+    the anchor, and be byte-identical to the plain offset-paged request at
+    the returned offset — i.e. listPosition agrees with listPage ordering."""
+    base = {
+        "datasetId": str(datasetId),
+        "filters": filters or {},
+        "sort": sort,
+        "propertyPaths": propertyPaths or [],
+        "limit": limit,
+    }
+    for annotationId in annotationIds:
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            **base, "offset": 0, "anchorId": str(annotationId),
+        })
+        assertStatusOk(resp)
+        anchored = parseStreaming(resp)
+        assert anchored["offset"] is not None
+        assert anchored["offset"] % limit == 0
+        anchoredIds = [str(r["_id"]) for r in anchored["rows"]]
+        assert str(annotationId) in anchoredIds
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            **base, "offset": anchored["offset"],
+        })
+        assertStatusOk(resp)
+        paged = [str(r["_id"]) for r in parseStreaming(resp)["rows"]]
+        assert anchoredIds == paged
+
+
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
 class TestServerListIds:
@@ -133,6 +164,129 @@ class TestServerListPage:
         xys = [r["location"]["XY"] for r in result["rows"]]
         assert xys == [2, 1, 0]
 
+    def testListAnchorReturnsContainingPage(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        annotations = []
+        for i in range(5):
+            annotations.append(makeAnnotation(
+                folder["_id"], location={"XY": i, "Z": 0, "Time": 0}
+            ))
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "location.XY",
+                     "order": "asc"},
+            "propertyPaths": [], "offset": 0, "limit": 2,
+            "anchorId": str(annotations[3]["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 2
+        assert [r["location"]["XY"] for r in result["rows"]] == [2, 3]
+
+    def testListAnchorOutsideFiltersReturnsNoPage(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        target = makeAnnotation(folder["_id"], tags=["excluded"])
+        makeAnnotation(folder["_id"], tags=["included"])
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"tags": {
+                "values": ["included"], "exclusive": False,
+            }},
+            "sort": None, "propertyPaths": [], "offset": 0, "limit": 10,
+            "anchorId": str(target["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == 1
+        assert result["offset"] is None
+        assert result["rows"] == []
+
+    def testListAnchorFieldSortDescending(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        annotations = [
+            makeAnnotation(folder["_id"], location={"XY": i, "Z": 0,
+                                                    "Time": 0})
+            for i in range(5)
+        ]
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "location.XY",
+                     "order": "desc"},
+            "propertyPaths": [], "offset": 0, "limit": 2,
+            # Descending order is 4,3,2,1,0 so XY=1 is at position 3.
+            "anchorId": str(annotations[1]["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 2
+        assert [r["location"]["XY"] for r in result["rows"]] == [2, 1]
+
+    def testListAnchorEqualSortValuesTieBrokenById(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        annotations = [
+            makeAnnotation(folder["_id"], location={"XY": 7, "Z": 0,
+                                                    "Time": 0})
+            for _ in range(3)
+        ]
+
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "field", "key": "location.XY", "order": "asc"},
+            "propertyPaths": [], "offset": 0, "limit": 1,
+            # All XY equal: order falls back to _id asc (creation order).
+            "anchorId": str(annotations[1]["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 1
+        assert str(result["rows"][0]["_id"]) == str(annotations[1]["_id"])
+
+    def testListAnchorNameSortWithMissingNames(self, admin, server):
+        # `name` is a nullable sort field: a missing name must order
+        # identically in the anchor position query and in the page sort
+        # (both treat missing as null).
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        annotations = [makeAnnotation(folder["_id"]) for _ in range(6)]
+        for unnamed in annotations[::2]:
+            Annotation().collection.update_one(
+                {"_id": unnamed["_id"]}, {"$unset": {"name": ""}}
+            )
+
+        for order in ("asc", "desc"):
+            assertAnchorPagesSelfConsistent(
+                server, admin, folder["_id"],
+                [a["_id"] for a in annotations],
+                {"type": "field", "key": "name", "order": order},
+                limit=2,
+            )
+
+    def testListRejectsInvalidAnchorId(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {}, "offset": 0, "limit": 10,
+            "anchorId": "not-an-object-id",
+        })
+        assertStatus(resp, 400)
+
     def testInvalidFieldSortReturns400(self, admin, server):
         folder = utilities.createFolder(
             admin, "ds", upenn_utilities.datasetMetadata
@@ -219,6 +373,71 @@ class TestServerListProperties:
         vals = [r["values"]["p"]["Area"] for r in result["rows"][:3]]
         assert vals == [30, 20, 10]
         assert str(result["rows"][-1]["_id"]) == str(noval["_id"])
+
+    def testPropertySortAnchorReturnsContainingPage(self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 2,
+            # anns[0] has Area=30, at position 2 after 10 and 20.
+            "anchorId": str(anns[0]["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 2
+        assert str(result["rows"][0]["_id"]) == str(anns[0]["_id"])
+        assert str(result["rows"][1]["_id"]) == str(noval["_id"])
+
+    def testPropertySortAnchorWithoutValueLandsOnTailPage(
+            self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 2,
+            # noval has no Area value, so it sorts last: position 3.
+            "anchorId": str(noval["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 2
+        assert str(result["rows"][1]["_id"]) == str(noval["_id"])
+
+    def testPropertySortDescAnchorsSelfConsistent(self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        assertAnchorPagesSelfConsistent(
+            server, admin, folder["_id"],
+            [a["_id"] for a in anns] + [noval["_id"]],
+            {"type": "property", "key": ["p", "Area"], "order": "desc"},
+            limit=2, propertyPaths=[["p", "Area"]],
+        )
+
+    def testPropertyFilterWithAnchor(self, admin, server):
+        folder, anns, noval = self._setup(admin)
+        propertyFilters = [{
+            "path": ["p", "Area"], "mode": "range", "min": 15,
+        }]
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"propertyFilters": propertyFilters},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0, "limit": 1,
+            # Filtered set is Area 20, 30 (asc): anns[0] (30) is position 1.
+            "anchorId": str(anns[0]["_id"]),
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["offset"] == 1
+        assert str(result["rows"][0]["_id"]) == str(anns[0]["_id"])
 
     def testPureSortNoDuplicateWhenPvDocLacksSortKey(self, admin, server):
         # Regression (Codex finding #4): on a pure property sort, an annotation
@@ -913,3 +1132,244 @@ class TestServerListCountConsistency:
         result = parseStreaming(resp)
         assert result["total"] == len(result["rows"])
         assert result["total"] == 1
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestServerListAnalysisGates:
+    """Gate definitions as first-class list filter terms (SERVER_GATING.md,
+    Phase 3): the client sends polygons, the server resolves them once per
+    request as pure predicates and ANDs them into the query — no gate id
+    lists round-trip on page fetches."""
+
+    def _setup(self, admin):
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        anns = []
+        for val in (30, 10, 20):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": val}}, a["_id"], folder["_id"])
+            anns.append(a)
+        noval = makeAnnotation(folder["_id"])
+        return folder, anns, noval
+
+    @staticmethod
+    def gateFilter(low, high):
+        return {
+            "xAxis": {"type": "property", "path": ["p", "Area"]},
+            "yAxis": {"type": "property", "path": ["p", "Area"]},
+            "gate": {
+                "categoryKeyVersion": 1,
+                "vertices": [
+                    {"x": low, "y": low}, {"x": high, "y": low},
+                    {"x": high, "y": high}, {"x": low, "y": high},
+                ],
+                "xCategories": None,
+                "yCategories": None,
+            },
+        }
+
+    def testGateNarrowsListIds(self, admin, server):
+        folder, anns, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [self.gateFilter(5, 25)]},
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        # Area 10 and 20 fall inside [5,25]²; 30 and the no-values
+        # annotation do not.
+        assert result["total"] == 2
+        assert sorted(result["ids"]) == sorted(
+            [str(anns[1]["_id"]), str(anns[2]["_id"])]
+        )
+
+    def testGateComposesWithPropertyFilter(self, admin, server):
+        folder, anns, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {
+                "analysisGates": [self.gateFilter(5, 25)],
+                "propertyFilters": [
+                    {"path": ["p", "Area"], "mode": "range",
+                     "min": 15, "max": 100},
+                ],
+            },
+        })
+        assertStatusOk(resp)
+        assert parseStreaming(resp)["ids"] == [str(anns[2]["_id"])]
+
+    def testZeroMatchGateIsZeroRowsNot400(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [self.gateFilter(1000, 1001)]},
+        })
+        assertStatusOk(resp)
+        assert parseStreaming(resp)["total"] == 0
+
+    def testGateAppliesToPageAndCount(self, admin, server):
+        folder, anns, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [self.gateFilter(5, 25)]},
+            "sort": {"type": "property", "key": ["p", "Area"],
+                     "order": "asc"},
+            "propertyPaths": [["p", "Area"]],
+            "offset": 0,
+            "limit": 10,
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert result["total"] == 2
+        assert [r["values"]["p"]["Area"] for r in result["rows"]] == [10, 20]
+
+    def testTwoGatesAnd(self, admin, server):
+        folder, anns, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [
+                self.gateFilter(5, 25),   # keeps 10, 20
+                self.gateFilter(15, 25),  # keeps 20
+            ]},
+        })
+        assertStatusOk(resp)
+        assert parseStreaming(resp)["ids"] == [str(anns[2]["_id"])]
+
+    def testMalformedGateIs400(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        bad = self.gateFilter(0, 1)
+        bad["xAxis"] = {"type": "nope"}
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [bad]},
+        })
+        assertStatus(resp, 400)
+
+    def testNonListAnalysisGatesIs400(self, admin, server):
+        folder, _, _ = self._setup(admin)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": {"gate": None}},
+        })
+        assertStatus(resp, 400)
+
+    def testMajorityGateUsesComplementNotAGiantIn(self, admin, server):
+        """A gate matching most of the dataset must not materialize every
+        match into one `$in`: near a million objects that array alone
+        approaches MongoDB's 16 MB command limit. Excluding the complement is
+        equivalent inside a dataset-scoped pipeline and is strictly smaller.
+        """
+        from upenncontrast_annotation.server.models.annotation import (
+            Annotation as AnnotationModel,
+        )
+        folder, anns, noval = self._setup(admin)
+        # Areas 30/10/20 plus one annotation without values. A gate over
+        # [5, 100] keeps 3 of 4 — a majority, so the complement is smaller.
+        filters = {"analysisGates": [self.gateFilter(5, 100)]}
+        AnnotationModel().resolveListGateConstraints(folder["_id"], filters)
+        clauses = filters.get("gateMatchClauses") or []
+        assert len(clauses) == 1
+        assert "$nin" in clauses[0]["_id"], clauses
+        # The complement is the one annotation with no values.
+        assert clauses[0]["_id"]["$nin"] == [noval["_id"]]
+        assert not filters.get("idConstraints")
+
+    def testMinorityGateStillUsesIn(self, admin, server):
+        from upenncontrast_annotation.server.models.annotation import (
+            Annotation as AnnotationModel,
+        )
+        folder, anns, _ = self._setup(admin)
+        filters = {"analysisGates": [self.gateFilter(5, 15)]}  # keeps Area 10
+        AnnotationModel().resolveListGateConstraints(folder["_id"], filters)
+        clauses = filters.get("gateMatchClauses") or []
+        assert len(clauses) == 1
+        assert clauses[0]["_id"]["$in"] == [anns[1]["_id"]]
+
+    def testComplementAndInAgreeThroughTheEndpoint(self, admin, server):
+        """Whichever representation is chosen, the answer is the same."""
+        folder, anns, _ = self._setup(admin)
+        for low, high, expected in ((5, 100, 3), (5, 15, 1)):
+            resp = postList(server, admin, "/upenn_annotation/list/ids", {
+                "datasetId": str(folder["_id"]),
+                "filters": {"analysisGates": [self.gateFilter(low, high)]},
+            })
+            assertStatusOk(resp)
+            assert parseStreaming(resp)["total"] == expected, (low, high)
+
+    def testOversizedGateConstraintIs400NotAMongoFailure(
+        self, admin, server, monkeypatch
+    ):
+        """Past the budget the request must fail with a comprehensible 400
+        rather than an opaque BSON-limit error from MongoDB."""
+        from upenncontrast_annotation.server.models import annotation as mod
+        folder, _, _ = self._setup(admin)
+        monkeypatch.setattr(mod, "MAX_GATE_CONSTRAINT_IDS", 1)
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"analysisGates": [self.gateFilter(5, 25)]},
+        })
+        assertStatus(resp, 400)
+
+    def testMarginalMajorityStaysWithIn(self, admin, server):
+        """`$nin` costs ~1.4x per element, so a barely-smaller complement is
+        a loss, not a win. Only switch when it at least halves the payload —
+        measured crossover is near 0.67 (see resolveListGateConstraints).
+        """
+        from upenncontrast_annotation.server.models.annotation import (
+            Annotation as AnnotationModel,
+        )
+        folder = utilities.createFolder(
+            admin, "marginal", upenn_utilities.datasetMetadata
+        )
+        pv = AnnotationPropertyValues()
+        # 3 inside the gate, 2 outside: a majority, but the complement is
+        # 0.67 of the matches — not worth the per-element penalty.
+        for val in (10, 10, 10, 90, 90):
+            a = makeAnnotation(folder["_id"])
+            pv.appendValues({"p": {"Area": val}}, a["_id"], folder["_id"])
+        filters = {"analysisGates": [self.gateFilter(5, 25)]}
+        AnnotationModel().resolveListGateConstraints(folder["_id"], filters)
+        clause = filters["gateMatchClauses"][0]["_id"]
+        assert "$in" in clause, clause
+        assert len(clause["$in"]) == 3
+
+    def testBudgetIsCheckedBeforeRetainingClauses(self, admin, server):
+        """Codex round 2: the budget must be enforced as ids accumulate, not
+        after. Checking at the end still materialized every gate's ObjectIds
+        first — 20 gates x ~350K on a 700K dataset is ~7M ObjectIds held
+        before the 400 is finally returned, i.e. the guard against a memory
+        blowup could itself blow memory."""
+        from upenncontrast_annotation.server.models import annotation as mod
+        folder, _, _ = self._setup(admin)
+        seen = []
+        realResolve = mod.analysis.resolve_gate_ids
+
+        def counting(docs, valuesById, gate):
+            ids = realResolve(docs, valuesById, gate)
+            seen.append(len(ids))
+            return ids
+
+        mod.analysis.resolve_gate_ids = counting
+        mod_max = mod.MAX_GATE_CONSTRAINT_IDS
+        mod.MAX_GATE_CONSTRAINT_IDS = 2
+        try:
+            filters = {"analysisGates": [self.gateFilter(5, 100)] * 5}
+            with pytest.raises(ValueError):
+                mod.Annotation().resolveListGateConstraints(
+                    folder["_id"], filters
+                )
+            # Must stop at the gate that crosses the budget, not resolve all
+            # five and check afterwards.
+            assert len(seen) < 5, seen
+            # And nothing oversized may be left retained on the filters.
+            retained = sum(
+                len(list(c["_id"].values())[0])
+                for c in filters.get("gateMatchClauses", [])
+            )
+            assert retained <= 2, retained
+        finally:
+            mod.analysis.resolve_gate_ids = realResolve
+            mod.MAX_GATE_CONSTRAINT_IDS = mod_max

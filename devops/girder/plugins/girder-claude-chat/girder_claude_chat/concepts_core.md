@@ -18,6 +18,8 @@ Connections establish relationships between objects, creating a network of assoc
 
 Connections have direction (parent to child) and can be created manually or automatically.
 
+A **track** is a group of objects joined into one connected chain by connections — typically one cell followed across time points. Tracks are not stored entities; they are whatever the current set of connections implies, so creating or deleting a connection can merge or split them. Time lapse mode draws tracks as lines and can color each one differently; the Object list's Connections tab can group by track. See the connections help topic.
+
 ## Properties
 Properties are measurements or calculations applied to objects:
 - **Intensity measurements**: Mean, max, median fluorescence within objects

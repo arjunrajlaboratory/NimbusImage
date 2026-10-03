@@ -140,7 +140,7 @@ class TestClientCollections:
 
         coll = client.collection("coll_001")
         assert coll.id == "coll_001"
-        mock_gc.get.assert_called_with("/upenn_collection/coll_001")
+        mock_gc.get.assert_called_with("upenn_collection/coll_001")
 
 
 class TestCollectionAccessorCollections:

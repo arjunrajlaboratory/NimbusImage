@@ -141,7 +141,7 @@
         </div>
         <div class="panel-options">
           <v-tooltip
-            text="Skip the confirmation for every action that needs approval: worker runs, property computation, and tool / property / scale creation."
+            text="Skip the confirmation for every action that needs approval: worker runs, property computation, tool / property / scale creation, recoloring the whole dataset by a property (not undoable), and removing analysis plots."
             location="top"
           >
             <template v-slot:activator="{ props: activatorProps }">

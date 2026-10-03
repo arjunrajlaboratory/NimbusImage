@@ -130,14 +130,14 @@ steps:
   # have the user open it (interactive trigger), then walk the dialog's controls.
   - id: measure-objects-tourstep
     route: datasetview
-    element: '[data-tour="measure-objects"]'
+    element: '[data-tour="analyze-button"]'
     title: "Measure your objects"
     text: "Properties are measurements of objects — like the area or perimeter of a nucleus. Click the ruler to open the measurement panel."
     position: "bottom"
     waitForElement: 2000
     modalOverlay: true
     showNextButton: false
-    onTriggerEvent: "measure-objects"
+    onTriggerEvent: "analyze-button"
 
   # Overview of the whole (large, centered) measure dialog — a centered modal
   # popover reads better here than an arrow pointing at one corner of it.
