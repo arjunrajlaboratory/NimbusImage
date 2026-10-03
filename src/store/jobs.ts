@@ -21,7 +21,7 @@ import main from "./index";
 
 import { logError } from "@/utils/log";
 import { quotaExceededMessage } from "@/utils/quota";
-import { jobStates } from "./jobConstants";
+import { isTerminalJobStatus, jobStates } from "./jobConstants";
 
 export { jobStates };
 
@@ -110,22 +110,29 @@ interface IJobInfo {
   successPromise: Promise<boolean>;
   successResolve: (success: boolean) => void;
   log: string;
-  // Set once a terminal status has been handled. The same outcome can
-  // arrive twice -- from the notification stream and from a status check --
-  // and must only be acted on once.
-  settled?: boolean;
 }
 
-const TERMINAL_JOB_STATES: number[] = [
-  jobStates.cancelled,
-  jobStates.success,
-  jobStates.error,
-];
+// A job as GET job/:id returns it: the event fields plus its log (the
+// server keeps only the tail of a very long one).
+interface IJobRecord extends IJobEventData {
+  log?: string[];
+}
 
 // Reconnect delay after the notification stream closes unexpectedly:
-// doubles per consecutive failure, capped.
+// doubles per consecutive failure, capped, and gives up after
+// RECONNECT_MAX_ATTEMPTS (addJob reconnects on demand after that).
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
+const RECONNECT_MAX_ATTEMPTS = 10;
+// Not module state: a timer handle is not something to put in the store.
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelReconnect() {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
 
 @Module({ dynamic: true, store, name: "jobs" })
 export class Jobs extends VuexModule {
@@ -212,11 +219,17 @@ export class Jobs extends VuexModule {
   // be mistaken for a failed job.
   @Action
   async fetchJobStatus(jobId: string): Promise<number | null> {
+    return (await this.fetchJob(jobId))?.status ?? null;
+  }
+
+  // The job record straight from the server, or null when it could not be
+  // read (network failure, deleted job, bad id).
+  @Action
+  async fetchJob(jobId: string): Promise<IJobRecord | null> {
     try {
-      const response = await main.girderRest.get(`job/${jobId}`);
-      return response.data.status;
+      return (await main.girderRest.get(`job/${jobId}`)).data;
     } catch (error) {
-      logError(`Failed to get status for job ${jobId}`);
+      logError(`Failed to get job ${jobId}`);
       return null;
     }
   }
@@ -243,6 +256,11 @@ export class Jobs extends VuexModule {
 
   @Action
   async addJob(job: IComputeJob) {
+    // Events reach us only through an open stream; if it is not open now,
+    // this job's events (possibly including its end) may already be lost.
+    const streamWasDown =
+      !this.notificationSource ||
+      this.notificationSource.readyState !== WebSocket.OPEN;
     if (
       !this.notificationSource ||
       this.notificationSource.readyState == WebSocket.CLOSED ||
@@ -263,25 +281,14 @@ export class Jobs extends VuexModule {
     }
     // The job may have finished before its events could reach us: a
     // request that runs the job in-process (e.g. transcoding with
-    // localJob=true) only returns once it is done, and if the notification
-    // stream was down meanwhile (a server restart, a network drop) the
-    // terminal event is gone for good. Ask the server once.
-    if (this.jobInfoMap[job.jobId]) {
+    // localJob=true) only returns once it is done, and if the stream was
+    // down meanwhile (a server restart, a network drop) the terminal event
+    // is gone for good. Ask the server then -- only then, so a healthy
+    // stream costs no extra request per job.
+    if (streamWasDown && this.jobInfoMap[job.jobId]) {
       await this.reconcileJob(job.jobId);
     }
     return successPromise;
-  }
-
-  // The job record straight from the server, or null when it could not be
-  // read (network failure, deleted job, bad id).
-  @Action
-  async fetchJob(jobId: string): Promise<IJobEventData | null> {
-    try {
-      return (await main.girderRest.get(`job/${jobId}`)).data;
-    } catch (error) {
-      logError(`Failed to get job ${jobId}`);
-      return null;
-    }
   }
 
   // Settle a tracked job from its server record if it has already finished;
@@ -291,26 +298,23 @@ export class Jobs extends VuexModule {
     if (!this.jobInfoMap[jobId]) {
       return;
     }
-    const job: any = await this.fetchJob(jobId);
+    const job = await this.fetchJob(jobId);
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
-    if (
-      !job ||
-      !jobInfo ||
-      jobInfo.settled ||
-      !TERMINAL_JOB_STATES.includes(job.status)
-    ) {
+    if (!job || !jobInfo || !isTerminalJobStatus(job.status)) {
       return;
     }
-    // Deliver whatever part of the log has not been seen, so listeners
-    // (progress, quota detection) see the same text the stream would have
-    // carried.
-    const serverLog = Array.isArray(job.log) ? job.log.join("") : "";
+    // Deliver the part of the log not seen yet, so listeners (progress,
+    // quota detection) get what the stream would have carried. When the
+    // server's log no longer extends ours (it keeps only the tail of a long
+    // log), send nothing rather than repeat lines already handled.
+    const serverLog = (job.log ?? []).join("");
     const unseenLog = serverLog.startsWith(jobInfo.log)
       ? serverLog.slice(jobInfo.log.length)
-      : serverLog;
+      : "";
     await this.handleJobEventImp({
-      ...job,
       _id: jobId,
+      status: job.status,
+      title: job.title,
       text: unseenLog || undefined,
     });
   }
@@ -396,7 +400,7 @@ export class Jobs extends VuexModule {
   async handleJobEventImp(jobEvent: IJobEventData) {
     const jobId = jobEvent._id;
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
-    if (!jobInfo || jobInfo.settled) return;
+    if (!jobInfo) return;
     // Append to the log if there's text
     if (jobEvent.text && typeof jobEvent.text === "string") {
       jobInfo.log = jobInfo.log + jobEvent.text;
@@ -407,11 +411,13 @@ export class Jobs extends VuexModule {
       listener.errorCallback?.(jobEvent);
     }
     const status = jobEvent.status;
-    if (!status || !TERMINAL_JOB_STATES.includes(status)) {
+    if (!isTerminalJobStatus(status)) {
       return;
     }
-    // Before any await, so a second terminal report is ignored.
-    jobInfo.settled = true;
+    // Untracked before any await: a second report of the end (the stream
+    // and a status check can both deliver it) is then ignored, and a new
+    // addJob for this id starts fresh instead of joining a settled entry.
+    this.removeJobInfo(jobId);
 
     const success = status === jobStates.success;
     if (!success) {
@@ -450,7 +456,6 @@ export class Jobs extends VuexModule {
       });
     }
     jobInfo.successResolve(success);
-    this.removeJobInfo(jobId);
     // A job is done, add badge to annotation panel if it is closed
     if (!main.isAnnotationPanelOpen) {
       main.setAnnotationPanelBadge(true);
@@ -473,32 +478,41 @@ export class Jobs extends VuexModule {
       return; // closed deliberately, or superseded by a newer connection
     }
     this.setNotificationSource(null);
+    // Logged out (the token is gone), or failing for a long while: stop;
+    // addJob reconnects on demand.
+    if (
+      !main.girderRest.token ||
+      this.connectionErrors >= RECONNECT_MAX_ATTEMPTS
+    ) {
+      logError("Can't connect to girder notification stream");
+      return;
+    }
     const delay = Math.min(
       RECONNECT_MAX_MS,
       RECONNECT_BASE_MS * 2 ** this.connectionErrors,
     );
     this.setConnectionErrors(this.connectionErrors + 1);
-    setTimeout(() => {
-      // Unless something else reconnected in the meantime.
-      if (!this.notificationSource) {
-        this.initializeNotificationSubscription();
-      }
+    cancelReconnect();
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      this.initializeNotificationSubscription();
     }, delay);
   }
 
+  // Every (re)connection re-checks the tracked jobs: whatever ended while
+  // no stream was open is otherwise never heard of. At first connection
+  // nothing is tracked, so this costs nothing.
   @Action
   async handleOpen() {
-    const reconnected = this.connectionErrors > 0;
     this.setConnectionErrors(0);
-    if (reconnected) {
-      for (const jobId of Object.keys(this.jobInfoMap)) {
-        await this.reconcileJob(jobId);
-      }
-    }
+    await Promise.all(
+      Object.keys(this.jobInfoMap).map((jobId) => this.reconcileJob(jobId)),
+    );
   }
 
   @Action
   async initializeNotificationSubscription() {
+    // Also cancels a pending reconnect: this is the connection now.
     await this.closeNotificationSubscription();
     const apiRoot = import.meta.env.VITE_GIRDER_URL || main.girderRest.apiRoot;
     let notificationURL = apiRoot.endsWith("/api/v1")
@@ -519,6 +533,7 @@ export class Jobs extends VuexModule {
 
   @Action
   async closeNotificationSubscription() {
+    cancelReconnect();
     const source = this.notificationSource;
     if (source) {
       // Cleared first, so handleClose sees a deliberate close.
