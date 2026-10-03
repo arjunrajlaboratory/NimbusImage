@@ -167,7 +167,7 @@ You can also add a tool from the command palette (⌘K / Ctrl+K): type its name 
 - Hover a tool to reveal its pin, edit (pencil) and drag-grip buttons
 - **Pin** a tool to move it into the Pinned section at the top; click the pin again to unpin it and return it to its usual section
 - **Reorder** tools by dragging the grip. Each section reorders on its own — a tool can't be dragged into a different section (pin it instead)
-- Pins and order are saved in the collection, so everyone using that collection sees the same arrangement. Because of that, adding, editing, pinning and reordering tools all need write access to the collection: a collaborator with view-only access can't save these changes (ask the collection's owner for edit access). Dragging is disabled entirely when logged out
+- Pins and order are saved in the collection, so everyone using that collection sees the same arrangement. Because of that, any change to the toolset (adding, editing, deleting, pinning or reordering tools) needs write access to the collection: a collaborator with view-only access can't save it (ask the collection's owner for edit access). Dragging is disabled entirely when logged out
 - Edit existing tools with the pencil icon
 - Delete tools no longer needed
 - Select a tool quickly from the command palette ("Use tool: …"), which also shows the tool's hotkey
