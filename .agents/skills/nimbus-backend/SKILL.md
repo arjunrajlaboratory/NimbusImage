@@ -395,6 +395,40 @@ Rules:
    were applied — otherwise "stripped" and "applied but harmless" look the
    same.
 
+## Concurrent writers: no read-merge-write, no delete-then-insert
+
+Property workers run in bursts (4–5 jobs within a second, several over the
+same annotations), so any write path is hit concurrently in production.
+Issue #1356: `saveMany` "updated" documents by `removeWithQuery` then
+`insert_many`, and property values merged by reading the stored doc in
+Python first. Two writers raced into `E11000 ... index: _id_`, the loser had
+already deleted its batch (lost data), and a stale merge overwrote a
+sibling's values.
+
+- **Merge on the server.** `UpdateOne({key: k}, {"$set": {"values.<id>": v}},
+  upsert=True)` per document in one `bulk_write` — never find, merge in
+  Python, then write back.
+- **Replace in place.** `ReplaceOne({"_id": id}, doc, upsert=True)` is atomic
+  per document; delete-then-insert is not.
+- **Racing upserts duplicate documents** unless the filter key is unique.
+  If adding a unique index would need a data migration, set
+  `_id` to the natural key on insert (`$setOnInsert: {"_id": annotationId}`):
+  the loser gets an `11000` on `_id` instead of a second document, and one
+  retry of just those ops (`ordered=False`, retry by `writeErrors[].index`)
+  merges into the winner's.
+- **`BulkWriteError.details` / `WriteError.details` are dicts.** Format them
+  (`"%s" % ...`) and `raise ... from e`; `"msg" + e.details` turned the real
+  error into a `TypeError` 500 (issue #1357).
+- **Authorize by the key the write matches on.** The endpoint checked WRITE
+  on the body's `datasetId`, but the upsert matched by `annotationId` alone,
+  so WRITE on your own dataset let you overwrite another dataset's values
+  (Codex P1, PR #1358). When the check and the write key differ, verify
+  they agree first (batch-load the annotations' `datasetId`s and reject
+  mismatches) — see `_requireAnnotationsInDatasets`.
+- **Test with real threads + a `threading.Barrier`** over a few hundred
+  documents and several rounds (`test/test_save_many.py`). It fails reliably
+  without the fix; a single-threaded test cannot see the race.
+
 ## Loading Plugin Changes Into the Running Backend
 
 The `girder` container bakes the plugin into its image (no source mount). After editing backend plugin code:
