@@ -50,7 +50,8 @@
     <annotation-csv-dialog
       v-if="mountedDialogs.csv"
       v-model:open="openDialogs.csv"
-      :annotations="openDialogs.csv ? filteredAnnotations : NO_ANNOTATIONS"
+      @closed="isCsvShown = false"
+      :annotations="isCsvShown ? filteredAnnotations : NO_ANNOTATIONS"
       :propertyPaths="propertyPaths"
     />
     <index-conversion-dialog
@@ -61,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive } from "vue";
+import { computed, nextTick, reactive, ref } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
@@ -79,6 +80,9 @@ const filteredAnnotations = computed(() => filterStore.filteredAnnotations);
 // menu on every filter change for the rest of the session. (Its export reads
 // the ids before its first await, so closing mid-export is safe.)
 const NO_ANNOTATIONS: typeof filterStore.filteredAnnotations = [];
+// From opening until its leave transition ends, so the closing card keeps its
+// counts rather than flashing "(0)".
+const isCsvShown = ref(false);
 const propertyPaths = computed(() => propertyStore.computedPropertyPaths);
 
 type TDataDialog = "import" | "export" | "csv" | "indexConversions";
@@ -147,6 +151,9 @@ async function openDataDialog(id: TDataDialog) {
   if (!mountedDialogs[id]) {
     mountedDialogs[id] = true;
     await nextTick();
+  }
+  if (id === "csv") {
+    isCsvShown.value = true;
   }
   openDialogs[id] = true;
 }

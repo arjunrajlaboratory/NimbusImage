@@ -251,8 +251,8 @@ Departures from the spec, and why:
   Ctrl+K from the browser's search-bar shortcut everywhere). The palette's own
   field handles the key itself and stops it, so the global binding doesn't
   toggle the palette straight back open.
-- **Focus stays in the search field** (Tab is swallowed, rows are
-  `tabindex="-1"`): app hotkeys are muted only while a text field has focus,
+- **Focus stays in the search field** (Tab is swallowed, the list prevents
+  mousedown, rows are `tabindex="-1"`): app hotkeys are muted only while a text field has focus,
   and would otherwise act on the viewer behind the palette.
 
 ## Verified in the browser
@@ -310,7 +310,7 @@ Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components
 - [ ] **⌘K / Ctrl+K typed in the search field closes the palette.** v-mousetrap ignores keys in inputs, so the field handles it (and claims Ctrl+K from the browser). — _"closes on its own toggle key typed in the search field"_
 - [ ] **⌘K / Ctrl+K opens the palette from inside any text field**, and only that binding fires there. — *"fires an allowInInputs hotkey from inside a text field, and only that one"*
 - [ ] **The field's own toggle key is stopped**, so the app-wide binding can't immediately reopen it. — *"stops its own toggle key, so the app-wide binding can't reopen it"*
-- [ ] **Focus can't leave the field for a row**, so viewer hotkeys stay muted behind the palette. — *"keeps focus in the search field on Tab"*
+- [ ] **Focus can't leave the field, by keyboard or pointer**, so viewer hotkeys (⌘⌫ delete included) stay muted behind the palette. — *"keeps focus in the search field on Tab"*, *"keeps focus in the search field when the list is pressed"*
 - [ ] **Enter that confirms an IME composition runs nothing.** — *"ignores Enter that confirms an IME composition"*
 - [ ] **Only real pointer movement moves the highlight**; a list scrolling under a resting pointer doesn't. — *"moves the highlight on real pointer movement only"*
 - [ ] **Hotkey hints render the plus key and sequences** instead of throwing in the row render. — *"keeps the plus key instead of throwing on it"*, *"keeps the steps of a sequence apart"*
@@ -330,7 +330,7 @@ Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components
 
 - [ ] **No per-keystroke list rebuild**: providers are read inside `allCommands` (a `computed`); typing only re-scores. No provider reads per-annotation state. — _"re-scores on each keystroke without re-running the providers"_
 - [ ] **The palette refreshes the worker list each time it opens in the viewer, and a failed refresh is logged, not leaked.** — _"resets the query and refreshes the worker list each time it opens"_, _"logs, rather than leaks, a failed worker-list refresh"_
-- [ ] **A once-opened CSV dialog doesn't keep the Data I/O menu reading the filtered list.** — _"hands the CSV dialog the filtered list only while it is open"_
+- [ ] **A once-opened CSV dialog doesn't keep the Data I/O menu reading the filtered list**, but keeps it until its leave transition ends (no "(0)" flash while closing). — *"hands the CSV dialog the filtered list only while it is open"*
 
 ### Process
 

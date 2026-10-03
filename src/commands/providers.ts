@@ -1,8 +1,9 @@
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import { ITourMetadata } from "@/store/model";
-import { boundKeys } from "@/utils/v-mousetrap";
+import { boundHotkey } from "./hotkeys";
 import { createPathStringFromPathArray } from "@/utils/paths";
+import { snapshotKey } from "@/utils/snapshotKey";
 import { PANELS, PanelId } from "@/utils/panelRegistry";
 import {
   buildToolTypeSelection,
@@ -21,15 +22,6 @@ import { IProviderContext } from "./context";
 // function read inside the registry's `computed`, so adding a tool, layer,
 // snapshot, property or worker image adds its command with no extra wiring.
 // None of them reads per-annotation state: these lists stay small.
-
-/**
- * `key` as a hint if v-mousetrap currently binds it with this help-overlay
- * description. `boundKeys` holds no handlers, so it can only annotate a
- * command, never run one.
- */
-function boundHotkey(key: string, description: string): string | undefined {
-  return boundKeys.value[key]?.description === description ? key : undefined;
-}
 
 export function toolCommands(ctx: IProviderContext): TCommandProvider {
   return () =>
@@ -120,8 +112,7 @@ export function snapshotCommands(ctx: IProviderContext): TCommandProvider {
   return () =>
     (store.configuration?.snapshots ?? []).map(
       (snapshot): ICommand => ({
-        // Snapshots.vue keys a snapshot the same way.
-        id: `snapshot.load.${snapshot.datasetViewId}:${snapshot.name}`,
+        id: `snapshot.load.${snapshotKey(snapshot)}`,
         title: `Go to snapshot: ${snapshot.name}`,
         group: "Snapshots",
         keywords: snapshot.tags ?? [],
@@ -148,7 +139,10 @@ export function propertyCommands(ctx: IProviderContext): TCommandProvider {
         group: "Properties",
         keywords: ["color", "colour", "colormap", "property"],
         icon: "mdi-palette",
-        enabled: () => ctx.inViewer() && store.isLoggedIn,
+        // Same rule as the generic "Color objects by property…" command and
+        // its app-bar button: anyone in the viewer may open the dialog, whose
+        // Apply is what requires a login.
+        enabled: ctx.inViewer,
         run: () => {
           colorByPropertyRequest.value = pathKey;
           store.setIsColorByPropertyDialogOpen(true);

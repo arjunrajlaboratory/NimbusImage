@@ -1,3 +1,5 @@
+import { boundKeys } from "@/utils/v-mousetrap";
+
 // Display helpers for Mousetrap key strings ("mod+shift+z", "tab", "1").
 
 export function isMacPlatform(): boolean {
@@ -72,4 +74,17 @@ export function isPaletteToggleKey(
     (mac ? !event.ctrlKey : !event.metaKey) &&
     event.key.toLowerCase() === "k"
   );
+}
+
+/**
+ * `key` as a hint if v-mousetrap currently binds it with this help-overlay
+ * description, else nothing. `boundKeys` holds no handlers, so it can only
+ * annotate a command, never run one; checking it keeps a hint from outliving
+ * a binding changed in another component.
+ */
+export function boundHotkey(
+  key: string,
+  description: string,
+): string | undefined {
+  return boundKeys.value?.[key]?.description === description ? key : undefined;
 }

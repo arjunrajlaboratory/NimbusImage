@@ -42,6 +42,7 @@ import { ref, computed } from "vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import { useCommand } from "@/commands/registry";
+import { boundHotkey } from "@/commands/hotkeys";
 
 const isDoing = ref(false);
 
@@ -91,7 +92,8 @@ useCommand(() => [
     group: "Actions",
     keywords: ["revert", "back"],
     icon: "mdi-undo",
-    hotkey: "mod+z",
+    // Bound by ImageViewer.
+    hotkey: boundHotkey("mod+z", "Undo last action"),
     enabled: () => !!undoEntry.value && !isDoing.value,
     run: undo,
   },
@@ -101,7 +103,7 @@ useCommand(() => [
     group: "Actions",
     keywords: ["again", "forward"],
     icon: "mdi-redo",
-    hotkey: "mod+shift+z",
+    hotkey: boundHotkey("mod+shift+z", "Redo last action"),
     enabled: () => !!redoEntry.value && !isDoing.value,
     run: redo,
   },

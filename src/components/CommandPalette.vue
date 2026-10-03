@@ -26,6 +26,8 @@
         class="command-palette-list"
         density="compact"
         role="listbox"
+        tabindex="-1"
+        @mousedown.prevent
       >
         <template v-for="row in rows" :key="row.key">
           <v-list-subheader v-if="row.kind === 'header'">
@@ -256,7 +258,8 @@ function onKeydown(event: KeyboardEvent) {
   switch (event.key) {
     // Focus stays in the field: app hotkeys (layer digits, tool keys,
     // ⌘⌫ delete) are muted only while a text field has focus, and they would
-    // otherwise act on the viewer behind the palette.
+    // otherwise act on the viewer behind the palette. Tab is the keyboard way
+    // out; the list's @mousedown.prevent closes the pointer way.
     case "Tab":
       event.preventDefault();
       break;

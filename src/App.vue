@@ -124,7 +124,7 @@
                 data-command-id="panel.toggle.navigatorPanel"
                 @click.stop="togglePalette('navigatorPanel')"
               >
-                <v-icon size="18">mdi-axis-arrow</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.navigatorPanel.icon }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -139,7 +139,7 @@
                 data-command-id="panel.toggle.layersPanel"
                 @click.stop="togglePalette('layersPanel')"
               >
-                <v-icon size="18">mdi-layers</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.layersPanel.icon }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -154,7 +154,7 @@
                 data-command-id="panel.toggle.toolsPanel"
                 @click.stop="togglePalette('toolsPanel')"
               >
-                <v-icon size="18">mdi-tools</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.toolsPanel.icon }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -212,7 +212,9 @@
                 data-command-id="panel.toggle.annotationPanel"
                 @click.stop="togglePalette('annotationPanel')"
               >
-                <v-icon size="18">mdi-format-list-bulleted-square</v-icon>
+                <v-icon size="18">{{
+                  PANEL_BY_ID.annotationPanel.icon
+                }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -229,7 +231,7 @@
                 data-command-id="panel.toggle.filtersPanel"
                 @click.stop="togglePalette('filtersPanel')"
               >
-                <v-icon size="18">mdi-filter-variant</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.filtersPanel.icon }}</v-icon>
                 <!-- Count of active filters, so the user can tell filters are
                      narrowing the object set even with the panel closed. -->
                 <span v-if="activeFilterCount > 0" class="palette-ibtn-badge">
@@ -249,7 +251,7 @@
                 data-command-id="panel.toggle.analysisPanel"
                 @click.stop="togglePalette('analysisPanel')"
               >
-                <v-icon size="18">mdi-chart-scatter-plot</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.analysisPanel.icon }}</v-icon>
                 <!-- Count of gates narrowing the object set. Gates apply with
                      the palette closed and are restored from the saved
                      configuration, so without this a dataset could open
@@ -282,7 +284,7 @@
                 data-command-id="panel.toggle.snapshotPanel"
                 @click.stop="togglePalette('snapshotPanel')"
               >
-                <v-icon size="18">mdi-camera-outline</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.snapshotPanel.icon }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -299,7 +301,7 @@
                 data-command-id="panel.toggle.settingsPanel"
                 @click.stop="togglePalette('settingsPanel')"
               >
-                <v-icon size="18">mdi-tune</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.settingsPanel.icon }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -481,7 +483,7 @@
 
     <floating-palette
       v-model="settingsPanel"
-      title="Settings"
+      :title="PANEL_BY_ID.settingsPanel.title"
       :width="RIGHT_PALETTE_WIDTHS.settings"
     >
       <annotations-settings />
@@ -489,7 +491,7 @@
 
     <floating-palette
       v-model="snapshotPanel"
-      title="Snapshots"
+      :title="PANEL_BY_ID.snapshotPanel.title"
       :width="RIGHT_PALETTE_WIDTHS.snapshots"
     >
       <snapshots :snapshotVisible="snapshotPanel" />
@@ -497,7 +499,7 @@
 
     <floating-palette
       v-model="annotationPanel"
-      title="Object Browser"
+      :title="PANEL_BY_ID.annotationPanel.title"
       :width="RIGHT_PALETTE_WIDTHS.objectBrowser"
       :top="stackedHostTop"
       :max-height="stackedHostMaxHeight"
@@ -508,7 +510,7 @@
     <floating-palette
       ref="filtersPaletteRef"
       v-model="filtersPanel"
-      title="Filters"
+      :title="PANEL_BY_ID.filtersPanel.title"
       :width="RIGHT_PALETTE_WIDTHS.filters"
       :max-height="filtersMaxHeight"
     >
@@ -517,7 +519,7 @@
 
     <floating-palette
       v-model="analysisPanel"
-      title="Analysis"
+      :title="PANEL_BY_ID.analysisPanel.title"
       :width="RIGHT_PALETTE_WIDTHS.analysis"
       :top="stackedHostTop"
       :max-height="stackedHostMaxHeight"
@@ -533,7 +535,7 @@
       <floating-palette
         ref="navigatorPaletteRef"
         v-model="navigatorPanel"
-        title="Navigator"
+        :title="PANEL_BY_ID.navigatorPanel.title"
         :left="PALETTE_INSET"
         :width="LEFT_COLUMN_PALETTE_WIDTHS.navigator"
       >
@@ -557,7 +559,7 @@
       <floating-palette
         ref="layersPaletteRef"
         v-model="layersPanel"
-        title="Layers"
+        :title="PANEL_BY_ID.layersPanel.title"
         :left="PALETTE_INSET"
         :width="LEFT_COLUMN_PALETTE_WIDTHS.layers"
         :top="layersPanelTop"
@@ -568,7 +570,7 @@
 
       <floating-palette
         v-model="toolsPanel"
-        title="Tools"
+        :title="PANEL_BY_ID.toolsPanel.title"
         :left="PALETTE_INSET"
         :width="LEFT_COLUMN_PALETTE_WIDTHS.tools"
         :top="toolsPanelTop"
@@ -646,11 +648,17 @@ import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 import { useTour } from "@/utils/useTour";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
-import { PANELS, PANEL_IDS, PanelId, applyOpen } from "@/utils/panelRegistry";
+import {
+  PANELS,
+  PANEL_BY_ID,
+  PANEL_IDS,
+  PanelId,
+  applyOpen,
+} from "@/utils/panelRegistry";
 import { useCommand, useCommandProvider } from "@/commands/registry";
 import { panelCommands, tourCommands } from "@/commands/providers";
 import { isTourAvailableOnRoute, useViewerContext } from "@/commands/context";
-import { formatHotkey } from "@/commands/hotkeys";
+import { boundHotkey, formatHotkey } from "@/commands/hotkeys";
 
 // Suppress unused import warnings for template-only components
 void UserMenu;
@@ -1324,7 +1332,7 @@ useCommand(() => [
     description: "Hotkeys and feature overview",
     keywords: ["hotkeys", "shortcuts", "keyboard"],
     icon: "mdi-view-dashboard-outline",
-    hotkey: "tab",
+    hotkey: boundHotkey("tab", "Toggle help dialog"),
     run: () => {
       helpPanelIsOpen.value = true;
     },

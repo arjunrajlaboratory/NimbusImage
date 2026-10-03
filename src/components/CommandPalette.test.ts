@@ -284,6 +284,22 @@ describe("CommandPalette", () => {
     ).toBe(true);
   });
 
+  it("keeps focus in the search field when the list is pressed", async () => {
+    mountPalette();
+    for (const target of [
+      wrapper.find(".command-palette-list"),
+      wrapper.find("[data-command-row]"),
+    ]) {
+      const event = new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+      });
+      target.element.dispatchEvent(event);
+      // A prevented mousedown moves no focus; a row's click still fires.
+      expect(event.defaultPrevented).toBe(true);
+    }
+  });
+
   it("stops its own toggle key, so the app-wide binding can't reopen it", async () => {
     // Attached, so an unstopped event really would bubble to the document.
     mountPalette(true, document.body);

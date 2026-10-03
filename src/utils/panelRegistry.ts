@@ -120,6 +120,15 @@ const PANELS_BY_ID = new Map<PanelId, IPanelDefinition>(
   PANELS.map((panel) => [panel.id, panel]),
 );
 
+/**
+ * Each panel's definition by id, for templates: App.vue binds the palette
+ * titles and app-bar toggle icons from here, so the "Open X" command and the
+ * palette header can't drift apart.
+ */
+export const PANEL_BY_ID = Object.fromEntries(PANELS_BY_ID) as Readonly<
+  Record<PanelId, IPanelDefinition>
+>;
+
 export const PANEL_IDS: readonly PanelId[] = PANELS.map((panel) => panel.id);
 
 /**

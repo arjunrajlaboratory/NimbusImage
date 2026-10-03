@@ -24,7 +24,7 @@ function dialogStub(name: string) {
   return defineComponent({
     name,
     props: { open: Boolean, annotations: { type: Array, default: undefined } },
-    emits: ["update:open"],
+    emits: ["update:open", "closed"],
     setup(props) {
       watch(
         () => props.open,
@@ -100,9 +100,12 @@ describe("DataIOMenu", () => {
     await run("data.export.csv");
     await flushPromises();
     expect(lastAnnotations.AnnotationCsvDialog).toHaveLength(2);
-    wrapper
-      .findComponent({ name: "AnnotationCsvDialog" })
-      .vm.$emit("update:open", false);
+    const csv = wrapper.findComponent({ name: "AnnotationCsvDialog" });
+    csv.vm.$emit("update:open", false);
+    await flushPromises();
+    // Still closing: the card keeps its counts instead of flashing "(0)".
+    expect(lastAnnotations.AnnotationCsvDialog).toHaveLength(2);
+    csv.vm.$emit("closed");
     await flushPromises();
     expect(lastAnnotations.AnnotationCsvDialog).toEqual([]);
   });

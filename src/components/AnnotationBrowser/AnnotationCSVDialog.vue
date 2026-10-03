@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="dialog">
+  <v-dialog v-model="dialog" @after-leave="emit('closed')">
     <v-card>
       <v-card-title> Current Annotation List as CSV </v-card-title>
       <v-card-subtitle>
@@ -318,6 +318,13 @@ const CSV_FIXED_COLUMNS: readonly CsvColumn[] = [
 const props = defineProps<{
   annotations: TAnnotationOrStub[];
   propertyPaths: string[][];
+}>();
+
+const emit = defineEmits<{
+  // Its leave transition has finished: the owner may now drop what it passed
+  // in (DataIOMenu stops reading the filtered list) without the closing card
+  // flashing empty counts.
+  (e: "closed"): void;
 }>();
 
 const fieldToCopy = ref<ComponentPublicInstance>();
