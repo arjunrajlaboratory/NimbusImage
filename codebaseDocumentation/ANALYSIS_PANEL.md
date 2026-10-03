@@ -165,7 +165,7 @@ lymph-node dataset has 708,983 objects.
 
 Because the panel tells the user to narrow with the **Filters** palette, Filters
 is registered as a companion of *both* the Object Browser and the Analysis panel
-(`paletteRoles` in `App.vue`) — otherwise opening it would close the panel that
+(`PANELS` in `src/utils/panelRegistry.ts`) — otherwise opening it would close the panel that
 just asked for it.
 
 ## Never serialize a filter object that can contain id lists

@@ -1,19 +1,5 @@
 <template>
   <v-dialog v-model="dialog" max-width="560px" :persistent="isImporting">
-    <template v-slot:activator="activatorBinding">
-      <slot name="activator" v-bind="activatorBinding">
-        <v-btn
-          v-bind="{ ...activatorBinding.props, ...$attrs }"
-          variant="outlined"
-          color="primary"
-          size="small"
-          :disabled="!isLoggedIn"
-        >
-          <v-icon class="mr-1">mdi-vector-polygon</v-icon>
-          Import GeoJSON
-        </v-btn>
-      </slot>
-    </template>
     <v-card :disabled="!store.dataset">
       <v-card-title>Import GeoJSON</v-card-title>
       <v-card-subtitle>
@@ -188,7 +174,9 @@ import { logError } from "@/utils/log";
 
 const MAX_PREVIEW_CLASSES = 12;
 
-const dialog = ref(false);
+// Opened by its owner through `v-model:open` (DataIOMenu, from its menu or the
+// command palette); the dialog renders no activator of its own.
+const dialog = defineModel<boolean>("open", { default: false });
 const file = ref<File | File[] | null>(null);
 const isParsing = ref(false);
 const parseError = ref("");

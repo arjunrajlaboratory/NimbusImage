@@ -203,7 +203,7 @@ describe("RenderCoverageIndicator", () => {
   });
 
   // Analysis and the Object Browser are mutually-evicting right-zone
-  // primaries (App.vue paletteRoles): requesting both would open Analysis and
+  // primaries (PANELS in @/utils/panelRegistry): requesting both would open Analysis and
   // then immediately evict it with the Object Browser — the click's outcome
   // would contradict its own tooltip. Analysis wins; the tooltip names only
   // what actually opens. (PR #1340 Codex P2.)

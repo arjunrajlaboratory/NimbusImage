@@ -613,10 +613,16 @@ The model is instructed to correct and retry once, then ask the user.
 - System prompt + tool definitions are stable per release → prompt cache
   them (`cache_control` on the system block and on the last tool, as the
   plugin already does for chat's system prompt).
-- Model: `CLAUDE_MODEL` constant (currently `claude-sonnet-5` on the PR
-  branch) — right latency/capability class for interactive UI driving. Not
+- Model: `CLAUDE_MODEL` constant (currently `claude-sonnet-5-5`) — right latency/capability class for interactive UI driving. Not
   a place for a smaller model: tool selection against 25+ tools with domain
   vocabulary is exactly where quality pays.
+- Preserved thinking: Sonnet 5.5 binds each thinking block to the exact
+  history before it, and `pruneOldScreenshots` edits earlier turns. The agent
+  call therefore sends `thinking.block_binding.prefix_mismatch_behavior:
+  "drop_block"` (beta `thinking-binding-controls-2026-08-01`), so the API
+  drops the stale thinking blocks instead of returning a 400 (the default for
+  accounts created on or after 2026-08-31). Text and tool calls are kept; the
+  drops are logged at INFO.
 
 ## 9. Implementation plan
 
@@ -761,3 +767,39 @@ Process notes:
 - The completion callback must fire *after* the store refreshed its data
   (`annotation.ts` awaits `fetchAnnotations` before `callback`), otherwise the
   model reads stale counts the moment it is told the job finished.
+
+## 13. Regression checklist — model migration and preserved thinking
+
+Invariants from the Sonnet 5.5 migration (PR #1353), each with the test that
+holds it. Re-check these whenever `CLAUDE_MODEL` changes, the agent request
+is edited, or the frontend changes how it rewrites earlier turns.
+
+- The agent call sends `thinking: {type: "adaptive", block_binding:
+  {prefix_mismatch_behavior: "drop_block"}}` under the
+  `thinking-binding-controls-2026-08-01` beta, so a pruned history drops
+  stale thinking blocks instead of returning a 400 on accounts created on or
+  after 2026-08-31 — `test_plugin.py::testAgentEndpointStreamsAndShapesResponse`.
+- `pruneOldScreenshots` rewrites only user `tool_result` images and never
+  touches assistant messages, so thinking blocks go back unchanged —
+  `wireConversation.test.ts` "never touches assistant messages (thinking
+  blocks must survive)".
+- Streamed blocks sent back as the next assistant turn drop API-excluded
+  fields — `testAgentEndpointStripsApiExcludedBlockFields`.
+- `setup.py` requires an SDK with `beta.messages` + `block_binding` and
+  `output_config` (`anthropic>=1.8.0`), and the installed SDK exposes all
+  three (the other tests fake the client, so they can't catch this) —
+  `test_plugin.py::testAnthropicSdkSupportsTheApisThePluginCalls` (fails
+  with the floor removed). Extend it when the plugin adopts a new API
+  feature.
+
+Process rules:
+
+- A unit test can't show whether the API accepts a history edit. Verify
+  against the live API: send the edited history with
+  `prefix_mismatch_behavior: "error"` (expect the 400 a new account gets),
+  then with `"drop_block"` (expect 200 and a `thinking_dropped` entry in
+  `input_transformations`). Setting the field opts older accounts in, so this
+  works from any key.
+- The plugin logs drops at INFO, but the Girder container doesn't print this
+  plugin's INFO output. To check drops, call `_stream_agent_response` in the
+  container with the `girder_claude_chat` logger set to INFO.

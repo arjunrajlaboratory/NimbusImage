@@ -7,6 +7,10 @@ export interface IHotkey {
   handler: Function;
   disabled?: boolean;
   data?: IHotkeyDescription;
+  // Fire even while focus is in a text field, which Mousetrap otherwise
+  // ignores. For keys with no typing meaning that must work everywhere (the
+  // ⌘K command palette); never for a plain letter or digit.
+  allowInInputs?: boolean;
 }
 
 export interface IHotkeyDescription {
@@ -31,6 +35,22 @@ function bind(el: any, value: IHotkey | IHotkey[], bindElement: any) {
     value = [value];
   }
   el.mousetrapValues = value;
+  const allowedInInputs = new Set(
+    value.filter((hotkey) => hotkey.allowInInputs).map((hotkey) => hotkey.bind),
+  );
+  if (allowedInInputs.size) {
+    const defaultStopCallback = mousetrap.stopCallback;
+    mousetrap.stopCallback = function (
+      this: any,
+      event: KeyboardEvent,
+      element: Element,
+      combo: string,
+    ) {
+      return allowedInInputs.has(combo)
+        ? false
+        : defaultStopCallback.call(this, event, element, combo);
+    };
+  }
   let changed = false;
   value.forEach(({ bind: _bind, handler, disabled, data }: IHotkey) => {
     if (disabled) {

@@ -844,7 +844,16 @@ export default class GirderAPI {
   }
 
   deleteDataset(dataset: IDataset): Promise<IDataset> {
-    return this.client.delete(`/folder/${dataset.id}`).then(() => dataset);
+    // DELETE /resource, not DELETE /folder/:id. Since Girder 5.0.11 the folder
+    // endpoint hands deletion to a Celery task on the "local" queue and returns
+    // 503 when no worker consumes it; /resource removes the folder in-request
+    // through the same Folder().remove(), as the dataset browser (deleteItems)
+    // already does.
+    return this.client
+      .delete("resource", {
+        params: { resources: JSON.stringify({ folder: [dataset.id] }) },
+      })
+      .then(() => dataset);
   }
 
   async createConfigurationFromBase(

@@ -1,24 +1,5 @@
 <template>
   <v-dialog v-model="dialog" max-width="760px" scrollable>
-    <template v-slot:activator="activatorBinding">
-      <slot name="activator" v-bind="activatorBinding">
-        <v-btn
-          variant="outlined"
-          color="primary"
-          size="small"
-          v-bind="{ ...activatorBinding.props, ...$attrs }"
-          v-description="{
-            section: 'Object list actions',
-            title: 'Selection summary',
-            description:
-              'Tag composition and property statistics for the current selection, filtered objects, or the whole dataset',
-          }"
-        >
-          <v-icon>mdi-chart-box-outline</v-icon>
-          Selection summary
-        </v-btn>
-      </slot>
-    </template>
     <v-card>
       <v-card-title>Selection summary</v-card-title>
       <v-card-subtitle>
@@ -296,7 +277,9 @@ import { deserializePropertyPath, serializePropertyPath } from "@/utils/paths";
 
 type TScope = "all" | "filtered" | "selected";
 
-const dialog = ref(false);
+// Opened by its owner through `v-model:open` (DataIOMenu, from its menu or the
+// command palette); the dialog renders no activator of its own.
+const dialog = defineModel<boolean>("open", { default: false });
 const scope = ref<TScope>("all");
 const selectedPathStrings = ref<string[]>([]);
 const summary = ref<IAnnotationSummary | null>(null);
