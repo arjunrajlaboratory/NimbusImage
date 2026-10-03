@@ -17,7 +17,7 @@ Start from the home page: drag files or a whole folder onto the **Upload files**
 - Multiple files — or a dropped folder — become a **single multidimensional dataset**. NimbusImage parses channels, Z, time, and position from metadata or filenames (e.g. `s01`, `t02`). This is what you want for "a folder's worth of images" that belong to one acquisition.
 - Use **Quick Import** to accept defaults and go straight to the viewer, or **Advanced Import** to review and adjust:
   1. **Variable assignment** — map filename elements (`s01`, `t02`, …) to Z, time, channel, or position.
-  2. **Compositing** — stitch tiled stage positions together, or keep them as separate positions.
+  2. **Compositing** — stitch tiled stage positions together, or keep them as separate positions. This works for one multi-position ND2 file and for a folder of ND2 files with one tile each: if the tile number shows up on C (common for names like `…_Point1_0001_…_Seq0001.nd2`), move that variable to XY and the **Composite** checkbox appears next to it. If two files are at the same stage position, Composite is disabled and the message names them; if the tiles are far apart (for example, two wells), a warning suggests keeping them as separate positions. Compositing more than 16 files turns on transcoding by default, which keeps zoomed-out views fast.
   3. **Transcoding** — "Transcode to optimized TIFF" for better performance. Generally not needed for Nikon .nd2; on by default for Zeiss .czi and for TIFFs. For Leica .lif, NimbusImage imports the largest image set in the container.
   4. **Collection placement** — add the dataset to an existing or new collection.
 - The dataset name defaults from the common part of the filenames; the system checks for and prevents duplicate names.

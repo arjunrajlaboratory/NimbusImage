@@ -19,6 +19,7 @@ is in codebaseDocumentation/DATASET_MULTI_SOURCE_ENDPOINT-REVIEW.md.
 
 import io
 import json
+import os
 
 import pytest
 from bson.objectid import ObjectId
@@ -61,6 +62,14 @@ def _uploadTiffItem(user, folder, name, fill=0):
     )
 
 
+def _loadParityFixture(name):
+    path = os.path.join(
+        os.path.dirname(__file__), "parity_fixtures", name
+    )
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)["input"]
+
+
 def _firstFile(item):
     return list(Item().childFiles(item, limit=1))[0]
 
@@ -71,14 +80,16 @@ def _clearLargeImageMarks(folder):
 
 
 def _mockLargeImagePipeline(
-    monkeypatch, metadataError=None, transcodeError=None, metadataByName=None
+    monkeypatch, metadataError=None, transcodeError=None, metadataByName=None,
+    internalMetadataByName=None,
 ):
     """Install deterministic model doubles for endpoint failure tests.
 
     ``metadataByName`` overrides the tile metadata per item name, so tests
     can drive dtype/IndexRange-dependent behaviour without needing a real
     tile source (and without the arm64 pylibtiff crash that probing real
-    TIFFs triggers locally).
+    TIFFs triggers locally). ``internalMetadataByName`` does the same for
+    the internal metadata (e.g. ND2 stage positions).
     """
     def createImageItem(self, item, file, createJob=True, **kwargs):
         if createJob == "always" and transcodeError is not None:
@@ -99,7 +110,10 @@ def _mockLargeImagePipeline(
     monkeypatch.setattr(ImageItem, "createImageItem", createImageItem)
     monkeypatch.setattr(ImageItem, "getMetadata", getMetadata)
     monkeypatch.setattr(
-        ImageItem, "getInternalMetadata", lambda self, item, **kwargs: {}
+        ImageItem, "getInternalMetadata",
+        lambda self, item, **kwargs: (internalMetadataByName or {}).get(
+            item["name"], {}
+        ),
     )
 
 
@@ -1389,8 +1403,12 @@ class TestDatasetMultiSourceValidationRules:
     """The frontend's refusal rules, driven through mocked tile metadata so
     they need no real tile source."""
 
-    def _makeFolder(self, admin, name, metadataByName, monkeypatch):
-        _mockLargeImagePipeline(monkeypatch, metadataByName=metadataByName)
+    def _makeFolder(self, admin, name, metadataByName, monkeypatch,
+                    internalMetadataByName=None):
+        _mockLargeImagePipeline(
+            monkeypatch, metadataByName=metadataByName,
+            internalMetadataByName=internalMetadataByName,
+        )
         folder = utilities.createFolder(
             admin, name, upenn_utilities.datasetMetadata
         )
@@ -1398,6 +1416,227 @@ class TestDatasetMultiSourceValidationRules:
             _uploadTiffItem(admin, folder, itemName)
         _clearLargeImageMarks(folder)
         return folder
+
+    def testFolderOfSingleTileND2FilesComposites(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """A folder with one ND2 file per tile composites by each file's own
+        stage position once the tile-index variable is on XY. The parser
+        guesses that variable as C, so the override is what enables it."""
+        fixture = _loadParityFixture("nd2_compositing_multifile.json")
+        names = fixture["itemNames"]
+        folder = self._makeFolder(
+            admin, "tile_folder_dataset",
+            dict(zip(names, fixture["tilesMetadata"])), monkeypatch,
+            internalMetadataByName=dict(
+                zip(names, fixture["tilesInternalMetadata"])
+            ),
+        )
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"],
+            method="POST",
+            user=admin,
+            body=json.dumps({
+                "transcode": False,
+                "enableCompositing": True,
+                "assignments": fixture["options"]["assignmentStrategy"],
+            }),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        assert resp.json["compositing"] is True
+        sources = resp.json["config"]["sources"]
+        assert len(sources) == 2 * len(names)
+        assert all("position" in source for source in sources)
+        assert {source["xySet"] for source in sources} == {0}
+        assert len({
+            (source["position"]["x"], source["position"]["y"])
+            for source in sources
+        }) == len(names)
+
+        from ..server.models.collection import Collection as CollectionModel
+        collection = CollectionModel().load(
+            ObjectId(resp.json["collectionId"]), user=admin,
+            level=AccessType.READ, exc=True,
+        )
+        assert collection["meta"]["compatibility"]["xyDimensions"] == "one"
+
+    def _tileFolder(self, admin, name, monkeypatch, fixture, stages=None,
+                    extraInternal=None):
+        """A folder of single-position ND2 tiles from a parity fixture,
+        optionally moved to ``stages`` (µm) and padded with the bulky
+        internal metadata real ND2 files carry."""
+        inp = _loadParityFixture(fixture)
+        tiles = inp["tilesMetadata"]
+        internals = inp["tilesInternalMetadata"]
+        names = inp["itemNames"]
+        if stages is not None:
+            names = [
+                "Well1_Point1_%04d_ChannelCTG,DAPI_Seq%04d.nd2" % (i, i)
+                for i in range(len(stages))
+            ]
+            tiles = [tiles[0]] * len(stages)
+            internals = []
+            for x, y in stages:
+                meta = json.loads(json.dumps(inp["tilesInternalMetadata"][0]))
+                meta["nd2_frame_metadata"][0]["position"][
+                    "stagePositionUm"] = [x, y, 0]
+                internals.append(meta)
+        if extraInternal is not None:
+            internals = [dict(meta, **extraInternal) for meta in internals]
+        folder = self._makeFolder(
+            admin, name, dict(zip(names, tiles)), monkeypatch,
+            internalMetadataByName=dict(zip(names, internals)),
+        )
+        return folder, inp["options"]["assignmentStrategy"]
+
+    def testDuplicateStagePositionRefusesRequestedCompositing(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """Asking for compositing when two tiles share a stage position is
+        a 400 on a real run -- quietly configuring every tile as its own
+        XY position instead could not be redone -- and a dry run reports
+        the same reason as its validationError."""
+        folder, assignments = self._tileFolder(
+            admin, "duplicate_tiles_dataset", monkeypatch,
+            "nd2_compositing_duplicate.json",
+        )
+        body = {"transcode": False, "enableCompositing": True,
+                "assignments": assignments}
+        dry = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"], method="POST",
+            user=admin, body=json.dumps(dict(body, dryRun=True)),
+            type="application/json",
+        )
+        assertStatusOk(dry)
+        assert dry.json["compositing"] is False
+        assert "same stage position" in dry.json["compositingCheck"]["error"]
+        assert dry.json["validationError"] == \
+            dry.json["compositingCheck"]["error"]
+
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"], method="POST",
+            user=admin, body=json.dumps(body), type="application/json",
+        )
+        assertStatus(resp, 400)
+        assert "same stage position" in resp.json["message"]
+        assert Item().findOne({
+            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
+        }) is None
+
+        # Not asking for compositing is unaffected by the duplicate.
+        plain = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"], method="POST",
+            user=admin, body=json.dumps(dict(body, enableCompositing=False)),
+            type="application/json",
+        )
+        assertStatusOk(plain)
+        assert plain.json["compositing"] is False
+
+    def testCompositingManyTilesTranscodesByDefault(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """17 composited ND2 tiles: transcode becomes the default, because
+        untranscoded each viewport tile would read many ND2 files."""
+        folder, assignments = self._tileFolder(
+            admin, "many_tiles_dataset", monkeypatch,
+            "nd2_compositing_multifile.json",
+            stages=[(512.0 * i, 0.0) for i in range(17)],
+        )
+
+        def plan(enableCompositing):
+            resp = server.request(
+                path=MULTI_SOURCE_PATH % folder["_id"], method="POST",
+                user=admin, type="application/json",
+                body=json.dumps({
+                    "dryRun": True, "assignments": assignments,
+                    "enableCompositing": enableCompositing,
+                }),
+            )
+            assertStatusOk(resp)
+            return resp.json
+
+        composited = plan(True)
+        assert composited["compositing"] is True
+        assert composited["transcodeDefault"] is True
+        assert composited["transcode"] is True
+        separate = plan(False)
+        assert separate["transcodeDefault"] is False
+        assert separate["transcode"] is False
+
+    def testSourceMetadataIsBatchedAndSlim(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        bulky = {"nd2_text": "x" * 10000, "nd2_custom": {"a": 1}}
+        folder, _ = self._tileFolder(
+            admin, "source_metadata_dataset", monkeypatch,
+            "nd2_compositing_multifile.json", extraInternal=bulky,
+        )
+        items = list(Item().find(
+            {"folderId": folder["_id"]}, sort=[("lowerName", 1)]
+        ))
+        # One item is not a large image yet: reported, not fatal.
+        notReady = items[1]["name"]
+        realGetMetadata = ImageItem.getMetadata
+
+        def getMetadata(self, item, **kwargs):
+            if item["name"] == notReady:
+                raise TileSourceError("No large image file in this item.")
+            return realGetMetadata(self, item, **kwargs)
+
+        monkeypatch.setattr(ImageItem, "getMetadata", getMetadata)
+        otherFolder = utilities.createFolder(
+            admin, "other_dataset", upenn_utilities.datasetMetadata
+        )
+        foreign = _uploadTiffItem(admin, otherFolder, "foreign.tif")
+        ids = [str(item["_id"]) for item in items] + [str(foreign["_id"])]
+
+        resp = server.request(
+            path="/dataset/%s/source_metadata" % folder["_id"],
+            user=admin, params={"itemIds": json.dumps(ids)},
+        )
+        assertStatusOk(resp)
+        entries = resp.json
+        assert [entry["itemId"] for entry in entries] == ids
+        assert entries[1] == {
+            "itemId": ids[1], "error": "No large image file in this item.",
+        }
+        assert entries[-1]["error"] == "Item is not in this dataset."
+        first = entries[0]
+        assert first["tiles"]["sizeX"] == 1024
+        assert "nd2_text" not in first["internalMetadata"]
+        assert "nd2_custom" not in first["internalMetadata"]
+        assert first["internalMetadata"]["nd2_frame_metadata"] == [
+            {"position": {"stagePositionUm": [1000.0, -2000.0, 2945.0]}},
+        ]
+
+    def testSourceMetadataLimitsAndAccess(
+        self, admin, user, server, fsAssetstore, monkeypatch
+    ):
+        folder, _ = self._tileFolder(
+            admin, "source_metadata_limits", monkeypatch,
+            "nd2_compositing_multifile.json",
+        )
+        path = "/dataset/%s/source_metadata" % folder["_id"]
+        tooMany = [str(ObjectId()) for _ in range(101)]
+        resp = server.request(
+            path=path, user=admin, params={"itemIds": json.dumps(tooMany)},
+        )
+        assertStatus(resp, 400)
+        resp = server.request(
+            path=path, user=admin, params={"itemIds": json.dumps(["nope"])},
+        )
+        assertStatus(resp, 400)
+        # Readable by anyone while public; denied once private.
+        resp = server.request(
+            path=path, user=user, params={"itemIds": json.dumps([])},
+        )
+        assertStatusOk(resp)
+        Folder().setPublic(folder, False, save=True)
+        resp = server.request(
+            path=path, user=user, params={"itemIds": json.dumps([])},
+        )
+        assertStatus(resp, 403)
 
     # dtype and the number of sized variables are the two things the
     # frontend refuses on; keep them adjacent so the precedence is obvious.

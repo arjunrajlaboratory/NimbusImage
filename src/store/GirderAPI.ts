@@ -365,9 +365,16 @@ export default class GirderAPI {
     return this.client.get(`item/${toId(item)}/tiles`).then((r) => r.data);
   }
 
-  getTilesInternalMetadata(item: string | IGirderItem): Promise<any> {
+  // Tile metadata plus slim internal metadata for up to 100 items of a
+  // dataset folder in one request; see `dataset/:id/source_metadata`.
+  getSourceMetadata(
+    datasetId: string,
+    itemIds: string[],
+  ): Promise<ISourceMetadataEntry[]> {
     return this.client
-      .get(`item/${toId(item)}/tiles/internal_metadata`)
+      .get(`dataset/${datasetId}/source_metadata`, {
+        params: { itemIds: JSON.stringify(itemIds) },
+      })
       .then((r) => r.data);
   }
 
@@ -1368,6 +1375,15 @@ export interface IHistogramOptions {
   height: number;
   resample: boolean;
   cache: "schedule" | "report" | "none";
+}
+
+// One item's entry from `getSourceMetadata`: its metadata, or the reason
+// it has none yet (e.g. "No large image file in this item.").
+export interface ISourceMetadataEntry {
+  itemId: string;
+  tiles?: ITileMeta;
+  internalMetadata?: { [key: string]: any };
+  error?: string;
 }
 
 export interface ITileMeta {

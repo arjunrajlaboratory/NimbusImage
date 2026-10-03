@@ -1,0 +1,301 @@
+{
+  "name": "nd2_compositing_duplicate",
+  "description": "Three single-position ND2 tiles where the third re-images the first field (3 um away, within stage error). The compositing check reports the duplicate as an error, so compositing is refused even though enableCompositing is true and the sources stay separate XY positions.",
+  "input": {
+    "itemNames": [
+      "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2",
+      "Well1_Point1_3118_ChannelCTG,DAPI_Seq3118.nd2",
+      "Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "Frame": 0,
+            "IndexC": 0,
+            "Index": 0,
+            "Channel": "CTG"
+          },
+          {
+            "Frame": 1,
+            "IndexC": 1,
+            "Index": 0,
+            "Channel": "DAPI"
+          }
+        ],
+        "channels": [
+          "CTG",
+          "DAPI"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      },
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "Frame": 0,
+            "IndexC": 0,
+            "Index": 0,
+            "Channel": "CTG"
+          },
+          {
+            "Frame": 1,
+            "IndexC": 1,
+            "Index": 0,
+            "Channel": "DAPI"
+          }
+        ],
+        "channels": [
+          "CTG",
+          "DAPI"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      },
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "Frame": 0,
+            "IndexC": 0,
+            "Index": 0,
+            "Channel": "CTG"
+          },
+          {
+            "Frame": 1,
+            "IndexC": 1,
+            "Index": 0,
+            "Channel": "DAPI"
+          }
+        ],
+        "channels": [
+          "CTG",
+          "DAPI"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      }
+    ],
+    "tilesInternalMetadata": [
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                1000,
+                -2000,
+                2945
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": [
+            {
+              "volume": {
+                "cameraTransformationMatrix": [
+                  -0.9999992536874144,
+                  0.0012217301724580128,
+                  -0.0012217301724580128,
+                  -0.9999992536874144
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                488,
+                -2000,
+                2945
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": [
+            {
+              "volume": {
+                "cameraTransformationMatrix": [
+                  -0.9999992536874144,
+                  0.0012217301724580128,
+                  -0.0012217301724580128,
+                  -0.9999992536874144
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                1003,
+                -2000,
+                2945
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": [
+            {
+              "volume": {
+                "cameraTransformationMatrix": [
+                  -0.9999992536874144,
+                  0.0012217301724580128,
+                  -0.0012217301724580128,
+                  -0.9999992536874144
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": true,
+      "assignmentStrategy": {
+        "XY": {
+          "source": "filename",
+          "guess": "C"
+        },
+        "C": {
+          "source": "file",
+          "guess": "C"
+        }
+      }
+    }
+  },
+  "expected": {
+    "filenameVariables": [
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2": 0,
+          "Well1_Point1_3118_ChannelCTG,DAPI_Seq3118.nd2": 1,
+          "Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2": 2
+        },
+        "values": [
+          "3117",
+          "3118",
+          "3119"
+        ]
+      }
+    ],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": null,
+      "T": null,
+      "C": {
+        "source": "file",
+        "guess": "C"
+      }
+    },
+    "transcodeDefault": false,
+    "config": {
+      "channels": [
+        "CTG",
+        "DAPI"
+      ],
+      "sources": [
+        {
+          "path": "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2",
+          "framesAsAxes": {
+            "c": 1
+          },
+          "xyValues": [
+            0
+          ],
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "Well1_Point1_3118_ChannelCTG,DAPI_Seq3118.nd2",
+          "framesAsAxes": {
+            "c": 1
+          },
+          "xyValues": [
+            1
+          ],
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2",
+          "framesAsAxes": {
+            "c": 1
+          },
+          "xyValues": [
+            2
+          ],
+          "cValues": [
+            0
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": [
+        "3117",
+        "3118",
+        "3119"
+      ],
+      "z": null,
+      "t": null
+    },
+    "compositingCheck": {
+      "error": "\"Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2\" (XY 1) and \"Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2\" (XY 3) are at the same stage position, so compositing would draw one on top of the other. Remove the duplicate, or leave Composite off to keep them as separate XY positions.",
+      "warning": null
+    }
+  }
+}

@@ -149,6 +149,10 @@
         "slide1",
         "slide2"
       ]
+    },
+    "compositingCheck": {
+      "error": null,
+      "warning": null
     }
   }
 }

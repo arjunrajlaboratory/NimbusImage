@@ -196,13 +196,37 @@ dimension unassigned); omitted dimensions keep their default. `source` is one
 of `filename`, `file` (embedded metadata such as ND2 IndexRange), or `images`
 (raw frame order).
 
+### Compositing a folder of tiles
+
+A folder with one single-position `.nd2` per field (e.g. Nikon's
+`Well1_Point1_0001_…_Seq0001.nd2`) can be stitched into one image by each
+file's stage position. The filename parser usually guesses the bare tile number
+as `C`, so move it to `XY`:
+
+```python
+plan = ds.configure(dry_run=True)   # tile number shows up as filename/C
+result = ds.configure(
+    assignments={"XY": {"source": "filename", "guess": "C"},
+                 "C": {"source": "file", "guess": "C"}},
+    enable_compositing=True,
+)
+assert result.compositing           # False if files lack stage positions
+                                    # or differ in tile size / pixel size
+```
+
+Check `plan.compositing_check` in the dry run: an `error` means two files sit
+at the same stage position (the real run would fail with that message), and
+a `warning` means the tiles cover little of the mosaic (e.g. two wells), which
+is usually better left as separate XY positions. Compositing more than 16
+files transcodes by default.
+
 ### Other options and failures
 
 | Argument | Meaning |
 |---|---|
 | `transcode` | Convert to one tiled TIFF. Omit to use the UI's rule (on unless every file is `.nd2`); pass `False` to skip. |
 | `split_rgb_bands` | Split an RGB image into three channels (default `True`). |
-| `enable_compositing` | Lay out a single multi-position ND2 by stage coordinates rather than as separate XY positions. Only applies to a single source with ND2 frame metadata — read `result.compositing` for what actually happened, and expect XY to collapse to one position when it does. |
+| `enable_compositing` | Lay out ND2 files by stage position rather than as separate XY positions. Applies to one multi-position ND2, or to a folder of ND2 files (one per tile) with the same tile size once the variable that tells the files apart is on `XY` — read `result.compositing` for what actually happened, and expect XY to collapse to one position when it does. |
 | `create_view` | Also create the collection and dataset view the web UI needs (default `True`). Turn it off only if you are going to create your own. |
 
 Failures come back as `girder_client.HttpError`: 400 for an invalid

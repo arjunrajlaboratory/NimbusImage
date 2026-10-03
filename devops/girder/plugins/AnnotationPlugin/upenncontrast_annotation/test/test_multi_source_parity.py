@@ -40,6 +40,7 @@ from helpers.multi_source import (  # noqa: E402
     build_dimensions,
     compute_configuration,
     get_default_assignments,
+    slim_internal_metadata,
     validate_assignments,
     validate_source_dtypes,
 )
@@ -178,6 +179,7 @@ def test_parity(path):
     assert result["transcodeDefault"] == expected["transcodeDefault"]
     assert default_assignments == expected["defaultAssignments"]
     assert filename_variables == expected["filenameVariables"]
+    assert result["compositingCheck"] == expected["compositingCheck"]
 
 
 def _load(name):
@@ -204,12 +206,14 @@ class TestCompositingCollapsesXY:
     """
 
     @staticmethod
-    def _run(enable_compositing):
-        inp = _load("nd2_compositing_identity.json")
+    def _run(enable_compositing, fixture="nd2_compositing_identity.json",
+             use_fixture_strategy=True):
+        inp = _load(fixture)
+        strategy = (inp.get("options") or {}).get("assignmentStrategy")
         return compute_configuration(
             inp["itemNames"], inp["tilesMetadata"],
             inp["tilesInternalMetadata"],
-            strategy=(inp.get("options") or {}).get("assignmentStrategy"),
+            strategy=strategy if use_fixture_strategy else None,
             split_rgb_bands=True,
             enable_compositing=enable_compositing,
         )
@@ -224,6 +228,26 @@ class TestCompositingCollapsesXY:
         assert result["compositing"] is False
         # ...and then the XY assignment's size is the real extent.
         assert "xySet" not in result["config"]["sources"][0]
+
+    def test_folder_of_single_position_files_composites(self):
+        result = self._run(True, "nd2_compositing_multifile.json")
+        assert result["compositing"] is True
+        sources = result["config"]["sources"]
+        assert {s["xySet"] for s in sources} == {0}
+        # One stage position per file, shared by that file's channels.
+        positions = {
+            s["path"]: (s["position"]["x"], s["position"]["y"])
+            for s in sources
+        }
+        assert len(set(positions.values())) == 4
+
+    def test_folder_does_not_composite_until_xy_is_assigned(self):
+        # The parser guesses the bare tile number as C, so with default
+        # assignments XY is empty and there is nothing to lay out.
+        result = self._run(True, "nd2_compositing_multifile.json",
+                           use_fixture_strategy=False)
+        assert result["assignments"]["XY"] is None
+        assert result["compositing"] is False
 
 
 class TestOneVariableCanDriveTwoDimensions:
@@ -334,3 +358,105 @@ class TestRgbLayoutComesFromTheFirstSourceOnly:
         grey = {"bandCount": 1, "frames": [], "sizeX": 16, "sizeY": 16,
                 "dtype": "uint8"}
         validate_source_dtypes([rgb, grey])
+
+
+@pytest.mark.parametrize("path", _PATHS, ids=_fixture_id)
+def test_slim_internal_metadata_changes_nothing(path):
+    """The endpoints slim ND2 internal metadata down to what the
+    configuration reads; for every fixture, the configuration computed from
+    the slim copy (with bulky ND2 fields added first) must be identical."""
+    with open(path, encoding="utf-8") as handle:
+        inp = json.load(handle)["input"]
+    if "itemNames" not in inp:
+        pytest.skip("not a configuration fixture")
+    bulky = [
+        dict(meta or {}, nd2_text="x" * 1000, nd2_custom={"a": 1})
+        for meta in inp["tilesInternalMetadata"]
+    ]
+    options = inp.get("options") or {}
+
+    def configure(internal):
+        try:
+            return compute_configuration(
+                inp["itemNames"], inp["tilesMetadata"], internal,
+                strategy=options.get("assignmentStrategy"),
+                split_rgb_bands=options.get("splitRGBBands", True),
+                enable_compositing=options.get("enableCompositing", False),
+            )
+        except ValueError as e:
+            return str(e)
+
+    full = configure(bulky)
+    slim = configure([slim_internal_metadata(meta) for meta in bulky])
+    assert slim == full
+
+
+def _tile(frames, channels=2, **overrides):
+    meta = {
+        "sizeX": 1000, "sizeY": 1000, "mm_x": 0.001, "mm_y": 0.001,
+        "bandCount": 1, "frames": [{} for _ in range(frames)],
+        "IndexRange": {"IndexC": channels} if channels > 1 else None,
+    }
+    meta.update(overrides)
+    return meta
+
+
+def _stages(points, matrix=None, **extra):
+    meta = {"nd2_frame_metadata": [
+        {"position": {"stagePositionUm": [x, y, 0]}} for x, y in points
+    ]}
+    if matrix is not None:
+        meta["nd2"] = {"channels": [
+            {"volume": {"cameraTransformationMatrix": matrix}}
+        ]}
+    meta.update(extra)
+    return meta
+
+
+class TestCompositingRobustness:
+    """The stage-layout check runs for every import that could composite,
+    asked or not, so metadata it cannot use must make compositing
+    unavailable -- never turn a plain import into an exception."""
+
+    @staticmethod
+    def _configure(tiles, internal, enable_compositing=False):
+        return compute_configuration(
+            ["a.nd2"], tiles, internal,
+            enable_compositing=enable_compositing,
+        )
+
+    def test_missing_pixel_size_does_not_raise(self):
+        result = self._configure(
+            [_tile(2, mm_x=None)], [_stages([(0, 0)])],
+        )
+        assert result["compositing"] is False
+        assert result["compositingCheck"] == {"error": None, "warning": None}
+
+    def test_channel_without_volume_is_the_identity(self):
+        internal = [_stages([(0, 0)], nd2={"channels": [{}]})]
+        result = self._configure([_tile(2)], internal, True)
+        assert result["compositing"] is True
+        assert result["config"]["sources"][0]["position"]["s11"] == 1
+
+    def test_frames_past_the_stage_entries_cannot_composite(self):
+        result = self._configure([_tile(6)], [_stages([(0, 0)])], True)
+        assert result["compositing"] is False
+
+    def test_mixed_camera_orientations_cannot_composite(self):
+        result = compute_configuration(
+            ["t_1.nd2", "t_2.nd2"], [_tile(2), _tile(2)],
+            [_stages([(0, 0)], [-1, 0, 0, -1]),
+             _stages([(1000, 0)], [1, 0, 0, 1])],
+            strategy={"XY": {"source": "filename", "guess": "C"},
+                      "C": {"source": "file", "guess": "C"}},
+            enable_compositing=True,
+        )
+        assert result["compositing"] is False
+
+    def test_truncated_file_keeps_channel_pairs_together(self):
+        # 6 positions recorded, but only 12 frames (6 per channel) readable.
+        points = [(1000 * i, 0) for i in range(6)]
+        result = self._configure([_tile(12)], [_stages(points)], True)
+        sources = result["config"]["sources"]
+        assert sources[10]["position"] == sources[11]["position"]
+        assert sources[0]["position"] != sources[2]["position"]

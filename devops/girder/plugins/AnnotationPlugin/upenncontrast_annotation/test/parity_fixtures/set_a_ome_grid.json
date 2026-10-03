@@ -940,6 +940,10 @@
         "img003",
         "img004"
       ]
+    },
+    "compositingCheck": {
+      "error": null,
+      "warning": null
     }
   }
 }

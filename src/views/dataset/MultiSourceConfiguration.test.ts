@@ -6,6 +6,7 @@ import { shallowMount } from "@vue/test-utils";
 const mockGetItems = vi.fn().mockResolvedValue([]);
 const mockGetTiles = vi.fn().mockResolvedValue({});
 const mockGetTilesInternalMetadata = vi.fn().mockResolvedValue({});
+const mockGetSourceMetadata = vi.fn();
 const mockCreateLargeImage = vi.fn().mockResolvedValue({});
 const mockUpdateDatasetMetadata = vi.fn().mockResolvedValue({});
 const mockAddMultiSourceMetadata = vi.fn().mockResolvedValue("item-123");
@@ -15,14 +16,42 @@ const mockScheduleMaxMergeCache = vi.fn().mockResolvedValue(undefined);
 const mockScheduleHistogramCache = vi.fn().mockResolvedValue(undefined);
 const mockSetUploadDimensionStrategy = vi.fn();
 
+// The component fetches metadata in batches (getSourceMetadata); answer
+// each batch from the per-item mocks, keyed by the items getItems returned,
+// turning a rejection into that item's `error` as the endpoint does.
+async function sourceMetadataFromItemMocks(
+  _datasetId: string,
+  itemIds: string[],
+) {
+  const results = mockGetItems.mock.results;
+  const items: any[] = (await results[results.length - 1]?.value) ?? [];
+  return Promise.all(
+    itemIds.map(async (itemId) => {
+      const item = items.find((i) => i._id === itemId) ?? { _id: itemId };
+      try {
+        return {
+          itemId,
+          tiles: await mockGetTiles(item),
+          internalMetadata: await mockGetTilesInternalMetadata(item),
+        };
+      } catch (error: any) {
+        return {
+          itemId,
+          error:
+            error?.response?.data?.message ?? error?.message ?? String(error),
+        };
+      }
+    }),
+  );
+}
+
 // --- Store mock ---
 vi.mock("@/store", () => ({
   default: {
     api: {
       getItems: (...args: any[]) => mockGetItems(...args),
-      getTiles: (...args: any[]) => mockGetTiles(...args),
-      getTilesInternalMetadata: (...args: any[]) =>
-        mockGetTilesInternalMetadata(...args),
+      getSourceMetadata: (datasetId: string, itemIds: string[]) =>
+        mockGetSourceMetadata(datasetId, itemIds),
       createLargeImage: (...args: any[]) => mockCreateLargeImage(...args),
       updateDatasetMetadata: (...args: any[]) =>
         mockUpdateDatasetMetadata(...args),
@@ -74,16 +103,33 @@ vi.mock("p-limit", () => ({
   default: () => (fn: any) => fn(),
 }));
 
-// p-retry: execute function immediately (no retries in tests)
-vi.mock("p-retry", () => ({
-  default: (fn: any) => fn(),
-  AbortError: class AbortError extends Error {
+// p-retry: retry immediately (no delays), stopping on AbortError like the
+// real one.
+vi.mock("p-retry", () => {
+  class AbortError extends Error {
     constructor(message: string) {
       super(message);
       this.name = "AbortError";
     }
-  },
-}));
+  }
+  return {
+    default: async (fn: any, options: any = {}) => {
+      for (let attempt = 0; ; ++attempt) {
+        try {
+          return await fn();
+        } catch (error) {
+          if (
+            error instanceof AbortError ||
+            attempt >= (options.retries ?? 0)
+          ) {
+            throw error;
+          }
+        }
+      }
+    },
+    AbortError,
+  };
+});
 
 // Import after mocks (real parsing is NOT mocked)
 import { routerProvider } from "@/test/helpers";
@@ -257,6 +303,19 @@ function makeBasicTileMeta(overrides: any = {}) {
   };
 }
 
+function stageMeta(x: number, y: number) {
+  return {
+    nd2_frame_metadata: [{ position: { stagePositionUm: [x, y, 0] } }],
+  };
+}
+
+function xyAssignmentOfSize(size: number) {
+  return {
+    text: "Filename",
+    value: { id: 0, guess: "XY", source: "filename", size, data: {} },
+  };
+}
+
 function makeND2TileMeta(nC: number = 3, nZ: number = 5, nT: number = 4): any {
   const frames = [];
   for (let t = 0; t < nT; t++) {
@@ -371,6 +430,7 @@ describe("MultiSourceConfiguration", () => {
     mockGetItems.mockResolvedValue([]);
     mockGetTiles.mockResolvedValue(makeBasicTileMeta());
     mockGetTilesInternalMetadata.mockResolvedValue({});
+    mockGetSourceMetadata.mockImplementation(sourceMetadataFromItemMocks);
     mockCreateLargeImage.mockResolvedValue({});
     mockUpdateDatasetMetadata.mockResolvedValue({});
     mockAddMultiSourceMetadata.mockResolvedValue("item-123");
@@ -493,19 +553,55 @@ describe("MultiSourceConfiguration", () => {
     it("returns true for single ND2 file with nd2_frame_metadata", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.tilesInternalMetadata = [{ nd2_frame_metadata: [{}] }];
+      vm.tilesInternalMetadata = [stageMeta(0, 0)];
       vm.tilesMetadata = [makeBasicTileMeta()];
       expect(vm.canDoCompositing).toBe(true);
     });
 
-    it("returns false when multiple files", () => {
+    it("returns false for several files until XY distinguishes them", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.tilesInternalMetadata = [stageMeta(0, 0), stageMeta(100, 0)];
+      vm.tilesMetadata = [makeBasicTileMeta(), makeBasicTileMeta()];
+      vm.assignments.XY = null;
+      expect(vm.canDoCompositing).toBe(false);
+    });
+
+    it("returns true for single-position files once XY is assigned", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.tilesInternalMetadata = [stageMeta(0, 0), stageMeta(100, 0)];
+      vm.tilesMetadata = [makeBasicTileMeta(), makeBasicTileMeta()];
+      vm.assignments.XY = xyAssignmentOfSize(2);
+      expect(vm.canDoCompositing).toBe(true);
+    });
+
+    it("returns false for several files when the tile geometry differs", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.tilesInternalMetadata = [stageMeta(0, 0), stageMeta(100, 0)];
+      vm.assignments.XY = xyAssignmentOfSize(2);
+      vm.tilesMetadata = [
+        makeBasicTileMeta(),
+        makeBasicTileMeta({ sizeX: 1024 }),
+      ];
+      expect(vm.canDoCompositing).toBe(false);
+      vm.tilesMetadata = [
+        makeBasicTileMeta(),
+        makeBasicTileMeta({ mm_x: 0.002 }),
+      ];
+      expect(vm.canDoCompositing).toBe(false);
+    });
+
+    it("returns false when a file has no stage position", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.tilesInternalMetadata = [
-        { nd2_frame_metadata: [{}] },
+        stageMeta(0, 0),
         { nd2_frame_metadata: [{}] },
       ];
       vm.tilesMetadata = [makeBasicTileMeta(), makeBasicTileMeta()];
+      vm.assignments.XY = xyAssignmentOfSize(2);
       expect(vm.canDoCompositing).toBe(false);
     });
 
@@ -526,11 +622,202 @@ describe("MultiSourceConfiguration", () => {
     });
   });
 
+  describe("compositing checks", () => {
+    function namedItems(n: number) {
+      return Array.from({ length: n }, (_, i) => ({
+        _id: `tile-${i}`,
+        _modelType: "item",
+        name: `tile_${String(i).padStart(3, "0")}.nd2`,
+        folderId: "folder1",
+        creatorId: "user1",
+        description: "",
+        meta: {},
+      }));
+    }
+
+    function setUpTileFolder(vm: any, stages: [number, number][]) {
+      const items = namedItems(stages.length);
+      vm.girderItems = items;
+      vm.tilesMetadata = items.map(() => makeBasicTileMeta());
+      vm.tilesInternalMetadata = stages.map(([x, y]) => stageMeta(x, y));
+      vm.assignments.XY = {
+        text: "Filename",
+        value: {
+          id: 0,
+          guess: "XY",
+          source: "filename",
+          size: items.length,
+          data: {
+            values: items.map((item) => item.name),
+            valueIdxPerFilename: Object.fromEntries(
+              items.map((item, idx) => [item.name, idx]),
+            ),
+          },
+        },
+      };
+    }
+
+    it("refuses compositing when two files share a stage position", () => {
+      const vm = mountComponent().vm as any;
+      // 512 px tiles at 1 µm/px; the third file re-images the first field.
+      setUpTileFolder(vm, [
+        [0, 0],
+        [512, 0],
+        [3, 2],
+      ]);
+      vm.enableCompositing = true;
+      expect(vm.canDoCompositing).toBe(true);
+      expect(vm.compositingCheckResult.error).toContain(
+        '"tile_000.nd2" (XY 1) and "tile_002.nd2" (XY 3)',
+      );
+      expect(vm.shouldDoCompositing).toBe(false);
+    });
+
+    it("unticks Composite when a reassignment creates a duplicate", async () => {
+      const vm = mountComponent().vm as any;
+      await vm.initialized.catch(() => {});
+      setUpTileFolder(vm, [
+        [0, 0],
+        [512, 0],
+      ]);
+      vm.enableCompositing = true;
+      await nextTick();
+      expect(vm.shouldDoCompositing).toBe(true);
+      vm.tilesInternalMetadata = [stageMeta(0, 0), stageMeta(4, 0)];
+      await nextTick();
+      expect(vm.compositingCheckResult.error).not.toBeNull();
+      expect(vm.enableCompositing).toBe(false);
+    });
+
+    it("warns about, but still composites, far-apart tiles", () => {
+      const vm = mountComponent().vm as any;
+      setUpTileFolder(vm, [
+        [0, 0],
+        [512, 0],
+        [20000, 0],
+        [20512, 0],
+      ]);
+      vm.enableCompositing = true;
+      expect(vm.compositingCheckResult.error).toBeNull();
+      expect(vm.compositingCheckResult.warning).toContain("cover only");
+      expect(vm.shouldDoCompositing).toBe(true);
+    });
+
+    it("turns transcode on when compositing more than 16 files", async () => {
+      const vm = mountComponent().vm as any;
+      await vm.initialized.catch(() => {});
+      setUpTileFolder(
+        vm,
+        Array.from({ length: 17 }, (_, i) => [512 * i, 0]),
+      );
+      vm.fileTranscodeDefault = false;
+      vm.transcode = false;
+      vm.enableCompositing = true;
+      await nextTick();
+      expect(vm.transcode).toBe(true);
+      vm.enableCompositing = false;
+      await nextTick();
+      expect(vm.transcode).toBe(false);
+    });
+
+    it("keeps an explicitly chosen transcode when compositing changes", async () => {
+      const vm = mountComponent().vm as any;
+      await vm.initialized.catch(() => {});
+      setUpTileFolder(
+        vm,
+        Array.from({ length: 17 }, (_, i) => [512 * i, 0]),
+      );
+      // A saved strategy (or the user) picked "no transcode".
+      vm.applyDimensionStrategy({
+        ...vm.getDimensionStrategy(),
+        transcode: false,
+      });
+      setUpTileFolder(
+        vm,
+        Array.from({ length: 17 }, (_, i) => [512 * i, 0]),
+      );
+      vm.enableCompositing = true;
+      await nextTick();
+      expect(vm.shouldDoCompositing).toBe(true);
+      expect(vm.transcode).toBe(false);
+    });
+
+    it("stops at once when a metadata request itself fails", async () => {
+      const items = namedItems(3);
+      mockGetItems.mockResolvedValue(items);
+      mockGetSourceMetadata.mockRejectedValue(new Error("Network Error"));
+      const vm = mountComponent({}, { skipInitialize: false }).vm as any;
+      await expect(vm.initialized).rejects.toThrow("Network Error");
+      expect(mockGetSourceMetadata).toHaveBeenCalledTimes(1);
+      expect(vm.initError.message).toBe("Network Error");
+      expect(vm.initError.name).toBe(
+        "tile_000.nd2 (or one of 2 other files in the same request)",
+      );
+    });
+
+    it("leaves transcode alone when compositing 16 files", async () => {
+      const vm = mountComponent().vm as any;
+      await vm.initialized.catch(() => {});
+      setUpTileFolder(
+        vm,
+        Array.from({ length: 16 }, (_, i) => [512 * i, 0]),
+      );
+      vm.fileTranscodeDefault = false;
+      vm.transcode = false;
+      vm.enableCompositing = true;
+      await nextTick();
+      expect(vm.shouldDoCompositing).toBe(true);
+      expect(vm.transcode).toBe(false);
+    });
+
+    it("loads source metadata in batches of at most 50 items", async () => {
+      const items = namedItems(120);
+      mockGetItems.mockResolvedValue(items);
+      const vm = mountComponent({}, { skipInitialize: false }).vm as any;
+      await vm.initialized;
+      expect(mockGetSourceMetadata).toHaveBeenCalledTimes(3);
+      const requested = mockGetSourceMetadata.mock.calls.map((c) => c[1]);
+      expect(requested.map((ids: string[]) => ids.length)).toEqual([
+        50, 50, 20,
+      ]);
+      expect(requested.flat()).toEqual(items.map((item) => item._id));
+      expect(vm.tilesMetadata).toHaveLength(120);
+      expect(vm.initCompleted).toBe(120);
+    });
+
+    it("retries only the items that are not large images yet", async () => {
+      const items = namedItems(3);
+      mockGetItems.mockResolvedValue(items);
+      let firstCall = true;
+      mockGetSourceMetadata.mockImplementation(
+        async (datasetId: string, itemIds: string[]) => {
+          const entries = await sourceMetadataFromItemMocks(datasetId, itemIds);
+          if (firstCall) {
+            firstCall = false;
+            entries[1] = {
+              itemId: itemIds[1],
+              error: "No large image file in this item.",
+            } as any;
+          }
+          return entries;
+        },
+      );
+      const vm = mountComponent({}, { skipInitialize: false }).vm as any;
+      await vm.initialized;
+      expect(mockGetSourceMetadata.mock.calls.map((c) => c[1])).toEqual([
+        ["tile-0", "tile-1", "tile-2"],
+        ["tile-1"],
+      ]);
+      expect(vm.tilesMetadata).toHaveLength(3);
+      expect(vm.initError).toBeNull();
+    });
+  });
+
   describe("shouldDoCompositing", () => {
     it("returns true when canDoCompositing and enableCompositing", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.tilesInternalMetadata = [{ nd2_frame_metadata: [{}] }];
+      vm.tilesInternalMetadata = [stageMeta(0, 0)];
       vm.tilesMetadata = [makeBasicTileMeta()];
       vm.enableCompositing = true;
       expect(vm.shouldDoCompositing).toBe(true);
@@ -539,7 +826,7 @@ describe("MultiSourceConfiguration", () => {
     it("returns false when canDoCompositing but not enableCompositing", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.tilesInternalMetadata = [{ nd2_frame_metadata: [{}] }];
+      vm.tilesInternalMetadata = [stageMeta(0, 0)];
       vm.tilesMetadata = [makeBasicTileMeta()];
       vm.enableCompositing = false;
       expect(vm.shouldDoCompositing).toBe(false);

@@ -201,9 +201,20 @@ class MultiSourceConfiguration(BaseModel):
     transcode: bool = False
     transcode_default: bool = Field(False, alias="transcodeDefault")
     # Whether compositing was actually applied. Not the same as asking for
-    # it: enable_compositing only takes effect for a single source with ND2
-    # frame metadata, and when it does, XY collapses to one position.
+    # it: enable_compositing only takes effect for ND2 files with stage
+    # positions (one multi-position file, or one file per tile with XY
+    # assigned), and when it does, XY collapses to one position.
     compositing: bool = False
+    # Problems with the stage layout, reported whenever compositing is
+    # possible (requested or not): ``{"error": ..., "warning": ...}``. An
+    # error (two XY positions at the same stage position) refuses
+    # compositing -- a real run asking for it fails with that message; a
+    # warning (tiles covering little of the mosaic, e.g. separate wells)
+    # does not.
+    compositing_check: dict = Field(
+        default_factory=lambda: {"error": None, "warning": None},
+        alias="compositingCheck",
+    )
     is_rgb_file: bool = Field(False, alias="isRGBFile")
     rgb_band_count: int = Field(0, alias="rgbBandCount")
     validation_error: str | None = Field(None, alias="validationError")

@@ -1,0 +1,475 @@
+{
+  "name": "nd2_compositing_multifile",
+  "description": "Four single-position ND2 tiles (one file per field, 2 channels each) in a 2x2 stage grid with a near -I camera matrix, as exported by Nikon NIS for optical pooled screens. The filename tile index is moved to XY and enableCompositing is true; each source is placed by its own file's stage position and XY collapses to one position.",
+  "input": {
+    "itemNames": [
+      "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2",
+      "Well1_Point1_3118_ChannelCTG,DAPI_Seq3118.nd2",
+      "Well1_Point1_3214_ChannelCTG,DAPI_Seq3214.nd2",
+      "Well1_Point1_3215_ChannelCTG,DAPI_Seq3215.nd2"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "Frame": 0,
+            "IndexC": 0,
+            "Index": 0,
+            "Channel": "CTG"
+          },
+          {
+            "Frame": 1,
+            "IndexC": 1,
+            "Index": 0,
+            "Channel": "DAPI"
+          }
+        ],
+        "channels": [
+          "CTG",
+          "DAPI"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      },
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "Frame": 0,
+            "IndexC": 0,
+            "Index": 0,
+            "Channel": "CTG"
+          },
+          {
+            "Frame": 1,
+            "IndexC": 1,
+            "Index": 0,
+            "Channel": "DAPI"
+          }
+        ],
+        "channels": [
+          "CTG",
+          "DAPI"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      },
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "Frame": 0,
+            "IndexC": 0,
+            "Index": 0,
+            "Channel": "CTG"
+          },
+          {
+            "Frame": 1,
+            "IndexC": 1,
+            "Index": 0,
+            "Channel": "DAPI"
+          }
+        ],
+        "channels": [
+          "CTG",
+          "DAPI"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      },
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "Frame": 0,
+            "IndexC": 0,
+            "Index": 0,
+            "Channel": "CTG"
+          },
+          {
+            "Frame": 1,
+            "IndexC": 1,
+            "Index": 0,
+            "Channel": "DAPI"
+          }
+        ],
+        "channels": [
+          "CTG",
+          "DAPI"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      }
+    ],
+    "tilesInternalMetadata": [
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                1000,
+                -2000,
+                2945
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": [
+            {
+              "volume": {
+                "cameraTransformationMatrix": [
+                  -0.9999992536874144,
+                  0.0012217301724580128,
+                  -0.0012217301724580128,
+                  -0.9999992536874144
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                488,
+                -2000,
+                2945
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": [
+            {
+              "volume": {
+                "cameraTransformationMatrix": [
+                  -0.9999992536874144,
+                  0.0012217301724580128,
+                  -0.0012217301724580128,
+                  -0.9999992536874144
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                1000,
+                -1488,
+                2945
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": [
+            {
+              "volume": {
+                "cameraTransformationMatrix": [
+                  -0.9999992536874144,
+                  0.0012217301724580128,
+                  -0.0012217301724580128,
+                  -0.9999992536874144
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                488,
+                -1488,
+                2945
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": [
+            {
+              "volume": {
+                "cameraTransformationMatrix": [
+                  -0.9999992536874144,
+                  0.0012217301724580128,
+                  -0.0012217301724580128,
+                  -0.9999992536874144
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": true,
+      "assignmentStrategy": {
+        "XY": {
+          "source": "filename",
+          "guess": "C"
+        },
+        "C": {
+          "source": "file",
+          "guess": "C"
+        }
+      }
+    }
+  },
+  "expected": {
+    "filenameVariables": [
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2": 0,
+          "Well1_Point1_3118_ChannelCTG,DAPI_Seq3118.nd2": 1,
+          "Well1_Point1_3214_ChannelCTG,DAPI_Seq3214.nd2": 2,
+          "Well1_Point1_3215_ChannelCTG,DAPI_Seq3215.nd2": 3
+        },
+        "values": [
+          "3117",
+          "3118",
+          "3214",
+          "3215"
+        ]
+      }
+    ],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": null,
+      "T": null,
+      "C": {
+        "source": "file",
+        "guess": "C"
+      }
+    },
+    "transcodeDefault": false,
+    "config": {
+      "channels": [
+        "CTG",
+        "DAPI"
+      ],
+      "sources": [
+        {
+          "path": "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 0,
+          "frames": [
+            0
+          ],
+          "position": {
+            "x": 2048,
+            "y": 2048,
+            "s11": -1,
+            "s12": 0,
+            "s21": 0,
+            "s22": -1
+          }
+        },
+        {
+          "path": "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 1,
+          "frames": [
+            1
+          ],
+          "position": {
+            "x": 2048,
+            "y": 2048,
+            "s11": -1,
+            "s12": 0,
+            "s21": 0,
+            "s22": -1
+          }
+        },
+        {
+          "path": "Well1_Point1_3118_ChannelCTG,DAPI_Seq3118.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 0,
+          "frames": [
+            0
+          ],
+          "position": {
+            "x": 1024,
+            "y": 2048,
+            "s11": -1,
+            "s12": 0,
+            "s21": 0,
+            "s22": -1
+          }
+        },
+        {
+          "path": "Well1_Point1_3118_ChannelCTG,DAPI_Seq3118.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 1,
+          "frames": [
+            1
+          ],
+          "position": {
+            "x": 1024,
+            "y": 2048,
+            "s11": -1,
+            "s12": 0,
+            "s21": 0,
+            "s22": -1
+          }
+        },
+        {
+          "path": "Well1_Point1_3214_ChannelCTG,DAPI_Seq3214.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 0,
+          "frames": [
+            0
+          ],
+          "position": {
+            "x": 2048,
+            "y": 1024,
+            "s11": -1,
+            "s12": 0,
+            "s21": 0,
+            "s22": -1
+          }
+        },
+        {
+          "path": "Well1_Point1_3214_ChannelCTG,DAPI_Seq3214.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 1,
+          "frames": [
+            1
+          ],
+          "position": {
+            "x": 2048,
+            "y": 1024,
+            "s11": -1,
+            "s12": 0,
+            "s21": 0,
+            "s22": -1
+          }
+        },
+        {
+          "path": "Well1_Point1_3215_ChannelCTG,DAPI_Seq3215.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 0,
+          "frames": [
+            0
+          ],
+          "position": {
+            "x": 1024,
+            "y": 1024,
+            "s11": -1,
+            "s12": 0,
+            "s21": 0,
+            "s22": -1
+          }
+        },
+        {
+          "path": "Well1_Point1_3215_ChannelCTG,DAPI_Seq3215.nd2",
+          "xySet": 0,
+          "zSet": 0,
+          "tSet": 0,
+          "cSet": 1,
+          "frames": [
+            1
+          ],
+          "position": {
+            "x": 1024,
+            "y": 1024,
+            "s11": -1,
+            "s12": 0,
+            "s21": 0,
+            "s22": -1
+          }
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": [
+        "3117",
+        "3118",
+        "3214",
+        "3215"
+      ],
+      "z": null,
+      "t": null
+    },
+    "compositingCheck": {
+      "error": null,
+      "warning": null
+    }
+  }
+}

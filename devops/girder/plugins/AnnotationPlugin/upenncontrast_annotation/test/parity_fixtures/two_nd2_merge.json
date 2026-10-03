@@ -231,6 +231,10 @@
       "xy": null,
       "z": [],
       "t": null
+    },
+    "compositingCheck": {
+      "error": null,
+      "warning": null
     }
   }
 }
