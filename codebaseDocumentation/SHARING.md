@@ -30,6 +30,8 @@ NimbusImage uses Girder's built-in access control system with three permission l
 - Any user with READ access can view the access list (who has access and at what level)
 - The dataset owner (ADMIN) cannot be removed from the access list
 
+This last invariant is enforced by a `model.folder.save` listener installed in `server/helpers/folder_access_guard.py`. It rejects any save of a `contrastDataset` folder whose access list does not include the creator at ADMIN level. Site admins can override (recovery path). This guard plugs a gap in core Girder's `setAccessList`, which otherwise accepts any ACL including one that locks the owner out — see `BUG_OWNER_CAN_REMOVE_SELF_FROM_DATASET.md`.
+
 ## Architecture
 
 ### Resources Affected by Sharing
