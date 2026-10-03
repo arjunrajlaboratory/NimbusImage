@@ -141,6 +141,7 @@ import { ref, computed, watch, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 import girderResources from "@/store/girderResources";
+import { userDisplayName } from "@/utils/userDisplay";
 import type { RouteLocationRaw } from "vue-router";
 import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
 
@@ -347,7 +348,7 @@ async function refreshItems(force = false) {
       .getUser(folder.creatorId)
       .then((user) => {
         if (user) {
-          ownerDisplayName.value = `${user.firstName} ${user.lastName} (${user.email})`;
+          ownerDisplayName.value = userDisplayName(user).full;
         }
       })
       .catch(() => {});
@@ -368,7 +369,7 @@ async function refreshItems(force = false) {
               type: "folder",
             });
             if (resource) {
-              text = resource.name;
+              text = resource.name ?? "Unknown dataset";
             }
           } catch {
             // Silently handle errors

@@ -113,12 +113,3 @@ const shareDialogVisible = ref(false);
 
 defineExpose({ shareDialogVisible });
 </script>
-
-<style>
-/* Override global chip color reset for colored relation chips */
-.v-chip.colored-chip {
-  color: var(--chip-color) !important;
-  border-color: var(--chip-color) !important;
-  background: transparent !important;
-}
-</style>

@@ -15,11 +15,12 @@ interface IGirderBase {
   icon?: string;
 }
 
-export interface IGirderUser extends IGirderBase {
+export interface IGirderUser extends Omit<IGirderBase, "name"> {
   _modelType: "user";
   _id: string;
+  name?: string;
   login: string;
-  email: string;
+  email?: string;
   firstName: string;
   lastName: string;
   admin?: boolean;
@@ -53,13 +54,42 @@ export interface IGirderFile extends IGirderBase {
   _modelType: "file";
 }
 
-export interface IUPennCollection extends IGirderBase {
+// A collection without its "meta" document. This is what the
+// GET /upenn_collection/list endpoint returns, so that listing thousands of
+// collections doesn't drag along every layer, tool and snapshot.
+export interface ICollectionSummary extends IGirderBase {
   _modelType: "upenn_collection";
-  description: string;
+  // Nullable: the listing endpoint projects fields with `document.get(field)`,
+  // so a collection stored without a description comes back as JSON null rather
+  // than being absent. Consumers must guard before calling string methods.
+  description: string | null;
   creatorId: string;
   folderId: string;
+}
+
+export interface IUPennCollection extends ICollectionSummary {
   meta: any;
 }
+
+/**
+ * A document returned by POST /resource/batch without a field projection.
+ * The backend does not add the frontend-only `_modelType` discriminator.
+ */
+export type IGirderBatchResource<T extends { _id: string }> = Omit<
+  T,
+  "_modelType"
+>;
+
+/**
+ * A projected POST /resource/batch document. Only `_id` is unconditional;
+ * every other requested field is optional because callers choose the
+ * projection at runtime and documents may omit nullable fields.
+ */
+export type IGirderProjectedResource<T extends { _id: string }> = Pick<
+  T,
+  "_id"
+> &
+  Partial<Omit<T, "_id" | "_modelType">>;
 
 // TODO: This type is essentially a wrapper around the IGirderItem type for now.
 // It is defined in case we want to add more properties to the largeImage object in the future.

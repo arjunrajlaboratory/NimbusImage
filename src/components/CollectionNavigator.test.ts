@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount, flushPromises } from "@vue/test-utils";
+import { nextTick } from "vue";
 
 const mockGetFolders = vi.fn();
 const mockGetAllConfigurations = vi.fn();
@@ -214,5 +215,33 @@ describe("CollectionNavigator", () => {
     expect(mockGetAllConfigurations).not.toHaveBeenCalled();
     expect((wrapper.vm as any).configurations).toEqual([]);
     expect((wrapper.vm as any).incompatibleConfigurations).toEqual([]);
+  });
+
+  // Third instance of the same shape as CollectionList.vue and
+  // AddCollectionToProjectFilterDialog.vue: `refreshRows` returns early when
+  // there is no location, but the original code bumped `fetchGeneration` only
+  // AFTER that return. A request already in flight therefore still looked
+  // current and repopulated the rows the early return had just cleared.
+  it("discards an in-flight response when a later refresh clears the location", async () => {
+    let release: (value: any) => void = () => {};
+    mockGetFolders.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    await nextTick();
+
+    // A later refresh with no location takes the early-return path.
+    await wrapper.setProps({ location: null as any });
+    await vm.refreshRows();
+
+    // The stale folder listing lands afterwards and must be ignored.
+    release([{ _id: "stale-folder", name: "Stale", _modelType: "folder" }]);
+    await flushPromises();
+
+    expect(vm.folders).toEqual([]);
   });
 });

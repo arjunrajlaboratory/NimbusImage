@@ -1,8 +1,11 @@
-import pytest
+import json
 import random
+
+import pytest
 
 from upenncontrast_annotation.server.models.project import Project
 from upenncontrast_annotation.server.models import project
+from upenncontrast_annotation.server.api import project as projectApi
 from upenncontrast_annotation.server.models.collection import Collection
 from upenncontrast_annotation.server.models.datasetView import (
     DatasetView as DatasetViewModel
@@ -12,6 +15,8 @@ from girder.constants import AccessType
 from girder.exceptions import ValidationException, AccessException
 from girder.models.folder import Folder
 from girder.models.user import User
+
+from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -23,6 +28,24 @@ def get_sample_project(name="Test Project", description="Test description"):
         "name": name,
         "description": description,
     }
+
+
+def create_test_collection(creator, folder, name):
+    return Collection().createCollection(
+        name=name,
+        creator=creator,
+        folder=folder,
+        metadata={
+            "subtype": "contrastDataset",
+            "compatibility": {},
+            "layers": [],
+            "tools": [],
+            "propertyIds": [],
+            "snapshots": [],
+            "scales": {},
+        },
+        description="Test configuration",
+    )
 
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
@@ -307,6 +330,213 @@ class TestProject:
             ValidationException, match="Collection already in project"
         ):
             project_model.addCollection(updated, str(config["_id"]))
+
+    def test_project_add_collections_validates_before_saving(
+        self, admin, monkeypatch
+    ):
+        """A duplicate in a batch must leave the project unchanged."""
+        project_model = Project()
+        proj = project_model.createProject(
+            name="Batch validation project",
+            creator=admin,
+            description="Test",
+        )
+        folder = utilities.createFolder(
+            admin,
+            f"batch_validation_{random.random()}",
+            upenn_utilities.datasetMetadata,
+        )
+        collection_id = create_test_collection(
+            admin, folder, f"batch_validation_config_{random.random()}"
+        )["_id"]
+        save_calls = 0
+        real_save = project_model.save
+
+        def count_save(document):
+            nonlocal save_calls
+            save_calls += 1
+            return real_save(document)
+
+        monkeypatch.setattr(project_model, "save", count_save)
+
+        with pytest.raises(
+            ValidationException, match="Duplicate collection"
+        ):
+            project_model.addCollections(
+                proj, [collection_id, collection_id]
+            )
+
+        assert save_calls == 0
+        assert proj["meta"]["collections"] == []
+
+    def test_batch_add_collections_uses_one_write_and_propagates_access(
+        self, admin, user, server, monkeypatch
+    ):
+        """The endpoint adds all selected collections as one logical write."""
+        project_model = Project()
+        proj = project_model.createProject(
+            name="Batch add project",
+            creator=admin,
+            description="Test",
+        )
+        project_model.setUserAccess(
+            proj, user, AccessType.WRITE, save=True
+        )
+        project_model.setPublic(proj, True, save=True)
+        folder = utilities.createPrivateFolder(
+            admin,
+            f"batch_add_{random.random()}",
+            upenn_utilities.datasetMetadata,
+        )
+        collections = [
+            create_test_collection(
+                admin, folder, f"batch_config_{random.random()}"
+            )
+            for _index in range(2)
+        ]
+        real_save = project_model.save
+        save_calls = 0
+
+        def count_save(document):
+            nonlocal save_calls
+            save_calls += 1
+            return real_save(document)
+
+        monkeypatch.setattr(project_model, "save", count_save)
+        resp = server.request(
+            path=f"/project/{proj['_id']}/collections",
+            method="POST",
+            user=admin,
+            body=json.dumps({
+                "collectionIds": [
+                    str(collection["_id"])
+                    for collection in collections
+                ],
+            }),
+            type="application/json",
+        )
+
+        assertStatusOk(resp)
+        assert save_calls == 1
+        assert {
+            entry["collectionId"]
+            for entry in resp.json["meta"]["collections"]
+        } == {str(collection["_id"]) for collection in collections}
+        for collection in collections:
+            assert Collection().load(
+                collection["_id"],
+                user=user,
+                level=AccessType.WRITE,
+                exc=True,
+            )
+            assert Collection().load(
+                collection["_id"], force=True, exc=True
+            )["public"] is True
+
+    def test_batch_add_collections_denies_all_before_project_write(
+        self, admin, user, server
+    ):
+        """One inaccessible id rejects the entire request before any add."""
+        project_model = Project()
+        proj = project_model.createProject(
+            name="Batch access project",
+            creator=user,
+            description="Test",
+        )
+        user_folder = utilities.createPrivateFolder(
+            user,
+            f"user_batch_{random.random()}",
+            upenn_utilities.datasetMetadata,
+        )
+        admin_folder = utilities.createPrivateFolder(
+            admin,
+            f"admin_batch_{random.random()}",
+            upenn_utilities.datasetMetadata,
+        )
+        allowed = create_test_collection(
+            user, user_folder, f"allowed_{random.random()}"
+        )
+        denied = create_test_collection(
+            admin, admin_folder, f"denied_{random.random()}"
+        )
+
+        resp = server.request(
+            path=f"/project/{proj['_id']}/collections",
+            method="POST",
+            user=user,
+            body=json.dumps({
+                "collectionIds": [
+                    str(allowed["_id"]),
+                    str(denied["_id"]),
+                ],
+            }),
+            type="application/json",
+        )
+
+        assertStatus(resp, 403)
+        reloaded = project_model.load(proj["_id"], force=True, exc=True)
+        assert reloaded["meta"]["collections"] == []
+
+    @pytest.mark.parametrize("body", [
+        [],
+        {},
+        {"collectionIds": "not-a-list"},
+        {"collectionIds": []},
+        {"collectionIds": ["not-an-object-id"]},
+    ])
+    def test_batch_add_collections_rejects_malformed_bodies(
+        self, admin, server, body
+    ):
+        project_model = Project()
+        proj = project_model.createProject(
+            name=f"Malformed batch {random.random()}",
+            creator=admin,
+            description="Test",
+        )
+
+        resp = server.request(
+            path=f"/project/{proj['_id']}/collections",
+            method="POST",
+            user=admin,
+            body=json.dumps(body),
+            type="application/json",
+        )
+
+        assertStatus(resp, 400)
+        assert project_model.load(
+            proj["_id"], force=True, exc=True
+        )["meta"]["collections"] == []
+
+    def test_batch_add_collections_caps_request_size(
+        self, admin, server, monkeypatch
+    ):
+        monkeypatch.setattr(
+            projectApi, "MAX_PROJECT_COLLECTIONS_PER_REQUEST", 1
+        )
+        project_model = Project()
+        proj = project_model.createProject(
+            name="Capped batch",
+            creator=admin,
+            description="Test",
+        )
+
+        resp = server.request(
+            path=f"/project/{proj['_id']}/collections",
+            method="POST",
+            user=admin,
+            body=json.dumps({
+                "collectionIds": [
+                    "012345678901234567890123",
+                    "012345678901234567890124",
+                ],
+            }),
+            type="application/json",
+        )
+
+        assertStatus(resp, 400)
+        assert project_model.load(
+            proj["_id"], force=True, exc=True
+        )["meta"]["collections"] == []
 
     def test_project_remove_collection(self, admin):
         """Test removing a collection from a project."""

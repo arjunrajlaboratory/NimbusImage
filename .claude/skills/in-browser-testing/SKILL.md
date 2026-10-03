@@ -116,6 +116,28 @@ return [Math.round(cx * sx), Math.round(cy * sy),
 
 Picking a target by eyeballing a screenshot lands on overlays: the coords that *looked* like a layer's toggle resolved to a `v-expansion-panel-title__overlay`, which would have toggled the panel instead. `elementFromPoint` returning the real `INPUT` is the go-ahead.
 
+### "The button does nothing" is almost always one of two environment faults
+
+Both look identical to a broken handler, and both cost real time in PR #1278 before being diagnosed. **Install a capture-phase listener first** — it separates them in one step, because it reports whether a click arrived at all and, if so, where:
+
+```js
+window.__pts = [];
+document.addEventListener('click', e =>
+  window.__pts.push(`${e.clientX},${e.clientY} -> ${e.target.tagName}`), true);
+```
+
+| `__pts` after the click | Cause | Fix |
+|---|---|---|
+| **empty** | the window is background-hidden — Chrome delivers no clicks at all | check `document.visibilityState`; ask the user to bring the window forward |
+| **one entry, wrong element** | stale scale factors — the mapped point landed on a neighbour | re-screenshot and recompute `sx`/`sy` |
+| one entry, right element, no effect | now it really is the app | debug the handler |
+
+`document.visibilityState === "hidden"` is the tell for the first, and note it reads hidden **while `document.hasFocus()` is still `true`** — focus is not visibility, so checking focus alone tells you nothing. A brand-new tab is hidden too if the whole window is occluded, so opening one is not a workaround.
+
+The second is what the "recompute rather than reusing a factor" warning above is guarding against; the concrete failure was a window resized from 1456→1684 wide, after which the stale factor mapped a button's centre onto the surrounding `v-alert` div. The click *registered* — on the wrong element — which is why it read as a dead handler rather than a miss.
+
+Do not report an app bug from a click that did not verifiably reach its target.
+
 If every browser call starts failing with `Cannot access contents of the page. Extension manifest must request permission to access the respective host` (and `javascript_tool` times out), the extension has lost host permission for the tab. Nothing you can do from here — confirm the dev server is still up from the shell (`curl -o /dev/null -w '%{http_code}' http://localhost:5173`) so you can say it's extension-side, then ask the user to re-grant site access and check the extension side panel for a pending prompt.
 
 ## Performance measurement

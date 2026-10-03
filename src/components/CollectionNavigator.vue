@@ -255,6 +255,10 @@ async function initializeDefaultLocation() {
 }
 
 async function refreshRows() {
+  // Bump BEFORE the early return, not after: returning without bumping leaves a
+  // request that is already in flight believing it is current, so its response
+  // repopulates the rows this return has just cleared.
+  const generation = ++fetchGeneration;
   const location = currentLocation.value;
   if (!location) {
     folders.value = [];
@@ -264,7 +268,6 @@ async function refreshRows() {
     return;
   }
 
-  const generation = ++fetchGeneration;
   loading.value = true;
   errorMessage.value = "";
 

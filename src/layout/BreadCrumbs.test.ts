@@ -330,6 +330,32 @@ describe("BreadCrumbs", () => {
     expect(vm.ownerDisplayName).toBe("John Doe (john@example.com)");
   });
 
+  // The User model exposes 'email' only at ADMIN level — your own account or a
+  // site admin. Looking up somebody else's account legitimately comes back
+  // without one, so the parenthetical has to be omitted rather than rendered as
+  // "John Doe (undefined)".
+  it("omits the email parenthetical when the owner's email is not visible", async () => {
+    mockWatchFolder.mockReturnValue({ name: "My Dataset" });
+    mockGetFolder.mockResolvedValue({ name: "My Dataset", creatorId: "u1" });
+    mockGetUser.mockResolvedValue({ firstName: "John", lastName: "Doe" });
+    const wrapper = mountComponent({ datasetId: "ds1" }, {}, "dataset");
+    const vm = wrapper.vm as any;
+    await vm.refreshItems(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(vm.ownerDisplayName).toBe("John Doe");
+  });
+
+  it("falls back to the login when the owner has no name set", async () => {
+    mockWatchFolder.mockReturnValue({ name: "My Dataset" });
+    mockGetFolder.mockResolvedValue({ name: "My Dataset", creatorId: "u1" });
+    mockGetUser.mockResolvedValue({ login: "jdoe" });
+    const wrapper = mountComponent({ datasetId: "ds1" }, {}, "dataset");
+    const vm = wrapper.vm as any;
+    await vm.refreshItems(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(vm.ownerDisplayName).toBe("jdoe");
+  });
+
   it("refreshItems deduplicates when called with same params and not forced", async () => {
     mockWatchFolder.mockReturnValue({ name: "My Dataset" });
     mockGetFolder.mockResolvedValue({ name: "My Dataset" });

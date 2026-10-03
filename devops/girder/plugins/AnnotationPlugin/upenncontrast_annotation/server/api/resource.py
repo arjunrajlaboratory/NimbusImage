@@ -1,4 +1,3 @@
-from bson import ObjectId
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.v1.resource import Resource
@@ -6,6 +5,8 @@ from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.utility.model_importer import ModelImporter
 from girder.utility.progress import ProgressContext
+
+from ..helpers.validation import requireList, requireObjectId
 
 
 class CustomResource(Resource):
@@ -16,21 +17,36 @@ class CustomResource(Resource):
         # Batch resolve endpoint for multiple resource types
         self.route('POST', ('batch',), self.batchResources)
 
+    # Namespaces to resolve a resource type against, core first so a plugin
+    # model can never shadow a Girder one.
+    MODEL_NAMESPACES = ('_core', 'upenncontrast_annotation')
+
     def _getResourceModel(self, kind, funcName=None):
         """
         Override the function _getResourceModel from Girder`s Resource API to
         allow plugins from 'upenncontrast_annotation'.
+
+        `kind` cannot be narrowed to a fixed set: this class inherits Girder's
+        own /resource routes (search, lookup, download, move, copy, DELETE),
+        which resolve whatever model types their callers pass -- see the
+        characterization tests in test_resource_batch.py.
+
+        The broad `except` is deliberate and is the one place this file waives
+        the catch-specific-exceptions rule: ModelImporter.model raises a bare
+        `Exception` for an unregistered model, so there is no narrower type
+        available. It is kept as tight as the library allows -- a single call
+        inside the try, and the failure surfaces as a 400 rather than being
+        swallowed.
         """
-        try:
-            model = ModelImporter.model(kind)
-        except Exception:
+        for namespace in self.MODEL_NAMESPACES:
             try:
-                model = ModelImporter.model(kind, "upenncontrast_annotation")
+                model = ModelImporter.model(kind, namespace)
             except Exception:
-                model = None
-        if not model or (funcName and not hasattr(model, funcName)):
-            raise RestException('Invalid resources format.')
-        return model
+                continue
+            if funcName and not hasattr(model, funcName):
+                break
+            return model
+        raise RestException('Invalid resources format.')
 
     def _prepareMoveOrCopy(self, resources, parentType, parentId):
         user = self.getCurrentUser()
@@ -96,7 +112,9 @@ class CustomResource(Resource):
             'body',
             description=(
                 'Object with optional keys: folder, item, upenn_collection, '
-                ' user; each a list of ids'
+                ' user; each a list of ids. An optional "fields" list trims '
+                'every returned document to those keys plus _id, so callers '
+                'that only need e.g. names do not pull whole documents.'
             ),
             paramType='body',
             requireObject=True
@@ -105,6 +123,7 @@ class CustomResource(Resource):
     def batchResources(self, body):
         user = self.getCurrentUser()
         result = {}
+        fields = self._batchProjection(body.get('fields'))
 
         # Only allow known types
         allowed = ('folder', 'item', 'upenn_collection', 'user')
@@ -112,22 +131,76 @@ class CustomResource(Resource):
             ids = body.get(kind)
             if not ids:
                 continue
+            requireList(ids, kind)
             model = self._getResourceModel(kind)
 
             # Use bulk aggregation query instead of individual loads
             # This is much more efficient than loading each document
-            # individually
+            # individually.
             docs = model.findWithPermissions(
-                query={"_id": {"$in": [ObjectId(x) for x in ids]}},
+                query={"_id": {"$in": [
+                    requireObjectId(x, kind) for x in ids
+                ]}},
                 user=user,
-                level=AccessType.READ
+                level=AccessType.READ,
+                fields=self._queryFields(fields),
             )
 
-            # Build the mapping from the bulk query results
+            # Build the mapping from the bulk query results.
+            # model.filter() is what @filtermodel would apply: it drops every
+            # key the model does not expose at the caller's access level.
+            # Returning the raw documents leaked 'access' (who holds which
+            # permission) for folders and, for the user type, 'salt' -- the
+            # bcrypt password hash -- plus 'email', to any signed-in caller.
             mapping = {}
             for doc in docs:
-                mapping[str(doc['_id'])] = doc
+                mapping[str(doc['_id'])] = self._project(
+                    model.filter(doc, user), fields)
 
             result[kind] = mapping
 
         return result
+
+    def _queryFields(self, fields):
+        """Widen a response projection to what access filtering needs.
+
+        `model.filter()` calls `getAccessLevel(doc, user)`, which reads the
+        document's own 'access' and 'public'. Projecting those away would make
+        every document look unreadable and silently strip fields the caller is
+        entitled to, so they are fetched and then dropped from the response by
+        _project. Returns None (whole documents) when no projection was asked
+        for.
+        """
+        if fields is None:
+            return None
+        return list(set(fields) | {'_id', 'access', 'public'})
+
+    def _project(self, doc, fields):
+        """Narrow a filtered document to the caller's requested fields."""
+        if fields is None:
+            return doc
+        return {key: value for key, value in doc.items() if key in fields}
+
+    def _batchProjection(self, fields):
+        """Validate the optional `fields` list into a Mongo projection.
+
+        Returns None (no projection, whole documents) when the caller omits it,
+        so existing callers are unaffected. The keys build a projection, so
+        they are caller input on a query shape: reject anything not a plain
+        non-empty string, and reject '.' and '$' which would address a subpath
+        or read as an operator. '_id' is always included -- the response is a
+        map keyed by id, so it is not optional.
+        """
+        if fields is None:
+            return None
+        requireList(fields, 'fields')
+        for field in fields:
+            if (
+                not isinstance(field, str)
+                or not field
+                or '.' in field
+                or '$' in field
+            ):
+                raise RestException(
+                    'fields must be a list of plain document keys', code=400)
+        return list(set(fields) | {'_id'})

@@ -232,6 +232,40 @@ class Project(ProxiedModel):
             'Collection'
         )
 
+    def addCollections(self, project, collectionIds):
+        """Add multiple collections with one project save.
+
+        All conflicts are checked before mutating the in-memory project so a
+        rejected batch cannot leave a partially changed document.
+        """
+        collectionIds = [
+            self._ensureObjectId(collectionId)
+            for collectionId in collectionIds
+        ]
+        if len(set(collectionIds)) != len(collectionIds):
+            raise ValidationException(
+                'Duplicate collection in batch'
+            )
+        existing_ids = {
+            entry['collectionId']
+            for entry in project['meta']['collections']
+        }
+        if existing_ids.intersection(collectionIds):
+            raise ValidationException(
+                'Collection already in project'
+            )
+
+        now = datetime.datetime.utcnow()
+        project['meta']['collections'].extend([
+            {
+                'collectionId': collectionId,
+                'addedDate': now,
+            }
+            for collectionId in collectionIds
+        ])
+        project['updated'] = now
+        return self.save(project)
+
     def removeCollection(self, project, collectionId):
         """Remove a collection from the project."""
         return self._removeResource(
@@ -581,6 +615,61 @@ class Project(ProxiedModel):
             ))
         return dataset_views, datasets
 
+    def _gatherCollectionsResources(self, collections):
+        """Bulk-load views and datasets for multiple collections."""
+        collection_ids = [
+            collection['_id'] for collection in collections
+        ]
+        dataset_views = list(DatasetViewModel().find({
+            'configurationId': {'$in': collection_ids}
+        })) if collection_ids else []
+        dataset_ids = {
+            dataset_view['datasetId']
+            for dataset_view in dataset_views
+        }
+        datasets = list(Folder().find({
+            '_id': {'$in': list(dataset_ids)}
+        })) if dataset_ids else []
+        return dataset_views, datasets
+
+    def _propagateToResources(
+        self, project, docs, doc_model,
+        related_docs, related_model,
+        dataset_views, propagate_type
+    ):
+        """Propagate permissions to one or more primary resources."""
+        if propagate_type == 'access':
+            self.propagateAllUsersAccess(
+                project, docs, doc_model
+            )
+            self.propagateAllUsersAccess(
+                project, dataset_views,
+                DatasetViewModel()
+            )
+            self.propagateAllUsersAccess(
+                project, related_docs,
+                related_model
+            )
+        elif propagate_type == 'public':
+            if not project.get('public', False):
+                return
+            for ids, model in [
+                ([doc['_id'] for doc in docs], doc_model),
+                (
+                    [view['_id']
+                     for view in dataset_views],
+                    DatasetViewModel()
+                ),
+                (
+                    [related['_id']
+                     for related in related_docs],
+                    related_model
+                ),
+            ]:
+                self._bulkSetPublic(
+                    ids, model, True
+                )
+
     def _propagateToResource(
         self, project, doc, doc_model,
         related_docs, related_model,
@@ -596,37 +685,11 @@ class Project(ProxiedModel):
         :param dataset_views: Associated DatasetViews.
         :param propagate_type: 'access' or 'public'.
         """
-        if propagate_type == 'access':
-            self.propagateAllUsersAccess(
-                project, doc, doc_model
-            )
-            self.propagateAllUsersAccess(
-                project, dataset_views,
-                DatasetViewModel()
-            )
-            self.propagateAllUsersAccess(
-                project, related_docs,
-                related_model
-            )
-        elif propagate_type == 'public':
-            if not project.get('public', False):
-                return
-            for ids, model in [
-                ([doc['_id']], doc_model),
-                (
-                    [v['_id']
-                     for v in dataset_views],
-                    DatasetViewModel()
-                ),
-                (
-                    [r['_id']
-                     for r in related_docs],
-                    related_model
-                ),
-            ]:
-                self._bulkSetPublic(
-                    ids, model, True
-                )
+        self._propagateToResources(
+            project, [doc], doc_model,
+            related_docs, related_model,
+            dataset_views, propagate_type
+        )
 
     def propagateAccessToDataset(
         self, project, dataset
@@ -656,6 +719,24 @@ class Project(ProxiedModel):
             project, collection,
             CollectionModel(), datasets,
             Folder(), views, 'access'
+        )
+
+    def propagatePermissionsToCollections(
+        self, project, collections
+    ):
+        """Propagate ACL and public state with one related-resource lookup."""
+        views, datasets = (
+            self._gatherCollectionsResources(collections)
+        )
+        self._propagateToResources(
+            project, collections,
+            CollectionModel(), datasets,
+            Folder(), views, 'access'
+        )
+        self._propagateToResources(
+            project, collections,
+            CollectionModel(), datasets,
+            Folder(), views, 'public'
         )
 
     def propagatePublicToDataset(

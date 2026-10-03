@@ -499,6 +499,7 @@ import {
   IUPennCollection,
 } from "@/girder";
 import girderResources from "@/store/girderResources";
+import { userDisplayName } from "@/utils/userDisplay";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import {
   IDatasetView,
@@ -827,18 +828,10 @@ function getNameError(idx: number): string {
   return "Dataset already exists in this location";
 }
 
-async function getUsernameFromId(
+async function getUserDisplayNames(
   creatorId: string,
-): Promise<{ fullname: string; username: string }> {
-  const user = await girderResources.getUser(creatorId);
-  if (!user) {
-    return { fullname: "Unknown User", username: "unknown" };
-  }
-  const fullname = `${user.firstName} ${user.lastName}`.trim();
-  return {
-    fullname: fullname || user.email, // fallback to email if no name set
-    username: user.email,
-  };
+): Promise<IUserDisplayInfo> {
+  return userDisplayName(await girderResources.getUser(creatorId));
 }
 
 function ensureUserDisplayInfo(creatorId: string) {
@@ -847,13 +840,10 @@ function ensureUserDisplayInfo(creatorId: string) {
       ...userDisplayNames.value,
       [creatorId]: { full: "Loading...", short: "Loading..." },
     };
-    getUsernameFromId(creatorId).then((user) => {
+    getUserDisplayNames(creatorId).then((names) => {
       userDisplayNames.value = {
         ...userDisplayNames.value,
-        [creatorId]: {
-          full: `${user.fullname} (${user.username})`,
-          short: user.fullname,
-        },
+        [creatorId]: names,
       };
     });
   }
@@ -887,12 +877,7 @@ async function fetchUsersForDatasets() {
     for (const userId of userIds) {
       const user = girderResources.watchUser(userId);
       if (user) {
-        const fullname =
-          `${user.firstName} ${user.lastName}`.trim() || user.email;
-        updates[userId] = {
-          full: `${fullname} (${user.email})`,
-          short: fullname,
-        };
+        updates[userId] = userDisplayName(user);
       }
     }
     if (Object.keys(updates).length > 0) {

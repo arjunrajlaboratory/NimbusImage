@@ -4,13 +4,19 @@ import { shallowMount } from "@vue/test-utils";
 
 const mockGetUserPrivateFolder = vi.fn();
 const mockClientGet = vi.fn();
-const mockAddCollectionToProject = vi.fn();
+const mockListCollections = vi.fn();
+const mockAddCollectionsToProject = vi.fn();
 
+// `listCollections` must be mocked: the dialog was switched from a raw
+// `client.get("upenn_collection")` to `store.api.listCollections`, and until this
+// was added the method was simply absent from the mock — every fetch threw and
+// took the catch branch, so the whole fetch path was passing vacuously.
 vi.mock("@/store", () => ({
   default: {
     api: {
       getUserPrivateFolder: (...args: any[]) =>
         mockGetUserPrivateFolder(...args),
+      listCollections: (...args: any[]) => mockListCollections(...args),
       client: {
         get: (...args: any[]) => mockClientGet(...args),
       },
@@ -21,8 +27,8 @@ vi.mock("@/store", () => ({
 
 vi.mock("@/store/projects", () => ({
   default: {
-    addCollectionToProject: (...args: any[]) =>
-      mockAddCollectionToProject(...args),
+    addCollectionsToProject: (...args: any[]) =>
+      mockAddCollectionsToProject(...args),
   },
 }));
 
@@ -90,6 +96,7 @@ async function mountComponent(props = {}) {
     _modelType: "folder",
   });
   mockClientGet.mockResolvedValue({ data: [] });
+  mockListCollections.mockResolvedValue({ collections: [], hasMore: false });
 
   const wrapper = shallowMount(AddCollectionToProjectFilterDialog, {
     props: {
@@ -146,6 +153,41 @@ describe("AddCollectionToProjectFilterDialog", () => {
     expect(vm.filteredCollections[0]._id).toBe("existing-col-1");
   });
 
+  it("renders only one bounded page of loaded collections", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.allCollections = Array.from({ length: 30 }, (_value, index) => ({
+      _id: `collection-${index}`,
+      name: `Collection ${index}`,
+      description: "",
+    }));
+
+    expect(vm.visibleCollections).toHaveLength(25);
+    expect(vm.visibleCollections[0]._id).toBe("collection-0");
+
+    vm.collectionPage = 2;
+    await nextTick();
+    expect(vm.visibleCollections).toHaveLength(5);
+    expect(vm.visibleCollections[0]._id).toBe("collection-25");
+  });
+
+  it("returns to the first client page when the search changes", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.allCollections = Array.from({ length: 30 }, (_value, index) => ({
+      _id: `collection-${index}`,
+      name: `Collection ${index}`,
+      description: "",
+    }));
+    vm.collectionPage = 2;
+
+    vm.searchQuery = "Collection 2";
+    await nextTick();
+
+    expect(vm.collectionPage).toBe(1);
+    expect(vm.visibleCollections[0]._id).toBe("collection-2");
+  });
+
   it("isInProject checks existingCollectionIds Set", async () => {
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
@@ -173,8 +215,8 @@ describe("AddCollectionToProjectFilterDialog", () => {
     expect(vm.selectedCollections).toHaveLength(0);
   });
 
-  it("addCollections calls store for each selected collection and emits added", async () => {
-    mockAddCollectionToProject.mockResolvedValue({});
+  it("adds every selection in one request and emits confirmed ids", async () => {
+    mockAddCollectionsToProject.mockResolvedValue(["col-3", "col-4"]);
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
@@ -183,14 +225,10 @@ describe("AddCollectionToProjectFilterDialog", () => {
 
     await vm.addCollections();
 
-    expect(mockAddCollectionToProject).toHaveBeenCalledTimes(2);
-    expect(mockAddCollectionToProject).toHaveBeenCalledWith({
+    expect(mockAddCollectionsToProject).toHaveBeenCalledTimes(1);
+    expect(mockAddCollectionsToProject).toHaveBeenCalledWith({
       projectId: "proj1",
-      collectionId: "col-3",
-    });
-    expect(mockAddCollectionToProject).toHaveBeenCalledWith({
-      projectId: "proj1",
-      collectionId: "col-4",
+      collectionIds: ["col-3", "col-4"],
     });
     expect(wrapper.emitted("added")).toBeTruthy();
     expect(wrapper.emitted("added")![0][0]).toEqual(["col-3", "col-4"]);
@@ -204,12 +242,12 @@ describe("AddCollectionToProjectFilterDialog", () => {
 
     await vm.addCollections();
 
-    expect(mockAddCollectionToProject).not.toHaveBeenCalled();
+    expect(mockAddCollectionsToProject).not.toHaveBeenCalled();
     expect(wrapper.emitted("added")).toBeFalsy();
   });
 
   it("addCollections resets selectedIds after adding", async () => {
-    mockAddCollectionToProject.mockResolvedValue({});
+    mockAddCollectionsToProject.mockResolvedValue(["col-3"]);
     const wrapper = await mountComponent();
     const vm = wrapper.vm as any;
     vm.allCollections = sampleCollections;
@@ -219,6 +257,23 @@ describe("AddCollectionToProjectFilterDialog", () => {
     await vm.addCollections();
 
     expect(vm.selectedIds).toEqual(new Set());
+  });
+
+  it("retains the selection and emits no success when the batch fails", async () => {
+    mockAddCollectionsToProject.mockRejectedValue(
+      new Error("Batch request failed"),
+    );
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.allCollections = sampleCollections;
+    vm.selectedIds = new Set(["col-3", "col-4"]);
+
+    await vm.addCollections();
+
+    expect(wrapper.emitted("added")).toBeFalsy();
+    expect(vm.selectedIds).toEqual(new Set(["col-3", "col-4"]));
+    expect(vm.addError).toBe("Failed to add collections. Please try again.");
+    expect(vm.adding).toBe(false);
   });
 
   it("watch on project resets selectedIds", async () => {
@@ -232,6 +287,115 @@ describe("AddCollectionToProjectFilterDialog", () => {
       name: "New Project",
     };
     await wrapper.setProps({ project: newProject });
+
+    expect(vm.selectedIds).toEqual(new Set());
+  });
+
+  // `fetchGeneration` is bumped AFTER the folder check in the original code, so
+  // the "no folder yet" early return left the counter untouched — an all-scope
+  // request already in flight then passed its own stale check and repopulated the
+  // list with cross-folder collections while the UI showed folder scope, making
+  // them selectable. The counter has to move before ANY scope-dependent return.
+  // Same shape as the guard in CollectionList.vue; this is its untreated twin.
+  it("discards an in-flight all-scope response after switching back to a folder scope", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+
+    let release: (value: any) => void = () => {};
+    mockListCollections.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    // All-folders request starts and is still pending.
+    vm.scope = "all";
+    await nextTick();
+
+    // Switch back before any folder has been resolved: the early return path.
+    vm.currentFolder = null;
+    vm.scope = "folder";
+    await nextTick();
+
+    // The stale all-scope page lands afterwards.
+    release({ collections: [{ _id: "cross-folder" }], hasMore: false });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(vm.allCollections).toEqual([]);
+    // Bumping the generation before the early return (the fix above) stranded
+    // `loading`: the superseded request's finally sees a stale generation and
+    // refuses to clear it, while the new generation never enters the
+    // try/finally at all — leaving the progress bar up indefinitely.
+    expect(vm.loading).toBe(false);
+  });
+
+  // The dialog previously fetched with `limit: 0` (Girder "unlimited"), so every
+  // collection in a folder was selectable. /list clamps to 10,000, so without a
+  // paging path anything past the first page became unreachable — a regression
+  // for a folder holding more than the cap.
+  it("appends the next page at the current offset when loading more", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.allCollections = [sampleCollections[0]];
+    vm.hasMore = true;
+
+    mockListCollections.mockResolvedValue({
+      collections: [sampleCollections[1]],
+      hasMore: false,
+    });
+    await vm.loadMore();
+
+    expect(mockListCollections).toHaveBeenLastCalledWith({
+      folderId: "private-folder",
+      offset: 1,
+    });
+    expect(vm.allCollections.map((c: any) => c._id)).toEqual([
+      "existing-col-1",
+      "col-3",
+    ]);
+    expect(vm.hasMore).toBe(false);
+  });
+
+  // The alert renders outside the `v-if="loading"` guard, so leaving hasMore set
+  // keeps a clickable-but-dead button on screen during a refetch. CollectionList
+  // clears it on entry for this reason; keep the two in step.
+  it("clears hasMore when a refetch starts", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.hasMore = true;
+    let release: (value: any) => void = () => {};
+    mockListCollections.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    vm.fetchCollections();
+    await nextTick();
+    expect(vm.hasMore).toBe(false);
+
+    release({ collections: [], hasMore: false });
+  });
+
+  it("does not page while a refetch is replacing the listing", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.hasMore = true;
+    vm.loading = true;
+    mockListCollections.mockClear();
+    await vm.loadMore();
+    expect(mockListCollections).not.toHaveBeenCalled();
+  });
+
+  // Switching scope redefines which collections are even listed, so a selection
+  // made under the old scope no longer corresponds to what the user can see.
+  it("clears selectedIds when the scope changes", async () => {
+    const wrapper = await mountComponent();
+    const vm = wrapper.vm as any;
+    vm.selectedIds = new Set(["col-3"]);
+
+    vm.scope = "all";
+    await wrapper.vm.$nextTick();
 
     expect(vm.selectedIds).toEqual(new Set());
   });
