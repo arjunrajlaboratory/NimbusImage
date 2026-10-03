@@ -1,9 +1,19 @@
 name: Lint and test backend
 
+# The Claude chat plugin has its own workflow (claude-chat.yaml), so a change
+# confined to it doesn't wait on the AnnotationPlugin suite.
 on:
   push:
     paths:
       - devops/girder/**
+      - "!devops/girder/plugins/girder-claude-chat/**"
+      - .github/workflows/backend.yaml
+
+# A newer push to the same branch supersedes a running check; master keeps
+# every run so each merge has a result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   all:
@@ -12,7 +22,9 @@ jobs:
 
     services:
       mongodb:
-        image: mongo:latest
+        # Pinned so tests run against a chosen version rather than whatever
+        # :latest is that day (it moved to 9.x unannounced).
+        image: mongo:8.2
         ports:
           - 27017:27017
 
@@ -28,5 +40,3 @@ jobs:
           path: devops/girder/
       - name: Test AnnotationPlugin
         run: pip install tox && cd devops/girder/plugins/AnnotationPlugin && tox
-      - name: Test Claude plugins
-        run: pip install tox && cd devops/girder/plugins/girder-claude-chat && tox

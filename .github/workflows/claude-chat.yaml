@@ -1,9 +1,10 @@
-name: Lint and test nimbusimage
+name: Lint and test Claude chat plugin
 
 on:
   push:
     paths:
-      - nimbusimage/**
+      - devops/girder/plugins/girder-claude-chat/**
+      - .github/workflows/claude-chat.yaml
 
 # A newer push to the same branch supersedes a running check; master keeps
 # every run so each merge has a result.
@@ -22,12 +23,11 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
+      # The same repo-wide flake8 backend.yaml runs on devops/girder/;
+      # tox's lint env below adds the plugin's stricter checks.
       - name: flake8 Lint
         uses: py-actions/flake8@v2
         with:
-          path: nimbusimage/
-      - name: Install and test nimbusimage
-        run: |
-          cd nimbusimage
-          pip install -e ".[dev]"
-          pytest -m "not integration"
+          path: devops/girder/plugins/girder-claude-chat/
+      - name: Test Claude chat plugin
+        run: pip install tox && cd devops/girder/plugins/girder-claude-chat && tox
