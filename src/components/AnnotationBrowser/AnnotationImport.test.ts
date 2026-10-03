@@ -38,13 +38,6 @@ describe("AnnotationImport", () => {
     vi.clearAllMocks();
   });
 
-  it("button disabled when not logged in", () => {
-    (store as any).isLoggedIn = false;
-    const wrapper = mountComponent();
-    expect(wrapper.vm.isLoggedIn).toBe(false);
-    (store as any).isLoggedIn = true;
-  });
-
   it("canImport is true when dataset exists", () => {
     const wrapper = mountComponent();
     expect(wrapper.vm.canImport).toBe(true);

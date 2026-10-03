@@ -25,7 +25,9 @@ vi.mock("@/store", () => ({ default: mockedStore }));
 vi.mock("@/store/annotation", () => ({ default: mockedAnnotationStore }));
 vi.mock("@/store/properties", () => ({ default: mockedPropertyStore }));
 
+import { nextTick } from "vue";
 import ColorByPropertyDialog from "./ColorByPropertyDialog.vue";
+import { colorByPropertyRequest } from "@/commands/requests";
 
 let wrapper: VueWrapper<any> | null = null;
 
@@ -213,5 +215,36 @@ describe("ColorByPropertyDialog", () => {
     expect(wrapper.vm.canApply).toBe(false);
     wrapper.vm.mode = "categorical";
     expect(wrapper.vm.canApply).toBe(true);
+  });
+
+  describe("command palette pre-selection", () => {
+    beforeEach(() => {
+      colorByPropertyRequest.value = null;
+    });
+
+    it("selects the requested property when the dialog opens", async () => {
+      const wrapper = mountDialog(false);
+      colorByPropertyRequest.value = "prop2.Mean.Ch1";
+      await wrapper.setProps({ show: true });
+      await nextTick();
+      expect(wrapper.vm.selectedPathKey).toBe("prop2.Mean.Ch1");
+      expect(colorByPropertyRequest.value).toBeNull();
+    });
+
+    it("selects it when the dialog is already open", async () => {
+      const wrapper = mountDialog(true);
+      colorByPropertyRequest.value = "prop1";
+      await nextTick();
+      expect(wrapper.vm.selectedPathKey).toBe("prop1");
+    });
+
+    it("ignores a path the current dataset doesn't have", async () => {
+      const wrapper = mountDialog(false);
+      colorByPropertyRequest.value = "gone";
+      await wrapper.setProps({ show: true });
+      await nextTick();
+      expect(wrapper.vm.selectedPathKey).toBeNull();
+      expect(colorByPropertyRequest.value).toBeNull();
+    });
   });
 });

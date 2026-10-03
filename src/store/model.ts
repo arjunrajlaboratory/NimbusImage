@@ -1,5 +1,6 @@
 import { IGirderItem, IGirderFolder, IUPennCollection } from "@/girder";
 import type { ITileHistogram } from "./images";
+import type { PanelId } from "@/utils/panelRegistry";
 interface IObject<Values = any> {
   [key: string]: Values;
 }
@@ -447,14 +448,12 @@ export type TTimelapseTrackColoring = "track" | "uniform";
 export type TAnnotationBrowserTab = "objects" | "measurements" | "connections";
 
 /**
- * Palettes that a component with no access to App.vue's palette registry may
- * ask to have opened (see `paletteOpenRequests` in the main store). These are
- * a subset of App.vue's `PaletteId`, which is where opening actually happens.
+ * Palettes that a component with no access to App.vue's open/closed refs may
+ * ask to have opened (see `paletteOpenRequests` in the main store). An alias
+ * of the panel registry's id, so a renamed palette is a compile error rather
+ * than a request that silently does nothing.
  */
-export type TRequestablePalette =
-  | "filtersPanel"
-  | "analysisPanel"
-  | "annotationPanel";
+export type TRequestablePalette = PanelId;
 
 export type TVolumeViewMode = "2d" | "3d";
 

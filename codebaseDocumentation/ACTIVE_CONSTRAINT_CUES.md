@@ -79,9 +79,9 @@ the store: `main.requestPaletteOpen(["analysisPanel", "filtersPanel"])` sets
 `paletteOpenRequests`, App.vue watches it, opens each palette in order and
 clears the list (so the same request twice in a row is still seen as a change).
 This generalizes the existing `isAnnotationPanelOpen` escape hatch used by the
-Timelapse panel. `TRequestablePalette` (in `model.ts`) is a subset of App.vue's
-`PaletteId`, so renaming a palette id fails to compile rather than silently
-never opening anything.
+Timelapse panel. `TRequestablePalette` (in `model.ts`) is an alias of `PanelId` from
+`src/utils/panelRegistry.ts`, so renaming a palette id fails to compile rather
+than silently never opening anything.
 
 ## Regression checklist
 
