@@ -9,12 +9,11 @@ a large image; they self-skip via the ``largeImageCapable`` fixture below
 when none is available, rather than reporting a false failure caused by
 the test environment.
 
-Running this file: prefer the Linux girder container over local tox on
-arm64 macOS, where ``large_image_source_tiff`` intermittently segfaults
-pylibtiff while probing the synthetic TIFFs (it takes down tests nobody
-touched, and whether it fires depends on test selection). The container
-recipe -- including the ``--mongo-uri`` that pytest-girder needs there --
-is in codebaseDocumentation/DATASET_MULTI_SOURCE_ENDPOINT-REVIEW.md.
+Running this file on arm64 macOS used to segfault pylibtiff while probing
+the synthetic TIFFs (intermittently, depending on test selection). The
+cause was large_image_source_tiff clearing ``TIFFGetField.argtypes``, which
+breaks variadic calls under the Apple arm64 ABI; conftest.py restores them
+(``_restoreVariadicTIFFGetField``), so local tox is deterministic now.
 """
 
 import io
@@ -77,8 +76,7 @@ def _mockLargeImagePipeline(
 
     ``metadataByName`` overrides the tile metadata per item name, so tests
     can drive dtype/IndexRange-dependent behaviour without needing a real
-    tile source (and without the arm64 pylibtiff crash that probing real
-    TIFFs triggers locally).
+    tile source.
     """
     def createImageItem(self, item, file, createJob=True, **kwargs):
         if createJob == "always" and transcodeError is not None:
@@ -161,8 +159,9 @@ def largeImageAutoSet(db):
 
     Binding the genuine ``checkForLargeImageFiles`` was tried first and is
     not usable here: probing the multi-source JSON walks every installed
-    source, and ``large_image_source_tiff`` segfaults pylibtiff on arm64
-    (crash inside ``libtiff.GetField``). The precondition that matters is
+    source, which segfaulted pylibtiff on arm64 at the time (fixed since:
+    conftest.py ``_restoreVariadicTIFFGetField``). The precondition that
+    matters is
     only "the configuration item already carries a largeImage mark by the
     time the endpoint reaches createImageItem", so set that directly.
     """
