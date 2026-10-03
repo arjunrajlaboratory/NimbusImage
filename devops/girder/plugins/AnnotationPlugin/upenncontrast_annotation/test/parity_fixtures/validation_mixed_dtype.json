@@ -1,0 +1,46 @@
+{
+  "name": "validation_mixed_dtype",
+  "description": "Sources with different pixel types are refused with the frontend's mixed-dtype message; assignments themselves are complete.",
+  "kind": "validation",
+  "input": {
+    "itemNames": [
+      "gfp_A1.tif",
+      "red_A1.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "sizeX": 16,
+        "sizeY": 16,
+        "tileWidth": 16,
+        "tileHeight": 16,
+        "levels": 1,
+        "bandCount": 1,
+        "dtype": "uint16"
+      },
+      {
+        "sizeX": 16,
+        "sizeY": 16,
+        "tileWidth": 16,
+        "tileHeight": 16,
+        "levels": 1,
+        "bandCount": 1,
+        "dtype": "uint8"
+      }
+    ],
+    "tilesInternalMetadata": [
+      {},
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "submitError": "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them. You will need to start over.",
+    "generationErrorMessage": "Source images use different pixel types (uint16, uint8). Convert all source images to the same pixel type before combining them. You will need to start over.",
+    "generatedItemId": null,
+    "configUploaded": false
+  }
+}

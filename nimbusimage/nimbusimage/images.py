@@ -68,7 +68,7 @@ class ImageAccessor:
         params = {"frame": frame, "encoding": "pickle:5"}
         params.update(kwargs)
         response = self._dataset._gc.get(
-            f"/item/{self._dataset._item_id}/tiles/region",
+            f"item/{self._dataset._item_id}/tiles/region",
             parameters=params,
             jsonResp=False,
         )

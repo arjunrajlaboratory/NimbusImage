@@ -39,6 +39,7 @@ import {
   IJob,
   IUserStorageQuota,
   resolveVisibilityConfig,
+  resolveAnnotationOverviewConfig,
 } from "@/store/model";
 import {
   toStyle,
@@ -510,6 +511,16 @@ export default class GirderAPI {
       .then((r) => asDatasetView(r.data));
   }
 
+  async getSnapshotImage(url: URL): Promise<ArrayBuffer> {
+    const response = await this.client.get<ArrayBuffer>(url.href, {
+      responseType: "arraybuffer",
+    });
+    if (response.data.byteLength === 0) {
+      throw new Error("Snapshot crop contains no image data.");
+    }
+    return response.data;
+  }
+
   getDatasetView(id: string) {
     return this.client
       .get(`dataset_view/${id}`)
@@ -881,7 +892,16 @@ export default class GirderAPI {
   }
 
   deleteDataset(dataset: IDataset): Promise<IDataset> {
-    return this.client.delete(`/folder/${dataset.id}`).then(() => dataset);
+    // DELETE /resource, not DELETE /folder/:id. Since Girder 5.0.11 the folder
+    // endpoint hands deletion to a Celery task on the "local" queue and returns
+    // 503 when no worker consumes it; /resource removes the folder in-request
+    // through the same Folder().remove(), as the dataset browser (deleteItems)
+    // already does.
+    return this.client
+      .delete("resource", {
+        params: { resources: JSON.stringify({ folder: [dataset.id] }) },
+      })
+      .then(() => dataset);
   }
 
   async createConfigurationFromBase(
@@ -1360,6 +1380,12 @@ export function setBaseCollectionValues(
       );
       continue;
     }
+    if (key === "overviewConfig") {
+      config.overviewConfig = resolveAnnotationOverviewConfig(
+        item.meta.overviewConfig,
+      );
+      continue;
+    }
     config[key] =
       key in item.meta ? item.meta[key] : exampleConfigurationBase()[key];
   }
@@ -1398,6 +1424,7 @@ export interface IHistogramOptions {
 
 export interface ITileMeta {
   [x: string]: any;
+  dtype?: string;
   IndexRange: any;
   levels: number;
   magnification: number;

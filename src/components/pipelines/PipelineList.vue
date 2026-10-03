@@ -34,7 +34,7 @@
             width="2"
             color="primary"
           />
-          <v-icon v-else>mdi-sitemap-outline</v-icon>
+          <v-icon v-else>mdi-sitemap</v-icon>
         </template>
 
         <v-list-item-title>

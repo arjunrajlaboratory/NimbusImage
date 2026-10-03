@@ -1,24 +1,5 @@
 <template>
-  <v-dialog v-model="dialog">
-    <template v-slot:activator="activatorBinding">
-      <slot name="activator" v-bind="activatorBinding">
-        <v-btn
-          variant="outlined"
-          color="primary"
-          size="small"
-          v-bind="{ ...activatorBinding.props, ...$attrs }"
-          v-description="{
-            section: 'Object list actions',
-            title: 'Export CSV',
-            description:
-              'Export the current list of annotations and associated properties to a CSV file',
-          }"
-        >
-          <v-icon>mdi-application-export</v-icon>
-          EXPORT CSV
-        </v-btn>
-      </slot>
-    </template>
+  <v-dialog v-model="dialog" @after-leave="emit('closed')">
     <v-card>
       <v-card-title> Current Annotation List as CSV </v-card-title>
       <v-card-subtitle>
@@ -172,7 +153,7 @@
             <v-alert type="info" variant="tonal" class="mb-4">
               Preview is not available for more than
               {{ PREVIEW_ANNOTATION_LIMIT }} annotations ({{
-                annotationsToExport.length
+                exportAnnotationCount
               }}
               annotations to export). Download will export using the server.
             </v-alert>
@@ -277,7 +258,7 @@
               bulkExporting ? "Exporting datasets..." : "Preparing download..."
             }}
           </template>
-          <v-icon> mdi-save </v-icon>
+          <v-icon> mdi-content-save </v-icon>
           {{ downloadButtonText }}
         </v-btn>
       </v-card-actions>
@@ -339,11 +320,20 @@ const props = defineProps<{
   propertyPaths: string[][];
 }>();
 
+const emit = defineEmits<{
+  // Its leave transition has finished: the owner may now drop what it passed
+  // in (DataIOMenu stops reading the filtered list) without the closing card
+  // flashing empty counts.
+  (e: "closed"): void;
+}>();
+
 const fieldToCopy = ref<ComponentPublicInstance>();
 
 const filename = ref("");
 
-const dialog = ref(false);
+// Opened by its owner through `v-model:open` (DataIOMenu, from its menu or the
+// command palette); the dialog renders no activator of its own.
+const dialog = defineModel<boolean>("open", { default: false });
 const text = ref("");
 const displayText = ref("");
 
@@ -376,13 +366,17 @@ const isDownloading = ref(false);
 
 const annotationScope = ref<"all" | "filtered" | "selected">("all");
 
-const allAnnotationCount = computed(() => annotationStore.annotations.length);
+// Counts and scopes read the stub-aware store members (annotationCount,
+// annotationsForIteration): in stub-only mode annotations[] is empty by
+// design, and deriving from it would silently turn a subset export into a
+// full export.
+const allAnnotationCount = computed(() => annotationStore.annotationCount);
 const filteredAnnotationCount = computed(() => props.annotations.length);
 const selectedAnnotationCount = computed(
   () => annotationStore.selectedAnnotationIds.size,
 );
 const hasActiveFilter = computed(
-  () => props.annotations.length < annotationStore.annotations.length,
+  () => props.annotations.length < annotationStore.annotationCount,
 );
 
 const exportScope = ref<"current" | "all">("current");
@@ -390,22 +384,65 @@ const bulkExporting = ref(false);
 const bulkExportProgress = ref(0);
 const bulkExportError = ref("");
 
-const annotationsToExport = computed(() => {
+// The ids to export; null means "every annotation" (the download omits the
+// field so the backend exports all without a dataset-sized $in query). Ids
+// only — never resolves annotation objects, so a subset download costs
+// O(subset) even when the stub map holds the whole dataset.
+const exportAnnotationIds = computed((): string[] | null => {
   if (annotationScope.value === "selected") {
-    const ids = annotationStore.selectedAnnotationIds;
-    return annotationStore.annotations.filter((a) => ids.has(a.id));
+    // Drop selection ids that no longer resolve (a delete or undo can leave
+    // stale ids behind): counted against annotationCount below, a stale id
+    // could make a real subset look like the whole dataset and silently
+    // widen the export.
+    const resolve = annotationStore.getAnnotationOrStubFromId;
+    return Array.from(annotationStore.selectedAnnotationIds).filter(
+      (id) => resolve(id) !== undefined,
+    );
   }
+  if (annotationScope.value === "filtered") {
+    return props.annotations.map((annotation) => annotation.id);
+  }
+  return null;
+});
+
+// Count without building the id array: the filter can match hundreds of
+// thousands of stubs, and this drives the count label and preview-limit
+// guard on every render. Only the "selected" branch touches
+// exportAnnotationIds, whose selected path is O(selection).
+const exportAnnotationCount = computed(() => {
+  if (annotationScope.value === "filtered") {
+    return props.annotations.length;
+  }
+  if (annotationScope.value === "selected") {
+    return exportAnnotationIds.value?.length ?? 0;
+  }
+  return annotationStore.annotationCount;
+});
+
+// Annotation rows for the client-side preview. Only read when the export is
+// within PREVIEW_ANNOTATION_LIMIT (the count check above never materializes
+// anything), so the id lookups here stay bounded by the preview limit. The
+// filtered branch comes first so this never evaluates exportAnnotationIds'
+// dataset-sized filtered id array.
+const annotationsToExport = computed((): TAnnotationOrStub[] => {
   if (annotationScope.value === "filtered") {
     return props.annotations;
   }
-  return annotationStore.annotations;
+  const ids = exportAnnotationIds.value;
+  if (ids === null) {
+    return annotationStore.annotationsForIteration;
+  }
+  const resolve = annotationStore.getAnnotationOrStubFromId;
+  return ids
+    .map(resolve)
+    .filter((annotation): annotation is TAnnotationOrStub => !!annotation);
 });
 
 const { loadingDatasets, collectionDatasets, configuration, allDatasetsLabel } =
   useCollectionDatasets(dialog, exportScope);
 
 const isTooLargeForPreview = computed(() => {
-  return annotationsToExport.value.length > PREVIEW_ANNOTATION_LIMIT;
+  return exportAnnotationCount.value > PREVIEW_ANNOTATION_LIMIT;
 });
 
 const canUseClipboard = computed(() => {
@@ -631,16 +668,14 @@ async function downloadSingleDataset() {
   try {
     // Only send annotationIds when exporting a subset, to avoid
     // exceeding MongoDB's 16MB BSON query size limit.
-    const exportAnnotations = annotationsToExport.value;
+    const exportIds = exportAnnotationIds.value;
     const isSubset =
-      exportAnnotations.length < annotationStore.annotations.length;
+      exportIds !== null && exportIds.length < annotationStore.annotationCount;
 
     await store.exportAPI.exportCsv({
       datasetId: store.dataset.id,
       propertyPaths: getIncludedPropertyPaths(),
-      ...(isSubset
-        ? { annotationIds: exportAnnotations.map((a) => a.id) }
-        : {}),
+      ...(isSubset ? { annotationIds: exportIds } : {}),
       undefinedValue: getUndefinedValueString(),
       delimiter: fileDelimiter.value,
       sanitizeColumnNames: sanitizeColumnNames.value,

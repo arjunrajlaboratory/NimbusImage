@@ -50,6 +50,20 @@ describe("ExportAPI", () => {
       const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
       expect(body.sanitizeColumnNames).toBe(false);
     });
+
+    it("omits annotationIds when no subset is supplied", async () => {
+      await api.exportCsv({ datasetId: "ds1" });
+
+      const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+      expect(body).not.toHaveProperty("annotationIds");
+    });
+
+    it("preserves an explicitly empty annotation subset", async () => {
+      await api.exportCsv({ datasetId: "ds1", annotationIds: [] });
+
+      const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+      expect(body.annotationIds).toEqual([]);
+    });
   });
 
   describe("exportBulkCsv", () => {

@@ -12,6 +12,10 @@ NimbusImage enables direct interaction with objects in your analysis:
 
 This selection tool is particularly useful for cleaning up results from automated segmentation by quickly removing false positives or applying consistent tags to object groups.
 
+The popup normally appears at the top left of the viewport (sliding right when a left-hand palette is open). While time lapse mode is on it moves to the top right instead, clearing the Time Lapse palette.
+
+Selections can also be made a whole track at a time: in the Object list's Connections tab grouped by track, each track's "Select ▾" menu selects that track's objects, its connections, or both. See the connections topic for details.
+
 ## Object Browser and Filtering
 The Object Browser provides tools for managing object visibility:
 - **Tag filtering** to filter objects by their tags

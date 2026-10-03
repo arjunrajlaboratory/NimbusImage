@@ -125,6 +125,7 @@ import DockerImageSelect from "@/components/DockerImageSelect.vue";
 import TagPicker from "@/components/TagPicker.vue";
 import PropertyWorkerMenu from "@/components/PropertyWorkerMenu.vue";
 import { tagFilterFunction } from "@/utils/annotation";
+import { computePropertyWithStatus } from "@/utils/propertyCompute";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 // Function to remove repeated words
@@ -307,10 +308,7 @@ function createProperty() {
         if (props.applyToAllDatasets) {
           emit("compute-property-batch", property);
         } else {
-          propertiesStore.computeProperty({
-            property,
-            errorInfo: { errors: [] },
-          });
+          void computePropertyWithStatus(property);
         }
       }
     });

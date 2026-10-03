@@ -1,8 +1,12 @@
+import math
 import re
+import threading
+from collections import defaultdict
 
 import fastjsonschema
 
 from bson.objectid import ObjectId
+from pymongo import UpdateMany
 
 from girder import events
 from girder.constants import AccessType, SortDir
@@ -11,16 +15,39 @@ from girder.models.folder import Folder
 
 from girder.utility.acl_mixin import AccessControlMixin
 
+from ..helpers import analysis
+from ..helpers.aggregation import AGGREGATION_MAX_TIME_MS
+from ..helpers.colormaps import (
+    CONTINUOUS_COLORMAPS,
+    DEFAULT_COLORMAP,
+    DISTINCT_CATEGORICAL_COLORS,
+    categoricalColor,
+    colormapTable,
+)
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 from ..helpers.proxiedModel import ProxiedModel
 from ..helpers.tasks import runJobRequest
+from ..helpers.annotationRaster import (
+    bumpDatasetRasterVersion,
+    bumpGlobalRasterVersion,
+)
 from .propertyValues import AnnotationPropertyValues
 
-# Bound any single aggregation's DB runtime so one expensive query (e.g. over a
-# 700K-annotation public dataset) can't run unbounded and pin a Mongo
-# connection. 5 minutes: comfortably above the slowest legitimate query, but a
-# hard ceiling against a runaway one.
-AGGREGATION_MAX_TIME_MS = 300000
+# Ceiling on how many ObjectIds all analysis gates together may push into a
+# list query. Each id costs ~20 bytes in a BSON array (12-byte oid + index
+# key + type), so 400K is ~8 MB — half of MongoDB's 16 MB command limit,
+# leaving room for the rest of the pipeline. Resolving a majority gate as
+# `$nin` of its complement (see resolveListGateConstraints) already halves
+# the worst case; this is the backstop past that.
+MAX_GATE_CONSTRAINT_IDS = 400_000
+
+# Ceiling on ids returned by one gate-resolution response, across all plots.
+# A single gate legitimately matches most of a large dataset (708K ids is
+# ~18 MB of JSON), but the allowed plot count multiplies that: 20 broad
+# gates on a 700K dataset is ~14M entries and hundreds of MB, which lands
+# on the Girder process and then on the browser parsing it.
+MAX_GATE_RESPONSE_IDS = 2_000_000
+
 DEFAULT_AGGREGATE_HINT = {"datasetId": 1, "_id": 1}
 
 
@@ -104,6 +131,26 @@ class Annotation(AccessControlMixin, ProxiedModel):
     # Collection joined by the property-value $lookup stages.
     PROPERTY_VALUES_COLLECTION = "annotation_property_values"
 
+    # color-by-property tuning. Quantizing continuous values to 256 levels
+    # bounds the number of distinct colors — and therefore the number of
+    # Mongo update_many calls — regardless of dataset size.
+    CONTINUOUS_COLOR_LEVELS = 256
+    # Derived, not chosen: past this many categories the palette would repeat
+    # itself, so two categories would render identically with nothing in the
+    # legend to distinguish them. A value beyond it is not really categorical
+    # (e.g. an id or a continuous measurement).
+    MAX_CATEGORIES = DISTINCT_CATEGORICAL_COLORS
+    COLOR_WRITE_CHUNK = 50000
+
+    # Default continuous range: the 1st..99th percentile rather than the full
+    # extent. Real property distributions are long-tailed — on a 708K-cell
+    # dataset, 99% of Area values occupied 14.2% of min..max, so a full-extent
+    # ramp put nearly every annotation in the same dark bucket. Values outside
+    # the range clamp to the end colors, and the legend carries the true
+    # extent (dataMin/dataMax) so it can show that it clipped.
+    DEFAULT_PERCENTILE_LOW = 1.0
+    DEFAULT_PERCENTILE_HIGH = 99.0
+
     def __init__(self):
         super().__init__()
         compoundSearchIndex = (
@@ -122,6 +169,10 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # The property-values model, for PV-driven list queries. Girder
         # model instances are cached singletons, so this is cheap.
         self._pvModel = AnnotationPropertyValues()
+        # saveMany replaces existing rows through removeWithQuery. Suppress
+        # that internal removal's broad invalidation in the current thread;
+        # saveMany bumps the saved documents' datasets after success.
+        self._rasterMutationState = threading.local()
 
     jsonValidate = staticmethod(
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)
@@ -189,6 +240,56 @@ class Annotation(AccessControlMixin, ProxiedModel):
 
     def validate(self, document):
         return self.validateMultiple([document])[0]
+
+    def save(self, document, validate=True, triggerEvents=True):
+        # An annotation belongs to exactly one dataset. The only path that
+        # changes datasetId is updateMultiple, which bumps the source
+        # dataset itself, so bumping the saved dataset suffices here.
+        saved = super().save(document, validate, triggerEvents)
+        bumpDatasetRasterVersion(saved.get("datasetId"))
+        return saved
+
+    def saveMany(self, documents, validate=True, triggerEvents=True):
+        previous = getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        )
+        self._rasterMutationState.suppressRemoveBump = True
+        try:
+            saved = super().saveMany(documents, validate, triggerEvents)
+        finally:
+            self._rasterMutationState.suppressRemoveBump = previous
+        for datasetId in set(
+            document.get("datasetId") for document in saved
+        ):
+            bumpDatasetRasterVersion(datasetId)
+        return saved
+
+    def remove(self, document, **kwargs):
+        previous = getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        )
+        self._rasterMutationState.suppressRemoveBump = True
+        try:
+            result = super().remove(document, **kwargs)
+        finally:
+            self._rasterMutationState.suppressRemoveBump = previous
+        bumpDatasetRasterVersion(document.get("datasetId"))
+        return result
+
+    def removeWithQuery(self, query):
+        result = super().removeWithQuery(query)
+        if getattr(
+            self._rasterMutationState, "suppressRemoveBump", False
+        ):
+            return result
+        datasetId = query.get("datasetId")
+        if isinstance(datasetId, ObjectId):
+            bumpDatasetRasterVersion(datasetId)
+        else:
+            # Bulk-id deletion does not carry dataset ids into the model.
+            # A global epoch is the safe no-query fallback.
+            bumpGlobalRasterVersion()
+        return result
 
     def validateMultiple(self, annotations):
         # Validate using the schema
@@ -335,11 +436,15 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # and annotationIdFilters membership semantics. Ids are already
         # ObjectId-converted at the API boundary (_validateListInputs).
         idConstraints = filters.get("idConstraints")
-        if idConstraints:
-            match["$and"] = [
-                {"_id": {"$in": list(ids)}}
-                for ids in idConstraints
-            ]
+        andClauses = [
+            {"_id": {"$in": list(ids)}} for ids in (idConstraints or [])
+        ]
+        # Server-resolved analysis gates arrive as ready-made clauses because
+        # a majority gate is expressed as `$nin` of its complement rather
+        # than `$in` of its matches (see resolveListGateConstraints).
+        andClauses += filters.get("gateMatchClauses") or []
+        if andClauses:
+            match["$and"] = andClauses
 
         stages = [{"$match": match}]
 
@@ -370,6 +475,198 @@ class Annotation(AccessControlMixin, ProxiedModel):
         pipeline.append({"$project": {"_id": 1}})
         cursor = self._aggregate(self.collection, pipeline)
         return [str(doc["_id"]) for doc in cursor]
+
+    def _analysisData(self, datasetId, axes):
+        """(docs, valuesById) for the analysis endpoints, from at most two
+        projected scans regardless of how many plots share them: one over the
+        annotation collection (always — annotation docs anchor existence, so
+        an orphaned property-value doc can never produce an id) and one over
+        the property-values collection when any axis is a property axis.
+        """
+        propertyPaths = {}
+        categoricalKeys = set()
+        for axis in axes:
+            if axis["type"] == "property":
+                propertyPaths[".".join(axis["path"])] = axis["path"]
+            else:
+                categoricalKeys.add(axis["key"])
+
+        fields = {"_id": 1}
+        if "tags" in categoricalKeys:
+            fields["tags"] = 1
+        if "shape" in categoricalKeys:
+            fields["shape"] = 1
+        if "channel" in categoricalKeys:
+            fields["channel"] = 1
+        if categoricalKeys & {"xy", "z", "time"}:
+            fields["location"] = 1
+        docs = []
+        cursor = self._aggregate(
+            self.collection,
+            [{"$match": {"datasetId": datasetId}}, {"$project": fields}],
+        )
+        for doc in cursor:
+            doc["id"] = str(doc.pop("_id"))
+            docs.append(doc)
+
+        valuesById = {}
+        if propertyPaths:
+            pvFields = {"_id": 0, "annotationId": 1}
+            for path in propertyPaths.values():
+                pvFields["values." + ".".join(path)] = 1
+            pvCursor = self._aggregate(
+                self._pvModel.collection,
+                [
+                    {"$match": {"datasetId": datasetId}},
+                    {"$project": pvFields},
+                ],
+            )
+            for doc in pvCursor:
+                valuesById[str(doc["annotationId"])] = (
+                    doc.get("values") or {}
+                )
+        return docs, valuesById
+
+    def resolveListGateConstraints(self, datasetId, filters):
+        """Convert `filters['analysisGates']` (gate DEFINITIONS, validated at
+        the API boundary) into `idConstraints` entries, in place.
+
+        Called once per request, before the paged/count/ids pipelines, so a
+        page+count pair never resolves the same gate twice. A gate matching
+        nothing becomes an empty $in — zero rows, deliberately not an error
+        (unlike a client-sent empty idConstraints entry, which validation
+        rejects because the client already knows that answer).
+        """
+        gates = filters.pop("analysisGates", None)
+        if not gates:
+            return filters
+        axes = [
+            axis for gate in gates for axis in (gate["xAxis"], gate["yAxis"])
+        ]
+        docs, valuesById = self._analysisData(datasetId, axes)
+        allIds = [doc["id"] for doc in docs]
+        clauses = filters.setdefault("gateMatchClauses", [])
+        budget = 0
+        for gate in gates:
+            ids = analysis.resolve_gate_ids(docs, valuesById, gate)
+            complementSize = len(allIds) - len(ids)
+            if complementSize * 2 <= len(ids):
+                # The gate keeps at least twice what it drops. Inside a
+                # pipeline already scoped to this dataset, excluding the
+                # complement is equivalent to including the matches and is
+                # much smaller.
+                #
+                # The 2x threshold is measured, not merely "whichever array
+                # is shorter": per element `$nin` costs ~1.4x what `$in`
+                # does, so a marginally-smaller complement is a LOSS. On the
+                # 708,983-object dataset (count via aggregate, warm):
+                #
+                #   gate keeps   $in      $nin     ratio   winner
+                #   51%          566ms    746ms    0.96    $in
+                #   60%          648ms    617ms    0.67    $nin
+                #   75%          794ms    411ms    0.33    $nin
+                #   95%        1,228ms    172ms    0.05    $nin  (7x, and
+                #                                    13.5MB -> 0.7MB)
+                #
+                # Crossover sits near 0.67; 0.5 keeps us clear of it while
+                # still capturing the case this exists for.
+                keep, operator = complementSize, "$nin"
+            else:
+                keep, operator = len(ids), "$in"
+            # Budget checked BEFORE converting and retaining, not after.
+            # Checking at the end still materialized every gate's ObjectIds
+            # first: the allowed 20 gates on a 700K dataset can each keep
+            # ~350K ids, so the guard against exhausting memory would hold
+            # ~7M ObjectIds on its way to returning the 400.
+            budget += keep
+            if budget > MAX_GATE_CONSTRAINT_IDS:
+                # Even the smaller side of every gate can overflow MongoDB's
+                # 16 MB command limit on a large enough dataset. Fail with a
+                # comprehensible message instead of an opaque BSON error. The
+                # real remedy is to push the gate predicate into the query
+                # rather than materializing ids — see SERVER_GATING.md.
+                filters.pop("gateMatchClauses", None)
+                # Says "redraw or disable a gate", NOT "narrow the filters".
+                # A gate is a pure predicate resolved over the WHOLE dataset
+                # before any tag/property/frame filter applies, so narrowing
+                # those cannot change this count by one id — the advice sent
+                # the user round a loop that kept returning the same 400.
+                raise ValueError(
+                    "analysis gates resolve to more than the %d ids the "
+                    "list query can carry. Gates are resolved over the whole "
+                    "dataset, so other filters will not reduce this: redraw "
+                    "a gate to cover fewer objects, or disable one."
+                    % MAX_GATE_CONSTRAINT_IDS
+                )
+            if operator == "$nin":
+                matched = set(ids)
+                selected = [
+                    ObjectId(i) for i in allIds if i not in matched
+                ]
+            else:
+                selected = [ObjectId(i) for i in ids]
+            clauses.append({"_id": {operator: selected}})
+        return filters
+
+    def resolveAnalysisGates(self, datasetId, plots):
+        """Resolve each plot's gate polygon to matching annotation ids.
+
+        Each answer is the PURE per-annotation predicate over the whole
+        dataset — independent of every other plot and of any filter state
+        (SERVER_GATING.md, "a gate is a pure predicate"). Returns
+        {plotId: [id string, ...]}.
+        """
+        if not plots:
+            return {}
+        axes = [
+            axis for plot in plots for axis in (plot["xAxis"], plot["yAxis"])
+        ]
+        docs, valuesById = self._analysisData(datasetId, axes)
+        resolved = {}
+        total = 0
+        for plot in plots:
+            ids = analysis.resolve_gate_ids(docs, valuesById, plot)
+            total += len(ids)
+            if total > MAX_GATE_RESPONSE_IDS:
+                # Checked as it accumulates, for the same reason the list
+                # budget is: the guard must not first build the thing it
+                # exists to prevent.
+                # "remove a plot", NOT "disable a gate" — unlike the list
+                # path, which is fed activeAnalysisGateDefinitions (enabled
+                # only), this endpoint receives analysisRefreshScope's
+                # resolutionPlots, which deliberately includes DISABLED drawn
+                # gates while the panel is open so their counts can be shown.
+                # Unchecking the box therefore leaves this request identical
+                # and the retry fails the same way.
+                raise ValueError(
+                    "analysis gates resolve to more than the %d ids one "
+                    "response can carry. Gates are resolved over the whole "
+                    "dataset, so other filters will not reduce this: redraw "
+                    "a gate to cover fewer objects, or remove a plot."
+                    % MAX_GATE_RESPONSE_IDS
+                )
+            resolved[plot["id"]] = ids
+        return resolved
+
+    def analysisHistogram(self, datasetId, spec):
+        """Binned 2D counts for one plot, display only (SERVER_GATING.md,
+        Phase 2): the population is the dataset narrowed by the serializable
+        `filters` (the list-endpoint schema) and by the upstream plots'
+        gates, so the picture matches what reaches the plot.
+        """
+        axes = [spec["xAxis"], spec["yAxis"]]
+        for upstream in spec["upstreamGates"]:
+            axes += [upstream["xAxis"], upstream["yAxis"]]
+        docs, valuesById = self._analysisData(datasetId, axes)
+        if spec["filters"]:
+            passing = set(self.listIds(datasetId, spec["filters"]))
+            docs = [doc for doc in docs if doc["id"] in passing]
+        for upstream in spec["upstreamGates"]:
+            inside = set(
+                analysis.resolve_gate_ids(docs, valuesById, upstream)
+            )
+            docs = [doc for doc in docs if doc["id"] in inside]
+        return analysis.histogram2d(docs, valuesById, spec)
 
     def _centroidAddFields(self):
         return {"$addFields": {"centroid": {
@@ -481,6 +778,13 @@ class Annotation(AccessControlMixin, ProxiedModel):
         if any(location.get(k) is not None for k in ("XY", "Z", "Time")):
             return True
         if filters.get("idConstraints"):
+            return True
+        # Server-resolved gate clauses are `_id` constraints too, just in a
+        # different representation (see resolveListGateConstraints). Omitting
+        # them here sent a gate + property-filter query down the PV-driven
+        # path, where an `_id` clause on the annotation collection is never
+        # applied — the gate silently stopped filtering.
+        if filters.get("gateMatchClauses"):
             return True
         if filters.get("idSubstring"):
             return True
@@ -919,9 +1223,18 @@ class Annotation(AccessControlMixin, ProxiedModel):
         expectedIds = set(annotationIdToUpdate.keys())
         foundIds = set()
         updatedAnnotations = []
+        movedSourceDatasetIds = set()
         for annotation in cursor:
             annotationId = annotation["_id"]
             updateDoc = annotationIdToUpdate[annotationId]
+            newDatasetId = updateDoc.get("datasetId")
+            if (
+                newDatasetId is not None
+                and newDatasetId != annotation.get("datasetId")
+            ):
+                # This is the only path that moves an annotation between
+                # datasets; saveMany only bumps the destination raster.
+                movedSourceDatasetIds.add(annotation.get("datasetId"))
             annotation.update(updateDoc)
             foundIds.add(annotationId)
             updatedAnnotations.append(annotation)
@@ -929,7 +1242,398 @@ class Annotation(AccessControlMixin, ProxiedModel):
             raise AccessException(
                 "Write access was denied for one or more annotations."
             )
-        return self.saveMany(updatedAnnotations)
+        saved = self.saveMany(updatedAnnotations)
+        for datasetId in movedSourceDatasetIds:
+            bumpDatasetRasterVersion(datasetId)
+        return saved
+
+    def clearColors(self, datasetId):
+        """Reset every annotation color in the dataset to null (layer color).
+        Returns the number of annotations in the dataset."""
+        try:
+            result = self.update(
+                {"datasetId": datasetId}, {"$set": {"color": None}}
+            )
+        finally:
+            # The overview raster renders each annotation's own color, and
+            # its geometry cache and ETag are keyed by the dataset's raster
+            # version. This path writes colors with a bulk update rather
+            # than through save()/saveMany(), so nothing else bumps that
+            # version and a revisited frame would keep serving pre-clear
+            # colors (304 on an unchanged ETag) until the 120s cache-TTL
+            # rotation. In a finally because a failed update can still have
+            # cleared part of the dataset; a bump without a write only costs
+            # one cache rebuild, the reverse serves wrong colors.
+            bumpDatasetRasterVersion(datasetId)
+        return result.matched_count
+
+    @staticmethod
+    def assignmentFromIdsByColor(idsByColor):
+        """The {color: [ObjectId]} grouping as JSON-ready
+        [{color, ids: [str]}].
+
+        Lets a caller apply the same colors it just wrote without re-reading
+        the dataset: the client patches the annotations it already holds
+        instead of refetching every stub (measured 12.8s of refetch replaced
+        by ~0.9s of serialize + patch on a 708K dataset)."""
+        return [
+            {"color": color, "ids": [str(i) for i in annotationIds]}
+            for color, annotationIds in idsByColor.items()
+        ]
+
+    def colorByProperty(self, datasetId, propertyPath, mode="auto",
+                        colormap=DEFAULT_COLORMAP,
+                        rangeMin=None, rangeMax=None,
+                        percentileLow=None, percentileHigh=None,
+                        returnAssignment=False):
+        """Assign each annotation's color from its value at propertyPath.
+
+        Continuous mode maps numeric values through a colormap over
+        [rangeMin, rangeMax]; an omitted bound resolves from the percentile
+        parameters, which default to the 1st..99th (NOT the data extent —
+        real distributions are long-tailed, and a full-extent ramp collapses
+        into one bucket; see _colorContinuous). Categorical
+        mode assigns palette colors per distinct value. Annotations without
+        a usable value get color null (layer color). Returns
+        {colored, uncolored, legend}, plus `assignment` (see
+        assignmentFromIdsByColor) when returnAssignment is set.
+
+        Deliberately not history-recorded: recording would snapshot every
+        annotation document twice into a single history entry, which
+        overruns the BSON document limit on large datasets. Re-coloring is
+        the undo.
+        """
+        # Keyed by annotation, not a list of pairs: an annotation with two
+        # property-value documents would otherwise appear in two color groups,
+        # which (a) makes the winning color depend on unordered write order and
+        # (b) inflates the covered-id count that _writeColors uses to decide
+        # the clearing pass can be skipped, hiding an uncovered annotation's
+        # stale color. Last value wins, deterministically by cursor order.
+        valueByAnnotation = {}
+        for annotationId, value in self._pvModel.valuesForPath(
+            datasetId, propertyPath
+        ):
+            valueByAnnotation[annotationId] = value
+
+        # Membership guard: drop values whose annotation is not (or is no
+        # longer) in this dataset. In normal app use this filters nothing —
+        # the UI never moves an annotation between datasets, and deleting
+        # annotations deletes their value documents (annotationsRemovedEvent).
+        # But the guarded states are reachable through the API, so a value's
+        # denormalized datasetId cannot be trusted:
+        #   - the bulk update endpoint explicitly supports changing an
+        #     annotation's datasetId (the single-update endpoint strips it;
+        #     updateMultiple access-checks destinations and bumps source
+        #     rasters), and moving an annotation does NOT move its value
+        #     documents;
+        #   - the value-creation endpoints never check that annotationId
+        #     belongs to the claimed datasetId, so any script can insert a
+        #     mismatched pair — including the app's own compute jobs, which
+        #     can post values for annotations deleted mid-job (the removal
+        #     cleanup fired before those values existed).
+        # The update operations below are scoped by the ANNOTATION's
+        # datasetId, so a stale pair can never recolor a foreign annotation
+        # — but an unfiltered map would still drive the range, the category
+        # counts, and the returned assignment, distorting the legend and
+        # listing ids that were never written. One dataset-scoped, indexed
+        # id scan, NOT a chunked $in loop: chunking at COLOR_WRITE_CHUNK
+        # meant ~15 sequential round trips on the measured 708K dataset
+        # before any coloring started, and the whole id set is already in
+        # memory (valueByAnnotation's keys) at this point anyway.
+        presentIds = {
+            document["_id"]
+            for document in self.find(
+                {"datasetId": datasetId}, fields=["_id"]
+            )
+        }
+        valueByAnnotation = {
+            annotationId: value
+            for annotationId, value in valueByAnnotation.items()
+            if annotationId in presentIds
+        }
+
+        if not valueByAnnotation:
+            raise ValueError(
+                "No values found for this property in this dataset"
+            )
+
+        # bool is an int subclass but "true/false" is a category, not a
+        # quantity; non-finite floats (NaN/inf) can't be range-mapped.
+        numericPairs = [
+            (annotationId, float(value))
+            for annotationId, value in valueByAnnotation.items()
+            if not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+        ]
+
+        if mode == "auto":
+            # Mostly-numeric values are a quantity with stray labels;
+            # anything else is treated as categories.
+            numericFraction = len(numericPairs) / len(valueByAnnotation)
+            mode = "continuous" if numericFraction >= 0.9 else "categorical"
+
+        # The private colorers return (result, idsByColor) so the assignment
+        # can be surfaced without threading a flag through both of them.
+        if mode == "continuous":
+            result, idsByColor = self._colorContinuous(
+                datasetId, propertyPath, numericPairs, colormap,
+                rangeMin, rangeMax, percentileLow, percentileHigh
+            )
+        else:
+            result, idsByColor = self._colorCategorical(
+                datasetId, propertyPath, valueByAnnotation.items()
+            )
+        if returnAssignment:
+            result["assignment"] = self.assignmentFromIdsByColor(idsByColor)
+        return result
+
+    @staticmethod
+    def _percentileOf(sortedValues, percentile):
+        """Linear-interpolated percentile of an ascending-sorted list."""
+        if percentile <= 0:
+            return sortedValues[0]
+        if percentile >= 100:
+            return sortedValues[-1]
+        position = (len(sortedValues) - 1) * percentile / 100.0
+        lowIndex = int(position)
+        highIndex = min(lowIndex + 1, len(sortedValues) - 1)
+        fraction = position - lowIndex
+        low = sortedValues[lowIndex]
+        return low + (sortedValues[highIndex] - low) * fraction
+
+    def _colorContinuous(self, datasetId, propertyPath, numericPairs,
+                         colormap, rangeMin, rangeMax,
+                         percentileLow=None, percentileHigh=None):
+        """Returns (result, idsByColor) -- see colorByProperty."""
+        if not numericPairs:
+            raise ValueError(
+                "No numeric values found for this property; "
+                "try categorical mode"
+            )
+        # Sorted once: feeds both the extent and the percentile bounds.
+        values = sorted(value for _, value in numericPairs)
+        dataMin, dataMax = values[0], values[-1]
+        # An explicit absolute bound means the caller is choosing the range, so
+        # resolve its partner from the data extent rather than a percentile.
+        # Mixing the two produced bafflement: rangeMax=1.5 on right-skewed data
+        # was rejected against an unrequested p1 of 1.99.
+        explicitBound = rangeMin is not None or rangeMax is not None
+        if percentileLow is None:
+            percentileLow = 0.0 if explicitBound else (
+                self.DEFAULT_PERCENTILE_LOW
+            )
+        if percentileHigh is None:
+            percentileHigh = 100.0 if explicitBound else (
+                self.DEFAULT_PERCENTILE_HIGH
+            )
+        low = (
+            self._percentileOf(values, percentileLow)
+            if rangeMin is None
+            else float(rangeMin)
+        )
+        high = (
+            self._percentileOf(values, percentileHigh)
+            if rangeMax is None
+            else float(rangeMax)
+        )
+        # Test the RESOLVED range, not "was a bound explicit": a single
+        # percentile can invert it just as a single absolute bound can
+        # (percentileLow=99.5 against the default high of 99), which otherwise
+        # painted every annotation the middle color under a legend whose min
+        # exceeded its max. Only a strict inversion is an error -- bounds that
+        # coincide are the span <= 0 branch's job (every value identical, or an
+        # explicit min equal to the data's single value).
+        if low > high:
+            raise ValueError(
+                "The requested range [%g, %g] is empty for this "
+                "property's values" % (low, high)
+            )
+        span = high - low
+        # Individually finite bounds can still overflow their DIFFERENCE
+        # (rangeMin=-1e308, rangeMax=1e308 → span == inf): every t below
+        # would compute against infinity — near-zero values silently landing
+        # on the first color, a value at the bound producing NaN. Raised
+        # before any write, like every ValueError in this path (the API
+        # relays it as a 400 and the client skips its refetch on 400s).
+        if not math.isfinite(span):
+            raise ValueError(
+                "The requested range [%g, %g] is too wide to color by"
+                % (low, high)
+            )
+
+        # Sample the colormap once per quantized level, not once per
+        # annotation: table[level] == sampleColormap(colormap,
+        # level / maxLevel), so the colors are identical and the hot loop is
+        # a list index instead of a parse-and-interpolate.
+        maxLevel = self.CONTINUOUS_COLOR_LEVELS - 1
+        table = colormapTable(colormap, self.CONTINUOUS_COLOR_LEVELS)
+        idsByColor = defaultdict(list)
+        for annotationId, value in numericPairs:
+            if span > 0:
+                t = (value - low) / span
+            elif value < low:
+                # A zero-width range still has an inside and an outside: p1 ==
+                # p99 happens on sparse data (199 zeros and one 1000), and
+                # painting the outliers the middle colour contradicted the
+                # legend, which reports clippedHigh in exactly that case.
+                t = 0.0
+            elif value > high:
+                t = 1.0
+            else:
+                # Every value identical, or exactly on the collapsed bound.
+                t = 0.5
+            level = int(round(min(max(t, 0.0), 1.0) * maxLevel))
+            idsByColor[table[level]].append(annotationId)
+
+        counts = self._writeColors(datasetId, idsByColor)
+        counts["legend"] = {
+            "type": "continuous",
+            "propertyPath": propertyPath,
+            "colormap": colormap,
+            "stops": CONTINUOUS_COLORMAPS[colormap],
+            "min": low,
+            "max": high,
+            # True extent + whether the ramp clipped it, so the legend can
+            # label its ends "≤ low" / "≥ high" instead of implying the range
+            # is all the data there is.
+            "dataMin": dataMin,
+            "dataMax": dataMax,
+            "clippedLow": low > dataMin,
+            "clippedHigh": high < dataMax,
+        }
+        return counts, idsByColor
+
+    def _colorCategorical(self, datasetId, propertyPath, pairs):
+        """Returns (result, idsByColor) -- see colorByProperty."""
+        idsByLabel = defaultdict(list)
+        for annotationId, value in pairs:
+            if isinstance(value, str):
+                label = value
+            elif isinstance(value, float) and value.is_integer():
+                # Workers disagree on numeric types (one writes 1, another
+                # 1.0); don't let the representation split a category.
+                label = str(int(value))
+            else:
+                label = str(value)
+            idsByLabel[label].append(annotationId)
+            # Bail the moment the cap is exceeded rather than grouping every
+            # distinct value first: forcing categorical on a continuous
+            # property would otherwise build one entry per value (observed
+            # live: 555,479 groups before a 256 cap rejected the request).
+            if len(idsByLabel) > self.MAX_CATEGORIES:
+                raise ValueError(
+                    "Too many distinct values (more than %d) for categorical "
+                    "coloring; use continuous mode or another property"
+                    % self.MAX_CATEGORIES
+                )
+
+        # Largest categories get the leading (strongest) palette colors;
+        # ties break alphabetically so re-running is stable.
+        ordered = sorted(
+            idsByLabel.items(), key=lambda item: (-len(item[1]), item[0])
+        )
+        categories = []
+        idsByColor = defaultdict(list)
+        for index, (label, annotationIds) in enumerate(ordered):
+            color = categoricalColor(index)
+            categories.append(
+                {"value": label, "color": color, "count": len(annotationIds)}
+            )
+            idsByColor[color].extend(annotationIds)
+
+        counts = self._writeColors(datasetId, idsByColor)
+        counts["legend"] = {
+            "type": "categorical",
+            "propertyPath": propertyPath,
+            "categories": categories,
+        }
+        return counts, idsByColor
+
+    def _buildColorOperations(self, datasetId, idsByColor):
+        """One bulk $set per distinct color, chunked so a single $in stays
+        reasonable."""
+        operations = []
+        for color, annotationIds in idsByColor.items():
+            for start in range(0, len(annotationIds), self.COLOR_WRITE_CHUNK):
+                chunk = annotationIds[start:start + self.COLOR_WRITE_CHUNK]
+                # datasetId keeps the write scoped to the access-checked
+                # dataset even if a foreign annotation id slipped into the
+                # property values, and lets Mongo use the compound index.
+                operations.append(UpdateMany(
+                    {"datasetId": datasetId, "_id": {"$in": chunk}},
+                    {"$set": {"color": color}},
+                ))
+        return operations
+
+    def _applyColorOperations(self, operations):
+        """Run the color assignment as one batched write, returning how many
+        annotations matched.
+
+        bulk_write, not a loop of Model.update(): one round trip instead of up
+        to 256. Girder exposes no batched-write API, which makes this the same
+        kind of sanctioned `collection` use as aggregate() -- and unlike
+        find()/load(), update paths add no security behavior to bypass.
+        Unordered so Mongo may parallelize; every operation targets a disjoint
+        id set, so order cannot matter between them.
+
+        Bypassing save()/saveMany() also bypasses their raster-version bump,
+        so _writeColors bumps it explicitly (see clearColors)."""
+        if not operations:
+            return 0
+        return self.collection.bulk_write(
+            operations, ordered=False
+        ).matched_count
+
+    def _writeColors(self, datasetId, idsByColor):
+        """Apply the color assignment, clearing first only when it doesn't
+        cover every annotation. Returns {colored, uncolored}.
+
+        The clearing pass exists so annotations WITHOUT a value fall back to
+        their layer color instead of keeping a stale one. When the assignment
+        covers the whole dataset it is pure waste: the $sets overwrite every
+        document anyway, and on a 708K-annotation dataset the clear cost 4.8s
+        directly plus ~4.5s indirectly (708K dirty pages left for the
+        following writes to contend with) -- 80% of the request.
+
+        When a clear IS needed it must complete BEFORE the assignment, as its
+        own round trip: batched writes are unordered, so a clear sharing their
+        batch could land after a $set and wipe it."""
+        total = self.collection.count_documents({"datasetId": datasetId})
+        operations = self._buildColorOperations(datasetId, idsByColor)
+        # No empty-operations branch: both colorers raise before producing an
+        # empty assignment, and if one ever did, the code below is already
+        # correct for it (clear, then apply nothing).
+        # Ids are unique across groups (colorByProperty keys by annotation), so
+        # this total is a distinct-annotation count and the matched_count
+        # cross-check below is sound.
+        coveredIds = sum(len(ids) for ids in idsByColor.values())
+        skipClear = coveredIds >= total
+        try:
+            if not skipClear:
+                self.clearColors(datasetId)
+            colored = self._applyColorOperations(operations)
+
+            if skipClear and colored < total:
+                # The id count implied full coverage but the writes
+                # disagree. colorByProperty filters its map to annotations
+                # actually in the dataset, so the known cause (a stale
+                # property value whose annotation moved datasets) is
+                # prevented upstream — this stays as the backstop for
+                # anything else that desynchronizes the count, because some
+                # annotations may still hold a stale color. Fall back to
+                # the clear-then-reapply order.
+                self.clearColors(datasetId)
+                colored = self._applyColorOperations(operations)
+        finally:
+            # The assignment writes are the half clearColors' bump does not
+            # cover (skipClear skips it entirely), and they are what changes
+            # the colors the overview raster draws. In a finally because an
+            # unordered bulk_write can raise after applying some operations
+            # — exactly when the cached raster is most wrong (see
+            # clearColors).
+            bumpDatasetRasterVersion(datasetId)
+        return {"colored": colored, "uncolored": max(total - colored, 0)}
 
     def compute(self, datasetId, tool, user=None):
         dataset = Folder().load(

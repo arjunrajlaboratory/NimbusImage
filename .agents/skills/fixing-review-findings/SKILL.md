@@ -46,7 +46,69 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | Partial persistence: one change writing the same config key twice | Handlers that change several fields of one resource | All inputs validated *before* the first write? Two actions in the handler both syncing the same key? (see nimbus-frontend skill) |
 | Store action throws/propagates without `rawError: true` | Any `src/store/*.ts` | Audit **every** store module and the **whole** chain — errors re-wrap at each `@Action` boundary, and an action needs the flag when it merely propagates (no `throw` of its own) |
 | **A rule applied to one of two symmetric paths** | Anywhere the same concept has two implementations | See below — this was the single most-repeated finding across a 10-round review |
-| **Cost before the guard** | Getters/handlers with a cheap precondition and expensive body | Does the cheap check run FIRST? A cap that resolves 700K annotations to discover the limit was exceeded is doing the work it exists to prevent |
+| **Derived-state invalidation stops at the edited item** | Ordered pipelines, chained filters, dependent plots, wizard steps | Map the dependency closure: if item N changes the input to N+1, invalidate N (when its own derivation changed) and every downstream item; a toggle can preserve N's own result while still invalidating N+1..end |
+| **Failed refresh retains state derived from different inputs** | Cached filters, search results, gates, projections | Record the exact derivation-input identity on successful commit. A failed identical retry may retain the result; if dataset/population/revision changed, invalidate before awaiting so failure cannot strand stale state. When active/filtering and visible-disabled consumers materialize different subsets, track their validity separately: a null active signature does not mean no visible derived state exists, and invalidating visible-only state must not drop still-valid active constraints. |
+| **Correctness work coupled to display-only data** | Hidden panels whose data also powers filters/exports | Compute mandatory and visible-only input scopes separately. Hidden mode requests only mandatory inputs; failure of an optional widened fetch must not block correctness work that can use local fields or a cached mandatory subset. On that failure path, derive the resolution subset from the paths actually retained — do not feed a broad visible scope a narrow cache and publish plausible empty output for its missing inputs. Sign the actual required input set, not the visibility flag, and reuse a cached superset. |
+| **Disabled work still treated as mandatory** | Persisted gates, filters, pipeline steps, hidden panels | Name each consumer's scope explicitly: hidden/filtering work may use the enabled subset, while visible counts/highlights may still materialize disabled entries and therefore must sign their inputs. Sweep fetch scope, derived-state resolution, and downstream query signatures. If disabled inputs are omitted, omit their derived outputs too; resolving them from a narrower active-only projection can publish plausible but false empty state. Re-enable/open transitions must wake the work when it becomes necessary. |
+| **Cost before the guard** | Getters/handlers with a cheap precondition and expensive body | Does the cheap check run FIRST, in every consumer? A cap that filters or hashes 700K annotations to discover the limit was exceeded is doing the work it exists to prevent. Use a bounded walk (`limit + 1` as an overflow bit), then share that bounded result across the watcher, action, and renderer; checking `.length` after building the full collection is not a guard. |
+| **A signature hashes values but not their structure** | Incremental hashes over nested rows, fields, or variable-length lists | Feed field/record boundaries into the hash, not only value separators and a final count; test two inputs with the same flattened values redistributed across records |
+| **Display text used as identity** | Categorical plots, select options, persisted group/order state | Carry a collision-free raw key separately from its human-readable label. Test sentinel-label collisions, delimiter collisions, and duplicate display names; persist keys and render labels. For persisted migrations, store an explicit schema version — never infer the version from a prefix in user-controlled display text. |
+
+#### The blast-radius sweep: who depended on what your fix changed?
+
+The pattern sweep above asks *"where else does this bug exist?"* That is not
+the question that keeps failing. On one 10-round review, **six of the last
+eight findings were consequences of the previous round's fix** — not sibling
+instances of the reported bug, but code that had encoded the invariant the
+fix changed. Fixing the reported bug and sweeping for siblings caught none of
+them.
+
+So run a second sweep, on your own diff. Write the change as one sentence:
+
+> **"X used to be true. Now Y is true instead."**
+
+Then find everything that assumed X. The mechanical version — check all five,
+because the last three are the ones that get missed:
+
+| Surface | What to look for |
+|---|---|
+| Other code paths | Anything branching on, short-circuiting from, or caching the old fact. **Especially guards and early returns**, which encode "nothing else can be true here" |
+| Tests | A test asserting X still passes and now pins the wrong behaviour |
+| **User-facing strings** | Banners, tooltips, error text, tool descriptions. These state invariants in prose and nothing typechecks them |
+| **Spec / doc prose** | `codebaseDocumentation/*.md` claims go stale silently; a wrong doc is a finding |
+| **Comments** | A comment explaining why the old thing was safe is now an argument for a bug |
+
+Worked examples, all from the same PR, all found by a reviewer *after* the fix
+shipped:
+
+- *"Invalidation was all-or-nothing; now it is per plot."* → the refusal
+  banner still said "the viewer shows everything the other filters allow"
+  (**user-facing string**), and a `stale.length === 0` early return still
+  skipped clearing the error (**guard**).
+- *"Gate ids were chained; now they are pure."* → the per-plot drop was
+  correct, but a whole-request signature one layer up threw the preserved ids
+  away anyway (**caller encoding the old fact**).
+- *"`null` was the decoder's `not-a-key` sentinel; now it is a legal category."*
+  → `isEncodedAnalysisCategoryKey` rejected a key the encoder could now
+  produce, silently discarding persisted gates.
+- *"This helper was synchronous; now it awaits the backend."* → a capacity
+  check above it became a TOCTOU, and the store's `addAnalysisPlot` no-ops
+  rather than throwing, so the tool reported creating something it had not.
+
+**The async sub-case deserves its own check.** Making a function `await`
+anything inserts a suspension point into every caller. Walk each call site and
+ask what was read *before* the new await and acted on *after* it — a check,
+a cap, a length, an index, a "current dataset" assumption. A concept grep
+cannot see this; only reading the call sites can. If the value can change
+during the await, re-derive it or confirm the effect landed. Prefer confirming
+the effect (*"is my plot actually in the list?"*) over re-reading the
+precondition, which is the same check-then-act one tick later.
+
+**Weakening an invariant is as dangerous as strengthening one.** Making a
+value legal that used to be impossible, a failure partial that used to be
+total, or state per-item that used to be global all widen the space of
+reachable states, and every consumer written against the narrower space is a
+candidate bug.
 
 #### The symmetric-path pattern
 
@@ -122,6 +184,24 @@ in-place restyle) over no reflection at all.
 Grep for the twin by concept, not by identifier: the two implementations rarely
 share a name, which is exactly why they drift.
 
+#### The transitive-invalidation pattern
+
+Derived state can depend on more than the object that stores it. In an ordered
+chain, item N's cached result may be computed from every predecessor, so editing
+item 0 invalidates a suffix even when items 1..N were not directly edited. A
+one-key cache delete looks locally correct and leaves every dependent result
+stale; a later failed recomputation can make that stale state permanent.
+
+Write down the dependency direction before fixing the flagged mutator, then
+sweep every operation that changes the chain: editing inputs, replacing the
+derived rule, removing an item, reordering, and enable-state toggles. Preserve
+results that remain mathematically valid — toggling an item can keep its own
+result when that result depends only on predecessors, while still invalidating
+all following items because their input population changed. Prefer one
+suffix-invalidation helper and a three-item regression that exercises every
+mutation path; a two-item test proves only the immediate neighbor, not the full
+dependency closure.
+
 #### The cost-before-guard pattern
 
 A cheap precondition placed *after* the expensive work it was meant to avoid.
@@ -147,6 +227,14 @@ Its three response signals are easy to confuse when polling:
 | 👍 | Reviewed, no suggestions. |
 | A plain PR comment ("Didn't find any major issues") | Also a clean result — arrives as an issue comment, *not* a review object with inline comments. |
 
+**A review object with an empty body is not a clean result.** Codex's review
+body is the same 621-character boilerplate whether or not it found anything;
+the findings are inline comments. Reading `gh pr view --json reviews` and
+seeing only boilerplate reports "no findings" while P2s sit in
+`/pulls/N/comments`. This misled two consecutive rounds of one review before
+it was noticed. Judge a round by the inline-comment count, paginated, never
+by the review body.
+
 Poll for all three. Watching only for a new review object plus 👍 reports a false timeout when the answer arrived as a comment. Findings themselves come as inline review comments (`/pulls/{n}/comments`), not in the review body, which only holds boilerplate.
 
 **The bot's login differs between the two GitHub APIs.** GraphQL (`gh pr view --json reviews`) reports `author.login` as `chatgpt-codex-connector`; REST (`gh api .../reviews`, `.../comments`) reports `user.login` as **`chatgpt-codex-connector[bot]`**. A REST poll filtering on the GraphQL spelling matches nothing and reports "no review yet" forever — this produced a confident false negative after the review had already landed. Match on a prefix, and prefer polling by timestamp rather than by author:
@@ -156,9 +244,21 @@ Poll for all three. Watching only for a new review object plus 👍 reports a fa
 gh api repos/OWNER/REPO/pulls/N/reviews \
   --jq "[.[] | select((.user.login|startswith(\"chatgpt-codex-connector\")) and .submitted_at > \"$LAST\")] | length"
 
-# The findings themselves:
-gh api repos/OWNER/REPO/pulls/N/comments \
+# The findings themselves. --paginate is NOT optional:
+gh api repos/OWNER/REPO/pulls/N/comments --paginate \
   --jq ".[] | select(.created_at > \"$LAST\") | \"=== \(.path):\(.line // .original_line)\n\(.body)\""
+```
+
+**Always `--paginate` the comments endpoint.** It returns 30 per page, and a
+long review thread passes that quickly — after which the *newest* finding is
+on page two and an unpaginated query reports zero. On a 13-round PR this
+produced a confident "the round was clean" when a P2 had in fact landed
+against the current head (30 comments returned vs 31 with `--paginate`).
+Sanity-check by counting both ways when a round reports clean:
+
+```bash
+gh api repos/$OWNER/pulls/$PR/comments --jq 'length'             # capped at 30
+gh api repos/$OWNER/pulls/$PR/comments --paginate --jq 'length'  # the real count
 ```
 
 Sanity-check a "nothing yet" result against `gh pr view N --json reviews` (GraphQL) before reporting it — if the two disagree, the filter is wrong, not the bot. Turnaround is 1–8 minutes and grows with diff size.
@@ -215,6 +315,22 @@ The eyes-reaction transition is the most useful signal: while 👀 is on the tri
 
 ### 5. Gates before claiming done
 
+**Run the blast-radius sweep here, per fix, before the automated gates** — it
+is the one check that catches nothing on its own and everything on the next
+round. For each behavioural change in the diff, write the sentence *"X used to
+be true; now Y is"*, then grep for the five surfaces above (code paths and
+guards, tests, user-facing strings, doc prose, comments). Two greps that pay
+for themselves every time:
+
+```bash
+# Prose and strings that may still describe the old behaviour.
+git diff <base>...HEAD --stat -- '*.md'      # docs you changed behaviour under
+grep -rn "<phrase from the old invariant>" src/ codebaseDocumentation/
+```
+
+If the fix made anything `async`, additionally walk its call sites for a value
+read before the new await and acted on after it.
+
 - Frontend: `pnpm tsc`, `pnpm lint:ci`, `pnpm test` (ignore failures under `.tox/**` paths — vitest glob artifact, see nimbus-frontend skill).
 - Backend: `tox` (includes flake8) **and** `docker compose build girder && docker compose up -d girder` before any curl/browser verification — `restart` does NOT load plugin code changes; tox passes against source even when the live API is stale.
 - User-facing changes: verify in the browser (see in-browser-testing skill) — unit tests green ≠ working UI.
@@ -234,6 +350,37 @@ Report per-finding outcomes (fixed / stale / by-design / needs-decision) keyed t
 | Silently choosing a cap/limit/default | Those are user decisions — recommend, then ask |
 | Reverting a fix in a chained `cp bak && revert && test && cp back` command | An interrupt or a rejected call between the revert and the restore leaves the fix silently removed from the working tree. Use `git stash` / `git checkout -- <file>` to restore, and `git diff` against HEAD before continuing |
 | Trusting a probe that passed against drifted state | Re-verify from a **fresh load**: a churn probe reported "no problem" only because everything had hydrated by the time it ran, and a live behavior check disagreed with a passing unit test because the working tree had lost the fix |
+
+### A test written alongside a fix must contradict the OLD source of truth
+
+The recurring failure is not "the test is wrong" — it is that the test sets
+up the one state in which **both** the old and new code agree, so it passes
+against the bug it was written for.
+
+The sharpest case: when a fix changes **where** a value comes from, the test
+must make the OLD source **empty or wrong**. On PR #1302 an open gate bound
+moved from `propertyStore.propertyValues` (empty in the stub-only regime the
+feature exists for) to a server histogram. The accompanying test populated
+`propertyValues` *and* `annotations` — the single configuration in which the
+old code worked. It passed against a production path that always took the
+broken branch. The replacement sets `annotations = []` and
+`propertyValues = {}` and asserts the bound still reaches past the data.
+
+Two more from the same round:
+
+- **A hand-maintained list of things-to-check silently omits the new thing.**
+  `describeAgentToolCall`'s "never throws on malformed input" test iterated a
+  literal array of tool names. The two new tools weren't in it, so the test
+  that exists for exactly that bug class couldn't see the bug. Derive such
+  lists from the registry/enum (`AGENT_TOOL_NAMES`) so they cannot drift.
+- **Paired mock state drifts like paired product state.** In one mock
+  `propertyValuesRevision` was wired to the reactivity signal and
+  `contentRevision`, on the adjacent line of the same signature, was a plain
+  constant — so half the signature was untestable and nobody noticed.
+
+Mechanically: after writing the test, restore the pre-fix behaviour (`git
+stash`, or a scripted edit you undo from a backup) and **watch it fail**.
+"It would obviously fail" has been wrong here more than once.
 
 ### Verifying a fix live: pick a fixture that actually exercises it
 

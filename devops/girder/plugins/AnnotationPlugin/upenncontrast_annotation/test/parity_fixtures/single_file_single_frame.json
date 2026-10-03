@@ -1,0 +1,81 @@
+{
+  "name": "single_file_single_frame",
+  "description": "Single image.tif with a single frame and no index metadata. Images fallback dimension Z size 1; channels ['Default'].",
+  "input": {
+    "itemNames": [
+      "image.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      }
+    ],
+    "tilesInternalMetadata": [
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": {
+        "source": "images",
+        "guess": "Z"
+      },
+      "T": null,
+      "C": null
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "Default"
+      ],
+      "sources": [
+        {
+          "path": "image.tif",
+          "framesAsAxes": {
+            "z": 1
+          },
+          "zValues": [
+            0
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": null,
+      "z": [
+        "1"
+      ],
+      "t": null
+    }
+  }
+}

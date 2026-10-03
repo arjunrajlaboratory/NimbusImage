@@ -76,7 +76,7 @@ vi.mock("@/store/filters", () => ({
     updatePropertyFilter: vi.fn(),
     togglePropertyPathFiltering: vi.fn(),
     getHistogram: vi.fn().mockReturnValue([]),
-    updateHistograms: vi.fn(),
+    updateHistograms: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -134,7 +134,9 @@ describe("PropertyFilterHistogram", () => {
     (filterStore as any).updatePropertyFilter = vi.fn();
     (filterStore as any).togglePropertyPathFiltering = vi.fn();
     (filterStore as any).getHistogram = vi.fn().mockReturnValue([]);
-    (filterStore as any).updateHistograms = vi.fn();
+    (filterStore as any).updateHistograms = vi
+      .fn()
+      .mockResolvedValue(undefined);
   });
 
   it("propertyFullName returns the full name from propertyStore", () => {

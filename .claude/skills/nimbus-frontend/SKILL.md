@@ -5,6 +5,63 @@ description: "Use when writing or modifying Vue 3 components, Vuex store modules
 
 # Nimbus Frontend Development
 
+## Dependency bumps and Vitest 4
+
+- Compare the actual resolved graph, not the Dependabot title. An override can
+  make a proposed bump a no-op. Keep legacy consumers on the API major they
+  require; a direct upgrade must not force every transitive consumer across it.
+- A pnpm package has both a `packages` entry and a `snapshots` dependency entry.
+  Updating only its version and integrity can omit a newly required dependency.
+  Re-resolve with pnpm and inspect the diff; a frozen install checks importer
+  consistency but does not prove every transitive snapshot is complete.
+- Vitest 4 mocks used with `new` must use a regular function or class, not an
+  arrow. Sweep sibling constructor mocks, including rarely exercised GIF/ZIP
+  paths. Factory methods such as vtk's `newInstance()` remain ordinary calls.
+- `vi.restoreAllMocks()` no longer clears standalone mock call history. The
+  suite uses `clearMocks: true` for call isolation; tests must still reset any
+  implementations or state they change. Do not relax call-count assertions.
+- jsdom 24 forwards stylesheet errors through a host console outside Vitest 4's
+  test console. Filter only `Could not parse CSS stylesheet` on its existing
+  virtual-console handlers, preserving every other error. A console.error
+  wrapper in test setup misses these events and can produce hundreds of MB of
+  log output. Verify the actual log after a runner upgrade.
+
+## Test mocks must model the real store's REPLACEMENT semantics
+
+A mock that mutates state in place where the real store replaces it makes
+tests silently vacuous. `AnalysisPanel.test.ts`'s `setPlots` did
+`plots.length = 0; plots.push(...)` while the real `applyAnalysisPlots`
+builds a new array. Vue short-circuits a computed whose value is unchanged
+by identity, so `analysisPlots` never invalidated and **every watcher
+downstream of it silently never re-ran** — a new test for plot-removal
+behavior passed against code that did nothing.
+
+It hid because an existing test appeared to cover removal: its watcher
+happened to read `analysisPopulation`, which returns a fresh array each
+evaluation, so that one re-fired for an unrelated reason.
+
+Rules:
+- Mock setters replace (`mocks.plots = [...next]`), matching the store.
+- Booleans and other scalars are the same trap in reverse: an intermediate
+  computed returning an unchanged `true` stops propagation, so a test that
+  changes only downstream data may never re-run the watcher.
+- Before trusting a new watcher test, make it FAIL once (revert the fix, or
+  assert the opposite) — this one passed for the wrong reason first.
+
+Two related mock traps, both of which make a test assert against something
+the component never touched:
+
+- **A `vi.mock` factory captures the spy it closes over.** Reassigning
+  `mocks.someAction = vi.fn()` in `beforeEach` leaves the component calling
+  the *original* spy while the test asserts on the new one — "expected spy
+  to be called, number of calls: 0" with obviously working code. Use
+  `mocks.someAction.mockClear()` instead.
+- **A plain-object store mock is not reactive**, so a component watching
+  `() => store.something` never fires when a test assigns to it. If the
+  behavior under test is a watcher on store state, wrap the mock's default
+  export in `reactive()` (`vi.mock("@/store", async () => { const { reactive }
+  = await import("vue"); return { default: reactive({ … }) }; })`).
+
 ## Component Patterns
 
 ### Script Setup (Composition API)
@@ -70,6 +127,37 @@ store.dispatch('sendUserMessage', 'Find the nuclei in this image.'); // fire, do
 **Send exactly once, from a clean/hydrated state.** Two `sendUserMessage`s in quick succession start two overlapping runs that both push to the module-level `wireMessages`, nesting the tool-result blocks (`content: [[tool_result,…]]`). The next request then fails with Anthropic `400 … messages.N.content.0: Input should be an object`. This is not a create/run bug — it's conversation corruption from concurrent turns. (The UI's `send()` and the `sendUserMessage` guard both check `running`, but a stale in-flight run or leftover persisted conversation can still bite; a hard reload + `clearConversationAndStorage` gives a truly clean slate.) Related: `hydrating` (module var) blocks sends until a reloaded conversation finishes restoring — a dispatch right after reload can no-op; wait a beat. `clearConversation()` (no `force`) no-ops while `running`; use `clearConversationAndStorage`.
 
 Agent tool executors live in `src/agent/executors.ts` (`executeAgentTool(name, input, ctx)`), importable in the Vite dev page for isolated testing: `await import('/src/agent/executors.ts?t=' + Date.now())` (the query-bust avoids a stale module cache). Worker tools save parameters under `tool.values.workerInterfaceValues`; `channelCheckboxes` values are `{channelIndex: true}` maps (a `true` value selects — key-presence alone does not).
+
+### Never assign a big per-annotation map to state without `markRaw`
+
+`annotationStubs`, `hydratedAnnotations`, and `annotationCentroids` hold one
+entry per annotation — up to ~700K. Every existing assignment wraps them in
+`markRaw(...)`; a new mutation that forgets it hands Vue a raw Map to walk and
+proxy entry by entry, and that cost dwarfs whatever the mutation was doing. A
+whole-dataset recolor measured **16.9s** with the `markRaw` missing against
+~5.5s with it — and the mutation itself was only ~0.5s of that.
+
+Nothing static catches this: `tsc` and lint are happy, and any test with a
+handful of fixture annotations is far too small to feel it. The tell is a
+measured time that doesn't add up from its parts.
+
+```typescript
+// BAD: Vue proxies ~700K entries on assignment
+this.annotationStubs = newStubs;
+
+// GOOD: matches the nine other assignments to this map
+this.annotationStubs = markRaw(newStubs);
+```
+
+`src/store/__tests__/rawStateMaps.test.ts` asserts `isReactive(...) === false`
+after every mutation that replaces one of these maps — extend it when you add
+another, rather than hand-checking. Verify a new row can fail by deleting only
+the `markRaw` call (not the whole mutation — stashing the file reverts it
+entirely and the test then fails for the wrong reason).
+
+Note the *array* convention differs: `annotations` is a plain reactive array of
+`markRaw`ed items (`setAnnotations` does `annotations.map(markRaw)`), so
+`markRaw` goes on the items there, not the array.
 
 ### Store Edits Break HMR — Hard-Reload
 
@@ -367,6 +455,33 @@ ignored).
 Extend that test rather than hand-grepping when auditing a new Vuetify
 deprecation.
 
+### Icon names: check `@mdi/font` 5.9.55, not the MDI website
+
+`@mdi/font` here is pinned at **5.9.55**, several major versions behind what
+mdi.dev documents. A name that doesn't exist in the installed font fails
+**silently and invisibly**: Vuetify sets the class, no `::before` rule matches,
+and the icon renders as blank space. `tsc`, lint and every component test stay
+green — the only symptom is a gap a human notices in a screenshot, which is
+exactly how `mdi-gradient-horizontal` shipped on a menu item. The sweep that
+followed found two more (`mdi-sitemap-outline`, added after 5.x, in two places;
+`mdi-save`, renamed to `mdi-content-save` in 5.x).
+
+Never write an icon name from memory or from current MDI docs — grep the
+installed font:
+
+```bash
+grep -c '^\.mdi-sitemap-outline::before' node_modules/@mdi/font/css/materialdesignicons.css   # 0 → blank icon
+```
+
+`src/__tests__/mdiIconNames.test.ts` enforces this across all of `src/`, so a
+bad name now fails the suite instead of shipping. Its one exclusion is itself
+(it quotes non-existent names in its own prose). In the browser, the direct
+evidence is `getComputedStyle(el, "::before").content` — a codepoint means the
+glyph resolved, `none`/`normal` means the class matched no rule.
+
+Common 5.9.55 gotchas: no `-outline` variant for many icons; `save` →
+`content-save`; `gradient` has no `-horizontal`/`-vertical` suffix.
+
 ### v-menu / v-dialog Initial State
 
 Vuetify 4's `v-menu` respects the initial `v-model` value immediately on mount. Vuetify 3 deferred it. If you set `v-model` to `true` before mount, the menu WILL open. Guard with conditions:
@@ -574,6 +689,33 @@ When **not** to add the class:
 
 If you see a dialog with a `width="N%"` or `width="Nvw"` prop and no `wide-dialog` class, it's almost certainly rendering narrower than intended — add the class.
 
+### Click-outside close runs *after* the outside click — and closes on drags
+
+Vuetify's `v-click-outside` (used by every non-`persistent` `v-dialog` / `v-menu`) runs its close inside a `setTimeout`, i.e. **after** the outside click has bubbled through its own handlers. When the dialog's `@update:model-value(false)` handler clears *shared* state, it can undo what that same click just did: in the worker-tool dialog (`Toolset.vue`), clicking another worker tool selected it, and then the deferred close ran `setSelectedToolId(null)` and deselected it again. It also fires for a drag whose mousedown and mouseup both land outside, so on a scrim-less dialog over the image, **panning the map closes the dialog**.
+
+Neither case can be told apart from inside `update:model-value`. `click:outside` is emitted synchronously just before it, with the click event, so veto there. Snapshot `{clientX, clientY, relevant state}` in a capture-phase `pointerdown` listener (registered only while the dialog is open, removed in the watcher's `onCleanup`), then in `@click:outside` set a one-shot veto when the state changed or the pointer moved more than a few px. Consume the flag in `update:model-value`. Escape emits no `click:outside`, so it still closes. See `onWorkerDialogClickOutside` in `Toolset.vue` and its tests in `Toolset.test.ts`.
+
+A nested overlay (a `v-select` menu inside the dialog) is the top of the overlay stack, so the first outside click closes only that menu and the second closes the dialog. That is expected, not a bug. Tooltips (`_disableGlobalStack`) don't take part in the stack.
+
+### Controlling a dialog from outside: two traps
+
+Both shipped in the command palette's first cut, when the Data I/O dialogs
+moved out of their `v-menu` so the palette could open them:
+
+- **A dialog created already open never fires its open watcher.** The CSV
+  preview and the index-conversion labels are built in non-immediate
+  `watch(dialog, ...)` callbacks. Mounting the dialog (`v-if`) and setting its
+  `v-model:open` in the same tick creates it with `dialog === true`, so the
+  watcher never sees false → true and the first open shows blank state. Mount
+  it closed, `await nextTick()`, then open it (`DataIOMenu.vue`
+  `openDataDialog`).
+- **An empty slot renders the slot's fallback.** Passing `<template
+  #activator />` to silence a component's default activator button does
+  nothing: Vue treats slot content that renders only comments as absent and
+  shows the fallback, so the dialog's own "Export CSV" button appeared in the
+  app bar. A dialog that is always opened from outside should have no
+  activator at all; delete it rather than overriding it with nothing.
+
 ## API Calls
 
 Use the API classes from store — never put `girderRest.get(...)` in components:
@@ -582,6 +724,39 @@ Use the API classes from store — never put `girderRest.get(...)` in components
 import store from "@/store";
 const result = await store.api.someMethod();
 ```
+
+## Opening a palette from a component that has no palette registry
+
+App.vue owns palette (right/left panel) visibility in local refs, so a
+component mounted under the route tree — anything inside `ImageViewer` /
+`AnnotationViewer` — cannot open one by emitting an event. Ask through the
+main store instead: `store.requestPaletteOpen(["analysisPanel",
+"filtersPanel"])` sets `paletteOpenRequests`; App.vue watches it, opens each
+in order, and clears the list. Order matters — open the *primary* palette
+first, then its companion (Filters hosts alongside Analysis and the Object
+Browser); the other order closes the palette just opened.
+`TRequestablePalette` in `model.ts` is an alias of `PanelId` from
+`src/utils/panelRegistry.ts` (the single list of palettes and their
+primary/companion rules), so a renamed palette is a compile error rather than
+a click that does nothing. Same shape as the older
+`isAnnotationPanelOpen` hatch used by the Timelapse panel.
+
+## A count computed after filtering must say it was filtered
+
+Every count the UI prints from `filteredAnnotations`, `viewportAnnotationCount`,
+or any id set that survived filters/gates is a *filtered* number. Printed
+without a cue, it reads as data loss the moment a filter is restored from a
+saved configuration — the reported case was a HUD reading "Showing 826 of 826
+in view" in a viewport visibly holding thousands, because a saved lasso gate
+cut 708,983 to 72,925.
+
+- The cue belongs **next to the number**, not on a palette badge across the
+  window. A badge that was visible the whole time did not prevent the report.
+- Count constraints through `src/utils/activeConstraints.ts` —
+  `collectActiveConstraints` / `countActiveConstraints` — never with a fresh
+  ad-hoc sum. The Filters badge, the Analysis badge and the HUD suffix all
+  read that one list; a new narrowing filter that skips it is invisible on
+  all three. See `codebaseDocumentation/ACTIVE_CONSTRAINT_CUES.md`.
 
 ## Logging
 
@@ -764,6 +939,34 @@ Before claiming a frontend change done:
 
 Component-level test patterns (AnnotationViewer harness, GeoJS mocks): see the nimbus-geojs skill and `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md`.
 
+### A mock that cannot represent the bug makes its tests meaningless
+
+Worse than a mock returning the wrong constant is a mock that models *none* of
+the real action's effect. `addAnalysisPlot` was a bare `vi.fn()`, so
+`mockFilters.analysisPlots` stayed empty no matter what the code under test
+did. Nine tests passed against it — and none of them could observe whether the
+executor's plot had actually landed, which is precisely the state the bug
+produced (the store refuses at its cap by no-oping, and the executor went on
+to configure and report a plot that did not exist).
+
+The rule: **a mocked action must reproduce the state change its caller depends
+on, including its refusal behaviour.** If the real action appends, the mock
+appends; if the real one silently no-ops past a cap, the mock does too. When a
+test needs extra side effects on top, factor the default into a helper and
+call it, rather than replacing the implementation and silently dropping the
+effect the code under test is checking for:
+
+```ts
+function appendAnalysisPlot(id: string) { /* what the real action does */ }
+beforeEach(() => { mock.addAnalysisPlot.mockImplementation(appendAnalysisPlot); });
+// A test layering extra behaviour composes rather than replaces:
+mock.addAnalysisPlot.mockImplementation((id) => { appendAnalysisPlot(id); ...extra... });
+```
+
+Also reset such state in **every** `describe`'s `beforeEach`, not just the
+first — a test that flips a cap flag or swaps an API stub mid-await leaks it
+into every later block.
+
 ### A mock that returns a fixed value can fail your test for the wrong reason
 
 Shared mocks in this repo return constants chosen for the tests that existed when they were written, and a new test inherits them silently. The failure looks like a bug in the code under test, not in the harness.
@@ -784,3 +987,36 @@ Before concluding "the code doesn't work", check what the relevant mock actually
 - When working on projects feature: read `codebaseDocumentation/PROJECTS.md`
 - When working on sharing UI: read `codebaseDocumentation/SHARING.md`
 - When working on annotation combining: read `codebaseDocumentation/COMBINE_ANNOTATIONS.md`
+
+## Snapshot/export validation must inspect the actual artifact
+
+A successful download click can produce a ZIP of empty or mislabeled images.
+For image exports, decode the downloaded files and check format, dimensions,
+coordinate coverage, and distinct pixels where expected. TIFF must bypass a
+browser canvas scalebar path: canvas cannot decode TIFF and PNG re-encoding
+would discard the original TIFF data. A scaled style with no frame can default
+to frame zero on the server; reject missing planes and empty layer selections
+before building export styles. Reject empty/inverted/nonfinite crops and empty
+binary responses instead of offering a plausible archive.
+
+Capture export inputs before the first await, including nested layer contrasts,
+per-crop scalebar geometry/color/text, and format/dimension selections. Disabled
+controls do not protect against changes from other panels or navigation.
+
+Numeric field tests must cover both emitted strings and numbers, with a nonzero
+origin: `"100" + 128` becomes `"100128"`. Width/height setters must add numeric
+sizes to the origin consistently; do not preserve a test that accidentally
+asserts a width is an absolute right coordinate. See `Snapshots.test.ts` and
+`utils/screenshot.test.ts` for artifact and crop regression coverage.
+
+Check single-file and ZIP paths together: a direct download URL does not carry
+an Axios/Girder authentication header. Both paths must use the authenticated
+client before offering a local Blob, especially when disabling a canvas overlay
+changes which path a format takes.
+
+Snapshot locations and display-layer channels use slider indices, but
+`dataset.images(z, time, xy, channel)` is keyed by metadata coordinate values.
+Use `getLayerImages` for layer validation and styles; for raw exports, map
+location indices through the dataset arrays while preserving channel IDs from
+the raw-channel selector. Test with the real `parseTiles` lookup and sparse,
+nonzero values on every axis: an index-agnostic image mock hides this mismatch.

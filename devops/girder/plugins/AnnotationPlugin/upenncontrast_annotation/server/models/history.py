@@ -4,6 +4,7 @@ from girder.utility.model_importer import ModelImporter
 
 from .documentChange import DocumentChange as DocumentChangeModel
 from ..helpers.customModel import CustomNimbusImageModel
+from ..helpers.annotationRaster import bumpDatasetRasterVersion
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
 import fastjsonschema
@@ -144,7 +145,11 @@ class History(CustomNimbusImageModel):
 
         # Update the entry
         history_entry["isUndone"] = undo
-        return self.save(history_entry)
+        saved = self.save(history_entry)
+        # History restoration uses raw collection replace/delete operations,
+        # so it intentionally bypasses the annotation model mutation hooks.
+        bumpDatasetRasterVersion(datasetId)
+        return saved
 
     def cleanRemoveWithQuery(self, query, creator, **kwargs):
         # Find the ids of the docs to remove

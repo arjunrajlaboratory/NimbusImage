@@ -147,6 +147,7 @@ Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names
 | `/api/v1/annotation_property` | `server/api/property.py` | Property definitions |
 | `/api/v1/worker_interface` | `server/api/workerInterfaces.py` | Docker worker registration |
 | `/api/v1/worker_preview` | `server/api/workerPreviews.py` | Worker preview images |
+| `/api/v1/dataset` | `server/api/dataset.py` | Multi-source dataset configuration via API |
 | `/api/v1/dataset_view` | `server/api/datasetView.py` | Per-user view state |
 | `/api/v1/history` | `server/api/history.py` | Undo/redo history |
 | `/api/v1/user_assetstore` | `server/api/user_assetstore.py` | Per-user storage |
@@ -155,8 +156,11 @@ Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names
 | `/api/v1/annotation_import` | `server/api/dataImport.py` | Server-side JSON import (annotations, connections, property values) |
 | `/api/v1/project` | `server/api/project.py` | Project management |
 | `/api/v1/resource` | `server/api/resource.py` | Custom resource search |
+| `/api/v1/system/authenticated_users` | `system.py` | Admin-only usage metric: count of distinct users who obtained an auth token within a look-back `window` (default `1d`). Added to Girder's core `system` route via `addSystemEndpoints`, not a plugin resource. |
 
 All source files under `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/`. Swagger UI at `http://localhost:8080/api/v1#!/`.
+
+**Authenticated-users metric — what it measures:** a user is counted for the window if the `token` collection holds a token whose `created` timestamp falls inside it, i.e. they authenticated (logged in / refreshed a session) during the window. The count is deduplicated per user (`$group` on `userId`). It is deliberately **not** a general "used the app" metric: clients reuse a stored token across requests, so a user only mints a new token on a fresh login (or after their token expires) — someone using the app daily on a still-valid token won't reappear in a short window. Treat it as distinct authentications, not activity. Because Girder deletes tokens once they expire (default ~180 days), counts for windows longer than the token lifetime are bounded by token retention.
 
 ### Image Rendering Pipeline
 
@@ -275,13 +279,17 @@ JobModel().scheduleJob(job)
 
 ### Turn review findings into durable artifacts, not one-off fixes
 
-A reviewer flags **one instance** of a pattern per round. Fixing only that instance means the next round flags the next instance — a ten-round review of one feature here produced roughly twenty findings that reduced to **two underlying shapes**. Two obligations follow, and they apply to every branch, not just large ones.
+A reviewer flags **one instance** of a pattern per round. Fixing only that instance means the next round flags the next instance — a ten-round review of one feature here produced roughly twenty findings that reduced to **two underlying shapes**. Three obligations follow, and they apply to every branch, not just large ones.
 
 **1. Generalize the finding, then sweep the branch.** Before fixing, name the shape ("a rule applied to one of two symmetric paths", "expensive work before the cheap guard that would skip it"). Then grep the whole diff for other instances and fix those in the same pass. If a sweep comes back clean, ask what the query structurally cannot see — a grep for `throw` once found every deliberate thrower and missed every silent propagator.
 
 The single most repeated shape in this repo is **one of two symmetric paths**. When you change one, ask what its twin is: drawing ↔ retention/clearing, styling-on-create ↔ restyling-on-update, hover/highlight ↔ click/selection, one piece of paired state ↔ the other, one mode branch ↔ the rest. The two implementations rarely share a name, which is exactly why they drift — search by concept.
 
-**2. Write the lesson into a skill.** If the finding would recur in *other* features, it belongs in `.claude/skills/` — `fixing-review-findings` for review patterns, `nimbus-frontend` / `nimbus-geojs` / `nimbus-backend` for domain traps. Skills are the mechanism by which a review round improves the next feature instead of only this one. Skills live in two trees and CI enforces parity, so run `python3 plugins/nimbusimage/scripts/sync_skills.py --write` after editing (see *Editing skills* below).
+**2. Sweep the blast radius of your own fix.** Obligation 1 asks where else the *bug* is. This asks who depended on what your fix changed being **true** — a different and, in practice, more productive question: on one long review, six of the last eight findings were consequences of the previous round's fix rather than siblings of the reported bug. State the change as *"X used to be true; now Y is"*, then check five surfaces for code that assumed X: other code paths (especially **guards and early returns**, which encode "nothing else can be true here"), tests that assert X, **user-facing strings**, **spec/doc prose**, and **comments**. The last three state invariants in prose that nothing typechecks, and they are the ones that get missed — a banner that still said "the viewer shows everything the other filters allow" after failures became partial, and five stale claims in a feature spec, were all review findings.
+
+Making a function `await` anything is the sharpest version: it inserts a suspension point into every caller, so anything read before it and acted on after it is now a race. Prefer confirming the effect landed (*"is my item actually in the list?"*) over re-reading the precondition, which is the same check-then-act one tick later.
+
+**3. Write the lesson into a skill.** If the finding would recur in *other* features, it belongs in `.claude/skills/` — `fixing-review-findings` for review patterns, `nimbus-frontend` / `nimbus-geojs` / `nimbus-backend` for domain traps. Skills are the mechanism by which a review round improves the next feature instead of only this one. Skills live in two trees and CI enforces parity, so run `python3 plugins/nimbusimage/scripts/sync_skills.py --write` after editing (see *Editing skills* below).
 
 Record test-harness traps too, not just product bugs. A shared mock returning a fixed value silently defeats new tests: `distance2dToLineSquared` returns `100`, `pointDistance` returns `undefined`, `geojsAnnotationFactory` drops its options. Each caused a test that passed **before** its fix — worse than no test at all.
 
@@ -291,7 +299,7 @@ When a feature accumulates review findings, add a **Regression checklist** to it
 
 This exists because several fixes in that feature were undone by *later* fixes to adjacent code — the checklist is what makes "change this, re-check these" mechanical instead of remembered. Rules for it to stay useful:
 
-- **Every item names its test.** An invariant without a test is a wish; if the test doesn't exist, write it.
+- **Every item names its test.** An invariant without a test is a wish; if the test doesn't exist, write it. Cite it as an italic quoted name, `*"testName"*` (frontend `it(...)` text or a pytest function name): `src/__tests__/regressionChecklist.test.ts` finds every doc with a `## Regression checklist` heading, requires more than 4 such citations, and fails if any cited name no longer exists. It runs in the frontend suite, so run `pnpm test` even when a PR touches only docs or backend code.
 - **Include invariants with no visible behavior** — allocation and recompute costs regress silently and no one notices until a large dataset does.
 - **Add an item whenever a review finds something the checklist missed.** The checklist is the running answer to "what has broken here before".
 - Also record process rules the feature proved: verify from a fresh page load on a dataset that actually has the property under test, and use `git stash` rather than a `cp` round-trip when confirming a test fails without its fix.

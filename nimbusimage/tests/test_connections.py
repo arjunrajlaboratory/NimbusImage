@@ -86,7 +86,7 @@ class TestConnectionDelete:
     def test_delete_single(self, mock_gc):
         accessor = ConnectionAccessor(mock_gc, "ds_001")
         accessor.delete("conn_001")
-        mock_gc.delete.assert_called_with("/annotation_connection/conn_001")
+        mock_gc.delete.assert_called_with("annotation_connection/conn_001")
 
     def test_delete_many(self, mock_gc):
         accessor = ConnectionAccessor(mock_gc, "ds_001")

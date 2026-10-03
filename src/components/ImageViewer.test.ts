@@ -67,30 +67,41 @@ const mockDomWidget = (el?: string) => {
   return { canvas: vi.fn(() => element) };
 };
 
-const mockLayer = () => ({
-  node: vi.fn().mockReturnValue({ css: vi.fn() }),
-  createFeature: vi.fn().mockReturnValue({}),
-  createWidget: vi.fn((_widgetName: string, arg?: any) =>
-    mockDomWidget(arg?.el),
-  ),
-  deleteWidget: vi.fn(),
-  moveToTop: vi.fn(),
-  zIndex: vi.fn().mockReturnValue(0),
-  visible: vi.fn(),
-  idle: true,
-  onIdle: vi.fn((cb: Function) => cb()),
-  reset: vi.fn(),
-  url: vi.fn(),
-  draw: vi.fn(),
-  map: vi.fn().mockReturnValue({ draw: vi.fn() }),
-  queue: {},
-  _imageUrls: null as string[] | null,
-  _tileBounds: null as Function | null,
-  tileAtPoint: null as Function | null,
-  setFrameQuad: vi.fn(),
-  baseQuad: null,
-  displayToLevel: vi.fn((pt: any) => pt),
-});
+const mockLayer = () => {
+  let isVisible = false;
+  let layerOpacity = 1;
+  return {
+    node: vi.fn().mockReturnValue({ css: vi.fn() }),
+    createFeature: vi.fn().mockReturnValue({}),
+    createWidget: vi.fn((_widgetName: string, arg?: any) =>
+      mockDomWidget(arg?.el),
+    ),
+    deleteWidget: vi.fn(),
+    moveToTop: vi.fn(),
+    zIndex: vi.fn().mockReturnValue(0),
+    visible: vi.fn((value?: boolean) => {
+      if (value !== undefined) isVisible = value;
+      return isVisible;
+    }),
+    opacity: vi.fn((value?: number) => {
+      if (value !== undefined) layerOpacity = value;
+      return layerOpacity;
+    }),
+    idle: true,
+    onIdle: vi.fn((cb: Function) => cb()),
+    reset: vi.fn(),
+    url: vi.fn(),
+    draw: vi.fn(),
+    map: vi.fn().mockReturnValue({ draw: vi.fn() }),
+    queue: {},
+    _imageUrls: null as string[] | null,
+    _tileBounds: null as Function | null,
+    tileAtPoint: null as Function | null,
+    setFrameQuad: vi.fn(),
+    baseQuad: null,
+    displayToLevel: vi.fn((pt: any) => pt),
+  };
+};
 
 // Use reactive() so the computed properties are reactive
 vi.mock("@/store", () => {
@@ -130,6 +141,7 @@ vi.mock("@/store", () => {
       showPixelScalebar: false,
       scalebarColor: "#ffffff",
       drawAnnotations: true,
+      showAnnotationsFromHiddenLayers: false,
       showTooltips: false,
       setMaps: vi.fn(),
       setMapAt: vi.fn(),
@@ -145,6 +157,11 @@ vi.mock("@/store", () => {
       setUnrollZ: vi.fn(),
       setUnrollT: vi.fn(),
       getLayerHistogram: vi.fn().mockResolvedValue(null),
+      layerSliceIndexes: vi.fn().mockReturnValue({
+        xyIndex: 0,
+        zIndex: 0,
+        tIndex: 0,
+      }),
     }),
   };
 });
@@ -154,11 +171,25 @@ vi.mock("@/store/annotation", () => {
   return {
     default: reactive({
       selectedAnnotationIds: new Set<string>(),
+      overviewConfig: {
+        enabled: false,
+        mode: "shapes",
+        opacity: 0.6,
+        vectorSwitchThreshold: 1,
+      },
+      mutationCounter: 0,
+      annotationsAPI: {
+        annotationRasterTemplateUrl: vi.fn(
+          ({ version }: { version: number }) =>
+            `http://localhost/raster/{z}/{x}/{y}?v=${version}`,
+        ),
+      },
       submitPendingAnnotation: null as Function | null,
       deleteSelectedAnnotations: vi.fn(),
       undoOrRedo: vi.fn(),
       copySelectedAnnotations: vi.fn(),
       pasteAnnotations: vi.fn(),
+      setVisibilitySuppressed: vi.fn(),
     }),
   };
 });
@@ -231,6 +262,7 @@ vi.mock("@/pipelines/computePipeline", () => ({
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import progressStore from "@/store/progress";
+import { ProgressType } from "@/store/model";
 import { logWarning } from "@/utils/log";
 import ImageViewer from "./ImageViewer.vue";
 
@@ -243,10 +275,14 @@ function createLayerStackImage(overrides: any = {}): any {
   return {
     layer: {
       id: "layer1",
+      channel: 0,
       visible: true,
       color: "#ff0000",
       contrast: { whitePoint: 100, blackPoint: 0, mode: "percentile" },
       layerGroup: null,
+      xy: { type: "current", value: null },
+      z: { type: "current", value: null },
+      time: { type: "current", value: null },
       ...layerOverride,
     },
     images: [
@@ -327,6 +363,7 @@ describe("ImageViewer", () => {
     mockedStore.showXYLabels = true;
     mockedStore.showZLabels = true;
     mockedStore.showTimeLabels = true;
+    mockedStore.showAnnotationsFromHiddenLayers = false;
     mockedStore.selectedTool = null;
     mockedStore.layerStackImages = [];
     mockedStore.layerMode = "multiple" as any;
@@ -334,7 +371,19 @@ describe("ImageViewer", () => {
     mockedStore.showPixelScalebar = false;
     mockedStore.scalebarColor = "#ffffff";
     mockedAnnotationStore.submitPendingAnnotation = null;
+    mockedAnnotationStore.overviewConfig = {
+      enabled: false,
+      mode: "shapes",
+      opacity: 0.6,
+      vectorSwitchThreshold: 1,
+    } as any;
+    mockedAnnotationStore.mutationCounter = 0;
     (mockedStore as any).getLayerHistogram = vi.fn().mockResolvedValue(null);
+    (mockedStore.layerSliceIndexes as any).mockReturnValue({
+      xyIndex: 0,
+      zIndex: 0,
+      tIndex: 0,
+    });
     vi.clearAllMocks();
     // Make setMaps/setCameraInfo actually update the reactive store
     (mockedStore.setMaps as any).mockImplementation((v: any) => {
@@ -1057,6 +1106,483 @@ describe("ImageViewer", () => {
         false,
       );
       // Should not throw
+    });
+  });
+
+  describe("annotation overview layer", () => {
+    it("coordinates shared raster suppression across mounted map viewers", () => {
+      const firstEntry = {
+        map: mockMap(),
+        annotationLayer: {},
+        annotationOverviewLayer: mockLayer(),
+        imageLayers: [{}, {}],
+        lowestLayer: 0,
+        params: {},
+      } as any;
+      const secondEntry = {
+        map: mockMap(),
+        annotationLayer: {},
+        annotationOverviewLayer: mockLayer(),
+        imageLayers: [{}, {}],
+        lowestLayer: 1,
+        params: {},
+      } as any;
+      mockedStore.maps = [firstEntry, secondEntry];
+      wrapper = mountComponent();
+      const [mountedFirstEntry, mountedSecondEntry] = (wrapper.vm as any)
+        .annotationViewerMaps;
+
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedFirstEntry, {
+        visible: true,
+        opacity: 0.6,
+      });
+      expect((wrapper.vm as any).allAnnotationOverviewViewersRasterActive).toBe(
+        false,
+      );
+
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedSecondEntry, {
+        visible: true,
+        opacity: 0.6,
+      });
+      expect((wrapper.vm as any).allAnnotationOverviewViewersRasterActive).toBe(
+        true,
+      );
+
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedFirstEntry, {
+        visible: false,
+        opacity: 0.6,
+      });
+      expect((wrapper.vm as any).allAnnotationOverviewViewersRasterActive).toBe(
+        false,
+      );
+    });
+
+    it("ignores raster visibility events from removed map viewers", () => {
+      const overviewLayer = mockLayer();
+      const removedEntry = {
+        map: mockMap(),
+        annotationOverviewLayer: overviewLayer,
+        imageLayers: [{}, {}],
+        lowestLayer: 0,
+        params: {},
+      } as any;
+      wrapper = mountComponent();
+
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(removedEntry, {
+        visible: false,
+        opacity: 0.6,
+      });
+
+      expect(overviewLayer.visible).not.toHaveBeenCalled();
+      expect(overviewLayer.opacity).not.toHaveBeenCalled();
+    });
+
+    it("does not allocate a GeoJS layer while the feature is disabled", () => {
+      const map = mockMap();
+      const mapentry = { map, imageLayers: [], params: {} } as any;
+      mockedStore.maps = [mapentry];
+      wrapper = mountComponent();
+
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+
+      expect(map.createLayer).not.toHaveBeenCalled();
+      expect(mapentry.annotationOverviewLayer).toBeUndefined();
+    });
+
+    it("lazily creates the layer and refreshes its URL on mutations", async () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      await nextTick();
+      const mountedMapentry = (wrapper.vm as any).maps[0];
+      mountedMapentry.annotationOverviewLayer = undefined;
+      mountedMapentry.map.createLayer.mockReturnValue(overviewLayer);
+      const image = createLayerStackImage().images[0];
+      const element = document.createElement("div");
+
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mountedMapentry,
+        image,
+        element,
+      );
+
+      expect(mountedMapentry.map.createLayer).toHaveBeenCalledWith(
+        "osm",
+        expect.any(Object),
+      );
+      const layerParams = mountedMapentry.map.createLayer.mock.calls[0][1];
+      expect(layerParams.maxLevel).toBe(9);
+      expect(layerParams.tilesAtZoom(9)).toEqual({ x: 2, y: 2 });
+      expect(layerParams.tilesAtZoom(8)).toEqual({ x: 1, y: 1 });
+      expect(layerParams.tilesMaxBounds(8)).toEqual({ x: 512, y: 512 });
+      expect(layerParams.visible).toBe(false);
+      expect(
+        mockedAnnotationStore.annotationsAPI.annotationRasterTemplateUrl,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          maxLevel: 9,
+          selectors: [{ channel: 0, XY: 0, Z: 0, Time: 0 }],
+        }),
+      );
+      expect(overviewLayer.url).not.toHaveBeenCalled();
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
+      const firstUrl = overviewLayer.url.mock.calls[0][0];
+      expect(firstUrl(2, 3, 4)).toBe("http://localhost/raster/4/2/3?v=0");
+      expect("_annotationOverviewUrl" in overviewLayer).toBe(false);
+
+      mockedAnnotationStore.mutationCounter = 1;
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mountedMapentry,
+        image,
+        element,
+      );
+      const secondUrl = overviewLayer.url.mock.calls[1][0];
+      expect(secondUrl(2, 3, 4)).toBe("http://localhost/raster/4/2/3?v=1");
+    });
+
+    it("does not request or activate a raster above the selector limit", () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedStore.layerStackImages = Array.from({ length: 65 }, (_, channel) =>
+        createLayerStackImage({
+          layer: { id: `layer-${channel}`, channel },
+        }),
+      );
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
+
+      expect(
+        mockedAnnotationStore.annotationsAPI.annotationRasterTemplateUrl,
+      ).not.toHaveBeenCalled();
+      expect(overviewLayer.url).not.toHaveBeenCalled();
+      expect(overviewLayer.visible()).toBe(false);
+    });
+
+    it("shows delayed progress while overview tiles load and completes on idle", async () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      let isIdle = false;
+      let idleHandler: (() => void) | undefined;
+      Object.defineProperty(overviewLayer, "idle", {
+        get: () => isIdle,
+      });
+      overviewLayer.onIdle.mockImplementation((handler: Function) => {
+        if (isIdle) {
+          handler();
+        } else {
+          idleHandler = handler as () => void;
+        }
+      });
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      await nextTick();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(mockedProgressStore.create).not.toHaveBeenCalled();
+      const mountedMapentry = (wrapper.vm as any).maps[0];
+      mountedMapentry.annotationOverviewLayer = undefined;
+      mountedMapentry.map.createLayer.mockReturnValue(overviewLayer);
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mountedMapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
+      expect(overviewLayer.visible()).toBe(true);
+      expect(overviewLayer.url).toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(299);
+      expect(mockedProgressStore.create).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mockedProgressStore.create).toHaveBeenCalledWith({
+        type: ProgressType.ANNOTATION_RASTER,
+      });
+      expect(mockedProgressStore.complete).not.toHaveBeenCalled();
+
+      isIdle = true;
+      idleHandler?.();
+      expect(mockedProgressStore.complete).toHaveBeenCalledWith("progress1");
+    });
+
+    // Mimic GeoJS's real tile factory ordering (tileLayer in geojs/geo.js):
+    // `_getTileCached` creates the tile via `_getTile` and only AFTER that
+    // adds it to the cache; cache hits return the cached tile. In real GeoJS,
+    // attaching a promise handler (tile.catch → tile.then) queues the tile's
+    // fetch, and the fetch queue's `needed` predicate only accepts a tile
+    // that is already the cache's entry for its hash — a handler attached
+    // pre-cache rejects the tile on the spot and the raster never loads. Each
+    // tile records cache membership at the moment `catch` is attached so the
+    // tests can hold that ordering contract.
+    const installMockTileFactory = (overviewLayer: any) => {
+      const cache = new Map<string, any>();
+      const tileErrorCallbacks: Array<() => void> = [];
+      const catchAttachedWhileInCache: boolean[] = [];
+      overviewLayer._getTile = vi.fn((index: any) => {
+        const hash = `${index.level}_${index.y}_${index.x}`;
+        const tile: any = {
+          toString: () => hash,
+          catch: (callback: () => void) => {
+            catchAttachedWhileInCache.push(cache.get(hash) === tile);
+            tileErrorCallbacks.push(callback);
+          },
+        };
+        return tile;
+      });
+      overviewLayer._getTileCached = vi.fn((index: any) => {
+        const hash = `${index.level}_${index.y}_${index.x}`;
+        let tile = cache.get(hash);
+        if (!tile) {
+          tile = overviewLayer._getTile(index);
+          cache.set(hash, tile);
+        }
+        return tile;
+      });
+      return { tileErrorCallbacks, catchAttachedWhileInCache };
+    };
+
+    // A raster tile can 503 while another geometry key is still cold-building
+    // (the backend sends Retry-After: 1). GeoJS has no tile-error event, drops
+    // the failed tile, and keeps the rejected entry in its tile cache — so
+    // without a retry the hole persists while vectors stay suppressed.
+    it("retries failed overview tiles with a bounded delayed reset", async () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      const { tileErrorCallbacks, catchAttachedWhileInCache } =
+        installMockTileFactory(overviewLayer);
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+        // Draws keep running against this pinned entry while timers advance,
+        // so it needs the layers the z-order pass touches.
+        workerPreviewLayer: mockLayer(),
+        annotationLayer: mockLayer(),
+        textLayer: mockLayer(),
+        timelapseLayer: mockLayer(),
+        timelapseTextLayer: mockLayer(),
+        interactionLayer: mockLayer(),
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      await nextTick();
+      const mountedMapentry = (wrapper.vm as any).maps[0];
+      // Pin the map entry: the shared reactive store mock lets throttled
+      // draws rebuild entries while timers advance, which would orphan the
+      // layer from the retry's mounted check (a harness artifact —
+      // production entries are stable markRaw objects).
+      (mockedStore.setMaps as any).mockImplementation(() => {});
+      (mockedStore.setMapAt as any).mockImplementation(() => {});
+      mountedMapentry.annotationOverviewLayer = undefined;
+      // Draws keep creating image layers on this pinned entry; only the
+      // overview creation (the one that sets tilesMaxBounds) may receive the
+      // overview mock, or image-layer URL churn resets it.
+      mountedMapentry.map.createLayer.mockImplementation(
+        (_type: string, opts: any) =>
+          opts?.tilesMaxBounds ? overviewLayer : mockLayer(),
+      );
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mountedMapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
+      expect(overviewLayer.visible()).toBe(true);
+
+      // Creation wrapped the tile factory: fetching a tile registers a
+      // failure hook on the tile's promise interface.
+      (overviewLayer as any)._getTileCached({ x: 0, y: 0, level: 0 });
+      (overviewLayer as any)._getTileCached({ x: 1, y: 0, level: 0 });
+      expect((overviewLayer as any)._getTile).toHaveBeenCalledTimes(2);
+      expect(tileErrorCallbacks).toHaveLength(2);
+      // Ordering contract: the failure hook must attach only once the tile
+      // is the cache's entry for its hash — attaching pre-cache makes the
+      // real fetch queue reject every tile at creation (blank raster).
+      expect(catchAttachedWhileInCache).toEqual([true, true]);
+      // A cache hit returns the same tile; the hook must not re-attach.
+      (overviewLayer as any)._getTileCached({ x: 0, y: 0, level: 0 });
+      expect(tileErrorCallbacks).toHaveLength(2);
+
+      // Two failures in one batch coalesce into a single delayed retry.
+      tileErrorCallbacks[0]();
+      tileErrorCallbacks[1]();
+      expect(overviewLayer.reset).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(999);
+      expect(overviewLayer.reset).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(1);
+      expect(overviewLayer.draw).toHaveBeenCalled();
+
+      // Bounded: two more rounds retry, the fourth is dropped.
+      tileErrorCallbacks[0]();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(2);
+      tileErrorCallbacks[0]();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(3);
+      tileErrorCallbacks[0]();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(3);
+
+      // A new template (mutation bump) restores the retry budget.
+      mockedAnnotationStore.mutationCounter = 1;
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mountedMapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+      tileErrorCallbacks[0]();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(overviewLayer.reset).toHaveBeenCalledTimes(4);
+    });
+
+    it("does not retry tiles for a hidden overview layer", async () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      const { tileErrorCallbacks } = installMockTileFactory(overviewLayer);
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+        // Draws keep running against this pinned entry while timers advance,
+        // so it needs the layers the z-order pass touches.
+        workerPreviewLayer: mockLayer(),
+        annotationLayer: mockLayer(),
+        textLayer: mockLayer(),
+        timelapseLayer: mockLayer(),
+        timelapseTextLayer: mockLayer(),
+        interactionLayer: mockLayer(),
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      await nextTick();
+      const mountedMapentry = (wrapper.vm as any).maps[0];
+      // Pin the map entry (see the bounded-retry test above): without this
+      // the mounted check would already block the retry and this test would
+      // pass without exercising the visibility guard.
+      (mockedStore.setMaps as any).mockImplementation(() => {});
+      (mockedStore.setMapAt as any).mockImplementation(() => {});
+      mountedMapentry.annotationOverviewLayer = undefined;
+      // Draws keep creating image layers on this pinned entry; only the
+      // overview creation (the one that sets tilesMaxBounds) may receive the
+      // overview mock, or image-layer URL churn resets it.
+      mountedMapentry.map.createLayer.mockImplementation(
+        (_type: string, opts: any) =>
+          opts?.tilesMaxBounds ? overviewLayer : mockLayer(),
+      );
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mountedMapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
+
+      (overviewLayer as any)._getTileCached({ x: 0, y: 0, level: 0 });
+      tileErrorCallbacks[0]();
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
+        visible: false,
+        opacity: 0.6,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(overviewLayer.reset).not.toHaveBeenCalled();
+    });
+
+    it("does not show progress when overview tiles are already cached", async () => {
+      const map = mockMap();
+      const overviewLayer = mockLayer();
+      map.createLayer.mockReturnValue(overviewLayer);
+      const mapentry = {
+        map,
+        imageLayers: [],
+        params: { layer: { maxLevel: 9 } },
+      } as any;
+      mockedStore.maps = [mapentry];
+      mockedAnnotationStore.overviewConfig = {
+        ...mockedAnnotationStore.overviewConfig,
+        enabled: true,
+      } as any;
+      wrapper = mountComponent();
+      mockedStore.layerStackImages = [createLayerStackImage()];
+
+      (wrapper.vm as any)._syncAnnotationOverviewLayer(
+        mapentry,
+        createLayerStackImage().images[0],
+        document.createElement("div"),
+      );
+      (wrapper.vm as any)._setAnnotationOverviewVisibility(mapentry, {
+        visible: true,
+        opacity: 0.6,
+      });
+
+      await vi.advanceTimersByTimeAsync(300);
+      expect(mockedProgressStore.create).not.toHaveBeenCalled();
     });
   });
 

@@ -3,11 +3,15 @@ import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
+import { jobStates } from "@/store/jobConstants";
 import volumeViewStore from "@/store/volumeView";
 import {
   AnnotationShape,
+  IAnalysisGate,
+  IAnalysisPlot,
   IAnnotation,
   IChatImage,
+  IColorByPropertyLegend,
   IContrast,
   IDisplayLayer,
   IErrorInfoList,
@@ -17,8 +21,12 @@ import {
   IScales,
   IToolConfiguration,
   IWorkerInterfaceValues,
+  ANALYSIS_CATEGORY_KEY_VERSION,
   PropertyFilterMode,
+  TAnalysisAxis,
+  TAnalysisCategoricalKey,
   TLayerMode,
+  TPropertyHistogram,
   TUnitLength,
   TUnitTime,
 } from "@/store/model";
@@ -26,6 +34,9 @@ import {
   captureInterfaceScreenshot,
   captureViewportScreenshot,
 } from "@/utils/interfaceCapture";
+import { v4 as uuidv4 } from "uuid";
+import { CATEGORICAL_AXIS_KEYS } from "@/utils/analysisAxes";
+import { MAX_ANALYSIS_PLOTS } from "@/store/constants";
 import {
   getDefault,
   normalizeWorkerInterfaceValue,
@@ -62,6 +73,9 @@ import {
 export interface IAgentToolContext {
   // Element excluded from interface screenshots (the panel itself)
   panelElement: HTMLElement | null;
+  // Test seam for the analysis gate-resolution wait; production uses the
+  // default.
+  waitForGateTimeoutMs?: number;
   // Append an informational note to the panel transcript, used for events
   // that happen after the tool call returned (e.g. worker job completion)
   notify: (text: string) => void;
@@ -70,6 +84,10 @@ export interface IAgentToolContext {
   // worker interface, then submits a job) calls this immediately before the
   // mutation so it never acts on a dataset the request didn't target.
   hasViewIdentityChanged?: () => boolean;
+  // Aborted when the user presses Stop (or the conversation is cleared) so a
+  // tool that blocks for minutes (wait_for_job) unwinds immediately instead of
+  // keeping the panel busy until its own budget expires.
+  abortSignal?: AbortSignal;
 }
 
 export interface IToolExecutionResult {
@@ -336,6 +354,44 @@ function propertyPathLabel(path: string[]): string {
   return propertyStore.getFullNameFromPath(path) ?? path.join(".");
 }
 
+// Cap on categorical legend entries echoed back to the model — a categorical
+// coloring can have dozens of categories, and the counts matter more than an
+// exhaustive value→color table.
+const MAX_LEGEND_CATEGORIES = 25;
+
+// Compact tool-result form of the legend color_by_property returns: the ramp
+// bounds / clipping for a continuous mapping, the value→color table (capped)
+// for a categorical one. The full stop list is rendering detail the model
+// doesn't need.
+function summarizeColorLegend(legend: IColorByPropertyLegend | null) {
+  if (!legend) {
+    return null;
+  }
+  if (legend.type === "continuous") {
+    return {
+      type: legend.type,
+      colormap: legend.colormap ?? null,
+      // Bounds the ramp spans (default: 1st..99th percentile).
+      min: legend.min ?? null,
+      max: legend.max ?? null,
+      // True data extent, and whether the ramp clipped it.
+      dataMin: legend.dataMin ?? null,
+      dataMax: legend.dataMax ?? null,
+      clippedLow: legend.clippedLow ?? false,
+      clippedHigh: legend.clippedHigh ?? false,
+    };
+  }
+  const categories = legend.categories ?? [];
+  return {
+    type: legend.type,
+    categoryCount: categories.length,
+    categories: categories
+      .slice(0, MAX_LEGEND_CATEGORIES)
+      .map(({ value, color, count }) => ({ value, color, count })),
+    categoriesTruncated: categories.length > MAX_LEGEND_CATEGORIES,
+  };
+}
+
 // A model-supplied plot title must be a non-empty string.
 function requirePlotTitle(value: unknown): string {
   if (typeof value !== "string" || value.trim() === "") {
@@ -565,11 +621,553 @@ export function buildInterfaceState() {
       selected: annotationStore.selectedAnnotationIds.size,
       tags: [...annotationStore.annotationTags],
     },
+    // Analysis-panel gates narrow the SAME `filtered` count above, so
+    // without them here the model sees a shrunken population with no
+    // explanation and can conclude the tag/property filters did it.
+    analysisPlots: filterStore.analysisPlots.map((plot, index) => ({
+      plotId: plot.id,
+      index,
+      xAxis: describeAnalysisAxis(plot.xAxis),
+      yAxis: describeAnalysisAxis(plot.yAxis),
+      hasGate: plot.gate !== null,
+      gateEnabled: plot.gateEnabled,
+      // undefined while a gate is still resolving; it constrains nothing
+      // until then.
+      gatedCount: filterStore.analysisGateIds[plot.id]?.length ?? null,
+    })),
+    // Record of the last color-by-property apply for this dataset (null when
+    // annotation colors are plain). Lets the model explain why annotations
+    // are colored the way they are without a tool call.
+    colorByProperty: describeColorByPropertyState(),
+  };
+}
+
+function describeColorByPropertyState() {
+  // `?? null` also covers test mocks that don't define the getter.
+  const state = main.colorByPropertyForCurrentDataset ?? null;
+  if (!state) {
+    return null;
+  }
+  return {
+    propertyName: state.propertyName,
+    propertyPath: state.propertyPath,
+    type: state.type,
+    colormap: state.colormap ?? null,
+    // Ramp bounds (continuous only) — usually the 1st..99th percentile, so
+    // narrower than the data extent.
+    min: state.min ?? null,
+    max: state.max ?? null,
+    categoryCount: state.categories?.length ?? null,
+  };
+}
+
+/** Human-readable axis label for the model (null when unset). */
+function describeAnalysisAxis(axis: TAnalysisAxis | null) {
+  if (!axis) {
+    return null;
+  }
+  return axis.type === "property"
+    ? {
+        type: "property",
+        propertyPath: axis.path,
+        label: propertyPathLabel(axis.path),
+      }
+    : { type: "categorical", key: axis.key };
+}
+
+/**
+ * Wait for a plot's gate ids to be committed.
+ *
+ * `refreshAnalysis` claims a stale-response guard token as its first
+ * statement, so a concurrent refresh (the Viewer watches the same inputs)
+ * supersedes ours and our await resolves without the commit having
+ * happened. Poll the derived state instead of trusting the await, and give
+ * up rather than hang — an unresolved gate constrains nothing, so reporting
+ * "not yet" is honest where reporting the pre-gate count is not.
+ */
+async function waitForGateResolution(
+  plotId: string,
+  timeoutMs: number = 15000,
+  abortSignal?: AbortSignal,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (filterStore.analysisGateIds[plotId] !== undefined) {
+      return true;
+    }
+    // Stop must unwind the turn immediately, like the other blocking tools.
+    // Without this the panel stayed busy for the rest of the deadline.
+    if (abortSignal?.aborted) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return filterStore.analysisGateIds[plotId] !== undefined;
+}
+
+/**
+ * Gate creations so far in this agent turn. Each one re-resolves every gate
+ * accumulated so far — a whole-dataset server scan above the plot cap — so
+ * the count is bounded per turn rather than only by MAX_ANALYSIS_PLOTS.
+ * Reset by the panel at the start of each turn, alongside the job tracker.
+ */
+let analysisPlotsCreatedThisTurn = 0;
+const MAX_AGENT_PLOTS_PER_TURN = 4;
+
+export function clearAgentTurnLimits() {
+  analysisPlotsCreatedThisTurn = 0;
+}
+
+/** Turn an agent axis spec into the store's TAnalysisAxis. */
+function resolveAgentAnalysisAxis(
+  spec: { propertyPath?: string[]; categorical?: string } | undefined,
+  field: string,
+): TAnalysisAxis {
+  if (!spec || (!spec.propertyPath && !spec.categorical)) {
+    throw new ToolExecutionError(
+      `${field} needs either a propertyPath or a categorical key.`,
+    );
+  }
+  if (spec.propertyPath && spec.categorical) {
+    throw new ToolExecutionError(
+      `${field} takes a propertyPath OR a categorical key, not both.`,
+    );
+  }
+  if (spec.categorical) {
+    if (!CATEGORICAL_AXIS_KEYS.includes(spec.categorical as any)) {
+      throw new ToolExecutionError(
+        `${field} categorical must be one of: ` +
+          `${CATEGORICAL_AXIS_KEYS.join(", ")}.`,
+      );
+    }
+    return {
+      type: "categorical",
+      key: spec.categorical as TAnalysisCategoricalKey,
+    };
+  }
+  validatePropertyPath(spec.propertyPath, `${field}.propertyPath`);
+  return { type: "property", path: spec.propertyPath as string[] };
+}
+
+/**
+ * How far out an "unbounded" side has to reach when the axis extent cannot be
+ * measured. Far past any physical measurement, and small enough that the
+ * polygon crossing test stays in comfortably finite arithmetic.
+ */
+const UNMEASURABLE_AXIS_EXTENT = 1e24;
+
+/**
+ * The largest |value| on one property axis, over the WHOLE dataset.
+ *
+ * Read from the server's property histogram rather than from
+ * propertyStore.propertyValues, because the values in the store are the wrong
+ * population twice over: above the plotting cap the annotations are stubs and
+ * the store holds none at all, and even below it the values are projected to
+ * the Annotation Browser's displayed columns, so an axis on an undisplayed
+ * property yields nothing. Both cases collapsed silently to the floor.
+ */
+async function propertyAxisExtent(
+  path: string[],
+  datasetId: string,
+): Promise<number> {
+  let histogram: TPropertyHistogram;
+  try {
+    histogram = await propertyStore.propertiesAPI.getPropertyHistogram(
+      datasetId,
+      path,
+      1,
+    );
+  } catch {
+    return UNMEASURABLE_AXIS_EXTENT;
+  }
+  let extreme = 0;
+  for (const bucket of histogram ?? []) {
+    for (const edge of [bucket.min, bucket.max]) {
+      if (typeof edge === "number" && isFinite(edge)) {
+        extreme = Math.max(extreme, Math.abs(edge));
+      }
+    }
+  }
+  return extreme > 0 ? extreme : UNMEASURABLE_AXIS_EXTENT;
+}
+
+/**
+ * A rectangle as a gate polygon, sized to the DATA rather than to a fixed
+ * sentinel.
+ *
+ * An omitted bound means "unbounded on that side", which is how users phrase
+ * one-sided gates ("area over 100"). A fixed stand-in silently broke that
+ * promise: with a constant 1e12, a property holding larger values had those
+ * objects excluded from an `x >= 100` gate, and a requested bound above the
+ * constant was rejected as an inverted range. The open side therefore reaches
+ * past both the furthest real point on that axis and any bound the caller
+ * asked for — the second half matters because an explicit `min` larger than
+ * the derived `max` is an inverted rectangle, which this used to reject as
+ * bad input rather than recognise as a bound that was too small.
+ */
+function openGateBound(
+  extent: number,
+  explicit: number | undefined,
+  otherExplicit: number | undefined,
+  direction: -1 | 1,
+): number {
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  const reach = Math.max(
+    extent,
+    otherExplicit !== undefined ? Math.abs(otherExplicit) : 0,
+  );
+  return direction * (reach * 1e3 + 1e6);
+}
+
+function requireFiniteBound(value: number | undefined): number | undefined {
+  if (value !== undefined && (typeof value !== "number" || !isFinite(value))) {
+    throw new ToolExecutionError("Range bounds must be finite numbers.");
+  }
+  return value;
+}
+
+async function rectangularGate(
+  xAxis: TAnalysisAxis,
+  yAxis: TAnalysisAxis,
+  xRange: { min?: number; max?: number } | undefined,
+  yRange: { min?: number; max?: number } | undefined,
+  datasetId: string,
+): Promise<IAnalysisGate> {
+  // Validate before spending two round trips on the extents.
+  const xMin = requireFiniteBound(xRange?.min);
+  const xMax = requireFiniteBound(xRange?.max);
+  const yMin = requireFiniteBound(yRange?.min);
+  const yMax = requireFiniteBound(yRange?.max);
+  // Only fetch an extent for an axis that actually has an open side.
+  const extentFor = async (axis: TAnalysisAxis, needed: boolean) =>
+    needed && axis.type === "property"
+      ? propertyAxisExtent(axis.path, datasetId)
+      : 0;
+  const [xExtent, yExtent] = await Promise.all([
+    extentFor(xAxis, xMin === undefined || xMax === undefined),
+    extentFor(yAxis, yMin === undefined || yMax === undefined),
+  ]);
+  const x0 = openGateBound(xExtent, xMin, xMax, -1);
+  const x1 = openGateBound(xExtent, xMax, xMin, 1);
+  const y0 = openGateBound(yExtent, yMin, yMax, -1);
+  const y1 = openGateBound(yExtent, yMax, yMin, 1);
+  if (x1 <= x0 || y1 <= y0) {
+    throw new ToolExecutionError(
+      "Each range needs max greater than min; an inverted or empty range " +
+        "would select nothing.",
+    );
+  }
+  return {
+    categoryKeyVersion: ANALYSIS_CATEGORY_KEY_VERSION,
+    vertices: [
+      { x: x0, y: y0 },
+      { x: x1, y: y0 },
+      { x: x1, y: y1 },
+      { x: x0, y: y1 },
+    ],
+    // Property axes only (enforced by the caller), so no pinned categories.
+    xCategories: null,
+    yCategories: null,
   };
 }
 
 function clamp(value: number, max: number) {
   return Math.max(0, Math.min(value, Math.max(0, max - 1)));
+}
+
+// --- Background jobs -------------------------------------------------------
+//
+// run_worker and compute_property start jobs that take minutes. The model
+// cannot see the transcript notes their completion callbacks write, so without
+// a way to *wait* it can only re-read state on each turn to guess whether the
+// job is done — which burns the turn budget on polling (issue: an agent spent
+// every turn polling a Cellpose run). wait_for_job blocks on the same
+// completion signal the transcript note uses, so one tool call covers the whole
+// run: no polling, and the job's outcome (including its errors) reaches the
+// model as a tool result.
+
+// Jobs started by the agent in this session, keyed by job id. Holds the live
+// progress/error objects the jobs store writes into, so a wait can report
+// progress on timeout and the failure reason on completion.
+interface IAgentJobRecord {
+  label: string;
+  progress: IProgressInfo;
+  errors: IErrorInfoList;
+  // Resolves when the job's completion callback fires (i.e. after the store
+  // has refreshed annotations / property values), never rejects.
+  completion: Promise<boolean>;
+  finished: boolean;
+  success: boolean | null;
+}
+
+const agentJobs = new Map<string, IAgentJobRecord>();
+
+// Records are tiny but must not grow without bound across a long session.
+const MAX_TRACKED_AGENT_JOBS = 20;
+
+// Wait budget for a single wait_for_job call. The floor matters: a wait that
+// comes back "still running" has by construction blocked for at least
+// MIN_WAIT_SECONDS, so a model that re-waits in a loop cannot spin through its
+// turns the way bare polling did.
+const DEFAULT_WAIT_SECONDS = 600;
+const MIN_WAIT_SECONDS = 30;
+const MAX_WAIT_SECONDS = 1800;
+
+// How often the fallback path asks the server for a job's status. Used only for
+// jobs this session never registered (e.g. started before a page reload), where
+// no completion event will arrive. These are plain REST calls inside a single
+// tool call — they cost no agent turns and never reach the model.
+const JOB_STATUS_POLL_SECONDS = 10;
+
+const TERMINAL_JOB_STATES = new Set([
+  jobStates.success,
+  jobStates.error,
+  jobStates.cancelled,
+]);
+
+function pruneAgentJobs() {
+  if (agentJobs.size <= MAX_TRACKED_AGENT_JOBS) {
+    return;
+  }
+  // Map iterates in insertion order: drop the oldest finished records first,
+  // then (only if many jobs are running at once) the oldest records regardless.
+  // A waiter already holds its record, so dropping one only forgets the
+  // outcome — it never breaks an in-flight wait.
+  for (const [jobId, record] of agentJobs) {
+    if (agentJobs.size <= MAX_TRACKED_AGENT_JOBS) {
+      return;
+    }
+    if (record.finished) {
+      agentJobs.delete(jobId);
+    }
+  }
+  for (const jobId of [...agentJobs.keys()]) {
+    if (agentJobs.size <= MAX_TRACKED_AGENT_JOBS) {
+      return;
+    }
+    agentJobs.delete(jobId);
+  }
+}
+
+function jobErrorMessages(errors: IErrorInfoList): string[] {
+  return (
+    errors.errors
+      .map((e) => e.error || e.warning || e.info)
+      .filter((message): message is string => Boolean(message))
+      // Worker logs can emit many messages; the model only needs the gist.
+      .slice(0, 5)
+  );
+}
+
+// Start tracking a job the agent submitted and return the completion handler to
+// wire to the store's callback. The handler both records the outcome (for
+// wait_for_job) and writes the transcript note the user sees.
+function trackAgentJob(params: {
+  jobId: string;
+  label: string;
+  progress: IProgressInfo;
+  errors: IErrorInfoList;
+  notify: (text: string) => void;
+}): (success: boolean) => void {
+  let resolve!: (success: boolean) => void;
+  const record: IAgentJobRecord = {
+    label: params.label,
+    progress: params.progress,
+    errors: params.errors,
+    completion: new Promise<boolean>((r) => (resolve = r)),
+    finished: false,
+    success: null,
+  };
+  agentJobs.set(params.jobId, record);
+  pruneAgentJobs();
+  return (success: boolean) => {
+    if (record.finished) {
+      return;
+    }
+    record.finished = true;
+    record.success = success;
+    const errors = jobErrorMessages(record.errors);
+    params.notify(
+      success
+        ? `${params.label} finished successfully.`
+        : `${params.label} failed${errors.length ? `: ${errors.join("; ")}` : "."}`,
+    );
+    resolve(success);
+  };
+}
+
+// Drop every tracked job. Called from aiPanel.clearConversation — like the plot
+// registry, this is module state that would otherwise outlive the conversation
+// it belongs to. That matters on an authenticated-user change (login/logout is
+// client-side, no page reload): a record holds the previous user's job label and
+// worker error text, and the tracked path returns it without the access-checked
+// job/{id} request, so the next user must not be able to read it by job id.
+export function clearTrackedAgentJobs() {
+  agentJobs.clear();
+}
+
+type TWaitOutcome = "timeout" | "aborted";
+
+// Wait for `completion` to settle, for `timeoutMs` to elapse, or for the user
+// to press Stop — whichever comes first. With no `completion` it is an
+// abortable sleep (used between status checks on the fallback path).
+function raceWait(
+  timeoutMs: number,
+  signal?: AbortSignal,
+  completion?: Promise<boolean>,
+): Promise<boolean | TWaitOutcome> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: boolean | TWaitOutcome) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(value);
+    };
+    const onAbort = () => finish("aborted");
+    // `finish` closes over `timer`, but is only ever called after this line.
+    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    if (signal?.aborted) {
+      finish("aborted");
+      return;
+    }
+    signal?.addEventListener("abort", onAbort);
+    completion?.then((success) => finish(success));
+  });
+}
+
+async function waitForJobTool(
+  input: { jobId?: unknown; timeoutSeconds?: unknown },
+  context: IAgentToolContext,
+): Promise<IToolExecutionResult> {
+  const jobId = typeof input?.jobId === "string" ? input.jobId.trim() : "";
+  if (!jobId) {
+    throw new ToolExecutionError(
+      "wait_for_job needs the jobId returned by run_worker or compute_property",
+    );
+  }
+  const timeoutSeconds =
+    typeof input?.timeoutSeconds === "number" &&
+    Number.isFinite(input.timeoutSeconds)
+      ? Math.min(
+          Math.max(input.timeoutSeconds, MIN_WAIT_SECONDS),
+          MAX_WAIT_SECONDS,
+        )
+      : DEFAULT_WAIT_SECONDS;
+  const startedAt = Date.now();
+  const waitedSeconds = () => Math.round((Date.now() - startedAt) / 1000);
+
+  const record = agentJobs.get(jobId);
+  const label = record?.label ?? "The job";
+  const finishedResult = (success: boolean) => {
+    const errors = record ? jobErrorMessages(record.errors) : [];
+    return {
+      result: {
+        jobId,
+        finished: true,
+        success,
+        waitedSeconds: waitedSeconds(),
+        ...(errors.length ? { errors } : {}),
+        note: success
+          ? `${label} finished successfully. Read the results ` +
+            "(get_annotation_summary, get_property_values) before reporting " +
+            "to the user."
+          : `${label} did not succeed. Tell the user what failed; its log is ` +
+            "in Settings > Jobs & Logs.",
+      },
+    };
+  };
+  const abortedResult = () => ({
+    result: {
+      jobId,
+      finished: false,
+      aborted: true,
+      waitedSeconds: waitedSeconds(),
+      note:
+        "The user stopped this turn while waiting; the job keeps running in " +
+        "the background. Do not start another run.",
+    },
+  });
+  const stillRunningResult = () => ({
+    result: {
+      jobId,
+      finished: false,
+      stillRunning: true,
+      waitedSeconds: waitedSeconds(),
+      ...(record?.progress?.progress != null
+        ? { progress: record.progress.progress, step: record.progress.title }
+        : {}),
+      note:
+        `Still running after ${waitedSeconds()}s. Call wait_for_job again ` +
+        "with the same jobId to keep waiting (this costs one turn per wait, " +
+        "polling other tools costs many). If it has been a very long time, " +
+        "tell the user it is still running instead of waiting again.",
+    },
+  });
+
+  if (record) {
+    if (record.finished) {
+      return finishedResult(record.success === true);
+    }
+    const outcome = await raceWait(
+      timeoutSeconds * 1000,
+      context.abortSignal,
+      record.completion,
+    );
+    if (outcome === "aborted") {
+      return abortedResult();
+    }
+    if (typeof outcome === "boolean") {
+      return finishedResult(outcome);
+    }
+    // Budget spent without a completion event. Almost always means the job is
+    // genuinely still running, but a dropped notification WebSocket looks the
+    // same, so confirm against the server before reporting.
+    const status = await jobsStore.fetchJobStatus(jobId);
+    if (status != null && TERMINAL_JOB_STATES.has(status)) {
+      return finishedResult(status === jobStates.success);
+    }
+    return stillRunningResult();
+  }
+
+  // Not started by the agent in this session (or already forgotten): there may
+  // still be a live completion promise in the jobs store; otherwise fall back
+  // to server status checks.
+  const completion = jobsStore.getPromiseForJobId(jobId);
+  const initialStatus = await jobsStore.fetchJobStatus(jobId);
+  if (initialStatus == null && !completion) {
+    throw new ToolExecutionError(
+      `Could not read the status of job "${jobId}" — check the id returned by ` +
+        "run_worker or compute_property.",
+    );
+  }
+  if (initialStatus != null && TERMINAL_JOB_STATES.has(initialStatus)) {
+    return finishedResult(initialStatus === jobStates.success);
+  }
+  const deadline = startedAt + timeoutSeconds * 1000;
+  while (Date.now() < deadline) {
+    const outcome = await raceWait(
+      Math.min(JOB_STATUS_POLL_SECONDS * 1000, deadline - Date.now()),
+      context.abortSignal,
+      completion,
+    );
+    if (outcome === "aborted") {
+      return abortedResult();
+    }
+    if (typeof outcome === "boolean") {
+      return finishedResult(outcome);
+    }
+    const status = await jobsStore.fetchJobStatus(jobId);
+    if (status != null && TERMINAL_JOB_STATES.has(status)) {
+      return finishedResult(status === jobStates.success);
+    }
+  }
+  return stillRunningResult();
 }
 
 async function runWorkerTool(
@@ -589,8 +1187,8 @@ async function runWorkerTool(
         alreadyRunning: true,
         jobId: runningJobId,
         note:
-          `A job for tool "${tool.name}" is already running. Wait for its ` +
-          "completion note in the transcript before starting another run.",
+          `A job for tool "${tool.name}" is already running. Call wait_for_job ` +
+          "with this jobId instead of starting another run.",
       },
     };
   }
@@ -631,28 +1229,40 @@ async function runWorkerTool(
 
   const progressInfo: IProgressInfo = {};
   const errorInfo: IErrorInfoList = { errors: [] };
+  // The completion handler needs the job id, which only exists after the
+  // submission below, so route the store's callback through this indirection and
+  // replay an outcome that arrived first (a job that fails immediately).
+  const completion: {
+    handler?: (success: boolean) => void;
+    early?: boolean;
+  } = {};
   const computeJob = await annotationStore.computeAnnotationsWithWorker({
     tool,
     workerInterface: values,
     progress: progressInfo,
     error: errorInfo,
     callback: (success: boolean) => {
-      const errors = errorInfo.errors
-        .map((e) => e.error || e.warning || e.info)
-        .filter(Boolean);
-      context.notify(
-        success
-          ? `Worker "${tool.name}" finished successfully.`
-          : `Worker "${tool.name}" failed${
-              errors.length ? `: ${errors.join("; ")}` : "."
-            }`,
-      );
+      if (completion.handler) {
+        completion.handler(success);
+      } else {
+        completion.early = success;
+      }
     },
   });
   if (!computeJob) {
     throw new ToolExecutionError(
       "Failed to start the worker job (are you logged in and is a dataset open?)",
     );
+  }
+  completion.handler = trackAgentJob({
+    jobId: computeJob.jobId,
+    label: `Worker "${tool.name}"`,
+    progress: progressInfo,
+    errors: errorInfo,
+    notify: context.notify,
+  });
+  if (completion.early !== undefined) {
+    completion.handler(completion.early);
   }
   return {
     result: {
@@ -661,8 +1271,9 @@ async function runWorkerTool(
       tool: { id: tool.id, name: tool.name, image },
       parameters: values,
       note:
-        "The job runs in the background; its progress is shown to the user. " +
-        "You will get a transcript note when it completes.",
+        "The job runs in the background and can take minutes. Call " +
+        "wait_for_job with this jobId to wait for it — one tool call covers " +
+        "the whole run. Never re-read state in a loop to check on it.",
     },
   };
 }
@@ -808,6 +1419,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
           type: tool.type,
           description: tool.template?.description ?? null,
           workerImage: tool.values?.image?.image ?? null,
+          pinned: !!tool.pinned,
         })),
       },
     }),
@@ -1304,6 +1916,105 @@ const registry: { [name: string]: IAgentToolEntry } = {
     },
   },
 
+  color_annotations_by_property: {
+    // Bulk-writes every annotation color in the dataset on the backend and
+    // replaces any previous coloring. Unlike color_annotations it is NOT
+    // covered by the undo history, so it is gated.
+    gated: true,
+    execute: async (input: {
+      propertyPath?: string[];
+      clear?: boolean;
+      mode?: "auto" | "continuous" | "categorical";
+      colormap?: string;
+      rangeMin?: number;
+      rangeMax?: number;
+      percentileLow?: number;
+      percentileHigh?: number;
+    }) => {
+      requireLogin();
+      requireDataset();
+      if (input.clear) {
+        // Mirror the dialog's hasActiveColoring gate (ColorByPropertyDialog):
+        // the backend's clear resets EVERY annotation color to the layer
+        // color, not just property-assigned ones, and is not undoable — so
+        // without an active legend a "clear" would silently erase unrelated
+        // manual colors under approval text that promises less.
+        if (!main.colorByPropertyForCurrentDataset) {
+          return {
+            result: {
+              cleared: false,
+              note:
+                "No property-based coloring is active on this dataset, so " +
+                "there is nothing to remove. Clearing anyway would reset " +
+                "every annotation to its layer color, so it was skipped.",
+            },
+          };
+        }
+        await annotationStore.removeColorByProperty();
+        return { result: { cleared: true } };
+      }
+      const propertyPath = validatePropertyPath(
+        input.propertyPath,
+        "propertyPath",
+      );
+      if (
+        input.mode !== undefined &&
+        !["auto", "continuous", "categorical"].includes(input.mode)
+      ) {
+        throw new ToolExecutionError(
+          'mode must be "auto", "continuous" or "categorical"',
+        );
+      }
+      for (const key of [
+        "rangeMin",
+        "rangeMax",
+        "percentileLow",
+        "percentileHigh",
+      ] as const) {
+        if (input[key] !== undefined && typeof input[key] !== "number") {
+          throw new ToolExecutionError(`${key} must be a number`);
+        }
+      }
+      if (input.colormap !== undefined && typeof input.colormap !== "string") {
+        throw new ToolExecutionError("colormap must be a string");
+      }
+      let result;
+      try {
+        result = await annotationStore.applyColorByProperty({
+          propertyPath,
+          propertyName: propertyPathLabel(propertyPath),
+          mode: input.mode,
+          colormap: input.colormap,
+          rangeMin: input.rangeMin,
+          rangeMax: input.rangeMax,
+          percentileLow: input.percentileLow,
+          percentileHigh: input.percentileHigh,
+        });
+      } catch (error: any) {
+        // rawError action: surface the backend's real 400 message (unknown
+        // colormap, non-numeric property, bad range) so the model can correct
+        // its call instead of getting a generic wrapper.
+        throw new ToolExecutionError(
+          error?.response?.data?.message ??
+            error?.message ??
+            "Coloring by property failed",
+        );
+      }
+      if (!result) {
+        throw new ToolExecutionError(
+          "No dataset is currently open in the viewer",
+        );
+      }
+      return {
+        result: {
+          colored: result.colored,
+          uncolored: result.uncolored,
+          legend: summarizeColorLegend(result.legend),
+        },
+      };
+    },
+  },
+
   tag_annotations: {
     execute: async (input: {
       target: TAnnotationTarget;
@@ -1644,7 +2355,10 @@ const registry: { [name: string]: IAgentToolEntry } = {
   compute_property: {
     // Starts a compute job, so it is gated like run_worker.
     gated: true,
-    execute: async (input: { propertyId?: string }) => {
+    execute: async (
+      input: { propertyId?: string },
+      context: IAgentToolContext,
+    ) => {
       requireLogin();
       requireDataset();
       const property = propertyStore.properties.find(
@@ -1666,7 +2380,8 @@ const registry: { [name: string]: IAgentToolEntry } = {
             propertyId: property.id,
             note:
               `Property "${property.name}" is already computing (job ` +
-              `${runningJobId}). Wait for it before starting another run.`,
+              `${runningJobId}). Call wait_for_job with this jobId instead of ` +
+              "starting another run.",
           },
         };
       }
@@ -1687,6 +2402,25 @@ const registry: { [name: string]: IAgentToolEntry } = {
           }`,
         );
       }
+      // Same completion tracking as run_worker (the transcript note and
+      // wait_for_job): addJob is idempotent for an already-tracked job — it
+      // adds a listener and hands back the promise that settles when the job
+      // does — so this works whether or not computeProperty's own registration
+      // has landed yet.
+      const onCompletion = trackAgentJob({
+        jobId: computeJob.jobId,
+        label: `Property "${property.name}"`,
+        progress:
+          propertyStore.propertyStatuses[property.id]?.progressInfo ?? {},
+        errors: errorInfo,
+        notify: context.notify,
+      });
+      jobsStore
+        .addJob({
+          jobId: computeJob.jobId,
+          datasetId: main.dataset?.id ?? null,
+        })
+        .then(onCompletion);
       return {
         result: {
           propertyId: property.id,
@@ -1694,8 +2428,9 @@ const registry: { [name: string]: IAgentToolEntry } = {
           started: true,
           jobId: computeJob.jobId,
           note:
-            "Computation started; values populate as the job runs. Use " +
-            "get_property_values to read the results.",
+            "Computation runs in the background. Call wait_for_job with this " +
+            "jobId to wait for it, then get_property_values to read the " +
+            "results. Never re-read state in a loop to check on it.",
         },
       };
     },
@@ -2079,6 +2814,186 @@ const registry: { [name: string]: IAgentToolEntry } = {
     },
   },
 
+  // --- Analysis panel (scatter gating) -------------------------------------
+  //
+  // The panel's gates are polygons in plot coordinate space. A model cannot
+  // sensibly hand-author a lasso, but a RECTANGLE is exactly two value
+  // ranges — which is also how users describe gates in words ("area over
+  // 100, intensity under 500"). So the tool takes ranges and builds the
+  // 4-vertex polygon; freehand shapes stay a human affair in the panel.
+  create_analysis_plot: {
+    execute: async (
+      input: {
+        xAxis?: { propertyPath?: string[]; categorical?: string };
+        yAxis?: { propertyPath?: string[]; categorical?: string };
+        xRange?: { min?: number; max?: number };
+        yRange?: { min?: number; max?: number };
+      },
+      context: IAgentToolContext,
+    ) => {
+      const dataset = requireDataset();
+      // Each call resolves EVERY gate accumulated so far, and above the cap
+      // that is a server-side scan of the whole dataset. The sequential-
+      // gating prompt actively encourages several calls per turn, so without
+      // a per-turn bound one natural-language request could reach the plot
+      // cap and cost 20 scans plus ~210 resolution passes. A gating strategy
+      // the model builds unattended is a handful of steps; beyond that it
+      // should hand back to the user.
+      if (analysisPlotsCreatedThisTurn >= MAX_AGENT_PLOTS_PER_TURN) {
+        throw new ToolExecutionError(
+          `Already created ${analysisPlotsCreatedThisTurn} analysis plots ` +
+            `in this turn, which is the limit — each one re-resolves every ` +
+            `gate over the whole dataset. Summarize what the current gates ` +
+            `show and let the user ask for more.`,
+        );
+      }
+      if (!filterStore.canAddAnalysisPlot) {
+        throw new ToolExecutionError(
+          `The Analysis panel already holds the maximum of ` +
+            `${MAX_ANALYSIS_PLOTS} plots. Remove one first ` +
+            `(clear_analysis_plots) before adding another.`,
+        );
+      }
+      const xAxis = resolveAgentAnalysisAxis(input.xAxis, "xAxis");
+      const yAxis = resolveAgentAnalysisAxis(input.yAxis, "yAxis");
+
+      const wantsGate =
+        input.xRange !== undefined || input.yRange !== undefined;
+      if (
+        wantsGate &&
+        (xAxis.type !== "property" || yAxis.type !== "property")
+      ) {
+        throw new ToolExecutionError(
+          "Ranges only define a gate when BOTH axes are properties. For a " +
+            "categorical axis, create the plot without ranges and ask the " +
+            "user to draw the gate in the Analysis panel.",
+        );
+      }
+
+      // Build and validate the gate BEFORE the first store mutation. An
+      // inverted range satisfies the JSON schema, so throwing after
+      // addAnalysisPlot left an orphan ungated plot behind on every failed
+      // call — and a few corrected retries would exhaust the plot cap.
+      const gate: IAnalysisGate | null = wantsGate
+        ? await rectangularGate(
+            xAxis,
+            yAxis,
+            input.xRange,
+            input.yRange,
+            dataset.id,
+          )
+        : null;
+      // Sizing the open sides hits the backend, so the user may have switched
+      // datasets underneath us; the plot below would land on the wrong one.
+      assertDatasetUnchanged(context);
+
+      const plotId = uuidv4();
+      await filterStore.addAnalysisPlot(plotId);
+      // addAnalysisPlot no-ops at the cap rather than throwing, and the cap
+      // check above is now stale: sizing an open bound awaits the backend, so
+      // the user can add the last allowed plot during that wait. Without this
+      // the executor went on to apply axes and a gate to an id that does not
+      // exist, waited for it to resolve, and reported a plot it never created.
+      // Confirm insertion rather than re-reading canAddAnalysisPlot, which is
+      // the same check-then-act one tick later.
+      if (!filterStore.analysisPlots.some((plot) => plot.id === plotId)) {
+        throw new ToolExecutionError(
+          `The Analysis panel filled up to its maximum of ` +
+            `${MAX_ANALYSIS_PLOTS} plots while this one was being prepared. ` +
+            `Remove one and try again.`,
+        );
+      }
+      // Counted only once the plot really exists, so a failed call does not
+      // consume the per-turn budget.
+      analysisPlotsCreatedThisTurn += 1;
+      await filterStore.setAnalysisPlotAxes({ id: plotId, xAxis, yAxis });
+      if (gate) {
+        await filterStore.setAnalysisPlotGate({ id: plotId, gate });
+      }
+      // Gate ids are DERIVED, never stored: without this the gate exists but
+      // constrains nothing and the counts below would be a lie.
+      await filterStore.refreshAnalysis();
+      // ...and awaiting it is NOT enough. refreshAnalysis claims a sequence
+      // token first; if the Viewer's watcher fires concurrently it takes a
+      // newer token and OUR call returns without committing, leaving the
+      // other one to finish afterwards. Observed live: the gate resolved to
+      // 0 while this reported the full 52,282 as passing. So wait for this
+      // plot's ids to actually appear before reporting any count.
+      const resolved = gate
+        ? await waitForGateResolution(
+            plotId,
+            context.waitForGateTimeoutMs,
+            context.abortSignal,
+          )
+        : true;
+
+      // Confirm the plot is STILL there, not just that it once was. The
+      // insertion check above is the twin of this one: between them sit
+      // refreshAnalysis and waitForGateResolution, which take seconds on a
+      // large dataset, and the user can delete the plot in that window. The
+      // wait then times out and this returned the removed plotId with a
+      // "still resolving" note — the same stale report the cap race produced,
+      // reached from the other end.
+      if (!filterStore.analysisPlots.some((plot) => plot.id === plotId)) {
+        return {
+          result: {
+            plotId: null,
+            removed: true,
+            note:
+              "The plot was removed while its gate was resolving, so it no " +
+              "longer exists. Nothing was left behind.",
+          },
+        };
+      }
+
+      const gatedCount = filterStore.analysisGateIds[plotId] ?? null;
+      return {
+        result: {
+          plotId,
+          xAxis: describeAnalysisAxis(xAxis),
+          yAxis: describeAnalysisAxis(yAxis),
+          gate: gate
+            ? { xRange: input.xRange ?? null, yRange: input.yRange ?? null }
+            : null,
+          gatedCount: gatedCount === null ? null : gatedCount.length,
+          filteredCount: resolved
+            ? filterStore.filteredAnnotations.length
+            : null,
+          note: !gate
+            ? "Plot created without a gate. Open the Analysis panel to draw one."
+            : resolved
+              ? undefined
+              : "The gate is still resolving; counts are not available yet. " +
+                "Call get_interface_state in a moment to read them.",
+        },
+      };
+    },
+  },
+
+  clear_analysis_plots: {
+    // Gated for the same reason set_scale is: it writes the shared
+    // annotationBrowserConfig, and what it destroys — a colleague's
+    // hand-drawn sequential gating strategy — cannot be reconstructed from
+    // anything the model knows. The system prompt actively steers here
+    // ("gates are a common reason a dataset shows fewer objects than
+    // expected"), so an unprompted call is likely, not hypothetical.
+    gated: true,
+    execute: async () => {
+      requireDataset();
+      const removed = filterStore.analysisPlots.length;
+      for (const plot of [...filterStore.analysisPlots]) {
+        await filterStore.removeAnalysisPlot(plot.id);
+      }
+      await filterStore.refreshAnalysis();
+      return {
+        result: {
+          removed,
+          filteredCount: filterStore.filteredAnnotations.length,
+        },
+      };
+    },
+  },
+
   undo: {
     execute: async () => {
       requireLogin();
@@ -2099,7 +3014,19 @@ const registry: { [name: string]: IAgentToolEntry } = {
     gated: true,
     execute: runWorkerTool,
   },
+
+  // Read-only: it starts nothing, it only blocks until a job it is told about
+  // finishes, so it is not gated.
+  wait_for_job: {
+    execute: waitForJobTool,
+  },
 };
+
+// Every tool the frontend can execute. Exported for the parity check against
+// the backend's agent_tools.json (see executors.test.ts): a name in only one of
+// the two is either dead code (the model is never told the tool exists) or a
+// guaranteed "Unknown tool" error at runtime.
+export const AGENT_TOOL_NAMES = Object.keys(registry);
 
 export function isGatedTool(name: string): boolean {
   return registry[name]?.gated === true;
@@ -2208,6 +3135,35 @@ export function describeAgentToolCall(name: string, input: any): string {
       return `Color ${query(input?.target)} ${
         input?.randomize ? "randomly" : input?.color ?? "by layer color"
       }`;
+    case "color_annotations_by_property": {
+      // This line is all the approval card shows, so it must carry the
+      // warning the Color by Property dialog gives: the write replaces
+      // every annotation color and is not on the undo stack.
+      if (input?.clear) {
+        return (
+          "Remove the property-based coloring — resets every annotation " +
+          "to its layer color; cannot be undone"
+        );
+      }
+      // Prefer the human-facing property name over raw path segments (the
+      // first segment is a property id); never throw on malformed input.
+      let label = "";
+      const path = input?.propertyPath;
+      if (
+        Array.isArray(path) &&
+        path.every((segment: unknown) => typeof segment === "string")
+      ) {
+        try {
+          label = propertyStore.getFullNameFromPath(path) ?? path.join(" / ");
+        } catch {
+          label = path.join(" / ");
+        }
+      }
+      return (
+        `Color all annotations by ${label || "a property"} — overwrites ` +
+        "every existing annotation color; cannot be undone"
+      );
+    }
     case "tag_annotations":
       return `${
         input?.mode === "remove" ? "Untag" : "Tag"
@@ -2218,6 +3174,19 @@ export function describeAgentToolCall(name: string, input: any): string {
         : `Filter annotations${
             input?.tags ? ` by tags ${joinList(input.tags)}` : ""
           }${input?.currentFrameOnly ? " (current frame)" : ""}`;
+    case "create_analysis_plot": {
+      // joinList, not .join: this function must never throw on malformed
+      // input, and a propertyPath that is a bare string satisfies `?.` and
+      // then dies on .join.
+      const axis = (a: any) =>
+        a?.categorical ?? (joinList(a?.propertyPath, " / ") || "?");
+      const gated = input?.xRange !== undefined || input?.yRange !== undefined;
+      return `${gated ? "Gate" : "Plot"} ${axis(input?.yAxis)} vs ${axis(
+        input?.xAxis,
+      )} in the Analysis panel`;
+    }
+    case "clear_analysis_plots":
+      return "Remove all Analysis panel plots and gates";
     case "select_tool": {
       if (input?.toolId == null) {
         return "Deselect the active tool";
@@ -2300,6 +3269,12 @@ export function describeAgentToolCall(name: string, input: any): string {
       const tool = main.tools.find((t) => t.id === input?.toolId);
       return `Run worker "${tool?.name ?? input?.toolId}" — starts a compute job that may create many annotations`;
     }
+    case "wait_for_job": {
+      const label = agentJobs.get(
+        typeof input?.jobId === "string" ? input.jobId : "",
+      )?.label;
+      return `Wait for ${label ?? "the background job"} to finish`;
+    }
     default:
       return name;
   }
@@ -2335,6 +3310,10 @@ export interface IViewStateSnapshot {
   tagFilter: typeof filterStore.tagFilter;
   onlyCurrentFrame: boolean;
   propertyFilters: IPropertyAnnotationFilter[];
+  // Gates narrow the same object set as the filters above, so a revert that
+  // skipped them would leave a gate applied (or a cleared one deleted) while
+  // telling the user the view was restored.
+  analysisPlots: IAnalysisPlot[];
   selectedAnnotationIds: string[];
   selectedToolId: string | null;
   displayOptions: ReturnType<typeof currentDisplayOptions>;
@@ -2383,6 +3362,7 @@ export function snapshotViewState(): IViewStateSnapshot {
       tagFilter: filterStore.tagFilter,
       onlyCurrentFrame: filterStore.onlyCurrentFrame,
       propertyFilters: filterStore.propertyFilters,
+      analysisPlots: filterStore.analysisPlots,
       selectedAnnotationIds: [...annotationStore.selectedAnnotationIds],
       selectedToolId: main.selectedTool?.configuration.id ?? null,
       displayOptions: currentDisplayOptions(),
@@ -2464,6 +3444,21 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   }
   for (const saved of snapshot.propertyFilters) {
     filterStore.updatePropertyFilter(saved);
+  }
+  // Analysis plots are replaced wholesale (hydrateAnalysisPlots is the same
+  // path a saved configuration takes) and then re-resolved, since gate ids
+  // are derived. Only touched when they actually differ, so an ordinary
+  // revert does not pay a gate resolution.
+  const savedPlots = snapshot.analysisPlots ?? [];
+  if (
+    JSON.stringify(savedPlots) !== JSON.stringify(filterStore.analysisPlots)
+  ) {
+    // restore, not hydrate: the forward path (create_analysis_plot /
+    // clear_analysis_plots) writes plots to the shared configuration, so the
+    // revert has to write them back or it is a memory-only lie that the next
+    // reload undoes.
+    await filterStore.restoreAnalysisPlots(savedPlots);
+    await filterStore.refreshAnalysis();
   }
   annotationStore.setSelected(snapshot.selectedAnnotationIds);
   await main.setSelectedToolId(snapshot.selectedToolId);

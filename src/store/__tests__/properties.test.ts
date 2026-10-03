@@ -2,13 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Exercise the real properties module in isolation by mocking the stores and
 // utilities it reaches. ./root stays real — the dynamic module registers on it.
-const { getPropertyValuesForIds, annotationMock } = vi.hoisted(() => ({
-  getPropertyValuesForIds: vi.fn(),
-  annotationMock: {
-    stubOnlyMode: true,
-    visibleAnnotationIds: new Set<string>(),
-  },
-}));
+const { getPropertyValuesForIds, annotationMock, scheduleBrowserSave } =
+  vi.hoisted(() => ({
+    getPropertyValuesForIds: vi.fn(),
+    scheduleBrowserSave: vi.fn(),
+    annotationMock: {
+      stubOnlyMode: true,
+      visibleAnnotationIds: new Set<string>(),
+    },
+  }));
 
 vi.mock("@/store/index", () => ({
   default: {
@@ -16,8 +18,9 @@ vi.mock("@/store/index", () => ({
     isLoggedIn: true,
     propertiesAPI: {
       getPropertyValuesForIds: (...a: any[]) => getPropertyValuesForIds(...a),
+      getPropertyValuesSample: async () => [],
     },
-    scheduleAnnotationBrowserSave: () => {},
+    scheduleAnnotationBrowserSave: scheduleBrowserSave,
   },
 }));
 
@@ -64,6 +67,63 @@ describe("resetPropertyState (Finding 7)", () => {
     properties.resetPropertyState();
 
     expect(properties.discoveredPropertyPaths).toEqual([]);
+  });
+});
+
+describe("displayed property path batching", () => {
+  beforeEach(() => {
+    scheduleBrowserSave.mockReset();
+    properties.hydrateDisplayedPropertyPaths([]);
+  });
+
+  it("shows many paths with one mutation/save and caps the result at 100", async () => {
+    const paths = Array.from({ length: 150 }, (_, index) => [
+      "genes",
+      `value-${index}`,
+    ]);
+
+    await properties.setPropertyPathsVisibility({ paths, visible: true });
+
+    expect(properties.displayedPropertyPaths).toEqual(paths.slice(0, 100));
+    expect(scheduleBrowserSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides a group with one save instead of one toggle per path", async () => {
+    const paths = [["genes", "TCF7"], ["genes", "SELL"], ["area"]];
+    properties.hydrateDisplayedPropertyPaths(paths);
+
+    await properties.setPropertyPathsVisibility({
+      paths: paths.slice(0, 2),
+      visible: false,
+    });
+
+    expect(properties.displayedPropertyPaths).toEqual([["area"]]);
+    expect(scheduleBrowserSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("clamps over-limit paths restored from configuration", () => {
+    const paths = Array.from({ length: 120 }, (_, index) => [
+      "property",
+      String(index),
+    ]);
+
+    properties.hydrateDisplayedPropertyPaths(paths);
+
+    expect(properties.displayedPropertyPaths).toEqual(paths.slice(0, 100));
+    expect(scheduleBrowserSave).not.toHaveBeenCalled();
+  });
+
+  it("rejects a singular addition when the column limit is already full", async () => {
+    const paths = Array.from({ length: 100 }, (_, index) => [
+      "property",
+      String(index),
+    ]);
+    properties.hydrateDisplayedPropertyPaths(paths);
+
+    await properties.togglePropertyPathVisibility(["property", "overflow"]);
+
+    expect(properties.displayedPropertyPaths).toEqual(paths);
+    expect(scheduleBrowserSave).not.toHaveBeenCalled();
   });
 });
 
@@ -119,5 +179,29 @@ describe("ensureVisiblePropertyValues stale guard (Finding 6)", () => {
     only.resolve([{ annotationId: "a", values: { propA: 9 } }]);
     await flush();
     expect(properties.propertyValues).toEqual({ a: { propA: 9 } });
+  });
+});
+
+// The Connections tab's lazy track-label fetcher gates on this readiness
+// signal: without it, a stubOnlyMode flip during dataset load launches a
+// batch that the revision bump (fetchPropertyValues' first operation)
+// immediately supersedes — one duplicated large query per dataset open.
+describe("fetchPropertyValues readiness signal", () => {
+  it("records the dataset id alongside the revision bump", async () => {
+    const before = properties.propertyValuesRevision;
+    await properties.fetchPropertyValues();
+    expect(properties.propertyValuesRevision).toBe(before + 1);
+    expect(properties.propertyValuesDatasetId).toBe("ds1");
+  });
+
+  // refreshDataset() resets property state while the dataset id stays the
+  // same, then re-runs fetchPropertyValues. If the reset left the readiness
+  // id in place, the gate would already pass before the new revision bump —
+  // reopening the duplicate-query window the signal exists to close.
+  it("clears the readiness id on a property-state reset", async () => {
+    await properties.fetchPropertyValues();
+    expect(properties.propertyValuesDatasetId).toBe("ds1");
+    properties.resetPropertyState();
+    expect(properties.propertyValuesDatasetId).toBeNull();
   });
 });

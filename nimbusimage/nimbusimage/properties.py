@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
+from nimbusimage._workers import PROPERTY_ROLE_LABEL, check_worker_role
 from nimbusimage.jobs import Job
 from nimbusimage.models import Property
 
@@ -24,12 +26,12 @@ class PropertyAccessor:
 
     def list(self) -> list[Property]:
         """List all property definitions accessible to the user."""
-        data = self._gc.get("/annotation_property")
+        data = self._gc.get("annotation_property")
         return [Property.from_dict(d) for d in data]
 
     def get(self, property_id: str) -> Property:
         """Get a property definition by ID."""
-        data = self._gc.get(f"/annotation_property/{property_id}")
+        data = self._gc.get(f"annotation_property/{property_id}")
         return Property.from_dict(data)
 
     def create(
@@ -40,7 +42,14 @@ class PropertyAccessor:
         image: str = "properties/none:latest",
         worker_interface: dict | None = None,
     ) -> Property:
-        """Create a new property definition."""
+        """Create a new property definition.
+
+        The new property is registered into all of this dataset's
+        collections. Properties are only visible (via ``list()`` and
+        ``get()``) through collections that reference them, so an
+        unregistered property would be invisible to every user,
+        including its creator.
+        """
         body = {
             "name": name,
             "shape": shape,
@@ -48,8 +57,18 @@ class PropertyAccessor:
             "tags": {"exclusive": False, "tags": tags or []},
             "workerInterface": worker_interface or {},
         }
-        data = self._gc.post("/annotation_property", json=body)
-        return Property.from_dict(data)
+        prop = Property.from_dict(
+            self._gc.post("annotation_property", json=body)
+        )
+        if self.register(prop.id) == 0:
+            warnings.warn(
+                f"Property {prop.id!r} was created, but dataset "
+                f"{self._dataset_id!r} has no collections to register "
+                "it into. The property will not be visible until "
+                "register() is called on a dataset with a collection.",
+                stacklevel=2,
+            )
+        return prop
 
     def get_or_create(
         self,
@@ -57,42 +76,53 @@ class PropertyAccessor:
         shape: str = "polygon",
         **kwargs,
     ) -> Property:
-        """Get existing property by name+shape, or create it."""
+        """Get existing property by name+shape, or create it.
+
+        Only properties registered in a collection the user can read
+        are findable, so the created property is registered into this
+        dataset's collections (see ``create()``).
+        """
         existing = self.list()
         for p in existing:
             if p.name == name and p.shape == shape:
                 return p
         return self.create(name=name, shape=shape, **kwargs)
 
-    def register(self, property_id: str) -> None:
+    def register(self, property_id: str) -> int:
         """Add property to all collections for this dataset.
 
         Fetches each unique collection, appends property_id if not
         present, and saves. Deduplicates by collection ID so shared
         collections are only updated once.
+
+        Returns:
+            The number of collections that reference the property
+            after registration. 0 means the dataset has no
+            collections and the property remains invisible.
         """
         views = self._gc.get(
-            f"/dataset_view?datasetId={self._dataset_id}"
+            f"dataset_view?datasetId={self._dataset_id}"
         )
         seen: dict[str, dict] = {}
         for view in views:
             cid = view.get("configurationId")
             if not cid or cid in seen:
                 continue
-            seen[cid] = self._gc.get(f"/upenn_collection/{cid}")
+            seen[cid] = self._gc.get(f"upenn_collection/{cid}")
 
         for cid, config in seen.items():
             prop_ids = config.get("meta", {}).get("propertyIds", [])
             if property_id not in prop_ids:
                 prop_ids.append(property_id)
                 self._gc.put(
-                    f"/upenn_collection/{cid}/metadata",
+                    f"upenn_collection/{cid}/metadata",
                     json={"propertyIds": prop_ids},
                 )
+        return len(seen)
 
     def delete(self, property_id: str) -> None:
         """Delete a property definition."""
-        self._gc.delete(f"/annotation_property/{property_id}")
+        self._gc.delete(f"annotation_property/{property_id}")
 
     # --- Values ---
 
@@ -103,7 +133,7 @@ class PropertyAccessor:
             annotation_id: If provided, get values for this annotation only.
                 Otherwise, get all values for the dataset.
         """
-        url = f"/annotation_property_values?datasetId={self._dataset_id}"
+        url = f"annotation_property_values?datasetId={self._dataset_id}"
         if annotation_id:
             url += f"&annotationId={annotation_id}"
         return self._gc.get(url)
@@ -132,13 +162,13 @@ class PropertyAccessor:
         for i in range(0, len(entries), _BATCH_SIZE):
             batch = entries[i:i + _BATCH_SIZE]
             self._gc.post(
-                "/annotation_property_values/multiple", json=batch
+                "annotation_property_values/multiple", json=batch
             )
 
     def delete_values(self, property_id: str) -> None:
         """Delete all values for a property in this dataset."""
         self._gc.delete(
-            f"/annotation_property_values"
+            f"annotation_property_values"
             f"?propertyId={property_id}&datasetId={self._dataset_id}"
         )
 
@@ -147,7 +177,7 @@ class PropertyAccessor:
     ) -> list[dict]:
         """Get histogram for a property across all annotations."""
         return self._gc.get(
-            f"/annotation_property_values/histogram"
+            f"annotation_property_values/histogram"
             f"?propertyPath={property_path}"
             f"&datasetId={self._dataset_id}"
             f"&buckets={buckets}"
@@ -181,7 +211,12 @@ class PropertyAccessor:
             A Job object. Call ``job.wait()`` to block until completion.
 
         Raises:
-            ValueError: If the property has no ``id`` or ``image``.
+            ValueError: If the property has no ``id`` or ``image``, or
+                if its ``image`` is an annotation worker (its role
+                labels from ``/worker_interface/available`` have
+                ``isAnnotationWorker`` but not ``isPropertyWorker``) —
+                annotation workers must run through
+                ``ds.annotations.compute`` instead.
         """
         if not property.id:
             raise ValueError(
@@ -190,6 +225,10 @@ class PropertyAccessor:
             )
         if not property.image:
             raise ValueError("Property must have a Docker image set")
+
+        # Reject annotation workers before submitting: they cannot
+        # handle the property-compute payload (dict-valued tags filter).
+        check_worker_role(self._gc, property.image, PROPERTY_ROLE_LABEL)
 
         body = property.to_dict()
         # The worker reads params.get("id") to identify which property
@@ -207,7 +246,7 @@ class PropertyAccessor:
             body["scales"] = scales
 
         resp = self._gc.post(
-            f"/annotation_property/{property.id}/compute"
+            f"annotation_property/{property.id}/compute"
             f"?datasetId={self._dataset_id}",
             json=body,
         )

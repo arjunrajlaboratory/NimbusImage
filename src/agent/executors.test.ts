@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 vi.mock("@/store", () => ({
   default: {
@@ -137,6 +139,8 @@ vi.mock("@/store/annotation", () => ({
     selectAnnotations: vi.fn(),
     unselectAnnotations: vi.fn(),
     colorAnnotationIds: vi.fn(),
+    applyColorByProperty: vi.fn(),
+    removeColorByProperty: vi.fn(),
     addTagsByAnnotationIds: vi.fn(),
     removeTagsByAnnotationIds: vi.fn(),
     replaceTagsByAnnotationIds: vi.fn(),
@@ -154,6 +158,20 @@ vi.mock("@/store/filters", () => ({
     setTagFilter: vi.fn(),
     setOnlyCurrentFrame: vi.fn(),
     updatePropertyFilter: vi.fn(),
+    // Analysis panel (scatter gating)
+    analysisPlots: [] as any[],
+    analysisGateIds: {} as Record<string, string[]>,
+    canAddAnalysisPlot: true,
+    addAnalysisPlot: vi.fn(),
+    removeAnalysisPlot: vi.fn(),
+    setAnalysisPlotAxes: vi.fn(),
+    setAnalysisPlotGate: vi.fn(),
+    hydrateAnalysisPlots: vi.fn(),
+    // Mirrors the real action: hydrate PLUS persist. Modelled as two separate
+    // recordable calls so a test can tell "restored in memory" apart from
+    // "restored durably" — the distinction the memory-only revert turned on.
+    restoreAnalysisPlots: vi.fn(),
+    refreshAnalysis: vi.fn(),
   },
 }));
 
@@ -173,6 +191,12 @@ vi.mock("@/store/properties", () => ({
     fetchPropertyValues: vi.fn(),
     createProperty: vi.fn(),
     computeProperty: vi.fn(),
+    // The server-side property histogram, which is where an open gate bound
+    // gets the axis extent. Defaults to empty (a dataset whose extent cannot
+    // be measured) so a test that cares must say so.
+    propertiesAPI: {
+      getPropertyHistogram: vi.fn(async () => [] as any[]),
+    },
   },
 }));
 
@@ -180,6 +204,10 @@ vi.mock("@/store/jobs", () => ({
   default: {
     jobIdForToolId: {} as { [toolId: string]: string },
     jobIdForPropertyId: {} as { [propertyId: string]: string },
+    // Never settles by default: tests that care resolve their own promise.
+    addJob: vi.fn(() => new Promise<boolean>(() => {})),
+    getPromiseForJobId: vi.fn(() => undefined as Promise<boolean> | undefined),
+    fetchJobStatus: vi.fn(async () => null as number | null),
   },
 }));
 
@@ -196,8 +224,12 @@ import propertyStore from "@/store/properties";
 import volumeViewStore from "@/store/volumeView";
 import filterStore from "@/store/filters";
 import {
+  AGENT_TOOL_NAMES,
   annotationsBoundingBox,
+  clearTrackedAgentJobs,
   describeAgentToolCall,
+  buildInterfaceState,
+  clearAgentTurnLimits,
   executeAgentTool,
   isGatedTool,
   restoreViewState,
@@ -206,6 +238,7 @@ import {
   viewIdentityChangedSince,
 } from "./executors";
 import { MAX_BOX_POINTS, MAX_PLOT_POINTS, MAX_SAMPLE_ROWS } from "./analysis";
+import { jobStates } from "@/store/jobConstants";
 import { clearPlots, getPlot } from "./plotRegistry";
 
 const mockMain = main as any;
@@ -261,6 +294,13 @@ beforeEach(() => {
   mockProperties.getFullNameFromPath = () => null;
   mockVolumeView.viewMode = "2d";
   mockFilters.propertyFilters = [];
+  mockJobs.getPromiseForJobId = vi.fn(() => undefined);
+  mockJobs.fetchJobStatus = vi.fn(async () => null);
+  mockJobs.addJob = vi.fn(() => new Promise<boolean>(() => {}));
+  clearTrackedAgentJobs();
+  // Per-turn agent budgets are real module state; a leaked count made later
+  // tests hit the turn limit instead of the behaviour they assert.
+  clearAgentTurnLimits();
   clearPlots();
 });
 
@@ -278,38 +318,14 @@ describe("describeAgentToolCall", () => {
     { target: 7, tags: 0 },
     { target: { tags: "spot", ids: "abc" } },
     { query: { tags: 3 } },
+    // An axis whose propertyPath is a bare string rather than an array.
+    { xAxis: { propertyPath: "Area" }, yAxis: { propertyPath: 5 } },
   ];
-  const toolNames = [
-    "get_interface_state",
-    "capture_screenshot",
-    "list_annotations",
-    "set_location",
-    "set_camera",
-    "set_layer_mode",
-    "update_layer",
-    "set_layer_visibility",
-    "set_display_options",
-    "set_view_mode",
-    "set_scale",
-    "select_annotations",
-    "color_annotations",
-    "tag_annotations",
-    "set_annotation_filter",
-    "select_tool",
-    "create_tool",
-    "list_properties",
-    "create_property",
-    "compute_property",
-    "get_property_values",
-    "get_property_histogram",
-    "get_sample_values",
-    "create_scatter_plot",
-    "create_histogram_plot",
-    "create_box_plot",
-    "read_help_topic",
-    "run_worker",
-    "unknown_tool",
-  ];
+  // Derived from the registry rather than hand-listed. A hand-listed copy
+  // drifts silently the moment a tool is added — create_analysis_plot went in
+  // with a `.join` on an unvalidated field, exactly the bug this test exists
+  // to catch, and the test never saw it because the name was not in the list.
+  const toolNames = [...AGENT_TOOL_NAMES, "unknown_tool"];
 
   it("never throws on malformed input", () => {
     for (const name of toolNames) {
@@ -336,6 +352,20 @@ describe("describeAgentToolCall", () => {
       "Zoom to level 3",
     );
   });
+
+  it("warns that property recoloring is irreversible on the approval card", () => {
+    // This line is all the gated approval card shows; without the warning
+    // the user gets less than the Color by Property dialog tells them
+    // (review finding, PR #1345 round 4).
+    expect(
+      describeAgentToolCall("color_annotations_by_property", {
+        propertyPath: ["p1", "Area"],
+      }),
+    ).toMatch(/overwrites every existing annotation color; cannot be undone/);
+    expect(
+      describeAgentToolCall("color_annotations_by_property", { clear: true }),
+    ).toMatch(/cannot be undone/);
+  });
 });
 
 describe("isGatedTool", () => {
@@ -347,6 +377,15 @@ describe("isGatedTool", () => {
 
   it("gates set_scale (mutates the shared collection, not revertable)", () => {
     expect(isGatedTool("set_scale")).toBe(true);
+  });
+
+  it("gates clear_analysis_plots but not create_analysis_plot", () => {
+    // Same rationale as set_scale: the plots live in the shared
+    // annotationBrowserConfig, so this discards gating work anyone on the
+    // dataset drew, and a hand-drawn polygon cannot be reconstructed.
+    // Creating one is additive and revertable, so it stays ungated.
+    expect(isGatedTool("clear_analysis_plots")).toBe(true);
+    expect(isGatedTool("create_analysis_plot")).toBe(false);
   });
 });
 
@@ -482,6 +521,18 @@ describe("executeAgentTool", () => {
     expect(Number.isInteger(result.nextOffset)).toBe(true);
   });
 
+  it("reports each tool's pin so the model can answer which are pinned", async () => {
+    mockMain.tools = [
+      { id: "t1", name: "Nuclei", type: "create", pinned: true, values: {} },
+      { id: "t2", name: "Spots", type: "create", values: {} },
+    ] as any;
+    const { result } = await executeAgentTool("list_tools", {}, context);
+    expect((result as any).tools.map((t: any) => [t.id, t.pinned])).toEqual([
+      ["t1", true],
+      ["t2", false],
+    ]);
+  });
+
   it("routes contrast to the personal view, other fields to the config", async () => {
     const layer = {
       id: "l1",
@@ -593,6 +644,154 @@ describe("executeAgentTool", () => {
     expect(mockAnnotations.colorAnnotationIds).toHaveBeenLastCalledWith(
       expect.objectContaining({ annotationIds: ["a1", "a2"] }),
     );
+  });
+
+  it("color_annotations_by_property is gated and validates its input", async () => {
+    expect(isGatedTool("color_annotations_by_property")).toBe(true);
+    // Missing propertyPath (and no clear).
+    await expect(
+      executeAgentTool("color_annotations_by_property", {}, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // A bare string instead of a path array.
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: "p1.Area" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // An unknown mode.
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: ["p1", "Area"], mode: "rainbow" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // A non-numeric bound.
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: ["p1", "Area"], rangeMin: "0" },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockAnnotations.applyColorByProperty).not.toHaveBeenCalled();
+
+    mockMain.isLoggedIn = false;
+    await expect(
+      executeAgentTool(
+        "color_annotations_by_property",
+        { propertyPath: ["p1", "Area"] },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockAnnotations.applyColorByProperty).not.toHaveBeenCalled();
+  });
+
+  it("color_annotations_by_property applies and summarizes the legend", async () => {
+    mockAnnotations.applyColorByProperty.mockResolvedValue({
+      colored: 120,
+      uncolored: 3,
+      legend: {
+        type: "continuous",
+        propertyPath: ["p1", "Area"],
+        colormap: "viridis",
+        stops: ["#000000", "#ffffff"],
+        min: 10,
+        max: 90,
+        dataMin: 1,
+        dataMax: 400,
+        clippedLow: true,
+        clippedHigh: true,
+      },
+      assignment: [],
+    });
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { propertyPath: ["p1", "Area"], colormap: "viridis" },
+      context,
+    );
+    expect(mockAnnotations.applyColorByProperty).toHaveBeenCalledWith(
+      expect.objectContaining({
+        propertyPath: ["p1", "Area"],
+        // getFullNameFromPath is mocked to null, so the label falls back to
+        // the dotted path.
+        propertyName: "p1.Area",
+        colormap: "viridis",
+      }),
+    );
+    expect(out.result.colored).toBe(120);
+    expect(out.result.uncolored).toBe(3);
+    // The legend is summarized: bounds and clipping, no raw stops.
+    expect(out.result.legend).toEqual({
+      type: "continuous",
+      colormap: "viridis",
+      min: 10,
+      max: 90,
+      dataMin: 1,
+      dataMax: 400,
+      clippedLow: true,
+      clippedHigh: true,
+    });
+  });
+
+  it("color_annotations_by_property caps echoed categories", async () => {
+    mockAnnotations.applyColorByProperty.mockResolvedValue({
+      colored: 40,
+      uncolored: 0,
+      legend: {
+        type: "categorical",
+        propertyPath: ["p1", "Cluster"],
+        categories: Array.from({ length: 30 }, (_, i) => ({
+          value: `${i}`,
+          color: "#112233",
+          count: 1,
+        })),
+      },
+    });
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { propertyPath: ["p1", "Cluster"], mode: "categorical" },
+      context,
+    );
+    expect(out.result.legend.categoryCount).toBe(30);
+    expect(out.result.legend.categories).toHaveLength(25);
+    expect(out.result.legend.categoriesTruncated).toBe(true);
+  });
+
+  it("color_annotations_by_property clears via the store twin", async () => {
+    mockMain.colorByPropertyForCurrentDataset = {
+      propertyName: "Area",
+      propertyPath: ["p1", "Area"],
+      type: "continuous",
+      showLegend: true,
+    };
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { clear: true },
+      context,
+    );
+    expect(mockAnnotations.removeColorByProperty).toHaveBeenCalled();
+    expect(mockAnnotations.applyColorByProperty).not.toHaveBeenCalled();
+    expect(out.result.cleared).toBe(true);
+    mockMain.colorByPropertyForCurrentDataset = null;
+  });
+
+  it("color_annotations_by_property refuses clear with no active coloring", async () => {
+    // Review finding (Codex, PR #1345): the backend's clear resets EVERY
+    // annotation color, not just property-assigned ones, and is not
+    // undoable — so with no active legend the clear must be a no-op, like
+    // the dialog's hasActiveColoring-gated Remove button.
+    mockMain.colorByPropertyForCurrentDataset = null;
+    const out = await executeAgentTool(
+      "color_annotations_by_property",
+      { clear: true },
+      context,
+    );
+    expect(mockAnnotations.removeColorByProperty).not.toHaveBeenCalled();
+    expect(out.result.cleared).toBe(false);
+    expect(out.result.note).toMatch(/no property-based coloring/i);
   });
 
   it("validates select_annotations queries but allows omitting for all", async () => {
@@ -857,6 +1056,307 @@ describe("executeAgentTool", () => {
     expect(result.started).toBe(true);
     expect(result.jobId).toBe("job7");
     expect(mockAnnotations.computeAnnotationsWithWorker).toHaveBeenCalled();
+  });
+});
+
+// wait_for_job exists so the agent never has to poll for a background job:
+// polling a Cellpose run burned every turn of the budget before the job
+// finished. These tests hold the two properties that make that true — it
+// returns on the completion event (not on a timer), and a wait that comes back
+// "still running" has actually blocked for at least the 30s floor.
+describe("wait_for_job", () => {
+  // Submit a worker job through run_worker and hand back the store-side
+  // completion callback plus the progress/error objects it writes into.
+  async function startWorkerJob(jobId = "job7") {
+    mockMain.tools = [
+      { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
+    ];
+    mockJobs.jobIdForToolId = {};
+    let submitted: any;
+    mockAnnotations.computeAnnotationsWithWorker = vi.fn(async (args: any) => {
+      submitted = args;
+      return { jobId };
+    });
+    const { result } = await executeAgentTool(
+      "run_worker",
+      { toolId: "t1" },
+      context,
+    );
+    expect(result.jobId).toBe(jobId);
+    return {
+      complete: (success: boolean) => submitted.callback(success),
+      errors: () => submitted.error as { errors: any[] },
+      progress: () => submitted.progress as { progress?: number },
+    };
+  }
+
+  it("is read-only, so it is not gated", () => {
+    expect(isGatedTool("wait_for_job")).toBe(false);
+  });
+
+  it("returns as soon as the completion event arrives, without polling", async () => {
+    const job = await startWorkerJob();
+    const pending = executeAgentTool(
+      "wait_for_job",
+      { jobId: "job7" },
+      context,
+    );
+    job.complete(true);
+    const { result } = await pending;
+    expect(result).toMatchObject({
+      jobId: "job7",
+      finished: true,
+      success: true,
+    });
+    // The whole point: no status requests were needed to learn the outcome.
+    expect(mockJobs.fetchJobStatus).not.toHaveBeenCalled();
+  });
+
+  it("reports the worker's own errors when the job fails", async () => {
+    const job = await startWorkerJob();
+    const pending = executeAgentTool(
+      "wait_for_job",
+      { jobId: "job7" },
+      context,
+    );
+    job.errors().errors.push({ error: "CUDA out of memory" });
+    job.complete(false);
+    const { result } = await pending;
+    expect(result).toMatchObject({ finished: true, success: false });
+    expect(result.errors).toContain("CUDA out of memory");
+    expect(context.notify).toHaveBeenCalledWith(
+      expect.stringContaining("CUDA out of memory"),
+    );
+  });
+
+  it("returns immediately for a job that already finished", async () => {
+    const job = await startWorkerJob();
+    job.complete(true);
+    const { result } = await executeAgentTool(
+      "wait_for_job",
+      { jobId: "job7" },
+      context,
+    );
+    expect(result).toMatchObject({ finished: true, success: true });
+    expect(result.waitedSeconds).toBe(0);
+  });
+
+  it("waits at least the 30s floor before reporting a job still running", async () => {
+    vi.useFakeTimers();
+    try {
+      const job = await startWorkerJob();
+      job.progress().progress = 0.4;
+      // A 1s budget must be clamped up: a model that re-waits in a loop with a
+      // tiny timeout would otherwise spin through its turns.
+      const pending = executeAgentTool(
+        "wait_for_job",
+        { jobId: "job7", timeoutSeconds: 1 },
+        context,
+      );
+      let settled = false;
+      pending.then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(settled).toBe(false);
+      // Budget spent: one status check confirms the job really is still going.
+      mockJobs.fetchJobStatus = vi.fn(async () => jobStates.running);
+      await vi.advanceTimersByTimeAsync(2_000);
+      const { result } = await pending;
+      expect(result).toMatchObject({ finished: false, stillRunning: true });
+      expect(result.waitedSeconds).toBeGreaterThanOrEqual(30);
+      expect(result.progress).toBe(0.4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a completion the notification stream missed", async () => {
+    vi.useFakeTimers();
+    try {
+      await startWorkerJob();
+      // No completion callback ever fires (e.g. a dropped WebSocket), but the
+      // server says the job succeeded — report that, not "still running".
+      mockJobs.fetchJobStatus = vi.fn(async () => jobStates.success);
+      const pending = executeAgentTool(
+        "wait_for_job",
+        { jobId: "job7", timeoutSeconds: 30 },
+        context,
+      );
+      await vi.advanceTimersByTimeAsync(31_000);
+      const { result } = await pending;
+      expect(result).toMatchObject({ finished: true, success: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("unwinds at once when the user stops the run", async () => {
+    const job = await startWorkerJob();
+    const controller = new AbortController();
+    const pending = executeAgentTool(
+      "wait_for_job",
+      { jobId: "job7" },
+      { ...context, abortSignal: controller.signal },
+    );
+    controller.abort();
+    const { result } = await pending;
+    expect(result).toMatchObject({ finished: false, aborted: true });
+    // The job itself is untouched — it keeps running in the background.
+    job.complete(true);
+  });
+
+  it("forgets a tracked job when the conversation is cleared", async () => {
+    // A cleared conversation (which is also what an authenticated-user change
+    // triggers) must not leave the previous user's job label and worker errors
+    // readable by job id; without a record the wait goes through the
+    // access-checked server request instead.
+    const job = await startWorkerJob();
+    job.errors().errors.push({ error: "path /user/alice/private" });
+    job.complete(false);
+    clearTrackedAgentJobs();
+
+    mockJobs.fetchJobStatus = vi.fn(async () => jobStates.error);
+    const { result } = await executeAgentTool(
+      "wait_for_job",
+      { jobId: "job7" },
+      context,
+    );
+    expect(mockJobs.fetchJobStatus).toHaveBeenCalledTimes(1);
+    expect(result.errors).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("alice");
+    expect(JSON.stringify(result)).not.toContain("Cellpose");
+  });
+
+  it("reads the server status for a job this session did not start", async () => {
+    mockJobs.fetchJobStatus = vi.fn(async () => jobStates.error);
+    const { result } = await executeAgentTool(
+      "wait_for_job",
+      { jobId: "job-from-a-previous-page-load" },
+      context,
+    );
+    expect(result).toMatchObject({ finished: true, success: false });
+    expect(mockJobs.fetchJobStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("polls an untracked job on a slow interval, not in a tight loop", async () => {
+    vi.useFakeTimers();
+    try {
+      let checks = 0;
+      mockJobs.fetchJobStatus = vi.fn(async () =>
+        ++checks >= 2 ? jobStates.success : jobStates.running,
+      );
+      const pending = executeAgentTool(
+        "wait_for_job",
+        { jobId: "untracked" },
+        context,
+      );
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(mockJobs.fetchJobStatus).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      const { result } = await pending;
+      expect(result).toMatchObject({ finished: true, success: true });
+      expect(mockJobs.fetchJobStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a job id it cannot resolve", async () => {
+    mockJobs.fetchJobStatus = vi.fn(async () => null);
+    await expect(
+      executeAgentTool("wait_for_job", { jobId: "bogus" }, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("requires a job id", async () => {
+    await expect(
+      executeAgentTool("wait_for_job", {}, context),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockJobs.fetchJobStatus).not.toHaveBeenCalled();
+  });
+
+  it("waits for a property computation and notes its completion", async () => {
+    mockProperties.properties = [{ id: "prop1", name: "Area" }];
+    mockProperties.computeProperty = vi.fn(async () => ({ jobId: "job-prop" }));
+    let finishJob!: (success: boolean) => void;
+    mockJobs.addJob = vi.fn(
+      () => new Promise<boolean>((resolve) => (finishJob = resolve)),
+    );
+    const { result: started } = await executeAgentTool(
+      "compute_property",
+      { propertyId: "prop1" },
+      context,
+    );
+    expect(started.jobId).toBe("job-prop");
+    const pending = executeAgentTool(
+      "wait_for_job",
+      { jobId: "job-prop" },
+      context,
+    );
+    finishJob(true);
+    const { result } = await pending;
+    expect(result).toMatchObject({ finished: true, success: true });
+    // Property jobs get the same transcript note worker jobs do.
+    expect(context.notify).toHaveBeenCalledWith(
+      expect.stringContaining('Property "Area" finished'),
+    );
+  });
+});
+
+// The executor registry lives here; the schemas the model sees are served by
+// the girder-claude-chat plugin. Nothing else keeps the two in step, and a
+// mismatch fails silently in one direction (a tool the model is never told
+// about) and loudly in the other ("Unknown tool" mid-turn).
+describe("tool schema parity with the backend", () => {
+  // Vitest runs from the repository root.
+  const schemaPath = resolve(
+    process.cwd(),
+    "devops/girder/plugins/girder-claude-chat/girder_claude_chat/agent_tools.json",
+  );
+
+  it("defines exactly the tools the backend advertises", () => {
+    const schemaNames = JSON.parse(readFileSync(schemaPath, "utf8")).map(
+      (tool: { name: string }) => tool.name,
+    );
+    expect([...AGENT_TOOL_NAMES].sort()).toEqual([...schemaNames].sort());
+  });
+});
+
+// The auto-approve switch's tooltip is the only place a user learns what
+// enabling it stops confirming. A gated tool missing from it (found in
+// review on PR #1345: the property recoloring, and clear_analysis_plots
+// before it) means users opt into bypassing an action they were never
+// warned about — and nothing else keeps the tooltip and the gated registry
+// in step.
+describe("auto-approve warning coverage", () => {
+  // The phrase in AiPanel.vue's tooltip that names each gated tool. Adding
+  // a gated tool without mapping it here fails this test: extend the
+  // tooltip text in AiPanel.vue first, then map the phrase.
+  const TOOLTIP_PHRASE_BY_GATED_TOOL: { [name: string]: string } = {
+    run_worker: "worker runs",
+    compute_property: "property computation",
+    create_tool: "tool / property / scale creation",
+    create_property: "tool / property / scale creation",
+    set_scale: "tool / property / scale creation",
+    color_annotations_by_property: "recoloring the whole dataset by a property",
+    clear_analysis_plots: "removing analysis plots",
+  };
+
+  it("names every gated tool in AiPanel.vue's auto-approve tooltip", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/AiPanel.vue"),
+      "utf8",
+    );
+    const tooltip = source.match(/text="(Skip the confirmation[^"]*)"/)?.[1];
+    expect(tooltip).toBeTruthy();
+    for (const name of AGENT_TOOL_NAMES.filter(isGatedTool)) {
+      const phrase = TOOLTIP_PHRASE_BY_GATED_TOOL[name];
+      expect(
+        phrase,
+        `gated tool "${name}" has no auto-approve tooltip phrase — name it ` +
+          "in AiPanel.vue's tooltip and map the phrase here",
+      ).toBeTruthy();
+      expect(tooltip).toContain(phrase);
+    }
   });
 });
 
@@ -2300,5 +2800,534 @@ describe("view identity binding (finding #1)", () => {
     const snapshot = snapshotViewState();
     await restoreViewState(snapshot);
     expect(mockMain.setViewContrastOverrides).toHaveBeenCalled();
+  });
+});
+
+// Analysis-panel gating tools. A gate narrows the same `filteredAnnotations`
+// the other filters do, so these must resolve before reporting counts —
+// gate ids are derived, not stored.
+// What the real addAnalysisPlot does: APPEND, and no-op at the cap rather
+// than throw. A bare vi.fn() left analysisPlots empty, so no test could
+// observe whether the executor's plot actually landed — which is precisely
+// the state the cap race produces, and precisely what the executor now
+// verifies. Exported as a helper so a test layering extra side effects on
+// top does not silently drop the append.
+function appendAnalysisPlot(id: string) {
+  if (!mockFilters.canAddAnalysisPlot) {
+    return;
+  }
+  mockFilters.analysisPlots = [
+    ...mockFilters.analysisPlots,
+    { id, xAxis: null, yAxis: null, gate: null, gateEnabled: true },
+  ];
+}
+
+describe("analysis panel tools", () => {
+  beforeEach(() => {
+    mockFilters.analysisPlots = [];
+    mockFilters.analysisGateIds = {};
+    mockFilters.canAddAnalysisPlot = true;
+    // mockReset, not mockClear: one test installs an implementation that
+    // reads addAnalysisPlot.mock.calls, which throws once those are cleared.
+    // Reset alongside the mock it gates: a test that fills the panel mid-await
+    // would otherwise leak both the cap and its histogram stub into every
+    // later describe.
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.analysisPlots = [];
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(
+      async () => [] as any[],
+    );
+    mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.addAnalysisPlot.mockImplementation(appendAnalysisPlot);
+    mockFilters.removeAnalysisPlot.mockReset();
+    mockFilters.setAnalysisPlotAxes.mockReset();
+    mockFilters.setAnalysisPlotGate.mockReset();
+    mockFilters.refreshAnalysis.mockReset();
+  });
+
+  it("creates a plot with property axes and no gate", async () => {
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+      },
+      context,
+    );
+    expect(mockFilters.addAnalysisPlot).toHaveBeenCalledTimes(1);
+    expect(mockFilters.setAnalysisPlotGate).not.toHaveBeenCalled();
+    // Still refreshes: the panel needs values for the new axes.
+    expect(mockFilters.refreshAnalysis).toHaveBeenCalled();
+    expect(out.result.gate).toBeNull();
+    expect(out.result.note).toMatch(/draw/i);
+  });
+
+  it("turns ranges into a rectangular gate", async () => {
+    await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 100, max: 500 },
+        yRange: { max: 40 },
+      },
+      // No ids will land from the mock; skip the resolution wait.
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    const gate = mockFilters.setAnalysisPlotGate.mock.calls[0][0].gate;
+    expect(gate.categoryKeyVersion).toBe(1);
+    expect(gate.xCategories).toBeNull();
+    const xs = gate.vertices.map((v: any) => v.x);
+    const ys = gate.vertices.map((v: any) => v.y);
+    expect(Math.min(...xs)).toBe(100);
+    expect(Math.max(...xs)).toBe(500);
+    // Omitted min is one-sided, not zero.
+    expect(Math.min(...ys)).toBeLessThan(-1e6);
+    expect(Math.max(...ys)).toBe(40);
+  });
+
+  it("reports the resolved gate count, not the request", async () => {
+    mockFilters.addAnalysisPlot.mockImplementation((id: string) => {
+      appendAnalysisPlot(id);
+      // The store resolves asynchronously; emulate ids appearing.
+      mockFilters.analysisGateIds = {};
+    });
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      const id = mockFilters.addAnalysisPlot.mock.calls[0][0];
+      mockFilters.analysisGateIds = { [id]: ["a", "b", "c"] };
+    });
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 1 },
+      },
+      context,
+    );
+    expect(out.result.gatedCount).toBe(3);
+  });
+
+  it("refuses to gate by range when an axis is categorical", async () => {
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { categorical: "tags" },
+          yAxis: { propertyPath: ["p1", "Area"] },
+          yRange: { min: 1 },
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockFilters.addAnalysisPlot).not.toHaveBeenCalled();
+  });
+
+  it("allows a categorical plot without ranges", async () => {
+    await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { categorical: "tags" },
+        yAxis: { propertyPath: ["p1", "Area"] },
+      },
+      context,
+    );
+    const axes = mockFilters.setAnalysisPlotAxes.mock.calls[0][0];
+    expect(axes.xAxis).toEqual({ type: "categorical", key: "tags" });
+  });
+
+  it("rejects an unknown categorical key and a bad property path", async () => {
+    for (const xAxis of [
+      { categorical: "nope" },
+      { propertyPath: [] },
+      { propertyPath: [123 as any] },
+    ]) {
+      await expect(
+        executeAgentTool(
+          "create_analysis_plot",
+          { xAxis, yAxis: { propertyPath: ["p1", "Area"] } },
+          context,
+        ),
+      ).rejects.toBeInstanceOf(ToolExecutionError);
+    }
+  });
+
+  it("rejects an inverted range rather than silently selecting nothing", async () => {
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { propertyPath: ["p1", "Area"] },
+          yAxis: { propertyPath: ["p1", "Perimeter"] },
+          xRange: { min: 500, max: 100 },
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  it("never reports a plot that was removed while its gate resolved", async () => {
+    // The twin of the cap race, reached from the other end. Insertion is
+    // confirmed before configuring the plot, but refreshAnalysis and the
+    // resolution wait take seconds on a large dataset, and the user can
+    // delete the plot in that window — after which this returned the removed
+    // plotId with a "still resolving" note.
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      mockFilters.analysisPlots = []; // the user deletes it mid-resolution
+    });
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 1 },
+      },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(out.result.plotId).toBeNull();
+    expect(out.result.removed).toBe(true);
+    expect(out.result.note).toMatch(/removed while its gate was resolving/i);
+  });
+
+  it("never reports a plot the store refused to create", async () => {
+    // Sizing an open bound awaits the backend, so the cap check at the top of
+    // the executor is stale by the time the plot is added — the user can fill
+    // the last slot during that wait. addAnalysisPlot no-ops at the cap
+    // instead of throwing, so the executor went on to apply axes and a gate
+    // to an id that does not exist, waited for it to resolve, and returned a
+    // plotId it had never created.
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => {
+      mockFilters.canAddAnalysisPlot = false; // the panel fills up mid-await
+      return [{ count: 1, min: 0, max: 10 }];
+    });
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { propertyPath: ["p1", "Area"] },
+          yAxis: { propertyPath: ["p1", "Perimeter"] },
+          xRange: { min: 1 },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/filled up/);
+    // ...and the failed call must not consume the per-turn budget or leave a
+    // half-configured plot behind.
+    expect(mockFilters.setAnalysisPlotAxes).not.toHaveBeenCalled();
+    expect(mockFilters.setAnalysisPlotGate).not.toHaveBeenCalled();
+  });
+
+  it("refuses past the plot cap with an actionable message", async () => {
+    mockFilters.canAddAnalysisPlot = false;
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        {
+          xAxis: { propertyPath: ["p1", "Area"] },
+          yAxis: { propertyPath: ["p1", "Perimeter"] },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/clear_analysis_plots/);
+  });
+
+  it("clears every plot and re-resolves", async () => {
+    mockFilters.analysisPlots = [{ id: "a" }, { id: "b" }];
+    const out = await executeAgentTool("clear_analysis_plots", {}, context);
+    expect(mockFilters.removeAnalysisPlot).toHaveBeenCalledTimes(2);
+    expect(mockFilters.refreshAnalysis).toHaveBeenCalled();
+    expect(out.result.removed).toBe(2);
+  });
+
+  it("reports gates in the interface state so the model can explain counts", () => {
+    mockFilters.analysisPlots = [
+      {
+        id: "plot-1",
+        xAxis: { type: "property", path: ["p1", "Area"] },
+        yAxis: { type: "categorical", key: "tags" },
+        gate: { vertices: [] },
+        gateEnabled: true,
+      },
+    ];
+    mockFilters.analysisGateIds = { "plot-1": ["a", "b"] };
+    const state = buildInterfaceState() as any;
+    expect(state.analysisPlots).toHaveLength(1);
+    expect(state.analysisPlots[0]).toMatchObject({
+      plotId: "plot-1",
+      hasGate: true,
+      gateEnabled: true,
+      gatedCount: 2,
+    });
+    expect(state.analysisPlots[0].yAxis).toEqual({
+      type: "categorical",
+      key: "tags",
+    });
+  });
+
+  it("reports the color-by-property legend in the interface state", () => {
+    // Absent (mock without the getter) reads as null.
+    expect((buildInterfaceState() as any).colorByProperty).toBeNull();
+    mockMain.colorByPropertyForCurrentDataset = {
+      propertyName: "Area",
+      propertyPath: ["p1", "Area"],
+      type: "continuous",
+      colormap: "viridis",
+      stops: ["#000000", "#ffffff"],
+      min: 10,
+      max: 90,
+      showLegend: true,
+    };
+    expect((buildInterfaceState() as any).colorByProperty).toEqual({
+      propertyName: "Area",
+      propertyPath: ["p1", "Area"],
+      type: "continuous",
+      colormap: "viridis",
+      min: 10,
+      max: 90,
+      categoryCount: null,
+    });
+    mockMain.colorByPropertyForCurrentDataset = null;
+  });
+});
+
+// Live-found: awaiting refreshAnalysis is not enough. It claims a sequence
+// token first, so a concurrent refresh (the Viewer watches the same inputs)
+// supersedes ours and the await resolves before any commit. Observed in the
+// browser as a gate that resolved to 0 while the tool reported all 52,282
+// objects still passing.
+describe("create_analysis_plot waits for gate resolution", () => {
+  beforeEach(() => {
+    mockFilters.analysisPlots = [];
+    mockFilters.analysisGateIds = {};
+    mockFilters.canAddAnalysisPlot = true;
+    // Reset alongside the mock it gates: a test that fills the panel mid-await
+    // would otherwise leak both the cap and its histogram stub into every
+    // later describe.
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.analysisPlots = [];
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(
+      async () => [] as any[],
+    );
+    mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.addAnalysisPlot.mockImplementation(appendAnalysisPlot);
+    mockFilters.setAnalysisPlotAxes.mockReset();
+    mockFilters.setAnalysisPlotGate.mockReset();
+    mockFilters.refreshAnalysis.mockReset();
+  });
+
+  it("reports no counts when the gate never resolves", async () => {
+    mockFilters.filteredAnnotations = new Array(52282).fill({});
+    // refreshAnalysis resolves without committing — the superseded case.
+    mockFilters.refreshAnalysis.mockResolvedValue(undefined);
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 50, max: 90 },
+      },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    // The pre-gate count is the misleading answer; null is the honest one.
+    expect(out.result.filteredCount).toBeNull();
+    expect(out.result.note).toMatch(/still resolving/i);
+    mockFilters.filteredAnnotations = [];
+  });
+
+  it("reports counts once the ids land", async () => {
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      const id = mockFilters.addAnalysisPlot.mock.calls[0][0];
+      mockFilters.analysisGateIds = { [id]: [] };
+      mockFilters.filteredAnnotations = [];
+    });
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      {
+        xAxis: { propertyPath: ["p1", "Area"] },
+        yAxis: { propertyPath: ["p1", "Perimeter"] },
+        xRange: { min: 50, max: 90 },
+      },
+      context,
+    );
+    expect(out.result.gatedCount).toBe(0);
+    expect(out.result.filteredCount).toBe(0);
+    expect(out.result.note).toBeUndefined();
+  });
+});
+
+// Codex round 6. These are all "the fix created the next bug" shapes, so each
+// asserts the specific failure rather than the happy path.
+describe("analysis tools: round 6 hardening", () => {
+  beforeEach(() => {
+    mockFilters.analysisPlots = [];
+    mockFilters.analysisGateIds = {};
+    mockFilters.canAddAnalysisPlot = true;
+    // Reset alongside the mock it gates: a test that fills the panel mid-await
+    // would otherwise leak both the cap and its histogram stub into every
+    // later describe.
+    mockFilters.canAddAnalysisPlot = true;
+    mockFilters.analysisPlots = [];
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(
+      async () => [] as any[],
+    );
+    mockFilters.addAnalysisPlot.mockReset();
+    mockFilters.addAnalysisPlot.mockImplementation(appendAnalysisPlot);
+    mockFilters.setAnalysisPlotAxes.mockReset();
+    mockFilters.setAnalysisPlotGate.mockReset();
+    mockFilters.refreshAnalysis.mockReset();
+  });
+
+  const axes = {
+    xAxis: { propertyPath: ["p1", "Area"] },
+    yAxis: { propertyPath: ["p1", "Perimeter"] },
+  };
+
+  it("leaves no orphan plot when the gate is invalid", async () => {
+    // The inverted range satisfies the JSON schema, so it can only be caught
+    // here — and throwing after addAnalysisPlot used to strand an ungated
+    // plot, letting a few corrected retries exhaust the plot cap.
+    await expect(
+      executeAgentTool(
+        "create_analysis_plot",
+        { ...axes, xRange: { min: 500, max: 100 } },
+        { ...context, waitForGateTimeoutMs: 0 } as any,
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    expect(mockFilters.addAnalysisPlot).not.toHaveBeenCalled();
+    expect(mockFilters.setAnalysisPlotAxes).not.toHaveBeenCalled();
+  });
+
+  it("caps gate creations per turn, since each re-resolves everything", async () => {
+    const call = () =>
+      executeAgentTool("create_analysis_plot", axes, {
+        ...context,
+        waitForGateTimeoutMs: 0,
+      } as any);
+    for (let i = 0; i < 4; i++) {
+      await call();
+    }
+    await expect(call()).rejects.toThrow(/limit/i);
+    // ...and a new turn starts fresh.
+    clearAgentTurnLimits();
+    await expect(call()).resolves.toBeTruthy();
+  });
+
+  it("stops waiting for gate resolution when the turn is aborted", async () => {
+    const controller = new AbortController();
+    mockFilters.refreshAnalysis.mockImplementation(() => {
+      controller.abort(); // user pressed Stop while the refresh was superseded
+    });
+    const started = Date.now();
+    const out = await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 1 } },
+      { ...context, abortSignal: controller.signal } as any,
+    );
+    // Unwinds immediately rather than sitting out the 15s deadline.
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(out.result.filteredCount).toBeNull();
+  });
+
+  const gateVertexRange = (axis: "x" | "y") => {
+    const gate = mockFilters.setAnalysisPlotGate.mock.calls[0][0].gate;
+    const values = gate.vertices.map((v: any) => v[axis]);
+    return { min: Math.min(...values), max: Math.max(...values) };
+  };
+
+  it("derives an open bound from the server's extent, not a fixed sentinel", async () => {
+    // A property whose values exceed the old 1e12 constant: everything above
+    // it was silently excluded from an otherwise unbounded gate.
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => [
+      { count: 2, min: 1, max: 5e12 },
+    ]);
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 100 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(5e12);
+  });
+
+  it("does not read the extent from the annotation store", async () => {
+    // The regime this whole feature exists for: above the plotting cap the
+    // annotations are stubs, so annotationStore.annotations is EMPTY and
+    // propertyStore.propertyValues holds nothing to walk. Deriving the extent
+    // from those collapsed every open bound to the floor — a smaller silent
+    // sentinel than the constant it replaced — and quietly dropped every
+    // object past it from a gate the user was told was unbounded.
+    mockAnnotations.annotations = [];
+    mockProperties.propertyValues = {};
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => [
+      { count: 700000, min: 0, max: 4e9 },
+    ]);
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 100 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(4e9);
+  });
+
+  it("reaches past an explicit bound larger than the measured extent", async () => {
+    // The open side must clear the requested bound too, or the rectangle is
+    // inverted and a legitimate one-sided request is rejected as bad input.
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => [
+      { count: 10, min: 0, max: 5 },
+    ]);
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 9e9 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(9e9);
+  });
+
+  it("still reaches far out when the extent cannot be measured", async () => {
+    mockProperties.propertiesAPI.getPropertyHistogram = vi.fn(async () => {
+      throw new Error("network");
+    });
+    await executeAgentTool(
+      "create_analysis_plot",
+      { ...axes, xRange: { min: 100 } },
+      { ...context, waitForGateTimeoutMs: 0 } as any,
+    );
+    expect(gateVertexRange("x").max).toBeGreaterThan(1e24);
+  });
+
+  it("captures and restores analysis plots in the revert snapshot", async () => {
+    const plot = {
+      id: "p1",
+      xAxis: null,
+      yAxis: null,
+      gate: null,
+      gateEnabled: true,
+    };
+    mockFilters.analysisPlots = [plot];
+    const snap = snapshotViewState();
+    expect(snap.analysisPlots).toEqual([plot]);
+
+    // A tool then adds a gate; reverting must put the saved plots back.
+    mockFilters.analysisPlots = [plot, { ...plot, id: "p2" }];
+    mockFilters.restoreAnalysisPlots = vi.fn();
+    mockFilters.hydrateAnalysisPlots = vi.fn();
+    await restoreViewState(snap);
+    // restoreAnalysisPlots, NOT hydrateAnalysisPlots. Hydration deliberately
+    // does not schedule a configuration save, so reverting through it undid
+    // the agent's gates in memory while the shared configuration kept them:
+    // the next reload brought them back and any unrelated debounced save
+    // wrote the reverted state instead. Whichever happened first won.
+    expect(mockFilters.restoreAnalysisPlots).toHaveBeenCalledWith([plot]);
+    expect(mockFilters.hydrateAnalysisPlots).not.toHaveBeenCalled();
+    expect(mockFilters.refreshAnalysis).toHaveBeenCalled();
+  });
+
+  it("does not re-resolve gates on a revert that did not touch them", async () => {
+    mockFilters.analysisPlots = [];
+    const snap = snapshotViewState();
+    mockFilters.restoreAnalysisPlots = vi.fn();
+    mockFilters.refreshAnalysis.mockClear();
+    await restoreViewState(snap);
+    expect(mockFilters.restoreAnalysisPlots).not.toHaveBeenCalled();
+    expect(mockFilters.refreshAnalysis).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,14 @@
 <template>
   <v-container>
+    <v-alert
+      v-if="mixedSourceDtypeError"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="my-4"
+    >
+      {{ mixedSourceDtypeError }}
+    </v-alert>
     <v-card class="pa-4 my-4">
       <v-list-subheader
         :data-tour="TOUR_ANCHORS.variables"
@@ -149,6 +158,15 @@
         density="compact"
       />
     </v-card>
+    <v-alert
+      v-if="assignmentError && !initializing"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="my-4"
+    >
+      {{ assignmentError }}
+    </v-alert>
     <v-card v-if="initializing" class="my-4">
       <v-card-title class="d-flex align-center">
         <v-progress-circular
@@ -350,18 +368,6 @@
       </div>
     </v-card>
     <v-row>
-      <v-col class="d-flex">
-        <v-alert
-          v-if="submitError"
-          type="error"
-          variant="tonal"
-          density="compact"
-          class="mr-4"
-        >
-          {{ submitError }}
-        </v-alert>
-        <v-spacer />
-      </v-col>
       <v-col class="d-flex justify-end">
         <v-checkbox
           :data-tour="TOUR_ANCHORS.transcodeCheckbox"
@@ -378,7 +384,7 @@
           color="success"
           size="small"
           @click="submit"
-          :disabled="!submitEnabled() || !isRGBAssignmentValid || isUploading"
+          :disabled="!!submitError || isUploading"
         >
           <v-progress-circular size="16" v-if="isUploading" indeterminate />
           Submit
@@ -898,7 +904,30 @@ const assignmentItems = computed(() => {
     .map(assignmentOptionToAssignmentItem);
 });
 
-const submitError = computed((): string | null => {
+const sourceDtypes = computed(() =>
+  Array.from(
+    new Set(
+      (tilesMetadata.value ?? [])
+        .map((tile) =>
+          typeof tile.dtype === "string"
+            ? tile.dtype.trim().toLowerCase()
+            : null,
+        )
+        .filter((dtype): dtype is string => !!dtype),
+    ),
+  ),
+);
+
+const mixedSourceDtypeError = computed((): string | null => {
+  if (sourceDtypes.value.length <= 1) {
+    return null;
+  }
+  return `Source images use different pixel types (${sourceDtypes.value.join(
+    ", ",
+  )}). Convert all source images to the same pixel type before combining them. You will need to start over.`;
+});
+
+const assignmentError = computed((): string | null => {
   if (!submitEnabled()) {
     return "Not all variables are assigned";
   }
@@ -907,6 +936,10 @@ const submitError = computed((): string | null => {
   }
   return null;
 });
+
+const submitError = computed(
+  (): string | null => mixedSourceDtypeError.value ?? assignmentError.value,
+);
 
 const isRGBAssignmentValid = computed(() => {
   if (isMultiBandRGBFile.value && splitRGBBands.value) {
@@ -1230,33 +1263,6 @@ function getValueFromAssignments(
   }
 }
 
-function getCompositingValueFromAssignments(
-  dim: TDimensions,
-  itemIdx: number,
-  frameIdx: number,
-): number {
-  const assignmentValue = assignments[dim]?.value;
-  if (!assignmentValue) {
-    return 0;
-  }
-  switch (assignmentValue.source) {
-    case Sources.File: {
-      const fileData = assignmentValue.data as IFileSourceData;
-      return fileData[itemIdx]
-        ? Math.floor(frameIdx / fileData[itemIdx].stride) %
-            fileData[itemIdx].range
-        : 0;
-    }
-    case Sources.Filename: {
-      const filenameData = assignmentValue.data as IFilenameSourceData;
-      const filename = girderItems.value[itemIdx].name;
-      return filenameData.valueIdxPerFilename[filename];
-    }
-    case Sources.Images:
-      return frameIdx;
-  }
-}
-
 function extractDimensionLabels(dim: TUpDim): string[] | null {
   const assignment = assignments[dim]?.value;
   if (!assignment) return null;
@@ -1546,6 +1552,12 @@ async function submit() {
 }
 
 async function generateJson(): Promise<string | null> {
+  if (mixedSourceDtypeError.value) {
+    generationErrorMessage.value = mixedSourceDtypeError.value;
+    emit("generationError", generationErrorMessage.value);
+    return null;
+  }
+
   let channels: string[] | null = null;
   const channelAssignment = assignments.C?.value;
   if (channelAssignment) {
@@ -1633,10 +1645,10 @@ async function generateJson(): Promise<string | null> {
         for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
           compositingSources.push({
             path: item.name,
-            xySet: getCompositingValueFromAssignments("XY", itemIdx, frameIdx),
-            zSet: getCompositingValueFromAssignments("Z", itemIdx, frameIdx),
-            tSet: getCompositingValueFromAssignments("T", itemIdx, frameIdx),
-            cSet: getCompositingValueFromAssignments("C", itemIdx, frameIdx),
+            xySet: getValueFromAssignments("XY", itemIdx, frameIdx),
+            zSet: getValueFromAssignments("Z", itemIdx, frameIdx),
+            tSet: getValueFromAssignments("T", itemIdx, frameIdx),
+            cSet: getValueFromAssignments("C", itemIdx, frameIdx),
             frames: [frameIdx],
           });
         }
@@ -2062,7 +2074,6 @@ defineExpose({
   isAssignmentImmutableForDimension,
   submitEnabled,
   getValueFromAssignments,
-  getCompositingValueFromAssignments,
   submit,
   generateJson,
   extractDimensionLabels,

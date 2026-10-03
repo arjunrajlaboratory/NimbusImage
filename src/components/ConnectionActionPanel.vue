@@ -153,4 +153,23 @@ defineExpose({ selectedCount, deleteSelected, onKeydown });
 .any-left-palette-open .connection-action-panel {
   transform: translateX(calc(var(--nimbus-left-palette-clear-x) - 16px));
 }
+
+/* The twin of AnnotationActionPanel's rule — the Timelapse palette occupies the
+   spot both panels slide to. `.stacked` still applies on top of this, so the two
+   keep stacking vertically in their new corner rather than overlapping. See that
+   component for why the offset is one resolved variable rather than a class per
+   right-edge overlay. */
+.timelapse-palette-open .connection-action-panel {
+  left: auto;
+  right: var(--nimbus-right-edge-clear-x);
+  transform: none;
+  top: var(--nimbus-action-panel-top, 72px);
+}
+
+/* `.stacked` follows the object panel wherever it went. Ordered after the rule
+   above so it wins, and after the plain `.stacked` rule further up whose fixed
+   304px assumes the un-shifted 72px top. */
+.timelapse-palette-open .connection-action-panel.stacked {
+  top: var(--nimbus-stacked-action-panel-top, 304px);
+}
 </style>

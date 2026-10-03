@@ -12,10 +12,12 @@ vi.mock("@/store", () => ({
 }));
 
 vi.mock("@/store/ZenodoAPI", () => ({
-  default: vi.fn().mockImplementation(() => ({
-    getCommunity: mockGetCommunity,
-    getCommunityRecords: mockGetCommunityRecords,
-  })),
+  default: vi.fn(function () {
+    return {
+      getCommunity: mockGetCommunity,
+      getCommunityRecords: mockGetCommunityRecords,
+    };
+  }),
 }));
 
 vi.mock("@/utils/log", () => ({

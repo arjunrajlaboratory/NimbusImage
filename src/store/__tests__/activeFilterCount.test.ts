@@ -38,6 +38,7 @@ vi.mock("geojs", () => ({
 }));
 
 import filters from "@/store/filters";
+import { MAX_ANALYSIS_PLOTS } from "@/store/constants";
 import { PropertyFilterMode } from "@/store/model";
 
 function addAreaFilter(enabled: boolean) {
@@ -154,5 +155,96 @@ describe("filters.activeFilterCount", () => {
     filters.addSelectionAsFilter();
     filters.resetFilterState();
     expect(filters.activeFilterCount).toBe(0);
+  });
+});
+
+// Each badge counts what its own panel shows. Analysis gates used to add to
+// this count, which meant a lone gate rendered "Filters: 1" on a button whose
+// panel then showed nothing — the count pointed at a filter the user could not
+// find. Gates are surfaced by the Analysis badge (activeAnalysisGateCount).
+describe("filters.activeFilterCount excludes analysis gates", () => {
+  beforeEach(() => {
+    filters.resetFilterState();
+    filters.setOnlyCurrentFrame(false);
+    mainMock.showAnnotationsFromHiddenLayers = true;
+  });
+
+  it("stays 0 for a resolved, enabled gate", () => {
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: {
+        categoryKeyVersion: 1,
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+        ],
+        xCategories: null,
+        yCategories: null,
+      },
+    });
+    filters.setAnalysisGateIds({ p1: ["a"] });
+    expect(filters.activeAnalysisGateCount).toBe(1);
+    expect(filters.activeFilterCount).toBe(0);
+  });
+
+  it("counts only the panel's own filters alongside a gate", () => {
+    filters.addAnalysisPlot("p1");
+    filters.setAnalysisPlotGate({
+      id: "p1",
+      gate: {
+        categoryKeyVersion: 1,
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+        ],
+        xCategories: null,
+        yCategories: null,
+      },
+    });
+    filters.setAnalysisGateIds({ p1: ["a"] });
+    filters.setTagFilter({
+      id: "tagFilter",
+      exclusive: false,
+      enabled: true,
+      tags: ["nucleus"],
+    });
+    addAreaFilter(true);
+    // Two rows in the Filters panel, one gate in the Analysis panel.
+    expect(filters.activeFilterCount).toBe(2);
+    expect(filters.activeAnalysisGateCount).toBe(1);
+  });
+});
+
+// Codex round 2: the backend caps a gate-resolution request at
+// MAX_ANALYSIS_PLOTS. Without a matching client limit, a 21st plot made
+// every request 400, fetchAnalysisGateIds returned null, and — because the
+// changed-input path clears resolved ids before awaiting — every gate
+// stopped filtering with no way to recover. The cap belongs where plots are
+// created, so the situation cannot arise.
+describe("filters plot count is capped", () => {
+  beforeEach(() => {
+    filters.resetFilterState();
+  });
+
+  it("stops adding plots at MAX_ANALYSIS_PLOTS", () => {
+    for (let i = 0; i < MAX_ANALYSIS_PLOTS + 5; i++) {
+      filters.addAnalysisPlot(`p${i}`);
+    }
+    expect(filters.analysisPlots).toHaveLength(MAX_ANALYSIS_PLOTS);
+    expect(filters.canAddAnalysisPlot).toBe(false);
+  });
+
+  it("allows adding again after one is removed", () => {
+    for (let i = 0; i < MAX_ANALYSIS_PLOTS; i++) {
+      filters.addAnalysisPlot(`p${i}`);
+    }
+    expect(filters.canAddAnalysisPlot).toBe(false);
+    filters.removeAnalysisPlot("p0");
+    expect(filters.canAddAnalysisPlot).toBe(true);
+    filters.addAnalysisPlot("fresh");
+    expect(filters.analysisPlots.map((p) => p.id)).toContain("fresh");
   });
 });

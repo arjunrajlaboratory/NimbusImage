@@ -7,6 +7,21 @@
   >
     <span class="render-coverage__label">
       {{ coverage.shownLabel }}
+      <!-- Both counts above are computed AFTER filters and analysis gates, so
+           a restored gate can make the HUD read "826 of 826" in a viewport
+           that visibly holds thousands. The suffix says narrowing is active,
+           its tooltip says which, and clicking it opens the panel that owns
+           it — the palette badges are too far from the count being read. -->
+      <button
+        v-if="coverage.constraintLabel"
+        type="button"
+        class="render-coverage__constraints"
+        :title="constraintTooltip"
+        :aria-label="constraintTooltip"
+        @click="openConstraintPanels"
+      >
+        {{ coverage.constraintLabel }}
+      </button>
     </span>
     <div class="render-coverage__track">
       <div
@@ -14,7 +29,14 @@
         :style="{ width: `${(coverage.fraction * 100).toFixed(1)}%` }"
       />
     </div>
-    <span class="render-coverage__suffix">{{ coverage.totalLabel }}</span>
+    <!-- One interpolation (not sibling nodes) so the space between the total
+         and the passing count cannot be dropped by template whitespace
+         handling. -->
+    <span class="render-coverage__suffix">{{
+      coverage.passingLabel
+        ? `${coverage.totalLabel} ${coverage.passingLabel}`
+        : coverage.totalLabel
+    }}</span>
 
     <v-menu :close-on-content-click="false" location="bottom end" offset="6">
       <template #activator="{ props: menuProps }">
@@ -42,7 +64,13 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import store from "@/store";
 import annotationStore from "@/store/annotation";
+import connectionListStore from "@/store/connectionList";
+import filterStore from "@/store/filters";
+import propertyStore from "@/store/properties";
+import { TRequestablePalette } from "@/store/model";
+import { summarizeActiveConstraints } from "@/utils/activeConstraints";
 import { computeRenderCoverage } from "@/utils/renderCoverage";
 import VisibilitySettings from "@/components/VisibilitySettings.vue";
 
@@ -64,14 +92,87 @@ const stubMode = computed(
       annotationStore.visibilityConfig.stubThreshold,
 );
 
+// Filters AND analysis gates, from the one list the app-bar badges count too
+// (utils/activeConstraints.ts), so the three surfaces cannot disagree.
+const constraints = computed(() => filterStore.activeConstraints);
+
 const coverage = computed(() =>
   computeRenderCoverage({
     stubMode: stubMode.value,
     viewportShown: annotationStore.viewportRenderedCount,
     viewportTotal: annotationStore.viewportAnnotationCount,
     loaded: annotationStore.annotationStubs.size,
+    constraintCount: constraints.value.length,
+    // The lens-aware count, NOT filteredAnnotations.length: the track-object
+    // opt-in hides whole tracks after the ordinary filters run, and the raw
+    // length would claim they all "pass filters" while they are hidden. A
+    // plain cached length read while the lens is off.
+    passingCount: connectionListStore.displayedPassingCount,
   }),
 );
+
+// The palettes that hold a constraint's controls.
+type TConstraintPalette = Extract<
+  TRequestablePalette,
+  "analysisPanel" | "filtersPanel" | "annotationPanel"
+>;
+
+// Which palettes own the active constraints, Analysis first: it is a primary
+// palette, and Filters is a companion that hosts alongside it — opening them
+// the other way round would close the one just opened.
+const constraintPalettes = computed<TConstraintPalette[]>(() => {
+  const palettes: TConstraintPalette[] = [];
+  if (
+    constraints.value.some((constraint) => constraint.source === "analysis")
+  ) {
+    palettes.push("analysisPanel");
+  }
+  // The track filter lives in the Object Browser's Connections tab — but the
+  // Object Browser and Analysis are mutually-evicting right-zone primaries
+  // (see PANELS in @/utils/panelRegistry), so requesting both would open Analysis and then
+  // immediately evict it. When both constraint sources are active, Analysis
+  // wins the click; the tooltip derives from this list, so it names only what
+  // actually opens. (PR #1340 Codex P2.)
+  else if (
+    constraints.value.some((constraint) => constraint.source === "connections")
+  ) {
+    palettes.push("annotationPanel");
+  }
+  if (constraints.value.some((constraint) => constraint.source === "filters")) {
+    palettes.push("filtersPanel");
+  }
+  return palettes;
+});
+
+const PALETTE_NAMES: Record<TConstraintPalette, string> = {
+  analysisPanel: "Analysis",
+  filtersPanel: "Filters",
+  annotationPanel: "the Object Browser",
+};
+
+const constraintTooltip = computed(() => {
+  const summary = summarizeActiveConstraints(constraints.value, (path) =>
+    propertyStore.getFullNameFromPath(path),
+  );
+  const names = constraintPalettes.value.map((id) => PALETTE_NAMES[id]);
+  return `Objects are narrowed by ${summary}. Click to open ${names.join(" and ")}.`;
+});
+
+function openConstraintPanels() {
+  const palettes = constraintPalettes.value;
+  // The track constraint's controls live in the Connections tab, and the
+  // Object Browser reopens on whatever tab it last showed — so open it
+  // through the open-on-a-tab mechanism ("Show tracks" uses the same one).
+  // It opens the palette itself, so it is removed from the plain request
+  // rather than double-opened.
+  if (palettes.includes("annotationPanel")) {
+    store.openAnnotationBrowserTab("connections");
+  }
+  const requested = palettes.filter((id) => id !== "annotationPanel");
+  if (requested.length > 0) {
+    store.requestPaletteOpen(requested);
+  }
+}
 </script>
 
 <style lang="scss" scoped>
@@ -100,6 +201,31 @@ const coverage = computed(() =>
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
+}
+
+.render-coverage__constraints {
+  // A real <button> (it is clickable and focusable), stripped back to text so
+  // it reads as part of the sentence rather than as a form control.
+  background: none;
+  border: 0;
+  padding: 0;
+  // Explicit, so the gap does not depend on how the template's whitespace
+  // survives compilation.
+  margin-left: 4px;
+  // Warning-tinted and underlined: the reason the counts are smaller than the
+  // eye expects, sitting on the line the user is actually reading.
+  color: rgb(var(--v-theme-warning));
+  font: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  // Re-enable clicks on just this button (the container is click-through).
+  pointer-events: auto;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline solid;
+  }
 }
 
 .render-coverage__suffix {

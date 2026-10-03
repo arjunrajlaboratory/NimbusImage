@@ -8,6 +8,9 @@ vi.mock("@/store", () => ({
     userName: "testuser",
     girderRest: { apiRoot: "http://localhost:8080/api/v1" },
     logout: vi.fn().mockResolvedValue(undefined),
+    userStorageInfo: { used: 10 * 1024 ** 3, quota: null },
+    storageUsagePercentage: null,
+    storageSeverity: "ok",
   },
   girderUrlFromApiRoot: (apiRoot: string) => apiRoot.replace("/api/v1", ""),
 }));
@@ -36,6 +39,12 @@ describe("UserProfileSettings", () => {
   it("displays Girder domain", () => {
     const wrapper = mountComponent();
     expect(wrapper.text()).toContain("http://localhost:8080");
+  });
+
+  it("renders the storage usage section", () => {
+    const wrapper = mountComponent();
+    expect(wrapper.text()).toContain("10.00 GB");
+    expect(wrapper.text()).toContain("used (no storage limit)");
   });
 
   it("calls logout and navigates on logout button click", async () => {

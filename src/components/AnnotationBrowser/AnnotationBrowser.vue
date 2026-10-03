@@ -7,6 +7,10 @@
           {{ objectCount.toLocaleString() }}
         </v-chip>
       </v-tab>
+      <v-tab value="measurements">
+        <v-icon size="16" start>mdi-ruler-square</v-icon>
+        Measurements
+      </v-tab>
       <v-tab value="connections">
         Connections
         <v-chip v-if="connectionCount > 0" size="x-small" class="ml-2">
@@ -19,6 +23,12 @@
     <v-window v-model="activeTab" class="browser-window">
       <v-window-item value="objects" class="browser-window-item">
         <annotation-list @clickedTag="clickedTag" />
+      </v-window-item>
+      <v-window-item value="measurements" class="browser-window-item">
+        <!-- is-active gates rendering: once opened the item stays mounted
+             (hidden, not unmounted), and a hidden tab must not re-render on
+             every annotation/property change. -->
+        <measurements-tab :is-active="activeTab === 'measurements'" />
       </v-window-item>
       <v-window-item value="connections" class="browser-window-item">
         <!-- is-active drives the reveal-on-show retry: this component mounts
@@ -35,13 +45,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import AnnotationList from "@/components/AnnotationBrowser/AnnotationList.vue";
 import ConnectionList from "@/components/AnnotationBrowser/ConnectionList.vue";
+import MeasurementsTab from "@/components/AnnotationBrowser/MeasurementsTab.vue";
+import store from "@/store";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
+import { TAnnotationBrowserTab } from "@/store/model";
 
-const activeTab = ref("objects");
+// In the store rather than a local ref so other panels can route here — the
+// Timelapse panel's "Show tracks" opens the browser AND picks this tab.
+const activeTab = computed({
+  get: () => store.annotationBrowserTab,
+  set: (value: TAnnotationBrowserTab) => store.setAnnotationBrowserTab(value),
+});
 
 // Both badges are dataset-wide totals, not the scoped/filtered counts shown
 // inside each tab — they answer "does this dataset have any?" at a glance.

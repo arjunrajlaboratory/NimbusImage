@@ -151,6 +151,8 @@ describe("annotation browser config persistence", () => {
         displayedPropertyPaths: [],
         filterPaths: [],
         propertyFilters: [],
+        analysisPlots: [],
+        trackLabelPath: [],
       });
     });
 
@@ -210,6 +212,8 @@ describe("annotation browser config persistence", () => {
         [["prop-a"]],
         [["prop-a"]],
         [makeFilter("prop-a"), { ...makeFilter("prop-b"), enabled: false }],
+        [],
+        [],
       );
       expect(built.displayedPropertyPaths).toEqual([["prop-a"]]);
       expect(built.filterPaths).toEqual([["prop-a"]]);
@@ -219,11 +223,199 @@ describe("annotation browser config persistence", () => {
     it("returns copies rather than the input arrays", () => {
       const displayed = [["prop-a"]];
       const filterPaths = [["prop-a"]];
-      const built = buildAnnotationBrowserConfig(displayed, filterPaths, [
-        makeFilter("prop-a"),
-      ]);
+      const trackLabelPath = ["prop-a", "trackId"];
+      const built = buildAnnotationBrowserConfig(
+        displayed,
+        filterPaths,
+        [makeFilter("prop-a")],
+        [],
+        trackLabelPath,
+      );
       expect(built.displayedPropertyPaths).not.toBe(displayed);
       expect(built.filterPaths).not.toBe(filterPaths);
+      expect(built.trackLabelPath).not.toBe(trackLabelPath);
+    });
+  });
+
+  describe("track label path", () => {
+    it("survives a build/resolve round trip", () => {
+      const built = buildAnnotationBrowserConfig(
+        [],
+        [],
+        [],
+        [],
+        ["prop-a", "trackId"],
+      );
+      expect(
+        resolveAnnotationBrowserConfig(built, ["prop-a"]).trackLabelPath,
+      ).toEqual(["prop-a", "trackId"]);
+    });
+
+    it("drops a path whose property left the configuration", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        { trackLabelPath: ["gone", "trackId"] },
+        ["prop-a"],
+      );
+      // Falls back to the default short-id labels rather than persisting a
+      // selection that can never resolve a value.
+      expect(resolved.trackLabelPath).toEqual([]);
+    });
+
+    it("tolerates malformed persisted data", () => {
+      expect(
+        resolveAnnotationBrowserConfig(
+          { trackLabelPath: "garbage" as unknown as string[] },
+          ["prop-a"],
+        ).trackLabelPath,
+      ).toEqual([]);
+      expect(
+        resolveAnnotationBrowserConfig(
+          { trackLabelPath: [42] as unknown as string[] },
+          ["prop-a"],
+        ).trackLabelPath,
+      ).toEqual([]);
+    });
+  });
+
+  describe("analysis plots", () => {
+    const GATE = {
+      categoryKeyVersion: 1 as const,
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+      ],
+      xCategories: null,
+      yCategories: ["v1:[]"],
+    };
+    const plot = (overrides: any = {}) => ({
+      id: "p1",
+      xAxis: { type: "property", path: ["prop-a", "Area"] },
+      yAxis: { type: "categorical", key: "tags" },
+      gate: GATE,
+      gateEnabled: true,
+      ...overrides,
+    });
+
+    it("persists the gate polygon and survives a round trip", () => {
+      const built = buildAnnotationBrowserConfig(
+        [],
+        [],
+        [],
+        [plot() as any],
+        [],
+      );
+      expect(
+        resolveAnnotationBrowserConfig(built, ["prop-a"]).analysisPlots,
+      ).toEqual([plot()]);
+    });
+
+    it("never persists resolved annotation ids", () => {
+      // The whole reason gates are polygons: ids belong to one dataset, while a
+      // configuration is shared by every dataset that uses it.
+      const built = buildAnnotationBrowserConfig(
+        [],
+        [],
+        [],
+        [plot({ gateAnnotationIds: ["a", "b"] }) as any],
+        [],
+      );
+      expect(JSON.stringify(built)).not.toContain("gateAnnotationIds");
+    });
+
+    it("drops a plot's axis when its property left the configuration", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        { analysisPlots: [plot() as any] },
+        ["other-prop"],
+      );
+      // Axis gone, and the gate with it: the polygon's coordinates are only
+      // meaningful against the axes it was drawn on.
+      expect(resolved.analysisPlots![0].xAxis).toBeNull();
+      expect(resolved.analysisPlots![0].gate).toBeNull();
+    });
+
+    it("drops an unknown categorical key rather than trusting it", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        {
+          analysisPlots: [
+            plot({ yAxis: { type: "categorical", key: "nope" } }) as any,
+          ],
+        },
+        ["prop-a"],
+      );
+      expect(resolved.analysisPlots![0].yAxis).toBeNull();
+      expect(resolved.analysisPlots![0].gate).toBeNull();
+    });
+
+    it("drops an unversioned legacy label even when it looks encoded", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        {
+          analysisPlots: [
+            plot({
+              gate: {
+                ...GATE,
+                categoryKeyVersion: undefined,
+                yCategories: ['v1:["A"]'],
+              },
+            }) as any,
+          ],
+        },
+        ["prop-a"],
+      );
+
+      expect(resolved.analysisPlots![0].gate).toBeNull();
+    });
+
+    it("upgrades a legacy property-only gate to the current key version", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        {
+          analysisPlots: [
+            plot({
+              yAxis: { type: "property", path: ["prop-a", "Mean"] },
+              gate: {
+                ...GATE,
+                categoryKeyVersion: undefined,
+                xCategories: null,
+                yCategories: null,
+              },
+            }) as any,
+          ],
+        },
+        ["prop-a"],
+      );
+
+      expect(resolved.analysisPlots![0].gate?.categoryKeyVersion).toBe(1);
+    });
+
+    it("drops malformed gates and plots", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        {
+          analysisPlots: [
+            plot({ gate: { vertices: [{ x: 0, y: 0 }] } }) as any, // < 3 vertices
+            plot({ id: "p2", gate: { vertices: [{ x: 0 }, {}, {}] } }) as any,
+            plot({ id: "" }) as any, // no usable id
+            "not an object" as any,
+          ],
+        },
+        ["prop-a"],
+      );
+      expect(resolved.analysisPlots!.map((p) => p.id)).toEqual(["p1", "p2"]);
+      expect(resolved.analysisPlots!.every((p) => p.gate === null)).toBe(true);
+    });
+
+    it("defaults a missing gateEnabled to true", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        { analysisPlots: [plot({ gateEnabled: undefined }) as any] },
+        ["prop-a"],
+      );
+      expect(resolved.analysisPlots![0].gateEnabled).toBe(true);
+    });
+
+    it("tolerates a configuration saved before analysis plots existed", () => {
+      expect(
+        resolveAnnotationBrowserConfig({ filterPaths: [] }, ["prop-a"])
+          .analysisPlots,
+      ).toEqual([]);
     });
   });
 
