@@ -86,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import { debounce } from "lodash";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
@@ -191,6 +191,9 @@ const toolValuesChanged = debounce(toolValuesChangedImpl, 1000, {
   leading: false,
   trailing: true,
 });
+// Save a pending edit now rather than from a dead instance: pinning or
+// unpinning the selected SAM tool remounts this menu in another section.
+onBeforeUnmount(() => toolValuesChanged.flush());
 
 watch(turboMode, () => {
   turboModeChanged();

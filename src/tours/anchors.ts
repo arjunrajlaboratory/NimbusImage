@@ -12,6 +12,7 @@ export const TOUR_ANCHORS = {
   settingsButton: "settings-button",
   analyzeButton: "analyze-button",
   helpButton: "help-button",
+  commandPaletteButton: "command-palette-button",
   // ToolCreation.vue
   toolName: "tool-name",
   toolCreationAddToolButton: "tool-creation-add-tool-button",

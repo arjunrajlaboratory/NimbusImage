@@ -75,7 +75,7 @@ def check_worker_role(
             accessor to use.
     """
     try:
-        workers = gc.get("/worker_interface/available")
+        workers = gc.get("worker_interface/available")
     except girder_client.HttpError:
         return
     if not isinstance(workers, dict):

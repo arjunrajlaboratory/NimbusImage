@@ -158,7 +158,7 @@ class WorkerContext:
         """Register worker interface metadata for a Docker image."""
         encoded_image = urllib.parse.quote(image, safe="")
         self._gc.post(
-            f"/worker_interface?image={encoded_image}",
+            f"worker_interface?image={encoded_image}",
             json=interface,
         )
 

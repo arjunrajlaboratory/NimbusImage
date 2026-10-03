@@ -21,7 +21,13 @@ from upenncontrast_annotation.server.helpers.annotationRaster import (
     _buildFrameGeometry,
     frameGeometryCache,
 )
+from upenncontrast_annotation.server.helpers.colormaps import (
+    categoricalColor,
+)
 from upenncontrast_annotation.server.models.annotation import Annotation
+from upenncontrast_annotation.server.models.propertyValues import (
+    AnnotationPropertyValues,
+)
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -670,6 +676,91 @@ class TestAnnotationRaster:
             str(document["_id"]) for document in batch
         ])
         assert requestTile(server, folder).headers["ETag"] != batchEtag
+
+    def testColorByPropertyInvalidatesEtagAndRepaints(self, admin, server):
+        # The color-by-property paths write colors with bulk_write/update
+        # instead of save()/saveMany(), so they get no raster-version bump for
+        # free — without an explicit one this tile keeps 304-ing the
+        # pre-recolor image (and its cached geometry keeps the old colors)
+        # until the 120s TTL rotation.
+        folder = utilities.createFolder(
+            admin, "raster_color_by_property", upenn_utilities.datasetMetadata
+        )
+        Folder().setPublic(folder, True, save=True)
+        annotation = createAnnotation(
+            folder["_id"], [{"x": 30, "y": 30}], shape="point"
+        )
+        AnnotationPropertyValues().appendValues(
+            {"propA": "cluster"}, annotation["_id"], folder["_id"]
+        )
+
+        etag = requestTile(server, folder).headers["ETag"]
+        Annotation().colorByProperty(
+            folder["_id"], ["propA"], mode="categorical"
+        )
+        colored = requestTile(server, folder)
+        coloredEtag = colored.headers["ETag"]
+        assert coloredEtag != etag
+        # The one category takes the leading palette color, and the raster must
+        # be drawing that color rather than a cached pre-recolor tile.
+        expected = categoricalColor(0)
+        assert responseImage(colored).getpixel((30, 30)) == (
+            int(expected[1:3], 16),
+            int(expected[3:5], 16),
+            int(expected[5:7], 16),
+            255,
+        )
+
+        # Clearing is the symmetric path (the "Remove coloring" flow) and it
+        # skips _writeColors entirely.
+        Annotation().clearColors(folder["_id"])
+        cleared = requestTile(server, folder)
+        assert cleared.headers["ETag"] != coloredEtag
+        # A null color falls back to the request's fallback fill, so the
+        # property color is really gone rather than merely re-fetched.
+        assert responseImage(cleared).getpixel((30, 30)) == (
+            0xFF, 0xD7, 0x00, 255
+        )
+
+    def testFailedColorWritesStillInvalidateRaster(
+        self, admin, server, monkeypatch
+    ):
+        # Unordered bulk writes can raise after applying only some
+        # operations, and a clear's update_many can fail partway too. The
+        # frontend already treats a non-400 failure as "colors may have
+        # changed" and refetches; the server cache must reach the same
+        # conclusion, or it keeps serving the pre-failure image (geometry
+        # cache + 304s) until the 120s TTL rotation.
+        folder = utilities.createFolder(
+            admin, "raster_color_failure", upenn_utilities.datasetMetadata
+        )
+        Folder().setPublic(folder, True, save=True)
+        annotation = createAnnotation(
+            folder["_id"], [{"x": 30, "y": 30}], shape="point"
+        )
+        AnnotationPropertyValues().appendValues(
+            {"propA": 1}, annotation["_id"], folder["_id"]
+        )
+        model = Annotation()
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("simulated mid-write failure")
+
+        etag = requestTile(server, folder).headers["ETag"]
+        monkeypatch.setattr(model, "_applyColorOperations", explode)
+        with pytest.raises(RuntimeError):
+            model.colorByProperty(folder["_id"], ["propA"])
+        monkeypatch.undo()
+        failedAssignEtag = requestTile(server, folder).headers["ETag"]
+        assert failedAssignEtag != etag
+
+        monkeypatch.setattr(model, "update", explode)
+        with pytest.raises(RuntimeError):
+            model.clearColors(folder["_id"])
+        monkeypatch.undo()
+        assert (
+            requestTile(server, folder).headers["ETag"] != failedAssignEtag
+        )
 
     def testBulkMoveInvalidatesSourceAndDestinationRasters(
         self, admin, server

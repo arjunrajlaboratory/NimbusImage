@@ -152,6 +152,7 @@ describe("annotation browser config persistence", () => {
         filterPaths: [],
         propertyFilters: [],
         analysisPlots: [],
+        trackLabelPath: [],
       });
     });
 
@@ -212,6 +213,7 @@ describe("annotation browser config persistence", () => {
         [["prop-a"]],
         [makeFilter("prop-a"), { ...makeFilter("prop-b"), enabled: false }],
         [],
+        [],
       );
       expect(built.displayedPropertyPaths).toEqual([["prop-a"]]);
       expect(built.filterPaths).toEqual([["prop-a"]]);
@@ -221,14 +223,57 @@ describe("annotation browser config persistence", () => {
     it("returns copies rather than the input arrays", () => {
       const displayed = [["prop-a"]];
       const filterPaths = [["prop-a"]];
+      const trackLabelPath = ["prop-a", "trackId"];
       const built = buildAnnotationBrowserConfig(
         displayed,
         filterPaths,
         [makeFilter("prop-a")],
         [],
+        trackLabelPath,
       );
       expect(built.displayedPropertyPaths).not.toBe(displayed);
       expect(built.filterPaths).not.toBe(filterPaths);
+      expect(built.trackLabelPath).not.toBe(trackLabelPath);
+    });
+  });
+
+  describe("track label path", () => {
+    it("survives a build/resolve round trip", () => {
+      const built = buildAnnotationBrowserConfig(
+        [],
+        [],
+        [],
+        [],
+        ["prop-a", "trackId"],
+      );
+      expect(
+        resolveAnnotationBrowserConfig(built, ["prop-a"]).trackLabelPath,
+      ).toEqual(["prop-a", "trackId"]);
+    });
+
+    it("drops a path whose property left the configuration", () => {
+      const resolved = resolveAnnotationBrowserConfig(
+        { trackLabelPath: ["gone", "trackId"] },
+        ["prop-a"],
+      );
+      // Falls back to the default short-id labels rather than persisting a
+      // selection that can never resolve a value.
+      expect(resolved.trackLabelPath).toEqual([]);
+    });
+
+    it("tolerates malformed persisted data", () => {
+      expect(
+        resolveAnnotationBrowserConfig(
+          { trackLabelPath: "garbage" as unknown as string[] },
+          ["prop-a"],
+        ).trackLabelPath,
+      ).toEqual([]);
+      expect(
+        resolveAnnotationBrowserConfig(
+          { trackLabelPath: [42] as unknown as string[] },
+          ["prop-a"],
+        ).trackLabelPath,
+      ).toEqual([]);
     });
   });
 
@@ -253,7 +298,13 @@ describe("annotation browser config persistence", () => {
     });
 
     it("persists the gate polygon and survives a round trip", () => {
-      const built = buildAnnotationBrowserConfig([], [], [], [plot() as any]);
+      const built = buildAnnotationBrowserConfig(
+        [],
+        [],
+        [],
+        [plot() as any],
+        [],
+      );
       expect(
         resolveAnnotationBrowserConfig(built, ["prop-a"]).analysisPlots,
       ).toEqual([plot()]);
@@ -267,6 +318,7 @@ describe("annotation browser config persistence", () => {
         [],
         [],
         [plot({ gateAnnotationIds: ["a", "b"] }) as any],
+        [],
       );
       expect(JSON.stringify(built)).not.toContain("gateAnnotationIds");
     });

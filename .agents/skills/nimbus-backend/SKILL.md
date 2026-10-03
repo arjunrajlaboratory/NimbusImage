@@ -176,6 +176,15 @@ assign it in `__init__`:
 self._pvModel = AnnotationPropertyValues()  # cheap: cached singleton
 ```
 
+**Exception: anything evaluated once at import.** A decorator's
+`__init__`, a module-level global or a class attribute runs once, at
+import, and keeps that instance forever. In production that's harmless,
+but the test suite resets every singleton between tests, so the cached
+instance goes stale: `@recordable` used to hold the first test's
+`HistoryModel()` and only worked because of a quadratic setup leak (see
+`codebaseDocumentation/BACKEND_CI_PERFORMANCE.md`). In import-time code,
+call `Model()` at the point of use instead.
+
 ### Class Constants and Aggregation Readability
 
 - Put class-level constants (allowed-field sets, collection names,
@@ -394,6 +403,34 @@ The `girder` container bakes the plugin into its image (no source mount). After 
 - Required: `docker compose build girder && docker compose up -d girder` (fast — cached layers; girder is back in ~7s).
 - `tox` runs against plugin **source**, so tests pass even when the live `:8080` API is stale. Always rebuild before verifying endpoints with curl or the browser.
 
+## Measuring a Mongo write path: re-running the same write measures nothing
+
+WiredTiger largely no-ops a `$set` that writes the value a document already
+holds. So a benchmark loop that repeats the *same* operation measures real work
+on its first iteration and near-nothing afterwards — and a median over those
+runs is meaningless. This actively misled a real optimization: repeated
+identical colorings made the write path look **2.6s** when it is ~5s, which
+pointed the work at the read path while 80% of the request was writes.
+
+Two rules for any write-path measurement:
+
+- **Force a real change between runs.** Alternate between two different values
+  (two colormaps, two field values) so every document genuinely changes each
+  iteration, and report the spread rather than a median of no-ops.
+- **Instrument inside the request, not in a standalone script.** A separate
+  pymongo script misses everything the server does around the write — and, in
+  particular, misses *contention between phases*: a dataset-wide clear left
+  ~700K dirty pages that doubled the cost of the writes that followed it, which
+  no isolated per-phase timing revealed. Temporary `print(...)` in the model,
+  read back with `docker logs girder`, is enough (girder's `logprint` is not
+  importable from `girder` and its logger's INFO does not reach stdout).
+
+Also worth knowing before reaching for a clever pipeline: a server-side
+`$merge` that computes the new value and merges it into the target collection —
+no ids crossing the wire, no separate clearing pass — measured **12.6s against
+~4.5s** for a plain batched `bulk_write` of `UpdateMany` ops. Measure it before
+assuming "push it into the database" is faster.
+
 ## Logging
 
 ```python
@@ -480,6 +517,14 @@ The frontend subscribes to job SSE events via `src/store/jobs.ts`. Log entries c
 For detailed testing patterns beyond basics: read `references/testing-patterns.md`
 
 Testing basics (running tox, test structure, linting): see `CLAUDE.md`
+
+`test/conftest.py` has an autouse fixture that drops model singletons and
+event handlers left over from earlier tests before each test's `db`
+setup. Without it, setup re-indexes every model ever created and the
+suite slows quadratically (it had reached 75–98 minutes in CI). Don't
+remove it. A test that passes alone but fails in the full run with
+`Cannot use MongoClient after close` is using a stale model reference
+(a cached `Model()` or an event handler bound to an old instance).
 
 ## Codebase Documentation References
 

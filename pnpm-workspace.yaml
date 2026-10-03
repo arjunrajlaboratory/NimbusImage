@@ -8,7 +8,8 @@ overrides:
   # merge-key DoS and prototype pollution, all patched in the 3.x line at
   # 3.15.0. Two consumers are stuck on js-yaml 3: yaml-front-matter (^3.14.1)
   # and xmlbuilder2@3.0.2, which pins 3.14.0 exactly and so cannot float on
-  # its own. Scoped to the 3.x range so the direct js-yaml 4 dep is untouched.
+  # its own. Scoped to the 3.x range so js-yaml 4 build-tool consumers and
+  # the direct js-yaml 5 dependency retain their own APIs.
   #
   # This clears `pnpm audit`, but note what it does NOT reach: the copy that
   # actually ships to the browser is inlined inside vtk.js@29.4.2's prebuilt
@@ -51,9 +52,9 @@ overrides:
   "brace-expansion@2": "^2.1.2"
   "braces": "^3.0.3"
   "cross-spawn": "^7.0.5"
-  # GHSA-7p8r-x3mc-p8w7: URL parsing confusion. Reached via ajv@8, which
-  # floats on ^3.0.6 and so needs an override to move off the pinned 3.1.4.
-  "fast-uri": "^3.1.5"
+  # URI normalization security fixes, reached through ajv@8. Keep the
+  # patched 3.x floor when regenerating the lockfile.
+  "fast-uri": "^3.1.7"
   "flatted": "^3.4.2"
   "form-data": "^4.0.6"
   "immutable": "^5.1.8"

@@ -181,7 +181,7 @@ class TestAnnotationGet:
         ann = accessor.get("ann_001")
         assert isinstance(ann, Annotation)
         assert ann.id == "ann_001"
-        mock_gc.get.assert_called_with("/upenn_annotation/ann_001")
+        mock_gc.get.assert_called_with("upenn_annotation/ann_001")
 
 
 class TestAnnotationCount:
@@ -269,7 +269,7 @@ class TestAnnotationDelete:
     def test_delete_single(self, mock_gc):
         accessor = AnnotationAccessor(mock_gc, "ds_001")
         accessor.delete("ann_001")
-        mock_gc.delete.assert_called_with("/upenn_annotation/ann_001")
+        mock_gc.delete.assert_called_with("upenn_annotation/ann_001")
 
     def test_delete_many(self, mock_gc):
         accessor = AnnotationAccessor(mock_gc, "ds_001")

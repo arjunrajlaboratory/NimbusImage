@@ -335,7 +335,10 @@ the cap **nothing changes**.
   (`activeAnalysisGateCount`), which counts gates rather than ids and so
   works unchanged above the cap. Note that badge is on Analysis, not
   Filters: `activeFilterCount` deliberately excludes gates, because each
-  badge counts only what its own panel can display.
+  badge counts only what its own panel can display. (Since #1328 both counts
+  come from one shared list, and the render-coverage HUD prints their sum as
+  "(N filters applied)" beside the counts it explains — see
+  `ACTIVE_CONSTRAINT_CUES.md`.)
 
 ### What Phase 1 explicitly does not do
 

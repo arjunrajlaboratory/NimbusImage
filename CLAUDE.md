@@ -147,6 +147,7 @@ Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names
 | `/api/v1/annotation_property` | `server/api/property.py` | Property definitions |
 | `/api/v1/worker_interface` | `server/api/workerInterfaces.py` | Docker worker registration |
 | `/api/v1/worker_preview` | `server/api/workerPreviews.py` | Worker preview images |
+| `/api/v1/dataset` | `server/api/dataset.py` | Multi-source dataset configuration via API |
 | `/api/v1/dataset_view` | `server/api/datasetView.py` | Per-user view state |
 | `/api/v1/history` | `server/api/history.py` | Undo/redo history |
 | `/api/v1/user_assetstore` | `server/api/user_assetstore.py` | Per-user storage |
@@ -298,7 +299,7 @@ When a feature accumulates review findings, add a **Regression checklist** to it
 
 This exists because several fixes in that feature were undone by *later* fixes to adjacent code — the checklist is what makes "change this, re-check these" mechanical instead of remembered. Rules for it to stay useful:
 
-- **Every item names its test.** An invariant without a test is a wish; if the test doesn't exist, write it.
+- **Every item names its test.** An invariant without a test is a wish; if the test doesn't exist, write it. Cite it as an italic quoted name, `*"testName"*` (frontend `it(...)` text or a pytest function name): `src/__tests__/regressionChecklist.test.ts` finds every doc with a `## Regression checklist` heading, requires more than 4 such citations, and fails if any cited name no longer exists. It runs in the frontend suite, so run `pnpm test` even when a PR touches only docs or backend code.
 - **Include invariants with no visible behavior** — allocation and recompute costs regress silently and no one notices until a large dataset does.
 - **Add an item whenever a review finds something the checklist missed.** The checklist is the running answer to "what has broken here before".
 - Also record process rules the feature proved: verify from a fresh page load on a dataset that actually has the property under test, and use `git stash` rather than a `cp` round-trip when confirming a test fails without its fix.

@@ -240,13 +240,42 @@ Review base: `master` (`da7a9e4e`)
   worse than originally reported — keeps the REJECTED tile in its cache, so
   later draws reuse the failure instead of refetching. Vectors stay
   suppressed while the raster shows holes.
-- **Status:** fixed — the overview layer's `_getTile` factory (the seam GeoJS
-  documents for derived classes) is wrapped at creation so every tile's
-  promise interface reports failures; a failure schedules one bounded retry
-  (max 3 per applied template, 1 s delay matching the server's Retry-After)
-  that runs `layer.reset()` (the only way to purge a rejected cached tile) +
-  redraw + reload tracking. Retries are skipped for unmounted, hidden, or
-  retemplated layers; a new template restores the budget. Retry state lives
-  in WeakMaps outside the GeoJS object (R6 rule). Covered by _"retries
-  failed overview tiles with a bounded delayed reset"_ and _"does not retry
-  tiles for a hidden overview layer"_, verified to fail without the fix.
+- **Status:** fixed — the overview layer's cache-aware tile factory
+  (`_getTileCached`; see R19 for why the pre-cache `_getTile` seam is wrong)
+  is wrapped at creation so every tile's promise interface reports failures;
+  a failure schedules one bounded retry (max 3 per applied template, 1 s
+  delay matching the server's Retry-After) that runs `layer.reset()` (the
+  only way to purge a rejected cached tile) + redraw + reload tracking.
+  Retries are skipped for unmounted, hidden, or retemplated layers; a new
+  template restores the budget. Retry state lives in WeakMaps outside the
+  GeoJS object (R6 rule). Covered by _"retries failed overview tiles with a
+  bounded delayed reset"_ and _"does not retry tiles for a hidden overview
+  layer"_, verified to fail without the fix.
+
+## R19 — Tile failure hook rejected every tile at creation (live regression, 2026-08-26)
+
+- **Severity:** Critical (raster permanently blank; the R18 fix itself caused it)
+- **Location:** `src/components/ImageViewer.vue`
+  (`hookAnnotationOverviewTileErrors`)
+- **Summary:** The R18 fix wrapped `_getTile` and attached `tile.catch(...)`
+  there. In GeoJS, attaching any handler to a tile's promise interface
+  (`tile.catch` → `tile.then`) queues the tile's fetch, and the fetch
+  queue's `needed` predicate only accepts a tile that is already the cache's
+  entry for its hash (`tile === cache.get(hash)`). `_getTile` runs BEFORE
+  `cache.add` inside `_getTileCached`, so every tile was rejected on the
+  spot: zero network requests, each rejection scheduled a retry whose
+  reset+redraw died identically, and after the 3-retry budget the raster
+  went permanently silent (rejected tiles stay cached with `_queued=true`,
+  so later draws and toggles are no-ops). Proven live with instrumentation
+  (41 created / 41 needed-false / 41 rejected) and the counterfactual
+  (`needed = () => true` for one pass → 41 requests, all 200, raster loads).
+- **Status:** fixed — the hook wraps `_getTileCached` instead, which returns
+  only after the tile is in the cache, and hooks each tile exactly once
+  (cache hits return the same tile; a WeakSet guards re-attachment). Retry
+  semantics for genuine failures are unchanged. Covered by the ordering
+  assertion in _"retries failed overview tiles with a bounded delayed
+  reset"_ (the test's tile factory mimics GeoJS's create-then-cache order
+  and records cache membership at `catch`-attach time), verified to fail
+  without the fix. Lesson per `CLAUDE.md`: a review-round fix is a change
+  like any other — re-verify the feature in-browser from a fresh load after
+  the LAST fix, not only after the feature landed.

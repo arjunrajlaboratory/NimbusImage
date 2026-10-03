@@ -1,0 +1,236 @@
+{
+  "name": "two_nd2_merge",
+  "description": "Two ND2 files with per-item file dimensions that merge (file0 C2/Z3, file1 C2/Z5). Z size becomes max(3,5)=5, data keyed by item index. Plus one filename variable (a/b).",
+  "input": {
+    "itemNames": [
+      "exp_a.nd2",
+      "exp_b.nd2"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 1,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 1,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 2,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 2,
+            "IndexT": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "DAPI",
+          "GFP"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2,
+          "IndexZ": 3
+        },
+        "IndexStride": {
+          "IndexC": 1,
+          "IndexZ": 2
+        }
+      },
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexC": 0,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 0,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 1,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 1,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 2,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 2,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 3,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 3,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 0,
+            "IndexZ": 4,
+            "IndexT": 0,
+            "IndexXY": 0
+          },
+          {
+            "IndexC": 1,
+            "IndexZ": 4,
+            "IndexT": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "DAPI",
+          "GFP"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2,
+          "IndexZ": 5
+        },
+        "IndexStride": {
+          "IndexC": 1,
+          "IndexZ": 2
+        }
+      }
+    ],
+    "tilesInternalMetadata": [
+      {},
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [
+      {
+        "guess": "C",
+        "valueIdxPerFilename": {
+          "exp_a.nd2": 0,
+          "exp_b.nd2": 1
+        },
+        "values": [
+          "a",
+          "b"
+        ]
+      }
+    ],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": {
+        "source": "file",
+        "guess": "Z"
+      },
+      "T": null,
+      "C": {
+        "source": "file",
+        "guess": "C"
+      }
+    },
+    "transcodeDefault": false,
+    "config": {
+      "channels": [
+        "DAPI",
+        "GFP"
+      ],
+      "sources": [
+        {
+          "path": "exp_a.nd2",
+          "framesAsAxes": {
+            "z": 2,
+            "c": 1
+          },
+          "zValues": [
+            0
+          ],
+          "cValues": [
+            0
+          ]
+        },
+        {
+          "path": "exp_b.nd2",
+          "framesAsAxes": {
+            "z": 2,
+            "c": 1
+          },
+          "zValues": [
+            0
+          ],
+          "cValues": [
+            0
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": false
+    },
+    "dimensionLabels": {
+      "xy": null,
+      "z": [],
+      "t": null
+    }
+  }
+}

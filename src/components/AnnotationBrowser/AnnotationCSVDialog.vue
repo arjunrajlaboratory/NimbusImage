@@ -1,24 +1,5 @@
 <template>
-  <v-dialog v-model="dialog">
-    <template v-slot:activator="activatorBinding">
-      <slot name="activator" v-bind="activatorBinding">
-        <v-btn
-          variant="outlined"
-          color="primary"
-          size="small"
-          v-bind="{ ...activatorBinding.props, ...$attrs }"
-          v-description="{
-            section: 'Object list actions',
-            title: 'Export CSV',
-            description:
-              'Export the current list of annotations and associated properties to a CSV file',
-          }"
-        >
-          <v-icon>mdi-application-export</v-icon>
-          EXPORT CSV
-        </v-btn>
-      </slot>
-    </template>
+  <v-dialog v-model="dialog" @after-leave="emit('closed')">
     <v-card>
       <v-card-title> Current Annotation List as CSV </v-card-title>
       <v-card-subtitle>
@@ -277,7 +258,7 @@
               bulkExporting ? "Exporting datasets..." : "Preparing download..."
             }}
           </template>
-          <v-icon> mdi-save </v-icon>
+          <v-icon> mdi-content-save </v-icon>
           {{ downloadButtonText }}
         </v-btn>
       </v-card-actions>
@@ -339,11 +320,20 @@ const props = defineProps<{
   propertyPaths: string[][];
 }>();
 
+const emit = defineEmits<{
+  // Its leave transition has finished: the owner may now drop what it passed
+  // in (DataIOMenu stops reading the filtered list) without the closing card
+  // flashing empty counts.
+  (e: "closed"): void;
+}>();
+
 const fieldToCopy = ref<ComponentPublicInstance>();
 
 const filename = ref("");
 
-const dialog = ref(false);
+// Opened by its owner through `v-model:open` (DataIOMenu, from its menu or the
+// command palette); the dialog renders no activator of its own.
+const dialog = defineModel<boolean>("open", { default: false });
 const text = ref("");
 const displayText = ref("");
 

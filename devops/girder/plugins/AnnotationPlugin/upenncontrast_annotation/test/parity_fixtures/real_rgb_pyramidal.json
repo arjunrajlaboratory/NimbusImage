@@ -1,0 +1,140 @@
+{
+  "name": "real_rgb_pyramidal",
+  "description": "A real pyramidal RGB TIFF (6 TIFF pages, which large_image reports as levels rather than frames -- so three sources, not eighteen).",
+  "input": {
+    "itemNames": [
+      "tissue_hires_image (1).tiff"
+    ],
+    "tilesMetadata": [
+      {
+        "bandCount": 3,
+        "dtype": "uint8",
+        "levels": 6,
+        "magnification": null,
+        "mm_x": null,
+        "mm_y": null,
+        "sizeX": 6000,
+        "sizeY": 3335,
+        "tileHeight": 256,
+        "tileWidth": 256
+      }
+    ],
+    "tilesInternalMetadata": [
+      {
+        "populatedLevels": 6,
+        "tilesource": "tiff",
+        "xml": {
+          "large_image_converter": {
+            "arguments": {
+              "force": "true",
+              "inputName": "tissue_hires_image.png",
+              "quality": "90",
+              "tileSize": "256"
+            },
+            "associated": 0,
+            "conversion_epoch": 1744641286.3765934,
+            "frames": 1,
+            "levels": 6,
+            "version": "1.32.1.dev6+g30916655"
+          }
+        }
+      }
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": false,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "filenameVariables": [],
+    "defaultAssignments": {
+      "XY": null,
+      "Z": {
+        "source": "images",
+        "guess": "Z"
+      },
+      "T": null,
+      "C": null
+    },
+    "transcodeDefault": true,
+    "config": {
+      "channels": [
+        "Default - Red",
+        "Default - Green",
+        "Default - Blue"
+      ],
+      "sources": [
+        {
+          "path": "tissue_hires_image (1).tiff",
+          "style": {
+            "bands": [
+              {
+                "band": 1
+              }
+            ]
+          },
+          "c": 0,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "tissue_hires_image (1).tiff",
+          "style": {
+            "bands": [
+              {
+                "band": 2
+              }
+            ]
+          },
+          "c": 1,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        },
+        {
+          "path": "tissue_hires_image (1).tiff",
+          "style": {
+            "bands": [
+              {
+                "band": 3
+              }
+            ]
+          },
+          "c": 2,
+          "tValues": [
+            0
+          ],
+          "zValues": [
+            0
+          ],
+          "xyValues": [
+            0
+          ]
+        }
+      ],
+      "uniformSources": true,
+      "singleBand": true
+    },
+    "dimensionLabels": {
+      "xy": null,
+      "z": [
+        "1"
+      ],
+      "t": null
+    }
+  }
+}

@@ -211,6 +211,41 @@ job.log           # str: job log output
 
 Status codes: 0=inactive, 1=queued, 2=running, **3=success**, 4=error, 5=cancelled. Note: status 3 is SUCCESS, not "still running" — easy to confuse.
 
+## Rate limits (HTTP 429)
+
+The production server (app.nimbusimage.com) rate-limits worker submissions from this client, per
+session (each `ni.connect()` is a new session): **1 GPU-queue job and 10
+CPU-queue jobs per 60 s**. GPU workers start on demand and take minutes to spin
+up, so a tight loop of `compute()` calls would otherwise flood the queue. The
+browser front-end is not limited.
+
+Over the limit, `ds.annotations.compute()` / `ds.properties.compute()` raise
+`girder_client.HttpError` with `status == 429`, and the `Retry-After` header is
+the exact number of seconds until the next job is accepted. A request the
+server rejects for another reason (e.g. a 400 for bad parameters) does not
+count against the limit.
+
+```python
+import time
+from girder_client import HttpError
+
+def submit(fn, retries=5):
+    for _ in range(retries):
+        try:
+            return fn()
+        except HttpError as e:
+            if e.status != 429:
+                raise
+            time.sleep(int(e.response.headers.get("Retry-After", 60)))
+    raise RuntimeError("still rate-limited")
+
+job = submit(lambda: ds.annotations.compute(image=img, assignment=..., worker_interface=params))
+```
+
+Prefer **one job over a wide range** (`assignment={"XY": "0-99", ...}`) to many
+small jobs: it does the same work and counts as a single job. Do not open new
+sessions to get around the limit.
+
 ## Writing your own worker
 
 Workers are Docker containers that receive parameters and use the `nimbusimage` API to read/write data:

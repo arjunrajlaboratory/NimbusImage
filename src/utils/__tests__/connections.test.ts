@@ -12,8 +12,13 @@ import {
   buildConnectionRows,
   buildTrackRows,
   chainAnnotationsByTime,
+  computeTrackMetrics,
   findConnectedComponents,
+  TTrackLabelResolution,
+  findDuplicateTrackLabelValues,
   findTimeTies,
+  formatTrackLabelValue,
+  resolveTrackLabelValue,
   shortAnnotationId,
   trackColor,
   trackKey,
@@ -643,5 +648,240 @@ describe("findTimeTies", () => {
         makeAnnotation("e", 9),
       ]),
     ).toEqual([1, 4]);
+  });
+});
+
+describe("resolveTrackLabelValue", () => {
+  const values = (map: Record<string, number | string | null>) => {
+    return (id: string) => map[id] ?? null;
+  };
+
+  it("returns the shared value when every member agrees", () => {
+    expect(
+      resolveTrackLabelValue(["a", "b"], values({ a: 42, b: 42 })),
+    ).toEqual({ status: "value", value: 42 });
+  });
+
+  it("keeps the shared value but flags partial coverage", () => {
+    expect(
+      resolveTrackLabelValue(["a", "b"], values({ a: 42, b: null })),
+    ).toEqual({ status: "partial", value: 42 });
+  });
+
+  it("reports each differing value once", () => {
+    expect(
+      resolveTrackLabelValue(["a", "b", "c"], values({ a: 42, b: 43, c: 43 })),
+    ).toEqual({ status: "mixed", values: [42, 43] });
+  });
+
+  it("reports missing when no member has a value", () => {
+    expect(resolveTrackLabelValue(["a", "b"], () => null)).toEqual({
+      status: "missing",
+    });
+  });
+
+  // The picker offers per-annotation paths (e.g. the worker's annotationId),
+  // where every member of a large track is unique, and resolution repeats on
+  // every scoped-tracks rebuild (each pan). Collection must stay linear — a
+  // quadratic distinct-scan freezes the tab; the test's implicit 5s timeout
+  // is the cost regression guard (quadratic: minutes, linear: milliseconds).
+  it("resolves a large all-distinct track in linear time", () => {
+    const memberIds = Array.from({ length: 100_000 }, (_, i) => `m${i}`);
+    const result = resolveTrackLabelValue(memberIds, (id) => id);
+    expect(result.status).toBe("mixed");
+    expect(result.status === "mixed" && result.values.length).toBe(100_000);
+  });
+
+  // 0 is a legitimate track id (the parent_child worker starts at 0), so the
+  // resolution must never treat it as "no value".
+  it("does not confuse a value of 0 with a missing value", () => {
+    expect(resolveTrackLabelValue(["a", "b"], values({ a: 0, b: 0 }))).toEqual({
+      status: "value",
+      value: 0,
+    });
+  });
+});
+
+describe("findDuplicateTrackLabelValues", () => {
+  const track = (
+    resolution: TTrackLabelResolution,
+    datasetTrackKey: string,
+  ) => ({ resolution, datasetTrackKey });
+
+  it("reports a value shared by two distinct dataset-wide tracks", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "value", value: 42 }, "k1"),
+        track({ status: "value", value: 42 }, "k2"),
+        track({ status: "value", value: 43 }, "k3"),
+      ]),
+    ).toEqual(new Set([42]));
+  });
+
+  // A narrow scope (selected, filtered, current location) can expose one
+  // intact dataset-wide track as two disconnected fragments; both carry the
+  // same value and the same dataset track key — no split happened.
+  it("does not report fragments of one dataset-wide track", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "value", value: 42 }, "k1"),
+        track({ status: "value", value: 42 }, "k1"),
+      ]),
+    ).toEqual(new Set());
+  });
+
+  // A split half that later gained an unvalued member resolves as partial;
+  // its value still collides with its twin.
+  it("counts partial resolutions' values too", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "partial", value: 42 }, "k1"),
+        track({ status: "value", value: 42 }, "k2"),
+      ]),
+    ).toEqual(new Set([42]));
+  });
+
+  it("ignores mixed and missing resolutions", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "mixed", values: [1, 2] }, "k1"),
+        track({ status: "mixed", values: [1, 2] }, "k2"),
+        track({ status: "missing" }, "k3"),
+        track({ status: "missing" }, "k4"),
+      ]),
+    ).toEqual(new Set());
+  });
+
+  it("treats 0 as a value", () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "value", value: 0 }, "k1"),
+        track({ status: "value", value: 0 }, "k2"),
+      ]),
+    ).toEqual(new Set([0]));
+  });
+
+  it('distinguishes the number 42 from the string "42"', () => {
+    expect(
+      findDuplicateTrackLabelValues([
+        track({ status: "value", value: 42 }, "k1"),
+        track({ status: "value", value: "42" }, "k2"),
+      ]),
+    ).toEqual(new Set());
+  });
+});
+
+describe("formatTrackLabelValue", () => {
+  it("shows worker integer floats without decimals", () => {
+    expect(formatTrackLabelValue(42.0)).toBe("42");
+    expect(formatTrackLabelValue(0)).toBe("0");
+  });
+
+  it("keeps fractional values short", () => {
+    expect(formatTrackLabelValue(1.23456789)).toBe("1.235");
+  });
+
+  it("passes strings through", () => {
+    expect(formatTrackLabelValue("t-7")).toBe("t-7");
+  });
+});
+
+describe("computeTrackMetrics", () => {
+  it("computes connection count, member count and duration for a linear track", () => {
+    const components = findConnectedComponents([
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "c"),
+    ]);
+    const metrics = computeTrackMetrics(
+      components,
+      resolverFor([
+        makeAnnotation("a", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("c", 2),
+      ]),
+    );
+    expect(metrics.get("a")).toEqual({
+      connectionCount: 2,
+      memberCount: 3,
+      duration: 3,
+    });
+  });
+
+  it("keys each track by its dataset-wide track key", () => {
+    const components = findConnectedComponents([
+      makeConnection("c1", "m", "b"),
+      makeConnection("c2", "x", "y"),
+    ]);
+    const metrics = computeTrackMetrics(
+      components,
+      resolverFor([
+        makeAnnotation("m", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("x", 0),
+        makeAnnotation("y", 1),
+      ]),
+    );
+    expect([...metrics.keys()].sort()).toEqual(["b", "x"]);
+  });
+
+  it("counts a branching track's members and connections separately", () => {
+    const components = findConnectedComponents([
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "a", "c"),
+    ]);
+    const metrics = computeTrackMetrics(
+      components,
+      resolverFor([
+        makeAnnotation("a", 0),
+        makeAnnotation("b", 1),
+        makeAnnotation("c", 1),
+      ]),
+    );
+    expect(metrics.get("a")).toEqual({
+      connectionCount: 2,
+      memberCount: 3,
+      duration: 2,
+    });
+  });
+
+  it("derives duration from the members that still resolve", () => {
+    // "gone" is a dangling endpoint — common in real datasets and must not
+    // poison the duration of the members that do resolve.
+    const components = findConnectedComponents([
+      makeConnection("c1", "a", "b"),
+      makeConnection("c2", "b", "gone"),
+    ]);
+    const metrics = computeTrackMetrics(
+      components,
+      resolverFor([makeAnnotation("a", 0), makeAnnotation("b", 5)]),
+    );
+    expect(metrics.get("a")).toEqual({
+      connectionCount: 2,
+      memberCount: 3,
+      duration: 6,
+    });
+  });
+
+  it("reports null duration when no member resolves", () => {
+    const components = findConnectedComponents([
+      makeConnection("c1", "gone1", "gone2"),
+    ]);
+    const metrics = computeTrackMetrics(components, resolverFor([]));
+    expect(metrics.get("gone1")).toEqual({
+      connectionCount: 1,
+      memberCount: 2,
+      duration: null,
+    });
+  });
+
+  it("resolves durations from stubs, not only hydrated annotations", () => {
+    const components = findConnectedComponents([
+      makeConnection("c1", "s1", "s2"),
+    ]);
+    const metrics = computeTrackMetrics(
+      components,
+      resolverFor([makeStub("s1", 2), makeStub("s2", 9)]),
+    );
+    expect(metrics.get("s1")?.duration).toBe(8);
   });
 });

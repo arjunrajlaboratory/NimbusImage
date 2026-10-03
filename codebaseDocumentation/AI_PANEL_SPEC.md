@@ -215,6 +215,7 @@ Reversibility notes:
 | `run_worker` | `{image, channel?, tags?, location scope, workerInterface values}` | `annotation.computeAnnotationsWithWorker` (+ `jobs.addJob` for progress) | compute cost, creates many annotations |
 | `compute_property` | `{propertyId \| create: {...}}` | `properties.computeProperty` | compute cost |
 | `add_tool` | `{templateId \| catalogEntry, name, channel/layer targeting, values}` | `main.addToolToConfiguration` (reuse `buildToolConfiguration` from PR #1224's `toolSuggestions.ts`) | mutates shared configuration |
+| `color_annotations_by_property` | `{propertyPath \| clear: true, mode?, colormap?, rangeMin/Max?, percentileLow/High?}` | `annotation.applyColorByProperty` / `removeColorByProperty` (server-side bulk color write + legend persisted in the configuration) | recolors every annotation in the dataset; not on the undo stack |
 | `create_annotations` | `{annotations: [...]}` (bulk) | annotation store bulk create | data mutation (undoable, but bulk) |
 | `delete_annotations` | `{target: selection\|query}` | bulk delete | destructive (undoable, but scary) |
 | `edit_layers` | `{add?, remove?, group?}` | `main.addLayer/removeLayer/groupLayers` | mutates shared configuration |
@@ -612,10 +613,16 @@ The model is instructed to correct and retry once, then ask the user.
 - System prompt + tool definitions are stable per release → prompt cache
   them (`cache_control` on the system block and on the last tool, as the
   plugin already does for chat's system prompt).
-- Model: `CLAUDE_MODEL` constant (currently `claude-sonnet-5` on the PR
-  branch) — right latency/capability class for interactive UI driving. Not
+- Model: `CLAUDE_MODEL` constant (currently `claude-sonnet-5-5`) — right latency/capability class for interactive UI driving. Not
   a place for a smaller model: tool selection against 25+ tools with domain
   vocabulary is exactly where quality pays.
+- Preserved thinking: Sonnet 5.5 binds each thinking block to the exact
+  history before it, and `pruneOldScreenshots` edits earlier turns. The agent
+  call therefore sends `thinking.block_binding.prefix_mismatch_behavior:
+  "drop_block"` (beta `thinking-binding-controls-2026-08-01`), so the API
+  drops the stale thinking blocks instead of returning a 400 (the default for
+  accounts created on or after 2026-08-31). Text and tool calls are kept; the
+  drops are logged at INFO.
 
 ## 9. Implementation plan
 
@@ -716,6 +723,38 @@ Cost and responsiveness:
 - The frontend tool surface and the backend's `agent_tools.json` define the
   same set of tools — `executors.test.ts` "defines exactly the tools the
   backend advertises".
+
+## 12. Regression checklist — destructive coloring and the approval surface
+
+Invariants from the `color_annotations_by_property` review rounds (PR #1345),
+each with the test that holds it. Re-check these when touching the coloring
+executors, the gated-tool registry, or the auto-approve UI.
+
+Destructive paths:
+
+- `clear: true` with no active property coloring is refused as a no-op (the
+  backend clear resets EVERY annotation color, not just property-assigned
+  ones, and is not undoable — the dialog's `hasActiveColoring` gate, mirrored)
+  — `executors.test.ts` "color_annotations_by_property refuses clear with no
+  active coloring".
+- The tool is gated and validates its input before any backend call —
+  "color_annotations_by_property is gated and validates its input".
+- The approval card's one-liner carries the irreversibility warning (it is
+  all the user sees before approving; the dialog says as much) —
+  "warns that property recoloring is irreversible on the approval card".
+
+Approval surface:
+
+- Every gated tool is named in the auto-approve switch's tooltip in
+  `AiPanel.vue`, so enabling the switch never bypasses an action the user was
+  not warned about — `executors.test.ts` "names every gated tool in
+  AiPanel.vue's auto-approve tooltip". A new gated tool fails this test until
+  the tooltip names it.
+
+Context cost:
+
+- A categorical legend echoed to the model is capped, not exhaustive —
+  "color_annotations_by_property caps echoed categories".
 - `MAX_TOOL_ITERATIONS` (30) stays below the plugin's
   `RATE_LIMIT_MAX_REQUESTS` (45) so one turn cannot 429 itself. No test; both
   constants carry a comment pointing at the other.
@@ -728,3 +767,39 @@ Process notes:
 - The completion callback must fire *after* the store refreshed its data
   (`annotation.ts` awaits `fetchAnnotations` before `callback`), otherwise the
   model reads stale counts the moment it is told the job finished.
+
+## 13. Regression checklist — model migration and preserved thinking
+
+Invariants from the Sonnet 5.5 migration (PR #1353), each with the test that
+holds it. Re-check these whenever `CLAUDE_MODEL` changes, the agent request
+is edited, or the frontend changes how it rewrites earlier turns.
+
+- The agent call sends `thinking: {type: "adaptive", block_binding:
+  {prefix_mismatch_behavior: "drop_block"}}` under the
+  `thinking-binding-controls-2026-08-01` beta, so a pruned history drops
+  stale thinking blocks instead of returning a 400 on accounts created on or
+  after 2026-08-31 — `test_plugin.py::testAgentEndpointStreamsAndShapesResponse`.
+- `pruneOldScreenshots` rewrites only user `tool_result` images and never
+  touches assistant messages, so thinking blocks go back unchanged —
+  `wireConversation.test.ts` "never touches assistant messages (thinking
+  blocks must survive)".
+- Streamed blocks sent back as the next assistant turn drop API-excluded
+  fields — `testAgentEndpointStripsApiExcludedBlockFields`.
+- `setup.py` requires an SDK with `beta.messages` + `block_binding` and
+  `output_config` (`anthropic>=1.8.0`), and the installed SDK exposes all
+  three (the other tests fake the client, so they can't catch this) —
+  `test_plugin.py::testAnthropicSdkSupportsTheApisThePluginCalls` (fails
+  with the floor removed). Extend it when the plugin adopts a new API
+  feature.
+
+Process rules:
+
+- A unit test can't show whether the API accepts a history edit. Verify
+  against the live API: send the edited history with
+  `prefix_mismatch_behavior: "error"` (expect the 400 a new account gets),
+  then with `"drop_block"` (expect 200 and a `thinking_dropped` entry in
+  `input_transformations`). Setting the field opts older accounts in, so this
+  works from any key.
+- The plugin logs drops at INFO, but the Girder container doesn't print this
+  plugin's INFO output. To check drops, call `_stream_agent_response` in the
+  container with the `girder_claude_chat` logger set to INFO.

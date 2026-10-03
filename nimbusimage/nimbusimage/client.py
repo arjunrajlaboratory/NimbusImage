@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+import girder_client
+
 from nimbusimage._girder import create_client
 from nimbusimage.collections import Collection
 from nimbusimage.dataset import Dataset
@@ -106,6 +108,60 @@ class NimbusClient:
             raise ValueError(f"Dataset with name '{name}' not found")
         raise ValueError("Provide either dataset_id or name=")
 
+    def create_dataset(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        parent_folder_id: str | None = None,
+    ) -> Dataset:
+        """Create an empty dataset, ready for image files.
+
+        A dataset is not usable until files are uploaded into it and
+        configured, so this is normally step one of three::
+
+            ds = client.create_dataset("My Experiment")
+            ds.upload("path/to/images/")
+            ds.configure()
+
+        Args:
+            name: Dataset name.
+            description: Optional description.
+            parent_folder_id: Folder to create it in. Defaults to the
+                calling user's Private folder, so a new dataset is not
+                world-readable by accident; use ``ds.sharing`` to share it.
+
+        Returns:
+            Dataset with no image data yet. Its metadata properties
+            (``shape``, ``channels``, ...) raise until it is configured.
+        """
+        if parent_folder_id is None:
+            parent_folder_id = self._private_folder_id()
+
+        folder = self._gc.createFolder(
+            parent_folder_id,
+            name,
+            description=description,
+            metadata={
+                "subtype": "contrastDataset",
+                "selectedLargeImageId": None,
+            },
+        )
+        return Dataset(
+            self._gc, folder["_id"], frontend_url=self._frontend_url,
+        )
+
+    def _private_folder_id(self) -> str:
+        """The calling user's Private folder id."""
+        for folder in self._gc.listFolder(
+            self.user_id, parentFolderType="user", name="Private"
+        ):
+            return folder["_id"]
+        raise ValueError(
+            "No Private folder found for the current user; pass "
+            "parent_folder_id= explicitly."
+        )
+
     def list_datasets(self) -> list[dict]:
         """List all accessible datasets.
 
@@ -115,7 +171,7 @@ class NimbusClient:
         Returns:
             List of dataset folder dicts with _id, name, meta.
         """
-        views = self._gc.get("/dataset_view", parameters={"limit": 0})
+        views = self._gc.get("dataset_view", parameters={"limit": 0})
         seen: set[str] = set()
         datasets: list[dict] = []
         for v in views:
@@ -123,9 +179,10 @@ class NimbusClient:
             if did and did not in seen:
                 seen.add(did)
                 try:
-                    folder = self._gc.get(f"folder/{did}")
-                    datasets.append(folder)
-                except Exception:
+                    datasets.append(self._gc.get(f"folder/{did}"))
+                except girder_client.HttpError:
+                    # A view can be shared while its dataset folder is not;
+                    # skip those. Anything else propagates.
                     pass
         return datasets
 
@@ -184,7 +241,7 @@ class NimbusClient:
                 return []
 
         data = self._gc.get(
-            f"/upenn_collection?folderId={folder_id}"
+            f"upenn_collection?folderId={folder_id}"
         )
         return [
             Collection(self._gc, d, frontend_url=self._frontend_url)
@@ -193,7 +250,7 @@ class NimbusClient:
 
     def collection(self, collection_id: str) -> Collection:
         """Get a Collection (configuration) by ID."""
-        data = self._gc.get(f"/upenn_collection/{collection_id}")
+        data = self._gc.get(f"upenn_collection/{collection_id}")
         return Collection(self._gc, data, frontend_url=self._frontend_url)
 
     # --- Workers ---
@@ -211,7 +268,7 @@ class NimbusClient:
             - ``description``: worker description
             - ``annotationShape``: shape it produces (point/polygon/...)
         """
-        return self._gc.get("/worker_interface/available")
+        return self._gc.get("worker_interface/available")
 
     def get_worker_interface(
         self, image: str, request_if_missing: bool = True
@@ -228,7 +285,7 @@ class NimbusClient:
             if no interface is available.
         """
         result = self._gc.get(
-            "/worker_interface",
+            "worker_interface",
             parameters={"image": image},
         )
         if result and isinstance(result, dict):
@@ -246,7 +303,7 @@ class NimbusClient:
 
         # Request the worker to register its interface
         resp = self._gc.post(
-            "/worker_interface/request",
+            "worker_interface/request",
             parameters={"image": image},
         )
         if isinstance(resp, (list, tuple)) and resp:
@@ -255,7 +312,7 @@ class NimbusClient:
 
         # Fetch the newly registered interface
         result = self._gc.get(
-            "/worker_interface",
+            "worker_interface",
             parameters={"image": image},
         )
         if result and isinstance(result, dict):

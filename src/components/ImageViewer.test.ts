@@ -1354,6 +1354,42 @@ describe("ImageViewer", () => {
       expect(mockedProgressStore.complete).toHaveBeenCalledWith("progress1");
     });
 
+    // Mimic GeoJS's real tile factory ordering (tileLayer in geojs/geo.js):
+    // `_getTileCached` creates the tile via `_getTile` and only AFTER that
+    // adds it to the cache; cache hits return the cached tile. In real GeoJS,
+    // attaching a promise handler (tile.catch → tile.then) queues the tile's
+    // fetch, and the fetch queue's `needed` predicate only accepts a tile
+    // that is already the cache's entry for its hash — a handler attached
+    // pre-cache rejects the tile on the spot and the raster never loads. Each
+    // tile records cache membership at the moment `catch` is attached so the
+    // tests can hold that ordering contract.
+    const installMockTileFactory = (overviewLayer: any) => {
+      const cache = new Map<string, any>();
+      const tileErrorCallbacks: Array<() => void> = [];
+      const catchAttachedWhileInCache: boolean[] = [];
+      overviewLayer._getTile = vi.fn((index: any) => {
+        const hash = `${index.level}_${index.y}_${index.x}`;
+        const tile: any = {
+          toString: () => hash,
+          catch: (callback: () => void) => {
+            catchAttachedWhileInCache.push(cache.get(hash) === tile);
+            tileErrorCallbacks.push(callback);
+          },
+        };
+        return tile;
+      });
+      overviewLayer._getTileCached = vi.fn((index: any) => {
+        const hash = `${index.level}_${index.y}_${index.x}`;
+        let tile = cache.get(hash);
+        if (!tile) {
+          tile = overviewLayer._getTile(index);
+          cache.set(hash, tile);
+        }
+        return tile;
+      });
+      return { tileErrorCallbacks, catchAttachedWhileInCache };
+    };
+
     // A raster tile can 503 while another geometry key is still cold-building
     // (the backend sends Retry-After: 1). GeoJS has no tile-error event, drops
     // the failed tile, and keeps the rejected entry in its tile cache — so
@@ -1361,13 +1397,8 @@ describe("ImageViewer", () => {
     it("retries failed overview tiles with a bounded delayed reset", async () => {
       const map = mockMap();
       const overviewLayer = mockLayer();
-      const tileErrorCallbacks: Array<() => void> = [];
-      const innerGetTile = vi.fn(() => ({
-        catch: (callback: () => void) => {
-          tileErrorCallbacks.push(callback);
-        },
-      }));
-      (overviewLayer as any)._getTile = innerGetTile;
+      const { tileErrorCallbacks, catchAttachedWhileInCache } =
+        installMockTileFactory(overviewLayer);
       map.createLayer.mockReturnValue(overviewLayer);
       const mapentry = {
         map,
@@ -1418,9 +1449,16 @@ describe("ImageViewer", () => {
 
       // Creation wrapped the tile factory: fetching a tile registers a
       // failure hook on the tile's promise interface.
-      (overviewLayer as any)._getTile({ x: 0, y: 0, level: 0 });
-      (overviewLayer as any)._getTile({ x: 1, y: 0, level: 0 });
-      expect(innerGetTile).toHaveBeenCalledTimes(2);
+      (overviewLayer as any)._getTileCached({ x: 0, y: 0, level: 0 });
+      (overviewLayer as any)._getTileCached({ x: 1, y: 0, level: 0 });
+      expect((overviewLayer as any)._getTile).toHaveBeenCalledTimes(2);
+      expect(tileErrorCallbacks).toHaveLength(2);
+      // Ordering contract: the failure hook must attach only once the tile
+      // is the cache's entry for its hash — attaching pre-cache makes the
+      // real fetch queue reject every tile at creation (blank raster).
+      expect(catchAttachedWhileInCache).toEqual([true, true]);
+      // A cache hit returns the same tile; the hook must not re-attach.
+      (overviewLayer as any)._getTileCached({ x: 0, y: 0, level: 0 });
       expect(tileErrorCallbacks).toHaveLength(2);
 
       // Two failures in one batch coalesce into a single delayed retry.
@@ -1459,12 +1497,7 @@ describe("ImageViewer", () => {
     it("does not retry tiles for a hidden overview layer", async () => {
       const map = mockMap();
       const overviewLayer = mockLayer();
-      const tileErrorCallbacks: Array<() => void> = [];
-      (overviewLayer as any)._getTile = vi.fn(() => ({
-        catch: (callback: () => void) => {
-          tileErrorCallbacks.push(callback);
-        },
-      }));
+      const { tileErrorCallbacks } = installMockTileFactory(overviewLayer);
       map.createLayer.mockReturnValue(overviewLayer);
       const mapentry = {
         map,
@@ -1511,7 +1544,7 @@ describe("ImageViewer", () => {
         opacity: 0.6,
       });
 
-      (overviewLayer as any)._getTile({ x: 0, y: 0, level: 0 });
+      (overviewLayer as any)._getTileCached({ x: 0, y: 0, level: 0 });
       tileErrorCallbacks[0]();
       (wrapper.vm as any)._setAnnotationOverviewVisibility(mountedMapentry, {
         visible: false,

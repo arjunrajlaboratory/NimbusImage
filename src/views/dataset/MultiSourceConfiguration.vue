@@ -1263,33 +1263,6 @@ function getValueFromAssignments(
   }
 }
 
-function getCompositingValueFromAssignments(
-  dim: TDimensions,
-  itemIdx: number,
-  frameIdx: number,
-): number {
-  const assignmentValue = assignments[dim]?.value;
-  if (!assignmentValue) {
-    return 0;
-  }
-  switch (assignmentValue.source) {
-    case Sources.File: {
-      const fileData = assignmentValue.data as IFileSourceData;
-      return fileData[itemIdx]
-        ? Math.floor(frameIdx / fileData[itemIdx].stride) %
-            fileData[itemIdx].range
-        : 0;
-    }
-    case Sources.Filename: {
-      const filenameData = assignmentValue.data as IFilenameSourceData;
-      const filename = girderItems.value[itemIdx].name;
-      return filenameData.valueIdxPerFilename[filename];
-    }
-    case Sources.Images:
-      return frameIdx;
-  }
-}
-
 function extractDimensionLabels(dim: TUpDim): string[] | null {
   const assignment = assignments[dim]?.value;
   if (!assignment) return null;
@@ -1672,10 +1645,10 @@ async function generateJson(): Promise<string | null> {
         for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
           compositingSources.push({
             path: item.name,
-            xySet: getCompositingValueFromAssignments("XY", itemIdx, frameIdx),
-            zSet: getCompositingValueFromAssignments("Z", itemIdx, frameIdx),
-            tSet: getCompositingValueFromAssignments("T", itemIdx, frameIdx),
-            cSet: getCompositingValueFromAssignments("C", itemIdx, frameIdx),
+            xySet: getValueFromAssignments("XY", itemIdx, frameIdx),
+            zSet: getValueFromAssignments("Z", itemIdx, frameIdx),
+            tSet: getValueFromAssignments("T", itemIdx, frameIdx),
+            cSet: getValueFromAssignments("C", itemIdx, frameIdx),
             frames: [frameIdx],
           });
         }
@@ -2101,7 +2074,6 @@ defineExpose({
   isAssignmentImmutableForDimension,
   submitEnabled,
   getValueFromAssignments,
-  getCompositingValueFromAssignments,
   submit,
   generateJson,
   extractDimensionLabels,

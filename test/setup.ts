@@ -10,16 +10,18 @@ import { vi } from "vitest";
 // megabytes of it and the run dies with a heap OOM once the suite grows a
 // little. The error tells us nothing (styles are irrelevant to these tests), so
 // drop exactly this one message and let everything else through.
-const originalConsoleError = console.error;
-console.error = (...args: unknown[]) => {
-  const [first] = args;
-  const text =
-    first instanceof Error ? first.message : typeof first === "string" ? first : "";
-  if (text.includes("Could not parse CSS stylesheet")) {
-    return;
-  }
-  originalConsoleError(...args);
-};
+// Vitest 4's jsdom errors go through a host console that is distinct from the
+// test's console. Filter the virtual-console event before its existing handlers
+// forward it; replacing console.error in the test realm no longer catches it.
+const virtualConsole = (globalThis as any).jsdom.virtualConsole;
+for (const listener of virtualConsole.listeners("jsdomError")) {
+  virtualConsole.removeListener("jsdomError", listener);
+  virtualConsole.on("jsdomError", (error: Error) => {
+    if (error.message !== "Could not parse CSS stylesheet") {
+      listener(error);
+    }
+  });
+}
 
 // Polyfill visualViewport for jsdom (required by Vuetify 3 overlay components)
 if (typeof globalThis.visualViewport === "undefined") {

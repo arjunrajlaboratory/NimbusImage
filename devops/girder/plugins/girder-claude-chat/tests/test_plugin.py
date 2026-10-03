@@ -25,9 +25,9 @@ def testAgentEndpointLoadsPackagedAssets(monkeypatch):
 @pytest.mark.plugin('girder_claude_chat')
 def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
     # AGENT_MAX_TOKENS is above the SDK's non-streaming ceiling (~21k), so the
-    # agent endpoint must use the streaming API (client.messages.stream) or the
-    # SDK raises "Streaming is required...". It still aggregates server-side
-    # and returns one JSON response with the same shape as before.
+    # agent endpoint must use the streaming API (client.beta.messages.stream)
+    # or the SDK raises "Streaming is required...". It still aggregates
+    # server-side and returns one JSON response with the same shape as before.
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
     resource = ClaudeAgentResource()
 
@@ -65,7 +65,9 @@ def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
             )
 
     fake_messages = FakeMessages()
-    resource.client = SimpleNamespace(messages=fake_messages)
+    resource.client = SimpleNamespace(
+        beta=SimpleNamespace(messages=fake_messages)
+    )
 
     result = resource._stream_agent_response(
         [{'role': 'user', 'content': 'hi'}]
@@ -77,6 +79,15 @@ def testAgentEndpointStreamsAndShapesResponse(monkeypatch):
         'usage': {'input_tokens': 11, 'output_tokens': 7},
     }
     assert fake_messages.stream_kwargs['model'] == CLAUDE_MODEL
+    # The frontend prunes old screenshots (a history edit), so the agent must
+    # ask the API to drop invalidated thinking blocks rather than 400.
+    assert fake_messages.stream_kwargs['thinking'] == {
+        'type': 'adaptive',
+        'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
+    }
+    assert fake_messages.stream_kwargs['betas'] == [
+        'thinking-binding-controls-2026-08-01'
+    ]
     assert (
         fake_messages.stream_kwargs['max_tokens']
         == resource.AGENT_MAX_TOKENS
@@ -129,7 +140,9 @@ def testAgentEndpointStripsApiExcludedBlockFields(monkeypatch):
         def stream(self, **kwargs):
             return FakeStream()
 
-    resource.client = SimpleNamespace(messages=FakeMessages())
+    resource.client = SimpleNamespace(
+        beta=SimpleNamespace(messages=FakeMessages())
+    )
 
     result = resource._stream_agent_response(
         [{'role': 'user', 'content': 'x'}]
@@ -164,6 +177,63 @@ def testSuggestToolsIncludesLayerContext(monkeypatch):
     assert '"channelName": "TRITC"' in text
     assert '"color": "#FFFF00"' in text
     assert 'map colored objects' in text
+
+
+@pytest.mark.plugin('girder_claude_chat')
+@pytest.mark.parametrize(
+    ('stop_reason', 'expected'),
+    [
+        (
+            'end_turn',
+            {'suggestions': [
+                {'toolId': 'manual:blob', 'reason': 'Blobs seen.'}
+            ]},
+        ),
+        # A refusal or truncation carries no valid JSON. It must be an error,
+        # not an empty list, or the frontend records the configuration as
+        # suggested and never retries.
+        ('refusal', {'error': 'Tool suggestion stopped early (refusal)'}),
+        (
+            'max_tokens',
+            {'error': 'Tool suggestion stopped early (max_tokens)'},
+        ),
+    ],
+)
+def testSuggestToolsUsesStructuredOutput(monkeypatch, stop_reason, expected):
+    # Sonnet 5.5 400s on forced tool_choice and on disabled thinking, so the
+    # suggestion call must get its JSON from output_config.format instead.
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'FAKE_API_KEY')
+    resource = ClaudeSuggestToolsResource()
+
+    class FakeMessages:
+        create_kwargs = None
+
+        def create(self, **kwargs):
+            self.create_kwargs = kwargs
+            return SimpleNamespace(
+                stop_reason=stop_reason,
+                content=[
+                    # Adaptive thinking may lead with an empty thinking block.
+                    SimpleNamespace(type='thinking', thinking=''),
+                    SimpleNamespace(
+                        type='text',
+                        text='{"suggestions": [{"toolId": "manual:blob", '
+                             '"reason": "Blobs seen."}]}',
+                    ),
+                ],
+            )
+
+    fake_messages = FakeMessages()
+    resource.client = SimpleNamespace(messages=fake_messages)
+
+    result = resource.suggest_tools_imp({'catalog': [], 'channels': []})
+
+    assert result == expected
+    kwargs = fake_messages.create_kwargs
+    assert kwargs['model'] == CLAUDE_MODEL
+    assert 'tool_choice' not in kwargs
+    assert 'thinking' not in kwargs
+    assert kwargs['output_config']['format']['type'] == 'json_schema'
 
 
 @pytest.mark.plugin('girder_claude_chat')
@@ -239,3 +309,25 @@ def testAgentParsesValidBody():
     assert ClaudeAgentResource._parse_agent_messages(
         {'messages': messages}
     ) == messages
+
+
+@pytest.mark.plugin('girder_claude_chat')
+def testAnthropicSdkSupportsTheApisThePluginCalls():
+    # The unit tests above replace the SDK client with fakes, so they can't
+    # catch an SDK too old for the real calls. Guard both halves: the
+    # installed distribution declares the floor, and the installed SDK
+    # exposes every interface the plugin uses.
+    import inspect
+    from importlib.metadata import requires
+
+    from anthropic import Anthropic
+    from anthropic.types.beta import BetaThinkingConfigAdaptiveParam
+
+    assert 'anthropic>=1.8.0' in requires('girder-claude-chat')
+
+    client = Anthropic(api_key='FAKE_API_KEY')
+    agent_params = inspect.signature(client.beta.messages.stream).parameters
+    assert {'betas', 'thinking'} <= set(agent_params)
+    assert 'block_binding' in BetaThinkingConfigAdaptiveParam.__annotations__
+    suggest_params = inspect.signature(client.messages.create).parameters
+    assert 'output_config' in suggest_params

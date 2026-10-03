@@ -572,18 +572,28 @@ const annotationOverviewRetryStates = new WeakMap<
 // GeoJS exposes no tile-error event: a failed fetch logs a console warning,
 // removes the tile, and leaves the REJECTED tile in the layer's cache, so
 // later draws reuse the failure instead of refetching. The tile's documented
-// promise interface (`tile.catch`) is the only failure signal, and `_getTile`
-// is the factory GeoJS documents for derived classes to override — wrap it so
-// every tile carries a failure hook. Retry state itself stays out of the
-// GeoJS object (WeakMaps above).
+// promise interface (`tile.catch`) is the only failure signal. Attaching any
+// handler (tile.catch → tile.then) queues the tile's fetch, and the fetch
+// queue's `needed` predicate only accepts a tile that is already the cache's
+// entry for its hash — `_getTile` runs BEFORE `cache.add` inside
+// `_getTileCached`, so hooking `_getTile` rejects every tile at creation
+// (zero requests, permanently blank raster). Wrap `_getTileCached` instead:
+// it returns only after the tile is cached. Cache hits return the same tile,
+// so hook each tile exactly once. Retry state itself stays out of the GeoJS
+// object (WeakMaps above).
+const hookedAnnotationOverviewTiles = new WeakSet<IGeoJSTile>();
+
 function hookAnnotationOverviewTileErrors(layer: AnnotationOverviewLayer) {
-  const originalGetTile = layer._getTile;
-  if (typeof originalGetTile !== "function") {
+  const originalGetTileCached = layer._getTileCached;
+  if (typeof originalGetTileCached !== "function") {
     return;
   }
-  layer._getTile = (...args: unknown[]) => {
-    const tile = originalGetTile.apply(layer, args);
-    tile.catch(() => scheduleAnnotationOverviewRetry(layer));
+  layer._getTileCached = (...args: unknown[]) => {
+    const tile = originalGetTileCached.apply(layer, args);
+    if (!hookedAnnotationOverviewTiles.has(tile)) {
+      hookedAnnotationOverviewTiles.add(tile);
+      tile.catch(() => scheduleAnnotationOverviewRetry(layer));
+    }
     return tile;
   };
 }

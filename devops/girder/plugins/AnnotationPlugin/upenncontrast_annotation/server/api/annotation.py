@@ -19,10 +19,17 @@ from girder.exceptions import RestException
 from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
+from ..helpers.colormaps import (
+    CATEGORICAL_PALETTE,
+    CONTINUOUS_COLORMAPS,
+    DEFAULT_COLORMAP,
+)
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.validation import (
     MAX_LIST_LIMIT,
     dropNoOpPropertyFilters,
+    isFiniteNumber,
+    isValidPropertyPath,
     requireCountWithin,
     requireFloat,
     requireInt,
@@ -216,6 +223,11 @@ class Annotation(Resource):
             "POST", ("analysis", "histogram2d"), self.analysisHistogram2d
         )
         self.route("POST", ("uncomputed_counts",), self.uncomputedCounts)
+        self.route("POST", ("color_by_property",), self.colorByProperty)
+        self.route(
+            "GET", ("color_by_property", "options"),
+            self.colorByPropertyOptions,
+        )
 
     # TODO: anytime a dataset is mentioned, load the dataset and check for
     #   existence and that the user has access to it
@@ -541,6 +553,173 @@ class Annotation(Resource):
             exc=True,
         )
         return self._annotationModel.uncomputedCounts(datasetId, properties)
+
+    @access.user(scope=TokenScope.DATA_WRITE)
+    @autoDescribeRoute(
+        Description("Color every annotation in a dataset by a property value")
+        .notes(
+            "Computes a color per annotation from its value at propertyPath "
+            "(server-side, so it works for datasets too large to hold "
+            "client-side) and writes it to the annotations' color field. "
+            "Annotations without a usable value get color null (layer "
+            "color). Returns {colored, uncolored, legend}, where legend "
+            "describes the applied mapping (gradient stops + range for "
+            "continuous, value/color swatches for categorical). "
+            "Body fields are documented on the endpoint implementation. "
+            "Continuous ranges default to the 1st..99th percentile (real "
+            "distributions are long-tailed, and a full-extent ramp collapses "
+            "into one bucket); rangeMin/rangeMax override a bound absolutely. "
+            "clear: true resets every color to null instead. "
+            "Not undoable via history: recording a bulk restyle of every "
+            "annotation would overrun the history document size on large "
+            "datasets."
+        )
+        .jsonParam(
+            "body",
+            "Coloring parameters (see notes)",
+            paramType="body",
+            requireObject=True,
+        )
+        .errorResponse()
+        .errorResponse("Write access was denied for the dataset.", 403)
+    )
+    def colorByProperty(self, body):
+        """POST /upenn_annotation/color_by_property
+
+        Body:
+            datasetId: str (required)
+            propertyPath: string[] (required unless clear)
+            mode: 'auto' | 'continuous' | 'categorical' (default 'auto')
+            colormap: str (default DEFAULT_COLORMAP)
+            rangeMin, rangeMax: number (absolute bound overrides)
+            percentileLow, percentileHigh: number in [0, 100]
+            clear: bool (reset every color to null instead)
+            returnAssignment: bool — adds `assignment`: [{color, ids}]
+                listing what was written, so a client can repaint the
+                annotations it already holds instead of refetching the
+                dataset (large: one id per annotation)
+        """
+        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.WRITE,
+            exc=True,
+        )
+
+        # Opt-in because it is large: one entry per annotation (~20MB on a
+        # 700K dataset). Clients that will repaint from it want it; scripted
+        # callers that only need the counts should not pay for it.
+        returnAssignment = body.get("returnAssignment") is True
+
+        if body.get("clear") is True:
+            uncolored = self._annotationModel.clearColors(datasetId)
+            result = {"colored": 0, "uncolored": uncolored, "legend": None}
+            if returnAssignment:
+                # Nothing is assigned, which is exactly what the client needs
+                # to know: every color became null.
+                result["assignment"] = []
+            return result
+
+        # Not validatePropertyPaths([...]): its message names a plural
+        # `propertyPaths` field this request doesn't have.
+        propertyPath = body.get("propertyPath")
+        if not isValidPropertyPath(propertyPath):
+            raise RestException(
+                "propertyPath must be a non-empty list of key strings",
+                code=400,
+            )
+
+        mode = body.get("mode", "auto")
+        if mode not in ("auto", "continuous", "categorical"):
+            raise RestException(
+                "mode must be 'auto', 'continuous' or 'categorical'",
+                code=400,
+            )
+
+        colormap = body.get("colormap", DEFAULT_COLORMAP)
+        if colormap not in CONTINUOUS_COLORMAPS:
+            raise RestException(
+                "colormap must be one of: %s"
+                % ", ".join(sorted(CONTINUOUS_COLORMAPS)),
+                code=400,
+            )
+
+        bounds = {}
+        for bound in (
+            "rangeMin", "rangeMax", "percentileLow", "percentileHigh"
+        ):
+            value = body.get(bound)
+            # json.loads accepts bare NaN/Infinity, and a non-finite bound
+            # propagates into the range arithmetic as NaN — where int(round(
+            # nan)) raises a ValueError that the model-error mapping below
+            # would relay as a bogus "validation" message. isFiniteNumber
+            # also covers the int-too-large-for-float case, where
+            # math.isfinite raises OverflowError instead of returning False.
+            if value is not None and not isFiniteNumber(value):
+                raise RestException(
+                    "%s must be a finite number" % bound, code=400
+                )
+            if (
+                value is not None
+                and bound.startswith("percentile")
+                and not 0 <= value <= 100
+            ):
+                raise RestException(
+                    "%s must be between 0 and 100" % bound, code=400
+                )
+            bounds[bound] = value
+        for lower, upper in (
+            ("rangeMin", "rangeMax"),
+            ("percentileLow", "percentileHigh"),
+        ):
+            if (
+                bounds[lower] is not None
+                and bounds[upper] is not None
+                and bounds[lower] >= bounds[upper]
+            ):
+                raise RestException(
+                    "%s must be less than %s" % (lower, upper), code=400
+                )
+
+        try:
+            return self._annotationModel.colorByProperty(
+                datasetId,
+                propertyPath,
+                mode=mode,
+                colormap=colormap,
+                rangeMin=bounds["rangeMin"],
+                rangeMax=bounds["rangeMax"],
+                percentileLow=bounds["percentileLow"],
+                percentileHigh=bounds["percentileHigh"],
+                returnAssignment=returnAssignment,
+            )
+        except ValueError as exception:
+            # Every ValueError the model raises here is a validation failure
+            # detected BEFORE the first write (no values, no numeric values,
+            # empty resolved range, too many categories). Keep it that way: a
+            # ValueError raised after writing would be reported to the client
+            # as a 400, and the frontend treats 400 as "nothing changed" and
+            # skips both its local repaint and its fallback refetch — leaving
+            # the canvas showing colors the database no longer has.
+            raise RestException(str(exception), code=400)
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description(
+            "List the colormaps and palette used by color_by_property"
+        ).notes(
+            "Returns {colormaps: {name: hex stop list}, default: name, "
+            "palette: hex list} so clients can preview gradients without "
+            "duplicating the tables."
+        )
+    )
+    def colorByPropertyOptions(self, params):
+        return {
+            "colormaps": CONTINUOUS_COLORMAPS,
+            "default": DEFAULT_COLORMAP,
+            "palette": CATEGORICAL_PALETTE,
+        }
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(

@@ -170,6 +170,55 @@ export function analyzeTracks(
   return { components, trackKeyByAnnotationId };
 }
 
+/** Size and extent of one dataset-wide track, for track-metric filtering. */
+export interface ITrackMetrics {
+  connectionCount: number;
+  /** Endpoint count, dangling endpoints included. */
+  memberCount: number;
+  /**
+   * Timepoints spanned (max member Time − min + 1) over the members that
+   * resolve — dangling endpoints are common in real datasets and must not
+   * poison the answer. Null when no member resolves at all: unknown, which is
+   * not the same as short.
+   */
+  duration: number | null;
+}
+
+/**
+ * Per-track metrics over the COMPLETE connection graph, keyed by the
+ * dataset-wide track key (`trackKey`). Metrics are deliberately dataset-wide:
+ * narrowing the list's scope must not make a long track read as short.
+ */
+export function computeTrackMetrics(
+  components: IConnectedComponent[],
+  resolveAnnotation: (id: string) => TAnnotationOrStub | undefined,
+): Map<string, ITrackMetrics> {
+  const metrics = new Map<string, ITrackMetrics>();
+  for (const component of components) {
+    let minTime: number | null = null;
+    let maxTime: number | null = null;
+    for (const annotationId of component.annotations) {
+      const time = resolveAnnotation(annotationId)?.location.Time;
+      if (time === undefined) {
+        continue;
+      }
+      if (minTime === null || time < minTime) {
+        minTime = time;
+      }
+      if (maxTime === null || time > maxTime) {
+        maxTime = time;
+      }
+    }
+    metrics.set(trackKey(component.annotations), {
+      connectionCount: component.connections.length,
+      memberCount: component.annotations.size,
+      duration:
+        minTime === null || maxTime === null ? null : maxTime - minTime + 1,
+    });
+  }
+  return metrics;
+}
+
 /** The colour every track is drawn in when per-track colouring is off. */
 export const TRACK_UNIFORM_COLOR = "#FFFFFF";
 
@@ -410,6 +459,117 @@ export function buildTrackRows(
     }
     return a.id.localeCompare(b.id);
   });
+}
+
+// --- Track labels from a property ---
+
+/**
+ * A track's label resolved from a per-annotation property value (e.g. the
+ * `trackId` computed by the Parent-Child Connection IDs worker).
+ *
+ * The four statuses are deliberate: `partial` and `mixed` are staleness
+ * signals, not error states. The worker assigned its values against the
+ * connection graph as it existed at compute time, so members that disagree or
+ * lack a value mean the graph changed since — exactly the tracks worth a
+ * second look during post-processing.
+ */
+export type TTrackLabelResolution =
+  | { status: "value"; value: number | string }
+  /** One shared value, but some members have none (e.g. links added since). */
+  | { status: "partial"; value: number | string }
+  /** Members carry differing values (e.g. two tracks joined since). */
+  | { status: "mixed"; values: (number | string)[] }
+  /** No member has a value for the chosen property. */
+  | { status: "missing" };
+
+/**
+ * Resolve a track's label from its members' property values.
+ *
+ * `getValue` returns the member's value for the chosen property path, or null
+ * when it is confirmed to have none (not computed, or a dangling endpoint).
+ * Callers must not pass members whose values are simply unknown — in lazy
+ * mode the component skips a track until the fetch covers all its members,
+ * so "missing" is never claimed about values that merely failed to load.
+ */
+export function resolveTrackLabelValue(
+  annotationIds: Iterable<string>,
+  getValue: (annotationId: string) => number | string | null,
+): TTrackLabelResolution {
+  // Ordered array for the mixed-status report, Set for the membership check:
+  // a per-annotation path (e.g. annotationId) makes every member of a large
+  // track distinct, and this resolution reruns on every scoped-tracks
+  // rebuild, so an array scan here would be quadratic per pan.
+  const distinct: (number | string)[] = [];
+  const distinctSet = new Set<number | string>();
+  let missingCount = 0;
+  for (const annotationId of annotationIds) {
+    const value = getValue(annotationId);
+    if (value === null) {
+      missingCount++;
+    } else if (!distinctSet.has(value)) {
+      distinctSet.add(value);
+      distinct.push(value);
+    }
+  }
+  if (distinct.length === 0) {
+    return { status: "missing" };
+  }
+  if (distinct.length > 1) {
+    return { status: "mixed", values: distinct };
+  }
+  return missingCount > 0
+    ? { status: "partial", value: distinct[0] }
+    : { status: "value", value: distinct[0] };
+}
+
+/**
+ * Values carried by more than one distinct DATASET-WIDE track.
+ *
+ * Covers the graph change per-track resolution cannot see: deleting a
+ * connection after the worker ran splits one component into two tracks whose
+ * members each still unanimously carry the same old id — both resolve as a
+ * clean `value`. Partial resolutions contribute their value too (a split half
+ * that later gained an unvalued member still collides with its twin); mixed
+ * and missing resolutions carry no single value to collide on.
+ *
+ * `datasetTrackKey` must be the dataset-wide track identity (the row's
+ * `colorKey`), NOT the scoped row id: a narrow scope (selected, filtered,
+ * current location) can expose one intact dataset-wide track as two
+ * disconnected fragments, and those share a value legitimately — only a
+ * value spanning two distinct dataset-wide tracks evidences a split.
+ */
+export function findDuplicateTrackLabelValues(
+  labelledTracks: Iterable<{
+    resolution: TTrackLabelResolution;
+    datasetTrackKey: string;
+  }>,
+): Set<number | string> {
+  const firstKeyByValue = new Map<number | string, string>();
+  const duplicates = new Set<number | string>();
+  for (const { resolution, datasetTrackKey } of labelledTracks) {
+    if (resolution.status !== "value" && resolution.status !== "partial") {
+      continue;
+    }
+    const firstKey = firstKeyByValue.get(resolution.value);
+    if (firstKey === undefined) {
+      firstKeyByValue.set(resolution.value, datasetTrackKey);
+    } else if (firstKey !== datasetTrackKey) {
+      duplicates.add(resolution.value);
+    }
+  }
+  return duplicates;
+}
+
+/**
+ * Display form of a track-label value. Workers store integer ids as floats
+ * (42.0), which JavaScript already reads back as 42; anything genuinely
+ * fractional is kept short rather than shown at full float precision.
+ */
+export function formatTrackLabelValue(value: number | string): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  return Number.isInteger(value) ? value.toString() : value.toPrecision(4);
 }
 
 // --- Connect selected ---
