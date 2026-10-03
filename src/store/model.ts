@@ -89,6 +89,9 @@ export interface IToolConfiguration<Type extends TToolType = TToolType> {
   type: Type;
   values: any;
   template: IToolTemplate;
+  // Listed in the Tools palette's "Pinned" section. Optional for
+  // compatibility with configurations saved before tools could be pinned.
+  pinned?: boolean;
 }
 
 export const BaseToolStateSymbol: unique symbol = Symbol("BaseToolState");

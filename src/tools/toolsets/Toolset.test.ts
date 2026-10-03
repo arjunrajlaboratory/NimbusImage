@@ -12,6 +12,7 @@ vi.mock("@/store", async () => {
       configuration: { tools: [] },
       isLoggedIn: true,
       setSelectedToolId: vi.fn(),
+      setToolOrder: vi.fn(),
       getLayerFromId: vi.fn(),
     }),
   };
@@ -28,9 +29,29 @@ vi.mock("@/store/toolSuggestions", () => ({
   },
 }));
 
-vi.mock("vuedraggable", () => ({
-  default: { name: "draggable", template: "<div><slot /></div>" },
-}));
+// Renders each element through the #item slot like vuedraggable 4, so the
+// tool sections actually render; tests emit update:modelValue to simulate a
+// finished drag.
+vi.mock("vuedraggable", async () => {
+  const { defineComponent, h } = await import("vue");
+  return {
+    default: defineComponent({
+      name: "draggable",
+      props: ["modelValue", "itemKey"],
+      emits: ["update:modelValue"],
+      setup(props, { slots, attrs }) {
+        return () =>
+          h(
+            "div",
+            attrs,
+            (props.modelValue ?? []).map((element: any) =>
+              slots.item?.({ element }),
+            ),
+          );
+      },
+    }),
+  };
+});
 
 import store from "@/store";
 import toolSuggestionsStore from "@/store/toolSuggestions";
@@ -385,5 +406,75 @@ describe("Toolset", () => {
       );
       removeSpy.mockRestore();
     });
+  });
+});
+
+describe("Toolset sections", () => {
+  function tool(id: string, type: string, pinned?: boolean) {
+    return {
+      id,
+      name: id,
+      type,
+      values: {},
+      hotkey: null,
+      template: { name: "t" },
+      pinned,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (store as any).selectedTool = null;
+    (store as any).isLoggedIn = true;
+  });
+
+  it("renders pinned tools in their own section above the others", () => {
+    (store as any).configuration = {
+      tools: [
+        tool("a1", "create"),
+        tool("w1", "segmentation"),
+        tool("a2", "snap", true),
+      ],
+    };
+    const wrapper = mountComponent();
+
+    const sections = wrapper
+      .findAll("[data-tool-group]")
+      .map((section) => [
+        section.attributes("data-tool-group"),
+        section
+          .findAllComponents({ name: "ToolItem" })
+          .map((item: any) => item.props("tool").id),
+      ]);
+    expect(sections).toEqual([
+      ["pinned", ["a2"]],
+      ["annotation", ["a1"]],
+      ["analysis", ["w1"]],
+    ]);
+    expect(wrapper.findAll(".tool-group-header").map((h) => h.text())).toEqual([
+      "Pinned",
+      "Annotation tools",
+      "Analysis tools",
+    ]);
+  });
+
+  it("a drag within a section reorders only that section's slots", async () => {
+    (store as any).configuration = {
+      tools: [
+        tool("a1", "create"),
+        tool("w1", "segmentation"),
+        tool("a2", "create"),
+        tool("a3", "create"),
+      ],
+    };
+    const wrapper = mountComponent();
+    const annotationSection = wrapper
+      .findAllComponents({ name: "draggable" })
+      .find((d) => d.attributes("data-tool-group") === "annotation")!;
+
+    const [a1, , a2, a3] = (store as any).configuration.tools;
+    annotationSection.vm.$emit("update:modelValue", [a3, a1, a2]);
+
+    expect(store.setToolOrder).toHaveBeenCalledWith(["a3", "w1", "a1", "a2"]);
   });
 });
