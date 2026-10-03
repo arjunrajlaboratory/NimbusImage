@@ -110,6 +110,14 @@ interface IJobInfo {
   successPromise: Promise<boolean>;
   successResolve: (success: boolean) => void;
   log: string;
+  // Set the moment a terminal status is handled, so a second report of the
+  // end (the stream and a status check can both deliver it) is ignored. The
+  // entry itself stays until the end is fully handled: watchers such as
+  // ToolItem's and the job-log panels read it after the current tick.
+  settled?: boolean;
+  // When the job last showed signs of life (registered, or any event);
+  // jobs quiet for JOB_QUIET_MS get their status checked.
+  lastEventAt: number;
 }
 
 // A job as GET job/:id returns it: the event fields plus its log (the
@@ -120,18 +128,91 @@ interface IJobRecord extends IJobEventData {
 
 // Reconnect delay after the notification stream closes unexpectedly:
 // doubles per consecutive failure, capped, and gives up after
-// RECONNECT_MAX_ATTEMPTS (addJob reconnects on demand after that).
+// RECONNECT_MAX_ATTEMPTS (addJob reconnects on demand after that). The
+// failure count resets only once a connection has stayed open for
+// STABLE_CONNECTION_MS, so a server that accepts and immediately drops the
+// socket still backs off.
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 const RECONNECT_MAX_ATTEMPTS = 10;
-// Not module state: a timer handle is not something to put in the store.
+const STABLE_CONNECTION_MS = 10000;
+// Safety net for events lost in ways the socket cannot tell us about (a
+// drop and reconnect while the job's request was in flight, a stream that
+// stays open but goes silent, giving up on reconnecting): every
+// JOB_POLL_INTERVAL_MS, jobs quiet for JOB_QUIET_MS are checked against one
+// list of the user's recently finished jobs.
+const JOB_POLL_INTERVAL_MS = 15000;
+const JOB_QUIET_MS = 30000;
+const RECENT_FINISHED_JOBS_LIMIT = 100;
+
+// Timer handles are not store state.
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let stableTimer: ReturnType<typeof setTimeout> | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 function cancelReconnect() {
   if (reconnectTimer !== null) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+}
+
+function cancelStableTimer() {
+  if (stableTimer !== null) {
+    clearTimeout(stableTimer);
+    stableTimer = null;
+  }
+}
+
+// Stops the quiet-job poll (it also stops itself once nothing is tracked).
+export function stopJobPolling() {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+// The part of the server's log not yet in ours. The server keeps only the
+// tail of a very long log, so when it does not simply extend ours, find the
+// longest end of ours that the start of its log repeats (KMP: the prefix
+// function of the server log, then a scan of our end against it -- linear
+// time). With no overlap at all, everything it has came after what we saw.
+export function unseenLogSuffix(seenLog: string, serverLog: string): string {
+  if (serverLog.startsWith(seenLog)) {
+    return serverLog.slice(seenLog.length);
+  }
+  if (!serverLog) {
+    return "";
+  }
+  // prefix[i]: length of the longest proper prefix of serverLog[0..i] that
+  // is also a suffix of it.
+  const prefix = new Array<number>(serverLog.length).fill(0);
+  for (let i = 1; i < serverLog.length; ++i) {
+    let k = prefix[i - 1];
+    while (k > 0 && serverLog[i] !== serverLog[k]) {
+      k = prefix[k - 1];
+    }
+    if (serverLog[i] === serverLog[k]) {
+      k += 1;
+    }
+    prefix[i] = k;
+  }
+  // Only our last serverLog.length characters can overlap its start (so a
+  // full match can only end at our end).
+  let matched = 0;
+  for (
+    let i = Math.max(0, seenLog.length - serverLog.length);
+    i < seenLog.length;
+    ++i
+  ) {
+    while (matched > 0 && seenLog[i] !== serverLog[matched]) {
+      matched = prefix[matched - 1];
+    }
+    if (seenLog[i] === serverLog[matched]) {
+      matched += 1;
+    }
+  }
+  return serverLog.slice(matched);
 }
 
 @Module({ dynamic: true, store, name: "jobs" })
@@ -248,6 +329,7 @@ export class Jobs extends VuexModule {
         successPromise,
         successResolve,
         log: "",
+        lastEventAt: Date.now(),
       };
       this.jobInfoMap[job.jobId] = jobData;
     }
@@ -256,16 +338,16 @@ export class Jobs extends VuexModule {
 
   @Action
   async addJob(job: IComputeJob) {
-    // Events reach us only through an open stream; if it is not open now,
-    // this job's events (possibly including its end) may already be lost.
-    const streamWasDown =
-      !this.notificationSource ||
-      this.notificationSource.readyState !== WebSocket.OPEN;
     if (
       !this.notificationSource ||
       this.notificationSource.readyState == WebSocket.CLOSED ||
       this.notificationSource.readyState == WebSocket.CLOSING
     ) {
+      // A new job is a fresh reason to try, even after reconnecting gave
+      // up. Once the new stream opens, handleOpen checks this job too (it
+      // is registered below, before any open event can arrive), so a job
+      // that ended while the stream was down is still settled.
+      this.setConnectionErrors(0);
       await this.initializeNotificationSubscription();
     }
     this.rawAddJob(job);
@@ -279,14 +361,16 @@ export class Jobs extends VuexModule {
       }
       this.clearStoredMessages(job.jobId);
     }
-    // The job may have finished before its events could reach us: a
-    // request that runs the job in-process (e.g. transcoding with
-    // localJob=true) only returns once it is done, and if the stream was
-    // down meanwhile (a server restart, a network drop) the terminal event
-    // is gone for good. Ask the server then -- only then, so a healthy
-    // stream costs no extra request per job.
-    if (streamWasDown && this.jobInfoMap[job.jobId]) {
-      await this.reconcileJob(job.jobId);
+    // The safety-net poll runs while anything is tracked (see
+    // JOB_POLL_INTERVAL_MS); skipped while logged out.
+    if (this.jobInfoMap[job.jobId] && pollTimer === null) {
+      pollTimer = setInterval(() => {
+        if (Object.keys(this.jobInfoMap).length === 0) {
+          stopJobPolling();
+        } else if (main.girderRest.token) {
+          this.reconcileTrackedJobs(true);
+        }
+      }, JOB_POLL_INTERVAL_MS);
     }
     return successPromise;
   }
@@ -300,23 +384,68 @@ export class Jobs extends VuexModule {
     }
     const job = await this.fetchJob(jobId);
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
-    if (!job || !jobInfo || !isTerminalJobStatus(job.status)) {
+    if (
+      !job ||
+      !jobInfo ||
+      jobInfo.settled ||
+      !isTerminalJobStatus(job.status)
+    ) {
       return;
     }
     // Deliver the part of the log not seen yet, so listeners (progress,
-    // quota detection) get what the stream would have carried. When the
-    // server's log no longer extends ours (it keeps only the tail of a long
-    // log), send nothing rather than repeat lines already handled.
-    const serverLog = (job.log ?? []).join("");
-    const unseenLog = serverLog.startsWith(jobInfo.log)
-      ? serverLog.slice(jobInfo.log.length)
-      : "";
+    // quota detection, the job-log panels) get what the stream would have
+    // carried, without repeating lines already handled.
+    const unseenLog = unseenLogSuffix(jobInfo.log, (job.log ?? []).join(""));
     await this.handleJobEventImp({
       _id: jobId,
       status: job.status,
       title: job.title,
       text: unseenLog || undefined,
     });
+  }
+
+  // Settle tracked jobs that have finished without our hearing of it, with
+  // one request for the user's recently finished jobs (there is no batch
+  // status endpoint) and a full read only of the ones that did finish.
+  // With onlyQuiet, only jobs with no news for JOB_QUIET_MS are considered.
+  @Action
+  async reconcileTrackedJobs(onlyQuiet: boolean) {
+    const now = Date.now();
+    const jobIds = Object.keys(this.jobInfoMap).filter(
+      (jobId) =>
+        !onlyQuiet || now - this.jobInfoMap[jobId].lastEventAt >= JOB_QUIET_MS,
+    );
+    if (jobIds.length === 0) {
+      return;
+    }
+    // Not again until they have been quiet for another full window.
+    for (const jobId of jobIds) {
+      this.jobInfoMap[jobId].lastEventAt = now;
+    }
+    let finished: Set<string>;
+    try {
+      const response = await main.girderRest.get("job", {
+        params: {
+          statuses: JSON.stringify([
+            jobStates.success,
+            jobStates.error,
+            jobStates.cancelled,
+          ]),
+          sort: "updated",
+          sortdir: -1,
+          limit: RECENT_FINISHED_JOBS_LIMIT,
+        },
+      });
+      finished = new Set(response.data.map((job: { _id: string }) => job._id));
+    } catch (error) {
+      logError("Failed to list recently finished jobs");
+      return;
+    }
+    await Promise.all(
+      jobIds
+        .filter((jobId) => finished.has(jobId))
+        .map((jobId) => this.reconcileJob(jobId)),
+    );
   }
 
   @Mutation
@@ -400,7 +529,8 @@ export class Jobs extends VuexModule {
   async handleJobEventImp(jobEvent: IJobEventData) {
     const jobId = jobEvent._id;
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
-    if (!jobInfo) return;
+    if (!jobInfo || jobInfo.settled) return;
+    jobInfo.lastEventAt = Date.now();
     // Append to the log if there's text
     if (jobEvent.text && typeof jobEvent.text === "string") {
       jobInfo.log = jobInfo.log + jobEvent.text;
@@ -414,10 +544,12 @@ export class Jobs extends VuexModule {
     if (!isTerminalJobStatus(status)) {
       return;
     }
-    // Untracked before any await: a second report of the end (the stream
-    // and a status check can both deliver it) is then ignored, and a new
-    // addJob for this id starts fresh instead of joining a settled entry.
-    this.removeJobInfo(jobId);
+    // Before any await, so a second report of the end is ignored. The
+    // entry is removed only once the end is handled (below): removing it
+    // now, in the same tick it may have been added, would hide the job from
+    // watchers that read it after this tick (ToolItem's outcome icon, the
+    // job-log panels).
+    jobInfo.settled = true;
 
     const success = status === jobStates.success;
     if (!success) {
@@ -456,6 +588,7 @@ export class Jobs extends VuexModule {
       });
     }
     jobInfo.successResolve(success);
+    this.removeJobInfo(jobId);
     // A job is done, add badge to annotation panel if it is closed
     if (!main.isAnnotationPanelOpen) {
       main.setAnnotationPanelBadge(true);
@@ -478,6 +611,7 @@ export class Jobs extends VuexModule {
       return; // closed deliberately, or superseded by a newer connection
     }
     this.setNotificationSource(null);
+    cancelStableTimer();
     // Logged out (the token is gone), or failing for a long while: stop;
     // addJob reconnects on demand.
     if (
@@ -499,15 +633,18 @@ export class Jobs extends VuexModule {
     }, delay);
   }
 
-  // Every (re)connection re-checks the tracked jobs: whatever ended while
-  // no stream was open is otherwise never heard of. At first connection
-  // nothing is tracked, so this costs nothing.
+  // Every (re)connection re-checks the tracked jobs, with one request for
+  // all of them: whatever ended while no stream was open is otherwise never
+  // heard of. At the first connection (made at login) nothing is tracked,
+  // so this costs nothing.
   @Action
   async handleOpen() {
-    this.setConnectionErrors(0);
-    await Promise.all(
-      Object.keys(this.jobInfoMap).map((jobId) => this.reconcileJob(jobId)),
-    );
+    cancelStableTimer();
+    stableTimer = setTimeout(() => {
+      stableTimer = null;
+      this.setConnectionErrors(0);
+    }, STABLE_CONNECTION_MS);
+    await this.reconcileTrackedJobs(false);
   }
 
   @Action
@@ -534,6 +671,7 @@ export class Jobs extends VuexModule {
   @Action
   async closeNotificationSubscription() {
     cancelReconnect();
+    cancelStableTimer();
     const source = this.notificationSource;
     if (source) {
       // Cleared first, so handleClose sees a deliberate close.
