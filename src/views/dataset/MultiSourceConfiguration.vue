@@ -356,7 +356,7 @@
               <span>Clear assignment</span>
             </v-tooltip>
             <v-checkbox
-              v-if="canDoCompositing && dimension === 'XY'"
+              v-if="showCompositeCheckbox && dimension === 'XY'"
               density="compact"
               hide-details
               label="Composite"
@@ -370,20 +370,24 @@
         </div>
       </div>
       <v-alert
-        v-if="canDoCompositing && compositingCheckResult.error"
-        :type="enableCompositing ? 'error' : 'info'"
+        v-if="compositingRefusal"
+        type="error"
         variant="tonal"
         density="compact"
         class="mt-3"
         data-test="compositing-error"
       >
-        <template v-if="enableCompositing">
-          Can't composite: {{ compositingCheckResult.error }} Untick Composite
-          to configure the files as separate XY positions.
-        </template>
-        <template v-else>
-          Composite is unavailable: {{ compositingCheckResult.error }}
-        </template>
+        Can't composite: {{ compositingRefusal }}
+      </v-alert>
+      <v-alert
+        v-else-if="canDoCompositing && compositingCheckResult.error"
+        type="info"
+        variant="tonal"
+        density="compact"
+        class="mt-3"
+        data-test="compositing-unavailable"
+      >
+        Composite is unavailable: {{ compositingCheckResult.error }}
       </v-alert>
       <v-alert
         v-else-if="shouldDoCompositing && compositingCheckResult.warning"
@@ -542,6 +546,7 @@ import {
   compositingCheck,
   compositingCoordinates,
   compositingFrameMetadataIndex,
+  COMPOSITING_UNAVAILABLE,
   ICompositingCheck,
   ICompositingLayout,
 } from "@/utils/ND2Compositing";
@@ -1027,13 +1032,26 @@ const assignmentError = computed((): string | null => {
   return null;
 });
 
-// Composite was asked for (by the checkbox or a saved batch strategy) but
-// the layout refuses it. Kept as a refusal rather than quietly unticking,
-// so an automated batch submit fails like the API's 400 instead of
-// configuring the folder as separate XY positions, which cannot be redone.
-const compositingRefusal = computed((): string | null =>
-  enableCompositing.value ? compositingCheckResult.value.error : null,
+// Shown whenever compositing is possible, and also while it is requested
+// but impossible (e.g. by a saved batch strategy), so it can be unticked.
+const showCompositeCheckbox = computed(
+  () => canDoCompositing.value || enableCompositing.value,
 );
+
+// Composite was asked for (by the checkbox or a saved batch strategy) but
+// cannot be honored: a duplicate stage position, or files that cannot be
+// composited at all. Kept as a refusal rather than a quiet fallback, so an
+// automated batch submit fails like the API's 400 instead of configuring
+// the folder as separate XY positions, which cannot be redone.
+const compositingRefusal = computed((): string | null => {
+  if (!enableCompositing.value) {
+    return null;
+  }
+  if (!canDoCompositing.value) {
+    return COMPOSITING_UNAVAILABLE;
+  }
+  return compositingCheckResult.value.error;
+});
 
 const submitError = computed(
   (): string | null =>
@@ -2137,6 +2155,7 @@ defineExpose({
   assignmentItems,
   submitError,
   compositingRefusal,
+  showCompositeCheckbox,
   isRGBAssignmentValid,
   generationErrorMessage,
   // Methods

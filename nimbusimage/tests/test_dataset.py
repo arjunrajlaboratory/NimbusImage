@@ -212,13 +212,15 @@ class TestDatasetConfigure:
     def test_compositing_is_reported(self, mock_gc):
         """Asking for compositing is not the same as getting it -- it needs
         ND2 stage positions and, for a folder of files, XY assigned -- so
-        the server reports what actually happened and the model has to
-        carry it."""
+        a dry run reports what would happen (a real run that cannot honor
+        the request fails instead) and the model has to carry it."""
         mock_gc.post.return_value = self._plan(itemId="i", compositing=True)
         assert Dataset(mock_gc, "f").configure().compositing is True
 
-        mock_gc.post.return_value = self._plan(itemId="i", compositing=False)
-        result = Dataset(mock_gc, "f").configure(enable_compositing=True)
+        mock_gc.post.return_value = self._plan(compositing=False)
+        result = Dataset(mock_gc, "f").configure(
+            dry_run=True, enable_compositing=True,
+        )
         assert mock_gc.post.call_args[1]["json"]["enableCompositing"] is True
         assert result.compositing is False
 

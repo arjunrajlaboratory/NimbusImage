@@ -200,10 +200,11 @@ class MultiSourceConfiguration(BaseModel):
     assignments: dict = Field(default_factory=dict)
     transcode: bool = False
     transcode_default: bool = Field(False, alias="transcodeDefault")
-    # Whether compositing was actually applied. Not the same as asking for
-    # it: enable_compositing only takes effect for ND2 files with stage
-    # positions (one multi-position file, or one file per tile with XY
-    # assigned), and when it does, XY collapses to one position.
+    # Whether compositing was actually applied; when it is, XY collapses to
+    # one position. It needs ND2 files with stage positions (one
+    # multi-position file, or one file per tile with XY assigned): a dry run
+    # asking for it on other files reports False with a validation_error,
+    # and a real run fails instead of falling back to separate positions.
     compositing: bool = False
     # Problems with the stage layout, reported whenever compositing is
     # possible (requested or not): ``{"error", "warning", "tileCount"}``.

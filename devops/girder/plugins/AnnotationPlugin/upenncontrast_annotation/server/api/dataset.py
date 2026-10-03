@@ -226,9 +226,11 @@ class Dataset(Resource):
             "lay ND2 files out by their stage positions -- one "
             "multi-position file, or one file per tile with the tile "
             "variable assigned to XY -- which collapses XY to one "
-            "position. Two XY positions at the same stage position refuse "
-            "it: a real run asking for compositing then returns 400 with "
-            "the reason); createView (default "
+            "position. A request that cannot be honored -- two XY "
+            "positions at the same stage position, or files that cannot "
+            "be composited at all -- is a 400 with the reason on a real "
+            "run and the validationError of a dry run, never a quiet "
+            "fallback to separate XY positions); createView (default "
             "true -- also create the collection and dataset view the web "
             "UI needs, without which the dataset cannot be opened in the "
             "browser and does not appear in listings that enumerate "
@@ -351,10 +353,11 @@ class Dataset(Resource):
                 )
             except ValueError as e:
                 validationError = str(e)
-            # Asking for compositing and having it refused for a duplicate
-            # position is a failure, not a quiet fallback: a real run would
-            # otherwise configure every tile as its own XY position, which
-            # cannot be redone (a second call returns 409).
+            # Asking for compositing and not getting it (a duplicate
+            # position, or files that cannot composite) is a failure, not a
+            # quiet fallback: a real run would otherwise configure every
+            # tile as its own XY position, which cannot be redone (a second
+            # call returns 409).
             if validationError is None:
                 validationError = compositing_refusal(
                     result, enableCompositing,

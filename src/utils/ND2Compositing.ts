@@ -283,6 +283,14 @@ export function compositingCoordinates(
   };
 }
 
+// Why a requested composite cannot be honored when the files fail the gate.
+export const COMPOSITING_UNAVAILABLE =
+  "Composite was requested, but these files cannot be laid out by stage " +
+  "position: that needs ND2 stage positions for every frame, one tile " +
+  "size, pixel size and camera orientation, and (for several files) an " +
+  "XY assignment that tells them apart. Leave Composite off to configure " +
+  "them as separate XY positions.";
+
 export interface ICompositingCheck {
   error: string | null;
   warning: string | null;

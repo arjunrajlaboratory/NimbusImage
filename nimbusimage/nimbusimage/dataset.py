@@ -308,12 +308,15 @@ class Dataset:
                 that tells the files apart is assigned to ``XY`` -- the
                 filename parser often guesses a bare tile number as ``C``,
                 so dry-run first and pass an ``assignments`` override that
-                moves it to ``XY``. Check ``result.compositing`` for what
-                actually happened; when it applies, XY collapses to one
-                position. ``result.compositing_check`` explains a refusal
-                (two tiles at the same stage position, which also makes a
-                real run fail) or warns about a sparse layout, and counts
-                the composited tiles (``tileCount``). Compositing more than
+                moves it to ``XY``. ``result.compositing`` says whether it
+                applies (XY then collapses to one position). A request that
+                cannot be honored -- files that cannot composite, or two
+                tiles at the same stage position -- shows up as the dry
+                run's ``validation_error`` and makes a real run fail rather
+                than fall back to separate positions.
+                ``result.compositing_check`` explains a duplicate or warns
+                about a sparse layout, and counts the composited tiles
+                (``tileCount``). Compositing more than
                 16 tiles transcodes by default.
             create_view: Also create the collection and dataset view the
                 web UI needs. On by default: without them the dataset is

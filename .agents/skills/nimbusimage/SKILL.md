@@ -227,7 +227,7 @@ default, whether they come from many files or one multi-position file.
 |---|---|
 | `transcode` | Convert to one tiled TIFF. Omit to use the UI's rule (on unless every file is `.nd2`, and also on when compositing more than 16 tiles, i.e. stage positions — a long job for thousands of tiles); pass `False` to skip. |
 | `split_rgb_bands` | Split an RGB image into three channels (default `True`). |
-| `enable_compositing` | Lay out ND2 files by stage position rather than as separate XY positions. Applies to one multi-position ND2, or to a folder of ND2 files (one per tile) with the same tile size once the variable that tells the files apart is on `XY` — read `result.compositing` for what actually happened, and expect XY to collapse to one position when it does. |
+| `enable_compositing` | Lay out ND2 files by stage position rather than as separate XY positions. Applies to one multi-position ND2, or to a folder of ND2 files (one per tile) with the same tile size once the variable that tells the files apart is on `XY` — `result.compositing` says whether it applies (XY then collapses to one position). A request that cannot be honored (files that cannot composite, or two tiles at one stage position) is the dry run's `validation_error` and makes a real run fail, rather than falling back to separate positions. |
 | `create_view` | Also create the collection and dataset view the web UI needs (default `True`). Turn it off only if you are going to create your own. |
 
 Failures come back as `girder_client.HttpError`: 400 for an invalid

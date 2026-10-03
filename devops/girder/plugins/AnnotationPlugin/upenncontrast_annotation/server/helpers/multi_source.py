@@ -1026,15 +1026,27 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
     }
 
 
+COMPOSITING_UNAVAILABLE = (
+    "Composite was requested, but these files cannot be laid out by stage "
+    "position: that needs ND2 stage positions for every frame, one tile "
+    "size, pixel size and camera orientation, and (for several files) an "
+    "XY assignment that tells them apart. Leave Composite off to configure "
+    "them as separate XY positions."
+)
+
+
 def compositing_refusal(result, enable_compositing):
-    """Port of the component's ``compositingRefusal``: the reason a
-    requested composite is refused (a duplicate stage position), or None.
-    It ranks after the dtype and assignment errors, as in ``submitError``,
-    and turns a request into a failure rather than a quiet fallback to
-    separate XY positions, which cannot be redone."""
+    """Port of the component's ``compositingRefusal``: why a requested
+    composite cannot be honored (a duplicate stage position, or files that
+    cannot be composited at all), or None. It ranks after the dtype and
+    assignment errors, as in ``submitError``, and turns the request into a
+    failure rather than a quiet fallback to separate XY positions, which
+    cannot be redone."""
     if not enable_compositing:
         return None
-    return result["compositingCheck"]["error"]
+    if result["compositingCheck"]["error"] is not None:
+        return result["compositingCheck"]["error"]
+    return None if result["compositing"] else COMPOSITING_UNAVAILABLE
 
 
 def composite_transcode_default(transcode_default, compositing, tile_count):

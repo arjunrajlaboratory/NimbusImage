@@ -54,8 +54,11 @@ Where the implementation differs from, or settles, the proposal below:
   after the dtype and assignment errors in `submitError`, and
   `generateJson` emits it as a generation error without uploading, so an
   automated batch submit fails instead of configuring separate XY positions.
-  Unticking clears it; an unticked Composite is just disabled, with the
-  reason shown. The UI disables Composite with the reason; the
+  The same holds when a requested composite is impossible altogether (a
+  batch folder without stage positions, or with another tile size): both
+  ends refuse with one message (`COMPOSITING_UNAVAILABLE`), and the
+  checkbox stays visible while ticked so it can be unticked. Unticking
+  clears it; an unticked Composite is just disabled, with the reason shown. The UI disables Composite with the reason; the
   API reports `compositingCheck.error`, uses it as the dry run's
   `validationError`, and a real run that asked for compositing returns 400
   rather than quietly configuring every tile as its own position (which
@@ -486,6 +489,8 @@ hand.
   *"test_tolerances_use_the_rotated_tile"*,
   *"test_duplicate_next_to_any_merged_point_is_caught"*,
   *"refuses a requested composite with a duplicate instead of dropping it"*,
+  *"refuses a requested composite the files cannot support"*,
+  *"testRequestedCompositingThatCannotApplyIsRefused"*,
   *"does not flag a point near a merged box but far from its points"*,
   *"test_point_near_a_merged_box_but_far_from_its_points"*.
 - A sparse layout warns but still composites —

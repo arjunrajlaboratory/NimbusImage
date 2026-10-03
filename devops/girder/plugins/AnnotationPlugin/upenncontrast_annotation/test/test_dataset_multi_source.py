@@ -1533,6 +1533,38 @@ class TestDatasetMultiSourceValidationRules:
         assertStatusOk(plain)
         assert plain.json["compositing"] is False
 
+    def testRequestedCompositingThatCannotApplyIsRefused(
+        self, admin, server, fsAssetstore, monkeypatch
+    ):
+        """Files without stage positions cannot composite. Asking for it
+        anyway (e.g. a saved batch strategy) is a 400 on a real run, not a
+        quiet fallback to separate XY positions that could not be redone."""
+        folder = self._makeFolder(
+            admin, "not_compositable_dataset", self._UNIFORM_DTYPE,
+            monkeypatch,
+        )
+        body = {"transcode": False, "enableCompositing": True,
+                "assignments": {"XY": {"source": "filename",
+                                       "guess": "XY"}}}
+        dry = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"], method="POST",
+            user=admin, body=json.dumps(dict(body, dryRun=True)),
+            type="application/json",
+        )
+        assertStatusOk(dry)
+        assert dry.json["compositing"] is False
+        assert dry.json["validationError"].startswith(
+            "Composite was requested, but these files cannot be laid out"
+        )
+        resp = server.request(
+            path=MULTI_SOURCE_PATH % folder["_id"], method="POST",
+            user=admin, body=json.dumps(body), type="application/json",
+        )
+        assertStatus(resp, 400)
+        assert Item().findOne({
+            "folderId": folder["_id"], "name": MULTI_SOURCE_ITEM_NAME,
+        }) is None
+
     def testCompositingManyTilesTranscodesByDefault(
         self, admin, server, fsAssetstore, monkeypatch
     ):

@@ -698,6 +698,32 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.shouldDoCompositing).toBe(false);
     });
 
+    it("refuses a requested composite the files cannot support", async () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      await vm.initialized.catch(() => {});
+      setUpTileFolder(vm, [
+        [0, 0],
+        [512, 0],
+      ]);
+      vm.enableCompositing = true;
+      // A later folder of a batch: tiles of a different size.
+      vm.tilesMetadata = [
+        makeBasicTileMeta(),
+        makeBasicTileMeta({ sizeX: 1024 }),
+      ];
+      await nextTick();
+      expect(vm.canDoCompositing).toBe(false);
+      expect(vm.compositingRefusal).toContain("Composite was requested");
+      mockAddMultiSourceMetadata.mockClear();
+      expect(await vm.generateJson()).toBeNull();
+      expect(mockAddMultiSourceMetadata).not.toHaveBeenCalled();
+      // The checkbox stays so the request can be unticked.
+      expect(vm.showCompositeCheckbox).toBe(true);
+      vm.enableCompositing = false;
+      expect(vm.compositingRefusal).toBeNull();
+    });
+
     it("refuses a requested composite with a duplicate instead of dropping it", async () => {
       const vm = mountComponent().vm as any;
       await vm.initialized.catch(() => {});

@@ -193,8 +193,9 @@ curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
 ```
 
 Every file must have stage positions and the same `sizeX`/`sizeY`/`mm_x`/
-`mm_y`; otherwise `compositing` comes back `false` and the tiles stay separate
-XY positions. `compositingCheck` (`{error, warning}`) explains the layout
+`mm_y`. Asking for compositing when that does not hold is a 400 on a real run
+(the dry run's `validationError`), never a quiet fallback to separate XY
+positions. `compositingCheck` (`{error, warning}`) explains the layout
 whenever compositing is possible: an `error` (two XY positions at the same
 stage position) refuses it, and a real run that asked for compositing then
 returns 400; a `warning` (tiles covering under 25% of the mosaic, e.g. two
