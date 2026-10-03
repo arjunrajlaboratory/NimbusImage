@@ -2,7 +2,7 @@ from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.constants import AccessType, TokenScope
 from girder.api.rest import Resource, loadmodel
-from ..helpers.validation import requireObjectBody
+from ..helpers.validation import requireObjectBody, requireObjectId
 from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from girder.exceptions import RestException, AccessException
@@ -62,11 +62,17 @@ class AnnotationProperty(Resource):
     )
     def compute(self, annotation_property, params):
         datasetId = params.get("datasetId", None)
-        if datasetId and id:
+        if datasetId:
+            # Validate the id shape at the API boundary so a malformed
+            # datasetId is a clean 400, not a 500 from bson deep inside
+            # Folder().load. Keep the original string: runJobRequest passes
+            # datasetId to the worker as a string container arg.
+            requireObjectId(datasetId, "datasetId")
             return self._propertyModel.compute(
                 annotation_property,
                 datasetId,
                 requireObjectBody(self.getBodyJson(), "Parameters"),
+                self.getCurrentUser(),
             )
         return {}
 

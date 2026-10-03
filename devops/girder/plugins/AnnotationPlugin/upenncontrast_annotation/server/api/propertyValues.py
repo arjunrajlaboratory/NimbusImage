@@ -1,4 +1,5 @@
 from bson import ObjectId
+from bson.errors import InvalidId
 
 from girder.api import access
 from girder.api.describe import Description, describeRoute
@@ -82,8 +83,19 @@ class PropertyValues(Resource):
         )
     )
     def addMultiple(self, params):
-        propertyValuesList = self._annotationPropertyValuesModel.\
-            convertIdsToObjectIds(self.getBodyJson())
+        # Validate the body shape at the API boundary (400, not 500): a
+        # non-list body or a non-dict entry would otherwise trip an uncaught
+        # AttributeError/TypeError in convertIdsToObjectIds.
+        bodyJson = requireList(self.getBodyJson(), "Request body")
+        for entry in bodyJson:
+            requireObjectBody(entry, "Each property value entry")
+        try:
+            propertyValuesList = self._annotationPropertyValuesModel.\
+                convertIdsToObjectIds(bodyJson)
+        except InvalidId:
+            raise RestException(
+                "Invalid id in property value entry", code=400
+            )
         datasetIds = {
             entry["datasetId"]
             for entry in propertyValuesList

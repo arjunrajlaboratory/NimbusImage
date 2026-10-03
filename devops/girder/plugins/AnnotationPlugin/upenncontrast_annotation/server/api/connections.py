@@ -7,9 +7,11 @@ from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
+from ..helpers.validation import requireList, requireObjectBody
 from ..models.annotation import Annotation as AnnotationModel
 from ..models.connections import AnnotationConnection as ConnectionModel
 
+from bson.errors import InvalidId
 from bson.objectid import ObjectId
 
 
@@ -27,7 +29,15 @@ def getDatasetIdFromConnectionListInBody(
     self: "AnnotationConnection", *args, **kwargs
 ):
     connections = kwargs["memoizedBodyJson"]
-    return None if len(connections) <= 0 else connections[0]["datasetId"]
+    # Defensive: this runs (in the @recordable wrapper) before the handler's
+    # input validation, so a malformed body must not raise here -- return None
+    # so recording is skipped and the handler produces the clean 400.
+    if not isinstance(connections, list) or len(connections) <= 0:
+        return None
+    first = connections[0]
+    if not isinstance(first, dict):
+        return None
+    return first.get("datasetId")
 
 
 def getDatasetIdFromLoadedConnection(
@@ -122,8 +132,16 @@ class AnnotationConnection(Resource):
         "Create multiple connections", getDatasetIdFromConnectionListInBody
     )
     def multipleCreate(self, params, *args, **kwargs):
-        bodyJson = kwargs["memoizedBodyJson"]
-        connections = self._connectionModel.convertIdsToObjectIds(bodyJson)
+        # Validate the body shape at the API boundary (400, not 500): a
+        # non-list body or a non-dict entry would otherwise trip an uncaught
+        # AttributeError/TypeError in convertIdsToObjectIds.
+        bodyJson = requireList(kwargs["memoizedBodyJson"], "Request body")
+        for entry in bodyJson:
+            requireObjectBody(entry, "Each connection")
+        try:
+            connections = self._connectionModel.convertIdsToObjectIds(bodyJson)
+        except InvalidId:
+            raise RestException("Invalid id in connection", code=400)
         datasetIds = {
             conn["datasetId"] for conn in connections
             if "datasetId" in conn

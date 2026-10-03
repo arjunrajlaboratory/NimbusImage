@@ -62,36 +62,21 @@ class AnnotationConnection(AccessControlMixin, ProxiedModel):
     )
 
     def annotationsRemovedEvent(self, event):
-        # Clean connections orphaned by the deletion of the annotations
-        annotationStringIds = event.info
-        pipeline = [
-            # Select the first annotation from the array
-            {"$match": {"_id": annotationStringIds[0]}},
-            # Bring up all connections who share the same datasetId
-            {"$lookup":
-                {
-                    "from": "annotation_connection",
-                    "localField": "datasetId",
-                    "foreignField": "datasetId",
-                    "as": "datasetConnections"
-                }},
-            # Replace root with connections (remove unnecessary annotation
-            # information)
-            {"$unwind": "$datasetConnections"},
-            {"$replaceRoot": {"newRoot": "$datasetConnections"}},
-            # Only match connections whose childId or parentId match one of
-            # the annotations to remove
-            {"$match": {"$or": [
-                {"childId": {"$in": annotationStringIds}},
-                {"parentId": {"$in": annotationStringIds}}
-            ]}},
-            # Only keep the necessary information
-            {"$project": {"_id": 1}}
-        ]
-        connectionsToRemove = [
-            connection["_id"]
-            for connection in Annotation().collection.aggregate(pipeline)]
-        self.removeWithQuery({"_id": {"$in": connectionsToRemove}})
+        # Clean connections orphaned by the deletion of the annotations.
+        # Ids arrive as strings from bulk deletes and as ObjectIds from single
+        # deletes; childId/parentId are stored as ObjectIds, so normalize
+        # before the $in query (a string $in never matches an ObjectId field,
+        # which previously left bulk-deleted annotations' connections
+        # orphaned). A connection references only annotations, so any
+        # connection whose child or parent is being removed is orphaned and
+        # is removed directly via the childId/parentId indices.
+        annotationIds = [ObjectId(str(i)) for i in event.info]
+        if not annotationIds:
+            return
+        self.removeWithQuery({"$or": [
+            {"childId": {"$in": annotationIds}},
+            {"parentId": {"$in": annotationIds}},
+        ]})
 
     def folderRemovedEvent(self, event):
         if event.info and event.info["_id"]:

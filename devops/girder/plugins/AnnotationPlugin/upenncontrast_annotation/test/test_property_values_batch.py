@@ -310,3 +310,39 @@ class TestFindByAnnotationIds:
         assert len(docs) == 1
         assert "_id" not in docs[0]
         assert "datasetId" not in docs[0]
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestAddMultipleValidation:
+    """POST /annotation_property_values/multiple must reject malformed input.
+
+    Regression for issue #1242: the bulk-add endpoint didn't validate its
+    body shape, so a non-list body or a non-dict entry raised 500 not 400.
+    """
+
+    def _post(self, server, user, body):
+        return server.request(
+            path="/annotation_property_values/multiple",
+            method="POST",
+            user=user,
+            body=json.dumps(body),
+            type="application/json",
+        )
+
+    def testNonListBodyReturns400(self, admin, server):
+        resp = self._post(server, admin, {"not": "a list"})
+        assertStatus(resp, 400)
+
+    def testNonDictEntryReturns400(self, admin, server):
+        resp = self._post(server, admin, [123])
+        assertStatus(resp, 400)
+
+    def testInvalidDatasetIdReturns400(self, admin, server):
+        entry = {
+            "datasetId": "not-a-valid-object-id",
+            "annotationId": "012345678901234567890123",
+            "values": {"propA": 1},
+        }
+        resp = self._post(server, admin, [entry])
+        assertStatus(resp, 400)

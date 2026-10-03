@@ -1,6 +1,7 @@
 from ..helpers.proxiedModel import ProxiedModel
-from girder.exceptions import ValidationException, RestException
+from girder.exceptions import ValidationException
 from girder.constants import AccessType
+from girder.models.folder import Folder
 from ..helpers.tasks import runJobRequest
 
 from ..helpers.fastjsonschema import customJsonSchemaCompile
@@ -65,11 +66,14 @@ class AnnotationProperty(ProxiedModel):
     def getPropertyById(self, id, user=None):
         return self.load(id, user=user)
 
-    def compute(self, property, datasetId, params):
+    def compute(self, property, datasetId, params, user=None):
+        # Mirror the annotation compute path: require WRITE on the dataset
+        # before scheduling a worker, so a caller can't spawn a (doomed) job
+        # against a dataset they lack access to. exc=True -> 403/404 here.
+        Folder().load(
+            datasetId, user=user, level=AccessType.WRITE, exc=True
+        )
         image = property.get("image", None)
         if not image:
-            raise RestException(code=500, message="Invalid property: no image")
-
-        if property:
-            return runJobRequest(image, datasetId, params, "compute")
-        return {}
+            raise ValidationException("Invalid property: no image")
+        return runJobRequest(image, datasetId, params, "compute")
