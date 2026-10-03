@@ -285,17 +285,31 @@ tests are out of date:
   response, so it still passes. Add a case that checks `configure()` sends both
   the `assignments` override and `enableCompositing: true` in the same body.
 
-### Agent skills and in-app help (same wording fix)
+### Agent skills for Claude Code and Codex, and in-app help
 
-- `plugins/nimbusimage/skills/nimbusimage/SKILL.md` and its mirror
-  `.agents/skills/nimbusimage/SKILL.md`: the `enable_compositing` row in the
-  `configure()` options table.
-- `.claude/skills/nimbus-local-ops/references/api-endpoints.md` and its mirror
-  `.agents/skills/nimbus-local-ops/references/api-endpoints.md`: the
-  `compositing` description, which currently says it "needs a single source
-  with ND2 frame metadata".
+Skills ship in three trees, and the copies have to be kept in sync:
+- `plugins/nimbusimage/skills/`: the installable Claude Code plugin
+  (`/nimbus-skills:*`)
+- `.claude/skills/`: Claude Code skills for working in this repo
+- `.agents/skills/`: the Codex copies of both (`$nimbusimage:*`)
+
+Update the same wording in each copy:
+
+| Skill file | Claude Code | Codex | What to change |
+| --- | --- | --- | --- |
+| nimbusimage client skill: the `enable_compositing` row in the `configure()` options table (line ~205), plus the `configure()` walkthrough above it | `plugins/nimbusimage/skills/nimbusimage/SKILL.md` | `.agents/skills/nimbusimage/SKILL.md` | Replace "Only applies to a single source with ND2 frame metadata" with the new rule. Add the tile-folder recipe: a dry run, then an `assignments` override that puts the tile-index variable on `XY`, then `enable_compositing=True`, then check `result.compositing`. |
+| Local-ops endpoint reference: the `multi_source` section (lines ~136 and ~176) | `.claude/skills/nimbus-local-ops/references/api-endpoints.md` | `.agents/skills/nimbus-local-ops/references/api-endpoints.md` | The `compositing` description ("needs a single source with ND2 frame metadata"). Add a curl example with an XY assignment override plus `enableCompositing: true`. |
+| Branch-review documentation index | `.claude/skills/branch-review/references/feature-documentation-index.md` | `.agents/skills/branch-review/references/feature-documentation-index.md` | Add a row so reviews load this spec. Under the feature-area table: "Dataset configuration, multi-source, compositing" → `codebaseDocumentation/MULTIFILE_ND2_COMPOSITING.md`. Under the file-pattern table: `MultiSourceConfiguration.vue`, `helpers/multi_source.py`, `helpers/filename_parsing.py`, `utils/parsing.ts`, `api/dataset.py` `multi_source`. |
+
+The `images`, `analyze`, `annotations` and `workers` skills and their
+`references/gotchas.md` mention "composite", but they mean an RGB blend of
+channels (`get_composite`), not tile stitching. Leave them alone.
+
+In-app help and history:
 - `devops/girder/plugins/girder-claude-chat/girder_claude_chat/help/file-formats-and-upload.md`:
   say that a folder of tiles composites once the tile variable is on XY.
+  `help/managing-files.md` already describes compositing generically and is
+  fine.
 - `codebaseDocumentation/DATASET_MULTI_SOURCE_ENDPOINT-REVIEW.md` is a
   historical review, so leave it as it is.
 
