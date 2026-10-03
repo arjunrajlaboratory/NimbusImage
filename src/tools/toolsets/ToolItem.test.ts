@@ -5,6 +5,7 @@ vi.mock("@/store", () => ({
   default: {
     selectedTool: null,
     setSelectedToolId: vi.fn(),
+    setToolPinned: vi.fn(),
     editToolInConfiguration: vi.fn(),
     removeToolFromConfiguration: vi.fn(),
   },
@@ -118,5 +119,35 @@ describe("ToolItem", () => {
     await vi.waitFor(() => {
       expect((wrapper.vm as any).statusIcon).toBe("mdi-close");
     });
+  });
+
+  it("the pin button pins an unpinned tool without toggling it", async () => {
+    const wrapper = mountComponent();
+    await wrapper.find(".tool-item__pin").trigger("click");
+
+    expect(store.setToolPinned).toHaveBeenCalledWith({
+      toolId: "tool-1",
+      pinned: true,
+    });
+    expect(store.setSelectedToolId).not.toHaveBeenCalled();
+  });
+
+  it("the pin button unpins a pinned tool", async () => {
+    const wrapper = mountComponent({ tool: { ...baseTool, pinned: true } });
+    const pin = wrapper.find(".tool-item__pin");
+    expect(pin.attributes("aria-label")).toBe("Unpin tool");
+    await pin.trigger("click");
+
+    expect(store.setToolPinned).toHaveBeenCalledWith({
+      toolId: "tool-1",
+      pinned: false,
+    });
+  });
+
+  it("clicking the drag handle does not toggle the tool", async () => {
+    const wrapper = mountComponent();
+    await wrapper.find(".tool-item__drag-handle").trigger("click");
+
+    expect(store.setSelectedToolId).not.toHaveBeenCalled();
   });
 });

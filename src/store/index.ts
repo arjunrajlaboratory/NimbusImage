@@ -1020,6 +1020,51 @@ export class Main extends VuexModule {
     this.syncConfiguration("tools");
   }
 
+  // Pinning only changes where the Tools palette lists a tool: one write of
+  // the tools key, and a selected tool keeps its state (setSelectedToolImpl
+  // only swaps the configuration for the same id).
+  @Action
+  async setToolPinned({ toolId, pinned }: { toolId: string; pinned: boolean }) {
+    const tool = this.tools.find((t) => t?.id === toolId);
+    if (!this.configuration || !tool || !!tool.pinned === pinned) {
+      return;
+    }
+    const pinnedTool = { ...tool, pinned };
+    this.setConfigurationTools(
+      this.tools.map((t) => (t?.id === toolId ? pinnedTool : t)),
+    );
+    if (this.selectedTool?.configuration.id === toolId) {
+      this.setSelectedToolImpl(pinnedTool);
+    }
+    await this.syncConfiguration("tools");
+  }
+
+  // Reorder the toolset to `toolIds`. The ids must be exactly the current
+  // tools: a list computed before a tool was added or removed is dropped
+  // rather than applied, so a stale drag can never delete or resurrect a
+  // tool. The current tool objects are reused, never the caller's copies.
+  @Action
+  async setToolOrder(toolIds: string[]) {
+    if (!this.configuration) {
+      return;
+    }
+    const currentTools = this.tools.filter(Boolean);
+    const toolsById = new Map(currentTools.map((tool) => [tool.id, tool]));
+    if (
+      toolIds.length !== toolsById.size ||
+      new Set(toolIds).size !== toolIds.length ||
+      toolIds.some((id) => !toolsById.has(id))
+    ) {
+      return;
+    }
+    const reorderedTools = toolIds.map((id) => toolsById.get(id)!);
+    if (reorderedTools.every((tool, index) => tool === currentTools[index])) {
+      return;
+    }
+    this.setConfigurationTools(reorderedTools);
+    await this.syncConfiguration("tools");
+  }
+
   @Action
   protected async loggedIn(girderRest: RestClientInstance) {
     this.setGirderRest(girderRest);
