@@ -1442,7 +1442,11 @@ async function initialize() {
 }
 
 async function initializeImplementation() {
-  const fetchedItems = await store.api.getItems(props.datasetId);
+  // One dataset id for the whole load: if the prop changes mid-load, the
+  // queued metadata batches must still ask about the folder these items
+  // came from (the reinitialize loop then loads the new one).
+  const datasetId = props.datasetId;
+  const fetchedItems = await store.api.getItems(datasetId);
 
   girderItems.value = fetchedItems;
 
@@ -1524,7 +1528,7 @@ async function initializeImplementation() {
                 let entries: ISourceMetadataEntry[];
                 try {
                   entries = await store.api.getSourceMetadata(
-                    props.datasetId,
+                    datasetId,
                     pending.map((idx) => fetchedItems[idx]._id),
                   );
                 } catch (error: any) {

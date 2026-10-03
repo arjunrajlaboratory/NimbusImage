@@ -850,6 +850,20 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.transcode).toBe(false);
     });
 
+    it("asks about the folder the items came from when the id changes mid-load", async () => {
+      const items = namedItems(120);
+      mockGetItems.mockResolvedValue(items);
+      const wrapper = mountComponent({}, { skipInitialize: false });
+      const vm = wrapper.vm as any;
+      await wrapper.setProps({ datasetId: "ds-2" });
+      await vm.initialized;
+      // The first load's three batches all name the folder its items came
+      // from, never the new id.
+      expect(
+        mockGetSourceMetadata.mock.calls.slice(0, 3).map((c) => c[0]),
+      ).toEqual(["ds-1", "ds-1", "ds-1"]);
+    });
+
     it("loads source metadata in batches of at most 50 items", async () => {
       const items = namedItems(120);
       mockGetItems.mockResolvedValue(items);

@@ -478,6 +478,7 @@ hand.
   *"retries only the items that are not large images yet"*,
   *"stops at once when a metadata request is refused"*,
   *"retries a metadata request that fails transiently"*,
+  *"asks about the folder the items came from when the id changes mid-load"*,
   *"testSourceMetadataIsBatchedAndSlim"*.
 - Slimming internal metadata never changes a configuration —
   *"test_slim_internal_metadata_changes_nothing"*.
