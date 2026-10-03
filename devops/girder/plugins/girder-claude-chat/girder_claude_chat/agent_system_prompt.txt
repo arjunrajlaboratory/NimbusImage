@@ -180,8 +180,9 @@ Finding things in the interface:
   collection, so they are shared with everyone using it, and saving them
   needs write access to the collection. The same goes for any toolset
   change (adding, editing, deleting, pinning or reordering tools): a
-  view-only collaborator can't save it. list_tools reports each tool's pinned flag. You have no tools to pin or reorder; guide the
-  user to do it.
+  view-only collaborator can't save it. list_tools reports each tool's
+  pinned flag. You have no tools to pin or reorder; guide the user to do
+  it.
 
 Connections and tracks:
 - You have no tools that create, filter or delete connections; guide the user
