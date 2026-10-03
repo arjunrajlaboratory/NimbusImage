@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => {
     toggleAnalysisPlotGateEnabled: vi.fn(),
     removeAnalysisPlot: vi.fn(),
     setAnalysisPlotAxes: vi.fn(),
+    setAnalysisPlotDisplay: vi.fn(),
   };
 });
 
@@ -35,6 +36,7 @@ vi.mock("@/store/filters", () => ({
     toggleAnalysisPlotGateEnabled: mocks.toggleAnalysisPlotGateEnabled,
     removeAnalysisPlot: mocks.removeAnalysisPlot,
     setAnalysisPlotAxes: mocks.setAnalysisPlotAxes,
+    setAnalysisPlotDisplay: mocks.setAnalysisPlotDisplay,
   },
 }));
 
@@ -361,7 +363,7 @@ describe("AnalysisScatterPlot heatmap mode", () => {
     expect(mocks.setAnalysisPlotGate).not.toHaveBeenCalled();
   });
 
-  it("shows the chained badge count from the histogram, not pure ids", async () => {
+  it("shows the panel's chained badge count, not pure ids", async () => {
     wrapper = mountHeatmap({
       plot: {
         ...PLOT,
@@ -378,9 +380,13 @@ describe("AnalysisScatterPlot heatmap mode", () => {
       },
       // Pure server ids over the whole dataset — NOT what the badge shows.
       gateIds: Array.from({ length: 70000 }, (_, i) => `id-${i}`),
+      chainedGateCount: 4521,
     });
     await flushPromises();
     expect((wrapper.vm as any).gateBadgeCount).toBe(4521);
+    // Unknown (a gate still resolving): the placeholder, never the pure count.
+    await wrapper.setProps({ chainedGateCount: null });
+    expect((wrapper.vm as any).gateBadgeCount).toBeNull();
   });
 
   it("ignores lasso selection events in heatmap mode", async () => {
@@ -392,5 +398,177 @@ describe("AnalysisScatterPlot heatmap mode", () => {
       });
     }
     expect(mocks.setAnalysisPlotGate).not.toHaveBeenCalled();
+  });
+});
+
+// Dots mode: a display sample from the server, colored, gated by lasso. The
+// gate is still a polygon in value space, resolved over every object.
+describe("AnalysisScatterPlot dots mode", () => {
+  const TAGS = { type: "categorical" as const, key: "tags" as const };
+  const SAMPLE_HISTOGRAM = {
+    counts: [[4]],
+    xEdges: [0, 10],
+    yEdges: [0, 10],
+    xCategories: null,
+    yCategories: null,
+    xCategoryLabels: null,
+    yCategoryLabels: null,
+    colorCategoryLabels: ["B Cell", "T Cell"],
+    inputCount: 700000,
+    plottedCount: 700000,
+    gateCount: null,
+    sample: {
+      x: [1, 2, 8, 9],
+      y: [1, 2, 8, 9],
+      total: 700000,
+      color: [0, 1, 0, null],
+      colorCategories: ['v1:["B Cell"]', 'v1:["T Cell"]'],
+    },
+  };
+
+  beforeEach(() => {
+    Object.keys(mocks.handlers).forEach((key) => delete mocks.handlers[key]);
+    mocks.react.mockClear();
+    mocks.setAnalysisPlotGate.mockClear();
+    mocks.setAnalysisPlotDisplay.mockClear();
+  });
+
+  function mountDots(
+    overrides: Record<string, unknown> = {},
+    plot: Record<string, unknown> = {},
+  ) {
+    return mountPlot({
+      plot: { ...PLOT, display: "dots", colorBy: TAGS, ...plot },
+      series: null,
+      overCap: true,
+      histogram: SAMPLE_HISTOGRAM,
+      ...overrides,
+    });
+  }
+
+  it("draws every dot in one trace colored per point, with a legend", async () => {
+    wrapper = mountDots();
+    await flushPromises();
+    const [, traces, layout] = mocks.react.mock.calls.at(-1)! as any[];
+    // One interleaved trace (so large categories cannot paint over small
+    // ones), then one legend proxy per category present.
+    expect(traces[0].x).toEqual([1, 2, 8, 9]);
+    expect(traces[0].hovertext).toEqual(["B Cell", "T Cell", "B Cell", ""]);
+    expect(new Set(traces[0].marker.color).size).toBe(3); // two + no value
+    expect(traces.slice(1).map((trace: any) => trace.name)).toEqual([
+      "B Cell",
+      "T Cell",
+    ]);
+    expect(layout.showlegend).toBe(true);
+    expect(layout.legend.itemclick).toBe(false);
+    expect(layout.dragmode).toBe("lasso");
+  });
+
+  it("colors a clustering by category and anything else on a ramp", async () => {
+    const values = { ...SAMPLE_HISTOGRAM.sample, color: [0, 3, 3, null] };
+    const numeric = {
+      ...SAMPLE_HISTOGRAM,
+      colorCategoryLabels: null,
+      sample: { ...values, colorCategories: null },
+    };
+    const cluster = { type: "property" as const, path: ["c", "kmeans"] };
+    wrapper = mountDots(
+      {
+        histogram: numeric,
+        axisItems: [{ text: "Clustering / kmeans", value: "prop.c.kmeans" }],
+      },
+      { colorBy: cluster },
+    );
+    await flushPromises();
+    let [, traces] = mocks.react.mock.calls.at(-1)! as any[];
+    expect(traces.slice(1).map((trace: any) => trace.name)).toEqual(["0", "3"]);
+    wrapper.unmount();
+    // A gene count is integer too, but not a clustering: a colorbar.
+    wrapper = mountDots(
+      {
+        histogram: numeric,
+        axisItems: [
+          { text: "Spatial table / MS4A1", value: "prop.spatial.MS4A1" },
+        ],
+      },
+      { colorBy: { type: "property", path: ["spatial", "MS4A1"] } },
+    );
+    await flushPromises();
+    [, traces] = mocks.react.mock.calls.at(-1)! as any[];
+    const ramp = traces.find((trace: any) => trace.marker?.showscale);
+    expect(ramp.x).toEqual([1, 2, 8]);
+    expect(ramp.marker.color).toEqual([0, 3, 3]);
+    expect(traces.find((trace: any) => trace.name === "No value").x).toEqual([
+      9,
+    ]);
+  });
+
+  it("turns a lasso into a gate and dims the dots outside it", async () => {
+    wrapper = mountDots();
+    await flushPromises();
+    for (const handler of mocks.handlers["plotly_selected"] ?? []) {
+      handler({ lassoPoints: { x: [0, 5, 5, 0], y: [0, 0, 5, 5] } });
+    }
+    expect(mocks.setAnalysisPlotGate).toHaveBeenCalledWith({
+      id: "p1",
+      gate: expect.objectContaining({
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+          { x: 5, y: 5 },
+          { x: 0, y: 5 },
+        ],
+        xCategories: null,
+        yCategories: null,
+      }),
+    });
+    // With that gate drawn, only the dots inside it are selected.
+    await wrapper.setProps({
+      plot: {
+        ...PLOT,
+        display: "dots",
+        colorBy: TAGS,
+        gate: {
+          categoryKeyVersion: 1,
+          vertices: [
+            { x: 0, y: 0 },
+            { x: 5, y: 0 },
+            { x: 5, y: 5 },
+            { x: 0, y: 5 },
+          ],
+          xCategories: null,
+          yCategories: null,
+        },
+      },
+    });
+    await flushPromises();
+    const [, traces, layout] = mocks.react.mock.calls.at(-1)! as any[];
+    expect(traces[0].selectedpoints).toEqual([0, 1]);
+    expect(layout.shapes).toHaveLength(1);
+  });
+
+  it("switches display, and below the cap coloring turns dots on", async () => {
+    wrapper = mountDots();
+    await flushPromises();
+    (wrapper.vm as any).setDisplay("density");
+    expect(mocks.setAnalysisPlotDisplay).toHaveBeenLastCalledWith({
+      id: "p1",
+      display: "density",
+    });
+    wrapper.unmount();
+    wrapper = mountPlot();
+    await flushPromises();
+    (wrapper.vm as any).setColorBy("cat.tags");
+    expect(mocks.setAnalysisPlotDisplay).toHaveBeenLastCalledWith({
+      id: "p1",
+      colorBy: TAGS,
+      display: "dots",
+    });
+    (wrapper.vm as any).setColorBy(null);
+    expect(mocks.setAnalysisPlotDisplay).toHaveBeenLastCalledWith({
+      id: "p1",
+      colorBy: null,
+      display: "density",
+    });
   });
 });

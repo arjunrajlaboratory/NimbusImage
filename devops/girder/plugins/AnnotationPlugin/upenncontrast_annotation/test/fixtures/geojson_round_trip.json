@@ -1,0 +1,332 @@
+{
+  "annotations": [
+    {
+      "_id": "64b0000000000000000000a1",
+      "shape": "polygon",
+      "tags": [
+        "Tumor",
+        "region"
+      ],
+      "name": "tumor 1",
+      "channel": 0,
+      "location": {
+        "XY": 0,
+        "Z": 0,
+        "Time": 0
+      },
+      "coordinates": [
+        {
+          "x": 100.5,
+          "y": 200
+        },
+        {
+          "x": 300,
+          "y": 200
+        },
+        {
+          "x": 300,
+          "y": 400.25
+        },
+        {
+          "x": 100.5,
+          "y": 400.25
+        }
+      ]
+    },
+    {
+      "_id": "64b0000000000000000000a2",
+      "shape": "polygon",
+      "tags": [
+        "Stroma"
+      ],
+      "channel": 0,
+      "location": {
+        "XY": 0,
+        "Z": 0,
+        "Time": 0
+      },
+      "coordinates": [
+        {
+          "x": 10,
+          "y": 10,
+          "z": 0
+        },
+        {
+          "x": 50,
+          "y": 12,
+          "z": 0
+        },
+        {
+          "x": 30,
+          "y": 60,
+          "z": 0
+        }
+      ]
+    },
+    {
+      "_id": "64b0000000000000000000a3",
+      "shape": "polygon",
+      "tags": [],
+      "channel": 0,
+      "location": {
+        "XY": 0,
+        "Z": 0,
+        "Time": 0
+      },
+      "coordinates": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 5,
+          "y": 0
+        },
+        {
+          "x": 5,
+          "y": 5
+        }
+      ]
+    },
+    {
+      "_id": "64b0000000000000000000a4",
+      "shape": "line",
+      "tags": [
+        "Boundary"
+      ],
+      "channel": 0,
+      "location": {
+        "XY": 0,
+        "Z": 0,
+        "Time": 0
+      },
+      "coordinates": [
+        {
+          "x": 1,
+          "y": 2
+        },
+        {
+          "x": 3,
+          "y": 4
+        },
+        {
+          "x": 5,
+          "y": 8
+        }
+      ]
+    },
+    {
+      "_id": "64b0000000000000000000a5",
+      "shape": "point",
+      "tags": [
+        "Nucleus",
+        "DAPI"
+      ],
+      "channel": 0,
+      "location": {
+        "XY": 0,
+        "Z": 0,
+        "Time": 0
+      },
+      "coordinates": [
+        {
+          "x": 42,
+          "y": 17,
+          "z": 3
+        }
+      ]
+    },
+    {
+      "_id": "64b0000000000000000000a6",
+      "shape": "polygon",
+      "tags": [
+        "Degenerate"
+      ],
+      "channel": 0,
+      "location": {
+        "XY": 0,
+        "Z": 0,
+        "Time": 0
+      },
+      "coordinates": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 1
+        }
+      ]
+    }
+  ],
+  "featureCollection": {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "id": "64b0000000000000000000a1",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                100.5,
+                200
+              ],
+              [
+                300,
+                200
+              ],
+              [
+                300,
+                400.25
+              ],
+              [
+                100.5,
+                400.25
+              ],
+              [
+                100.5,
+                200
+              ]
+            ]
+          ]
+        },
+        "properties": {
+          "objectType": "annotation",
+          "name": "tumor 1",
+          "tags": [
+            "Tumor",
+            "region"
+          ],
+          "classification": {
+            "name": "Tumor"
+          }
+        }
+      },
+      {
+        "type": "Feature",
+        "id": "64b0000000000000000000a2",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                10,
+                10
+              ],
+              [
+                50,
+                12
+              ],
+              [
+                30,
+                60
+              ],
+              [
+                10,
+                10
+              ]
+            ]
+          ]
+        },
+        "properties": {
+          "objectType": "annotation",
+          "name": null,
+          "tags": [
+            "Stroma"
+          ],
+          "classification": {
+            "name": "Stroma"
+          }
+        }
+      },
+      {
+        "type": "Feature",
+        "id": "64b0000000000000000000a3",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                0,
+                0
+              ],
+              [
+                5,
+                0
+              ],
+              [
+                5,
+                5
+              ],
+              [
+                0,
+                0
+              ]
+            ]
+          ]
+        },
+        "properties": {
+          "objectType": "annotation",
+          "name": null,
+          "tags": []
+        }
+      },
+      {
+        "type": "Feature",
+        "id": "64b0000000000000000000a4",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              8
+            ]
+          ]
+        },
+        "properties": {
+          "objectType": "annotation",
+          "name": null,
+          "tags": [
+            "Boundary"
+          ],
+          "classification": {
+            "name": "Boundary"
+          }
+        }
+      },
+      {
+        "type": "Feature",
+        "id": "64b0000000000000000000a5",
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            42,
+            17
+          ]
+        },
+        "properties": {
+          "objectType": "annotation",
+          "name": null,
+          "tags": [
+            "Nucleus",
+            "DAPI"
+          ],
+          "classification": {
+            "name": "Nucleus"
+          }
+        }
+      }
+    ]
+  }
+}

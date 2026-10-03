@@ -9,6 +9,7 @@ vi.mock("@/store", () => ({
     dataset: { id: "ds1" },
     annotationsAPI: {
       importAnnotationData: vi.fn(),
+      createMultipleAnnotations: vi.fn(),
       deleteMultipleAnnotations: vi.fn(),
     },
   },
@@ -41,10 +42,15 @@ import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
 import {
   importAnnotationsFromData,
+  importGeoJsonAnnotations,
   ImportOptions,
   defaultImportOptions,
 } from "@/utils/annotationImport";
-import { ISerializedData } from "@/store/model";
+import {
+  AnnotationShape,
+  IAnnotationBase,
+  ISerializedData,
+} from "@/store/model";
 
 const mockedStore = store as any;
 const mockedAnnotationStore = annotationStore as any;
@@ -279,5 +285,70 @@ describe("importAnnotationsFromData", () => {
     expect(mockedPropertyStore.deleteProperty).not.toHaveBeenCalledWith(
       "existing-p1",
     );
+  });
+});
+
+describe("importGeoJsonAnnotations", () => {
+  function bases(count: number): IAnnotationBase[] {
+    return Array.from({ length: count }, (_, x) => ({
+      tags: ["region"],
+      shape: AnnotationShape.Point,
+      channel: 0,
+      location: { XY: 0, Z: 0, Time: 0 },
+      coordinates: [{ x, y: 0 }],
+      datasetId: "ds1",
+      color: null,
+    }));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedStore.annotationsAPI.createMultipleAnnotations.mockImplementation(
+      async (batch: IAnnotationBase[]) =>
+        batch.map((base) => ({ ...base, id: `id-${base.coordinates[0].x}` })),
+    );
+  });
+
+  it("creates in batches, reports progress, and refreshes", async () => {
+    const onProgress = vi.fn();
+    // 6000 points: over the 5000-per-batch cap, so two batch requests.
+    const created = await importGeoJsonAnnotations(bases(6000), onProgress);
+
+    expect(created).toBe(6000);
+    const calls =
+      mockedStore.annotationsAPI.createMultipleAnnotations.mock.calls;
+    expect(calls.map((call: any) => call[0].length)).toEqual([5000, 1000]);
+    expect(onProgress).toHaveBeenLastCalledWith(6000, 6000);
+    expect(mockedAnnotationStore.fetchAnnotations).toHaveBeenCalledTimes(1);
+    expect(
+      mockedStore.annotationsAPI.deleteMultipleAnnotations,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("rolls back the created batches when a later batch fails", async () => {
+    mockedStore.annotationsAPI.createMultipleAnnotations
+      .mockImplementationOnce(async (batch: IAnnotationBase[]) =>
+        batch.map((base) => ({ ...base, id: `id-${base.coordinates[0].x}` })),
+      )
+      .mockResolvedValueOnce(null);
+
+    await expect(importGeoJsonAnnotations(bases(6000))).rejects.toThrow(
+      /after 5000 of 6000; nothing was imported/,
+    );
+    const [deleted] =
+      mockedStore.annotationsAPI.deleteMultipleAnnotations.mock.calls[0];
+    expect(deleted).toHaveLength(5000);
+    expect(deleted[0]).toBe("id-0");
+    expect(mockedAnnotationStore.fetchAnnotations).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not delete anything when the first batch fails", async () => {
+    mockedStore.annotationsAPI.createMultipleAnnotations.mockResolvedValue(
+      null,
+    );
+    await expect(importGeoJsonAnnotations(bases(2))).rejects.toThrow();
+    expect(
+      mockedStore.annotationsAPI.deleteMultipleAnnotations,
+    ).not.toHaveBeenCalled();
   });
 });

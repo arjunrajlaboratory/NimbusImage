@@ -106,6 +106,37 @@ export function labelForCategoryKey(
 }
 
 /**
+ * Legend labels for the categories coloring a plot's dots. For tags, each
+ * category is an object's whole tag set, and a tag every category shares (the
+ * "cell" on every Xenium cell) says nothing — it is dropped so the legend
+ * reads "B Cell", not "B Cell, cell". Other keys label as on an axis.
+ */
+export function colorLegendLabels(
+  keys: string[],
+  axisKey: TAnalysisCategoricalKey,
+  channelName: (channel: number) => string,
+): string[] {
+  const decoded = keys.map(decodeAnalysisCategoryKey);
+  if (
+    axisKey !== "tags" ||
+    keys.length < 2 ||
+    decoded.some((raw) => !Array.isArray(raw))
+  ) {
+    return keys.map((key) => labelForCategoryKey(key, axisKey, channelName));
+  }
+  const tagSets = decoded as string[][];
+  const shared = tagSets[0].filter((tag) =>
+    tagSets.every((tags) => tags.includes(tag)),
+  );
+  return tagSets.map((tags) => {
+    const distinct = tags.filter((tag) => !shared.includes(tag));
+    return distinct.length > 0
+      ? categoricalLabelFromRaw(distinct, "tags", channelName)
+      : categoricalLabelFromRaw(tags, "tags", channelName);
+  });
+}
+
+/**
  * Deterministic jitter in [-0.28, 0.28] spreading a categorical column into a
  * readable strip. Derived from the annotation id rather than Math.random so a
  * point does not move between renders — and, more importantly, so a gate drawn
@@ -344,7 +375,7 @@ export function buildPlotSeries(input: {
  * this module is pure maths with no map involved, and keeping geojs out of it
  * lets the gating tests run without the geojs mock every map-touching test needs.
  */
-function isPointInPolygon(
+export function isPointInPolygon(
   x: number,
   y: number,
   vertices: IGeoJSPosition[],
@@ -418,7 +449,9 @@ export function selectionEventToGate(
     lassoPoints?: { x: number[]; y: number[] };
     range?: { x: number[]; y: number[] };
   } | null,
-  series: IAnalysisSeries,
+  // Only the pinned category orders are read: the series below the cap, or
+  // the server-derived orders of a sampled-dots plot.
+  series: Pick<IAnalysisSeries, "xCategories" | "yCategories">,
 ): IAnalysisGate | null {
   const categories = {
     categoryKeyVersion: ANALYSIS_CATEGORY_KEY_VERSION,

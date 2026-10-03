@@ -45,3 +45,18 @@ class TestExportAccessor:
             property_paths=[["prop1"]], path=str(out_file)
         )
         assert out_file.read_bytes() == b"Id,Channel\nann1,0"
+
+    def test_to_geojson_ids_are_three_state(self, mock_gc, tmp_path):
+        mock_response = MagicMock()
+        mock_response.content = b'{"type":"FeatureCollection","features":[]}'
+        mock_gc.sendRestRequest.return_value = mock_response
+        accessor = ExportAccessor(mock_gc, "ds_001")
+        out_file = tmp_path / "regions.geojson"
+        result = accessor.to_geojson(path=str(out_file))
+        assert result["type"] == "FeatureCollection"
+        assert out_file.read_bytes() == mock_response.content
+        body = mock_gc.sendRestRequest.call_args.kwargs["data"]
+        assert "annotationIds" not in body  # None: every annotation
+        accessor.to_geojson(annotation_ids=[])
+        body = mock_gc.sendRestRequest.call_args.kwargs["data"]
+        assert '"annotationIds": []' in body  # empty: none

@@ -24,6 +24,8 @@ Solutions for slow or unresponsive behavior:
 **Large Annotation Sets & Advanced Rendering Settings**:
 For datasets with very large annotation counts (hundreds of thousands, e.g. spatial data like Xenium or MERFISH), NimbusImage automatically switches to a "lazy" rendering mode: it loads lightweight placeholders for every object and draws only a subset at a time — revealing more as you zoom in — so the viewer stays responsive. This is automatic; users don't need to turn anything on.
 
+For everything else specific to Xenium and similar spatial data (transcripts, gene expression, neighborhoods, regions), see the **spatial-transcriptomics** topic.
+
 If a user finds panning sluggish on a huge dataset, or wants to control how many objects are drawn at once, point them to the **"Advanced settings for large numbers of annotations"** section — a collapsible panel under the Interface heading in the Settings panel (the sliders icon in the top toolbar). The defaults suit most datasets; the key tradeoff to explain is that **showing more annotations at once makes panning large datasets slower**. The main controls:
 - **Max visible annotations**: the most objects drawn per frame. Lower it if panning is laggy; raise it to see more at once.
 - **Max hydrated annotations**: how many are drawn as full shapes (the rest show as simple dots). Full shapes are more detailed but heavier to draw.

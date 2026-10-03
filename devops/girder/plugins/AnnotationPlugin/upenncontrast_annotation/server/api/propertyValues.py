@@ -8,6 +8,7 @@ from girder.exceptions import RestException
 from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
+from ..helpers.serialization import jsonSafe
 from ..helpers.validation import (
     requireList,
     requireObjectBody,
@@ -18,6 +19,7 @@ from ..helpers.validation import (
 from ..models.propertyValues import (
     AnnotationPropertyValues as PropertyValuesModel,
 )
+from ..models.annotation import Annotation
 
 
 class PropertyValues(Resource):
@@ -33,6 +35,34 @@ class PropertyValues(Resource):
         self.route("GET", (), self.find)
         self.route("GET", ("count",), self.count)
         self.route("GET", ("histogram",), self.histogram)
+
+    def _requireAnnotationDatasets(self, entries):
+        # Dataset WRITE alone does not authorize an annotationId supplied by
+        # the caller. Global annotation-keyed upserts must not rehome another
+        # dataset's values. Validate the entire batch before the first write.
+        if not entries:
+            return
+        if not all(isinstance(entry, dict) for entry in entries):
+            raise RestException("Property values must be objects", code=400)
+        annotationDatasets = {
+            annotation['_id']: annotation['datasetId']
+            for annotation in Annotation().find({
+                '_id': {'$in': list({
+                    entry.get('annotationId') for entry in entries
+                })},
+                'datasetId': {'$in': list({
+                    entry.get('datasetId') for entry in entries
+                })},
+            }, fields=['_id', 'datasetId'])
+        }
+        if any(
+            entry.get('annotationId') not in annotationDatasets or
+            annotationDatasets[entry['annotationId']] != entry.get('datasetId')
+            for entry in entries
+        ):
+            raise RestException(
+                "Each annotation must belong to its supplied dataset", code=400
+            )
 
     # TODO: anytime a dataset is mentioned, load the dataset and check for
     #   existence and that the user has access to it
@@ -63,11 +93,12 @@ class PropertyValues(Resource):
             level=AccessType.WRITE,
             exc=True,
         )
-        return self._annotationPropertyValuesModel.appendValues(
+        self._requireAnnotationDatasets([params])
+        return jsonSafe(self._annotationPropertyValuesModel.appendValues(
             self.getBodyJson(),
             params["annotationId"],
             params["datasetId"],
-        )
+        ))
 
     @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
@@ -90,8 +121,11 @@ class PropertyValues(Resource):
             if "datasetId" in entry
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
-        return self._annotationPropertyValuesModel.appendMultipleValues(
-            propertyValuesList
+        self._requireAnnotationDatasets(propertyValuesList)
+        return jsonSafe(
+            self._annotationPropertyValuesModel.appendMultipleValues(
+                propertyValuesList
+            )
         )
 
     @describeRoute(
@@ -168,9 +202,13 @@ class PropertyValues(Resource):
             exc=True,
         )
         annotationIds = [requireObjectId(i, "annotationId") for i in rawIds]
-        return self._annotationPropertyValuesModel.findByAnnotationIds(
-            datasetId, annotationIds, propertyPaths
-        )
+        try:
+            return self._annotationPropertyValuesModel.findByAnnotationIds(
+                datasetId, annotationIds, propertyPaths
+            )
+        except ValueError as exc:
+            # A virtual path the provider cannot resolve (unknown key).
+            raise RestException(str(exc), code=400)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -216,12 +254,12 @@ class PropertyValues(Resource):
             offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions
-        return self._annotationPropertyValuesModel.find(
+        return jsonSafe(list(self._annotationPropertyValuesModel.find(
             query,
             sort=sort,
             limit=limit,
             offset=offset,
-        ).hint([("datasetId", 1), ("_id", 1)])
+        ).hint([("datasetId", 1), ("_id", 1)])))
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -271,12 +309,12 @@ class PropertyValues(Resource):
             exc=True,
         )
         if "buckets" in params:
-            return self._annotationPropertyValuesModel.histogram(
+            return jsonSafe(self._annotationPropertyValuesModel.histogram(
                 params["propertyPath"],
                 params["datasetId"],
                 int(params["buckets"]),
-            )
+            ))
         else:
-            return self._annotationPropertyValuesModel.histogram(
+            return jsonSafe(self._annotationPropertyValuesModel.histogram(
                 params["propertyPath"], params["datasetId"]
-            )
+            ))

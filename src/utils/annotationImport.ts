@@ -1,7 +1,12 @@
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
-import { IAnnotationImportPayload, ISerializedData } from "@/store/model";
+import {
+  IAnnotationBase,
+  IAnnotationImportPayload,
+  ISerializedData,
+} from "@/store/model";
+import { batchAnnotationBases } from "@/utils/geojson";
 import { logError } from "@/utils/log";
 
 export interface ImportOptions {
@@ -159,4 +164,48 @@ export async function importAnnotationsFromFile(
     logError("Error importing annotations from file:", error);
     throw error;
   }
+}
+
+/**
+ * Create annotations parsed from a GeoJSON file, in batches through the
+ * batch create endpoint, then refresh the annotation store the way the JSON
+ * import does.
+ *
+ * All or nothing: if a batch fails, the batches already created are deleted
+ * (one batch delete) before the error is re-thrown, so a failed import never
+ * leaves a partial region layer behind.
+ *
+ * @returns The number of annotations created.
+ */
+export async function importGeoJsonAnnotations(
+  annotationBases: IAnnotationBase[],
+  onProgress?: (created: number, total: number) => void,
+): Promise<number> {
+  const createdIds: string[] = [];
+  try {
+    for (const batch of batchAnnotationBases(annotationBases)) {
+      const created =
+        await store.annotationsAPI.createMultipleAnnotations(batch);
+      if (!created) {
+        throw new Error(
+          `Creating annotations failed after ${createdIds.length} of ` +
+            `${annotationBases.length}; nothing was imported.`,
+        );
+      }
+      createdIds.push(...created.map(({ id }) => id));
+      onProgress?.(createdIds.length, annotationBases.length);
+    }
+  } catch (error) {
+    if (createdIds.length > 0) {
+      try {
+        await store.annotationsAPI.deleteMultipleAnnotations(createdIds);
+      } catch (cleanupError) {
+        logError("Error rolling back a failed GeoJSON import:", cleanupError);
+      }
+    }
+    throw error;
+  } finally {
+    await annotationStore.fetchAnnotations();
+  }
+  return createdIds.length;
 }

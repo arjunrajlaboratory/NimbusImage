@@ -186,6 +186,18 @@ class NimbusClient:
                     pass
         return datasets
 
+    # --- Jobs ---
+
+    def job(self, job_id: str) -> Job:
+        """A job by id, e.g. the transcode job ``Dataset.configure()``
+        returns::
+
+            result = ds.configure()
+            if result.job_id and not client.job(result.job_id).wait():
+                ...
+        """
+        return Job(self._gc, self._gc.get(f"job/{job_id}"))
+
     # --- Projects ---
 
     def list_projects(self) -> list[dict]:

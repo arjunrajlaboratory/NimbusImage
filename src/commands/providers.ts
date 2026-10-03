@@ -154,6 +154,8 @@ export function propertyCommands(ctx: IProviderContext): TCommandProvider {
 export interface IPanelController {
   isOpen: (id: PanelId) => boolean;
   toggle: (id: PanelId) => void;
+  // Panels that only exist for some datasets (Transcripts); omitted → all.
+  isAvailable?: (id: PanelId) => boolean;
 }
 
 /**
@@ -174,7 +176,8 @@ export function panelCommands(
         group: "Panels",
         keywords: ["panel", "palette", "show", "hide"],
         icon: panel.icon,
-        enabled: ctx.inViewer,
+        enabled: () =>
+          ctx.inViewer() && (controller.isAvailable?.(panel.id) ?? true),
         run: () => controller.toggle(panel.id),
       };
     });

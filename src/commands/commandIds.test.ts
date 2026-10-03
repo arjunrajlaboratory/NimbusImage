@@ -54,6 +54,6 @@ describe("data-command-id attributes", () => {
       "utf8",
     );
     expect(source).toContain(':data-command-id="entry.commandId"');
-    expect(source).toMatch(/useCommand\(\s*DATA_DIALOGS\.map/);
+    expect(source).toMatch(/useCommand\(\s*DATA_ENTRIES\.map/);
   });
 });

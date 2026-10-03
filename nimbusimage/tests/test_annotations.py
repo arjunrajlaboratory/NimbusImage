@@ -278,3 +278,36 @@ class TestAnnotationDelete:
         args = mock_gc.sendRestRequest.call_args
         assert args[0][0] == "DELETE"
         assert "multiple" in args[0][1]
+
+
+class TestGetMany:
+    def test_one_hydrate_request(self, mock_gc, sample_annotation_dict):
+        mock_gc.post.return_value = [sample_annotation_dict]
+        accessor = AnnotationAccessor(mock_gc, "dataset_001")
+        result = accessor.get_many(["ann_001", "ann_missing"])
+        mock_gc.post.assert_called_once_with(
+            "upenn_annotation/hydrate", json=["ann_001", "ann_missing"]
+        )
+        assert [a.id for a in result] == ["ann_001"]
+
+    def test_scoped_to_the_dataset(self, mock_gc, sample_annotation_dict):
+        other = {**sample_annotation_dict, "_id": "x", "datasetId": "other"}
+        mock_gc.post.return_value = [sample_annotation_dict, other]
+        result = AnnotationAccessor(mock_gc, "dataset_001").get_many(
+            ["ann_001", "x"]
+        )
+        assert [a.id for a in result] == ["ann_001"]
+
+    def test_accepts_a_numpy_array(self, mock_gc, sample_annotation_dict):
+        import numpy as np
+
+        mock_gc.post.return_value = [sample_annotation_dict]
+        ids = np.array(["ann_001", "ann_002"], dtype=object)
+        AnnotationAccessor(mock_gc, "dataset_001").get_many(ids)
+        mock_gc.post.assert_called_once_with(
+            "upenn_annotation/hydrate", json=["ann_001", "ann_002"]
+        )
+
+    def test_empty_list_makes_no_request(self, mock_gc):
+        assert AnnotationAccessor(mock_gc, "dataset_001").get_many([]) == []
+        mock_gc.post.assert_not_called()

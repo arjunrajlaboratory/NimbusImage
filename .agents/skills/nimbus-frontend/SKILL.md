@@ -627,6 +627,52 @@ import store from "@/store";
 const result = await store.api.someMethod();
 ```
 
+### Replacing `girderRest` must reach the API classes too
+
+Every API class (`api`, `annotationsAPI`, `spatialAPI`, …) talks to Girder through
+`girderRestProxy`, not through `state.main.girderRest` directly. Two credentials are
+therefore in play, and a change to one is not a change to the other. The proxy must
+resolve the **live** module state (`liveGirderRest`): the object a class-field
+initializer sees as `this` is the construction-time instance, which a mutation never
+updates. Before the fix, `openShareLink` committed the link's own client to state while
+every API call kept the boot client — so a share view ran as the owner's stored login
+(full write access) or, for a recipient with no login, anonymously (private dataset
+fails). Its tests asserted `main.girderRest.token` and passed; the regression test now
+also asserts `main.api.client.token` (`index.test.ts`, "commits only the latest
+validated link"). When you swap or re-token the client, assert on an API class's
+client, and check live with `store.state.main.api.client.get('user/me')` — not with
+`girderRest`.
+
+### An optional plugin's missing route is a network error, not a 404
+
+A Girder route that was never registered (its plugin is not installed) gets
+cherrypy's bare 404 **without CORS headers**, and its preflight gets 405. From the
+dev server or any cross-origin frontend the browser blocks it, so axios reports
+`Network Error` with no `error.response`. Code that maps 404 to "nothing here" therefore
+reads "plugin missing" as "could not ask". This put a Transcripts error button on every
+dataset when the server lacked `upenncontrast_spatial`. Don't probe an optional
+plugin's routes to discover it. Ask `GET system/loaded_plugins` (public, cached per
+`apiRoot`; see `SpatialAPI.isPluginLoaded`) and skip the calls when it is absent. To
+test, run a second Girder from the same image with the plugin `pip uninstall`ed on another
+port, and point a dev server at it with `VITE_GIRDER_URL` plus the persisted `girderUrl`
+localStorage key, which overrides the env var.
+
+## Palette content stays mounted: gate server work on visibility
+
+`FloatingPalette` hides a closed palette with `display: none`; its content is
+mounted at app boot and stays mounted. So `onMounted` runs for every user, and
+watchers keep firing while nobody can see the panel. Anything that costs
+server work must take a visibility prop and defer: the Object Browser's
+server-backed list used to refetch on every filter or gate change with its
+palette closed — with an analysis gate that is a whole-dataset gate
+resolution (8 s on 709K objects) competing with the gate the user just drew.
+Pattern: `App.vue` passes the palette's open state (`:visible="annotationPanel"`),
+the container forwards `visible && activeTab === '…'`, and the component
+records a deferred request while hidden and runs it once when shown
+(`AnnotationList.fetchServerPageWhenShown`; `AnalysisPanel`'s required
+`visible` prop is the same idea). Test both halves: nothing while hidden, one
+catch-up fetch when shown.
+
 ## Opening a palette from a component that has no palette registry
 
 App.vue owns palette (right/left panel) visibility in local refs, so a

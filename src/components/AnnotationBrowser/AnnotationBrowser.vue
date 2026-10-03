@@ -22,7 +22,10 @@
          that is expensive to rebuild, and the Connections tab is cheap. -->
     <v-window v-model="activeTab" class="browser-window">
       <v-window-item value="objects" class="browser-window-item">
-        <annotation-list @clickedTag="clickedTag" />
+        <annotation-list
+          :visible="visible && activeTab === 'objects'"
+          @clickedTag="clickedTag"
+        />
       </v-window-item>
       <v-window-item value="measurements" class="browser-window-item">
         <!-- is-active gates rendering: once opened the item stays mounted
@@ -53,6 +56,15 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import { TAnnotationBrowserTab } from "@/store/model";
+
+// Whether the palette is open. Its content stays mounted while closed
+// (display: none), so the server-backed Objects list uses this to skip
+// whole-dataset refetches nobody would see. Defaults to shown for mounts
+// that are always visible.
+const props = withDefaults(defineProps<{ visible?: boolean }>(), {
+  visible: true,
+});
+const visible = computed(() => props.visible);
 
 // In the store rather than a local ref so other panels can route here — the
 // Timelapse panel's "Show tracks" opens the browser AND picks this tab.

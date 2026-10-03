@@ -104,6 +104,9 @@ const NOT_OURS = new Set([
   ".venv",
   "__pycache__",
   ".pnpm-store",
+  // Local MongoDB storage changes while backend tests run; it is data, not
+  // an owned source/test tree (and stat'ing its removed files is a race).
+  "db",
   // Agent/IDE-created linked worktrees contain a second copy of every owned
   // test tree, but are not part of this checkout's sources. Descending into
   // them makes the completeness guard report those copies as new roots.
@@ -126,19 +129,13 @@ const NOT_OURS = new Set([
  */
 function ownedPytestDirs(): string[] {
   const repoRoot = resolve(__dirname, "../..");
-  const nestedWorktrees = join(repoRoot, ".claude", "worktrees");
   const found: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
+      if (NOT_OURS.has(entry) || entry === ".git") continue;
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) {
-        if (
-          !NOT_OURS.has(entry) &&
-          entry !== ".git" &&
-          full !== nestedWorktrees
-        ) {
-          walk(full);
-        }
+        walk(full);
       } else if (PYTEST(entry) && !found.includes(dir)) {
         found.push(dir);
       }

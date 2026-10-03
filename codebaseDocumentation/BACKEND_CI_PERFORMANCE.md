@@ -39,8 +39,11 @@ CI), dependency install (~40 s).
 
 ## Fix
 
-1. **`test/conftest.py` `dropStaleModelState()`**, run by an autouse
-   fixture before each test (autouse fixtures run before `db`). It removes
+1. **`dropStaleModelState()`** in the AnnotationPlugin's
+   `test/model_state.py`, run by an autouse fixture in each plugin's
+   `test/conftest.py` before each test (autouse fixtures run before `db`).
+   The SpatialPlugin's conftest imports the same helper, since its tox
+   installs the AnnotationPlugin editable. It removes
    list entries that are no longer their class's live singleton, **and**
    the Girder event handlers bound to those stale instances. Models bind
    handlers under fixed names, so a stale instance keeps receiving events
@@ -55,7 +58,11 @@ CI), dependency install (~40 s).
 
 Result: all 801 tests pass locally in 1 min 57 s, with setup flat at about
 0.17 s per database test. In CI the AnnotationPlugin step dropped from
-77 minutes (PR #1366) to 3 min 24 s (PR #1367's first run).
+77 minutes (PR #1366) to 3 min 24 s (PR #1367's first run). The
+SpatialPlugin suite (308 tests) went from 11 min 48 s to 1 min 19 s locally.
+
+The SpatialPlugin suite is not run by any CI workflow yet; run its `tox`
+locally when changing it.
 
 ## Workflow changes
 
@@ -76,11 +83,10 @@ Result: all 801 tests pass locally in 1 min 57 s, with setup flat at about
 
 ## Local runs on Apple Silicon
 
-`test_dataset_multi_source.py` can segfault inside pylibtiff on arm64 macOS
-(a ctypes variadic-call ABI issue; Linux and CI are unaffected). The fix,
-`_restoreVariadicTIFFGetField()` in `test/conftest.py`, ships with PR #1347.
-Until that merges, run that file in the Linux Girder container or exclude it
-locally.
+`test_dataset_multi_source.py` used to segfault inside pylibtiff on arm64
+macOS (a ctypes variadic-call ABI issue; Linux and CI are unaffected).
+`_restoreVariadicTIFFGetField()` in `test/conftest.py` (from PR #1347) fixes
+it at import, ahead of the stale-model fixture.
 
 ## Regression checklist
 

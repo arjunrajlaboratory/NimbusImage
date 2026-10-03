@@ -10,7 +10,7 @@
       // slide to when a left palette is open, so they move to the top-right
       // while it is up. How far in they sit is `--nimbus-right-edge-clear-x`
       // below, not a second class.
-      'timelapse-palette-open': isDatasetView && timelapsePanel,
+      'timelapse-palette-open': isDatasetView && !embedMode && timelapsePanel,
     }"
     :style="paletteGeometryVars"
   >
@@ -23,8 +23,9 @@
     >
       <help-panel @close="helpPanelIsOpen = false" />
     </v-dialog>
-    <command-palette v-model="commandPaletteOpen" />
-    <v-app-bar>
+    <!-- The embed route (a share link in an iframe) shows only the canvas. -->
+    <command-palette v-if="!embedMode" v-model="commandPaletteOpen" />
+    <v-app-bar v-if="!embedMode">
       <v-tooltip text="NimbusImage home" :open-delay="500">
         <template v-slot:activator="{ props: activatorProps }">
           <v-toolbar-title
@@ -270,6 +271,30 @@
             </template>
           </v-tooltip>
           <v-tooltip
+            v-if="
+              transcriptsStore.hasTranscripts ||
+              transcriptsStore.error ||
+              transcriptsStore.loading
+            "
+            text="Transcripts"
+          >
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: transcriptsPanel }"
+                aria-label="Transcripts"
+                data-command-id="panel.toggle.transcriptsPanel"
+                @click.stop="togglePalette('transcriptsPanel')"
+              >
+                <v-icon size="18">{{
+                  PANEL_BY_ID.transcriptsPanel.icon
+                }}</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
+          <v-tooltip
             text="Snapshots for bookmarking and downloading cropped regions in your dataset"
           >
             <template v-slot:activator="{ props: activatorProps }">
@@ -504,7 +529,7 @@
       :top="stackedHostTop"
       :max-height="stackedHostMaxHeight"
     >
-      <annotation-browser></annotation-browser>
+      <annotation-browser :visible="annotationPanel"></annotation-browser>
     </floating-palette>
 
     <floating-palette
@@ -531,7 +556,15 @@
       <analysis-panel :visible="analysisPanel" />
     </floating-palette>
 
-    <template v-if="store.dataset && routeName === 'datasetview'">
+    <floating-palette
+      v-model="transcriptsPanel"
+      :title="PANEL_BY_ID.transcriptsPanel.title"
+      :width="RIGHT_PALETTE_WIDTHS.transcripts"
+    >
+      <transcripts-panel :visible="transcriptsPanel" />
+    </floating-palette>
+
+    <template v-if="leftPalettesMounted">
       <floating-palette
         ref="navigatorPaletteRef"
         v-model="navigatorPanel"
@@ -545,7 +578,7 @@
       <!-- Sits immediately right of the Navigator rather than in the left
            stack, so turning the mode on doesn't push Layers and Tools down.
            Visibility IS the mode: closing the palette turns timelapse off, so
-           there is no "mode on, panel hidden" state to reason about. -->
+           only the chrome-less embed hides the panel while retaining mode. -->
       <floating-palette
         ref="timelapsePaletteRef"
         v-model="timelapsePanel"
@@ -608,6 +641,8 @@ import AnnotationBrowser from "@/components/AnnotationBrowser/AnnotationBrowser.
 import DataIoMenu from "@/components/DataIOMenu.vue";
 import FiltersPanel from "@/components/FiltersPanel.vue";
 import AnalysisPanel from "@/components/AnalysisPanel.vue";
+import TranscriptsPanel from "@/components/TranscriptsPanel.vue";
+import transcriptsStore from "@/store/transcripts";
 import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
 import PipelineDialog from "@/components/PipelineDialog.vue";
 import ColorByPropertyDialog from "@/components/AnnotationBrowser/ColorByPropertyDialog.vue";
@@ -669,6 +704,7 @@ void Snapshots;
 void AnnotationBrowser;
 void FiltersPanel;
 void AnalysisPanel;
+void TranscriptsPanel;
 void AnalyzeDialog;
 void PipelineDialog;
 void ColorByPropertyDialog;
@@ -695,6 +731,7 @@ const annotationPanel = ref(false);
 const settingsPanel = ref(false);
 const filtersPanel = ref(false);
 const analysisPanel = ref(false);
+const transcriptsPanel = ref(false);
 const analyzePanel = ref(false);
 const aiPanelOpen = ref(false);
 
@@ -746,6 +783,10 @@ const rightEdgeClearance = computed(() =>
     { open: annotationPanel.value, width: RIGHT_PALETTE_WIDTHS.objectBrowser },
     { open: filtersPanel.value, width: RIGHT_PALETTE_WIDTHS.filters },
     { open: analysisPanel.value, width: RIGHT_PALETTE_WIDTHS.analysis },
+    {
+      open: transcriptsPanel.value,
+      width: RIGHT_PALETTE_WIDTHS.transcripts,
+    },
     { open: settingsPanel.value, width: RIGHT_PALETTE_WIDTHS.settings },
     { open: snapshotPanel.value, width: RIGHT_PALETTE_WIDTHS.snapshots },
     {
@@ -768,7 +809,7 @@ const rightEdgeClearance = computed(() =>
  * palette, using its measured height so the offset tracks its real content.
  */
 const actionPanelTop = computed(() => {
-  if (!timelapsePanel.value || !isDatasetView.value) {
+  if (!timelapsePanel.value || !isDatasetView.value || embedMode.value) {
     return ACTION_PANEL_TOP;
   }
   if (
@@ -881,6 +922,7 @@ const paletteOpen: Record<PanelId, Ref<boolean>> = {
   annotationPanel,
   filtersPanel,
   analysisPanel,
+  transcriptsPanel,
   snapshotPanel,
   settingsPanel,
   navigatorPanel,
@@ -888,11 +930,27 @@ const paletteOpen: Record<PanelId, Ref<boolean>> = {
   layersPanel,
 };
 
+// The Transcripts button and the viewer's overlay only appear for a dataset
+// with a registered transcript store, so the registration is looked up as
+// soon as the dataset is known rather than when the palette first opens.
+watch(
+  () => store.dataset?.id,
+  (datasetId) => {
+    if (datasetId) {
+      transcriptsStore.ensureSchema();
+    }
+  },
+  { immediate: true },
+);
+
 function openPaletteSet(): Set<PanelId> {
   return new Set(PANEL_IDS.filter((id) => paletteOpen[id].value));
 }
 
 function openPalette(id: PanelId) {
+  if (embedMode.value) {
+    return;
+  }
   const next = applyOpen(openPaletteSet(), id);
   for (const panelId of PANEL_IDS) {
     paletteOpen[panelId].value = next.has(panelId);
@@ -1041,7 +1099,8 @@ const toolsPanelMaxHeight = computed(
 // The left palettes live inside a v-if, so attach their observers once they
 // mount (and tear down when leaving the dataset view).
 const leftPalettesMounted = computed(
-  () => !!store.dataset && routeName.value === "datasetview",
+  () =>
+    !!store.dataset && routeName.value === "datasetview" && !embedMode.value,
 );
 
 function setupLeftPaletteObservers() {
@@ -1127,7 +1186,15 @@ function onShowInList() {
   }
 }
 
-const routeName = computed(() => route.name);
+const routeName = computed(() =>
+  route.name === "shared" || route.name === "embed"
+    ? "datasetview"
+    : route.name,
+);
+const embedMode = computed(
+  () => route.name === "embed" || route.query.embed === "1",
+);
+
 const isDatasetView = computed(() => routeName.value === "datasetview");
 
 const activeFilterCount = computed(() => filterStore.activeFilterCount);
@@ -1264,6 +1331,12 @@ useCommandProvider(
   panelCommands(viewerContext, {
     isOpen: (id) => paletteOpen[id].value,
     toggle: togglePalette,
+    // Same rule as the Transcripts app-bar button's v-if.
+    isAvailable: (id) =>
+      id !== "transcriptsPanel" ||
+      transcriptsStore.hasTranscripts ||
+      !!transcriptsStore.error ||
+      transcriptsStore.loading,
   }),
 );
 
@@ -1363,7 +1436,7 @@ function annotationPanelChanged() {
 }
 
 function datasetChanged() {
-  if (routeName.value !== "datasetview") {
+  if (routeName.value !== "datasetview" || embedMode.value) {
     closeAllPalettes();
   } else {
     // Each palette marked `defaultOpen` in the registry (the left stack) opens
@@ -1413,7 +1486,10 @@ watch(
   },
 );
 
-watch(routeName, () => datasetChanged());
+// One watcher owns route defaults: a separate embed-close watcher can run
+// before route initialization reopens the defaults. Watch embed as well because
+// shared and embed normalize to the same viewer route name.
+watch([routeName, embedMode], datasetChanged, { immediate: true });
 
 // Left palettes mount/unmount with the dataset view, so (re)attach their
 // height observers whenever they appear.

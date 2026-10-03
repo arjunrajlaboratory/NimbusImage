@@ -1,5 +1,7 @@
 import json
 
+from bson import ObjectId
+
 import pytest
 
 from pytest_girder.assertions import assertStatus, assertStatusOk
@@ -41,6 +43,43 @@ class TestPropertyValuesBatch:
             user=user,
             body=json.dumps(body),
             type="application/json",
+        )
+
+    def testInfiniteValueRoundTripsAsNull(self, admin, server):
+        """A JSON body's `1e999` parses to Infinity and is stored; the write
+        echo, the GET and the histogram answer it as null instead of a 500
+        from Girder's `allow_nan=False` encoder."""
+        folder, ids = self._makeDatasetWithValues(admin, [{}])
+        body = (
+            '[{"datasetId": "%s", "annotationId": "%s", '
+            '"values": {"probe": {"x": 1e999}}}]' % (folder["_id"], ids[0])
+        )
+        resp = server.request(
+            path="/annotation_property_values/multiple", method="POST",
+            user=admin, body=body, type="application/json",
+        )
+        assertStatusOk(resp)
+        stored = AnnotationPropertyValues().findOne(
+            {"annotationId": Annotation().load(ids[0], force=True)["_id"]}
+        )
+        assert stored["values"]["probe"]["x"] == float("inf")
+        resp = server.request(
+            path="/annotation_property_values", method="GET", user=admin,
+            params={"datasetId": str(folder["_id"])},
+        )
+        assertStatusOk(resp)
+        assert resp.json[0]["values"]["probe"]["x"] is None
+        resp = server.request(
+            path="/annotation_property_values/histogram", method="GET",
+            user=admin, params={
+                "datasetId": str(folder["_id"]), "propertyPath": "probe.x",
+            },
+        )
+        assertStatusOk(resp)
+        # Infinity is left out of the buckets, not turned into a null bound.
+        assert all(
+            bucket["min"] is not None and bucket["max"] is not None
+            for bucket in resp.json
         )
 
     def testReturnsValuesForRequestedIds(self, admin, server):
@@ -310,3 +349,52 @@ class TestFindByAnnotationIds:
         assert len(docs) == 1
         assert "_id" not in docs[0]
         assert "datasetId" not in docs[0]
+
+    def testMovedAnnotationsTakeTheirValuesAndUndoReturnsThem(
+        self, admin, server
+    ):
+        """Values are scoped by datasetId everywhere they are read, so a
+        value left under the source would still count there for a cell it
+        no longer has (summary counts above `total`)."""
+        source = utilities.createFolder(
+            admin, "move_source", upenn_utilities.datasetMetadata
+        )
+        ids = []
+        for value in (1, 2):
+            annotation = Annotation().create(
+                upenn_utilities.getSampleAnnotation(source["_id"])
+            )
+            AnnotationPropertyValues().appendValues(
+                {"prop": value}, annotation["_id"], source["_id"]
+            )
+            ids.append(str(annotation["_id"]))
+        destination = utilities.createFolder(
+            admin, "move_destination", upenn_utilities.datasetMetadata
+        )
+        resp = server.request(
+            path="/upenn_annotation/multiple", method="PUT", user=admin,
+            body=json.dumps([
+                {"id": ids[0], "datasetId": str(destination["_id"])},
+            ]),
+            type="application/json",
+        )
+        assertStatusOk(resp)
+        values = AnnotationPropertyValues()
+        assert values.findOne(
+            {"annotationId": ObjectId(ids[0])}
+        )["datasetId"] == destination["_id"]
+        assert values.findOne(
+            {"annotationId": ObjectId(ids[1])}
+        )["datasetId"] == source["_id"]
+
+        undo = server.request(
+            path="/history/undo", method="PUT", user=admin,
+            params={"datasetId": str(destination["_id"])},
+        )
+        assertStatusOk(undo)
+        assert Annotation().load(ids[0], force=True)["datasetId"] == (
+            source["_id"]
+        )
+        assert values.findOne(
+            {"annotationId": ObjectId(ids[0])}
+        )["datasetId"] == source["_id"]

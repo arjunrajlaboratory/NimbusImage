@@ -61,3 +61,4 @@ nav:
     - Coordinates: api/coordinates.md
     - Filters: api/filters.md
     - URLs: api/urls.md
+    - Xenium Ingest: api/xenium.md

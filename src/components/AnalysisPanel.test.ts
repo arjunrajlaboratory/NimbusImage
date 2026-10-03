@@ -13,6 +13,8 @@ import { reactive } from "vue";
 const mocks = vi.hoisted(() => ({
   setAnalysisPanelOpen: vi.fn(),
   addAnalysisPlot: vi.fn(),
+  umapAxes: null as any,
+  ensureUmapPlot: vi.fn(),
   fetchAnalysisHistogram: vi.fn(async (...args: any[]): Promise<any> => {
     void args; // vi.fn needs the rest signature for typed spread calls
     return null;
@@ -80,8 +82,12 @@ vi.mock("@/store/filters", () => ({
     get analysisHistogramFilterSpec() {
       return mocks.histogramSpec;
     },
+    get umapAxes() {
+      return mocks.umapAxes;
+    },
     setAnalysisPanelOpen: mocks.setAnalysisPanelOpen,
     addAnalysisPlot: mocks.addAnalysisPlot,
+    ensureUmapPlot: (...args: any[]) => mocks.ensureUmapPlot(...args),
   },
 }));
 
@@ -252,6 +258,110 @@ describe("AnalysisPanel", () => {
     expect(datasetId).toBe("ds1");
     expect(request.xAxis).toEqual(AXIS);
     expect(request.bins).toEqual({ x: 128, y: 128 });
+  });
+
+  it("asks for a colored sample for dots plots, at any population size", async () => {
+    const tags = { type: "categorical" as const, key: "tags" as const };
+    setPlots([
+      makePlot("dots", { display: "dots", colorBy: tags }),
+      makePlot("plain"),
+    ]);
+    // Below the cap: only the dots plot goes to the server.
+    setPopulation(3);
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalledTimes(1);
+    const [, request] = mocks.fetchAnalysisHistogram.mock.calls[0] as [
+      string,
+      any,
+    ];
+    expect(request.sample).toEqual({ size: 50000, colorBy: tags });
+    expect(wrapper.vm.serverDisplayActive).toBe(true);
+    // The plain plot keeps its client-side series.
+    expect(Object.keys(wrapper.vm.seriesByPlot)).toContain("plain");
+    wrapper.unmount();
+
+    // Above the cap: both, and only the dots plot carries a sample.
+    mocks.fetchAnalysisHistogram.mockClear();
+    setPopulation(50001);
+    mountPanel({ visible: true });
+    await flushPromises();
+    await flushPromises();
+    const all = mocks.fetchAnalysisHistogram.mock.calls.map(
+      (call) => (call as any[])[1],
+    );
+    expect(all).toHaveLength(2);
+    expect(all.filter((r: any) => r.sample)).toHaveLength(1);
+  });
+
+  it("counts each gate over the population reaching it, and sends no gate", async () => {
+    // Above the cap: the non-gate filters pass id-0..id-50000.
+    setPopulation(50001);
+    const G2 = { ...GATE, vertices: [...GATE.vertices, { x: 0, y: 1 }] };
+    setPlots([
+      makePlot("p1", { gate: GATE }),
+      makePlot("p2", { gate: G2 }),
+      makePlot("p3", { gate: GATE, gateEnabled: false }),
+    ]);
+    // Pure ids: p1 keeps id-0..4 plus an object the filters hide; p2 keeps
+    // id-3..7, of which only id-3 and id-4 reach it through p1's gate.
+    mocks.gateIds = {
+      p1: ["id-0", "id-1", "id-2", "id-3", "id-4", "hidden-by-filters"],
+      p2: ["id-3", "id-4", "id-5", "id-6", "id-7"],
+    };
+    const wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(wrapper.vm.overCap).toBe(true);
+    // p3 is not resolved yet: unknown, not a guess.
+    expect(wrapper.vm.chainedGateCounts).toEqual({ p1: 5, p2: 2, p3: null });
+    // The display requests carry no gate: drawing one must not re-scan.
+    expect(mocks.fetchAnalysisHistogram).toHaveBeenCalled();
+    for (const call of mocks.fetchAnalysisHistogram.mock.calls) {
+      expect((call as any[])[1].gate).toBeNull();
+    }
+  });
+
+  it("builds the reaching population only once a plot has a resolved gate", async () => {
+    setPopulation(50001);
+    // An own `map` on the population array: the chained counts are its only
+    // caller, so this counts the full-population Set builds.
+    const map = vi.fn(Array.prototype.map);
+    (mocks.population as any).map = map;
+    try {
+      setPlots([makePlot("p1"), makePlot("p2")]);
+      let wrapper = mountPanel({ visible: true });
+      await flushPromises();
+      expect(wrapper.vm.overCap).toBe(true);
+      expect(wrapper.vm.chainedGateCounts).toEqual({});
+      expect(map).not.toHaveBeenCalled();
+      wrapper.unmount();
+
+      setPlots([makePlot("p1"), makePlot("p2", { gate: GATE })]);
+      mocks.gateIds = { p2: ["id-1", "id-2"] };
+      wrapper = mountPanel({ visible: true });
+      await flushPromises();
+      expect(wrapper.vm.chainedGateCounts).toEqual({ p2: 2 });
+      expect(map).toHaveBeenCalledTimes(1);
+      wrapper.unmount();
+    } finally {
+      delete (mocks.population as any).map;
+      mocks.gateIds = {};
+    }
+  });
+
+  it("offers the UMAP shortcut only when the dataset has one", async () => {
+    setPlots([]);
+    let wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(wrapper.vm.hasUmap).toBe(false);
+    wrapper.unmount();
+    mocks.umapAxes = { xAxis: AXIS, yAxis: AXIS };
+    wrapper = mountPanel({ visible: true });
+    await flushPromises();
+    expect(wrapper.vm.hasUmap).toBe(true);
+    wrapper.vm.addUmapPlot();
+    expect(mocks.ensureUmapPlot).toHaveBeenCalledTimes(1);
+    mocks.umapAxes = null;
   });
 
   it("does not fetch histograms while hidden or below the cap", async () => {

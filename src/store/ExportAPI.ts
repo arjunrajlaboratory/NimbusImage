@@ -23,6 +23,13 @@ export interface ICsvExportOptions {
   filename?: string;
 }
 
+export interface IGeoJsonExportOptions {
+  datasetId: string;
+  // Omit for every annotation; an array (even empty) is an exact subset.
+  annotationIds?: string[];
+  filename?: string;
+}
+
 export interface IBulkExportDataset {
   datasetId: string;
   datasetName: string;
@@ -123,9 +130,6 @@ export default class ExportAPI {
    * Streams response from backend - handles large datasets without memory issues.
    */
   async exportCsv(options: ICsvExportOptions): Promise<void> {
-    const url = `${this.client.apiRoot}/export/csv`;
-    const token = (this.client as any).token;
-
     const body = {
       datasetId: options.datasetId,
       propertyPaths: options.propertyPaths || [],
@@ -140,6 +144,48 @@ export default class ExportAPI {
       filename: options.filename || "export.csv",
     };
 
+    await this.postAndDownload(
+      "export/csv",
+      body,
+      body.filename,
+      "CSV export failed",
+    );
+  }
+
+  /**
+   * Export annotations as a GeoJSON FeatureCollection (image pixel
+   * coordinates, QuPath's convention). Server-side, so a stub-mode dataset
+   * exports every annotation, not only the hydrated ones.
+   */
+  async exportGeoJson(options: IGeoJsonExportOptions): Promise<void> {
+    const filename = options.filename || "annotations.geojson";
+    await this.postAndDownload(
+      "export/geojson",
+      {
+        datasetId: options.datasetId,
+        // Omitting the field means "every annotation"; a present array is an
+        // exact subset, including the empty subset.
+        ...(options.annotationIds !== undefined
+          ? { annotationIds: options.annotationIds }
+          : {}),
+        filename,
+      },
+      filename,
+      "GeoJSON export failed",
+    );
+  }
+
+  /**
+   * POST a JSON body to a streaming export endpoint and save the response
+   * as `filename`. Shared by the CSV and GeoJSON exports.
+   */
+  private async postAndDownload(
+    path: string,
+    body: object,
+    filename: string,
+    failureMessage: string,
+  ): Promise<void> {
+    const token = (this.client as any).token;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -147,24 +193,18 @@ export default class ExportAPI {
       headers["Girder-Token"] = token;
     }
 
-    const response = await fetch(url, {
+    const response = await fetch(`${this.client.apiRoot}/${path}`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
     });
 
     if (!response.ok) {
-      throw new Error(`CSV export failed: ${response.statusText}`);
+      throw new Error(`${failureMessage}: ${response.statusText}`);
     }
 
-    // Get the blob and trigger download
-    const blob = await response.blob();
-    const downloadUrl = URL.createObjectURL(blob);
-
-    downloadToClient({
-      href: downloadUrl,
-      download: options.filename || "export.csv",
-    });
+    const downloadUrl = URL.createObjectURL(await response.blob());
+    downloadToClient({ href: downloadUrl, download: filename });
 
     // Clean up the object URL after a short delay
     setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);

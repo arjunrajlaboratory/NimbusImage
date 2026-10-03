@@ -9,7 +9,7 @@
 //
 // Placement rules:
 //   * Right zone is a mutually-exclusive column. A "primary" (Object Browser /
-//     Analysis / Snapshots / Settings) owns it — opening one closes the others.
+//     Analysis / Transcripts / Snapshots / Settings) owns it — opening one closes the others.
 //     The "companion" (Filters) may share the column, but only alongside one of
 //     its `hosts`; any other primary evicts it.
 //   * Left zone (Navigator / Layers / Tools) is an independent vertical stack:
@@ -20,6 +20,7 @@ export type PanelId =
   | "annotationPanel"
   | "filtersPanel"
   | "analysisPanel"
+  | "transcriptsPanel"
   | "snapshotPanel"
   | "settingsPanel"
   | "navigatorPanel"
@@ -94,6 +95,16 @@ export const PANELS: readonly IPanelDefinition[] = [
     id: "analysisPanel",
     title: "Analysis",
     icon: "mdi-chart-scatter-plot",
+    zone: "right",
+    role: "primary",
+    defaultOpen: false,
+  },
+  // Only offered for a dataset with a registered transcript store (App.vue
+  // gates the button and the command).
+  {
+    id: "transcriptsPanel",
+    title: "Transcripts",
+    icon: "mdi-dots-hexagon",
     zone: "right",
     role: "primary",
     defaultOpen: false,
