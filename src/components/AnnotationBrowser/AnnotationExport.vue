@@ -1,24 +1,5 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="activatorBinding">
-      <slot name="activator" v-bind="activatorBinding">
-        <v-btn
-          variant="outlined"
-          color="primary"
-          size="small"
-          v-bind="{ ...activatorBinding.props, ...$attrs }"
-          v-description="{
-            section: 'Object list actions',
-            title: 'Export to JSON',
-            description:
-              'Export annotations, connections, properties, and property values to a JSON file',
-          }"
-        >
-          <v-icon>mdi-export</v-icon>
-          Export to JSON
-        </v-btn>
-      </slot>
-    </template>
     <v-card class="pa-2" :disabled="!canExport">
       <v-card-title>Export to JSON</v-card-title>
       <v-card-subtitle>
@@ -148,8 +129,8 @@ import { ref, computed, watch, onMounted } from "vue";
 import store from "@/store";
 import { useCollectionDatasets } from "@/utils/useCollectionDatasets";
 
-// Bindable as `v-model:open` (DataIOMenu opens it for the command palette);
-// without a binding it is local state toggled by the activator.
+// Opened by its owner through `v-model:open` (DataIOMenu, from its menu or the
+// command palette); the dialog renders no activator of its own.
 const dialog = defineModel<boolean>("open", { default: false });
 const exporting = ref(false);
 const exportProgress = ref(0);

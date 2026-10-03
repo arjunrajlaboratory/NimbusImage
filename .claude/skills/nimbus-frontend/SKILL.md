@@ -557,6 +557,25 @@ Persister wraps `localStorage` with JSON serialization. It's already used for th
 
 ## Dialogs
 
+### Controlling a dialog from outside: two traps
+
+Both shipped in the command palette's first cut, when the Data I/O dialogs
+moved out of their `v-menu` so the palette could open them:
+
+- **A dialog created already open never fires its open watcher.** The CSV
+  preview and the index-conversion labels are built in non-immediate
+  `watch(dialog, ...)` callbacks. Mounting the dialog (`v-if`) and setting its
+  `v-model:open` in the same tick creates it with `dialog === true`, so the
+  watcher never sees false → true and the first open shows blank state. Mount
+  it closed, `await nextTick()`, then open it (`DataIOMenu.vue`
+  `openDataDialog`).
+- **An empty slot renders the slot's fallback.** Passing `<template
+  #activator />` to silence a component's default activator button does
+  nothing: Vue treats slot content that renders only comments as absent and
+  shows the fallback, so the dialog's own "Export CSV" button appeared in the
+  app bar. A dialog that is always opened from outside should have no
+  activator at all; delete it rather than overriding it with nothing.
+
 ```vue
 <v-dialog v-model="dialogOpen" max-width="600px">
   <v-card>

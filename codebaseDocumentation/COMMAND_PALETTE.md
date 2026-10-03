@@ -249,6 +249,33 @@ Departures from the spec, and why:
 - **The hotkey is `mod+k`** (⌘K / Ctrl+K). Because v-mousetrap ignores keys
   typed in text fields, the palette's own input handles ⌘K to close itself.
 
+## Verified in the browser
+
+On the HCR dataset (`6a5a8f6a7cb263929b47ece2`), from a fresh load, with real
+key presses (Playwright; the Chrome-extension tab was occluded, which stalls
+every Vuetify transition at 0 rAF, so it can't verify a dialog):
+
+1. ⌘K opens the palette focused; ⌘K and Esc in the field close it, and focus
+   returns to the page.
+2. "gauss" → "Add tool: Gaussian Blur…" + Enter opens tool creation
+   pre-selected, identical to picking the card in "Add new tool". (This
+   server has no Cellpose worker.)
+3. Replacing `workerImageList` without the Gaussian Blur image removes its
+   command from the open palette, and restoring the list brings it back, with
+   no reload.
+4. "open analysis", then "filters": both stay open (companion rule).
+5. "dapi" toggles the DAPI layer (and was toggled back).
+6. "color by area" opens Color by with Area pre-selected.
+7. "export csv" / "index conversions" open their dialogs, with the dimension
+   labels loaded on the first open; the Data I/O menu path still works.
+8. On the home route only global commands show (home, upload, AI, tours,
+   help).
+9. The Tab overlay lists `mod+k  Command palette: search every command`.
+
+Not exercised live: "Go to snapshot" (the test collection has no snapshots,
+and creating one would write to a shared configuration). It is covered by
+*"loads a snapshot requested from the command palette, then clears it"*.
+
 ## Regression checklist
 
 Each line names an invariant and the test that holds it, so a change here means
@@ -276,6 +303,7 @@ Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components
 - [ ] **The highlight follows the command, not the row number**, so a list that re-derives under the user (the worker list landing) can't make Enter run something else, and a vanished command falls back to the first row. — _"keeps the highlighted command when the list re-derives under it"_, _"falls back to the first row when the highlighted command disappears"_
 - [ ] **⌘K / Ctrl+K typed in the search field closes the palette.** v-mousetrap ignores keys in inputs, so the field handles it (and claims Ctrl+K from the browser). — _"closes on its own toggle key typed in the search field"_
 - [ ] **Data dialogs mount closed, then open.** Their on-open work (CSV preview, dimension labels) is a non-immediate watcher, which a dialog created already open never fires. — _"opens each dialog after mounting it, so its on-open watcher fires the first time"_
+- [ ] **The data dialogs render no activator of their own.** An empty `#activator` template rendered each dialog's fallback "Export CSV"-style button into the app bar once it mounted. — *"its dialogs render no activator of their own"*
 - [ ] **Same-named layers show their own hotkey**, read by position, not looked up by name. — _"gives same-named layers their own key, not the first one's"_
 - [ ] **Closing without choosing runs nothing.** — _"closing without choosing runs nothing"_
 - [ ] **Keyboard: arrows wrap, Enter runs the active row and records it as recent.** — _"arrow keys move the active row and Enter runs it after closing"_

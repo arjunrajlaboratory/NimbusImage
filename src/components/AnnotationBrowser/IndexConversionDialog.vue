@@ -1,24 +1,5 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="activatorBinding">
-      <slot name="activator" v-bind="activatorBinding">
-        <v-btn
-          variant="outlined"
-          color="primary"
-          size="small"
-          v-bind="{ ...activatorBinding.props, ...$attrs }"
-          v-description="{
-            section: 'Object list actions',
-            title: 'Download Index Conversions',
-            description:
-              'Download CSV files that map dimension indices (UI and JSON) to their string labels',
-          }"
-        >
-          <v-icon>mdi-table-arrow-down</v-icon>
-          Download Index Conversions
-        </v-btn>
-      </slot>
-    </template>
     <v-card>
       <v-card-title> Download Index Conversion CSVs </v-card-title>
       <v-card-subtitle>
@@ -144,8 +125,8 @@ import Papa from "papaparse";
 import { downloadToClient } from "@/utils/download";
 import { logError } from "@/utils/log";
 
-// Bindable as `v-model:open` (DataIOMenu opens it for the command palette);
-// without a binding it is local state toggled by the activator.
+// Opened by its owner through `v-model:open` (DataIOMenu, from its menu or the
+// command palette); the dialog renders no activator of its own.
 const dialog = defineModel<boolean>("open", { default: false });
 const dimensionLabels = ref<{
   xy: string[] | null;

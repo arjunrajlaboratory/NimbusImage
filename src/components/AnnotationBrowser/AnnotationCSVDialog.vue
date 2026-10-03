@@ -1,24 +1,5 @@
 <template>
   <v-dialog v-model="dialog">
-    <template v-slot:activator="activatorBinding">
-      <slot name="activator" v-bind="activatorBinding">
-        <v-btn
-          variant="outlined"
-          color="primary"
-          size="small"
-          v-bind="{ ...activatorBinding.props, ...$attrs }"
-          v-description="{
-            section: 'Object list actions',
-            title: 'Export CSV',
-            description:
-              'Export the current list of annotations and associated properties to a CSV file',
-          }"
-        >
-          <v-icon>mdi-application-export</v-icon>
-          EXPORT CSV
-        </v-btn>
-      </slot>
-    </template>
     <v-card>
       <v-card-title> Current Annotation List as CSV </v-card-title>
       <v-card-subtitle>
@@ -343,8 +324,8 @@ const fieldToCopy = ref<ComponentPublicInstance>();
 
 const filename = ref("");
 
-// Bindable as `v-model:open` (DataIOMenu opens it for the command palette);
-// without a binding it is local state toggled by the activator.
+// Opened by its owner through `v-model:open` (DataIOMenu, from its menu or the
+// command palette); the dialog renders no activator of its own.
 const dialog = defineModel<boolean>("open", { default: false });
 const text = ref("");
 const displayText = ref("");

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { defineComponent, h, watch } from "vue";
 import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 vi.mock("@/store", () => ({ default: { isLoggedIn: true } }));
 vi.mock("@/store/properties", () => ({
@@ -99,5 +101,27 @@ describe("DataIOMenu", () => {
       .vm.$emit("update:open", false);
     await flushPromises();
     expect(lastAnnotations.AnnotationCsvDialog).toEqual([]);
+  });
+
+  it("its dialogs render no activator of their own", () => {
+    // DataIOMenu opens them through v-model:open from outside its menu. An
+    // activator slot left in place renders its fallback button wherever the
+    // dialog is mounted (an empty #activator template does not suppress it,
+    // because Vue renders the fallback for empty slot content).
+    const dialogs = [
+      "AnnotationImport",
+      "AnnotationExport",
+      "AnnotationCSVDialog",
+      "IndexConversionDialog",
+    ];
+    for (const name of dialogs) {
+      const source = readFileSync(
+        join(__dirname, "AnnotationBrowser", `${name}.vue`),
+        "utf8",
+      );
+      expect(source, name).not.toMatch(/v-slot:activator|#activator/);
+    }
+    const menu = readFileSync(join(__dirname, "DataIOMenu.vue"), "utf8");
+    expect(menu).not.toMatch(/<template #activator \/>/);
   });
 });

@@ -41,29 +41,21 @@
     <annotation-import
       v-if="mountedDialogs.import"
       v-model:open="openDialogs.import"
-    >
-      <template #activator />
-    </annotation-import>
+    />
     <annotation-export
       v-if="mountedDialogs.export"
       v-model:open="openDialogs.export"
-    >
-      <template #activator />
-    </annotation-export>
+    />
     <annotation-csv-dialog
       v-if="mountedDialogs.csv"
       v-model:open="openDialogs.csv"
       :annotations="openDialogs.csv ? filteredAnnotations : NO_ANNOTATIONS"
       :propertyPaths="propertyPaths"
-    >
-      <template #activator />
-    </annotation-csv-dialog>
+    />
     <index-conversion-dialog
       v-if="mountedDialogs.indexConversions"
       v-model:open="openDialogs.indexConversions"
-    >
-      <template #activator />
-    </index-conversion-dialog>
+    />
   </div>
 </template>
 
