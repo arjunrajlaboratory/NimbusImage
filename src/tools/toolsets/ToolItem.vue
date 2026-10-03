@@ -120,7 +120,7 @@ const jobId = computed((): string | null => {
 });
 
 const statusIcon = computed((): string | null => {
-  const success = jobs.toolJobOutcomes[props.tool.id];
+  const success = jobs.toolJobOutcome(props.tool.id);
   if (success === undefined) {
     return null;
   }
@@ -131,13 +131,18 @@ function onJobChanged() {
   if (!jobId.value) {
     return;
   }
+  // Capture the scope now: a job that finishes after the user switched
+  // dataset, collection or account must not report into the new one.
   const toolId = props.tool.id;
+  const scope = jobs.toolJobScope;
   // Undefined if the job already settled (the jobs store drops finished
   // entries), in which case there is no outcome left to show an icon for.
   // The outcome goes to the store so it survives this item remounting.
   jobs
     .getPromiseForJobId(jobId.value)
-    ?.then((success: boolean) => jobs.setToolJobOutcome({ toolId, success }));
+    ?.then((success: boolean) =>
+      jobs.setToolJobOutcome({ toolId, scope, success }),
+    );
 }
 
 watch(jobId, onJobChanged);

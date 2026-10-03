@@ -11,17 +11,34 @@ vi.mock("@/store", () => ({
   },
 }));
 
-// Reactive, and setToolJobOutcome replaces the map like the real mutation,
-// so the statusIcon computed re-evaluates.
+// Reactive, with the real module's scoping: setToolJobOutcome replaces the
+// map like the real mutation, and toolJobOutcome only reports an outcome
+// whose scope is the current toolJobScope.
 vi.mock("@/store/jobs", async () => {
   const { reactive } = await import("vue");
   const jobs: any = reactive({
     jobIdForToolId: {} as Record<string, string>,
-    toolJobOutcomes: {} as Record<string, boolean>,
+    toolJobOutcomes: {} as Record<string, { scope: string; success: boolean }>,
+    toolJobScope: "user:dataset:config",
+    toolJobOutcome: (toolId: string) => {
+      const outcome = jobs.toolJobOutcomes[toolId];
+      return outcome?.scope === jobs.toolJobScope ? outcome.success : undefined;
+    },
     getPromiseForJobId: vi.fn(),
     setToolJobOutcome: vi.fn(
-      ({ toolId, success }: { toolId: string; success: boolean }) => {
-        jobs.toolJobOutcomes = { ...jobs.toolJobOutcomes, [toolId]: success };
+      ({
+        toolId,
+        scope,
+        success,
+      }: {
+        toolId: string;
+        scope: string;
+        success: boolean;
+      }) => {
+        jobs.toolJobOutcomes = {
+          ...jobs.toolJobOutcomes,
+          [toolId]: { scope, success },
+        };
       },
     ),
   });
@@ -62,6 +79,7 @@ describe("ToolItem", () => {
     (store as any).selectedTool = null;
     (jobs as any).jobIdForToolId = {};
     (jobs as any).toolJobOutcomes = {};
+    (jobs as any).toolJobScope = "user:dataset:config";
   });
 
   it("isToolSelected is false when no tool is selected", () => {
@@ -145,6 +163,39 @@ describe("ToolItem", () => {
     (jobs as any).jobIdForToolId = {};
     const remounted = mountComponent();
     expect((remounted.vm as any).statusIcon).toBe("mdi-check");
+  });
+
+  it("hides the status icon once the user, dataset or collection changes", async () => {
+    (jobs as any).jobIdForToolId = { "tool-1": "job-789" };
+    (jobs.getPromiseForJobId as any).mockResolvedValue(true);
+    const wrapper = mountComponent();
+    (wrapper.vm as any).onJobChanged();
+    await vi.waitFor(() => {
+      expect((wrapper.vm as any).statusIcon).toBe("mdi-check");
+    });
+
+    // e.g. logout + another user, or the same tool id in a duplicated
+    // collection.
+    (jobs as any).toolJobScope = "other-user:dataset:config";
+    await wrapper.vm.$nextTick();
+    expect((wrapper.vm as any).statusIcon).toBeNull();
+  });
+
+  it("does not report a job that finishes after the scope changed", async () => {
+    (jobs as any).jobIdForToolId = { "tool-1": "job-789" };
+    let finish!: (success: boolean) => void;
+    (jobs.getPromiseForJobId as any).mockReturnValue(
+      new Promise<boolean>((resolve) => (finish = resolve)),
+    );
+    const wrapper = mountComponent();
+    (wrapper.vm as any).onJobChanged();
+
+    (jobs as any).toolJobScope = "user:other-dataset:config";
+    finish(true);
+    await vi.waitFor(() => {
+      expect(jobs.setToolJobOutcome).toHaveBeenCalled();
+    });
+    expect((wrapper.vm as any).statusIcon).toBeNull();
   });
 
   it("the pin button pins an unpinned tool without toggling it", async () => {

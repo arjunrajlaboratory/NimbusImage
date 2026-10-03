@@ -122,11 +122,17 @@ export class Jobs extends VuexModule {
 
   connectionErrors: number = 0;
 
-  // Outcome of each tool's last finished job (true = success), shown as the
-  // Tools palette's status icon. Kept here rather than in ToolItem because
-  // pinning or unpinning moves a tool to another section, which remounts its
-  // ToolItem; a job can also finish while no ToolItem is mounted.
-  toolJobOutcomes: { [toolId: string]: boolean } = {};
+  // Outcome of each tool's last finished job, shown as the Tools palette's
+  // status icon. Kept here rather than in ToolItem because pinning or
+  // unpinning moves a tool to another section, which remounts its ToolItem.
+  // Each outcome records the toolJobScope its job started in and is only
+  // reported while that scope is current: tool ids are shared by every
+  // dataset in a collection and copied into duplicated collections, and this
+  // module outlives logout, so an unscoped outcome would show one user's or
+  // one dataset's result somewhere else.
+  toolJobOutcomes: {
+    [toolId: string]: { scope: string; success: boolean };
+  } = {};
 
   // The completion promise for a tracked job, or undefined if the job is not
   // tracked — either it was never registered with addJob, or it already
@@ -149,6 +155,22 @@ export class Jobs extends VuexModule {
       }
     }
     return jobsPerToolId;
+  }
+
+  get toolJobScope() {
+    return [
+      main.girderUser?._id,
+      main.dataset?.id,
+      main.configuration?.id,
+    ].join(":");
+  }
+
+  // The last job outcome for a tool in the current scope, or undefined.
+  get toolJobOutcome() {
+    return (toolId: string): boolean | undefined => {
+      const outcome = this.toolJobOutcomes[toolId];
+      return outcome?.scope === this.toolJobScope ? outcome.success : undefined;
+    };
   }
 
   get jobIdForPropertyId() {
@@ -255,8 +277,19 @@ export class Jobs extends VuexModule {
   }
 
   @Mutation
-  setToolJobOutcome({ toolId, success }: { toolId: string; success: boolean }) {
-    this.toolJobOutcomes = { ...this.toolJobOutcomes, [toolId]: success };
+  setToolJobOutcome({
+    toolId,
+    scope,
+    success,
+  }: {
+    toolId: string;
+    scope: string;
+    success: boolean;
+  }) {
+    this.toolJobOutcomes = {
+      ...this.toolJobOutcomes,
+      [toolId]: { scope, success },
+    };
   }
 
   @Mutation

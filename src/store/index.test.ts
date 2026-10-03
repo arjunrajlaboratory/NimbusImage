@@ -272,3 +272,35 @@ describe("tool pinning and ordering", () => {
     expect(updateKey).not.toHaveBeenCalled();
   });
 });
+
+describe("tool job outcome scoping", () => {
+  afterEach(() => {
+    (rootStore.state as any).main.girderUser = null;
+    (rootStore.state as any).main.configuration = null;
+  });
+
+  it("reports an outcome only in the user/dataset/collection it ran in", () => {
+    const state = (rootStore.state as any).main;
+    state.girderUser = { _id: "user-a", login: "a" };
+    state.configuration = { id: "config-1", tools: [] };
+
+    jobs.setToolJobOutcome({
+      toolId: "tool-1",
+      scope: jobs.toolJobScope,
+      success: true,
+    });
+    expect(jobs.toolJobOutcome("tool-1")).toBe(true);
+
+    // Another user on the same tab (after logout/login).
+    state.girderUser = { _id: "user-b", login: "b" };
+    expect(jobs.toolJobOutcome("tool-1")).toBeUndefined();
+
+    // A duplicated collection keeps the same tool ids.
+    state.girderUser = { _id: "user-a", login: "a" };
+    state.configuration = { id: "config-copy", tools: [] };
+    expect(jobs.toolJobOutcome("tool-1")).toBeUndefined();
+
+    state.configuration = { id: "config-1", tools: [] };
+    expect(jobs.toolJobOutcome("tool-1")).toBe(true);
+  });
+});
