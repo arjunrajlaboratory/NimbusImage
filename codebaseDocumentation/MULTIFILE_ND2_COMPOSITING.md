@@ -39,7 +39,9 @@ Where the implementation differs from, or settles, the proposal below:
   value there (a Z stack, or channels split across files) count as one tile.
   To stay linear, each tolerance-sized grid cell keeps one bounding box per
   XY value covering every point merged there, so a long stack is one entry
-  and a duplicate near *any* merged point is still caught (not only one
+  and a duplicate near *any* merged point is still caught. Tolerances and
+  coverage use the tile's mosaic-space footprint (after the camera
+  transform), so a rotated non-square tile is measured correctly (not only one
   near a single representative point, which a chain of merges could evade).
   The check walks every stage entry the sources use, not one per XY value, so
   files whose XY values repeat (XY from frame order) are all checked. A ticked
@@ -452,8 +454,10 @@ hand.
   *"test_long_stacks_at_one_position_are_checked_quickly"*,
   *"reports no coverage warning alongside a duplicate"*,
   *"test_duplicate_reports_no_sparse_warning"*.
-- A composite carries no per-tile XY labels —
-  *"test_composited_xy_has_no_per_tile_labels"*.
+- A composite carries no per-tile XY labels, decided by the config that
+  was generated even if Composite is toggled during the upload —
+  *"test_composited_xy_has_no_per_tile_labels"*,
+  *"saves the labels of the config it generated, not a later toggle"*.
 
 **Sanity checks**
 - Two XY positions at one stage position refuse compositing, in the UI and as
@@ -466,6 +470,8 @@ hand.
   *"treats stage entries sharing an XY value as one tile"*,
   *"checks every file when XY repeats across files"*,
   *"catches a duplicate next to any merged point, not just the first"*,
+  *"measures tolerances on the rotated tile, not the raw size"*,
+  *"test_tolerances_use_the_rotated_tile"*,
   *"test_duplicate_next_to_any_merged_point_is_caught"*,
   *"unticks Composite when a reassignment creates a duplicate"*.
 - A sparse layout warns but still composites —

@@ -33,6 +33,10 @@ export interface ICompositingLayout {
   // entries start.
   coordinates: IGeoJSPositionWithTransform[];
   itemOffsets: number[];
+  // One tile's width and height in mosaic pixels, after the camera
+  // transform (a rotated non-square tile swaps them).
+  tileWidth: number;
+  tileHeight: number;
 }
 
 // Two XY positions closer than this fraction of a tile are the same field
@@ -246,6 +250,8 @@ export function compositingCoordinates(
       s22: c.s22,
     })),
     itemOffsets,
+    tileWidth: offsetX.max - offsetX.min,
+    tileHeight: offsetY.max - offsetY.min,
   };
 }
 
@@ -272,9 +278,10 @@ export function compositingCheck(
   layout: ICompositingLayout,
   xyValue: (itemIdx: number, frameIdx: number) => number,
 ): ICompositingCheck {
-  const { sizeX, sizeY } = tilesMetadata[0];
-  const tolX = DUPLICATE_POSITION_FRACTION * sizeX;
-  const tolY = DUPLICATE_POSITION_FRACTION * sizeY;
+  // Measured in mosaic space: the camera transform can rotate the tile.
+  const { tileWidth, tileHeight } = layout;
+  const tolX = DUPLICATE_POSITION_FRACTION * tileWidth;
+  const tolY = DUPLICATE_POSITION_FRACTION * tileHeight;
 
   const points: { x: number; y: number; xy: number; item: number }[] = [];
   for (let itemIdx = 0; itemIdx < itemNames.length; ++itemIdx) {
@@ -373,13 +380,14 @@ export function compositingCheck(
   if (error === null && tileCount > 1) {
     const xs = extent(points, (p) => p.x);
     const ys = extent(points, (p) => p.y);
-    const width = xs.max - xs.min + sizeX;
-    const height = ys.max - ys.min + sizeY;
-    const coverage = (tileCount * sizeX * sizeY) / (width * height);
+    const width = xs.max - xs.min + tileWidth;
+    const height = ys.max - ys.min + tileHeight;
+    const coverage = (tileCount * tileWidth * tileHeight) / (width * height);
     if (coverage < SPARSE_COVERAGE_FRACTION) {
       warning =
         `The ${tileCount} tiles cover only ` +
-        `${Math.round(coverage * 100)}% of the ${width} × ${height} ` +
+        `${Math.round(coverage * 100)}% of the ${Math.round(width)} × ` +
+        `${Math.round(height)} ` +
         "px composite, so they look like separate regions (for example, " +
         "different wells). Consider leaving Composite off to keep them as " +
         "separate XY positions.";

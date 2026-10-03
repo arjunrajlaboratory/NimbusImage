@@ -312,7 +312,13 @@ function stageMeta(x: number, y: number) {
 function xyAssignmentOfSize(size: number) {
   return {
     text: "Filename",
-    value: { id: 0, guess: "XY", source: "filename", size, data: {} },
+    value: {
+      id: 0,
+      guess: "XY",
+      source: "filename",
+      size,
+      data: { values: [], valueIdxPerFilename: {} },
+    },
   };
 }
 
@@ -862,6 +868,37 @@ describe("MultiSourceConfiguration", () => {
       expect(
         mockGetSourceMetadata.mock.calls.slice(0, 3).map((c) => c[0]),
       ).toEqual(["ds-1", "ds-1", "ds-1"]);
+    });
+
+    it("saves the labels of the config it generated, not a later toggle", async () => {
+      const vm = mountComponent().vm as any;
+      await vm.initialized.catch(() => {});
+      setUpTileFolder(vm, [
+        [0, 0],
+        [512, 0],
+      ]);
+      vm.enableCompositing = true;
+      await nextTick();
+      let finishUpload: (id: string) => void = () => {};
+      mockAddMultiSourceMetadata.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishUpload = resolve;
+        }),
+      );
+      mockUpdateDatasetMetadata.mockClear();
+      const generating = vm.generateJson();
+      await nextTick();
+      // The user unticks Composite while the upload is in flight.
+      vm.enableCompositing = false;
+      finishUpload("item-123");
+      await generating;
+      const config = JSON.parse(
+        mockAddMultiSourceMetadata.mock.calls.at(-1)![0].metadata,
+      );
+      expect(config.sources[0].position).toBeDefined();
+      expect(
+        mockUpdateDatasetMetadata.mock.calls[0][1].dimensionLabels.xy,
+      ).toBeNull();
     });
 
     it("loads source metadata in batches of at most 50 items", async () => {

@@ -544,3 +544,21 @@ class TestCompositingRobustness:
             lambda item_idx, frame_idx: 0 if item_idx < 2 else 1,
         )
         assert '"a.nd2" (XY 1) and "c.nd2" (XY 2)' in check["error"]
+
+    def test_tolerances_use_the_rotated_tile(self):
+        # 2000 x 500 tiles rotated 90 degrees: 500 wide on screen, so 100 px
+        # apart is not a duplicate (it would be against the raw 2000 px).
+        from helpers.multi_source import (  # noqa: E402
+            _compositing_positions, compositing_check,
+        )
+        rotated = _tile(1, 1, sizeX=2000, sizeY=500)
+        tiles = [rotated, rotated]
+        internal = [_stages([(0, 0)], [0, -1, 1, 0]),
+                    _stages([(100, 0)], [0, -1, 1, 0])]
+        layout = _compositing_positions(tiles, internal)
+        assert layout[2] == (500, 2000)
+        check = compositing_check(
+            ["a.nd2", "b.nd2"], tiles, layout,
+            lambda item_idx, frame_idx: item_idx,
+        )
+        assert check["error"] is None

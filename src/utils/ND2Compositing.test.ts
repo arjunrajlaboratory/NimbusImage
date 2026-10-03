@@ -226,6 +226,23 @@ describe("compositingCheck", () => {
     expect(result.error).toContain('"a.nd2" (XY 1) and "c.nd2" (XY 2)');
   });
 
+  it("measures tolerances on the rotated tile, not the raw size", () => {
+    // 2000 x 500 tiles rotated 90 degrees: 500 wide, 2000 tall on screen.
+    // 100 px apart in x is not within a tenth of the 500 px rotated width
+    // (but would be within a tenth of the raw 2000 px sizeX).
+    const rotated = { ...tile(1, 1), sizeX: 2000, sizeY: 500 };
+    const tiles = [rotated, rotated];
+    const internal = [
+      stages([[0, 0]], [0, -1, 1, 0]),
+      stages([[100, 0]], [0, -1, 1, 0]),
+    ];
+    const layout = compositingCoordinates(tiles, internal);
+    expect([layout.tileWidth, layout.tileHeight]).toEqual([500, 2000]);
+    expect(
+      compositingCheck(["a.nd2", "b.nd2"], tiles, layout, (i) => i).error,
+    ).toBeNull();
+  });
+
   it("checks every file when XY repeats across files", () => {
     // XY from frame order: both files hold XY 0 and 1, at the same stages,
     // so file 2's positions would be skipped if keyed by XY value alone.

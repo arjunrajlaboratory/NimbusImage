@@ -1693,6 +1693,11 @@ async function generateJson(): Promise<string | null> {
     return null;
   }
 
+  // Read once: the upload below is awaited, and the labels saved after it
+  // must describe the config generated here, even if the user toggles
+  // Composite or reassigns XY in the meantime.
+  const composited = shouldDoCompositing.value;
+
   let channels: string[] | null = null;
   const channelAssignment = assignments.C?.value;
   if (channelAssignment) {
@@ -1752,7 +1757,7 @@ async function generateJson(): Promise<string | null> {
 
   const sources: ICompositingSource[] | IBasicSource[] = [];
 
-  if (shouldDoCompositing.value) {
+  if (composited) {
     const compositingSources: ICompositingSource[] =
       sources as ICompositingSource[];
     if (!tilesMetadata.value) {
@@ -1922,7 +1927,7 @@ async function generateJson(): Promise<string | null> {
       const dimensionLabels = {
         // A composite has one XY position, so per-tile XY labels would
         // name the whole mosaic after its first tile.
-        xy: shouldDoCompositing.value ? null : xyLabels,
+        xy: composited ? null : xyLabels,
         z: zLabels,
         t: tLabels,
       };

@@ -791,7 +791,8 @@ def _can_composite(tiles_metadata, internal_metadata, xy_assignment_size):
 def _compositing_positions(tiles_metadata, internal_metadata):
     """Port of ``compositingCoordinates``: pixel positions for every
     ``nd2_frame_metadata`` entry of every item, concatenated in item order,
-    plus the offset where each item's entries start. All files share the
+    the offset where each item's entries start, and one tile's
+    mosaic-space ``(width, height)``. All files share the
     first file's pixel size and camera orientation (the gate checks both),
     which also sets the mosaic's extent."""
     first_tile = tiles_metadata[0]
@@ -842,7 +843,13 @@ def _compositing_positions(tiles_metadata, internal_metadata):
         }
         for c in coordinates
     ]
-    return final_coordinates, item_offsets
+    # One tile's mosaic-space footprint: a rotated non-square tile swaps
+    # width and height.
+    tile_size = (
+        max(c["x"] for c in transformed) - min(c["x"] for c in transformed),
+        max(c["y"] for c in transformed) - min(c["y"] for c in transformed),
+    )
+    return final_coordinates, item_offsets, tile_size
 
 
 def slim_internal_metadata(internal_meta):
@@ -911,9 +918,8 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
     ``_compositing_positions``'s result and ``xy_value(item_idx,
     frame_idx)`` the frame's XY assignment.
     """
-    final_coordinates, item_offsets = layout
-    size_x = tiles_metadata[0]["sizeX"]
-    size_y = tiles_metadata[0]["sizeY"]
+    # Measured in mosaic space: the camera transform can rotate the tile.
+    final_coordinates, item_offsets, (size_x, size_y) = layout
     tol_x = DUPLICATE_POSITION_FRACTION * size_x
     tol_y = DUPLICATE_POSITION_FRACTION * size_y
 
@@ -1000,7 +1006,7 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
                 "example, different wells). Consider leaving Composite off "
                 "to keep them as separate XY positions." % (
                     tile_count, js_math_round(coverage * 100),
-                    width, height,
+                    js_math_round(width), js_math_round(height),
                 )
             )
     return {
@@ -1074,7 +1080,7 @@ def generate_multi_source_config(item_names, tiles_metadata,
     sources = []
 
     if should_composite:
-        final_coordinates, item_offsets = layout
+        final_coordinates, item_offsets, _tile_size = layout
         for item_idx in range(len(item_names)):
             name = item_names[item_idx]
             n_frames = _frame_count(tiles_metadata[item_idx])
