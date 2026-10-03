@@ -3,7 +3,7 @@ import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
-import { jobStates } from "@/store/jobConstants";
+import { isTerminalJobStatus, jobStates } from "@/store/jobConstants";
 import volumeViewStore from "@/store/volumeView";
 import {
   AnnotationShape,
@@ -921,12 +921,6 @@ const MAX_WAIT_SECONDS = 1800;
 // tool call — they cost no agent turns and never reach the model.
 const JOB_STATUS_POLL_SECONDS = 10;
 
-const TERMINAL_JOB_STATES = new Set([
-  jobStates.success,
-  jobStates.error,
-  jobStates.cancelled,
-]);
-
 function pruneAgentJobs() {
   if (agentJobs.size <= MAX_TRACKED_AGENT_JOBS) {
     return;
@@ -1129,7 +1123,7 @@ async function waitForJobTool(
     // genuinely still running, but a dropped notification WebSocket looks the
     // same, so confirm against the server before reporting.
     const status = await jobsStore.fetchJobStatus(jobId);
-    if (status != null && TERMINAL_JOB_STATES.has(status)) {
+    if (isTerminalJobStatus(status)) {
       return finishedResult(status === jobStates.success);
     }
     return stillRunningResult();
@@ -1146,7 +1140,7 @@ async function waitForJobTool(
         "run_worker or compute_property.",
     );
   }
-  if (initialStatus != null && TERMINAL_JOB_STATES.has(initialStatus)) {
+  if (isTerminalJobStatus(initialStatus)) {
     return finishedResult(initialStatus === jobStates.success);
   }
   const deadline = startedAt + timeoutSeconds * 1000;
@@ -1163,7 +1157,7 @@ async function waitForJobTool(
       return finishedResult(outcome);
     }
     const status = await jobsStore.fetchJobStatus(jobId);
-    if (status != null && TERMINAL_JOB_STATES.has(status)) {
+    if (isTerminalJobStatus(status)) {
       return finishedResult(status === jobStates.success);
     }
   }

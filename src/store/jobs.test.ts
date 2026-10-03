@@ -3,13 +3,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   createNotification: vi.fn(),
+  girderRest: { token: "token" as string | null },
 }));
 
 vi.mock("./index", () => ({
   default: {
     girderRest: {
       get: (...args: any[]) => mocks.get(...args),
-      token: "token",
+      get token() {
+        return mocks.girderRest.token;
+      },
       apiRoot: "http://girder.test/api/v1",
     },
     isAnnotationPanelOpen: true,
@@ -74,6 +77,7 @@ describe("jobs notification recovery", () => {
     FakeSocket.instances = [];
     mocks.get.mockReset();
     mocks.createNotification.mockReset();
+    mocks.girderRest.token = "token";
   });
 
   afterEach(() => {
@@ -170,6 +174,60 @@ describe("jobs notification recovery", () => {
     second.onopen?.({ target: second });
     await vi.advanceTimersByTimeAsync(0);
     expect(settled).toBe(true);
+  });
+
+  it("costs no extra request while the stream is healthy", async () => {
+    await jobs.initializeNotificationSubscription();
+    const socket = FakeSocket.instances.at(-1)!;
+    socket.onopen?.({ target: socket });
+    await flush();
+    const jobId = nextJobId();
+    let settled: boolean | undefined;
+    jobs
+      .addJob({ jobId, datasetId: "ds" } as any)
+      .then((success) => (settled = success));
+    await flush();
+    expect(mocks.get).not.toHaveBeenCalled();
+    streamEvent(socket, { _id: jobId, status: jobStates.success });
+    await flush();
+    expect(settled).toBe(true);
+  });
+
+  it("does not repeat log lines when the server log is only a tail", async () => {
+    const jobId = nextJobId();
+    const socket = () => FakeSocket.instances.at(-1)!;
+    // We saw the start of the log; the server kept only a later tail.
+    mocks.get.mockImplementation(async () => {
+      streamEvent(socket(), { _id: jobId, text: '{"error": "boom"}\n' });
+      return {
+        data: { _id: jobId, status: jobStates.error, log: ["tail only\n"] },
+      };
+    });
+    const texts: string[] = [];
+    await jobs.addJob({
+      jobId,
+      datasetId: "ds",
+      eventCallback: (event: any) => event.text && texts.push(event.text),
+    } as any);
+    expect(texts).toEqual(['{"error": "boom"}\n']);
+  });
+
+  it("cancels a pending reconnect on a deliberate close", async () => {
+    vi.useFakeTimers();
+    await jobs.initializeNotificationSubscription();
+    FakeSocket.instances.at(-1)!.drop();
+    await jobs.closeNotificationSubscription();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeSocket.instances).toHaveLength(1);
+  });
+
+  it("stops reconnecting once logged out", async () => {
+    vi.useFakeTimers();
+    await jobs.initializeNotificationSubscription();
+    mocks.girderRest.token = null;
+    FakeSocket.instances.at(-1)!.drop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeSocket.instances).toHaveLength(1);
   });
 
   it("does not reconnect after a deliberate close", async () => {
