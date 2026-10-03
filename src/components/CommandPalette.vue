@@ -16,7 +16,6 @@
         variant="solo"
         flat
         hide-details
-        autofocus
         autocomplete="off"
         aria-label="Search commands"
         @keydown="onKeydown"
@@ -40,7 +39,7 @@
             role="option"
             :aria-selected="row.index === activeIndex"
             @click="choose(row.command)"
-            @mousemove="activeIndex = row.index"
+            @mousemove="activeCommandId = row.command.id"
           >
             <template #prepend v-if="row.command.icon">
               <v-icon size="18">{{ row.command.icon }}</v-icon>
@@ -74,7 +73,6 @@ import { enabledCommands, useCommandProvider } from "@/commands/registry";
 import { rankCommands } from "@/commands/scorer";
 import { recentCommandIds, recordRecentCommand } from "@/commands/recent";
 import {
-  IProviderContext,
   addToolCommands,
   layerCommands,
   propertyCommands,
@@ -82,7 +80,8 @@ import {
   toolCommands,
 } from "@/commands/providers";
 import { COMMAND_GROUP_ORDER, ICommand } from "@/commands/types";
-import { formatHotkey } from "@/commands/hotkeys";
+import { formatHotkey, isPaletteToggleKey } from "@/commands/hotkeys";
+import { useViewerContext } from "@/commands/context";
 
 // Results are capped so a broad query stays a short, scannable list.
 const MAX_ROWS = 50;
@@ -97,14 +96,15 @@ type TRow =
 
 const route = useRoute();
 const query = ref("");
-const activeIndex = ref(0);
+// The highlighted row is tracked by command, not position: the list can
+// re-derive under the user (the worker list landing, an undo finishing), and
+// a position would then point at a different command — or past the end.
+const activeCommandId = ref<string | null>(null);
 const inputRef = ref<{ focus: () => void } | null>(null);
 const listRef = ref<{ $el: HTMLElement } | null>(null);
 let pendingCommand: ICommand | null = null;
 
-const providerContext: IProviderContext = {
-  inViewer: () => route.name === "datasetview" && !!store.dataset,
-};
+const providerContext = useViewerContext(() => route.name);
 
 // The store-derived providers. Panels, tours and static actions are
 // registered by the components that own them (App.vue, DataIOMenu, ...).
@@ -181,22 +181,37 @@ const commandRows = computed(() =>
   ),
 );
 
+// Falls back to the first row when nothing is highlighted or the highlighted
+// command has left the list.
+const activeIndex = computed(() =>
+  Math.max(
+    0,
+    commandRows.value.findIndex(
+      (row) => row.command.id === activeCommandId.value,
+    ),
+  ),
+);
+
 watch(query, () => {
-  activeIndex.value = 0;
+  activeCommandId.value = null;
 });
 
 watch(open, (isOpen) => {
   if (!isOpen) {
     return;
   }
+  // Reopened before the close transition finished: after-leave won't fire,
+  // so run the command the user already chose instead of dropping it.
+  runPendingCommand();
   query.value = "";
-  activeIndex.value = 0;
-  pendingCommand = null;
+  activeCommandId.value = null;
   // The worker list fills in only after login and is otherwise fetched only
   // when the Add-tool dialog mounts; refresh it so "Add tool: <worker>" is
   // offered (the provider re-derives when it lands).
   if (providerContext.inViewer() && store.isLoggedIn) {
-    propertyStore.fetchWorkerImageList();
+    propertyStore.fetchWorkerImageList().catch((error) => {
+      logError("Failed to refresh the worker list", error);
+    });
   }
   nextTick(focusInput);
 });
@@ -218,11 +233,20 @@ function moveActive(delta: number) {
   if (count === 0) {
     return;
   }
-  activeIndex.value = (activeIndex.value + delta + count) % count;
+  const next = (activeIndex.value + delta + count) % count;
+  activeCommandId.value = commandRows.value[next].command.id;
   scrollActiveIntoView();
 }
 
 function onKeydown(event: KeyboardEvent) {
+  // The app-wide ⌘K binding (v-mousetrap) ignores keys typed into inputs, so
+  // the palette's own field handles closing it — and claims Ctrl+K from the
+  // browser's search-bar shortcut.
+  if (isPaletteToggleKey(event)) {
+    event.preventDefault();
+    open.value = false;
+    return;
+  }
   switch (event.key) {
     case "ArrowDown":
       event.preventDefault();
@@ -267,7 +291,14 @@ async function runPendingCommand() {
   }
 }
 
-defineExpose({ query, rows, commandRows, activeIndex, choose });
+defineExpose({
+  query,
+  rows,
+  commandRows,
+  activeIndex,
+  activeCommandId,
+  choose,
+});
 </script>
 
 <style lang="scss">

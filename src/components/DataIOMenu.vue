@@ -53,7 +53,7 @@
     <annotation-csv-dialog
       v-if="mountedDialogs.csv"
       v-model:open="openDialogs.csv"
-      :annotations="filteredAnnotations"
+      :annotations="openDialogs.csv ? filteredAnnotations : NO_ANNOTATIONS"
       :propertyPaths="propertyPaths"
     >
       <template #activator />
@@ -68,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive } from "vue";
+import { computed, nextTick, reactive } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
@@ -81,6 +81,11 @@ import IndexConversionDialog from "@/components/AnnotationBrowser/IndexConversio
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 
 const filteredAnnotations = computed(() => filterStore.filteredAnnotations);
+// Handed to the CSV dialog while it is closed: once opened it stays mounted,
+// and reading the filtered list in this render would otherwise re-render the
+// menu on every filter change for the rest of the session. (Its export reads
+// the ids before its first await, so closing mid-export is safe.)
+const NO_ANNOTATIONS: typeof filterStore.filteredAnnotations = [];
 const propertyPaths = computed(() => propertyStore.computedPropertyPaths);
 
 type TDataDialog = "import" | "export" | "csv" | "indexConversions";
@@ -142,8 +147,14 @@ const openDialogs = reactive<Record<TDataDialog, boolean>>({
   indexConversions: false,
 });
 
-function openDataDialog(id: TDataDialog) {
-  mountedDialogs[id] = true;
+// Mount closed, THEN open: the dialogs do their on-open work (CSV preview,
+// dimension labels, collection datasets) in watchers on their open state,
+// which a component created already open never fires.
+async function openDataDialog(id: TDataDialog) {
+  if (!mountedDialogs[id]) {
+    mountedDialogs[id] = true;
+    await nextTick();
+  }
   openDialogs[id] = true;
 }
 

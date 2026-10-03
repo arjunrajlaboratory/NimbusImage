@@ -4,17 +4,21 @@ import { synonymsOf } from "./synonyms";
 // Local, synchronous command matching: no network, no dependency. Scores, from
 // strongest: the whole query equals / prefixes the title, then per query word
 // a title word-start ("seg" → "Segment"), a run of the title's word initials
-// ("cs" → "Add tool: Cellpose-SAM"), a title substring, a title subsequence, a keyword, and the
-// description last. Every query word must match somewhere; a word may also
-// match through a synonym at a discount.
+// ("cs" → "Add tool: Cellpose-SAM"), a title substring, a title subsequence,
+// a keyword, and the description last. Every query word must match somewhere;
+// a word may also match through a synonym at a discount.
 
-/** Lowercase, strip diacritics, and turn punctuation (hyphens too) into spaces. */
+/**
+ * Lowercase, strip diacritics, and turn punctuation (hyphens too) into spaces.
+ * Letters of any script survive: channel names like "α-tubulin" are common.
+ * NFKD also folds compatibility forms (the micro sign µ becomes Greek μ).
+ */
 export function normalize(text: string): string {
   return text
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 }
 
@@ -106,9 +110,10 @@ function scoreWordWithSynonyms(word: string, p: IPrepared): number {
 /** Score of `command` for `query`; 0 means no match. */
 export function scoreCommand(command: ICommand, query: string): number {
   const q = normalize(query);
-  if (!q) {
-    return 0;
-  }
+  return q ? scoreNormalized(command, q, q.split(" ")) : 0;
+}
+
+function scoreNormalized(command: ICommand, q: string, words: string[]) {
   const p = prepare(command);
   if (p.title === q) {
     return 1000;
@@ -117,7 +122,7 @@ export function scoreCommand(command: ICommand, query: string): number {
     return 900;
   }
   let total = 0;
-  for (const word of q.split(" ")) {
+  for (const word of words) {
     const score = scoreWordWithSynonyms(word, p);
     if (score === 0) {
       return 0;
@@ -136,11 +141,17 @@ export function rankCommands(
   query: string,
   limit = 50,
 ): ICommand[] {
+  // Normalized once per keystroke, not once per command.
+  const q = normalize(query);
+  if (!q) {
+    return [];
+  }
+  const words = q.split(" ");
   return commands
     .map((command, index) => ({
       command,
       index,
-      score: scoreCommand(command, query),
+      score: scoreNormalized(command, q, words),
     }))
     .filter(({ score }) => score > 0)
     .sort(

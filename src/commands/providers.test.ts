@@ -47,6 +47,8 @@ vi.mock("@/utils/v-mousetrap", async () => {
   return {
     boundKeys: ref({
       "1": { section: "Layer control", description: "Show/hide layer: DAPI" },
+      "3": { section: "Layer control", description: "Show/hide layer: GFP" },
+      "4": { section: "Layer control", description: "Show/hide layer: GFP" },
     }),
   };
 });
@@ -188,6 +190,23 @@ describe("layerCommands", () => {
     expect(commands[1].icon).toBe("mdi-eye-off");
     commands[1].run();
     expect(mocks.store.toggleLayerVisibility).toHaveBeenCalledWith("l2");
+  });
+});
+
+describe("layerCommands hotkeys", () => {
+  it("gives same-named layers their own key, not the first one's", () => {
+    mocks.store.layers = [
+      { id: "l1", name: "DAPI", channel: 0, visible: true },
+      { id: "l2", name: "Cy5", channel: 1, visible: true },
+      { id: "l3", name: "GFP", channel: 2, visible: true },
+      { id: "l4", name: "GFP", channel: 3, visible: true },
+    ];
+    expect(layerCommands(ctx)().map((command) => command.hotkey)).toEqual([
+      "1",
+      undefined,
+      "3",
+      "4",
+    ]);
   });
 });
 

@@ -2993,6 +2993,8 @@ watch(snapshotLoadRequest, (snapshot) => {
     return;
   }
   snapshotLoadRequest.value = null;
+  // A row click's rejection is caught by Vue's event-handler wrapper; a
+  // watcher callback has no such cover.
   loadSnapshot(new Event("command"), {
     item: {
       name: snapshot.name,
@@ -3001,6 +3003,8 @@ watch(snapshotLoadRequest, (snapshot) => {
       record: snapshot,
       modified: "",
     },
+  }).catch((error) => {
+    logError("Failed to load the snapshot from the command palette", error);
   });
 });
 

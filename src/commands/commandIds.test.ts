@@ -29,7 +29,11 @@ describe("data-command-id attributes", () => {
         continue;
       }
       const source = readFileSync(file, "utf8");
-      const [template, script = ""] = source.split("<script setup");
+      const [template, rawScript = ""] = source.split("<script setup");
+      // Comments don't register anything.
+      const script = rawScript
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
       for (const [, id] of template.matchAll(/\sdata-command-id="([^"]+)"/g)) {
         checked++;
         if (

@@ -12,6 +12,7 @@
                 size="small"
                 v-bind="mergeProps(dialogProps, tooltipProps)"
                 :data-tour="TOUR_ANCHORS.addTool"
+                data-command-id="tools.browse"
                 v-tour-trigger="TOUR_TRIGGERS.addTool"
                 :disabled="!isLoggedIn"
               >
@@ -282,6 +283,19 @@ watch(
 );
 
 useCommand(() => [
+  {
+    id: "tools.browse",
+    title: "Add new tool…",
+    group: "Add tool",
+    description: "Browse every tool type",
+    keywords: ["create", "catalog", "types"],
+    icon: "mdi-plus-box-outline",
+    enabled: () => isLoggedIn.value,
+    run: () => {
+      store.requestPaletteOpen(["toolsPanel"]);
+      toolTypeDialogOpen.value = true;
+    },
+  },
   {
     id: "tools.suggest",
     title: "Suggest tools with AI",

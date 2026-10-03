@@ -41,3 +41,21 @@ export function formatHotkey(binding: string, mac = isMacPlatform()): string {
     );
   return parts.join(mac ? "" : "+");
 }
+
+/**
+ * The palette's own toggle (Mousetrap "mod+k"): ⌘K on a Mac, Ctrl+K
+ * elsewhere, with no other modifier.
+ */
+export function isPaletteToggleKey(
+  event: KeyboardEvent,
+  mac = isMacPlatform(),
+): boolean {
+  const mod = mac ? event.metaKey : event.ctrlKey;
+  return (
+    mod &&
+    !event.altKey &&
+    !event.shiftKey &&
+    (mac ? !event.ctrlKey : !event.metaKey) &&
+    event.key.toLowerCase() === "k"
+  );
+}

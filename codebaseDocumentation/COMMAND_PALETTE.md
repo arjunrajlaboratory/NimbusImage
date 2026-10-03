@@ -1,8 +1,8 @@
 # Command Palette (⌘K)
 
 > **Status: Phase 1 implemented** (branch `feature/command-palette`). See
-> *Implementation notes* below for where the code ended up and where it
-> departs from this spec, and the *Regression checklist* at the end. Phase 2
+> _Implementation notes_ below for where the code ended up and where it
+> departs from this spec, and the _Regression checklist_ at the end. Phase 2
 > ("Ask AI") is not started. Part of the "adaptive interface" effort alongside
 > `PANEL_LAYOUT_PERSISTENCE.md`, whose panel registry (Part 1, shipped with
 > this feature) it reads.
@@ -26,16 +26,16 @@ New module `src/commands/` (a directory, since it will grow):
 
 ```ts
 export interface ICommand {
-  id: string;               // stable, e.g. "panel.open.filtersPanel",
-                            // "tool.select.<toolId>", "tool.add.worker:<image>"
-  title: string;            // what the row shows
-  group: TCommandGroup;     // "Tools" | "Add tool" | "Panels" | "Layers" |
-                            // "Snapshots" | "Actions" | "Help"
-  keywords?: string[];      // extra match terms (synonyms, tags, channel)
-  description?: string;     // secondary line; also matched, at lower weight
-  icon?: string;            // mdi name, checked against @mdi/font 5.9.55
-  hotkey?: string;          // shown as a hint, never re-bound by the palette
-  enabled?: () => boolean;  // e.g. requires login, requires a dataset
+  id: string; // stable, e.g. "panel.open.filtersPanel",
+  // "tool.select.<toolId>", "tool.add.worker:<image>"
+  title: string; // what the row shows
+  group: TCommandGroup; // "Tools" | "Add tool" | "Panels" | "Layers" |
+  // "Snapshots" | "Actions" | "Help"
+  keywords?: string[]; // extra match terms (synonyms, tags, channel)
+  description?: string; // secondary line; also matched, at lower weight
+  icon?: string; // mdi name, checked against @mdi/font 5.9.55
+  hotkey?: string; // shown as a hint, never re-bound by the palette
+  enabled?: () => boolean; // e.g. requires login, requires a dataset
   run: () => void | Promise<void>;
 }
 
@@ -46,17 +46,17 @@ export type TCommandProvider = () => ICommand[];
 
 ## Where commands come from (the self-updating part)
 
-| Provider | Source of truth | Example | Updates on its own? |
-|---|---|---|---|
-| `toolCommands` | `store.tools` (current configuration) | "Use tool: Nuclei" (shows hotkey) | ✅ |
-| `addToolCommands` | `buildCatalog()` in `src/tools/creation/toolFromCatalog.ts`, which reads worker-image Docker labels (`interfaceName`, `description`) from `properties.workerImageList` plus `MANUAL_CATALOG` | "Add Cellpose-SAM tool…" | ✅ registering a worker image adds it |
-| `templateCommands` | `store.toolTemplateList` (`public/config/templates.json`) | "Add tool: Snap to circle…" | ✅ |
-| `panelCommands` | The panel registry from `PANEL_LAYOUT_PERSISTENCE.md` Part 1 | "Open Filters", "Close Layers" | ✅ once the registry exists |
-| `layerCommands` | `store.layers` | "Toggle layer: DAPI" | ✅ |
-| `snapshotCommands` | `configuration.snapshots` | "Go to snapshot: Fig 2" | ✅ |
-| `tourCommands` | The tour list App.vue's Help menu already builds | "Tour: Calculate blob metrics" | ✅ |
-| `propertyCommands` | Properties store | "Color by: Area" | ✅ |
-| Static actions | `useCommand()` registrations next to the feature | "Export CSV", "Undo", "Switch to 3D" | ⚠️ one line per feature |
+| Provider           | Source of truth                                                                                                                                                                              | Example                              | Updates on its own?                   |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------- |
+| `toolCommands`     | `store.tools` (current configuration)                                                                                                                                                        | "Use tool: Nuclei" (shows hotkey)    | ✅                                    |
+| `addToolCommands`  | `buildCatalog()` in `src/tools/creation/toolFromCatalog.ts`, which reads worker-image Docker labels (`interfaceName`, `description`) from `properties.workerImageList` plus `MANUAL_CATALOG` | "Add Cellpose-SAM tool…"             | ✅ registering a worker image adds it |
+| `templateCommands` | `store.toolTemplateList` (`public/config/templates.json`)                                                                                                                                    | "Add tool: Snap to circle…"          | ✅                                    |
+| `panelCommands`    | The panel registry from `PANEL_LAYOUT_PERSISTENCE.md` Part 1                                                                                                                                 | "Open Filters", "Close Layers"       | ✅ once the registry exists           |
+| `layerCommands`    | `store.layers`                                                                                                                                                                               | "Toggle layer: DAPI"                 | ✅                                    |
+| `snapshotCommands` | `configuration.snapshots`                                                                                                                                                                    | "Go to snapshot: Fig 2"              | ✅                                    |
+| `tourCommands`     | The tour list App.vue's Help menu already builds                                                                                                                                             | "Tour: Calculate blob metrics"       | ✅                                    |
+| `propertyCommands` | Properties store                                                                                                                                                                             | "Color by: Area"                     | ✅                                    |
+| Static actions     | `useCommand()` registrations next to the feature                                                                                                                                             | "Export CSV", "Undo", "Switch to 3D" | ⚠️ one line per feature               |
 
 **Static actions** (app-bar buttons, menus) register where they live with a
 composable that unregisters itself on unmount:
@@ -79,7 +79,7 @@ id in `App.vue`'s template exists in the registry.
 
 **Hotkeys.** `boundKeys` in `src/utils/v-mousetrap.ts` records only
 `{ section, description }`, not the handler, so it can't drive commands
-directly. Use it only to *annotate* commands with their hotkey hint. Don't
+directly. Use it only to _annotate_ commands with their hotkey hint. Don't
 extend the directive to store handlers: element-bound bindings
 (`v-mousetrap.element`) expect the element as the handler's first argument and
 would misbehave when invoked from the palette.
@@ -116,7 +116,7 @@ Phase 1 is local, synchronous and fast, with no network:
   "segment nuclei" finds Cellpose-SAM through its description. Improving those
   Docker labels improves search for free.
 - Add a hand-written synonym table for domain vocabulary (`spots ↔ puncta ↔
-  dots`, `cells ↔ nuclei ↔ segment`, `measure ↔ property ↔ metric`). Keep it
+dots`, `cells ↔ nuclei ↔ segment`, `measure ↔ property ↔ metric`). Keep it
   short and in one file.
 - **Empty query** shows recently used commands (session memory, at most 8),
   then each group's top items, so opening the palette also shows what exists.
@@ -170,7 +170,7 @@ and login). Never send keystrokes to the network while the user types.
   a synonym hit; diacritics).
 - Providers: each returns the expected ids from a fixture state, and
   `addToolCommands` reflects a newly added worker image without a reload. Use
-  a reactive store mock that *replaces* `workerImageList`, as the real store
+  a reactive store mock that _replaces_ `workerImageList`, as the real store
   does (nimbus-frontend skill, mock replacement semantics).
 - `useCommand` unregisters on unmount.
 - The app-bar coverage test described above.
@@ -194,18 +194,18 @@ Use the `in-browser-testing` skill and **real clicks/keys** (not synthetic
 
 Where things live:
 
-| Piece | File |
-|---|---|
-| Command model, group order | `src/commands/types.ts` |
-| Registry, `useCommand`, `useCommandProvider` | `src/commands/registry.ts` |
-| Store-derived providers | `src/commands/providers.ts` |
-| Scorer / synonym table | `src/commands/scorer.ts`, `src/commands/synonyms.ts` |
-| Recently used (session) | `src/commands/recent.ts` |
-| Escape-hatch requests | `src/commands/requests.ts` |
-| Hotkey display | `src/commands/hotkeys.ts` |
-| Palette UI | `src/components/CommandPalette.vue` (mounted once in `App.vue`) |
-| Card builder extracted from the tool-type dialog | `src/tools/creation/toolTypeCatalog.ts` |
-| Panel registry | `src/utils/panelRegistry.ts` |
+| Piece                                            | File                                                            |
+| ------------------------------------------------ | --------------------------------------------------------------- |
+| Command model, group order                       | `src/commands/types.ts`                                         |
+| Registry, `useCommand`, `useCommandProvider`     | `src/commands/registry.ts`                                      |
+| Store-derived providers                          | `src/commands/providers.ts`                                     |
+| Scorer / synonym table                           | `src/commands/scorer.ts`, `src/commands/synonyms.ts`            |
+| Recently used (session)                          | `src/commands/recent.ts`                                        |
+| Escape-hatch requests                            | `src/commands/requests.ts`                                      |
+| Hotkey display                                   | `src/commands/hotkeys.ts`                                       |
+| Palette UI                                       | `src/components/CommandPalette.vue` (mounted once in `App.vue`) |
+| Card builder extracted from the tool-type dialog | `src/tools/creation/toolTypeCatalog.ts`                         |
+| Panel registry                                   | `src/utils/panelRegistry.ts`                                    |
 
 Who registers what:
 
@@ -220,7 +220,7 @@ Who registers what:
 Departures from the spec, and why:
 
 - **One "Add tool" provider, not two.** `addToolCommands` lists every card of
-  the Add-new-tool dialog (worker images *and* template tools) from the
+  the Add-new-tool dialog (worker images _and_ template tools) from the
   extracted `buildToolTypeSubmenus`, instead of `buildCatalog()` plus a
   separate `templateCommands`. `buildCatalog()` is the AI flows' catalog and
   has no template tools, and running a command needs the dialog's own
@@ -240,6 +240,8 @@ Departures from the spec, and why:
   beside it, take `v-model:open`, and **mount the first time they are
   opened**, so a viewer load still pays for none of them. Mounted eagerly,
   the CSV dialog would read the filtered-annotation list on every render.
+- **Every app-bar and Tools-palette button has a command**, including "Add new
+  tool…" (browse every tool type), alongside the per-card "Add tool: X…".
 - **The worker list is refreshed when the palette opens** in the viewer.
   Before this, only mounting the Add-tool dialog fetched it, so
   "Add tool: Cellpose-SAM…" would have been missing until the user had opened
@@ -252,35 +254,42 @@ Departures from the spec, and why:
 Each line names an invariant and the test that holds it, so a change here means
 re-checking the list rather than rediscovering it.
 
-Run `pnpm test src/commands src/components/CommandPalette.test.ts src/App.commands.test.ts src/App.test.ts src/utils/panelRegistry.test.ts src/tools/creation/toolTypeCatalog.test.ts src/tools/toolsets/Toolset.test.ts src/components/Snapshots.test.ts src/components/AnnotationBrowser/ColorByPropertyDialog.test.ts`.
+Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components/DataIOMenu.test.ts src/App.commands.test.ts src/App.test.ts src/utils/panelRegistry.test.ts src/tools/creation/toolTypeCatalog.test.ts src/tools/toolsets/Toolset.test.ts src/components/Snapshots.test.ts src/components/AnnotationBrowser/ColorByPropertyDialog.test.ts`.
 
 ### Self-updating
 
-- [ ] **A newly registered worker image becomes a command with no reload.** The store *replaces* `workerImageList`; the provider must re-derive. — *"picks up a newly registered worker image without a reload"*
-- [ ] **A provider's reactive inputs re-derive the list; a registration goes away with its component.** — *"re-derives a getter registration when its reactive input changes"*, *"useCommand registers for the component's lifetime"*
-- [ ] **Commands are hidden while `enabled()` is false**, reactively. — *"hides commands whose enabled() is false, reactively"*, *"is disabled outside the viewer and when logged out"*
-- [ ] **Every app-bar control names a registered command.** — *"registers a command for every data-command-id in the template"*, *"gives every app-bar palette toggle a data-command-id"*, *"name a command registered by the same component"*
+- [ ] **A newly registered worker image becomes a command with no reload.** The store _replaces_ `workerImageList`; the provider must re-derive. — _"picks up a newly registered worker image without a reload"_
+- [ ] **A provider's reactive inputs re-derive the list; a registration goes away with its component.** — _"re-derives a getter registration when its reactive input changes"_, _"useCommand registers for the component's lifetime"_
+- [ ] **Commands are hidden while `enabled()` is false**, reactively. — _"hides commands whose enabled() is false, reactively"_, _"is disabled outside the viewer and when logged out"_
+- [ ] **Every app-bar control names a registered command.** — _"registers a command for every data-command-id in the template"_, _"gives every app-bar palette toggle a data-command-id"_, _"name a command registered by the same component"_
 
 ### Matching
 
-- [ ] **Name, initials, description, synonym and diacritics matches.** — *"ranks the worker first for its name"*, *"matches a run of the title's word initials ('cs' → Cellpose-SAM)"*, *"matches a description word ('segment nuclei' finds Cellpose)"*, *"matches through a synonym (spots → puncta)"*, *"matches ignoring diacritics in either direction"*
-- [ ] **Every query word must match**, and results are capped. — *"requires every query word to match"*, *"returns nothing for an empty query and caps results"*
+- [ ] **Letters of any script stay searchable** ("α-tubulin", µ ↔ μ); an ASCII-only normalizer erased them. — _"keeps non-Latin letters searchable (α-tubulin, µ)"_
+- [ ] **Name, initials, description, synonym and diacritics matches.** — _"ranks the worker first for its name"_, _"matches a run of the title's word initials ('cs' → Cellpose-SAM)"_, _"matches a description word ('segment nuclei' finds Cellpose)"_, _"matches through a synonym (spots → puncta)"_, _"matches ignoring diacritics in either direction"_
+- [ ] **Every query word must match**, and results are capped. — _"requires every query word to match"_, _"returns nothing for an empty query and caps results"_
 
 ### Running commands
 
-- [ ] **A command runs only after the dialog has left**, so a dialog it opens doesn't fight the closing one for focus or the scrim. — *"does not run the command until the dialog has left"*
-- [ ] **Closing without choosing runs nothing.** — *"closing without choosing runs nothing"*
-- [ ] **Keyboard: arrows wrap, Enter runs the active row and records it as recent.** — *"arrow keys move the active row and Enter runs it after closing"*
-- [ ] **Empty query shows recents first, not duplicated below.** — *"shows recent commands first on an empty query"*
-- [ ] **"Add tool" opens creation pre-selected, never builds a tool silently**, and the selection matches what clicking the card produces. — *"asks for tool creation pre-selected instead of building a tool"*, *"opens tool creation pre-selected for an Add-tool request, then clears it"*
-- [ ] **Selecting a shape card doesn't write into the shared template list.** — *"selecting a shape card does not write into the shared template"*
-- [ ] **Requests are cleared once honoured, and a logged-out request is dropped.** — *"drops the request without opening when logged out"*, *"loads a snapshot requested from the command palette, then clears it"*, *"selects it when the dialog is already open"*
-- [ ] **Panel commands go through the owner's toggle**, so the companion rules apply. — *"flips Open/Close with the palette's state and toggles through the owner"*
+- [ ] **A command runs only after the dialog has left**, so a dialog it opens doesn't fight the closing one for focus or the scrim. The test's dialog stub emits after-leave only when the test says so; an automatic one can't tell "after leave" from "a tick later". — _"does not run the command until the dialog has left"_
+- [ ] **Reopening mid-close still runs the chosen command** (after-leave never comes once the leave is cancelled). — _"still runs the chosen command if reopened before it finished closing"_
+- [ ] **The highlight follows the command, not the row number**, so a list that re-derives under the user (the worker list landing) can't make Enter run something else, and a vanished command falls back to the first row. — _"keeps the highlighted command when the list re-derives under it"_, _"falls back to the first row when the highlighted command disappears"_
+- [ ] **⌘K / Ctrl+K typed in the search field closes the palette.** v-mousetrap ignores keys in inputs, so the field handles it (and claims Ctrl+K from the browser). — _"closes on its own toggle key typed in the search field"_
+- [ ] **Data dialogs mount closed, then open.** Their on-open work (CSV preview, dimension labels) is a non-immediate watcher, which a dialog created already open never fires. — _"opens each dialog after mounting it, so its on-open watcher fires the first time"_
+- [ ] **Same-named layers show their own hotkey**, read by position, not looked up by name. — _"gives same-named layers their own key, not the first one's"_
+- [ ] **Closing without choosing runs nothing.** — _"closing without choosing runs nothing"_
+- [ ] **Keyboard: arrows wrap, Enter runs the active row and records it as recent.** — _"arrow keys move the active row and Enter runs it after closing"_
+- [ ] **Empty query shows recents first, not duplicated below.** — _"shows recent commands first on an empty query"_
+- [ ] **"Add tool" opens creation pre-selected, never builds a tool silently**, and the selection matches what clicking the card produces. — _"asks for tool creation pre-selected instead of building a tool"_, _"opens tool creation pre-selected for an Add-tool request, then clears it"_
+- [ ] **Selecting a shape card doesn't write into the shared template list.** — _"selecting a shape card does not write into the shared template"_
+- [ ] **Requests are cleared once honoured, and a logged-out request is dropped.** — _"drops the request without opening when logged out"_, _"loads a snapshot requested from the command palette, then clears it"_, _"selects it when the dialog is already open"_
+- [ ] **Panel commands go through the owner's toggle**, so the companion rules apply. — _"flips Open/Close with the palette's state and toggles through the owner"_
 
 ### Cost
 
-- [ ] **No per-keystroke list rebuild**: providers are read inside `allCommands` (a `computed`); typing only re-scores. No provider reads per-annotation state. — *"re-derives a getter registration when its reactive input changes"*
-- [ ] **The palette refreshes the worker list each time it opens in the viewer, and nowhere else.** — *"resets the query and refreshes the worker list each time it opens"*
+- [ ] **No per-keystroke list rebuild**: providers are read inside `allCommands` (a `computed`); typing only re-scores. No provider reads per-annotation state. — _"re-scores on each keystroke without re-running the providers"_
+- [ ] **The palette refreshes the worker list each time it opens in the viewer, and a failed refresh is logged, not leaked.** — _"resets the query and refreshes the worker list each time it opens"_, _"logs, rather than leaks, a failed worker-list refresh"_
+- [ ] **A once-opened CSV dialog doesn't keep the Data I/O menu reading the filtered list.** — _"hands the CSV dialog the filtered list only while it is open"_
 
 ### Process
 

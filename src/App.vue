@@ -649,6 +649,7 @@ import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import { PANELS, PANEL_IDS, PanelId, applyOpen } from "@/utils/panelRegistry";
 import { useCommand, useCommandProvider } from "@/commands/registry";
 import { panelCommands, tourCommands } from "@/commands/providers";
+import { isTourAvailableOnRoute, useViewerContext } from "@/commands/context";
 import { formatHotkey } from "@/commands/hotkeys";
 
 // Suppress unused import warnings for template-only components
@@ -1186,11 +1187,7 @@ const filteredToursByCategory = computed(
         .toLowerCase()
         .includes(tourSearch.value.toLowerCase());
 
-      const isDatasetTour = tour.entryPoint === "datasetview";
-      const isDatasetView = routeName.value === "datasetview";
-      const isAllowedOnCurrentRoute = isDatasetView || !isDatasetTour;
-
-      return matchesSearch && isAllowedOnCurrentRoute;
+      return matchesSearch && isTourAvailableOnRoute(tour, routeName.value);
     });
 
     return filtered.reduce(
@@ -1249,22 +1246,20 @@ async function goToNewDataset() {
 // App.vue owns the palette refs and the app-bar actions, so it registers their
 // commands. Every app-bar control carries a `data-command-id` naming its
 // command; App.commands.test.ts fails if one names nothing registered.
-const inViewer = () => isDatasetView.value && !!store.dataset;
+const viewerContext = useViewerContext(() => routeName.value);
+const { inViewer } = viewerContext;
 
 useCommandProvider(
-  panelCommands(
-    { inViewer },
-    {
-      isOpen: (id) => paletteOpen[id].value,
-      toggle: togglePalette,
-    },
-  ),
+  panelCommands(viewerContext, {
+    isOpen: (id) => paletteOpen[id].value,
+    toggle: togglePalette,
+  }),
 );
 
 useCommandProvider(
   tourCommands(
     () => availableTours.value,
-    (tour) => tour.entryPoint !== "datasetview" || isDatasetView.value,
+    (tour) => isTourAvailableOnRoute(tour, routeName.value),
     handleTourStart,
   ),
 );

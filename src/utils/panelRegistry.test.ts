@@ -1,12 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  PANELS,
-  PANEL_IDS,
-  PanelId,
-  applyOpen,
-  getPanel,
-  isPanelId,
-} from "./panelRegistry";
+import { PANELS, PANEL_IDS, PanelId, applyOpen } from "./panelRegistry";
 
 function open(ids: PanelId[], id: PanelId): PanelId[] {
   return [...applyOpen(new Set(ids), id)].sort();
@@ -90,11 +83,5 @@ describe("panelRegistry", () => {
       applyOpen(input, "snapshotPanel");
       expect([...input]).toEqual(["annotationPanel"]);
     });
-  });
-
-  it("isPanelId / getPanel recognise registered ids only", () => {
-    expect(isPanelId("filtersPanel")).toBe(true);
-    expect(isPanelId("timelapsePanel")).toBe(false);
-    expect(getPanel("filtersPanel")?.title).toBe("Filters");
   });
 });

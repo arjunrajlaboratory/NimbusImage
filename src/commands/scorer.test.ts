@@ -76,6 +76,18 @@ describe("command scorer", () => {
     expect(ids("naïve")).toEqual(["naive"]);
   });
 
+  it("keeps non-Latin letters searchable (α-tubulin, µ)", () => {
+    const greek = command("g", "Toggle layer: α-tubulin");
+    const micro = command("m", "Scale: 5 µm");
+    expect(normalize("α-Tubulin")).toBe("α tubulin");
+    expect(rankCommands([greek, micro], "α").map((c) => c.id)).toEqual(["g"]);
+    expect(rankCommands([greek, micro], "tubulin").map((c) => c.id)).toEqual([
+      "g",
+    ]);
+    // The micro sign and Greek mu are the same letter after NFKD.
+    expect(rankCommands([greek, micro], "μm").map((c) => c.id)).toEqual(["m"]);
+  });
+
   it("requires every query word to match", () => {
     expect(ids("dapi spreadsheet")).toEqual([]);
   });

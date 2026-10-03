@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { defineComponent, h, nextTick } from "vue";
-import { mount, VueWrapper } from "@vue/test-utils";
+import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 
 vi.mock("vue-router", () => ({
   useRoute: () => ({ name: "datasetview" }),
@@ -11,7 +11,7 @@ vi.mock("@/store", () => ({
 }));
 
 vi.mock("@/store/properties", () => ({
-  default: { fetchWorkerImageList: vi.fn() },
+  default: { fetchWorkerImageList: vi.fn().mockResolvedValue(undefined) },
 }));
 
 vi.mock("@/utils/log", () => ({
@@ -34,21 +34,25 @@ import propertyStore from "@/store/properties";
 import { registerCommandProvider } from "@/commands/registry";
 import { recentCommandIds } from "@/commands/recent";
 import { ICommand } from "@/commands/types";
+import { ref } from "vue";
+import { logError } from "@/utils/log";
 
-// Stands in for v-dialog: renders while open and emits after-leave when it
-// closes, which is when Vuetify's real dialog finishes its leave transition.
+// Stands in for v-dialog: renders while open. after-leave — which Vuetify's
+// real dialog emits only once its leave transition has finished — is emitted
+// by the test (`leave()`), so a test can tell "ran after the dialog left" from
+// "ran a tick later".
 const VDialogStub = defineComponent({
   props: { modelValue: Boolean },
   emits: ["update:modelValue", "afterLeave", "afterEnter"],
-  watch: {
-    modelValue(open: boolean) {
-      this.$emit(open ? "afterEnter" : "afterLeave");
-    },
-  },
   setup(props, { slots }) {
     return () => (props.modelValue ? h("div", slots.default?.()) : null);
   },
 });
+
+async function leave() {
+  wrapper.findComponent(VDialogStub).vm.$emit("afterLeave");
+  await flushPromises();
+}
 
 const runs: string[] = [];
 function command(id: string, title: string, group: any = "Actions"): ICommand {
@@ -74,8 +78,8 @@ async function type(query: string) {
   await wrapper.find("input").setValue(query);
 }
 
-async function press(key: string) {
-  await wrapper.find("input").trigger("keydown", { key });
+async function press(key: string, modifiers: Record<string, boolean> = {}) {
+  await wrapper.find("input").trigger("keydown", { key, ...modifiers });
 }
 
 function rowTitles() {
@@ -120,8 +124,8 @@ describe("CommandPalette", () => {
     await press("ArrowUp");
     expect(wrapper.vm.activeIndex).toBe(1);
     await press("Enter");
-    await nextTick();
     expect(wrapper.emitted("update:modelValue")?.at(-1)).toEqual([false]);
+    await leave();
     expect(runs).toEqual(["panel.filters"]);
     expect(recentCommandIds.value).toEqual(["panel.filters"]);
   });
@@ -129,11 +133,12 @@ describe("CommandPalette", () => {
   it("does not run the command until the dialog has left", async () => {
     mountPalette();
     await type("dapi");
-    // Close without letting the stub's after-leave fire.
     wrapper.vm.choose(wrapper.vm.commandRows[0].command);
+    await flushPromises();
+    expect(wrapper.props("modelValue")).toBe(false);
+    // Closed, but the leave transition hasn't finished: nothing runs yet.
     expect(runs).toEqual([]);
-    await nextTick();
-    await nextTick();
+    await leave();
     expect(runs).toEqual(["layer.dapi"]);
   });
 
@@ -141,7 +146,7 @@ describe("CommandPalette", () => {
     mountPalette();
     await type("dapi");
     await wrapper.setProps({ modelValue: false });
-    await nextTick();
+    await leave();
     expect(runs).toEqual([]);
   });
 
@@ -166,5 +171,89 @@ describe("CommandPalette", () => {
     await wrapper.setProps({ modelValue: true });
     expect(wrapper.vm.query).toBe("");
     expect(propertyStore.fetchWorkerImageList).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the highlighted command when the list re-derives under it", async () => {
+    const extra = ref<ICommand[]>([]);
+    const unregisterExtra = registerCommandProvider(() => extra.value);
+    mountPalette();
+    await type("open");
+    await press("ArrowDown");
+    expect(rowTitles()[wrapper.vm.activeIndex]).toBe("Open Filters");
+    // A late arrival (the worker list landing) inserts a better match above.
+    extra.value = [command("panel.aaa", "Open A", "Panels")];
+    await nextTick();
+    expect(rowTitles()[0]).toBe("Open A");
+    expect(rowTitles()[wrapper.vm.activeIndex]).toBe("Open Filters");
+    await press("Enter");
+    await leave();
+    expect(runs).toEqual(["panel.filters"]);
+    unregisterExtra();
+  });
+
+  it("falls back to the first row when the highlighted command disappears", async () => {
+    const gone = ref(false);
+    const unregisterExtra = registerCommandProvider(() =>
+      gone.value ? [] : [command("panel.zzz", "Open Zebra panel", "Panels")],
+    );
+    mountPalette();
+    await type("open");
+    // Longest title, so it sorts last; ArrowUp wraps to it.
+    await press("ArrowUp");
+    expect(rowTitles()[wrapper.vm.activeIndex]).toBe("Open Zebra panel");
+    gone.value = true;
+    await nextTick();
+    expect(wrapper.vm.activeIndex).toBe(0);
+    await press("Enter");
+    await leave();
+    expect(runs).toEqual(["panel.layers"]);
+    unregisterExtra();
+  });
+
+  it("closes on its own toggle key typed in the search field", async () => {
+    mountPalette();
+    await type("dapi");
+    const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+    await press("k", mac ? { metaKey: true } : { ctrlKey: true });
+    expect(wrapper.emitted("update:modelValue")?.at(-1)).toEqual([false]);
+    await leave();
+    expect(runs).toEqual([]);
+  });
+
+  it("still runs the chosen command if reopened before it finished closing", async () => {
+    mountPalette();
+    await type("dapi");
+    wrapper.vm.choose(wrapper.vm.commandRows[0].command);
+    await flushPromises();
+    // Reopened mid-transition: Vuetify cancels the leave, so after-leave
+    // never comes.
+    await wrapper.setProps({ modelValue: true });
+    await flushPromises();
+    expect(runs).toEqual(["layer.dapi"]);
+  });
+
+  it("logs, rather than leaks, a failed worker-list refresh", async () => {
+    vi.mocked(propertyStore.fetchWorkerImageList).mockRejectedValueOnce(
+      new Error("offline"),
+    );
+    mountPalette(false);
+    await wrapper.setProps({ modelValue: true });
+    await flushPromises();
+    expect(logError).toHaveBeenCalled();
+  });
+
+  it("re-scores on each keystroke without re-running the providers", async () => {
+    const provider = vi.fn(() => [command("cost.probe", "Cost probe")]);
+    const unregisterProbe = registerCommandProvider(provider);
+    mountPalette();
+    await nextTick();
+    const callsAfterOpen = provider.mock.calls.length;
+    expect(callsAfterOpen).toBeGreaterThan(0);
+    for (const query of ["c", "co", "cos", "cost", "cost p"]) {
+      await type(query);
+    }
+    expect(rowTitles()).toEqual(["Cost probe"]);
+    expect(provider.mock.calls.length).toBe(callsAfterOpen);
+    unregisterProbe();
   });
 });

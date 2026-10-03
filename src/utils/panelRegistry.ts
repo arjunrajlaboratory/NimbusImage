@@ -122,14 +122,6 @@ const PANELS_BY_ID = new Map<PanelId, IPanelDefinition>(
 
 export const PANEL_IDS: readonly PanelId[] = PANELS.map((panel) => panel.id);
 
-export function getPanel(id: PanelId): IPanelDefinition | undefined {
-  return PANELS_BY_ID.get(id);
-}
-
-export function isPanelId(value: unknown): value is PanelId {
-  return typeof value === "string" && PANELS_BY_ID.has(value as PanelId);
-}
-
 /**
  * Pure: the open set that results from opening `id` in `open`, with the
  * right-zone primary/companion eviction rules applied. An unknown id leaves

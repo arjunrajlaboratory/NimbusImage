@@ -15,30 +15,22 @@ import {
   toolCreationRequest,
 } from "./requests";
 import { ICommand, TCommandProvider } from "./types";
+import { IProviderContext } from "./context";
 
 // Commands derived from data the app already loads. Each provider is a plain
 // function read inside the registry's `computed`, so adding a tool, layer,
 // snapshot, property or worker image adds its command with no extra wiring.
 // None of them reads per-annotation state: these lists stay small.
 
-export interface IProviderContext {
-  // True on the dataset view with a dataset loaded — the only place the
-  // panels, tools and layers these commands act on are mounted.
-  inViewer: () => boolean;
-}
+export type { IProviderContext };
 
 /**
- * The hotkey currently bound (via v-mousetrap) with this help-overlay
- * description, as a hint. `boundKeys` holds no handlers, so it can only
- * annotate a command, never run one.
+ * `key` as a hint if v-mousetrap currently binds it with this help-overlay
+ * description. `boundKeys` holds no handlers, so it can only annotate a
+ * command, never run one.
  */
-export function hotkeyForDescription(description: string): string | undefined {
-  for (const [key, data] of Object.entries(boundKeys.value)) {
-    if (data.description === description) {
-      return key;
-    }
-  }
-  return undefined;
+function boundHotkey(key: string, description: string): string | undefined {
+  return boundKeys.value[key]?.description === description ? key : undefined;
 }
 
 export function toolCommands(ctx: IProviderContext): TCommandProvider {
@@ -105,7 +97,7 @@ export function addToolCommands(ctx: IProviderContext): TCommandProvider {
 export function layerCommands(ctx: IProviderContext): TCommandProvider {
   return () => {
     const dataset = store.dataset;
-    return store.layers.map((layer): ICommand => {
+    return store.layers.map((layer, index): ICommand => {
       const channelName = dataset?.channelNames.get(layer.channel);
       return {
         id: `layer.toggle.${layer.id}`,
@@ -114,7 +106,11 @@ export function layerCommands(ctx: IProviderContext): TCommandProvider {
         keywords: channelName ? [channelName, "channel"] : ["channel"],
         description: layer.visible ? "Visible" : "Hidden",
         icon: layer.visible ? "mdi-eye" : "mdi-eye-off",
-        hotkey: hotkeyForDescription(`Show/hide layer: ${layer.name}`),
+        // DisplayLayer binds each layer's position (1-based) as its toggle;
+        // checking the description too keeps a stale binding from showing.
+        // Looking the key up by description alone would give every layer
+        // sharing a name the first one's key.
+        hotkey: boundHotkey(`${index + 1}`, `Show/hide layer: ${layer.name}`),
         enabled: ctx.inViewer,
         run: () => store.toggleLayerVisibility(layer.id),
       };

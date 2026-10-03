@@ -111,15 +111,15 @@ const coverage = computed(() =>
   }),
 );
 
-// Which palettes own the active constraints, Analysis first: it is a primary
-// palette, and Filters is a companion that hosts alongside it — opening them
-// the other way round would close the one just opened.
 // The palettes that hold a constraint's controls.
 type TConstraintPalette = Extract<
   TRequestablePalette,
   "analysisPanel" | "filtersPanel" | "annotationPanel"
 >;
 
+// Which palettes own the active constraints, Analysis first: it is a primary
+// palette, and Filters is a companion that hosts alongside it — opening them
+// the other way round would close the one just opened.
 const constraintPalettes = computed<TConstraintPalette[]>(() => {
   const palettes: TConstraintPalette[] = [];
   if (
