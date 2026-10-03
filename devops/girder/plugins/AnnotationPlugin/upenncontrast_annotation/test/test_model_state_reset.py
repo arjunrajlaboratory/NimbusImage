@@ -11,7 +11,7 @@ from girder import events
 from girder.models import model_base
 from girder.models.model_base import Model
 
-from .conftest import dropStaleModelState
+from .model_state import dropStaleModelState
 
 
 class _ProbeModel(Model):
