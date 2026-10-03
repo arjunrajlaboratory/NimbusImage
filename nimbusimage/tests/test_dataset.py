@@ -136,7 +136,7 @@ class TestDatasetConfigure:
 
     def test_configure_omits_transcode_unless_given(self, mock_gc):
         """None must not be sent: the server picks the default (off only
-        when every file is .nd2 and at most 16 are composited), and a
+        when every file is .nd2 and at most 16 tiles are composited), and a
         literal null is a 400."""
         mock_gc.post.return_value = self._plan(itemId="i", jobId=None)
         Dataset(mock_gc, "folder_123").configure()

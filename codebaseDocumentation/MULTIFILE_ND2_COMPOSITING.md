@@ -37,6 +37,10 @@ Where the implementation differs from, or settles, the proposal below:
 - **Duplicates (C).** Two stage entries with *different* XY values closer
   than 10% of a tile in both x and y refuse compositing; entries sharing an XY
   value there (a Z stack, or channels split across files) count as one tile.
+  To stay linear, each tolerance-sized grid cell keeps one bounding box per
+  XY value covering every point merged there, so a long stack is one entry
+  and a duplicate near *any* merged point is still caught (not only one
+  near a single representative point, which a chain of merges could evade).
   The check walks every stage entry the sources use, not one per XY value, so
   files whose XY values repeat (XY from frame order) are all checked. A ticked
   Composite unticks itself when a duplicate appears. The UI disables Composite with the reason; the
@@ -61,13 +65,16 @@ Where the implementation differs from, or settles, the proposal below:
   match) and only those are retried. A failed request is retried on a
   network error or 5xx and stops at once on a 4xx, naming its batch. `createMultiSource` slims each item's internal metadata as it
   reads it.
-- **Transcode (D).** On by default when compositing more than 16 files, in
-  both the UI and the API (`transcodeDefault`). In the UI `transcode` is a
+- **Transcode (D).** On by default when compositing more than 16 *tiles*
+  (distinct stage positions, `compositingCheck.tileCount`), in both the UI
+  and the API (`transcodeDefault`). The spec said files; counting tiles
+  also covers one multi-position ND2, whose zoomed-out views cost the same
+  per source — so composited multi-position files now transcode by default
+  too. In the UI `transcode` is a
   computed: an explicit choice (the checkbox, or a saved strategy) wins,
   otherwise it follows the default. Saved upload strategies also record the
   Composite choice, so a batch of tile folders composites every folder
-  rather than transcoding uncomposited ones. The threshold counts files, as
-  specced: a single multi-position ND2 keeps its old default.
+  rather than transcoding uncomposited ones.
 - **XY labels.** A composite has one XY position, so `dimensionLabels.xy`
   is null rather than one label per tile (which named the whole mosaic after
   its first tile).
@@ -458,6 +465,8 @@ hand.
   *"does not call heavily overlapping neighbours duplicates"*,
   *"treats stage entries sharing an XY value as one tile"*,
   *"checks every file when XY repeats across files"*,
+  *"catches a duplicate next to any merged point, not just the first"*,
+  *"test_duplicate_next_to_any_merged_point_is_caught"*,
   *"unticks Composite when a reassignment creates a duplicate"*.
 - A sparse layout warns but still composites —
   *"warns about, but still composites, far-apart tiles"*.
@@ -472,9 +481,13 @@ hand.
   *"testSourceMetadataIsBatchedAndSlim"*.
 - Slimming internal metadata never changes a configuration —
   *"test_slim_internal_metadata_changes_nothing"*.
-- Compositing more than 16 files transcodes by default, in both layers —
-  *"turns transcode on when compositing more than 16 files"*,
-  *"leaves transcode alone when compositing 16 files"*,
+- Compositing more than 16 tiles transcodes by default, in both layers,
+  counting a multi-position file's positions —
+  *"turns transcode on when compositing more than 16 tiles"*,
+  *"leaves transcode alone when compositing 16 tiles"*,
+  *"counts a multi-position file's positions toward transcode"*,
+  *"counts a multi-position file's positions as tiles"*,
+  *"test_multi_position_file_counts_tiles_for_transcode"*,
   *"keeps an explicitly chosen transcode when compositing changes"*,
   *"saves and restores the Composite choice with the strategy"*,
   *"testCompositingManyTilesTranscodesByDefault"*.

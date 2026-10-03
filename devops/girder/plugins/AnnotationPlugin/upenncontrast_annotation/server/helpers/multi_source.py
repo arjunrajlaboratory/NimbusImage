@@ -41,9 +41,9 @@ DUPLICATE_POSITION_FRACTION = 0.1
 # Tiles covering less than this fraction of the mosaic's bounding box look
 # like separate regions (e.g. different wells), not one stitched area.
 SPARSE_COVERAGE_FRACTION = 0.25
-# Compositing more files than this reads many ND2 files per viewport tile
-# unless the result is transcoded, so transcode becomes the default.
-COMPOSITE_TRANSCODE_FILE_THRESHOLD = 16
+# A composite of more tiles than this renders zoomed-out views from that
+# many sources unless it is transcoded, so transcode becomes the default.
+COMPOSITE_TRANSCODE_TILE_THRESHOLD = 16
 # Camera matrices closer than this are the same orientation.
 CAMERA_MATRIX_TOLERANCE = 0.01
 
@@ -906,8 +906,10 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
     position (the same field imaged twice), which refuses compositing.
     Entries sharing an XY value there (a Z stack, or channels split across
     files) are one tile. ``warning``: the tiles cover little of the mosaic,
-    which does not refuse it. ``layout`` is ``_compositing_positions``'s
-    result and ``xy_value(item_idx, frame_idx)`` the frame's XY assignment.
+    which does not refuse it. ``tileCount``: the distinct tiles the
+    composite holds (None with an error). ``layout`` is
+    ``_compositing_positions``'s result and ``xy_value(item_idx,
+    frame_idx)`` the frame's XY assignment.
     """
     final_coordinates, item_offsets = layout
     size_x = tiles_metadata[0]["sizeX"]
@@ -930,6 +932,15 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
                 "xy": xy_value(item_idx, frame_idx), "item": item_idx,
             })
 
+    # Points are bucketed into tolerance-sized cells. Each cell keeps one
+    # box per XY value covering every point of that value merged there, so
+    # a long Z/T stack at one position stays one entry (linear), yet no
+    # merged point is forgotten: a different-XY point within tolerance of
+    # any of them is still caught.
+    def near(box, x, y):
+        return (max(box["minX"] - x, x - box["maxX"], 0) < tol_x
+                and max(box["minY"] - y, y - box["maxY"], 0) < tol_y)
+
     error = None
     tile_count = 0
     cells = {}
@@ -940,15 +951,13 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
         same_tile = False
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
-                for other in cells.get((cell_x + dx, cell_y + dy), []):
-                    if (abs(points[other]["x"] - point["x"]) >= tol_x
-                            or abs(points[other]["y"] - point["y"])
-                            >= tol_y):
+                for box in cells.get((cell_x + dx, cell_y + dy), []):
+                    if not near(box, point["x"], point["y"]):
                         continue
-                    if points[other]["xy"] == point["xy"]:
+                    if box["xy"] == point["xy"]:
                         same_tile = True
-                    elif duplicate_of is None or other < duplicate_of:
-                        duplicate_of = other
+                    elif duplicate_of is None or box["first"] < duplicate_of:
+                        duplicate_of = box["first"]
         if duplicate_of is not None:
             first = points[duplicate_of]
             error = (
@@ -960,14 +969,22 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
                     item_names[point["item"]], point["xy"] + 1,
                 )
             )
-        if error is not None:
             break
-        # A point that merges into an existing tile adds nothing new to
-        # compare against; storing only one representative per tile keeps
-        # long Z/T stacks at one position from making this quadratic.
         if not same_tile:
             tile_count += 1
-            cells.setdefault((cell_x, cell_y), []).append(index)
+        cell = cells.setdefault((cell_x, cell_y), [])
+        box = next((b for b in cell if b["xy"] == point["xy"]), None)
+        if box is not None:
+            box["minX"] = min(box["minX"], point["x"])
+            box["maxX"] = max(box["maxX"], point["x"])
+            box["minY"] = min(box["minY"], point["y"])
+            box["maxY"] = max(box["maxY"], point["y"])
+        else:
+            cell.append({
+                "xy": point["xy"], "first": index,
+                "minX": point["x"], "maxX": point["x"],
+                "minY": point["y"], "maxY": point["y"],
+            })
 
     warning = None
     if error is None and tile_count > 1:
@@ -986,15 +1003,20 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
                     width, height,
                 )
             )
-    return {"error": error, "warning": warning}
+    return {
+        "error": error, "warning": warning,
+        "tileCount": tile_count if error is None else None,
+    }
 
 
-def composite_transcode_default(transcode_default, compositing, file_count):
+def composite_transcode_default(transcode_default, compositing, tile_count):
     """Port of ``compositeTranscodeDefault``: transcode by default when
-    compositing many files, which otherwise reads many ND2 files for every
-    viewport tile."""
+    compositing many tiles (composited positions, from many files or one
+    multi-position file), whose zoomed-out views otherwise read every
+    source."""
     return transcode_default or (
-        compositing and file_count > COMPOSITE_TRANSCODE_FILE_THRESHOLD
+        compositing
+        and (tile_count or 0) > COMPOSITE_TRANSCODE_TILE_THRESHOLD
     )
 
 
@@ -1037,7 +1059,7 @@ def generate_multi_source_config(item_names, tiles_metadata,
             assignments, item_names, dim, item_idx, frame_idx,
         )
 
-    check = {"error": None, "warning": None}
+    check = {"error": None, "warning": None, "tileCount": None}
     layout = None
     if can_do_compositing:
         layout = _compositing_positions(tiles_metadata, internal_metadata)
@@ -1180,7 +1202,7 @@ def compute_configuration(item_names, tiles_metadata, internal_metadata, *,
     stage layout whenever compositing is possible, requested or not; an
     error refuses compositing), ``variables`` (the dimensions),
     ``assignments`` (summaries), ``transcodeDefault`` (also on when
-    compositing more than ``COMPOSITE_TRANSCODE_FILE_THRESHOLD`` files),
+    compositing more than ``COMPOSITE_TRANSCODE_TILE_THRESHOLD`` tiles),
     ``isRGBFile`` and ``rgbBandCount``.
     """
     built = build_dimensions(item_names, tiles_metadata)
@@ -1213,7 +1235,7 @@ def compute_configuration(item_names, tiles_metadata, internal_metadata, *,
         },
         "transcodeDefault": composite_transcode_default(
             built["transcodeDefault"], generated["compositing"],
-            len(item_names),
+            generated["compositingCheck"]["tileCount"],
         ),
         "isRGBFile": is_rgb_file,
         "rgbBandCount": rgb_band_count,

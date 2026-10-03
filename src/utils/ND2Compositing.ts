@@ -41,9 +41,9 @@ export const DUPLICATE_POSITION_FRACTION = 0.1;
 // Tiles covering less than this fraction of the mosaic's bounding box look
 // like separate regions (e.g. different wells), not one stitched area.
 export const SPARSE_COVERAGE_FRACTION = 0.25;
-// Compositing more files than this reads many ND2 files per viewport tile
-// unless the result is transcoded, so transcode becomes the default.
-export const COMPOSITE_TRANSCODE_FILE_THRESHOLD = 16;
+// A composite of more tiles than this renders zoomed-out views from that
+// many sources unless it is transcoded, so transcode becomes the default.
+export const COMPOSITE_TRANSCODE_TILE_THRESHOLD = 16;
 // Camera matrices closer than this are the same orientation.
 const CAMERA_MATRIX_TOLERANCE = 0.01;
 
@@ -252,6 +252,8 @@ export function compositingCoordinates(
 export interface ICompositingCheck {
   error: string | null;
   warning: string | null;
+  // Distinct tiles (stage positions) in the composite; null with an error.
+  tileCount: number | null;
 }
 
 /**
@@ -260,7 +262,8 @@ export interface ICompositingCheck {
  * values at the same stage position (the same field imaged twice), which
  * refuses compositing. Entries sharing an XY value there (a Z stack, or
  * channels split across files) are one tile. `warning`: the tiles cover
- * little of the mosaic, which does not refuse it. `xyValue(itemIdx,
+ * little of the mosaic, which does not refuse it. `tileCount`: the
+ * distinct tiles the composite holds. `xyValue(itemIdx,
  * frameIdx)` is the frame's XY assignment.
  */
 export function compositingCheck(
@@ -293,9 +296,25 @@ export function compositingCheck(
     }
   }
 
+  // Points are bucketed into tolerance-sized cells. Each cell keeps one
+  // box per XY value covering every point of that value merged there, so
+  // a long Z/T stack at one position stays one entry (linear), yet no
+  // merged point is forgotten: a different-XY point within tolerance of any
+  // of them is still caught.
+  interface ICellBox {
+    xy: number;
+    first: number; // index of the earliest point in the box
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+  }
+  const near = (box: ICellBox, x: number, y: number) =>
+    Math.max(box.minX - x, x - box.maxX, 0) < tolX &&
+    Math.max(box.minY - y, y - box.maxY, 0) < tolY;
   let error: string | null = null;
   let tileCount = 0;
-  const cells = new Map<string, number[]>();
+  const cells = new Map<string, ICellBox[]>();
   for (let index = 0; index < points.length && error === null; ++index) {
     const point = points[index];
     const cellX = Math.floor(point.x / tolX);
@@ -304,17 +323,14 @@ export function compositingCheck(
     let sameTile = false;
     for (const dx of [-1, 0, 1]) {
       for (const dy of [-1, 0, 1]) {
-        for (const other of cells.get(`${cellX + dx},${cellY + dy}`) ?? []) {
-          if (
-            Math.abs(points[other].x - point.x) >= tolX ||
-            Math.abs(points[other].y - point.y) >= tolY
-          ) {
+        for (const box of cells.get(`${cellX + dx},${cellY + dy}`) ?? []) {
+          if (!near(box, point.x, point.y)) {
             continue;
           }
-          if (points[other].xy === point.xy) {
+          if (box.xy === point.xy) {
             sameTile = true;
-          } else if (duplicateOf === null || other < duplicateOf) {
-            duplicateOf = other;
+          } else if (duplicateOf === null || box.first < duplicateOf) {
+            duplicateOf = box.first;
           }
         }
       }
@@ -327,19 +343,29 @@ export function compositingCheck(
         "stage position, so compositing would draw one on top of the " +
         "other. Remove the duplicate, or leave Composite off to keep them " +
         "as separate XY positions.";
+      break;
     }
-    // A point that merges into an existing tile adds nothing new to compare
-    // against; storing only one representative per tile keeps long Z/T
-    // stacks at one position from making this quadratic.
-    if (error === null && !sameTile) {
+    if (!sameTile) {
       tileCount++;
-      const key = `${cellX},${cellY}`;
-      const cell = cells.get(key);
-      if (cell) {
-        cell.push(index);
-      } else {
-        cells.set(key, [index]);
-      }
+    }
+    const key = `${cellX},${cellY}`;
+    const cell = cells.get(key) ?? [];
+    const box = cell.find((b) => b.xy === point.xy);
+    if (box) {
+      box.minX = Math.min(box.minX, point.x);
+      box.maxX = Math.max(box.maxX, point.x);
+      box.minY = Math.min(box.minY, point.y);
+      box.maxY = Math.max(box.maxY, point.y);
+    } else {
+      cell.push({
+        xy: point.xy,
+        first: index,
+        minX: point.x,
+        maxX: point.x,
+        minY: point.y,
+        maxY: point.y,
+      });
+      cells.set(key, cell);
     }
   }
 
@@ -359,20 +385,22 @@ export function compositingCheck(
         "separate XY positions.";
     }
   }
-  return { error, warning };
+  return { error, warning, tileCount: error === null ? tileCount : null };
 }
 
 /**
- * Transcode by default when compositing many files, which otherwise reads
- * many ND2 files for every viewport tile.
+ * Transcode by default when compositing many tiles: zoomed-out views of an
+ * untranscoded composite read every source (about 78 s for 6,400 tiles).
+ * Counts composited positions, whether from many files or one
+ * multi-position file.
  */
 export function compositeTranscodeDefault(
   transcodeDefault: boolean,
   compositing: boolean,
-  fileCount: number,
+  tileCount: number | null,
 ): boolean {
   return (
     transcodeDefault ||
-    (compositing && fileCount > COMPOSITE_TRANSCODE_FILE_THRESHOLD)
+    (compositing && (tileCount ?? 0) > COMPOSITE_TRANSCODE_TILE_THRESHOLD)
   );
 }

@@ -430,7 +430,8 @@ class TestCompositingRobustness:
             [_tile(2, mm_x=None)], [_stages([(0, 0)])],
         )
         assert result["compositing"] is False
-        assert result["compositingCheck"] == {"error": None, "warning": None}
+        assert result["compositingCheck"]["error"] is None
+        assert result["compositingCheck"]["warning"] is None
 
     def test_channel_without_volume_is_the_identity(self):
         internal = [_stages([(0, 0)], nd2={"channels": [{}]})]
@@ -515,4 +516,31 @@ class TestCompositingRobustness:
             [_tile(2 * len(points))], [_stages(points)],
         )
         assert time.monotonic() - started < 2
-        assert result["compositingCheck"] == {"error": None, "warning": None}
+        assert result["compositingCheck"]["error"] is None
+        assert result["compositingCheck"]["warning"] is None
+
+    def test_multi_position_file_counts_tiles_for_transcode(self):
+        # One ND2 with 20 positions: compositing it transcodes by default,
+        # though it is a single file.
+        points = [(1000 * i, 0) for i in range(20)]
+        composited = self._configure([_tile(40)], [_stages(points)], True)
+        assert composited["compositingCheck"]["tileCount"] == 20
+        assert composited["transcodeDefault"] is True
+        separate = self._configure([_tile(40)], [_stages(points)])
+        assert separate["transcodeDefault"] is False
+
+    def test_duplicate_next_to_any_merged_point_is_caught(self):
+        # Same-XY points at x=0 and x=99 merge into one tile; a different-XY
+        # point at x=198 is 99 px (< 100 px tolerance) from the merged one.
+        from helpers.multi_source import (  # noqa: E402
+            _compositing_positions, compositing_check,
+        )
+        tiles = [_tile(1, 1), _tile(1, 1), _tile(1, 1)]
+        internal = [_stages([(0, 0)]), _stages([(99, 0)]),
+                    _stages([(198, 0)])]
+        check = compositing_check(
+            ["a.nd2", "b.nd2", "c.nd2"], tiles,
+            _compositing_positions(tiles, internal),
+            lambda item_idx, frame_idx: 0 if item_idx < 2 else 1,
+        )
+        assert '"a.nd2" (XY 1) and "c.nd2" (XY 2)' in check["error"]

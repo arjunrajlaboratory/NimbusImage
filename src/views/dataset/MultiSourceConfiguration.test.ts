@@ -617,7 +617,11 @@ describe("MultiSourceConfiguration", () => {
       vm.tilesInternalMetadata = [stageMeta(0, 0)];
       vm.tilesMetadata = [makeBasicTileMeta()];
       expect(vm.canDoCompositing).toBe(false);
-      expect(vm.compositingCheckResult).toEqual({ error: null, warning: null });
+      expect(vm.compositingCheckResult).toEqual({
+        error: null,
+        warning: null,
+        tileCount: null,
+      });
     });
 
     it("returns false when tilesInternalMetadata is null", () => {
@@ -718,7 +722,7 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.shouldDoCompositing).toBe(true);
     });
 
-    it("turns transcode on when compositing more than 16 files", async () => {
+    it("turns transcode on when compositing more than 16 tiles", async () => {
       const vm = mountComponent().vm as any;
       await vm.initialized.catch(() => {});
       setUpTileFolder(
@@ -733,6 +737,33 @@ describe("MultiSourceConfiguration", () => {
       vm.enableCompositing = false;
       await nextTick();
       expect(vm.transcode).toBe(false);
+    });
+
+    it("counts a multi-position file's positions toward transcode", async () => {
+      const vm = mountComponent().vm as any;
+      await vm.initialized.catch(() => {});
+      // One ND2 with 20 positions and 2 channels.
+      vm.girderItems = makeSetCItems();
+      vm.tilesMetadata = [
+        makeBasicTileMeta({
+          frames: Array.from({ length: 40 }, () => ({})),
+          IndexRange: { IndexC: 2, IndexXY: 20 },
+        }),
+      ];
+      vm.tilesInternalMetadata = [
+        {
+          nd2_frame_metadata: Array.from({ length: 20 }, (_, i) => ({
+            position: { stagePositionUm: [512 * i, 0, 0] },
+          })),
+        },
+      ];
+      vm.fileTranscodeDefault = false;
+      vm.transcodeOverride = null;
+      vm.enableCompositing = true;
+      await nextTick();
+      expect(vm.shouldDoCompositing).toBe(true);
+      expect(vm.compositingCheckResult.tileCount).toBe(20);
+      expect(vm.transcode).toBe(true);
     });
 
     it("keeps an explicitly chosen transcode when compositing changes", async () => {
@@ -804,7 +835,7 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.shouldDoCompositing).toBe(true);
     });
 
-    it("leaves transcode alone when compositing 16 files", async () => {
+    it("leaves transcode alone when compositing 16 tiles", async () => {
       const vm = mountComponent().vm as any;
       await vm.initialized.catch(() => {});
       setUpTileFolder(

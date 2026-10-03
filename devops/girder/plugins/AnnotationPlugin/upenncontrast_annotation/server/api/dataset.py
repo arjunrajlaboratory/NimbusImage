@@ -220,7 +220,8 @@ class Dataset(Resource):
             "Body options, all optional: assignments (per-dimension "
             "overrides, see below); transcode (default: on unless every "
             "file is .nd2, and also on when compositing more than 16 "
-            "files); splitRGBBands (default true -- an RGB file "
+            "tiles, i.e. stage positions, from many files or one); "
+            "splitRGBBands (default true -- an RGB file "
             "becomes three channels); enableCompositing (default false -- "
             "lay ND2 files out by their stage positions -- one "
             "multi-position file, or one file per tile with the tile "
@@ -241,7 +242,8 @@ class Dataset(Resource):
             "stage layout whenever compositing is possible, requested or "
             "not: error names two XY positions at the same stage position, "
             "warning says the tiles cover little of the mosaic, e.g. "
-            "separate wells) always; "
+            "separate wells; tileCount counts the composited tiles) "
+            "always; "
             "itemId, jobId, collectionId and viewId on a real run; "
             "validationError on a dry run." % (
                 MULTI_SOURCE_ITEM_NAME

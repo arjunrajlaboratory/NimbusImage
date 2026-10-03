@@ -5,7 +5,7 @@ import {
   compositingCheck,
   compositingCoordinates,
   compositingFrameMetadataIndex,
-  COMPOSITE_TRANSCODE_FILE_THRESHOLD,
+  COMPOSITE_TRANSCODE_TILE_THRESHOLD,
   ICompositingTileMeta,
 } from "./ND2Compositing";
 
@@ -154,7 +154,24 @@ describe("compositingCheck", () => {
         [0, 1000],
         [1000, 1000],
       ]),
-    ).toEqual({ error: null, warning: null });
+    ).toEqual({ error: null, warning: null, tileCount: 4 });
+  });
+
+  it("counts a multi-position file's positions as tiles", () => {
+    // One file: 20 positions x 3 Z, 2 channels; Z entries share a tile.
+    const points: [number, number][] = Array.from({ length: 60 }, (_, i) => [
+      1000 * Math.floor(i / 3),
+      0,
+    ]);
+    const tiles = [tile(120, 2)];
+    expect(
+      compositingCheck(
+        ["multi.nd2"],
+        tiles,
+        compositingCoordinates(tiles, [stages(points)]),
+        (_itemIdx, frameIdx) => Math.floor(frameIdx / 6),
+      ).tileCount,
+    ).toBe(20);
   });
 
   it("refuses two files within a tenth of a tile of each other", () => {
@@ -192,7 +209,21 @@ describe("compositingCheck", () => {
         compositingCoordinates(tiles, internal),
         (itemIdx) => Math.floor(itemIdx / 2),
       ),
-    ).toEqual({ error: null, warning: null });
+    ).toMatchObject({ error: null, warning: null });
+  });
+
+  it("catches a duplicate next to any merged point, not just the first", () => {
+    // Same-XY points at x=0 and x=99 merge into one tile; a different-XY
+    // point at x=198 is 99 px (< 100 px tolerance) from the merged one.
+    const tiles = [tile(1, 1), tile(1, 1), tile(1, 1)];
+    const internal = [stages([[0, 0]]), stages([[99, 0]]), stages([[198, 0]])];
+    const result = compositingCheck(
+      ["a.nd2", "b.nd2", "c.nd2"],
+      tiles,
+      compositingCoordinates(tiles, internal),
+      (itemIdx) => (itemIdx < 2 ? 0 : 1),
+    );
+    expect(result.error).toContain('"a.nd2" (XY 1) and "c.nd2" (XY 2)');
   });
 
   it("checks every file when XY repeats across files", () => {
@@ -248,7 +279,7 @@ describe("compositingCheck", () => {
       (_itemIdx, frameIdx) => Math.floor(frameIdx / 6000),
     );
     expect(performance.now() - started).toBeLessThan(1000);
-    expect(result).toEqual({ error: null, warning: null });
+    expect(result).toMatchObject({ error: null, warning: null });
   });
 
   it("warns, without refusing, when the tiles are far apart", () => {
@@ -269,9 +300,11 @@ describe("compositeTranscodeDefault", () => {
     expect(compositeTranscodeDefault(true, false, 2)).toBe(true);
   });
 
-  it("turns transcode on when compositing many files", () => {
-    const n = COMPOSITE_TRANSCODE_FILE_THRESHOLD;
+  it("turns transcode on when compositing many tiles", () => {
+    const n = COMPOSITE_TRANSCODE_TILE_THRESHOLD;
     expect(compositeTranscodeDefault(false, true, n)).toBe(false);
     expect(compositeTranscodeDefault(false, true, n + 1)).toBe(true);
+    // No tile count (a refused composite) is not "many".
+    expect(compositeTranscodeDefault(false, true, null)).toBe(false);
   });
 });

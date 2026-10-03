@@ -276,7 +276,7 @@ class Dataset:
         This is the API equivalent of the web UI's dataset-configuration
         screen: it works out which filename tokens and file metadata map to
         XY / Z / Time / Channel, writes the multi-source configuration, and
-        (unless every file is ``.nd2`` and at most 16 are composited)
+        (unless every file is ``.nd2`` and at most 16 tiles are composited)
         schedules a transcode job.
 
         **Start with ``dry_run=True``.** It computes and returns everything
@@ -297,8 +297,9 @@ class Dataset:
                 dimensions keep their default.
             transcode: Convert to a single tiled TIFF. Defaults to the
                 same rule the UI uses: on unless every file is ``.nd2``,
-                and also on when compositing more than 16 files (a long
-                job for thousands of tiles; pass ``False`` to skip it).
+                and also on when compositing more than 16 tiles (stage
+                positions, from many files or one multi-position file; a
+                long job for thousands of tiles; pass ``False`` to skip).
             split_rgb_bands: Split an RGB image into three channels.
             enable_compositing: Lay out ND2 files by their stage
                 positions instead of as separate XY positions. Takes effect
@@ -311,8 +312,9 @@ class Dataset:
                 actually happened; when it applies, XY collapses to one
                 position. ``result.compositing_check`` explains a refusal
                 (two tiles at the same stage position, which also makes a
-                real run fail) or warns about a sparse layout. Compositing
-                more than 16 files transcodes by default.
+                real run fail) or warns about a sparse layout, and counts
+                the composited tiles (``tileCount``). Compositing more than
+                16 tiles transcodes by default.
             create_view: Also create the collection and dataset view the
                 web UI needs. On by default: without them the dataset is
                 readable through this API but has nothing to open in the

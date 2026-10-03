@@ -943,7 +943,8 @@
     },
     "compositingCheck": {
       "error": null,
-      "warning": null
+      "warning": null,
+      "tileCount": null
     }
   }
 }

@@ -206,13 +206,16 @@ class MultiSourceConfiguration(BaseModel):
     # assigned), and when it does, XY collapses to one position.
     compositing: bool = False
     # Problems with the stage layout, reported whenever compositing is
-    # possible (requested or not): ``{"error": ..., "warning": ...}``. An
-    # error (two XY positions at the same stage position) refuses
+    # possible (requested or not): ``{"error", "warning", "tileCount"}``.
+    # An error (two XY positions at the same stage position) refuses
     # compositing -- a real run asking for it fails with that message; a
     # warning (tiles covering little of the mosaic, e.g. separate wells)
-    # does not.
+    # does not. ``tileCount`` is the number of composited tiles (None with
+    # an error); more than 16 makes transcode the default.
     compositing_check: dict = Field(
-        default_factory=lambda: {"error": None, "warning": None},
+        default_factory=lambda: {
+            "error": None, "warning": None, "tileCount": None,
+        },
         alias="compositingCheck",
     )
     is_rgb_file: bool = Field(False, alias="isRGBFile")

@@ -295,7 +295,8 @@
     },
     "compositingCheck": {
       "error": "\"Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2\" (XY 1) and \"Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2\" (XY 3) are at the same stage position, so compositing would draw one on top of the other. Remove the duplicate, or leave Composite off to keep them as separate XY positions.",
-      "warning": null
+      "warning": null,
+      "tileCount": null
     }
   }
 }

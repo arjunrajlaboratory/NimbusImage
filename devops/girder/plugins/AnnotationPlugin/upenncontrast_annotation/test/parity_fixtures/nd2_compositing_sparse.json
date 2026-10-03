@@ -464,7 +464,8 @@
     },
     "compositingCheck": {
       "error": null,
-      "warning": "The 4 tiles cover only 19% of the 22048 × 1024 px composite, so they look like separate regions (for example, different wells). Consider leaving Composite off to keep them as separate XY positions."
+      "warning": "The 4 tiles cover only 19% of the 22048 × 1024 px composite, so they look like separate regions (for example, different wells). Consider leaving Composite off to keep them as separate XY positions.",
+      "tileCount": 4
     }
   }
 }

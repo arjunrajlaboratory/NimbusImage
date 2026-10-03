@@ -788,7 +788,7 @@ const compositingCheckResult = computed<ICompositingCheck>(() =>
         compositingLayout.value,
         (itemIdx, frameIdx) => getValueFromAssignments("XY", itemIdx, frameIdx),
       )
-    : { error: null, warning: null },
+    : { error: null, warning: null, tileCount: null },
 );
 
 const shouldDoCompositing = computed(
@@ -798,7 +798,7 @@ const shouldDoCompositing = computed(
     compositingCheckResult.value.error === null,
 );
 
-// Compositing many files reads many ND2 files per viewport tile, so it
+// Compositing many tiles makes zoomed-out views read every source, so it
 // turns transcode on by default; an explicit choice always wins.
 const transcode = computed<boolean>({
   get: () =>
@@ -806,7 +806,7 @@ const transcode = computed<boolean>({
     compositeTranscodeDefault(
       fileTranscodeDefault.value,
       shouldDoCompositing.value,
-      girderItems.value.length,
+      compositingCheckResult.value.tileCount,
     ),
   set: (value) => {
     transcodeOverride.value = value;

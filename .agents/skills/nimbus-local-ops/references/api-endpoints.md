@@ -127,7 +127,7 @@ curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   "http://localhost:8080/api/v1/dataset/$DATASET_ID/multi_source"
 
 # Configure for real (transcode defaults to true unless every file is .nd2,
-# and also when compositing more than 16 files)
+# and also when compositing more than 16 tiles, i.e. stage positions)
 curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"transcode": false}' \
   "http://localhost:8080/api/v1/dataset/$DATASET_ID/multi_source"
@@ -198,7 +198,9 @@ XY positions. `compositingCheck` (`{error, warning}`) explains the layout
 whenever compositing is possible: an `error` (two XY positions at the same
 stage position) refuses it, and a real run that asked for compositing then
 returns 400; a `warning` (tiles covering under 25% of the mosaic, e.g. two
-wells) does not. Compositing more than 16 files transcodes by default.
+wells) does not; `tileCount` counts the composited tiles. Compositing more
+than 16 tiles (stage positions, from many files or one multi-position file)
+transcodes by default.
 
 `GET /dataset/{id}/source_metadata?itemIds=[...]` (≤100 ids, folder READ)
 returns `[{itemId, tiles, internalMetadata}]` — tile metadata plus internal
