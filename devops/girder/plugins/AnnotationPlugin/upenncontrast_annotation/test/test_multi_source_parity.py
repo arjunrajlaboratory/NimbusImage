@@ -591,3 +591,17 @@ class TestCompositingRobustness:
             lambda item_idx, frame_idx: 0 if item_idx < 2 else 1,
         )
         assert check["error"] is None
+
+    def test_shear_with_identity_diagonal_is_kept(self):
+        result = self._configure(
+            [_tile(2)], [_stages([(0, 0)], [1, 0.5, 0, 1])], True,
+        )
+        position = result["config"]["sources"][0]["position"]
+        assert (position["s11"], position["s12"]) == (1, 0.5)
+
+    def test_singular_camera_matrix_cannot_composite(self):
+        # Rank one: maps the whole tile onto a line.
+        result = self._configure(
+            [_tile(2)], [_stages([(0, 0)], [2, 2, 1, 1])],
+        )
+        assert result["compositing"] is False

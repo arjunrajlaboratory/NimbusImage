@@ -730,20 +730,24 @@ def _has_stage_positions(internal_meta):
 
 
 def _camera_transform(internal_meta):
-    """One file's camera matrix; a matrix within 0.01 of -I snaps to -I,
-    and a missing one is the identity."""
+    """Port of ``cameraTransform``: every coefficient within 0.01 of I is
+    the identity, within 0.01 of -I snaps to -I (all four, so a shear such
+    as [1, 0.5, 0, 1] is kept), and a missing or malformed matrix is the
+    identity."""
+    identity = {"s11": 1, "s12": 0, "s21": 0, "s22": 1}
     nd2 = internal_meta.get("nd2")
     matrix = _camera_matrix_source(nd2) if isinstance(nd2, dict) else None
-    if (isinstance(matrix, list) and len(matrix) >= 4
-            and all(_is_finite(v) for v in matrix[:4])
-            and (abs(matrix[0] - 1) > CAMERA_MATRIX_TOLERANCE
-                 or abs(matrix[3] - 1) > CAMERA_MATRIX_TOLERANCE)):
-        if (abs(matrix[0] + 1) < CAMERA_MATRIX_TOLERANCE
-                and abs(matrix[3] + 1) < CAMERA_MATRIX_TOLERANCE):
-            return {"s11": -1.0, "s12": 0.0, "s21": 0.0, "s22": -1.0}
-        return {"s11": matrix[0], "s12": matrix[1],
-                "s21": matrix[2], "s22": matrix[3]}
-    return {"s11": 1, "s12": 0, "s21": 0, "s22": 1}
+    if not (isinstance(matrix, list) and len(matrix) >= 4
+            and all(_is_finite(v) for v in matrix[:4])):
+        return identity
+    if all(abs(m - t) <= CAMERA_MATRIX_TOLERANCE
+           for m, t in zip(matrix, (1, 0, 0, 1))):
+        return identity
+    if all(abs(m - t) < CAMERA_MATRIX_TOLERANCE
+           for m, t in zip(matrix, (-1, 0, 0, -1))):
+        return {"s11": -1.0, "s12": 0.0, "s21": 0.0, "s22": -1.0}
+    return {"s11": matrix[0], "s12": matrix[1],
+            "s21": matrix[2], "s22": matrix[3]}
 
 
 def _tile_footprint(transform, size_x, size_y):
@@ -788,7 +792,12 @@ def _can_composite(tiles_metadata, internal_metadata, xy_assignment_size):
         first_transform, tiles_metadata[0]["sizeX"],
         tiles_metadata[0]["sizeY"],
     )
-    # A degenerate matrix (e.g. all zeros) collapses the tile to nothing.
+    # A singular matrix (all zeros, or rank one like [2, 2, 1, 1]) maps the
+    # tile onto a point or a line.
+    determinant = (first_transform["s11"] * first_transform["s22"]
+                   - first_transform["s12"] * first_transform["s21"])
+    if abs(determinant) < CAMERA_MATRIX_TOLERANCE:
+        return False
     if not (width > 0 and height > 0) or not all(
         _same_transform(_camera_transform(meta), first_transform)
         for meta in internal_metadata

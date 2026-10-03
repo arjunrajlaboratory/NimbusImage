@@ -94,8 +94,9 @@ function hasStagePositions(internalMeta: TInternalMetadata): boolean {
   );
 }
 
-// The camera matrix of one file; a matrix within 0.01 of -I snaps to -I,
-// and a missing one is the identity.
+// The camera matrix of one file. Every coefficient within 0.01 of I is the
+// identity, within 0.01 of -I snaps to -I (all four, so a shear such as
+// [1, 0.5, 0, 1] is kept), and a missing or malformed one is the identity.
 function cameraTransform(internalMeta: TInternalMetadata): ICameraTransform {
   const chan = internalMeta.nd2?.channels;
   const volume = chan
@@ -104,22 +105,27 @@ function cameraTransform(internalMeta: TInternalMetadata): ICameraTransform {
       : chan[0]?.volume
     : undefined;
   const matrix = volume?.cameraTransformationMatrix;
+  const identity = { s11: 1, s12: 0, s21: 0, s22: 1 };
   if (
-    Array.isArray(matrix) &&
-    matrix.length >= 4 &&
-    matrix.slice(0, 4).every((v) => typeof v === "number" && isFinite(v)) &&
-    (Math.abs(matrix[0] - 1) > CAMERA_MATRIX_TOLERANCE ||
-      Math.abs(matrix[3] - 1) > CAMERA_MATRIX_TOLERANCE)
+    !Array.isArray(matrix) ||
+    matrix.length < 4 ||
+    !matrix.slice(0, 4).every((v) => typeof v === "number" && isFinite(v))
   ) {
-    if (
-      Math.abs(matrix[0] - -1) < CAMERA_MATRIX_TOLERANCE &&
-      Math.abs(matrix[3] - -1) < CAMERA_MATRIX_TOLERANCE
-    ) {
-      return { s11: -1.0, s12: 0.0, s21: 0.0, s22: -1.0 };
-    }
-    return { s11: matrix[0], s12: matrix[1], s21: matrix[2], s22: matrix[3] };
+    return identity;
   }
-  return { s11: 1, s12: 0, s21: 0, s22: 1 };
+  const within = (target: number[], strict: boolean) =>
+    target.every((t, i) =>
+      strict
+        ? Math.abs(matrix[i] - t) < CAMERA_MATRIX_TOLERANCE
+        : Math.abs(matrix[i] - t) <= CAMERA_MATRIX_TOLERANCE,
+    );
+  if (within([1, 0, 0, 1], false)) {
+    return identity;
+  }
+  if (within([-1, 0, 0, -1], true)) {
+    return { s11: -1.0, s12: 0.0, s21: 0.0, s22: -1.0 };
+  }
+  return { s11: matrix[0], s12: matrix[1], s21: matrix[2], s22: matrix[3] };
 }
 
 // One tile's width and height in mosaic pixels under `transform`.
@@ -192,7 +198,12 @@ export function canCompositeByStagePosition(
     tilesMetadata[0].sizeY,
   );
   if (
-    // A degenerate matrix (e.g. all zeros) collapses the tile to nothing.
+    // A singular matrix (all zeros, or rank one like [2, 2, 1, 1]) maps the
+    // tile onto a point or a line.
+    Math.abs(
+      firstTransform.s11 * firstTransform.s22 -
+        firstTransform.s12 * firstTransform.s21,
+    ) < CAMERA_MATRIX_TOLERANCE ||
     !(footprint.width > 0 && footprint.height > 0) ||
     !internalMetadata.every((meta) =>
       sameTransform(cameraTransform(meta), firstTransform),

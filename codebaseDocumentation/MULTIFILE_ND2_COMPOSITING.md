@@ -31,8 +31,10 @@ Where the implementation differs from, or settles, the proposal below:
   positive `sizeX`/`sizeY`/`mm_x`/`mm_y`, an entry for every camera frame the
   file's frames use, and the same camera orientation (within 0.01) for every
   file, because the mosaic's extent is computed from the first file's, and a
-  transform whose tile footprint is non-empty (an all-zero matrix would
-  collapse it and divide by zero). A
+  non-singular transform (an all-zero or rank-one matrix would collapse the
+  tile onto a point or line, and divide by zero). A matrix snaps to I or -I
+  only when all four coefficients are within 0.01 (so a shear is kept); the
+  Nikon matrices seen so far (off-diagonals ~0.0012) still snap to -I. A
   channel without a `volume` is the identity. These matter because the check
   below runs whenever compositing is *possible*: metadata it cannot use must
   make compositing unavailable, never fail an import that did not ask for it.
@@ -459,6 +461,11 @@ hand.
   `Math.min` — *"handles more frames than Math.min can take as arguments"*,
   *"treats a malformed camera matrix as the identity"*,
   *"refuses a camera matrix that collapses the tile"*,
+  *"refuses a singular camera matrix"*,
+  *"test_singular_camera_matrix_cannot_composite"*,
+  *"keeps a shear whose diagonal is the identity"*,
+  *"still snaps a nearly -I Nikon matrix to -I"*,
+  *"test_shear_with_identity_diagonal_is_kept"*,
   *"test_degenerate_camera_matrix_cannot_composite"*,
   *"test_malformed_camera_matrix_is_the_identity"*,
   *"test_non_object_frame_entry_does_not_raise"*,

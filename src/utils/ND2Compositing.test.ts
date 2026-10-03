@@ -124,6 +124,37 @@ describe("canCompositeByStagePosition", () => {
     ).toBe(false);
   });
 
+  it("keeps a shear whose diagonal is the identity", () => {
+    const { coordinates } = compositingCoordinates(
+      [tile(2)],
+      [stages([[0, 0]], [1, 0.5, 0, 1])],
+    );
+    expect(coordinates[0]).toMatchObject({ s11: 1, s12: 0.5, s21: 0, s22: 1 });
+  });
+
+  it("still snaps a nearly -I Nikon matrix to -I", () => {
+    const { coordinates } = compositingCoordinates(
+      [tile(2)],
+      [
+        stages(
+          [[0, 0]],
+          [-0.9999992536874144, 0.0012217301724580128, -0.0012, -0.99999925],
+        ),
+      ],
+    );
+    expect(coordinates[0]).toMatchObject({ s11: -1, s12: 0, s21: 0, s22: -1 });
+  });
+
+  it("refuses a singular camera matrix", () => {
+    expect(
+      canCompositeByStagePosition(
+        [tile(2)],
+        [stages([[0, 0]], [2, 2, 1, 1])],
+        0,
+      ),
+    ).toBe(false);
+  });
+
   it("treats a malformed camera matrix as the identity", () => {
     const internal = [stages([[0, 0]], [null as any, 0, 0, "x" as any])];
     expect(compositingCoordinates([tile(2)], internal).coordinates[0].s11).toBe(
