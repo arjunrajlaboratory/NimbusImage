@@ -61,8 +61,8 @@ from girder_large_image.models.image_item import ImageItem
 
 from ..helpers.default_configuration import build_default_configuration
 from ..helpers.multi_source import (
-    UP_DIMS, compute_configuration, slim_internal_metadata,
-    validate_assignments, validate_source_dtypes,
+    UP_DIMS, compositing_refusal, compute_configuration,
+    slim_internal_metadata, validate_assignments, validate_source_dtypes,
 )
 from ..helpers.validation import (
     optionalBoolean, requireCountWithin, requireObjectId,
@@ -355,10 +355,10 @@ class Dataset(Resource):
             # position is a failure, not a quiet fallback: a real run would
             # otherwise configure every tile as its own XY position, which
             # cannot be redone (a second call returns 409).
-            compositingError = result["compositingCheck"]["error"]
-            if (validationError is None and enableCompositing
-                    and compositingError is not None):
-                validationError = compositingError
+            if validationError is None:
+                validationError = compositing_refusal(
+                    result, enableCompositing,
+                )
 
             transcode = (
                 result["transcodeDefault"] if transcodeOption is None

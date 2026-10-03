@@ -30,22 +30,32 @@ Where the implementation differs from, or settles, the proposal below:
 - **The gate** also requires: a finite stage position on every entry, a
   positive `sizeX`/`sizeY`/`mm_x`/`mm_y`, an entry for every camera frame the
   file's frames use, and the same camera orientation (within 0.01) for every
-  file, because the mosaic's extent is computed from the first file's. A
+  file, because the mosaic's extent is computed from the first file's, and a
+  transform whose tile footprint is non-empty (an all-zero matrix would
+  collapse it and divide by zero). A
   channel without a `volume` is the identity. These matter because the check
   below runs whenever compositing is *possible*: metadata it cannot use must
   make compositing unavailable, never fail an import that did not ask for it.
 - **Duplicates (C).** Two stage entries with *different* XY values closer
   than 10% of a tile in both x and y refuse compositing; entries sharing an XY
   value there (a Z stack, or channels split across files) count as one tile.
-  To stay linear, each tolerance-sized grid cell keeps one bounding box per
-  XY value covering every point merged there, so a long stack is one entry
-  and a duplicate near *any* merged point is still caught. Tolerances and
+  To stay linear, each tolerance-sized grid cell is split into 8×8
+  sub-cells, and each sub-cell keeps one bounding box per XY value covering
+  every point merged there: a long stack is a few entries, a duplicate near
+  *any* merged point is caught, and "near a box" overstates "near a point"
+  by at most 1/8 of the tolerance. Tolerances and
   coverage use the tile's mosaic-space footprint (after the camera
   transform), so a rotated non-square tile is measured correctly (not only one
   near a single representative point, which a chain of merges could evade).
   The check walks every stage entry the sources use, not one per XY value, so
-  files whose XY values repeat (XY from frame order) are all checked. A ticked
-  Composite unticks itself when a duplicate appears. The UI disables Composite with the reason; the
+  files whose XY values repeat (XY from frame order) are all checked. When
+  Composite was requested (the checkbox, or a saved batch strategy) the UI
+  keeps the request and refuses it exactly like the API: the refusal ranks
+  after the dtype and assignment errors in `submitError`, and
+  `generateJson` emits it as a generation error without uploading, so an
+  automated batch submit fails instead of configuring separate XY positions.
+  Unticking clears it; an unticked Composite is just disabled, with the
+  reason shown. The UI disables Composite with the reason; the
   API reports `compositingCheck.error`, uses it as the dry run's
   `validationError`, and a real run that asked for compositing returns 400
   rather than quietly configuring every tile as its own position (which
@@ -445,6 +455,8 @@ hand.
   *"treats a channel without a volume as the identity"*, and no spread into
   `Math.min` — *"handles more frames than Math.min can take as arguments"*,
   *"treats a malformed camera matrix as the identity"*,
+  *"refuses a camera matrix that collapses the tile"*,
+  *"test_degenerate_camera_matrix_cannot_composite"*,
   *"test_malformed_camera_matrix_is_the_identity"*,
   *"test_non_object_frame_entry_does_not_raise"*,
   *"returns false while the metadata belongs to other items"*.
@@ -473,7 +485,9 @@ hand.
   *"measures tolerances on the rotated tile, not the raw size"*,
   *"test_tolerances_use_the_rotated_tile"*,
   *"test_duplicate_next_to_any_merged_point_is_caught"*,
-  *"unticks Composite when a reassignment creates a duplicate"*.
+  *"refuses a requested composite with a duplicate instead of dropping it"*,
+  *"does not flag a point near a merged box but far from its points"*,
+  *"test_point_near_a_merged_box_but_far_from_its_points"*.
 - A sparse layout warns but still composites —
   *"warns about, but still composites, far-apart tiles"*.
 

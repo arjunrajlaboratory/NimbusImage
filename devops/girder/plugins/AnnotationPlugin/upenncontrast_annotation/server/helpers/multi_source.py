@@ -44,6 +44,8 @@ SPARSE_COVERAGE_FRACTION = 0.25
 # A composite of more tiles than this renders zoomed-out views from that
 # many sources unless it is transcoded, so transcode becomes the default.
 COMPOSITE_TRANSCODE_TILE_THRESHOLD = 16
+# Sub-cells per tolerance cell (per axis) in the duplicate check.
+DUPLICATE_SUBCELLS = 8
 # Camera matrices closer than this are the same orientation.
 CAMERA_MATRIX_TOLERANCE = 0.01
 
@@ -744,6 +746,15 @@ def _camera_transform(internal_meta):
     return {"s11": 1, "s12": 0, "s21": 0, "s22": 1}
 
 
+def _tile_footprint(transform, size_x, size_y):
+    """Port of ``tileFootprint``: one tile's mosaic-space corners under
+    ``transform``, as ``(width, height, min_x, min_y)``."""
+    corners = [(0, 0), (size_x, 0), (0, size_y), (size_x, size_y)]
+    xs = [transform["s11"] * x + transform["s12"] * y for x, y in corners]
+    ys = [transform["s21"] * x + transform["s22"] * y for x, y in corners]
+    return max(xs) - min(xs), max(ys) - min(ys), min(xs), min(ys)
+
+
 def _same_transform(a, b):
     return all(
         abs(a[key] - b[key]) <= CAMERA_MATRIX_TOLERANCE
@@ -773,7 +784,12 @@ def _can_composite(tiles_metadata, internal_metadata, xy_assignment_size):
     ):
         return False
     first_transform = _camera_transform(internal_metadata[0])
-    if not all(
+    width, height, _min_x, _min_y = _tile_footprint(
+        first_transform, tiles_metadata[0]["sizeX"],
+        tiles_metadata[0]["sizeY"],
+    )
+    # A degenerate matrix (e.g. all zeros) collapses the tile to nothing.
+    if not (width > 0 and height > 0) or not all(
         _same_transform(_camera_transform(meta), first_transform)
         for meta in internal_metadata
     ):
@@ -814,26 +830,16 @@ def _compositing_positions(tiles_metadata, internal_metadata):
                 **transform,
             })
 
-    corners = [
-        {"x": 0, "y": 0}, {"x": size_x, "y": 0},
-        {"x": 0, "y": size_y}, {"x": size_x, "y": size_y},
-    ]
     first = coordinates[0] if coordinates else {}
-    s11 = first.get("s11", 1)
-    s12 = first.get("s12", 0)
-    s21 = first.get("s21", 0)
-    s22 = first.get("s22", 1)
-    transformed = [
-        {
-            "x": s11 * corner["x"] + s12 * corner["y"],
-            "y": s21 * corner["x"] + s22 * corner["y"],
-        }
-        for corner in corners
-    ]
-    min_x = min(c["x"] for c in coordinates) + min(
-        c["x"] for c in transformed)
-    max_y = max(c["y"] for c in coordinates) - min(
-        c["y"] for c in transformed)
+    # One tile's mosaic-space footprint: a rotated non-square tile swaps
+    # width and height.
+    tile_width, tile_height, corner_min_x, corner_min_y = _tile_footprint(
+        {key: first.get(key, default) for key, default in (
+            ("s11", 1), ("s12", 0), ("s21", 0), ("s22", 1))},
+        size_x, size_y,
+    )
+    min_x = min(c["x"] for c in coordinates) + corner_min_x
+    max_y = max(c["y"] for c in coordinates) - corner_min_y
     final_coordinates = [
         {
             "x": js_math_round(c["x"] - min_x),
@@ -843,12 +849,7 @@ def _compositing_positions(tiles_metadata, internal_metadata):
         }
         for c in coordinates
     ]
-    # One tile's mosaic-space footprint: a rotated non-square tile swaps
-    # width and height.
-    tile_size = (
-        max(c["x"] for c in transformed) - min(c["x"] for c in transformed),
-        max(c["y"] for c in transformed) - min(c["y"] for c in transformed),
-    )
+    tile_size = (tile_width, tile_height)
     return final_coordinates, item_offsets, tile_size
 
 
@@ -938,11 +939,14 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
                 "xy": xy_value(item_idx, frame_idx), "item": item_idx,
             })
 
-    # Points are bucketed into tolerance-sized cells. Each cell keeps one
-    # box per XY value covering every point of that value merged there, so
-    # a long Z/T stack at one position stays one entry (linear), yet no
-    # merged point is forgotten: a different-XY point within tolerance of
-    # any of them is still caught.
+    # Points are bucketed into tolerance-sized cells, each split into
+    # DUPLICATE_SUBCELLS x DUPLICATE_SUBCELLS sub-cells. Each sub-cell keeps
+    # one box per XY value covering every point of that value merged there,
+    # so a long Z/T stack at one position stays a few entries (linear), and
+    # no merged point is forgotten: a different-XY point within tolerance
+    # of any of them is caught. A box spans at most 1/DUPLICATE_SUBCELLS of
+    # the tolerance, which bounds how far "near a box" can overstate "near
+    # a point".
     def near(box, x, y):
         return (max(box["minX"] - x, x - box["maxX"], 0) < tol_x
                 and max(box["minY"] - y, y - box["maxY"], 0) < tol_y)
@@ -979,7 +983,14 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
         if not same_tile:
             tile_count += 1
         cell = cells.setdefault((cell_x, cell_y), [])
-        box = next((b for b in cell if b["xy"] == point["xy"]), None)
+        sub = (
+            math.floor(point["x"] / (tol_x / DUPLICATE_SUBCELLS)),
+            math.floor(point["y"] / (tol_y / DUPLICATE_SUBCELLS)),
+        )
+        box = next(
+            (b for b in cell if b["xy"] == point["xy"] and b["sub"] == sub),
+            None,
+        )
         if box is not None:
             box["minX"] = min(box["minX"], point["x"])
             box["maxX"] = max(box["maxX"], point["x"])
@@ -987,7 +998,7 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
             box["maxY"] = max(box["maxY"], point["y"])
         else:
             cell.append({
-                "xy": point["xy"], "first": index,
+                "xy": point["xy"], "sub": sub, "first": index,
                 "minX": point["x"], "maxX": point["x"],
                 "minY": point["y"], "maxY": point["y"],
             })
@@ -1013,6 +1024,17 @@ def compositing_check(item_names, tiles_metadata, layout, xy_value):
         "error": error, "warning": warning,
         "tileCount": tile_count if error is None else None,
     }
+
+
+def compositing_refusal(result, enable_compositing):
+    """Port of the component's ``compositingRefusal``: the reason a
+    requested composite is refused (a duplicate stage position), or None.
+    It ranks after the dtype and assignment errors, as in ``submitError``,
+    and turns a request into a failure rather than a quiet fallback to
+    separate XY positions, which cannot be redone."""
+    if not enable_compositing:
+        return None
+    return result["compositingCheck"]["error"]
 
 
 def composite_transcode_default(transcode_default, compositing, tile_count):

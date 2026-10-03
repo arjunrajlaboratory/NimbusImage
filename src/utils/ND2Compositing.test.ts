@@ -114,6 +114,16 @@ describe("canCompositeByStagePosition", () => {
     ).toBe(false);
   });
 
+  it("refuses a camera matrix that collapses the tile", () => {
+    expect(
+      canCompositeByStagePosition(
+        [tile(2)],
+        [stages([[0, 0]], [0, 0, 0, 0])],
+        0,
+      ),
+    ).toBe(false);
+  });
+
   it("treats a malformed camera matrix as the identity", () => {
     const internal = [stages([[0, 0]], [null as any, 0, 0, "x" as any])];
     expect(compositingCoordinates([tile(2)], internal).coordinates[0].s11).toBe(
@@ -223,7 +233,7 @@ describe("compositingCheck", () => {
       compositingCoordinates(tiles, internal),
       (itemIdx) => (itemIdx < 2 ? 0 : 1),
     );
-    expect(result.error).toContain('"a.nd2" (XY 1) and "c.nd2" (XY 2)');
+    expect(result.error).toContain('"b.nd2" (XY 1) and "c.nd2" (XY 2)');
   });
 
   it("measures tolerances on the rotated tile, not the raw size", () => {
@@ -241,6 +251,24 @@ describe("compositingCheck", () => {
     expect(
       compositingCheck(["a.nd2", "b.nd2"], tiles, layout, (i) => i).error,
     ).toBeNull();
+  });
+
+  it("does not flag a point near a merged box but far from its points", () => {
+    // Same-XY points at (0,99) and (99,0); a different-XY point at
+    // (149,149) is more than 100 px from each in one axis.
+    const tiles = [tile(1, 1), tile(1, 1), tile(1, 1)];
+    const internal = [
+      stages([[0, -99]]),
+      stages([[99, 0]]),
+      stages([[149, -149]]),
+    ];
+    const result = compositingCheck(
+      ["a.nd2", "b.nd2", "c.nd2"],
+      tiles,
+      compositingCoordinates(tiles, internal),
+      (itemIdx) => (itemIdx < 2 ? 0 : 1),
+    );
+    expect(result.error).toBeNull();
   });
 
   it("checks every file when XY repeats across files", () => {

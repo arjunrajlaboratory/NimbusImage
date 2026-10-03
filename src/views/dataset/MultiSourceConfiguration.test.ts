@@ -698,20 +698,30 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.shouldDoCompositing).toBe(false);
     });
 
-    it("unticks Composite when a reassignment creates a duplicate", async () => {
+    it("refuses a requested composite with a duplicate instead of dropping it", async () => {
       const vm = mountComponent().vm as any;
       await vm.initialized.catch(() => {});
       setUpTileFolder(vm, [
         [0, 0],
         [512, 0],
       ]);
+      // e.g. a saved batch strategy asked for Composite.
       vm.enableCompositing = true;
-      await nextTick();
-      expect(vm.shouldDoCompositing).toBe(true);
       vm.tilesInternalMetadata = [stageMeta(0, 0), stageMeta(4, 0)];
       await nextTick();
-      expect(vm.compositingCheckResult.error).not.toBeNull();
-      expect(vm.enableCompositing).toBe(false);
+      expect(vm.enableCompositing).toBe(true);
+      expect(vm.shouldDoCompositing).toBe(false);
+      // (ranked after the assignment error this hand-built state also has)
+      expect(vm.compositingRefusal).toContain("same stage position");
+      // An automated batch submit fails instead of configuring separate
+      // XY positions.
+      mockAddMultiSourceMetadata.mockClear();
+      expect(await vm.generateJson()).toBeNull();
+      expect(mockAddMultiSourceMetadata).not.toHaveBeenCalled();
+      expect(vm.generationErrorMessage).toContain("same stage position");
+      // Unticking clears the refusal.
+      vm.enableCompositing = false;
+      expect(vm.compositingRefusal).toBeNull();
     });
 
     it("warns about, but still composites, far-apart tiles", () => {

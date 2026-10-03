@@ -1,6 +1,6 @@
 {
   "name": "nd2_compositing_duplicate",
-  "description": "Three single-position ND2 tiles where the third re-images the first field (3 um away, within stage error). The compositing check reports the duplicate as an error, so compositing is refused even though enableCompositing is true and the sources stay separate XY positions.",
+  "description": "Three single-position ND2 tiles where the third re-images the first field (3 um away, within stage error), with Composite requested. Both ends refuse: the component sets submitError and generateJson emits a generation error without uploading (so an automated batch submit fails), and the API reports the same message as validationError (a 400 on a real run).",
   "input": {
     "itemNames": [
       "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2",
@@ -213,90 +213,10 @@
     }
   },
   "expected": {
-    "filenameVariables": [
-      {
-        "guess": "C",
-        "valueIdxPerFilename": {
-          "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2": 0,
-          "Well1_Point1_3118_ChannelCTG,DAPI_Seq3118.nd2": 1,
-          "Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2": 2
-        },
-        "values": [
-          "3117",
-          "3118",
-          "3119"
-        ]
-      }
-    ],
-    "defaultAssignments": {
-      "XY": null,
-      "Z": null,
-      "T": null,
-      "C": {
-        "source": "file",
-        "guess": "C"
-      }
-    },
-    "transcodeDefault": false,
-    "config": {
-      "channels": [
-        "CTG",
-        "DAPI"
-      ],
-      "sources": [
-        {
-          "path": "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2",
-          "framesAsAxes": {
-            "c": 1
-          },
-          "xyValues": [
-            0
-          ],
-          "cValues": [
-            0
-          ]
-        },
-        {
-          "path": "Well1_Point1_3118_ChannelCTG,DAPI_Seq3118.nd2",
-          "framesAsAxes": {
-            "c": 1
-          },
-          "xyValues": [
-            1
-          ],
-          "cValues": [
-            0
-          ]
-        },
-        {
-          "path": "Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2",
-          "framesAsAxes": {
-            "c": 1
-          },
-          "xyValues": [
-            2
-          ],
-          "cValues": [
-            0
-          ]
-        }
-      ],
-      "uniformSources": true,
-      "singleBand": false
-    },
-    "dimensionLabels": {
-      "xy": [
-        "3117",
-        "3118",
-        "3119"
-      ],
-      "z": null,
-      "t": null
-    },
-    "compositingCheck": {
-      "error": "\"Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2\" (XY 1) and \"Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2\" (XY 3) are at the same stage position, so compositing would draw one on top of the other. Remove the duplicate, or leave Composite off to keep them as separate XY positions.",
-      "warning": null,
-      "tileCount": null
-    }
-  }
+    "submitError": "\"Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2\" (XY 1) and \"Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2\" (XY 3) are at the same stage position, so compositing would draw one on top of the other. Remove the duplicate, or leave Composite off to keep them as separate XY positions.",
+    "generationErrorMessage": "\"Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2\" (XY 1) and \"Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2\" (XY 3) are at the same stage position, so compositing would draw one on top of the other. Remove the duplicate, or leave Composite off to keep them as separate XY positions.",
+    "generatedItemId": null,
+    "configUploaded": false
+  },
+  "kind": "validation"
 }

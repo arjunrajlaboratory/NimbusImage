@@ -362,20 +362,28 @@
               label="Composite"
               class="mt-0 ml-4"
               v-model="enableCompositing"
-              :disabled="compositingCheckResult.error !== null"
+              :disabled="
+                compositingCheckResult.error !== null && !enableCompositing
+              "
             />
           </div>
         </div>
       </div>
       <v-alert
         v-if="canDoCompositing && compositingCheckResult.error"
-        type="info"
+        :type="enableCompositing ? 'error' : 'info'"
         variant="tonal"
         density="compact"
         class="mt-3"
         data-test="compositing-error"
       >
-        Composite is unavailable: {{ compositingCheckResult.error }}
+        <template v-if="enableCompositing">
+          Can't composite: {{ compositingCheckResult.error }} Untick Composite
+          to configure the files as separate XY positions.
+        </template>
+        <template v-else>
+          Composite is unavailable: {{ compositingCheckResult.error }}
+        </template>
       </v-alert>
       <v-alert
         v-else-if="shouldDoCompositing && compositingCheckResult.warning"
@@ -1019,8 +1027,19 @@ const assignmentError = computed((): string | null => {
   return null;
 });
 
+// Composite was asked for (by the checkbox or a saved batch strategy) but
+// the layout refuses it. Kept as a refusal rather than quietly unticking,
+// so an automated batch submit fails like the API's 400 instead of
+// configuring the folder as separate XY positions, which cannot be redone.
+const compositingRefusal = computed((): string | null =>
+  enableCompositing.value ? compositingCheckResult.value.error : null,
+);
+
 const submitError = computed(
-  (): string | null => mixedSourceDtypeError.value ?? assignmentError.value,
+  (): string | null =>
+    mixedSourceDtypeError.value ??
+    assignmentError.value ??
+    compositingRefusal.value,
 );
 
 const isRGBAssignmentValid = computed(() => {
@@ -1687,8 +1706,9 @@ async function submit() {
 }
 
 async function generateJson(): Promise<string | null> {
-  if (mixedSourceDtypeError.value) {
-    generationErrorMessage.value = mixedSourceDtypeError.value;
+  const refusal = mixedSourceDtypeError.value ?? compositingRefusal.value;
+  if (refusal) {
+    generationErrorMessage.value = refusal;
     emit("generationError", generationErrorMessage.value);
     return null;
   }
@@ -2063,18 +2083,6 @@ watch(
 
 // --- Lifecycle ---
 
-// A layout that refuses compositing also unticks it, so the disabled
-// checkbox never hides a request that Submit would silently ignore (the API
-// refuses the same request with a 400).
-watch(
-  () => compositingCheckResult.value.error,
-  (error) => {
-    if (error !== null) {
-      enableCompositing.value = false;
-    }
-  },
-);
-
 onMounted(() => {
   initialized.value = initialize();
 });
@@ -2128,6 +2136,7 @@ defineExpose({
   filenameLegend,
   assignmentItems,
   submitError,
+  compositingRefusal,
   isRGBAssignmentValid,
   generationErrorMessage,
   // Methods

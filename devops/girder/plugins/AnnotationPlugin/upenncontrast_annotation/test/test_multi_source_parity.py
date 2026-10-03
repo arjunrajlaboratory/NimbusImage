@@ -38,6 +38,7 @@ if _SERVER not in sys.path:
 from helpers.filename_parsing import collect_filename_metadata  # noqa: E402
 from helpers.multi_source import (  # noqa: E402
     build_dimensions,
+    compositing_refusal,
     compute_configuration,
     get_default_assignments,
     slim_internal_metadata,
@@ -117,6 +118,10 @@ def _assert_validation_parity(inp, expected):
         )
     except ValueError as exc:
         error = str(exc)
+    if error is None:
+        error = compositing_refusal(
+            result, options.get("enableCompositing", False),
+        )
 
     assert error == expected["submitError"]
 
@@ -543,7 +548,7 @@ class TestCompositingRobustness:
             _compositing_positions(tiles, internal),
             lambda item_idx, frame_idx: 0 if item_idx < 2 else 1,
         )
-        assert '"a.nd2" (XY 1) and "c.nd2" (XY 2)' in check["error"]
+        assert '"b.nd2" (XY 1) and "c.nd2" (XY 2)' in check["error"]
 
     def test_tolerances_use_the_rotated_tile(self):
         # 2000 x 500 tiles rotated 90 degrees: 500 wide on screen, so 100 px
@@ -560,5 +565,29 @@ class TestCompositingRobustness:
         check = compositing_check(
             ["a.nd2", "b.nd2"], tiles, layout,
             lambda item_idx, frame_idx: item_idx,
+        )
+        assert check["error"] is None
+
+    def test_degenerate_camera_matrix_cannot_composite(self):
+        # An all-zero matrix collapses the tile; it must not divide by zero.
+        result = self._configure(
+            [_tile(2)], [_stages([(0, 0)], [0, 0, 0, 0])],
+        )
+        assert result["compositing"] is False
+        assert result["compositingCheck"]["error"] is None
+
+    def test_point_near_a_merged_box_but_far_from_its_points(self):
+        # Same-XY points at (0,99) and (99,0); a different-XY point at
+        # (149,149) is more than 100 px from each in one axis.
+        from helpers.multi_source import (  # noqa: E402
+            _compositing_positions, compositing_check,
+        )
+        tiles = [_tile(1, 1), _tile(1, 1), _tile(1, 1)]
+        internal = [_stages([(0, -99)]), _stages([(99, 0)]),
+                    _stages([(149, -149)])]
+        check = compositing_check(
+            ["a.nd2", "b.nd2", "c.nd2"], tiles,
+            _compositing_positions(tiles, internal),
+            lambda item_idx, frame_idx: 0 if item_idx < 2 else 1,
         )
         assert check["error"] is None

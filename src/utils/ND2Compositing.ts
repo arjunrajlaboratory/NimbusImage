@@ -48,6 +48,8 @@ export const SPARSE_COVERAGE_FRACTION = 0.25;
 // A composite of more tiles than this renders zoomed-out views from that
 // many sources unless it is transcoded, so transcode becomes the default.
 export const COMPOSITE_TRANSCODE_TILE_THRESHOLD = 16;
+// Sub-cells per tolerance cell (per axis) in the duplicate check.
+const DUPLICATE_SUBCELLS = 8;
 // Camera matrices closer than this are the same orientation.
 const CAMERA_MATRIX_TOLERANCE = 0.01;
 
@@ -120,6 +122,31 @@ function cameraTransform(internalMeta: TInternalMetadata): ICameraTransform {
   return { s11: 1, s12: 0, s21: 0, s22: 1 };
 }
 
+// One tile's width and height in mosaic pixels under `transform`.
+function tileFootprint(
+  transform: ICameraTransform,
+  sizeX: number,
+  sizeY: number,
+) {
+  const corners = [
+    { x: 0, y: 0 },
+    { x: sizeX, y: 0 },
+    { x: 0, y: sizeY },
+    { x: sizeX, y: sizeY },
+  ].map((corner) => ({
+    x: transform.s11 * corner.x + transform.s12 * corner.y,
+    y: transform.s21 * corner.x + transform.s22 * corner.y,
+  }));
+  const xs = extent(corners, (c) => c.x);
+  const ys = extent(corners, (c) => c.y);
+  return {
+    width: xs.max - xs.min,
+    height: ys.max - ys.min,
+    minX: xs.min,
+    minY: ys.min,
+  };
+}
+
 function sameTransform(a: ICameraTransform, b: ICameraTransform): boolean {
   return (["s11", "s12", "s21", "s22"] as const).every(
     (key) => Math.abs(a[key] - b[key]) <= CAMERA_MATRIX_TOLERANCE,
@@ -159,7 +186,14 @@ export function canCompositeByStagePosition(
     return false;
   }
   const firstTransform = cameraTransform(internalMetadata[0]);
+  const footprint = tileFootprint(
+    firstTransform,
+    tilesMetadata[0].sizeX,
+    tilesMetadata[0].sizeY,
+  );
   if (
+    // A degenerate matrix (e.g. all zeros) collapses the tile to nothing.
+    !(footprint.width > 0 && footprint.height > 0) ||
     !internalMetadata.every((meta) =>
       sameTransform(cameraTransform(meta), firstTransform),
     )
@@ -220,26 +254,20 @@ export function compositingCoordinates(
     }
   }
 
-  const corners = [
-    { x: 0, y: 0 },
-    { x: sizeX, y: 0 },
-    { x: 0, y: sizeY },
-    { x: sizeX, y: sizeY },
-  ];
-  const transformedCorners = corners.map((corner) => ({
-    x:
-      (coordinates[0]?.s11 ?? 1) * corner.x +
-      (coordinates[0]?.s12 ?? 0) * corner.y,
-    y:
-      (coordinates[0]?.s21 ?? 0) * corner.x +
-      (coordinates[0]?.s22 ?? 1) * corner.y,
-  }));
-  const offsetX = extent(transformedCorners, (c) => c.x);
-  const offsetY = extent(transformedCorners, (c) => c.y);
+  const footprint = tileFootprint(
+    {
+      s11: coordinates[0]?.s11 ?? 1,
+      s12: coordinates[0]?.s12 ?? 0,
+      s21: coordinates[0]?.s21 ?? 0,
+      s22: coordinates[0]?.s22 ?? 1,
+    },
+    sizeX,
+    sizeY,
+  );
   const coordX = extent(coordinates, (c) => c.x);
   const coordY = extent(coordinates, (c) => c.y);
-  const minCoordinate = { x: coordX.min + offsetX.min };
-  const maxCoordinate = { y: coordY.max - offsetY.min };
+  const minCoordinate = { x: coordX.min + footprint.minX };
+  const maxCoordinate = { y: coordY.max - footprint.minY };
   return {
     coordinates: coordinates.map((c) => ({
       x: Math.round(c.x - minCoordinate.x),
@@ -250,8 +278,8 @@ export function compositingCoordinates(
       s22: c.s22,
     })),
     itemOffsets,
-    tileWidth: offsetX.max - offsetX.min,
-    tileHeight: offsetY.max - offsetY.min,
+    tileWidth: footprint.width,
+    tileHeight: footprint.height,
   };
 }
 
@@ -303,13 +331,17 @@ export function compositingCheck(
     }
   }
 
-  // Points are bucketed into tolerance-sized cells. Each cell keeps one
-  // box per XY value covering every point of that value merged there, so
-  // a long Z/T stack at one position stays one entry (linear), yet no
-  // merged point is forgotten: a different-XY point within tolerance of any
-  // of them is still caught.
+  // Points are bucketed into tolerance-sized cells, each split into
+  // DUPLICATE_SUBCELLS x DUPLICATE_SUBCELLS sub-cells. Each sub-cell keeps
+  // one box per XY value covering every point of that value merged there,
+  // so a long Z/T stack at one position stays a few entries (linear), and
+  // no merged point is forgotten: a different-XY point within tolerance of
+  // any of them is caught. A box spans at most 1/DUPLICATE_SUBCELLS of the
+  // tolerance, which bounds how far "near a box" can overstate "near a
+  // point".
   interface ICellBox {
     xy: number;
+    sub: string; // sub-cell within the cell
     first: number; // index of the earliest point in the box
     minX: number;
     maxX: number;
@@ -356,8 +388,11 @@ export function compositingCheck(
       tileCount++;
     }
     const key = `${cellX},${cellY}`;
+    const sub =
+      `${Math.floor(point.x / (tolX / DUPLICATE_SUBCELLS))},` +
+      `${Math.floor(point.y / (tolY / DUPLICATE_SUBCELLS))}`;
     const cell = cells.get(key) ?? [];
-    const box = cell.find((b) => b.xy === point.xy);
+    const box = cell.find((b) => b.xy === point.xy && b.sub === sub);
     if (box) {
       box.minX = Math.min(box.minX, point.x);
       box.maxX = Math.max(box.maxX, point.x);
@@ -366,6 +401,7 @@ export function compositingCheck(
     } else {
       cell.push({
         xy: point.xy,
+        sub,
         first: index,
         minX: point.x,
         maxX: point.x,
