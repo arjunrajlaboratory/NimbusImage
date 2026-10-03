@@ -1013,9 +1013,14 @@ export class Main extends VuexModule {
     if (toolIdx < 0) {
       return;
     }
-    configurationTools.splice(toolIdx, 1, tool);
+    // The pin is owned by setToolPinned. Editors can hand in a copy taken
+    // before a pin toggle (AnnotationWorkerMenu debounces its save of
+    // props.tool), so keep the stored pin rather than let a late edit undo it.
+    const { pinned } = configurationTools[toolIdx];
+    const editedTool = tool.pinned === pinned ? tool : { ...tool, pinned };
+    configurationTools.splice(toolIdx, 1, editedTool);
     if (this.selectedTool?.configuration.id === tool.id) {
-      this.setSelectedToolImpl(tool);
+      this.setSelectedToolImpl(editedTool);
     }
     this.syncConfiguration("tools");
   }

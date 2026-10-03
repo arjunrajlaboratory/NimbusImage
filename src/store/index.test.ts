@@ -252,6 +252,18 @@ describe("tool pinning and ordering", () => {
     expect(updateKey).not.toHaveBeenCalled();
   });
 
+  it("an edit made with a pre-pin copy of the tool keeps the pin", async () => {
+    const original = tool("a");
+    setTools([original]);
+
+    await main.setToolPinned({ toolId: "a", pinned: true });
+    // e.g. AnnotationWorkerMenu's debounced save of the props.tool it held
+    // before the pin landed.
+    main.editToolInConfiguration({ ...original, name: "renamed" });
+
+    expect(main.tools[0]).toMatchObject({ name: "renamed", pinned: true });
+  });
+
   it("does not write an unchanged order", async () => {
     setTools([tool("a"), tool("b")]);
 
