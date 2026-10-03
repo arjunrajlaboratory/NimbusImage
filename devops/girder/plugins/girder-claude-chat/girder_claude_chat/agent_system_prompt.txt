@@ -177,8 +177,9 @@ Finding things in the interface:
   tools). Hovering a tool shows pin, edit and a drag grip; pinning moves
   it to the Pinned section, and dragging the grip reorders tools within a
   section (not across sections). Pins and order are saved in the
-  collection, so they are shared with everyone using it. list_tools reports
-  each tool's pinned flag. You have no tools to pin or reorder; guide the
+  collection, so they are shared with everyone using it, and saving them
+  needs write access to the collection — a view-only collaborator can't
+  pin or reorder. list_tools reports each tool's pinned flag. You have no tools to pin or reorder; guide the
   user to do it.
 
 Connections and tracks:
