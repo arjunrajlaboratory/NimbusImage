@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { enableAutoUnmount, mount } from "@vue/test-utils";
 
 // Reactive so computeds over the store (e.g. selectedToolId) track mutations
 // made mid-test, as they would against the real Vuex store.
@@ -12,6 +12,7 @@ vi.mock("@/store", async () => {
       configuration: { tools: [] },
       isLoggedIn: true,
       setSelectedToolId: vi.fn(),
+      setToolOrder: vi.fn(),
       getLayerFromId: vi.fn(),
     }),
   };
@@ -28,13 +29,40 @@ vi.mock("@/store/toolSuggestions", () => ({
   },
 }));
 
-vi.mock("vuedraggable", () => ({
-  default: { name: "draggable", template: "<div><slot /></div>" },
-}));
+// Renders each element through the #item slot like vuedraggable 4, so the
+// tool sections actually render; tests emit update:modelValue to simulate a
+// finished drag.
+vi.mock("vuedraggable", async () => {
+  const { defineComponent, h } = await import("vue");
+  return {
+    default: defineComponent({
+      name: "draggable",
+      props: ["modelValue", "itemKey"],
+      emits: ["update:modelValue"],
+      setup(props, { slots, attrs }) {
+        return () =>
+          h(
+            "div",
+            attrs,
+            (props.modelValue ?? []).map((element: any) =>
+              slots.item?.({ element }),
+            ),
+          );
+      },
+    }),
+  };
+});
 
+import { nextTick } from "vue";
 import store from "@/store";
 import toolSuggestionsStore from "@/store/toolSuggestions";
 import Toolset from "./Toolset.vue";
+import { toolCreationRequest } from "@/commands/requests";
+import { allCommands } from "@/commands/registry";
+
+// Toolset registers palette commands and watches a module-level request, so a
+// mount left over from an earlier test would answer this test's request.
+enableAutoUnmount(afterEach);
 
 function mountComponent() {
   return mount(Toolset, {
@@ -385,5 +413,126 @@ describe("Toolset", () => {
       );
       removeSpy.mockRestore();
     });
+  });
+
+  describe("command palette", () => {
+    const request = {
+      template: { name: "Manual object tool", interface: [] } as any,
+      defaultValues: { shape: "point" },
+      selectedItem: { text: "Point" } as any,
+    };
+
+    beforeEach(() => {
+      toolCreationRequest.value = null;
+    });
+
+    it("opens tool creation pre-selected for an Add-tool request, then clears it", async () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      toolCreationRequest.value = request;
+      await nextTick();
+      expect(vm.selectedToolType).toEqual(request);
+      expect(vm.toolCreationDialogOpen).toBe(true);
+      expect(toolCreationRequest.value).toBeNull();
+      wrapper.unmount();
+    });
+
+    it("honours a request made before it mounted", () => {
+      toolCreationRequest.value = request;
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).toolCreationDialogOpen).toBe(true);
+      wrapper.unmount();
+    });
+
+    it("drops the request without opening when logged out", async () => {
+      (store as any).isLoggedIn = false;
+      const wrapper = mountComponent();
+      toolCreationRequest.value = request;
+      await nextTick();
+      expect((wrapper.vm as any).toolCreationDialogOpen).toBe(false);
+      expect(toolCreationRequest.value).toBeNull();
+      wrapper.unmount();
+    });
+
+    it("registers its Pipelines and Suggest-tools commands while mounted", () => {
+      const wrapper = mountComponent();
+      const ids = allCommands.value.map((command) => command.id);
+      expect(ids).toContain("tools.pipelines");
+      expect(ids).toContain("tools.suggest");
+      wrapper.unmount();
+      expect(allCommands.value.map((command) => command.id)).not.toContain(
+        "tools.pipelines",
+      );
+    });
+  });
+});
+
+describe("Toolset sections", () => {
+  function tool(id: string, type: string, pinned?: boolean) {
+    return {
+      id,
+      name: id,
+      type,
+      values: {},
+      hotkey: null,
+      template: { name: "t" },
+      pinned,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (store as any).selectedTool = null;
+    (store as any).isLoggedIn = true;
+  });
+
+  it("renders pinned tools in their own section above the others", () => {
+    (store as any).configuration = {
+      tools: [
+        tool("a1", "create"),
+        tool("w1", "segmentation"),
+        tool("a2", "snap", true),
+      ],
+    };
+    const wrapper = mountComponent();
+
+    const sections = wrapper
+      .findAll("[data-tool-group]")
+      .map((section) => [
+        section.attributes("data-tool-group"),
+        section
+          .findAllComponents({ name: "ToolItem" })
+          .map((item: any) => item.props("tool").id),
+      ]);
+    expect(sections).toEqual([
+      ["pinned", ["a2"]],
+      ["annotation", ["a1"]],
+      ["analysis", ["w1"]],
+    ]);
+    expect(wrapper.findAll(".tool-group-header").map((h) => h.text())).toEqual([
+      "Pinned",
+      "Annotation tools",
+      "Analysis tools",
+    ]);
+  });
+
+  it("a drag within a section reorders only that section's slots", async () => {
+    (store as any).configuration = {
+      tools: [
+        tool("a1", "create"),
+        tool("w1", "segmentation"),
+        tool("a2", "create"),
+        tool("a3", "create"),
+      ],
+    };
+    const wrapper = mountComponent();
+    const annotationSection = wrapper
+      .findAllComponents({ name: "draggable" })
+      .find((d) => d.attributes("data-tool-group") === "annotation")!;
+
+    const [a1, , a2, a3] = (store as any).configuration.tools;
+    annotationSection.vm.$emit("update:modelValue", [a3, a1, a2]);
+
+    expect(store.setToolOrder).toHaveBeenCalledWith(["a3", "w1", "a1", "a2"]);
   });
 });

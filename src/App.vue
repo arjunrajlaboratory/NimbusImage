@@ -23,10 +23,16 @@
     >
       <help-panel @close="helpPanelIsOpen = false" />
     </v-dialog>
+    <command-palette v-model="commandPaletteOpen" />
     <v-app-bar>
       <v-tooltip text="NimbusImage home" :open-delay="500">
         <template v-slot:activator="{ props: activatorProps }">
-          <v-toolbar-title v-bind="activatorProps" @click="goHome" class="logo">
+          <v-toolbar-title
+            v-bind="activatorProps"
+            data-command-id="nav.home"
+            @click="goHome"
+            class="logo"
+          >
             <svg
               class="logo-icon"
               viewBox="0 0 652 397"
@@ -115,9 +121,10 @@
                 class="palette-ibtn"
                 :class="{ active: navigatorPanel }"
                 aria-label="Navigator"
+                data-command-id="panel.toggle.navigatorPanel"
                 @click.stop="togglePalette('navigatorPanel')"
               >
-                <v-icon size="18">mdi-axis-arrow</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.navigatorPanel.icon }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -129,9 +136,10 @@
                 class="palette-ibtn"
                 :class="{ active: layersPanel }"
                 aria-label="Layers"
+                data-command-id="panel.toggle.layersPanel"
                 @click.stop="togglePalette('layersPanel')"
               >
-                <v-icon size="18">mdi-layers</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.layersPanel.icon }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -143,9 +151,10 @@
                 class="palette-ibtn"
                 :class="{ active: toolsPanel }"
                 aria-label="Tools"
+                data-command-id="panel.toggle.toolsPanel"
                 @click.stop="togglePalette('toolsPanel')"
               >
-                <v-icon size="18">mdi-tools</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.toolsPanel.icon }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -157,6 +166,7 @@
                 class="palette-ibtn"
                 :class="{ active: is3DView }"
                 aria-label="3D view"
+                data-command-id="view.toggle3d"
                 @click.stop="toggle3DView"
               >
                 <v-icon size="18">mdi-cube-scan</v-icon>
@@ -176,6 +186,7 @@
             class="ml-4"
             :disabled="!store.isLoggedIn || !store.girderUser"
             :loading="isUploadLoading"
+            data-command-id="data.upload"
             @click="goToNewDataset"
           >
             Upload Data
@@ -198,9 +209,12 @@
                 class="palette-ibtn"
                 :class="{ active: annotationPanel }"
                 aria-label="Object list"
+                data-command-id="panel.toggle.annotationPanel"
                 @click.stop="togglePalette('annotationPanel')"
               >
-                <v-icon size="18">mdi-format-list-bulleted-square</v-icon>
+                <v-icon size="18">{{
+                  PANEL_BY_ID.annotationPanel.icon
+                }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -214,9 +228,10 @@
                 class="palette-ibtn"
                 :class="{ active: filtersPanel }"
                 :aria-label="filtersAriaLabel"
+                data-command-id="panel.toggle.filtersPanel"
                 @click.stop="togglePalette('filtersPanel')"
               >
-                <v-icon size="18">mdi-filter-variant</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.filtersPanel.icon }}</v-icon>
                 <!-- Count of active filters, so the user can tell filters are
                      narrowing the object set even with the panel closed. -->
                 <span v-if="activeFilterCount > 0" class="palette-ibtn-badge">
@@ -233,9 +248,10 @@
                 class="palette-ibtn"
                 :class="{ active: analysisPanel }"
                 :aria-label="analysisAriaLabel"
+                data-command-id="panel.toggle.analysisPanel"
                 @click.stop="togglePalette('analysisPanel')"
               >
-                <v-icon size="18">mdi-chart-scatter-plot</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.analysisPanel.icon }}</v-icon>
                 <!-- Count of gates narrowing the object set. Gates apply with
                      the palette closed and are restored from the saved
                      configuration, so without this a dataset could open
@@ -265,9 +281,10 @@
                 class="palette-ibtn"
                 :class="{ active: snapshotPanel }"
                 aria-label="Snapshots"
+                data-command-id="panel.toggle.snapshotPanel"
                 @click.stop="togglePalette('snapshotPanel')"
               >
-                <v-icon size="18">mdi-camera-outline</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.snapshotPanel.icon }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -281,9 +298,10 @@
                 class="palette-ibtn"
                 :class="{ active: settingsPanel }"
                 aria-label="Settings"
+                data-command-id="panel.toggle.settingsPanel"
                 @click.stop="togglePalette('settingsPanel')"
               >
-                <v-icon size="18">mdi-tune</v-icon>
+                <v-icon size="18">{{ PANEL_BY_ID.settingsPanel.icon }}</v-icon>
               </button>
             </template>
           </v-tooltip>
@@ -301,6 +319,7 @@
               size="small"
               class="ml-1"
               aria-label="Measure objects"
+              data-command-id="analysis.measure"
               @click="analyzeDialogOpen = true"
             >
               <v-icon>mdi-ruler-square</v-icon>
@@ -316,6 +335,7 @@
               size="small"
               class="ml-1"
               aria-label="Color objects by property"
+              data-command-id="properties.colorBy"
               @click="colorByPropertyDialogOpen = true"
             >
               <v-icon>mdi-palette</v-icon>
@@ -325,6 +345,21 @@
         <data-io-menu class="ml-1" />
       </template>
       <div class="mx-4 d-flex align-center">
+        <v-tooltip :text="`Search commands (${commandPaletteHotkey})`">
+          <template v-slot:activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              :data-tour="TOUR_ANCHORS.commandPaletteButton"
+              variant="text"
+              icon
+              size="small"
+              aria-label="Search commands"
+              @click="commandPaletteOpen = true"
+            >
+              <v-icon>mdi-magnify</v-icon>
+            </v-btn>
+          </template>
+        </v-tooltip>
         <v-menu>
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
@@ -342,7 +377,10 @@
           <v-card min-width="300">
             <v-list>
               <!-- HUD Option -->
-              <v-list-item @click="toggleHelpDialogUsingHotkey">
+              <v-list-item
+                data-command-id="help.hud"
+                @click="toggleHelpDialogUsingHotkey"
+              >
                 <template #prepend>
                   <v-icon>mdi-view-dashboard-outline</v-icon>
                 </template>
@@ -354,7 +392,11 @@
               <v-divider></v-divider>
 
               <!-- Documentation Link -->
-              <v-list-item href="https://docs.nimbusimage.com" target="_blank">
+              <v-list-item
+                :href="DOCUMENTATION_URL"
+                target="_blank"
+                data-command-id="help.docs"
+              >
                 <template #prepend>
                   <v-icon>mdi-book-open-variant</v-icon>
                 </template>
@@ -409,6 +451,8 @@
               variant="text"
               icon
               size="small"
+              aria-label="Nimbus AI panel"
+              data-command-id="ai.togglePanel"
               @click="toggleAiPanel"
             >
               <v-icon>mdi-robot-outline</v-icon>
@@ -439,7 +483,7 @@
 
     <floating-palette
       v-model="settingsPanel"
-      title="Settings"
+      :title="PANEL_BY_ID.settingsPanel.title"
       :width="RIGHT_PALETTE_WIDTHS.settings"
     >
       <annotations-settings />
@@ -447,7 +491,7 @@
 
     <floating-palette
       v-model="snapshotPanel"
-      title="Snapshots"
+      :title="PANEL_BY_ID.snapshotPanel.title"
       :width="RIGHT_PALETTE_WIDTHS.snapshots"
     >
       <snapshots :snapshotVisible="snapshotPanel" />
@@ -455,7 +499,7 @@
 
     <floating-palette
       v-model="annotationPanel"
-      title="Object Browser"
+      :title="PANEL_BY_ID.annotationPanel.title"
       :width="RIGHT_PALETTE_WIDTHS.objectBrowser"
       :top="stackedHostTop"
       :max-height="stackedHostMaxHeight"
@@ -466,7 +510,7 @@
     <floating-palette
       ref="filtersPaletteRef"
       v-model="filtersPanel"
-      title="Filters"
+      :title="PANEL_BY_ID.filtersPanel.title"
       :width="RIGHT_PALETTE_WIDTHS.filters"
       :max-height="filtersMaxHeight"
     >
@@ -475,7 +519,7 @@
 
     <floating-palette
       v-model="analysisPanel"
-      title="Analysis"
+      :title="PANEL_BY_ID.analysisPanel.title"
       :width="RIGHT_PALETTE_WIDTHS.analysis"
       :top="stackedHostTop"
       :max-height="stackedHostMaxHeight"
@@ -491,7 +535,7 @@
       <floating-palette
         ref="navigatorPaletteRef"
         v-model="navigatorPanel"
-        title="Navigator"
+        :title="PANEL_BY_ID.navigatorPanel.title"
         :left="PALETTE_INSET"
         :width="LEFT_COLUMN_PALETTE_WIDTHS.navigator"
       >
@@ -515,7 +559,7 @@
       <floating-palette
         ref="layersPaletteRef"
         v-model="layersPanel"
-        title="Layers"
+        :title="PANEL_BY_ID.layersPanel.title"
         :left="PALETTE_INSET"
         :width="LEFT_COLUMN_PALETTE_WIDTHS.layers"
         :top="layersPanelTop"
@@ -526,7 +570,7 @@
 
       <floating-palette
         v-model="toolsPanel"
-        title="Tools"
+        :title="PANEL_BY_ID.toolsPanel.title"
         :left="PALETTE_INSET"
         :width="LEFT_COLUMN_PALETTE_WIDTHS.tools"
         :top="toolsPanelTop"
@@ -573,6 +617,7 @@ import TimelapsePanel from "@/components/TimelapsePanel.vue";
 import LayersPanel from "@/components/LayersPanel.vue";
 import Toolset from "@/tools/toolsets/Toolset.vue";
 import HelpPanel from "./components/HelpPanel.vue";
+import CommandPalette from "./components/CommandPalette.vue";
 import BreadCrumbs from "./layout/BreadCrumbs.vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
@@ -603,6 +648,17 @@ import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 import { useTour } from "@/utils/useTour";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
+import {
+  PANELS,
+  PANEL_BY_ID,
+  PANEL_IDS,
+  PanelId,
+  applyOpen,
+} from "@/utils/panelRegistry";
+import { useCommand, useCommandProvider } from "@/commands/registry";
+import { panelCommands, tourCommands } from "@/commands/providers";
+import { isTourAvailableOnRoute, useViewerContext } from "@/commands/context";
+import { boundHotkey, formatHotkey } from "@/commands/hotkeys";
 
 // Suppress unused import warnings for template-only components
 void UserMenu;
@@ -622,6 +678,7 @@ void TimelapsePanel;
 void LayersPanel;
 void Toolset;
 void HelpPanel;
+void CommandPalette;
 void BreadCrumbs;
 void AiPanel;
 
@@ -809,45 +866,18 @@ const colorByPropertyDialogOpen = computed({
 
 const isUploadLoading = ref(false);
 const helpPanelIsOpen = ref(false);
+const commandPaletteOpen = ref(false);
+
+const DOCUMENTATION_URL = "https://docs.nimbusimage.com";
+const COMMAND_PALETTE_BINDING = "mod+k";
+const commandPaletteHotkey = formatHotkey(COMMAND_PALETTE_BINDING);
 
 // --- Palette layout ---------------------------------------------------------
 //
-// The dataset view hosts palettes on two edges. Each declares a `zone` (which
-// edge it lives on) and a `role`.
-//
-// Right zone behaves as a mutually-exclusive column:
-//   * "primary" palettes (Object Browser / Snapshots / Settings) own the
-//     column — opening one closes the others.
-//   * the "companion" (Filters) may share the column, but only alongside its
-//     host primary (the Object Browser); any other primary evicts it.
-//
-// Left zone (dissolved sidebar: Navigator / Layers / Tools) is an independent
-// vertical stack — all three can be open at once and flow top-to-bottom in a
-// fixed order, each positioned beneath the open palettes above it.
-//
-// The two zones are independent, so a left palette and a right palette can be
-// open simultaneously.
-type PaletteId =
-  | "annotationPanel"
-  | "filtersPanel"
-  | "analysisPanel"
-  | "snapshotPanel"
-  | "settingsPanel"
-  | "navigatorPanel"
-  | "toolsPanel"
-  | "layersPanel";
-
-type PaletteZone = "left" | "right";
-
-interface PaletteRole {
-  role: "primary" | "companion";
-  zone: PaletteZone;
-  // Primaries a companion may share the column with. A companion evicts any
-  // primary NOT listed here.
-  hosts?: PaletteId[];
-}
-
-const paletteOpen: Record<PaletteId, Ref<boolean>> = {
+// Which palettes exist, which edge each lives on and how they evict each other
+// are defined in `@/utils/panelRegistry`; App.vue only owns the open/closed
+// refs, because the template and the stacking observers below bind to them.
+const paletteOpen: Record<PanelId, Ref<boolean>> = {
   annotationPanel,
   filtersPanel,
   analysisPanel,
@@ -858,58 +888,18 @@ const paletteOpen: Record<PaletteId, Ref<boolean>> = {
   layersPanel,
 };
 
-const paletteRoles: Record<PaletteId, PaletteRole> = {
-  annotationPanel: { role: "primary", zone: "right" },
-  analysisPanel: { role: "primary", zone: "right" },
-  snapshotPanel: { role: "primary", zone: "right" },
-  settingsPanel: { role: "primary", zone: "right" },
-  // Filters hosts alongside both the Object Browser and the Analysis panel:
-  // the Analysis panel's own guidance above the cap is "narrow the filters",
-  // which would be self-defeating if opening Filters closed it.
-  filtersPanel: {
-    role: "companion",
-    zone: "right",
-    hosts: ["annotationPanel", "analysisPanel"],
-  },
-  navigatorPanel: { role: "primary", zone: "left" },
-  toolsPanel: { role: "primary", zone: "left" },
-  layersPanel: { role: "primary", zone: "left" },
-};
-
-const paletteIds = Object.keys(paletteRoles) as PaletteId[];
-
-function openPalette(id: PaletteId) {
-  const def = paletteRoles[id];
-  // Only the right zone has mutex/companion relationships; left-zone palettes
-  // stack independently and never evict each other.
-  if (def.zone === "right") {
-    for (const other of paletteIds) {
-      if (other === id || paletteRoles[other].zone !== "right") {
-        continue;
-      }
-      const otherDef = paletteRoles[other];
-      if (def.role === "primary") {
-        // A new primary clears every other primary, plus any companion that
-        // doesn't host with it.
-        if (
-          otherDef.role === "primary" ||
-          !(otherDef.hosts ?? []).includes(id)
-        ) {
-          paletteOpen[other].value = false;
-        }
-      } else if (
-        otherDef.role === "primary" &&
-        !(def.hosts ?? []).includes(other)
-      ) {
-        // A companion evicts any primary that isn't one of its hosts.
-        paletteOpen[other].value = false;
-      }
-    }
-  }
-  paletteOpen[id].value = true;
+function openPaletteSet(): Set<PanelId> {
+  return new Set(PANEL_IDS.filter((id) => paletteOpen[id].value));
 }
 
-function togglePalette(id: PaletteId) {
+function openPalette(id: PanelId) {
+  const next = applyOpen(openPaletteSet(), id);
+  for (const panelId of PANEL_IDS) {
+    paletteOpen[panelId].value = next.has(panelId);
+  }
+}
+
+function togglePalette(id: PanelId) {
   if (paletteOpen[id].value) {
     paletteOpen[id].value = false;
   } else {
@@ -923,7 +913,7 @@ function toggle3DView() {
 }
 
 function closeAllPalettes() {
-  for (const id of paletteIds) {
+  for (const id of PANEL_IDS) {
     paletteOpen[id].value = false;
   }
 }
@@ -968,7 +958,7 @@ function observePaletteHeight(
 }
 
 // Right zone: Filters stacks above whichever primary is hosting it. Both the
-// Object Browser and the Analysis panel host it (see paletteRoles), and the two
+// Object Browser and the Analysis panel host it (see `PANELS`), and the two
 // are mutually exclusive primaries, so at most one host is open at a time and
 // one shared offset covers both. Keyed on the host set rather than the Object
 // Browser alone: making Filters a companion of Analysis without this left the
@@ -1084,14 +1074,32 @@ function toggleHelpDialogUsingHotkey() {
   helpPanelIsOpen.value = !helpPanelIsOpen.value;
 }
 
-const appHotkeys: IHotkey = {
-  bind: "tab",
-  handler: toggleHelpDialogUsingHotkey,
-  data: {
-    section: "Global",
-    description: "Toggle help dialog",
+const appHotkeys: IHotkey[] = [
+  {
+    bind: "tab",
+    handler: toggleHelpDialogUsingHotkey,
+    data: {
+      section: "Global",
+      description: "Toggle help dialog",
+    },
   },
-};
+  {
+    bind: COMMAND_PALETTE_BINDING,
+    // Works from inside any text field too: Ctrl+K is the browser's own
+    // search-bar shortcut on Windows/Linux, so it must be claimed everywhere.
+    // (The palette's own field handles the key itself and stops it.)
+    allowInInputs: true,
+    // v-mousetrap calls handlers as (element, event).
+    handler: (_el: HTMLElement, event?: KeyboardEvent) => {
+      event?.preventDefault();
+      commandPaletteOpen.value = !commandPaletteOpen.value;
+    },
+    data: {
+      section: "Global",
+      description: "Command palette: search every command",
+    },
+  },
+];
 
 function fetchConfig() {
   axios
@@ -1190,11 +1198,7 @@ const filteredToursByCategory = computed(
         .toLowerCase()
         .includes(tourSearch.value.toLowerCase());
 
-      const isDatasetTour = tour.entryPoint === "datasetview";
-      const isDatasetView = routeName.value === "datasetview";
-      const isAllowedOnCurrentRoute = isDatasetView || !isDatasetTour;
-
-      return matchesSearch && isAllowedOnCurrentRoute;
+      return matchesSearch && isTourAvailableOnRoute(tour, routeName.value);
     });
 
     return filtered.reduce(
@@ -1248,6 +1252,112 @@ async function goToNewDataset() {
   }
 }
 
+// --- Command palette --------------------------------------------------------
+//
+// App.vue owns the palette refs and the app-bar actions, so it registers their
+// commands. Every app-bar control carries a `data-command-id` naming its
+// command; App.commands.test.ts fails if one names nothing registered.
+const viewerContext = useViewerContext(() => routeName.value);
+const { inViewer } = viewerContext;
+
+useCommandProvider(
+  panelCommands(viewerContext, {
+    isOpen: (id) => paletteOpen[id].value,
+    toggle: togglePalette,
+  }),
+);
+
+useCommandProvider(
+  tourCommands(
+    () => availableTours.value,
+    (tour) => isTourAvailableOnRoute(tour, routeName.value),
+    handleTourStart,
+  ),
+);
+
+useCommand(() => [
+  {
+    id: "nav.home",
+    title: "Go to home",
+    group: "Actions",
+    keywords: ["datasets", "start"],
+    icon: "mdi-home",
+    run: goHome,
+  },
+  {
+    id: "view.toggle3d",
+    title: is3DView.value ? "Switch to 2D view" : "Switch to 3D view",
+    group: "Actions",
+    keywords: ["volume", "3d", "2d", "render"],
+    icon: "mdi-cube-scan",
+    enabled: inViewer,
+    run: toggle3DView,
+  },
+  {
+    id: "data.upload",
+    title: "Upload a new dataset…",
+    group: "Actions",
+    keywords: ["import", "new", "dataset", "file"],
+    icon: "mdi-upload",
+    enabled: () => store.isLoggedIn && !!store.girderUser,
+    run: goToNewDataset,
+  },
+  {
+    id: "analysis.measure",
+    title: "Measure objects…",
+    group: "Actions",
+    description: "Configure and run property computations",
+    keywords: ["compute", "property", "area", "intensity"],
+    icon: "mdi-ruler-square",
+    enabled: inViewer,
+    run: () => {
+      analyzeDialogOpen.value = true;
+    },
+  },
+  {
+    id: "properties.colorBy",
+    title: "Color objects by property…",
+    group: "Actions",
+    keywords: ["colormap", "colour", "heatmap"],
+    icon: "mdi-palette",
+    enabled: inViewer,
+    run: () => {
+      colorByPropertyDialogOpen.value = true;
+    },
+  },
+  {
+    id: "help.hud",
+    title: "Show heads-up display",
+    group: "Help",
+    description: "Hotkeys and feature overview",
+    keywords: ["hotkeys", "shortcuts", "keyboard"],
+    icon: "mdi-view-dashboard-outline",
+    hotkey: boundHotkey("tab", "Toggle help dialog"),
+    run: () => {
+      helpPanelIsOpen.value = true;
+    },
+  },
+  {
+    id: "help.docs",
+    title: "Open documentation",
+    group: "Help",
+    keywords: ["docs", "manual", "help"],
+    icon: "mdi-book-open-variant",
+    run: () => {
+      window.open(DOCUMENTATION_URL, "_blank", "noopener");
+    },
+  },
+  {
+    id: "ai.togglePanel",
+    title: aiPanelOpen.value ? "Close Nimbus AI panel" : "Open Nimbus AI panel",
+    group: "Actions",
+    keywords: ["assistant", "claude", "chat", "agent"],
+    icon: "mdi-robot-outline",
+    enabled: () => canUseAiPanel.value,
+    run: toggleAiPanel,
+  },
+]);
+
 function annotationPanelChanged() {
   store.setIsAnnotationPanelOpen(annotationPanel.value);
 }
@@ -1256,10 +1366,13 @@ function datasetChanged() {
   if (routeName.value !== "datasetview") {
     closeAllPalettes();
   } else {
-    // Left palettes (Navigator / Tools / Layers) open by default on each entry.
-    navigatorPanel.value = true;
-    toolsPanel.value = true;
-    layersPanel.value = true;
+    // Each palette marked `defaultOpen` in the registry (the left stack) opens
+    // on every entry.
+    for (const panel of PANELS) {
+      if (panel.defaultOpen) {
+        paletteOpen[panel.id].value = true;
+      }
+    }
   }
 }
 
@@ -1372,6 +1485,7 @@ defineExpose({
   canUseAiPanel,
   isUploadLoading,
   helpPanelIsOpen,
+  commandPaletteOpen,
   appHotkeys,
   routeName,
   activeFilterCount,

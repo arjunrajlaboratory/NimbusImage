@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { shallowMount } from "@vue/test-utils";
+import { enableAutoUnmount, shallowMount } from "@vue/test-utils";
 
 // ---- Hoisted mocks ----
 
@@ -214,6 +214,13 @@ import { logError } from "@/utils/log";
 import progress from "@/store/progress";
 import girderResources from "@/store/girderResources";
 import Snapshots from "./Snapshots.vue";
+import { snapshotLoadRequest } from "@/commands/requests";
+import type { ISnapshot } from "@/store/model";
+import { flushPromises } from "@vue/test-utils";
+
+// Snapshots watches a module-level load request, so a mount left over from an
+// earlier test would answer this test's request instead.
+enableAutoUnmount(afterEach);
 import {
   TScalebarUnit,
   PixelSizeMode,
@@ -265,8 +272,6 @@ describe("Snapshots.vue", () => {
   let wrapper: ReturnType<typeof mountComponent>;
 
   afterEach(() => {
-    if (wrapper) {
-    }
     vi.clearAllMocks();
   });
 
@@ -1190,6 +1195,15 @@ describe("Snapshots.vue", () => {
       expect(store.setDatasetViewId).toHaveBeenCalledWith({
         id: "differentView",
       });
+    });
+
+    it("loads a snapshot requested from the command palette, then clears it", async () => {
+      const snapshot = makeSnapshot();
+      snapshotLoadRequest.value = snapshot as ISnapshot;
+      await flushPromises();
+      expect(snapshotLoadRequest.value).toBeNull();
+      expect(store.setXY).toHaveBeenCalledWith(2);
+      expect((wrapper.vm as any).newName).toBe("Test Snapshot");
     });
 
     it("loadSnapshot does not call setDatasetViewId when same view", async () => {

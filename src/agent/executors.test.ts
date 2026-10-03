@@ -521,6 +521,18 @@ describe("executeAgentTool", () => {
     expect(Number.isInteger(result.nextOffset)).toBe(true);
   });
 
+  it("reports each tool's pin so the model can answer which are pinned", async () => {
+    mockMain.tools = [
+      { id: "t1", name: "Nuclei", type: "create", pinned: true, values: {} },
+      { id: "t2", name: "Spots", type: "create", values: {} },
+    ] as any;
+    const { result } = await executeAgentTool("list_tools", {}, context);
+    expect((result as any).tools.map((t: any) => [t.id, t.pinned])).toEqual([
+      ["t1", true],
+      ["t2", false],
+    ]);
+  });
+
   it("routes contrast to the personal view, other fields to the config", async () => {
     const layer = {
       id: "l1",

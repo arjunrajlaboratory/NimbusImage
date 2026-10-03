@@ -1,0 +1,33 @@
+name: Lint and test Claude chat plugin
+
+on:
+  push:
+    paths:
+      - devops/girder/plugins/girder-claude-chat/**
+      - .github/workflows/claude-chat.yaml
+
+# A newer push to the same branch supersedes a running check; master keeps
+# every run so each merge has a result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  all:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # The same repo-wide flake8 backend.yaml runs on devops/girder/;
+      # tox's lint env below adds the plugin's stricter checks.
+      - name: flake8 Lint
+        uses: py-actions/flake8@v2
+        with:
+          path: devops/girder/plugins/girder-claude-chat/
+      - name: Test Claude chat plugin
+        run: pip install tox && cd devops/girder/plugins/girder-claude-chat && tox

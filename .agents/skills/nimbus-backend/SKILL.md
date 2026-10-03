@@ -176,6 +176,15 @@ assign it in `__init__`:
 self._pvModel = AnnotationPropertyValues()  # cheap: cached singleton
 ```
 
+**Exception: anything evaluated once at import.** A decorator's
+`__init__`, a module-level global or a class attribute runs once, at
+import, and keeps that instance forever. In production that's harmless,
+but the test suite resets every singleton between tests, so the cached
+instance goes stale: `@recordable` used to hold the first test's
+`HistoryModel()` and only worked because of a quadratic setup leak (see
+`codebaseDocumentation/BACKEND_CI_PERFORMANCE.md`). In import-time code,
+call `Model()` at the point of use instead.
+
 ### Class Constants and Aggregation Readability
 
 - Put class-level constants (allowed-field sets, collection names,
@@ -542,6 +551,14 @@ The frontend subscribes to job SSE events via `src/store/jobs.ts`. Log entries c
 For detailed testing patterns beyond basics: read `references/testing-patterns.md`
 
 Testing basics (running tox, test structure, linting): see `CLAUDE.md`
+
+`test/conftest.py` has an autouse fixture that drops model singletons and
+event handlers left over from earlier tests before each test's `db`
+setup. Without it, setup re-indexes every model ever created and the
+suite slows quadratically (it had reached 75–98 minutes in CI). Don't
+remove it. A test that passes alone but fails in the full run with
+`Cannot use MongoClient after close` is using a stale model reference
+(a cached `Model()` or an event handler bound to an old instance).
 
 ## Codebase Documentation References
 

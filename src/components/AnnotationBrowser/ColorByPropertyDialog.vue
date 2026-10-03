@@ -166,6 +166,7 @@ import { cssLinearGradient } from "@/utils/colors";
 import { extractErrorMessage } from "@/utils/errors";
 import { createPathStringFromPathArray } from "@/utils/paths";
 import { logError } from "@/utils/log";
+import { colorByPropertyRequest } from "@/commands/requests";
 
 type TColorByMode = "auto" | "continuous" | "categorical";
 
@@ -267,6 +268,18 @@ function gradientStyle(name: string) {
   }
   return { background: cssLinearGradient(stops, "to right") };
 }
+
+// "Color by: <property>" from the command palette pre-selects its property,
+// whether the dialog opens with the request or is already open.
+watch([showDialog, colorByPropertyRequest], ([open, request]) => {
+  if (!open || request === null) {
+    return;
+  }
+  if (pathByKey.value.has(request)) {
+    selectedPathKey.value = request;
+  }
+  colorByPropertyRequest.value = null;
+});
 
 // The colormap catalog comes from the backend (single source of truth for
 // the gradients); fetch it once, the first time the dialog opens.
