@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import os
+from importlib.metadata import PackageNotFoundError, version
 
 import girder_client
 import requests
@@ -38,6 +39,19 @@ _RETRY_SUPPORTS_JITTER = (
 )
 
 
+try:
+    _VERSION = version("nimbusimage")
+except PackageNotFoundError:  # running from a source tree without install
+    _VERSION = "0+unknown"
+
+# Identifies this client to the deployment. The production load balancer
+# (AWSDeploy, doc/Worker_Rate_Limiting.md) rate-limits worker-compute
+# submissions from this User-Agent only, so it must stay a
+# "nimbusimage-python/" prefix. girder_client's default would otherwise be
+# requests' generic "python-requests/<version>".
+USER_AGENT = f"nimbusimage-python/{_VERSION}"
+
+
 def _build_retry_session() -> requests.Session:
     """Build a requests.Session that retries transient 5xx with backoff."""
     retry_kwargs = dict(
@@ -52,6 +66,7 @@ def _build_retry_session() -> requests.Session:
     retry = Retry(**retry_kwargs)
     adapter = HTTPAdapter(max_retries=retry)
     session = requests.Session()
+    session.headers["User-Agent"] = USER_AGENT
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session

@@ -111,11 +111,17 @@ const coverage = computed(() =>
   }),
 );
 
+// The palettes that hold a constraint's controls.
+type TConstraintPalette = Extract<
+  TRequestablePalette,
+  "analysisPanel" | "filtersPanel" | "annotationPanel"
+>;
+
 // Which palettes own the active constraints, Analysis first: it is a primary
 // palette, and Filters is a companion that hosts alongside it — opening them
 // the other way round would close the one just opened.
-const constraintPalettes = computed<TRequestablePalette[]>(() => {
-  const palettes: TRequestablePalette[] = [];
+const constraintPalettes = computed<TConstraintPalette[]>(() => {
+  const palettes: TConstraintPalette[] = [];
   if (
     constraints.value.some((constraint) => constraint.source === "analysis")
   ) {
@@ -123,7 +129,7 @@ const constraintPalettes = computed<TRequestablePalette[]>(() => {
   }
   // The track filter lives in the Object Browser's Connections tab — but the
   // Object Browser and Analysis are mutually-evicting right-zone primaries
-  // (App.vue paletteRoles), so requesting both would open Analysis and then
+  // (see PANELS in @/utils/panelRegistry), so requesting both would open Analysis and then
   // immediately evict it. When both constraint sources are active, Analysis
   // wins the click; the tooltip derives from this list, so it names only what
   // actually opens. (PR #1340 Codex P2.)
@@ -138,7 +144,7 @@ const constraintPalettes = computed<TRequestablePalette[]>(() => {
   return palettes;
 });
 
-const PALETTE_NAMES: Record<TRequestablePalette, string> = {
+const PALETTE_NAMES: Record<TConstraintPalette, string> = {
   analysisPanel: "Analysis",
   filtersPanel: "Filters",
   annotationPanel: "the Object Browser",

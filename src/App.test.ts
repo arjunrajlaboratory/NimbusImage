@@ -290,11 +290,25 @@ describe("App", () => {
   });
 
   // -- appHotkeys --
-  it("appHotkeys binds to tab key", () => {
+  it("appHotkeys binds the help overlay to tab", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.appHotkeys.bind).toBe("tab");
-    expect(typeof vm.appHotkeys.handler).toBe("function");
+    const tab = vm.appHotkeys.find((hotkey: any) => hotkey.bind === "tab");
+    expect(typeof tab.handler).toBe("function");
+  });
+
+  it("appHotkeys toggles the command palette on mod+k and claims the key", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    const hotkey = vm.appHotkeys.find((h: any) => h.bind === "mod+k");
+    // Listed in the Tab help overlay.
+    expect(hotkey.data.section).toBe("Global");
+    const event = { preventDefault: vi.fn() };
+    hotkey.handler(document.body, event);
+    expect(vm.commandPaletteOpen).toBe(true);
+    expect(event.preventDefault).toHaveBeenCalled();
+    hotkey.handler(document.body, event);
+    expect(vm.commandPaletteOpen).toBe(false);
   });
 
   // -- Computed: hasUncomputedProperties --

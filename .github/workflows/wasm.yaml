@@ -5,6 +5,12 @@ on:
     paths:
       - itk/**
 
+# A newer push to the same branch supersedes a running check; master keeps
+# every run so each merge has a result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
 jobs:
   all:
     runs-on: ubuntu-latest

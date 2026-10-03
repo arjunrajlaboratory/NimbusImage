@@ -701,6 +701,8 @@ import {
   getBaseURLFromDownloadParameters,
 } from "@/utils/screenshot";
 import { logError } from "@/utils/log";
+import { snapshotLoadRequest } from "@/commands/requests";
+import { snapshotKey } from "@/utils/snapshotKey";
 
 interface ISnapshotItem {
   name: string;
@@ -708,10 +710,6 @@ interface ISnapshotItem {
   key: string;
   record: ISnapshot;
   modified: string;
-}
-
-function snapshotKey(snapshot: ISnapshot) {
-  return `${snapshot.datasetViewId}:${snapshot.name}`;
 }
 
 interface IGifOptions extends GIF.Options {
@@ -1673,7 +1671,12 @@ function overwriteConfigurationLayers() {
 }
 
 async function loadSnapshot(_event: Event, { item }: { item: ISnapshotItem }) {
-  const snapshot = item.record;
+  await applySnapshot(item.record);
+}
+
+// Restore a snapshot's view: dataset view, layers, location and viewport.
+// Called for a row click and for a command-palette request.
+async function applySnapshot(snapshot: ISnapshot) {
   if (
     snapshot.datasetViewId &&
     snapshot.datasetViewId !== store.datasetView?.id
@@ -2984,6 +2987,20 @@ function drawScalebarOnCanvas(
 }
 
 // --- Watchers ---
+
+// "Go to snapshot: …" from the command palette: load it exactly as clicking
+// its row does. Cleared once taken, so asking twice is still a change.
+watch(snapshotLoadRequest, (snapshot) => {
+  if (!snapshot) {
+    return;
+  }
+  snapshotLoadRequest.value = null;
+  // A row click's rejection is caught by Vue's event-handler wrapper; a
+  // watcher callback has no such cover.
+  applySnapshot(snapshot).catch((error) => {
+    logError("Failed to load the snapshot from the command palette", error);
+  });
+});
 
 watch(
   () => props.snapshotVisible,

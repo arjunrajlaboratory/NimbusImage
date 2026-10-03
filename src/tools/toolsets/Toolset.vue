@@ -12,6 +12,7 @@
                 size="small"
                 v-bind="mergeProps(dialogProps, tooltipProps)"
                 :data-tour="TOUR_ANCHORS.addTool"
+                data-command-id="tools.browse"
                 v-tour-trigger="TOUR_TRIGGERS.addTool"
                 :disabled="!isLoggedIn"
               >
@@ -33,6 +34,7 @@
             class="tool-suggestions-ai-btn"
             :class="{ 'tool-suggestions-glow': toolSuggestionsGlow }"
             aria-label="Suggest tools with AI"
+            data-command-id="tools.suggest"
             :disabled="!isLoggedIn || toolSuggestionsLoading"
             :loading="toolSuggestionsLoading"
             @click="openToolSuggestions"
@@ -50,6 +52,7 @@
             color="primary"
             size="small"
             aria-label="Pipelines"
+            data-command-id="tools.pipelines"
             :disabled="!isLoggedIn"
             @click="openPipelines"
           >
@@ -59,58 +62,63 @@
         </template>
       </v-tooltip>
     </div>
-    <!-- List toolset tools, grouped by behavior: canvas tools you use directly
-         on the image vs. worker tools that open a configuration panel. -->
+    <!-- List toolset tools in sections: pinned tools first, then canvas tools
+         you use directly on the image, then worker tools that open a
+         configuration panel. Each section reorders by dragging a tool's grip;
+         sections are separate sortables, so a tool can't be dropped into
+         another section. -->
     <v-list v-if="toolGroups.length" density="compact" class="tight-list">
-      <template v-for="group in toolGroups" :key="group.label">
+      <template v-for="group in toolGroups" :key="group.key">
         <v-list-subheader class="tool-group-header">
           {{ group.label }}
         </v-list-subheader>
-        <v-tooltip
-          v-for="tool in group.tools"
-          :key="tool.id"
-          location="end"
-          transition="none"
-          z-index="100"
+        <draggable
+          :model-value="group.tools"
+          item-key="id"
+          handle=".tool-item__drag-handle"
+          :animation="150"
+          :disabled="!isLoggedIn"
+          :data-tool-group="group.key"
+          @update:model-value="onToolSectionReordered"
         >
-          <template v-slot:activator="{ props: activatorProps }">
-            <!-- SAM tools expose their options in an inline panel -->
-            <template v-if="tool.type === 'samAnnotation'">
-              <div>
-                <tool-item
-                  :tool="tool"
-                  :disabled="!isLoggedIn"
-                  v-bind="activatorProps"
-                />
-                <template v-if="selectedTool && selectedTool.id === tool.id">
-                  <sam-tool-menu :toolConfiguration="tool" />
+          <template #item="{ element: tool }">
+            <div>
+              <v-tooltip location="end" transition="none" z-index="100">
+                <template v-slot:activator="{ props: activatorProps }">
+                  <tool-item
+                    :tool="tool"
+                    :disabled="!isLoggedIn"
+                    v-bind="activatorProps"
+                  />
                 </template>
-              </div>
-            </template>
-            <!-- The unified "Segment similar objects" tool exposes its
-                 options in the bottom-right ObjectSegmentationPanel (mounted
-                 by ImageViewer), so here it renders as a plain tool-item. -->
-            <template v-else>
-              <tool-item
-                :tool="tool"
-                :disabled="!isLoggedIn"
-                v-bind="activatorProps"
+                <div class="d-flex flex-column">
+                  <div style="margin: 5px">
+                    <div
+                      v-for="(
+                        propEntry, forKey
+                      ) in getToolPropertiesDescription(tool)"
+                      :key="forKey"
+                    >
+                      {{ propEntry[0] }}: {{ propEntry[1] }}
+                    </div>
+                  </div>
+                </div>
+              </v-tooltip>
+              <!-- SAM tools expose their options in an inline panel. The
+                   unified "Segment similar objects" tool exposes its options
+                   in the bottom-right ObjectSegmentationPanel (mounted by
+                   ImageViewer) instead. -->
+              <sam-tool-menu
+                v-if="
+                  tool.type === 'samAnnotation' &&
+                  selectedTool &&
+                  selectedTool.id === tool.id
+                "
+                :toolConfiguration="tool"
               />
-            </template>
-          </template>
-          <div class="d-flex flex-column">
-            <div style="margin: 5px">
-              <div
-                v-for="(propEntry, forKey) in getToolPropertiesDescription(
-                  tool,
-                )"
-                :key="forKey"
-              >
-                {{ propEntry[0] }}: {{ propEntry[1] }}
-              </div>
             </div>
-          </div>
-        </v-tooltip>
+          </template>
+        </draggable>
       </template>
       <circle-to-dot-menu
         :tool="selectedTool"
@@ -127,13 +135,15 @@
 
     <!-- Worker tools open their configuration in a centered, scrim-less dialog
          so the image (and any worker preview overlays) stay visible behind it.
-         A single dialog tracks whichever worker tool is currently selected. -->
+         A single dialog tracks whichever worker tool is currently selected.
+         Clicking anywhere outside it (or pressing Escape) closes it, except
+         for the outside interactions onWorkerDialogClickOutside vetoes. -->
     <v-dialog
       :model-value="!!selectedWorkerTool"
       :scrim="false"
-      persistent
       width="680"
       class="worker-dialog"
+      @click:outside="onWorkerDialogClickOutside"
       @update:model-value="onWorkerDialogToggle"
     >
       <annotation-worker-menu
@@ -175,15 +185,18 @@ import CircleToDotMenu from "@/components/CircleToDotMenu.vue";
 import ToolCreation from "@/tools/creation/ToolCreation.vue";
 import ToolTypeSelection from "@/tools/creation/ToolTypeSelection.vue";
 import ToolItem from "./ToolItem.vue";
+import draggable from "vuedraggable";
+import {
+  groupTools,
+  reorderSection,
+  WORKER_TOOL_TYPE,
+} from "@/utils/toolOrder";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import toolSuggestionsStore from "@/store/toolSuggestions";
+import { useCommand } from "@/commands/registry";
+import { toolCreationRequest } from "@/commands/requests";
 
 // Lists tools from a toolset, allows selecting a tool from the list, and adding new tools
-
-// Worker tools (type "segmentation") open a configuration dialog; everything
-// else is used directly on the canvas. Group them so the distinction is
-// obvious — see the two-section list and the worker dialog in the template.
-const WORKER_TOOL_TYPE = "segmentation";
 
 const selectedToolId = computed({
   get: () => store.selectedTool?.configuration.id || null,
@@ -200,24 +213,17 @@ const selectedTool = computed<IToolConfiguration | null>(
   () => store.selectedTool?.configuration ?? null,
 );
 
-const toolGroups = computed(() => {
-  const canvasTools: IToolConfiguration[] = [];
-  const workerTools: IToolConfiguration[] = [];
-  for (const tool of toolsetTools.value) {
-    if (!tool) {
-      continue;
-    }
-    (tool.type === WORKER_TOOL_TYPE ? workerTools : canvasTools).push(tool);
+const toolGroups = computed(() => groupTools(toolsetTools.value));
+
+function onToolSectionReordered(sectionTools: IToolConfiguration[]) {
+  const toolOrder = reorderSection(
+    toolsetTools.value.filter(Boolean).map(({ id }) => id),
+    sectionTools.map(({ id }) => id),
+  );
+  if (toolOrder) {
+    store.setToolOrder(toolOrder);
   }
-  const groups: { label: string; tools: IToolConfiguration[] }[] = [];
-  if (canvasTools.length) {
-    groups.push({ label: "Annotation tools", tools: canvasTools });
-  }
-  if (workerTools.length) {
-    groups.push({ label: "Analysis tools", tools: workerTools });
-  }
-  return groups;
-});
+}
 
 // The single worker dialog tracks whichever worker tool is selected (if any).
 const selectedWorkerTool = computed<IToolConfiguration | null>(() =>
@@ -256,6 +262,59 @@ function handleToolTypeSelected(toolType: any) {
   toolTypeDialogOpen.value = false;
   toolCreationDialogOpen.value = true;
 }
+
+// "Add tool: …" from the command palette: open tool creation pre-selected,
+// exactly as picking that card in the tool-type dialog does. Cleared once
+// honoured, so asking for the same tool twice is still a change.
+watch(
+  toolCreationRequest,
+  (request) => {
+    if (!request) {
+      return;
+    }
+    toolCreationRequest.value = null;
+    if (!isLoggedIn.value) {
+      return;
+    }
+    handleToolTypeSelected(request);
+  },
+  { immediate: true },
+);
+
+useCommand(() => [
+  {
+    id: "tools.browse",
+    title: "Add new tool…",
+    group: "Add tool",
+    description: "Browse every tool type",
+    keywords: ["create", "catalog", "types"],
+    icon: "mdi-plus-box-outline",
+    enabled: () => isLoggedIn.value,
+    run: () => {
+      store.requestPaletteOpen(["toolsPanel"]);
+      toolTypeDialogOpen.value = true;
+    },
+  },
+  {
+    id: "tools.suggest",
+    title: "Suggest tools with AI",
+    group: "Actions",
+    keywords: ["recommend", "ai", "claude", "auto"],
+    icon: "mdi-lightbulb-on-outline",
+    enabled: () => isLoggedIn.value && !toolSuggestionsLoading.value,
+    run: openToolSuggestions,
+  },
+  {
+    id: "tools.pipelines",
+    title: "Open pipelines…",
+    group: "Actions",
+    description: "Chain worker steps and run them in sequence",
+    keywords: ["workflow", "batch", "chain", "steps"],
+    icon: "mdi-sitemap",
+    enabled: () => isLoggedIn.value,
+    run: openPipelines,
+  },
+]);
 
 function openToolSuggestions() {
   stopToolSuggestionsGlow();
@@ -328,8 +387,63 @@ function getToolPropertiesDescription(tool: IToolConfiguration): string[][] {
   return propDesc;
 }
 
+// The worker dialog closes on a click outside it, but two outside
+// interactions must not close it:
+//  - dragging (panning) the image behind the scrim-less dialog, and
+//  - clicking another worker tool in the list. Vuetify runs its close in a
+//    setTimeout, i.e. *after* that click has already selected the new tool,
+//    so an unguarded close would deselect the tool the user just picked.
+// Snapshot the pointer position and selected tool at pointerdown; the
+// click:outside handler then vetoes the close Vuetify emits right after it.
+// Escape emits no click:outside, so it always closes.
+const WORKER_DIALOG_CLICK_TOLERANCE_PX = 5;
+let workerDialogPointerDown: {
+  x: number;
+  y: number;
+  toolId: string | null;
+} | null = null;
+let isWorkerDialogCloseVetoed = false;
+
+function recordWorkerDialogPointerDown(event: PointerEvent) {
+  workerDialogPointerDown = {
+    x: event.clientX,
+    y: event.clientY,
+    toolId: selectedToolId.value,
+  };
+}
+
+watch(
+  () => !!selectedWorkerTool.value,
+  (isOpen, _wasOpen, onCleanup) => {
+    if (!isOpen) {
+      return;
+    }
+    window.addEventListener("pointerdown", recordWorkerDialogPointerDown, true);
+    onCleanup(() => {
+      window.removeEventListener(
+        "pointerdown",
+        recordWorkerDialogPointerDown,
+        true,
+      );
+      workerDialogPointerDown = null;
+    });
+  },
+  { immediate: true },
+);
+
+function onWorkerDialogClickOutside(event: MouseEvent) {
+  const pointerDown = workerDialogPointerDown;
+  isWorkerDialogCloseVetoed =
+    !pointerDown ||
+    pointerDown.toolId !== selectedToolId.value ||
+    Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) >
+      WORKER_DIALOG_CLICK_TOLERANCE_PX;
+}
+
 function onWorkerDialogToggle(open: boolean) {
-  if (!open) {
+  const isVetoed = isWorkerDialogCloseVetoed;
+  isWorkerDialogCloseVetoed = false;
+  if (!open && !isVetoed) {
     store.setSelectedToolId(null);
   }
 }
@@ -347,7 +461,9 @@ defineExpose({
   tools,
   toolsetTools,
   toolGroups,
+  onToolSectionReordered,
   selectedWorkerTool,
+  onWorkerDialogClickOutside,
   configuration,
   selectedTool,
   isLoggedIn,

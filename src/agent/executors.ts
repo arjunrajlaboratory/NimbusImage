@@ -1419,6 +1419,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
           type: tool.type,
           description: tool.template?.description ?? null,
           workerImage: tool.values?.image?.image ?? null,
+          pinned: !!tool.pinned,
         })),
       },
     }),
