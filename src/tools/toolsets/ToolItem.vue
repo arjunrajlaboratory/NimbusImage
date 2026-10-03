@@ -94,7 +94,6 @@ const props = defineProps<{
 
 const isHovering = ref(false);
 const editDialog = ref(false);
-const statusIcon = ref<string | null>(null);
 
 function togglePinned() {
   store.setToolPinned({ toolId: props.tool.id, pinned: !props.tool.pinned });
@@ -120,18 +119,25 @@ const jobId = computed((): string | null => {
   return jobs.jobIdForToolId[props.tool.id] ?? null;
 });
 
+const statusIcon = computed((): string | null => {
+  const success = jobs.toolJobOutcomes[props.tool.id];
+  if (success === undefined) {
+    return null;
+  }
+  return success ? "mdi-check" : "mdi-close";
+});
+
 function onJobChanged() {
   if (!jobId.value) {
     return;
   }
+  const toolId = props.tool.id;
   // Undefined if the job already settled (the jobs store drops finished
   // entries), in which case there is no outcome left to show an icon for.
+  // The outcome goes to the store so it survives this item remounting.
   jobs
     .getPromiseForJobId(jobId.value)
-    ?.then(
-      (success: boolean) =>
-        (statusIcon.value = success ? "mdi-check" : "mdi-close"),
-    );
+    ?.then((success: boolean) => jobs.setToolJobOutcome({ toolId, success }));
 }
 
 watch(jobId, onJobChanged);

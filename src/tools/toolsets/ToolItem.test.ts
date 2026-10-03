@@ -11,12 +11,22 @@ vi.mock("@/store", () => ({
   },
 }));
 
-vi.mock("@/store/jobs", () => ({
-  default: {
+// Reactive, and setToolJobOutcome replaces the map like the real mutation,
+// so the statusIcon computed re-evaluates.
+vi.mock("@/store/jobs", async () => {
+  const { reactive } = await import("vue");
+  const jobs: any = reactive({
     jobIdForToolId: {} as Record<string, string>,
+    toolJobOutcomes: {} as Record<string, boolean>,
     getPromiseForJobId: vi.fn(),
-  },
-}));
+    setToolJobOutcome: vi.fn(
+      ({ toolId, success }: { toolId: string; success: boolean }) => {
+        jobs.toolJobOutcomes = { ...jobs.toolJobOutcomes, [toolId]: success };
+      },
+    ),
+  });
+  return { default: jobs };
+});
 
 import store from "@/store";
 import jobs from "@/store/jobs";
@@ -51,6 +61,7 @@ describe("ToolItem", () => {
     vi.clearAllMocks();
     (store as any).selectedTool = null;
     (jobs as any).jobIdForToolId = {};
+    (jobs as any).toolJobOutcomes = {};
   });
 
   it("isToolSelected is false when no tool is selected", () => {
@@ -119,6 +130,21 @@ describe("ToolItem", () => {
     await vi.waitFor(() => {
       expect((wrapper.vm as any).statusIcon).toBe("mdi-close");
     });
+  });
+
+  it("keeps the job status icon when the item remounts (e.g. after pinning)", async () => {
+    (jobs as any).jobIdForToolId = { "tool-1": "job-789" };
+    (jobs.getPromiseForJobId as any).mockResolvedValue(true);
+    const first = mountComponent();
+    (first.vm as any).onJobChanged();
+    await vi.waitFor(() => {
+      expect((first.vm as any).statusIcon).toBe("mdi-check");
+    });
+    first.unmount();
+
+    (jobs as any).jobIdForToolId = {};
+    const remounted = mountComponent();
+    expect((remounted.vm as any).statusIcon).toBe("mdi-check");
   });
 
   it("the pin button pins an unpinned tool without toggling it", async () => {

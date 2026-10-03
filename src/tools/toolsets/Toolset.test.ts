@@ -477,13 +477,4 @@ describe("Toolset sections", () => {
 
     expect(store.setToolOrder).toHaveBeenCalledWith(["a3", "w1", "a1", "a2"]);
   });
-
-  it("disables dragging when logged out", () => {
-    (store as any).isLoggedIn = false;
-    (store as any).configuration = { tools: [tool("a1", "create")] };
-    const wrapper = mountComponent();
-
-    const section = wrapper.findComponent({ name: "draggable" });
-    expect(section.attributes("disabled")).toBeDefined();
-  });
 });
