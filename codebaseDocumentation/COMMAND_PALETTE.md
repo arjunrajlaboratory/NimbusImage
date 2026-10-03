@@ -314,6 +314,7 @@ Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components
 - [ ] **Enter that confirms an IME composition runs nothing.** — *"ignores Enter that confirms an IME composition"*
 - [ ] **Only real pointer movement moves the highlight**; a list scrolling under a resting pointer doesn't. — *"moves the highlight on real pointer movement only"*
 - [ ] **Hotkey hints render the plus key and sequences** instead of throwing in the row render. — *"keeps the plus key instead of throwing on it"*, *"keeps the steps of a sequence apart"*
+- [ ] **Import from JSON needs a login in the menu and the palette alike**, through one shared rule (Codex P2 on #1365). — *"offers Import only to logged-in users, in the menu and the palette alike"*
 - [ ] **Data dialogs mount closed, then open.** Their on-open work (CSV preview, dimension labels) is a non-immediate watcher, which a dialog created already open never fires. — _"opens each dialog after mounting it, so its on-open watcher fires the first time"_
 - [ ] **The data dialogs render no activator of their own.** An empty `#activator` template rendered each dialog's fallback "Export CSV"-style button into the app bar once it mounted. — *"its dialogs render no activator of their own"*
 - [ ] **Same-named layers show their own hotkey**, read by position, not looked up by name. — _"gives same-named layers their own key, not the first one's"_

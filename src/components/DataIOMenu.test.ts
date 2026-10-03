@@ -4,7 +4,10 @@ import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { readFileSync } from "fs";
 import { join } from "path";
 
-vi.mock("@/store", () => ({ default: { isLoggedIn: true } }));
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  return { default: reactive({ isLoggedIn: true }) };
+});
 vi.mock("@/store/properties", () => ({
   default: { computedPropertyPaths: [] },
 }));
@@ -55,6 +58,7 @@ vi.mock("@/components/AnnotationBrowser/IndexConversionDialog.vue", () => ({
 }));
 
 import DataIOMenu from "./DataIOMenu.vue";
+import store from "@/store";
 import { allCommands } from "@/commands/registry";
 
 enableAutoUnmount(afterEach);
@@ -123,5 +127,25 @@ describe("DataIOMenu", () => {
     }
     const menu = readFileSync(join(__dirname, "DataIOMenu.vue"), "utf8");
     expect(menu).not.toMatch(/<template #activator \/>/);
+  });
+
+  it("offers Import only to logged-in users, in the menu and the palette alike", async () => {
+    (store as any).isLoggedIn = false;
+    const wrapper = mount(DataIOMenu, { attachTo: document.body });
+    await wrapper.find("button").trigger("click");
+    await flushPromises();
+    const item = (id: string) =>
+      document.querySelector(`[data-command-id="${id}"]`);
+    expect(item("data.import.json")?.classList).toContain(
+      "v-list-item--disabled",
+    );
+    expect(item("data.export.json")?.classList).not.toContain(
+      "v-list-item--disabled",
+    );
+    const command = (id: string) => allCommands.value.find((c) => c.id === id)!;
+    expect(command("data.import.json").enabled!()).toBe(false);
+    expect(command("data.export.json").enabled!()).toBe(true);
+    (store as any).isLoggedIn = true;
+    expect(command("data.import.json").enabled!()).toBe(true);
   });
 });

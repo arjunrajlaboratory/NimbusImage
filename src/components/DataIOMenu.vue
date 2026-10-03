@@ -28,6 +28,7 @@
             :prepend-icon="entry.icon"
             :title="entry.menuTitle"
             :data-command-id="entry.commandId"
+            :disabled="!isEntryAvailable(entry)"
             @click="openDataDialog(entry.id)"
           />
         </v-list>
@@ -150,6 +151,14 @@ async function openDataDialog(id: TDataDialog) {
   openDialogs[id] = true;
 }
 
+// One rule for the menu item and its palette command. Import writes, so it
+// needs a login; the export dialogs work for anonymous viewers of a public
+// dataset. (The backend enforces this either way; this only avoids offering
+// an action that can only fail.)
+function isEntryAvailable(entry: (typeof DATA_DIALOGS)[number]) {
+  return !entry.requiresLogin || store.isLoggedIn;
+}
+
 // DataIOMenu is only mounted in the dataset view, so its commands exist only
 // there.
 useCommand(
@@ -159,7 +168,7 @@ useCommand(
     group: "Actions" as const,
     keywords: entry.keywords,
     icon: entry.icon,
-    enabled: entry.requiresLogin ? () => store.isLoggedIn : undefined,
+    enabled: () => isEntryAvailable(entry),
     run: () => openDataDialog(entry.id),
   })),
 );
