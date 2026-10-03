@@ -553,6 +553,7 @@ describe("MultiSourceConfiguration", () => {
     it("returns true for single ND2 file with nd2_frame_metadata", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
+      vm.girderItems = makeSetCItems();
       vm.tilesInternalMetadata = [stageMeta(0, 0)];
       vm.tilesMetadata = [makeBasicTileMeta()];
       expect(vm.canDoCompositing).toBe(true);
@@ -561,6 +562,7 @@ describe("MultiSourceConfiguration", () => {
     it("returns false for several files until XY distinguishes them", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
+      vm.girderItems = makeSetDItems();
       vm.tilesInternalMetadata = [stageMeta(0, 0), stageMeta(100, 0)];
       vm.tilesMetadata = [makeBasicTileMeta(), makeBasicTileMeta()];
       vm.assignments.XY = null;
@@ -570,6 +572,7 @@ describe("MultiSourceConfiguration", () => {
     it("returns true for single-position files once XY is assigned", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
+      vm.girderItems = makeSetDItems();
       vm.tilesInternalMetadata = [stageMeta(0, 0), stageMeta(100, 0)];
       vm.tilesMetadata = [makeBasicTileMeta(), makeBasicTileMeta()];
       vm.assignments.XY = xyAssignmentOfSize(2);
@@ -579,6 +582,7 @@ describe("MultiSourceConfiguration", () => {
     it("returns false for several files when the tile geometry differs", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
+      vm.girderItems = makeSetDItems();
       vm.tilesInternalMetadata = [stageMeta(0, 0), stageMeta(100, 0)];
       vm.assignments.XY = xyAssignmentOfSize(2);
       vm.tilesMetadata = [
@@ -596,6 +600,7 @@ describe("MultiSourceConfiguration", () => {
     it("returns false when a file has no stage position", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
+      vm.girderItems = makeSetDItems();
       vm.tilesInternalMetadata = [
         stageMeta(0, 0),
         { nd2_frame_metadata: [{}] },
@@ -603,6 +608,16 @@ describe("MultiSourceConfiguration", () => {
       vm.tilesMetadata = [makeBasicTileMeta(), makeBasicTileMeta()];
       vm.assignments.XY = xyAssignmentOfSize(2);
       expect(vm.canDoCompositing).toBe(false);
+    });
+
+    it("returns false while the metadata belongs to other items", () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.girderItems = makeSetDItems();
+      vm.tilesInternalMetadata = [stageMeta(0, 0)];
+      vm.tilesMetadata = [makeBasicTileMeta()];
+      expect(vm.canDoCompositing).toBe(false);
+      expect(vm.compositingCheckResult).toEqual({ error: null, warning: null });
     });
 
     it("returns false when tilesInternalMetadata is null", () => {
@@ -711,7 +726,7 @@ describe("MultiSourceConfiguration", () => {
         Array.from({ length: 17 }, (_, i) => [512 * i, 0]),
       );
       vm.fileTranscodeDefault = false;
-      vm.transcode = false;
+      vm.transcodeOverride = null;
       vm.enableCompositing = true;
       await nextTick();
       expect(vm.transcode).toBe(true);
@@ -742,17 +757,51 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.transcode).toBe(false);
     });
 
-    it("stops at once when a metadata request itself fails", async () => {
+    it("stops at once when a metadata request is refused", async () => {
       const items = namedItems(3);
       mockGetItems.mockResolvedValue(items);
-      mockGetSourceMetadata.mockRejectedValue(new Error("Network Error"));
+      mockGetSourceMetadata.mockRejectedValue({
+        response: { status: 403, data: { message: "Access denied" } },
+      });
       const vm = mountComponent({}, { skipInitialize: false }).vm as any;
-      await expect(vm.initialized).rejects.toThrow("Network Error");
+      await expect(vm.initialized).rejects.toThrow("Access denied");
       expect(mockGetSourceMetadata).toHaveBeenCalledTimes(1);
-      expect(vm.initError.message).toBe("Network Error");
+      expect(vm.initError.message).toBe("Access denied");
       expect(vm.initError.name).toBe(
         "tile_000.nd2 (or one of 2 other files in the same request)",
       );
+    });
+
+    it("retries a metadata request that fails transiently", async () => {
+      const items = namedItems(3);
+      mockGetItems.mockResolvedValue(items);
+      mockGetSourceMetadata
+        .mockRejectedValueOnce({ response: { status: 504 } })
+        .mockRejectedValueOnce(new Error("Network Error"));
+      const vm = mountComponent({}, { skipInitialize: false }).vm as any;
+      await vm.initialized;
+      expect(mockGetSourceMetadata).toHaveBeenCalledTimes(3);
+      expect(vm.tilesMetadata).toHaveLength(3);
+    });
+
+    it("saves and restores the Composite choice with the strategy", async () => {
+      const vm = mountComponent().vm as any;
+      await vm.initialized.catch(() => {});
+      setUpTileFolder(
+        vm,
+        Array.from({ length: 17 }, (_, i) => [512 * i, 0]),
+      );
+      vm.enableCompositing = true;
+      const saved = vm.getDimensionStrategy();
+      expect(saved).toMatchObject({ composite: true, transcode: true });
+      vm.enableCompositing = false;
+      vm.applyDimensionStrategy(saved);
+      setUpTileFolder(
+        vm,
+        Array.from({ length: 17 }, (_, i) => [512 * i, 0]),
+      );
+      expect(vm.enableCompositing).toBe(true);
+      expect(vm.shouldDoCompositing).toBe(true);
     });
 
     it("leaves transcode alone when compositing 16 files", async () => {
@@ -763,7 +812,7 @@ describe("MultiSourceConfiguration", () => {
         Array.from({ length: 16 }, (_, i) => [512 * i, 0]),
       );
       vm.fileTranscodeDefault = false;
-      vm.transcode = false;
+      vm.transcodeOverride = null;
       vm.enableCompositing = true;
       await nextTick();
       expect(vm.shouldDoCompositing).toBe(true);
@@ -797,6 +846,7 @@ describe("MultiSourceConfiguration", () => {
             entries[1] = {
               itemId: itemIds[1],
               error: "No large image file in this item.",
+              notReady: true,
             } as any;
           }
           return entries;
@@ -817,6 +867,7 @@ describe("MultiSourceConfiguration", () => {
     it("returns true when canDoCompositing and enableCompositing", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
+      vm.girderItems = makeSetCItems();
       vm.tilesInternalMetadata = [stageMeta(0, 0)];
       vm.tilesMetadata = [makeBasicTileMeta()];
       vm.enableCompositing = true;
@@ -826,6 +877,7 @@ describe("MultiSourceConfiguration", () => {
     it("returns false when canDoCompositing but not enableCompositing", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
+      vm.girderItems = makeSetCItems();
       vm.tilesInternalMetadata = [stageMeta(0, 0)];
       vm.tilesMetadata = [makeBasicTileMeta()];
       vm.enableCompositing = false;

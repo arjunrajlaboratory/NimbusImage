@@ -396,7 +396,6 @@
           hide-details
           class="mr-8"
           v-model="transcode"
-          @update:model-value="transcodeChosen = true"
           label="Transcode into optimized TIFF file"
         />
         <v-btn
@@ -512,7 +511,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted } from "vue";
+import { ref, shallowRef, reactive, computed, watch, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import store from "@/store";
 
@@ -641,11 +640,6 @@ interface ICompositingSource {
 
 // Items per source-metadata request (the endpoint allows up to 100).
 const SOURCE_METADATA_BATCH_SIZE = 50;
-// Item errors that mean "not a large image yet", which retrying can fix.
-const NOT_YET_LARGE_IMAGE_ERRORS = [
-  "No large image file in this item.",
-  "The large image file for this item is still pending creation.",
-];
 
 // --- Props & Emits ---
 
@@ -668,16 +662,17 @@ const router = useRouter();
 
 // --- Reactive state ---
 
-const tilesInternalMetadata = ref<{ [key: string]: any }[] | null>(null);
-const tilesMetadata = ref<ITileMeta[] | null>(null);
+// Replaced wholesale, never mutated in place: shallow refs keep the
+// compositing computeds from walking every frame entry through proxies.
+const tilesInternalMetadata = shallowRef<{ [key: string]: any }[] | null>(null);
+const tilesMetadata = shallowRef<ITileMeta[] | null>(null);
 
 const enableCompositing = ref(false);
-const transcode = ref(false);
 // Transcode default from the file types alone (on unless all are .nd2).
 const fileTranscodeDefault = ref(false);
-// Set once transcode was chosen explicitly (by the user or a saved
-// strategy); compositing then no longer changes it.
-const transcodeChosen = ref(false);
+// An explicit transcode choice (the checkbox, or a saved strategy); null
+// follows the default, which compositing many files turns on.
+const transcodeOverride = ref<boolean | null>(null);
 
 const isUploading = ref(false);
 const logs = ref("");
@@ -765,6 +760,9 @@ const canDoCompositing = computed(
   () =>
     tilesInternalMetadata.value !== null &&
     tilesMetadata.value !== null &&
+    // During a re-initialization girderItems is already the new folder's
+    // while the metadata is still the old one's.
+    tilesMetadata.value.length === girderItems.value.length &&
     canCompositeByStagePosition(
       tilesMetadata.value,
       tilesInternalMetadata.value,
@@ -799,6 +797,21 @@ const shouldDoCompositing = computed(
     enableCompositing.value &&
     compositingCheckResult.value.error === null,
 );
+
+// Compositing many files reads many ND2 files per viewport tile, so it
+// turns transcode on by default; an explicit choice always wins.
+const transcode = computed<boolean>({
+  get: () =>
+    transcodeOverride.value ??
+    compositeTranscodeDefault(
+      fileTranscodeDefault.value,
+      shouldDoCompositing.value,
+      girderItems.value.length,
+    ),
+  set: (value) => {
+    transcodeOverride.value = value;
+  },
+});
 
 const fileCount = computed(() => girderItems.value.length);
 
@@ -1386,6 +1399,7 @@ function getDimensionStrategy(): IDimensionStrategy {
     T: null,
     C: null,
     transcode: transcode.value,
+    composite: enableCompositing.value,
   };
 
   for (const dim of ["XY", "Z", "T", "C"] as const) {
@@ -1437,8 +1451,7 @@ async function initializeImplementation() {
   fileTranscodeDefault.value = !names.every((name: string) =>
     name.toLowerCase().endsWith(".nd2"),
   );
-  transcode.value = fileTranscodeDefault.value;
-  transcodeChosen.value = false;
+  transcodeOverride.value = null;
 
   if (names.length > 1) {
     collectFilenameMetadata2(names).forEach((filenameData) => {
@@ -1515,17 +1528,18 @@ async function initializeImplementation() {
                     pending.map((idx) => fetchedItems[idx]._id),
                   );
                 } catch (error: any) {
-                  // The request itself failed (not one item): retrying the
-                  // same batch will not help, except while OIB conversion
-                  // is still settling.
-                  if (hasOibFiles) {
-                    throw error;
+                  // The request itself failed (not one item). A 4xx will
+                  // fail the same way again; a network error or 5xx (each
+                  // request opens 50 tile sources) is worth retrying.
+                  const status = error?.response?.status;
+                  if (!hasOibFiles && status >= 400 && status < 500) {
+                    throw new AbortError(
+                      error?.response?.data?.message ||
+                        error?.message ||
+                        "Unknown error",
+                    );
                   }
-                  throw new AbortError(
-                    error?.response?.data?.message ||
-                      error?.message ||
-                      "Unknown error",
-                  );
+                  throw error;
                 }
                 const notReady: number[] = [];
                 entries.forEach((entry, k) => {
@@ -1537,10 +1551,7 @@ async function initializeImplementation() {
                     };
                     initCompleted.value++;
                     finish(idx);
-                  } else if (
-                    hasOibFiles ||
-                    NOT_YET_LARGE_IMAGE_ERRORS.includes(entry.error)
-                  ) {
+                  } else if (hasOibFiles || entry.notReady) {
                     notReady.push(idx);
                   } else {
                     initError.value = {
@@ -1560,10 +1571,9 @@ async function initializeImplementation() {
               },
               {
                 retries: hasOibFiles ? 15 : 10,
-                onFailedAttempt: (error: any) => {
+                onFailedAttempt: ({ error, attemptNumber }: any) => {
                   logError(
-                    `Error retrieving source metadata ` +
-                      `(attempt ${error?.attemptNumber || 0}):`,
+                    `Error retrieving source metadata (attempt ${attemptNumber}):`,
                     error?.response?.data?.message || error?.message || "",
                   );
                 },
@@ -1906,7 +1916,9 @@ async function generateJson(): Promise<string | null> {
 
     try {
       const dimensionLabels = {
-        xy: xyLabels,
+        // A composite has one XY position, so per-tile XY labels would
+        // name the whole mosaic after its first tile.
+        xy: shouldDoCompositing.value ? null : xyLabels,
         z: zLabels,
         t: tLabels,
       };
@@ -1973,7 +1985,7 @@ async function reinitializeAndApplyStrategy(
 
 function applyDimensionStrategy(strategy: IDimensionStrategy): void {
   transcode.value = strategy.transcode;
-  transcodeChosen.value = true;
+  enableCompositing.value = strategy.composite ?? false;
 
   for (const dim of ["XY", "Z", "T", "C"] as const) {
     const savedStrategy = strategy[dim];
@@ -2031,7 +2043,7 @@ watch(
 );
 
 watch(
-  () => transcode.value,
+  () => [transcode.value, enableCompositing.value],
   () => saveDimensionStrategyToStore(),
 );
 
@@ -2053,19 +2065,6 @@ watch(
     }
   },
 );
-
-// Compositing many files reads many ND2 files per viewport tile, so turning
-// it on (or off) moves transcode to the matching default, unless transcode
-// was chosen explicitly.
-watch(shouldDoCompositing, (compositing) => {
-  if (!transcodeChosen.value) {
-    transcode.value = compositeTranscodeDefault(
-      fileTranscodeDefault.value,
-      compositing,
-      fileCount.value,
-    );
-  }
-});
 
 onMounted(() => {
   initialized.value = initialize();
@@ -2108,7 +2107,7 @@ defineExpose({
   canDoCompositing,
   compositingCheckResult,
   fileTranscodeDefault,
-  transcodeChosen,
+  transcodeOverride,
   compositingLayout,
   shouldDoCompositing,
   fileCount,

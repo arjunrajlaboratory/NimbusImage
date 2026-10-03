@@ -114,6 +114,13 @@ describe("canCompositeByStagePosition", () => {
     ).toBe(false);
   });
 
+  it("treats a malformed camera matrix as the identity", () => {
+    const internal = [stages([[0, 0]], [null as any, 0, 0, "x" as any])];
+    expect(compositingCoordinates([tile(2)], internal).coordinates[0].s11).toBe(
+      1,
+    );
+  });
+
   it("treats a channel without a volume as the identity", () => {
     const internal = [{ ...stages([[0, 0]]), nd2: { channels: [{}] } }];
     expect(canCompositeByStagePosition([tile(2)], internal, 0)).toBe(true);
@@ -209,6 +216,39 @@ describe("compositingCheck", () => {
       (_itemIdx, frameIdx) => Math.floor(frameIdx / 2),
     );
     expect(result.error).toContain('"a.nd2" (XY 2) and "b.nd2" (XY 1)');
+  });
+
+  it("reports no coverage warning alongside a duplicate", () => {
+    const points: [number, number][] = [
+      [0, 0],
+      [1000, 0],
+      [3, 0],
+      ...Array.from({ length: 58 }, (_, i): [number, number] => [
+        1000 * (i + 2),
+        0,
+      ]),
+    ];
+    const result = check(points);
+    expect(result.error).toContain("same stage position");
+    expect(result.warning).toBeNull();
+  });
+
+  it("checks long stacks at one position in linear time", () => {
+    // 10 positions x 3000 Z/T entries, 2 channels, one XY value each.
+    const points: [number, number][] = Array.from(
+      { length: 30_000 },
+      (_, i) => [1000 * Math.floor(i / 3000), 0],
+    );
+    const tiles = [tile(60_000, 2)];
+    const started = performance.now();
+    const result = compositingCheck(
+      ["stack.nd2"],
+      tiles,
+      compositingCoordinates(tiles, [stages(points)]),
+      (_itemIdx, frameIdx) => Math.floor(frameIdx / 6000),
+    );
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(result).toEqual({ error: null, warning: null });
   });
 
   it("warns, without refusing, when the tiles are far apart", () => {

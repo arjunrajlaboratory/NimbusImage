@@ -56,13 +56,21 @@ Where the implementation differs from, or settles, the proposal below:
   the configuration reads (`nd2_experiment`, stage positions, the camera
   matrix): 6.7 KB → 271 B per phenotyping tile. Items that are not large
   images yet come back as `{itemId, error}` and only those are retried.
-  A failed request (rather than a per-item error) stops at once and names
-  its batch. `createMultiSource` slims each item's internal metadata as it
+  Items that are not large images yet come back with `notReady: true` (a
+  structured flag, checked on the item before opening it, not a message
+  match) and only those are retried. A failed request is retried on a
+  network error or 5xx and stops at once on a 4xx, naming its batch. `createMultiSource` slims each item's internal metadata as it
   reads it.
 - **Transcode (D).** On by default when compositing more than 16 files, in
-  both the UI (it follows the Composite checkbox until transcode is chosen
-  explicitly, by the user or a saved strategy) and the API
-  (`transcodeDefault`).
+  both the UI and the API (`transcodeDefault`). In the UI `transcode` is a
+  computed: an explicit choice (the checkbox, or a saved strategy) wins,
+  otherwise it follows the default. Saved upload strategies also record the
+  Composite choice, so a batch of tile folders composites every folder
+  rather than transcoding uncomposited ones. The threshold counts files, as
+  specced: a single multi-position ND2 keeps its old default.
+- **XY labels.** A composite has one XY position, so `dimensionLabels.xy`
+  is null rather than one label per tile (which named the whole mosaic after
+  its first tile).
 - **Measured scale (D).** large_image multi source, N single-tile ND2 files
   (2304², 2 channels; distinct paths), in the Girder container on a laptop:
 
@@ -426,7 +434,19 @@ hand.
   *"refuses frames past the file's stage entries"*,
   *"refuses files whose camera orientations differ"*,
   *"treats a channel without a volume as the identity"*, and no spread into
-  `Math.min` — *"handles more frames than Math.min can take as arguments"*.
+  `Math.min` — *"handles more frames than Math.min can take as arguments"*,
+  *"treats a malformed camera matrix as the identity"*,
+  *"test_malformed_camera_matrix_is_the_identity"*,
+  *"test_non_object_frame_entry_does_not_raise"*,
+  *"returns false while the metadata belongs to other items"*.
+- The duplicate check stays linear on long Z/T stacks, and an error
+  suppresses the coverage warning —
+  *"checks long stacks at one position in linear time"*,
+  *"test_long_stacks_at_one_position_are_checked_quickly"*,
+  *"reports no coverage warning alongside a duplicate"*,
+  *"test_duplicate_reports_no_sparse_warning"*.
+- A composite carries no per-tile XY labels —
+  *"test_composited_xy_has_no_per_tile_labels"*.
 
 **Sanity checks**
 - Two XY positions at one stage position refuse compositing, in the UI and as
@@ -447,7 +467,8 @@ hand.
   yet, and a failed request stops at once —
   *"loads source metadata in batches of at most 50 items"*,
   *"retries only the items that are not large images yet"*,
-  *"stops at once when a metadata request itself fails"*,
+  *"stops at once when a metadata request is refused"*,
+  *"retries a metadata request that fails transiently"*,
   *"testSourceMetadataIsBatchedAndSlim"*.
 - Slimming internal metadata never changes a configuration —
   *"test_slim_internal_metadata_changes_nothing"*.
@@ -455,4 +476,5 @@ hand.
   *"turns transcode on when compositing more than 16 files"*,
   *"leaves transcode alone when compositing 16 files"*,
   *"keeps an explicitly chosen transcode when compositing changes"*,
+  *"saves and restores the Composite choice with the strategy"*,
   *"testCompositingManyTilesTranscodesByDefault"*.

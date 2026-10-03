@@ -160,8 +160,8 @@ subdirectories, so a partial upload can't be mistaken for a complete one.
 
 `configure()` is the API equivalent of the web UI's configuration screen: it
 derives the dimensions from filename tokens and file metadata, writes the
-multi-source configuration, and (unless every file is `.nd2`) schedules a
-transcode job.
+multi-source configuration, and (unless every file is `.nd2` and at most 16
+are composited) schedules a transcode job.
 
 ### Always dry-run first
 
@@ -224,7 +224,7 @@ files transcodes by default.
 
 | Argument | Meaning |
 |---|---|
-| `transcode` | Convert to one tiled TIFF. Omit to use the UI's rule (on unless every file is `.nd2`); pass `False` to skip. |
+| `transcode` | Convert to one tiled TIFF. Omit to use the UI's rule (on unless every file is `.nd2`, and also on when compositing more than 16 files — a long job for thousands of tiles); pass `False` to skip. |
 | `split_rgb_bands` | Split an RGB image into three channels (default `True`). |
 | `enable_compositing` | Lay out ND2 files by stage position rather than as separate XY positions. Applies to one multi-position ND2, or to a folder of ND2 files (one per tile) with the same tile size once the variable that tells the files apart is on `XY` — read `result.compositing` for what actually happened, and expect XY to collapse to one position when it does. |
 | `create_view` | Also create the collection and dataset view the web UI needs (default `True`). Turn it off only if you are going to create your own. |

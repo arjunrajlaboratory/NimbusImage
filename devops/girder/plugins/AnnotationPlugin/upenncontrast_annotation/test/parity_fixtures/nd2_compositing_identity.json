@@ -310,7 +310,7 @@
       "singleBand": false
     },
     "dimensionLabels": {
-      "xy": [],
+      "xy": null,
       "z": null,
       "t": null
     },

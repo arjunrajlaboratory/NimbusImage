@@ -1378,12 +1378,14 @@ export interface IHistogramOptions {
 }
 
 // One item's entry from `getSourceMetadata`: its metadata, or the reason
-// it has none yet (e.g. "No large image file in this item.").
+// it has none (`notReady` when it is still being marked or converted, so
+// worth retrying).
 export interface ISourceMetadataEntry {
   itemId: string;
   tiles?: ITileMeta;
   internalMetadata?: { [key: string]: any };
   error?: string;
+  notReady?: boolean;
 }
 
 export interface ITileMeta {

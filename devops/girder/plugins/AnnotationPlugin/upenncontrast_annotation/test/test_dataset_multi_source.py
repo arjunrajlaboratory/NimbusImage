@@ -1575,13 +1575,21 @@ class TestDatasetMultiSourceValidationRules:
         items = list(Item().find(
             {"folderId": folder["_id"]}, sort=[("lowerName", 1)]
         ))
-        # One item is not a large image yet: reported, not fatal.
-        notReady = items[1]["name"]
+        # Mark every item but one as a large image: items[1] is still
+        # "being marked". items[2] is marked but cannot be opened.
+        for item in items:
+            if item is not items[1]:
+                item["largeImage"] = {
+                    "fileId": _firstFile(item)["_id"],
+                    "sourceName": "mock_source",
+                }
+                Item().save(item)
+        unreadable = items[2]["name"]
         realGetMetadata = ImageItem.getMetadata
 
         def getMetadata(self, item, **kwargs):
-            if item["name"] == notReady:
-                raise TileSourceError("No large image file in this item.")
+            if item["name"] == unreadable:
+                raise TileSourceError("File cannot be opened.")
             return realGetMetadata(self, item, **kwargs)
 
         monkeypatch.setattr(ImageItem, "getMetadata", getMetadata)
@@ -1598,8 +1606,14 @@ class TestDatasetMultiSourceValidationRules:
         assertStatusOk(resp)
         entries = resp.json
         assert [entry["itemId"] for entry in entries] == ids
+        # Retryable (not yet a large image) is flagged, not inferred from
+        # the message; an unreadable file is not retryable.
         assert entries[1] == {
             "itemId": ids[1], "error": "No large image file in this item.",
+            "notReady": True,
+        }
+        assert entries[2] == {
+            "itemId": ids[2], "error": "File cannot be opened.",
         }
         assert entries[-1]["error"] == "Item is not in this dataset."
         first = entries[0]

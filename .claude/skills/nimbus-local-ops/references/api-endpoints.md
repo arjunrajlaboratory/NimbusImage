@@ -126,7 +126,8 @@ curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"dryRun": true}' \
   "http://localhost:8080/api/v1/dataset/$DATASET_ID/multi_source"
 
-# Configure for real (transcode defaults to true unless every file is .nd2)
+# Configure for real (transcode defaults to true unless every file is .nd2,
+# and also when compositing more than 16 files)
 curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"transcode": false}' \
   "http://localhost:8080/api/v1/dataset/$DATASET_ID/multi_source"
@@ -202,7 +203,8 @@ wells) does not. Compositing more than 16 files transcodes by default.
 `GET /dataset/{id}/source_metadata?itemIds=[...]` (≤100 ids, folder READ)
 returns `[{itemId, tiles, internalMetadata}]` — tile metadata plus internal
 metadata slimmed to what configuration reads — or `{itemId, error}` for an
-item that is not a large image yet. The configuration screen uses it in
+item it cannot read, with `notReady: true` when that item is still being
+marked or converted (retry those). The configuration screen uses it in
 batches of 50.
 
 **`jobId` is yours to check.** The response returns once the transcode is

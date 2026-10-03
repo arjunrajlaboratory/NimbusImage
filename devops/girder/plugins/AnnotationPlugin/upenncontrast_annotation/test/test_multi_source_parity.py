@@ -460,3 +460,59 @@ class TestCompositingRobustness:
         sources = result["config"]["sources"]
         assert sources[10]["position"] == sources[11]["position"]
         assert sources[0]["position"] != sources[2]["position"]
+
+    def test_malformed_camera_matrix_is_the_identity(self):
+        internal = [_stages([(0, 0)], [None, 0, 0, "x"])]
+        result = self._configure([_tile(2)], internal, True)
+        assert result["compositing"] is True
+        assert result["config"]["sources"][0]["position"]["s11"] == 1
+
+    def test_non_object_frame_entry_does_not_raise(self):
+        internal = [{"nd2_frame_metadata": [["not", "a", "dict"]]}]
+        result = self._configure([_tile(2)], internal, True)
+        assert result["compositing"] is False
+        assert slim_internal_metadata(internal[0]) == {
+            "nd2_frame_metadata": [{"position": {"stagePositionUm": None}}],
+        }
+
+    def test_composited_xy_has_no_per_tile_labels(self):
+        inp = _load("nd2_compositing_multifile.json")
+        result = compute_configuration(
+            inp["itemNames"], inp["tilesMetadata"],
+            inp["tilesInternalMetadata"],
+            strategy=inp["options"]["assignmentStrategy"],
+            enable_compositing=True,
+        )
+        assert result["compositing"] is True
+        assert result["dimensionLabels"]["xy"] is None
+
+    def test_duplicate_reports_no_sparse_warning(self):
+        # A wide grid whose third tile repeats the first: the check stops at
+        # the duplicate, so a coverage figure would be meaningless.
+        points = [(0, 0), (1000, 0), (3, 0)] + [
+            (1000 * i, 0) for i in range(2, 60)
+        ]
+        names = ["t_%d.nd2" % i for i in range(len(points))]
+        result = compute_configuration(
+            names, [_tile(2) for _ in points],
+            [_stages([p]) for p in points],
+            strategy={"XY": {"source": "filename", "guess": "C"},
+                      "C": {"source": "file", "guess": "C"}},
+            enable_compositing=True,
+        )
+        assert "same stage position" in result["compositingCheck"]["error"]
+        assert result["compositingCheck"]["warning"] is None
+
+    def test_long_stacks_at_one_position_are_checked_quickly(self):
+        # 10 positions x 3000 Z/T entries each, 2 channels: every entry of
+        # a position merges into one tile, so the check stays linear.
+        import time
+        points = [
+            (1000 * p, 0) for p in range(10) for _ in range(3000)
+        ]
+        started = time.monotonic()
+        result = self._configure(
+            [_tile(2 * len(points))], [_stages(points)],
+        )
+        assert time.monotonic() - started < 2
+        assert result["compositingCheck"] == {"error": None, "warning": None}

@@ -309,13 +309,14 @@ describe("MultiSourceConfig parity", () => {
 
         // Apply options.
         vm.splitRGBBands = options.splitRGBBands;
-        vm.enableCompositing = options.enableCompositing;
         if (options.assignmentStrategy) {
           vm.applyDimensionStrategy(
             buildFullStrategy(vm, options.assignmentStrategy),
           );
           await nextTick();
         }
+        // After the strategy, which restores its own saved Composite choice.
+        vm.enableCompositing = options.enableCompositing;
 
         mockAddMultiSourceMetadata.mockClear();
         mockUpdateDatasetMetadata.mockClear();
@@ -390,13 +391,14 @@ describe("MultiSourceConfig parity", () => {
         await nextTick();
 
         vm.splitRGBBands = options.splitRGBBands;
-        vm.enableCompositing = options.enableCompositing;
         if (options.assignmentStrategy) {
           vm.applyDimensionStrategy(
             buildFullStrategy(vm, options.assignmentStrategy),
           );
           await nextTick();
         }
+        // After the strategy, which restores its own saved Composite choice.
+        vm.enableCompositing = options.enableCompositing;
 
         // submitError is what disables Submit; generationErrorMessage is what
         // generateJson reports if it is called anyway.

@@ -85,6 +85,18 @@ _ABSENT = object()
 logger = logging.getLogger(__name__)
 
 
+def _notReadyReason(item):
+    """Why ``item`` has no large image yet (it is still being marked or
+    converted), or None. Checked before opening it, so callers can retry
+    exactly these items instead of matching error text."""
+    largeImage = item.get("largeImage")
+    if largeImage is None:
+        return "No large image file in this item."
+    if largeImage.get("expected"):
+        return "The large image file for this item is still pending creation."
+    return None
+
+
 class Dataset(Resource):
     """REST API resource for multi-source dataset configuration."""
 
@@ -114,9 +126,10 @@ class Dataset(Resource):
             "stage position and the camera matrix), dropping nd2_text, "
             "nd2_custom and the rest. Returns one entry per requested id, "
             "in order: {itemId, tiles, internalMetadata}, or {itemId, "
-            "error} when the item has no readable large image (for "
-            "example while it is still being marked). At most %d ids per "
-            "request." % MAX_SOURCE_METADATA_ITEMS
+            "error, notReady} when the item has no readable large image; "
+            "notReady is true when it is still being marked or converted "
+            "(so worth retrying). At most %d ids per request."
+            % MAX_SOURCE_METADATA_ITEMS
         )
         .modelParam(
             "id", "The dataset folder id.", model=Folder,
@@ -150,17 +163,34 @@ class Dataset(Resource):
                     "itemId": itemId, "error": "Item is not in this dataset.",
                 })
                 continue
-            try:
+            notReady = _notReadyReason(item)
+            if notReady is not None:
                 results.append({
-                    "itemId": itemId,
-                    "tiles": self._imageItemModel.getMetadata(item),
-                    "internalMetadata": slim_internal_metadata(
-                        self._imageItemModel.getInternalMetadata(item)
-                    ),
+                    "itemId": itemId, "error": notReady, "notReady": True,
                 })
+                continue
+            try:
+                tiles, internal = self._readSourceMetadata(item)
             except TileGeneralError as e:
                 results.append({"itemId": itemId, "error": str(e)})
+                continue
+            results.append({
+                "itemId": itemId, "tiles": tiles, "internalMetadata": internal,
+            })
         return results
+
+    def _readSourceMetadata(self, item):
+        """Tile metadata and slim internal metadata for one source item,
+        read together so its tile source is opened once (from large_image's
+        cache) rather than in two passes over every item. Slimmed as it is
+        read: full ND2 internal metadata for thousands of tiles would
+        otherwise all be held at once."""
+        return (
+            self._imageItemModel.getMetadata(item),
+            slim_internal_metadata(
+                self._imageItemModel.getInternalMetadata(item)
+            ),
+        )
 
     @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
@@ -288,17 +318,12 @@ class Dataset(Resource):
             newlyMarked = self._markLargeImages(items, user, token)
 
             itemNames = [item["name"] for item in items]
-            tilesMetadata = [
-                self._imageItemModel.getMetadata(item) for item in items
-            ]
-            # Slimmed as each item is read: full ND2 internal metadata for
-            # thousands of tiles would otherwise all be held at once.
-            internalMetadata = [
-                slim_internal_metadata(
-                    self._imageItemModel.getInternalMetadata(item)
-                )
-                for item in items
-            ]
+            tilesMetadata = []
+            internalMetadata = []
+            for item in items:
+                tiles, internal = self._readSourceMetadata(item)
+                tilesMetadata.append(tiles)
+                internalMetadata.append(internal)
 
             try:
                 result = compute_configuration(

@@ -136,7 +136,8 @@ class TestDatasetConfigure:
 
     def test_configure_omits_transcode_unless_given(self, mock_gc):
         """None must not be sent: the server picks the default (off only
-        when every file is .nd2), and a literal null is a 400."""
+        when every file is .nd2 and at most 16 are composited), and a
+        literal null is a 400."""
         mock_gc.post.return_value = self._plan(itemId="i", jobId=None)
         Dataset(mock_gc, "folder_123").configure()
         assert "transcode" not in mock_gc.post.call_args[1]["json"]

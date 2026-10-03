@@ -458,12 +458,7 @@
       "singleBand": false
     },
     "dimensionLabels": {
-      "xy": [
-        "3117",
-        "3118",
-        "3214",
-        "3215"
-      ],
+      "xy": null,
       "z": null,
       "t": null
     },

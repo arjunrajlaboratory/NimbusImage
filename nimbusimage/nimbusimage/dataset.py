@@ -276,7 +276,8 @@ class Dataset:
         This is the API equivalent of the web UI's dataset-configuration
         screen: it works out which filename tokens and file metadata map to
         XY / Z / Time / Channel, writes the multi-source configuration, and
-        (unless every file is ``.nd2``) schedules a transcode job.
+        (unless every file is ``.nd2`` and at most 16 are composited)
+        schedules a transcode job.
 
         **Start with ``dry_run=True``.** It computes and returns everything
         without writing, including ``validation_error`` and ``variables``.
@@ -295,7 +296,9 @@ class Dataset:
                 ``None`` leaves a dimension unassigned, and omitted
                 dimensions keep their default.
             transcode: Convert to a single tiled TIFF. Defaults to the
-                same rule the UI uses (on unless every file is ``.nd2``).
+                same rule the UI uses: on unless every file is ``.nd2``,
+                and also on when compositing more than 16 files (a long
+                job for thousands of tiles; pass ``False`` to skip it).
             split_rgb_bands: Split an RGB image into three channels.
             enable_compositing: Lay out ND2 files by their stage
                 positions instead of as separate XY positions. Takes effect

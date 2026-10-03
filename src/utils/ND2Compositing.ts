@@ -101,6 +101,7 @@ function cameraTransform(internalMeta: TInternalMetadata): ICameraTransform {
   if (
     Array.isArray(matrix) &&
     matrix.length >= 4 &&
+    matrix.slice(0, 4).every((v) => typeof v === "number" && isFinite(v)) &&
     (Math.abs(matrix[0] - 1) > CAMERA_MATRIX_TOLERANCE ||
       Math.abs(matrix[3] - 1) > CAMERA_MATRIX_TOLERANCE)
   ) {
@@ -327,20 +328,23 @@ export function compositingCheck(
         "other. Remove the duplicate, or leave Composite off to keep them " +
         "as separate XY positions.";
     }
-    if (!sameTile) {
+    // A point that merges into an existing tile adds nothing new to compare
+    // against; storing only one representative per tile keeps long Z/T
+    // stacks at one position from making this quadratic.
+    if (error === null && !sameTile) {
       tileCount++;
-    }
-    const key = `${cellX},${cellY}`;
-    const cell = cells.get(key);
-    if (cell) {
-      cell.push(index);
-    } else {
-      cells.set(key, [index]);
+      const key = `${cellX},${cellY}`;
+      const cell = cells.get(key);
+      if (cell) {
+        cell.push(index);
+      } else {
+        cells.set(key, [index]);
+      }
     }
   }
 
   let warning: string | null = null;
-  if (tileCount > 1) {
+  if (error === null && tileCount > 1) {
     const xs = extent(points, (p) => p.x);
     const ys = extent(points, (p) => p.y);
     const width = xs.max - xs.min + sizeX;
