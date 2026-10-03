@@ -22,16 +22,17 @@ jobs:
 
     services:
       mongodb:
-        # Pinned so tests run against a chosen version rather than whatever
-        # :latest is that day (it moved to 9.x unannounced).
-        image: mongo:8.2
+        # Pinned to production's major version (Atlas, MongoDB 8.0.26 as of
+        # 2026-06; see AWSDeploy doc/Prod_Mongo_Query_Optimization_Findings.md)
+        # rather than whatever :latest is that day (it moved to 9.x).
+        image: mongo:8.0
         ports:
           - 27017:27017
 
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python environment
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: flake8 Lint

@@ -19,11 +19,23 @@ class _ProbeModel(Model):
         self.name = "model_state_reset_probe"
 
 
+# The instance testLeavesAModelBehind creates, for the next test to check.
+_leftBehind = []
+
+
 @pytest.mark.usefixtures("db")
 class TestModelStateReset:
+    # pytest runs these in definition order, so the first leaves a model for
+    # db teardown to turn stale and the second checks it was dropped. That
+    # keeps the check meaningful even when this file runs on its own.
+    def testLeavesAModelBehind(self):
+        _leftBehind.append(_ProbeModel())
+
     def testNoStaleModelsAtTestStart(self):
         # The autouse fixture ran before this test's db setup, so the
         # reconnect loop only saw live singletons.
+        assert _leftBehind, "testLeavesAModelBehind must run first"
+        assert _leftBehind[0] not in model_base._modelSingletons
         assert all(
             type(model)._instance is model
             for model in model_base._modelSingletons

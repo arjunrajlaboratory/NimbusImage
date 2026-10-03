@@ -54,7 +54,8 @@ CI), dependency install (~40 s).
    leak fixed it caused 17 failures.
 
 Result: all 801 tests pass locally in 1 min 57 s, with setup flat at about
-0.17 s per database test.
+0.17 s per database test. In CI the AnnotationPlugin step dropped from
+77 minutes (PR #1366) to 3 min 24 s (PR #1367's first run).
 
 ## Workflow changes
 
@@ -68,9 +69,10 @@ Result: all 801 tests pass locally in 1 min 57 s, with setup flat at about
   to a branch cancels that branch's running check. Master never cancels, so
   every merge keeps a result. Before, five pushes to one PR left five full
   backend runs going at once.
-- **Mongo pinned** to `mongo:8.2` in CI. `mongo:latest` had silently moved
-  to 9.0.2. Production runs on MongoDB Atlas; keep this pin at the major
-  version production uses.
+- **Mongo pinned** to `mongo:8.0` in CI, production's major version
+  (Atlas, MongoDB 8.0.26 as of June 2026, per AWSDeploy's
+  `doc/Prod_Mongo_Query_Optimization_Findings.md`). `mongo:latest` had
+  silently moved to 9.0.2. Bump this pin when production upgrades.
 
 ## Local runs on Apple Silicon
 
