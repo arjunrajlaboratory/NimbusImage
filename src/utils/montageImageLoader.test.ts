@@ -1,9 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import {
-  MontageAbortError,
-  MontageImageLoader,
-  createLimiter,
-} from "./montageImageLoader";
+import { MontageAbortError, MontageImageLoader } from "./montageImageLoader";
 
 // A fetch whose requests resolve only when the test says so.
 function controllableFetch() {
@@ -141,35 +137,5 @@ describe("MontageImageLoader", () => {
     expect(image.close).not.toHaveBeenCalled();
     request.release();
     expect(image.close).toHaveBeenCalled();
-  });
-});
-
-describe("createLimiter", () => {
-  it("runs at most max tasks at once, in order", async () => {
-    const limit = createLimiter(2);
-    const started: number[] = [];
-    const finish: (() => void)[] = [];
-    const task = (n: number) => () =>
-      new Promise<number>((resolve) => {
-        started.push(n);
-        finish.push(() => resolve(n));
-      });
-    const results = [1, 2, 3, 4].map((n) => limit(task(n)));
-    expect(started).toEqual([1, 2]);
-    finish[0]();
-    await flush();
-    expect(started).toEqual([1, 2, 3]);
-    finish.slice(1).forEach((f) => f());
-    await flush();
-    finish.slice(3).forEach((f) => f());
-    expect(await Promise.all(results)).toEqual([1, 2, 3, 4]);
-  });
-
-  it("keeps going after a task fails", async () => {
-    const limit = createLimiter(1);
-    const failed = limit(() => Promise.reject(new Error("x")));
-    const next = limit(async () => "ok");
-    await expect(failed).rejects.toThrow("x");
-    expect(await next).toBe("ok");
   });
 });

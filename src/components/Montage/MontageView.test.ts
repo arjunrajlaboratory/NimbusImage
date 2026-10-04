@@ -84,13 +84,11 @@ vi.mock("@/store/properties", async () => {
   mocks.getPropertyValuesForIds = vi.fn(async (_ds: string, ids: string[]) =>
     ids.map((annotationId) => ({ annotationId, values: { p1: { a: 7 } } })),
   );
-  mocks.properties = reactive({
-    propertyValues: {} as Record<string, any>,
-  });
+  mocks.properties = reactive({ propertyValuesRevision: 0 });
   return {
     default: {
-      get propertyValues() {
-        return mocks.properties.propertyValues;
+      get propertyValuesRevision() {
+        return mocks.properties.propertyValuesRevision;
       },
       computedPropertyPaths: [["p1", "a"]],
       getFullNameFromPath: (path: string[]) => path.join(" / "),
@@ -104,11 +102,13 @@ vi.mock("@/store/properties", async () => {
   };
 });
 
-vi.mock("@/utils/screenshot", () => {
+vi.mock("@/utils/screenshot", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/screenshot")>();
   mocks.getLayersDownloadUrls = vi.fn(async (baseUrl: URL) => [
     { url: new URL(baseUrl), layerIds: ["l1"] },
   ]);
   return {
+    ...actual,
     getLayersDownloadUrls: (...args: any[]) =>
       mocks.getLayersDownloadUrls(...args),
   };
@@ -171,7 +171,11 @@ describe("MontageView", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mocks.annotations.clear();
-    mocks.properties.propertyValues = {};
+    mocks.properties.propertyValuesRevision = 0;
+    // Some tests swap in hanging builds; clearMocks doesn't undo that.
+    mocks.getLayersDownloadUrls.mockImplementation(async (baseUrl: URL) => [
+      { url: new URL(baseUrl), layerIds: ["l1"] },
+    ]);
     mocks.annotationStore.hoveredAnnotationId = null;
     mocks.montage.isOpen = true;
     mocks.montage.listPageItems = [];
@@ -330,6 +334,73 @@ describe("MontageView", () => {
     });
   });
 
+  it("drops a queued crop build whose inputs changed before it started", async () => {
+    // Five objects; the first four builds hang, so the fifth queues.
+    const ids = ["a", "b", "c", "d", "e"];
+    ids.forEach((id) =>
+      mocks.annotations.set(id, stub(id, { shape: "point" })),
+    );
+    mocks.montage.listPageItems = ids.map((id, index) => ({ id, index }));
+    const hanging: (() => void)[] = [];
+    mocks.getLayersDownloadUrls.mockImplementation(
+      (baseUrl: URL) =>
+        new Promise((resolve) =>
+          hanging.push(() =>
+            resolve([{ url: new URL(baseUrl), layerIds: [] }]),
+          ),
+        ),
+    );
+    const vm = mountView();
+    await vi.advanceTimersByTimeAsync(300);
+    const builds = ids.map((id) =>
+      vm.loadCrop(vm.cropKeyFor(id)).catch((error: Error) => error),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.getLayersDownloadUrls).toHaveBeenCalledTimes(4);
+
+    // The page's settings change while "e" waits in the queue.
+    mocks.montage.settings = { ...mocks.montage.settings, padding: 40 };
+    await vi.advanceTimersByTimeAsync(300);
+    hanging.forEach((finish) => finish());
+    const results = await Promise.all(builds);
+    expect(mocks.getLayersDownloadUrls).toHaveBeenCalledTimes(4);
+    expect(results[4]).toMatchObject({ name: "StaleCropError" });
+  });
+
+  it("treats a missing plane as expected, other build failures as errors", async () => {
+    const { LayerSelectionError } = await import("@/utils/screenshot");
+    mocks.annotations.set("pt", stub("pt", { shape: "point" }));
+    mocks.montage.listPageItems = [{ id: "pt", index: 1 }];
+    const vm = mountView();
+    await vi.advanceTimersByTimeAsync(300);
+    mocks.getLayersDownloadUrls.mockRejectedValueOnce(
+      new LayerSelectionError("No image for layer"),
+    );
+    await expect(vm.loadCrop(vm.cropKeyFor("pt"))).rejects.toMatchObject({
+      name: "MontageCropError",
+    });
+    mocks.getLayersDownloadUrls.mockRejectedValueOnce(new Error("500"));
+    await expect(vm.loadCrop(vm.cropKeyFor("pt"))).rejects.toMatchObject({
+      message: "500",
+    });
+  });
+
+  it("exports from captured inputs when settings move on mid-export", async () => {
+    mocks.annotations.set("pt", stub("pt", { shape: "point" }));
+    mocks.montage.listPageItems = [{ id: "pt", index: 1 }];
+    const vm = mountView();
+    await vi.advanceTimersByTimeAsync(300);
+    const key = vm.cropKeyFor("pt");
+    const captured = vm.settledCrops.inputs.get("pt");
+    mocks.montage.settings = { ...mocks.montage.settings, padding: 40 };
+    await vi.advanceTimersByTimeAsync(300);
+    // The key is stale now; the export still gets the crop it captured.
+    const pending = vm.exportCrop(key, captured);
+    await vi.advanceTimersByTimeAsync(0);
+    const crop = await pending;
+    expect(crop.imageRect).toEqual(captured.imageRect);
+  });
+
   it("reports an object outside the image instead of requesting it", async () => {
     mocks.annotations.set(
       "out",
@@ -377,14 +448,14 @@ describe("MontageView", () => {
     expect(mocks.montage.settings.padding).toBe(25);
   });
 
-  it("refetches labels when the store's property values change", async () => {
+  it("refetches labels when property values are recomputed", async () => {
     mocks.annotations.set("pt", stub("pt", { shape: "point" }));
     mocks.montage.listPageItems = [{ id: "pt", index: 1 }];
     mocks.montage.settings.labelPropertyPaths = [["p1", "a"]];
     mountView();
     await flushPromises();
     mocks.getPropertyValuesForIds.mockClear();
-    mocks.properties.propertyValues = { pt: { p1: { a: 8 } } };
+    mocks.properties.propertyValuesRevision++;
     await vi.advanceTimersByTimeAsync(350);
     expect(mocks.getPropertyValuesForIds).toHaveBeenCalledTimes(1);
   });

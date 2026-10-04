@@ -21,14 +21,16 @@
       <v-divider vertical class="mx-2" />
       <div class="montage-control montage-size">
         <span class="text-caption">Size</span>
+        <!-- Applied when the drag ends: every tick would otherwise resize
+             and redraw every panel and rewrite the saved settings. -->
         <v-slider
-          :model-value="settings.panelSize"
+          v-model="panelSizeDraft"
           :min="80"
           :max="320"
           :step="20"
           density="compact"
           hide-details
-          @update:model-value="setPanelSize"
+          @end="setPanelSize"
         />
       </div>
       <v-text-field
@@ -170,12 +172,16 @@ import {
   montageWindows,
   regionOutputSize,
 } from "@/utils/montage";
+import pLimit from "p-limit";
 import {
   IMontageImageRequest,
   MontageImageLoader,
-  createLimiter,
 } from "@/utils/montageImageLoader";
-import { getLayersDownloadUrls } from "@/utils/screenshot";
+import {
+  LayerSelectionError,
+  getBaseURLFromDownloadParameters,
+  getLayersDownloadUrls,
+} from "@/utils/screenshot";
 import { getStringFromPropertiesAndPath } from "@/utils/paths";
 import { goToAnnotationLocation } from "@/utils/annotationNavigation";
 import { downloadToClient } from "@/utils/download";
@@ -202,6 +208,14 @@ const dataset = computed(() => store.dataset);
 function update(changes: Partial<IMontageSettings>) {
   montageStore.updateSettings(changes);
 }
+
+const panelSizeDraft = ref(settings.value.panelSize);
+watch(
+  () => settings.value.panelSize,
+  (value) => {
+    panelSizeDraft.value = value;
+  },
+);
 
 function setPanelSize(value: number) {
   update({ panelSize: value });
@@ -298,12 +312,13 @@ watch(
   { immediate: true },
 );
 
-// The store replaces its property-value map when values are (re)computed or
-// fetched; the montage's own copy goes stale then, so refetch. Debounced: a
-// compute can land values in several batches.
+// The montage's own copy of the values goes stale when values are computed or
+// imported; propertyValuesRevision is bumped exactly then (not on the viewport
+// merges that replace propertyValues in lazy mode). Debounced: a compute can
+// land values in several batches.
 const debouncedLabelRefresh = debounce(refreshLabels, 300);
 watch(
-  () => propertyStore.propertyValues,
+  () => propertyStore.propertyValuesRevision,
   () => debouncedLabelRefresh(),
 );
 
@@ -467,6 +482,7 @@ interface ICropInput {
   annotation: TAnnotationOrStub;
   window: IImageRect;
   imageRect: IImageRect | null;
+  panelSize: number;
 }
 
 const settledCrops = shallowRef({
@@ -477,7 +493,7 @@ const settledCrops = shallowRef({
 // export never draws a page whose crops don't match it.
 const cropsPending = ref(true);
 const cropBuilds = new Map<string, Promise<IMontageCrop>>();
-const limitCropBuilds = createLimiter(4);
+const limitCropBuilds = pLimit(4);
 
 function settleCrops() {
   // Hydration changes the windows; the watcher re-fires when it ends.
@@ -490,7 +506,12 @@ function settleCrops() {
     inputs: new Map(
       panels.value.map(({ id, annotation, content }) => [
         id,
-        { annotation, window: content.window, imageRect: content.imageRect },
+        {
+          annotation,
+          window: content.window,
+          imageRect: content.imageRect,
+          panelSize: settings.value.panelSize,
+        },
       ]),
     ),
   };
@@ -525,7 +546,7 @@ function cropKeyFor(id: string): string | null {
 }
 
 async function buildPanelCrop(input: ICropInput): Promise<IMontageCrop> {
-  const { annotation, window, imageRect } = input;
+  const { annotation, window, imageRect, panelSize } = input;
   if (!imageRect) {
     throw new MontageCropError("Object is outside the image");
   }
@@ -534,22 +555,18 @@ async function buildPanelCrop(input: ICropInput): Promise<IMontageCrop> {
   if (!anyImage) {
     throw new MontageCropError("Dataset has no images");
   }
-  const scale =
-    (settings.value.panelSize * pixelRatio) / (window.right - window.left);
-  const { width, height } = regionOutputSize(imageRect, scale);
-  const baseUrl = new URL(
-    `${store.girderRest.apiRoot}/item/${anyImage.item._id}/tiles/region`,
+  const scale = (panelSize * pixelRatio) / (window.right - window.left);
+  const baseUrl = getBaseURLFromDownloadParameters(
+    {
+      ...imageRect,
+      ...regionOutputSize(imageRect, scale),
+      encoding: "JPEG",
+      jpegQuality: 90,
+      contentDisposition: "inline",
+    },
+    anyImage.item._id,
+    store.girderRest.apiRoot,
   );
-  const params = {
-    ...imageRect,
-    width,
-    height,
-    encoding: "JPEG",
-    jpegQuality: 90,
-  };
-  for (const [key, value] of Object.entries(params)) {
-    baseUrl.searchParams.set(key, String(value));
-  }
   const { XY, Z, Time } = annotation.location;
   try {
     const [{ url }] = await getLayersDownloadUrls(
@@ -562,9 +579,9 @@ async function buildPanelCrop(input: ICropInput): Promise<IMontageCrop> {
     );
     return { url, imageRect };
   } catch (error) {
-    // Its validation errors (no visible layer, no plane at this frame) are
-    // expected per object; anything else (a histogram fetch) is a failure.
-    if (error instanceof Error && /^No (image|layers)/.test(error.message)) {
+    // No visible layer, or no plane at this object's frame: expected per
+    // object. Anything else (a histogram fetch) is a real failure.
+    if (error instanceof LayerSelectionError) {
       throw new MontageCropError(error.message);
     }
     throw error;
@@ -580,7 +597,13 @@ function loadCrop(key: string): Promise<IMontageCrop> {
   }
   let build = cropBuilds.get(key);
   if (!build) {
-    build = limitCropBuilds(() => buildPanelCrop(input));
+    // Re-checked when the build actually starts: it may have queued behind
+    // others while the page or settings moved on.
+    build = limitCropBuilds(() =>
+      generation === settledCrops.value.generation
+        ? buildPanelCrop(input)
+        : Promise.reject(new StaleCropError()),
+    );
     // A failed build is retried on the next request rather than cached.
     build.catch(() => cropBuilds.delete(key));
     cropBuilds.set(key, build);
@@ -621,39 +644,49 @@ function exportColumns(count: number): number {
   );
 }
 
+// Safari's canvas area limit (the strictest supported browser), with margin.
+const MAX_EXPORT_PIXELS = 16_000_000;
+
+// The crop for an export: the panel's (cached) one, or — if settings moved
+// on mid-export and its build went stale — one built from the inputs the
+// export captured, so queued panels don't come out blank.
+async function exportCrop(
+  key: string,
+  input: ICropInput,
+): Promise<IMontageCrop> {
+  try {
+    return await loadCrop(key);
+  } catch (error) {
+    if (error instanceof StaleCropError) {
+      return limitCropBuilds(() => buildPanelCrop(input));
+    }
+    throw error;
+  }
+}
+
 async function exportPng() {
   // Capture everything the export depends on before the first await.
-  const exported = panels.value.map((panel) => ({
-    content: panel.content,
-    cropKey: cropKeyFor(panel.id),
-  }));
-  const size = Math.round(settings.value.panelSize * pixelRatio);
-  const gap = Math.round(GAP * pixelRatio);
-  const grid = montageGrid(
-    exported.length,
-    exportColumns(exported.length),
-    size,
-    gap,
+  const exported = panels.value.flatMap((panel) => {
+    const cropKey = cropKeyFor(panel.id);
+    const input = settledCrops.value.inputs.get(panel.id);
+    return cropKey && input ? [{ content: panel.content, cropKey, input }] : [];
+  });
+  const columns = exportColumns(exported.length);
+  const fullSize = Math.round(settings.value.panelSize * pixelRatio);
+  const fullGap = Math.round(GAP * pixelRatio);
+  const full = montageGrid(exported.length, columns, fullSize, fullGap);
+  // Shrink the whole image, if needed, to fit the canvas area limit.
+  const shrink = Math.min(
+    1,
+    Math.sqrt(MAX_EXPORT_PIXELS / (full.width * full.height)),
   );
+  const size = Math.floor(fullSize * shrink);
+  const gap = Math.max(1, Math.round(fullGap * shrink));
+  const grid = montageGrid(exported.length, columns, size, gap);
   const datasetName = dataset.value?.name ?? "dataset";
   isExporting.value = true;
   exportError.value = null;
-  const held: IMontageImageRequest[] = [];
   try {
-    // Offscreen panels haven't built or fetched their crops yet; do it here.
-    const crops = await Promise.all(
-      exported.map(async ({ cropKey }) => {
-        if (!cropKey) return null;
-        try {
-          const crop = await loadCrop(cropKey);
-          const request = loader.load(crop.url);
-          held.push(request);
-          return { image: await request.promise, imageRect: crop.imageRect };
-        } catch {
-          return null;
-        }
-      }),
-    );
     const canvas = document.createElement("canvas");
     canvas.width = grid.width;
     canvas.height = grid.height;
@@ -663,22 +696,35 @@ async function exportPng() {
     }
     ctx.fillStyle = EXPORT_BACKGROUND;
     ctx.fillRect(0, 0, grid.width, grid.height);
-    exported.forEach(({ content }, i) => {
-      const column = i % grid.columns;
-      const row = Math.floor(i / grid.columns);
-      drawMontagePanel(
-        ctx,
-        column * (size + gap),
-        row * (size + gap),
-        size,
-        {
-          ...content,
-          image: crops[i]?.image ?? null,
-          imageRect: crops[i]?.imageRect ?? null,
-        },
-        pixelRatio,
-      );
-    });
+    let failed = 0;
+    // Draw each panel as its crop arrives and let the crop go at once, so
+    // the export never holds every decoded crop of the page together.
+    await Promise.all(
+      exported.map(async ({ content, cropKey, input }, i) => {
+        let image: ImageBitmap | null = null;
+        let imageRect: IImageRect | null = null;
+        let request: IMontageImageRequest | null = null;
+        try {
+          const crop = await exportCrop(cropKey, input);
+          request = loader.load(crop.url);
+          image = await request.promise;
+          imageRect = crop.imageRect;
+        } catch (error) {
+          if (!(error instanceof MontageCropError)) {
+            failed++;
+          }
+        }
+        drawMontagePanel(
+          ctx,
+          (i % grid.columns) * (size + gap),
+          Math.floor(i / grid.columns) * (size + gap),
+          size,
+          { ...content, image, imageRect },
+          pixelRatio * shrink,
+        );
+        request?.release();
+      }),
+    );
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, "image/png"),
     );
@@ -688,11 +734,13 @@ async function exportPng() {
     const href = URL.createObjectURL(blob);
     downloadToClient({ href, download: `${datasetName} - montage.png` });
     setTimeout(() => URL.revokeObjectURL(href), 0);
+    if (failed > 0) {
+      exportError.value = `${failed} crop${failed === 1 ? "" : "s"} could not be loaded`;
+    }
   } catch (error) {
     logError("Montage export failed", error);
     exportError.value = "Export failed";
   } finally {
-    held.forEach((request) => request.release());
     isExporting.value = false;
   }
 }
@@ -716,6 +764,7 @@ defineExpose({
   cropsPending,
   cropKeyFor,
   loadCrop,
+  exportCrop,
   canExport,
   exportPng,
   setLabelKeys,

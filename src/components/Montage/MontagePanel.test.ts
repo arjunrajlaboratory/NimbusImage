@@ -179,4 +179,59 @@ describe("MontagePanel", () => {
     wrapper = null;
     expect(loader.requests.get(crop(1).url.href)!.release).toHaveBeenCalled();
   });
+
+  it("frees its image and canvas when scrolled away, and reloads on return", async () => {
+    // A controllable observer: tests flip intersection by hand.
+    let notify!: (isIntersecting: boolean) => void;
+    (globalThis as any).IntersectionObserver = class {
+      constructor(callback: (entries: any[]) => void) {
+        notify = (isIntersecting) => callback([{ isIntersecting }]);
+      }
+      observe() {}
+      disconnect() {}
+    };
+    const loader = fakeLoader();
+    const loadCrop = vi.fn(async () => crop(1));
+    const w = mountPanel({ loader, loadCrop, cropKey: "1:a" });
+    // Off screen at mount: nothing requested, no backing store.
+    await flushPromises();
+    expect(loadCrop).not.toHaveBeenCalled();
+    const canvas = w.find("canvas").element as HTMLCanvasElement;
+    expect(canvas.width).toBe(0);
+
+    notify(true);
+    await flushPromises();
+    loader.requests.get(crop(1).url.href)!.resolve({ id: "image1" });
+    await flushPromises();
+    expect(w.vm.isLoaded).toBe(true);
+    expect(canvas.width).toBe(100);
+
+    notify(false);
+    await flushPromises();
+    expect(w.vm.isLoaded).toBe(false);
+    expect(canvas.width).toBe(0);
+    expect(loader.requests.get(crop(1).url.href)!.release).toHaveBeenCalled();
+
+    notify(true);
+    await flushPromises();
+    expect(loadCrop).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases a crop still loading when it moves on to another", async () => {
+    const loader = fakeLoader();
+    const loadCrop = vi.fn(async (key: string) =>
+      key === "1:a" ? crop(1) : crop(2),
+    );
+    const w = mountPanel({ loader, loadCrop, cropKey: "1:a" });
+    await flushPromises();
+    const first = loader.requests.get(crop(1).url.href)!;
+    // Superseded before it arrived: let the loader drop it.
+    await w.setProps({ cropKey: "2:a" });
+    await flushPromises();
+    expect(first.release).toHaveBeenCalled();
+    first.resolve({ id: "late" });
+    loader.requests.get(crop(2).url.href)!.resolve({ id: "image2" });
+    await flushPromises();
+    expect(w.vm.loaded.image).toEqual({ id: "image2" });
+  });
 });

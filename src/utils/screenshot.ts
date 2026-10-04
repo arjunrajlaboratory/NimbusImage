@@ -13,6 +13,16 @@ import {
   type IImage,
 } from "@/store/model";
 
+// The selected layers can't be rendered at this location (none selected, or a
+// layer has no plane there). Typed so callers rendering many locations (the
+// montage) can tell this expected case from a real failure.
+export class LayerSelectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LayerSelectionError";
+  }
+}
+
 export function getDownloadParameters(
   bounds: IGeoJSBounds,
   format: string,
@@ -37,7 +47,7 @@ export function getDownloadParameters(
     height: bounds.bottom - bounds.top,
   };
   if (format === "jpeg") {
-    params.jpeqQuality = jpegQuality;
+    params.jpegQuality = jpegQuality;
   } else if (format === "tiff") {
     params.tiffCompression = "raw";
   }
@@ -85,7 +95,9 @@ export async function getLayersDownloadUrls(
       exportLayer === "all" ||
       (exportLayer === "composite" ? layer.visible : layer.id === exportLayer),
   );
-  if (layers.length === 0) throw new Error("No layers selected for download.");
+  if (layers.length === 0) {
+    throw new LayerSelectionError("No layers selected for download.");
+  }
   // A style without a frame defaults to frame zero on the server. Validate
   // before requesting any histograms so missing planes cannot be mislabeled.
   for (const layer of layers) {
@@ -93,7 +105,7 @@ export async function getLayersDownloadUrls(
       !getLayerImages(layer, dataset, location.time, location.xy, location.z)
         .length
     ) {
-      throw new Error(
+      throw new LayerSelectionError(
         `No image for layer ${layer.name} at XY${location.xy + 1}, T${location.time + 1}, Z${location.z + 1}.`,
       );
     }

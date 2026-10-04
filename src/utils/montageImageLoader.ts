@@ -187,27 +187,3 @@ export class MontageImageLoader {
     this.queue = [];
   }
 }
-
-// Runs at most `max` tasks at once, in submission order.
-export function createLimiter(max: number) {
-  let running = 0;
-  const waiting: (() => void)[] = [];
-  return function limit<T>(task: () => Promise<T>): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const run = () => {
-        running++;
-        task()
-          .then(resolve, reject)
-          .finally(() => {
-            running--;
-            waiting.shift()?.();
-          });
-      };
-      if (running < max) {
-        run();
-      } else {
-        waiting.push(run);
-      }
-    });
-  };
-}

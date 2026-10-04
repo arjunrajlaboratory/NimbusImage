@@ -52,9 +52,9 @@ replaced (values computed or fetched).
 | `src/store/montage.ts` | `isOpen`, persisted settings, and `listPageItems` (the published page) |
 | `AnnotationList.vue` (`currentPageForMontage`) | Publishes the page it shows: server rows in server mode; the sorted mirror `dataTableItems` sliced by page in client mode |
 | `src/components/Montage/MontageView.vue` | Resolves objects, hydrates outlines, fetches label values, builds crop URLs, toolbar, export |
-| `src/components/Montage/MontagePanel.vue` | One `<canvas>`; asks for its crop when scrolled into view (observed within the grid) and keeps the old crop until the new one has loaded |
+| `src/components/Montage/MontagePanel.vue` | One `<canvas>`; asks for its crop when scrolled into view (observed within the grid), keeps the old crop until the new one has loaded, and frees its canvas and image when scrolled away |
 | `src/utils/montage.ts` | Pure geometry (`montageWindows`, `clipToImage`, …) and `drawMontagePanel`, used by both the panels and the export |
-| `src/utils/montageImageLoader.ts` | Concurrency-limited, reference-counted crop fetch + decode, LRU-cached under a byte budget; evicted bitmaps are `close()`d. Also `createLimiter`, the pool for crop builds |
+| `src/utils/montageImageLoader.ts` | Concurrency-limited, reference-counted crop fetch + decode, LRU-cached under a byte budget; evicted bitmaps are `close()`d. |
 | `Viewer.vue` | Mounts the montage **over** the image viewer (not instead of it), so closing returns to the same camera and tile state |
 
 Why the list *publishes* its page instead of the montage re-deriving it: the
@@ -78,13 +78,28 @@ only once visible, and builds share a pool of 4. Inputs (geometry, layers,
 panel size) settle 250ms after the last change into a numbered generation; a
 crop key is `generation:id`, keys are null while settling (panels keep their
 current image), and a key from an older generation is rejected as stale. The
-export builds the remaining offscreen crops itself, and is disabled while
-inputs are settling or outlines are hydrating.
+export builds the remaining offscreen crops itself (from the inputs it
+captured, if settings move on mid-export), draws each as it arrives and lets
+it go, shrinks the image to stay under Safari's ~16.7M-pixel canvas limit, and
+reports how many crops failed. It is disabled while inputs are settling or
+outlines are hydrating. Crop builds share a `p-limit` pool of 4.
+
+**Off-screen panels hold nothing.** Beyond the observer's 200px margin a
+panel has a 0×0 canvas and no decoded image (at 320px on a 2× display each is
+~1.6MB, so a 200-object page would otherwise hold hundreds of MB). Scrolling
+back usually gets the image from the loader's cache. A queued crop build
+re-checks its generation when it starts, so rapid paging doesn't run builds
+for pages already gone.
 
 **A panel's image stays drawn at the rect it was fetched for**, not the
 current window's rect. When padding, scale mode or the page's largest object
 changes, the old crop stays correctly placed under the new window until the
 new one arrives, instead of stretching or flashing black.
+
+The Size slider applies when the drag ends. Crop URLs are built with the
+shared `getBaseURLFromDownloadParameters` (whose `jpegQuality` key was
+misspelled `jpeqQuality` before this branch, so Snapshots' JPEG quality was
+being ignored).
 
 Crops are requested at screen density (capped at 2×) and never above native
 resolution; the canvas upsamples with smoothing off so pixels stay honest. The
@@ -139,7 +154,9 @@ Run `pnpm test src/utils/montage.test.ts src/utils/montageImageLoader.test.ts sr
 - [ ] **Crops are built only when a panel asks** (no up-front histogram fetches for offscreen panels). — *"builds a crop only when a panel asks, for the object's own frame"*
 - [ ] **One build per crop per generation.** — *"builds each crop once per settled generation"*
 - [ ] **The image cache is bounded by bytes and closes what it evicts, never a held image.** — *"evicts and closes the oldest unheld images past the byte budget"*, *"never closes an image someone still holds"*
-- [ ] **Crop builds are pooled.** — *"runs at most max tasks at once, in order"*
+- [ ] **Off-screen panels free their canvas and image.** — *"frees its image and canvas when scrolled away, and reloads on return"*
+- [ ] **A panel releases a crop still loading when it moves on**, so the loader can drop it before it starts. — *"releases a crop still loading when it moves on to another"*
+- [ ] **A queued build whose inputs changed doesn't run.** — *"drops a queued crop build whose inputs changed before it started"*
 
 ### Display while inputs change
 
@@ -147,6 +164,8 @@ Run `pnpm test src/utils/montage.test.ts src/utils/montageImageLoader.test.ts sr
 - [ ] **The old crop stays up, at its own rect, until the replacement loads.** — *"keeps the old crop until its replacement has loaded"*, *"shows its crop at the rect that crop was fetched for"*
 - [ ] **A long export page stays within canvas limits** (≥ √n columns). — *"uses at least √n columns so a long page stays within canvas limits"*
 - [ ] **Export waits for crops that match the current inputs.** — *"disables export until the crops match the current inputs"*
+- [ ] **Export doesn't come out blank if settings change mid-export.** — *"exports from captured inputs when settings move on mid-export"*
+- [ ] **Missing planes are typed, not matched by message.** — *"treats a missing plane as expected, other build failures as errors"*, *"types layer-selection failures so callers can tell them apart"*
 - [ ] **Expected build errors show on the panel without being logged.** — *"shows an expected build error without logging it"*
 
 ### Lifecycle and interaction
@@ -159,7 +178,7 @@ Run `pnpm test src/utils/montage.test.ts src/utils/montageImageLoader.test.ts sr
 ### Labels
 
 - [ ] **Labels from another configuration's properties are not shown, and choosing labels keeps theirs.** — *"only labels with properties this configuration has"*, *"keeps label choices made under other configurations"*
-- [ ] **Labels refresh when property values are recomputed.** — *"refetches labels when the store's property values change"*
+- [ ] **Labels refresh when property values are recomputed** (on `propertyValuesRevision`, not on lazy-mode viewport merges). — *"refetches labels when property values are recomputed"*
 - [ ] **Clearing the padding field doesn't apply zero padding.** — *"ignores an emptied padding field"*
 
 ### Process notes

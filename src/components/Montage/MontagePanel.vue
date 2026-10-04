@@ -9,7 +9,8 @@
     @mouseenter="emit('hover', true)"
     @mouseleave="emit('hover', false)"
   >
-    <canvas ref="canvas" class="montage-canvas" />
+    <!-- 0×0 until visible (a canvas otherwise defaults to 300×150). -->
+    <canvas ref="canvas" class="montage-canvas" width="0" height="0" />
     <v-icon v-if="error" class="montage-panel-error" size="18" color="warning">
       mdi-alert-circle-outline
     </v-icon>
@@ -85,28 +86,30 @@ const error = ref<string | null>(null);
 const isVisible = ref(false);
 const isLoaded = computed(() => loaded.value !== null);
 
-// The key being shown or loaded, and the request keeping its image alive.
+// The key being shown or loaded, the request keeping its image alive, and
+// the one still loading. The loading one is released whenever the panel moves
+// on, so the loader can drop it before it starts (fast paging/scrolling).
 let activeKey: string | null = null;
 let held: IMontageImageRequest | null = null;
+let pending: IMontageImageRequest | null = null;
+
+function releasePending() {
+  pending?.release();
+  pending = null;
+}
 let observer: IntersectionObserver | null = null;
 
 async function show(key: string) {
   activeKey = key;
+  releasePending();
   try {
     const crop = await props.loadCrop(key);
     if (activeKey !== key) return;
     const request = props.loader.load(crop.url);
-    let image: ImageBitmap;
-    try {
-      image = await request.promise;
-    } catch (err) {
-      request.release();
-      throw err;
-    }
-    if (activeKey !== key) {
-      request.release();
-      return;
-    }
+    pending = request;
+    const image = await request.promise;
+    if (activeKey !== key) return;
+    pending = null;
     // Swap only now, so the old crop stays up until the new one is ready.
     held?.release();
     held = request;
@@ -125,6 +128,7 @@ async function show(key: string) {
       logError("Montage crop failed to load", err);
     }
     error.value = err instanceof Error ? err.message : String(err);
+    releasePending();
     held?.release();
     held = null;
     loaded.value = null;
@@ -133,10 +137,28 @@ async function show(key: string) {
   }
 }
 
+// Off screen (beyond the observer margin) a panel holds nothing: no canvas
+// backing store and no decoded image. At 320px on a 2× display each is
+// ~1.6MB, so a 200-object page would otherwise hold hundreds of MB. The image
+// usually comes back from the loader's cache when the panel returns.
+function release() {
+  activeKey = null;
+  releasePending();
+  held?.release();
+  held = null;
+  loaded.value = null;
+  if (canvas.value) {
+    canvas.value.width = 0;
+    canvas.value.height = 0;
+  }
+}
+
 watch(
   () => [isVisible.value, props.cropKey] as const,
   ([visible, key]) => {
-    if (visible && key && key !== activeKey) {
+    if (!visible) {
+      release();
+    } else if (key && key !== activeKey) {
       show(key);
     }
   },
@@ -144,7 +166,7 @@ watch(
 
 function draw() {
   const el = canvas.value;
-  if (!el) {
+  if (!el || !isVisible.value) {
     return;
   }
   const devicePixels = Math.round(props.size * props.pixelRatio);
@@ -170,9 +192,17 @@ function draw() {
   );
 }
 
-watch(() => [props.content, props.size, props.pixelRatio, loaded.value], draw, {
-  flush: "post",
-});
+watch(
+  () => [
+    props.content,
+    props.size,
+    props.pixelRatio,
+    loaded.value,
+    isVisible.value,
+  ],
+  draw,
+  { flush: "post" },
+);
 
 onMounted(() => {
   draw();
@@ -196,9 +226,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   observer?.disconnect();
-  activeKey = null;
-  held?.release();
-  held = null;
+  release();
 });
 
 defineExpose({ isVisible, isLoaded, error, loaded });
@@ -226,6 +254,8 @@ defineExpose({ isVisible, isLoaded, error, loaded });
 
 .montage-canvas {
   display: block;
+  // Shown while a panel's canvas is unallocated (off screen) or loading.
+  background: #000;
   width: 100%;
   height: 100%;
 }
