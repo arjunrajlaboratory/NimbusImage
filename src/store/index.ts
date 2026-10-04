@@ -279,15 +279,35 @@ async function waitForStreamEnd(jobId: string, ms: number): Promise<boolean> {
   return true;
 }
 
+// One read of the job, or null as soon as the stream delivers the end
+// while the read is still in flight (a read stalled by the same outage
+// would otherwise hold everything up until the request times out).
+function readJobUnlessStreamEnds(
+  getJobInfo: (jobId: string) => Promise<IJob | null>,
+  jobId: string,
+): Promise<IJob | null> {
+  let readDone = false;
+  const read = getJobInfo(jobId).finally(() => {
+    readDone = true;
+  });
+  const streamEnd = (async () => {
+    while (!readDone && !streamDeliveredEnd(jobId)) {
+      await sleep(STREAM_GRACE_CHECK_MS);
+    }
+    return null;
+  })();
+  return Promise.race([read, streamEnd]);
+}
+
 // The job document, retrying a failed read (getJobInfo returns null) with
 // backoff; null if every attempt failed or the stream delivered the end
-// meanwhile (it may reconnect while the retries wait).
+// meanwhile (it may reconnect while a read or the retries wait).
 async function readJobWithRetries(
   getJobInfo: (jobId: string) => Promise<IJob | null>,
   jobId: string,
 ): Promise<IJob | null> {
   for (let attempt = 1; ; ++attempt) {
-    const job = await getJobInfo(jobId);
+    const job = await readJobUnlessStreamEnds(getJobInfo, jobId);
     if (job || attempt >= JOB_READ_ATTEMPTS) {
       return job;
     }

@@ -272,6 +272,23 @@ describe("addMultiSourceMetadata error propagation", () => {
       expect(getJob).toHaveBeenCalledTimes(1);
     });
 
+    it("does not wait on a stalled read once the stream delivers the end", async () => {
+      // The read hangs (same outage); the stream reconnects meanwhile.
+      vi.spyOn(main.api, "getJobInfo").mockReturnValue(new Promise(() => {}));
+      const done = main.addMultiSourceMetadata({
+        parentId: "folder1",
+        metadata: "{}",
+        transcode: true,
+      });
+      await vi.advanceTimersByTimeAsync(3000); // past the grace period
+      jobs.storeMessage({
+        jobId: "job1",
+        event: { _id: "job1", status: jobStates.success },
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(done).resolves.toBe("item1");
+    });
+
     it("lets a stream that is merely late deliver the end itself", async () => {
       const getJob = finishedJob(jobStates.success, ["done\n"]);
       const done = main.addMultiSourceMetadata({

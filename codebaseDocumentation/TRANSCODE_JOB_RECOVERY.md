@@ -23,8 +23,8 @@ tracking (`src/store/jobs.ts`) is unchanged. (A general fix in `jobs.ts`,
 2. Otherwise wait up to `STREAM_GRACE_MS` (2 s, on the wall clock so a
    throttled background tab cannot stretch it) for a merely late stream.
 3. Then read the job (`GirderAPI.getJobInfo`), retrying with backoff
-   (2/4/8/16 s) and stopping early if the stream delivers the end while
-   the retries wait.
+   (2/4/8/16 s) and stopping early if the stream delivers the end while a
+   read or the retries wait.
 4. If the job has finished and the stream still has not delivered its end,
    buffer the missing events with `jobs.storeMessage`: the log entries the
    stream did not carry (those it did form a prefix of the job's log),
@@ -70,8 +70,9 @@ Each invariant names the test that holds it (`src/store/index.test.ts`).
 **Reads and retries**
 - A failed read is retried —
   *"retries a failed read of the job"*.
-- Retries stop as soon as the stream delivers the end —
-  *"stops retrying the read once the stream delivers the end"*.
+- Retries, and a read still in flight, stop as soon as the stream delivers
+  the end — *"stops retrying the read once the stream delivers the end"*,
+  *"does not wait on a stalled read once the stream delivers the end"*.
 - An unreadable job leaves the store untouched and waits on the stream —
   *"waits on the stream as before when the job cannot be read"*.
 
