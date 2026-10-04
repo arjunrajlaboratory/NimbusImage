@@ -848,6 +848,10 @@ Shared mocks in this repo return constants chosen for the tests that existed whe
 - `mockGeoJSAnnotation` doesn't derive `coordinates()` from the `vertices` option, so a feature built by the real draw path has correct `options()` and no usable geometry.
 - `geojsAnnotationFactory` drops its options argument unless you re-forward it — assertions on a feature's constructed `style` see `undefined`.
 
+### Unhandled rejections are invisible in tests by default — twice over
+
+`vitest.config.js` sets `dangerouslyIgnoreUnhandledErrors: true`, so an abandoned promise that later rejects never fails a run. Listening with `process.on("unhandledRejection", spy)` (then waiting a `setTimeout` turn, not a microtask flush) isn't enough on its own: **a promise returned by a `vi.fn` is already "handled"**, because vitest attaches handlers to record `mock.settledResults`. A test for "the superseded call's connections request rejects unobserved" passed with and without the fix until the request came from a plain function instead of a `vi.fn` (`fetchAnnotationsStale.test.ts`, PR #1380). Any test about an unobserved rejection must produce the promise from a non-spy function.
+
 Before concluding "the code doesn't work", check what the relevant mock actually returns. Equally: when a component test needs a *component* to do something, prefer asserting the side effect the component owns over re-deriving geometry through the mock.
 
 **Unmount components that register global listeners.** A wrapper left mounted by an earlier test keeps its `window` listener attached, so the next test's dispatch fires it too and a spy is called twice. Track the wrapper and unmount it in `afterEach`. If you see "expected 1 call, got 2", suspect a leaked mount before suspecting the code — and then ask whether the *product* can also mount that component more than once, because that is the same bug in production.

@@ -2129,6 +2129,10 @@ export class Annotations extends VuexModule {
     try {
       const connectionsPromise =
         this.annotationsAPI.getConnectionsForDatasetId(datasetId);
+      // A superseded call may return before awaiting this; mark it handled so
+      // a late rejection isn't reported as unhandled. Awaiting it below still
+      // rejects into the catch.
+      connectionsPromise.catch(() => {});
 
       const { stubThreshold } = this.visibilityConfig;
       let count: number;

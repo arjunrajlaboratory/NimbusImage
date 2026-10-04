@@ -202,6 +202,43 @@ describe("fetchAnnotations stale-response guard", () => {
     expect(firstResult).toBe(true);
   });
 
+  it("a superseded call's abandoned connections request may reject without an unhandled rejection", async () => {
+    const oldCount = deferred<number>();
+    const oldConnections = deferred<never[]>();
+    api.getAnnotationCount.mockImplementation((datasetId: string) =>
+      datasetId === "old" ? oldCount.promise : Promise.resolve(1),
+    );
+    api.getAnnotationsForDatasetId.mockResolvedValue([
+      makeAnnotation("n1", "new"),
+    ]);
+    // A plain function, not vi.fn: vitest attaches handlers to promises a
+    // vi.fn returns (to record settledResults), which would mark the abandoned
+    // request handled and hide the bug.
+    const connectionsMock = api.getConnectionsForDatasetId;
+    (api as any).getConnectionsForDatasetId = (datasetId: string) =>
+      datasetId === "old" ? oldConnections.promise : Promise.resolve([]);
+    // vitest.config.js ignores unhandled errors, so listen for them directly.
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      openDataset("old");
+      const first = annotationStore.fetchAnnotations();
+      openDataset("new");
+      await annotationStore.fetchAnnotations();
+      oldCount.resolve(1); // the old call now returns before awaiting connections
+      expect(await first).toBe(false);
+
+      oldConnections.reject(new Error("network"));
+      // Node reports unhandled rejections after a macrotask turn.
+      await new Promise((r) => setTimeout(r, 10));
+    } finally {
+      process.off("unhandledRejection", unhandled);
+      api.getConnectionsForDatasetId = connectionsMock;
+    }
+    expect(unhandled).not.toHaveBeenCalled();
+    expect(annotationStore.annotations.map((a) => a.id)).toEqual(["n1"]);
+  });
+
   it("a bail-out (no dataset) supersedes a slow fetch already in flight", async () => {
     const oldFetch = deferred<IAnnotation[]>();
     api.getAnnotationsForDatasetId.mockReturnValue(oldFetch.promise);
