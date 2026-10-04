@@ -20,7 +20,8 @@ vi.mock("@/components/ImageViewer.vue", () => ({
   default: { template: "<div></div>", name: "ImageViewer" },
 }));
 
-// Reactive so the dataset/configuration watchers can be driven by assignment.
+// Reactive so the dataset/configuration and montage-closing watchers can be
+// driven by assignment.
 vi.mock("@/store", async () => {
   const { reactive } = await import("vue");
   return {
@@ -33,6 +34,21 @@ vi.mock("@/store", async () => {
       setShowTimelapseMode: vi.fn(),
     }),
   };
+});
+
+vi.mock("@/components/Montage/MontageView.vue", () => ({
+  default: { template: "<div></div>", name: "MontageView" },
+}));
+
+vi.mock("@/store/montage", async () => {
+  const { reactive } = await import("vue");
+  const montage = reactive({
+    isOpen: false,
+    setIsOpen: (value: boolean) => {
+      montage.isOpen = value;
+    },
+  });
+  return { default: montage };
 });
 
 vi.mock("@/store/annotation", () => ({
@@ -48,9 +64,10 @@ vi.mock("@/store/properties", () => ({
   },
 }));
 
-vi.mock("@/store/volumeView", () => ({
-  default: volumeViewMock,
-}));
+vi.mock("@/store/volumeView", async () => {
+  const { reactive } = await import("vue");
+  return { default: reactive(volumeViewMock) };
+});
 
 vi.mock("@/store/filters", () => ({
   default: {
@@ -74,6 +91,8 @@ import propertiesStore from "@/store/properties";
 import toolSuggestionsStore from "@/store/toolSuggestions";
 import Viewer from "./Viewer.vue";
 import volumeViewStore from "@/store/volumeView";
+import montageStore from "@/store/montage";
+import { nextTick } from "vue";
 
 // The store mock is shared and reactive: a component left mounted by an
 // earlier test would keep firing its watchers into later assertions.
@@ -262,6 +281,45 @@ describe("Viewer analysis gate refresh", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("Viewer montage lifecycle", () => {
+  beforeEach(() => {
+    (volumeViewStore as any).viewMode = "2d";
+    (store as any).dataset = { id: "ds-1", name: "Test", time: { length: 5 } };
+    montageStore.setIsOpen(false);
+  });
+
+  it("closes the montage for a different dataset", async () => {
+    mountComponent();
+    montageStore.setIsOpen(true);
+    (store as any).dataset = { id: "ds-2", name: "Other", time: { length: 1 } };
+    await nextTick();
+    expect(montageStore.isOpen).toBe(false);
+  });
+
+  it("keeps the montage open when the same dataset is reloaded", async () => {
+    mountComponent();
+    montageStore.setIsOpen(true);
+    (store as any).dataset = { id: "ds-1", name: "Test", time: { length: 5 } };
+    await nextTick();
+    expect(montageStore.isOpen).toBe(true);
+  });
+
+  it("closes the montage when switching to 3D", async () => {
+    mountComponent();
+    montageStore.setIsOpen(true);
+    (volumeViewStore as any).viewMode = "3d";
+    await nextTick();
+    expect(montageStore.isOpen).toBe(false);
+  });
+
+  it("closes the montage when leaving the view", () => {
+    const wrapper = mountComponent();
+    montageStore.setIsOpen(true);
+    wrapper.unmount();
+    expect(montageStore.isOpen).toBe(false);
   });
 });
 

@@ -508,9 +508,10 @@ export default class GirderAPI {
       .then((r) => asDatasetView(r.data));
   }
 
-  async getSnapshotImage(url: URL): Promise<ArrayBuffer> {
+  async getSnapshotImage(url: URL, signal?: AbortSignal): Promise<ArrayBuffer> {
     const response = await this.client.get<ArrayBuffer>(url.href, {
       responseType: "arraybuffer",
+      signal,
     });
     if (response.data.byteLength === 0) {
       throw new Error("Snapshot crop contains no image data.");

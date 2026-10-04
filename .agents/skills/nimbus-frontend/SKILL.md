@@ -856,6 +856,8 @@ Before concluding "the code doesn't work", check what the relevant mock actually
 
 **Unmount components that register global listeners.** A wrapper left mounted by an earlier test keeps its `window` listener attached, so the next test's dispatch fires it too and a spy is called twice. Track the wrapper and unmount it in `afterEach`. If you see "expected 1 call, got 2", suspect a leaked mount before suspecting the code — and then ask whether the *product* can also mount that component more than once, because that is the same bug in production.
 
+The same leak bites through **reactive shared store mocks**: a component that writes into a mocked store from a watcher (e.g. AnnotationList publishing its page to `montage.listPageItems`) keeps doing so from every wrapper earlier tests left mounted. Flip a reactive flag they all watch and the mock's final value can come from a stale instance. Assert on the instance's own computed (`wrapper.vm.x`), or trigger the write through state only that instance owns (its own `page`), rather than reading the shared mock's last value.
+
 ## Codebase Documentation References
 
 - Vuetify 4 migration details: read `codebaseDocumentation/VUETIFY4_MIGRATION.md`

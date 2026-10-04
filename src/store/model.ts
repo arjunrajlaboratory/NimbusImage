@@ -475,7 +475,7 @@ export interface IDownloadParameters {
   width?: number;
   height?: number;
   magnification?: number;
-  jpeqQuality?: number;
+  jpegQuality?: number;
   style?: string;
   tiffCompression?: string;
 }

@@ -57,7 +57,7 @@ describe("App.vue command palette coverage", () => {
     const toggles = template.match(/class="palette-ibtn"/g) ?? [];
     const toggleIds =
       template.match(
-        /data-command-id="(panel\.toggle\.[a-zA-Z]+|view\.toggle3d)"/g,
+        /data-command-id="(panel\.toggle\.[a-zA-Z]+|view\.toggle[a-zA-Z0-9]+)"/g,
       ) ?? [];
     expect(toggles.length).toBeGreaterThan(0);
     expect(toggleIds.length).toBe(toggles.length);
