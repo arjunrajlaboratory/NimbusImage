@@ -27,6 +27,7 @@
       v-if="isCategorical"
       :property-path="propertyPath"
       :model-value="selectedCategories"
+      :visible="visible"
       @update:model-value="updateCategories"
     />
 
@@ -141,7 +142,14 @@ import debounce from "lodash/debounce";
 // Suppress unused import warnings for template-only components
 void TagFilterEditor;
 
-const props = defineProps<{ propertyPath: string[] }>();
+const props = withDefaults(
+  defineProps<{
+    propertyPath: string[];
+    // Whether this row can be seen (see PropertyCategoryFilter's `visible`).
+    visible?: boolean;
+  }>(),
+  { visible: true },
+);
 
 // Template refs
 const wrapper = ref<HTMLElement>();
@@ -406,6 +414,25 @@ watch(hist, () => {
     ) {
       updateCategories(selectedCategories.value);
     }
+    return;
+  }
+  // The inverse: string selections restored (from a shared configuration)
+  // onto a path that is numeric in this dataset match no value. Reset to the
+  // full histogram range, which passes everything, rather than hide it all.
+  if (
+    hist.value.length > 0 &&
+    (propertyFilter.value.values ?? []).some(
+      (value) => typeof value === "string",
+    )
+  ) {
+    defaultMinMax.value = true;
+    filterStore.updatePropertyFilter({
+      ...propertyFilter.value,
+      valuesOrRange: PropertyFilterMode.Range,
+      values: undefined,
+      range: { min: defaultMin.value, max: defaultMax.value },
+    });
+    initializeHandles();
     return;
   }
   // Once the server histogram (authoritative full-data range) arrives, sync the

@@ -220,4 +220,28 @@ describe("PropertyCategoryFilter", () => {
     expect((w.vm as any).search).toBe("");
     expect((w.vm as any).shownEntries).toHaveLength(4);
   });
+  it("defers loading until visible, loads once, and retries a failed load on the next reveal", async () => {
+    getPropertyDistinctValues.mockRejectedValueOnce(new Error("timeout"));
+    wrapper = shallowMount(PropertyCategoryFilter, {
+      props: { propertyPath: ["p", "gene"], modelValue: [], visible: false },
+    });
+    await flushPromises();
+    expect(getPropertyDistinctValues).not.toHaveBeenCalled();
+
+    await wrapper.setProps({ visible: true });
+    await flushPromises();
+    expect(getPropertyDistinctValues).toHaveBeenCalledTimes(1);
+    expect((wrapper.vm as any).error).toBe("Could not load values");
+
+    await wrapper.setProps({ visible: false });
+    await wrapper.setProps({ visible: true });
+    await flushPromises();
+    expect(getPropertyDistinctValues).toHaveBeenCalledTimes(2);
+    expect((wrapper.vm as any).shownEntries).toHaveLength(4);
+
+    await wrapper.setProps({ visible: false });
+    await wrapper.setProps({ visible: true });
+    await flushPromises();
+    expect(getPropertyDistinctValues).toHaveBeenCalledTimes(2);
+  });
 });

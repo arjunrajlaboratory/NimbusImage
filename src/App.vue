@@ -514,7 +514,7 @@
       :width="RIGHT_PALETTE_WIDTHS.filters"
       :max-height="filtersMaxHeight"
     >
-      <filters-panel />
+      <filters-panel :visible="filtersPanel" />
     </floating-palette>
 
     <floating-palette

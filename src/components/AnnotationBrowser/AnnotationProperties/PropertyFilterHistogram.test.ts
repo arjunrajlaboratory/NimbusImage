@@ -411,6 +411,32 @@ describe("PropertyFilterHistogram", () => {
       );
     });
 
+    it("resets restored string selections to the full range when the property is numeric here", async () => {
+      const histogram = ref<any[]>([]);
+      (filterStore as any).getHistogram = vi.fn(() => histogram.value);
+      (filterStore as any).propertyFilters = [
+        {
+          id: "existing-id",
+          propertyPath: ["propA", "sub1"],
+          range: { min: 0, max: 0 },
+          exclusive: false,
+          enabled: true,
+          valuesOrRange: "values",
+          values: ["KIT"],
+        },
+      ];
+      const wrapper = mountComponent();
+      histogram.value = [{ count: 5, min: 2, max: 40 }];
+      await wrapper.vm.$nextTick();
+      expect(filterStore.updatePropertyFilter).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          valuesOrRange: "range",
+          values: undefined,
+          range: { min: 2, max: 40 },
+        }),
+      );
+    });
+
     it("numeric histograms keep the histogram UI", () => {
       (filterStore as any).getHistogram = vi.fn(() => [
         { count: 5, min: 0, max: 100 },

@@ -98,10 +98,17 @@ import { logError } from "@/utils/log";
 
 const ROW_HEIGHT = 26;
 
-const props = defineProps<{
-  propertyPath: string[];
-  modelValue: string[];
-}>();
+const props = withDefaults(
+  defineProps<{
+    propertyPath: string[];
+    modelValue: string[];
+    // False while the Filters palette or its Property values section is
+    // closed. Palette content stays mounted, so without this every restored
+    // categorical row would run a whole-dataset aggregation at dataset load.
+    visible?: boolean;
+  }>(),
+  { visible: true },
+);
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: string[]): void;
@@ -207,19 +214,34 @@ const debouncedServerSearch = debounce(fetchValues, 300);
 // Keyed on the dataset too: the Filters panel keys these rows by index, so
 // after a dataset switch with the same configuration this component can be
 // reused for an identical path whose values belong to the old dataset.
-watch(
+const listKey = computed(
   () => `${store.dataset?.id}|${props.propertyPath.join(".")}`,
-  () => {
-    allValues.value = null;
-    // Rows are keyed by index, so a removed row above can hand this
-    // component a new path; a search typed for the old one does not carry
-    // over. Clearing it lets the searchText watcher reset the search state.
-    search.value = "";
-    searchedValues.value = null;
-    requestSeq.search++;
-    loadingKind.value.search = false;
-    debouncedServerSearch.cancel();
-    void fetchValues("");
+);
+let loadedKey: string | null = null;
+
+// The full list loads the first time the row is visible for its key, and
+// again on a later reveal if that load failed.
+watch(
+  [listKey, () => props.visible],
+  ([key, visible]) => {
+    if (key !== loadedKey) {
+      loadedKey = key;
+      allValues.value = null;
+      failedKind.value.all = false;
+      requestSeq.all++;
+      loadingKind.value.all = false;
+      // Rows are keyed by index, so a removed row above can hand this
+      // component a new path; a search typed for the old one does not carry
+      // over. Clearing it lets the searchText watcher reset the search state.
+      search.value = "";
+      searchedValues.value = null;
+      requestSeq.search++;
+      loadingKind.value.search = false;
+      debouncedServerSearch.cancel();
+    }
+    if (visible && allValues.value === null && !loadingKind.value.all) {
+      void fetchValues("");
+    }
   },
   { immediate: true },
 );
