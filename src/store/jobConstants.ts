@@ -5,6 +5,11 @@ export const jobStates = {
   success: 3,
   error: 4,
   cancelled: 5,
+  // girder_worker's intermediate statuses.
+  fetchingInput: 820,
+  convertingInput: 821,
+  convertingOutput: 822,
+  pushingOutput: 823,
   cancelling: 824,
 };
 
@@ -15,17 +20,15 @@ const TERMINAL_JOB_STATES: ReadonlySet<number> = new Set([
   jobStates.cancelled,
 ]);
 
-// Statuses of a job still in progress: girder_jobs' own and girder_worker's
-// intermediate ones (fetching/converting input, converting/pushing output,
-// cancelling).
+// Statuses of a job still in progress.
 export const UNFINISHED_JOB_STATUSES: readonly number[] = [
   jobStates.inactive,
   jobStates.queued,
   jobStates.running,
-  820,
-  821,
-  822,
-  823,
+  jobStates.fetchingInput,
+  jobStates.convertingInput,
+  jobStates.convertingOutput,
+  jobStates.pushingOutput,
   jobStates.cancelling,
 ];
 

@@ -6,6 +6,7 @@ import {
   VuexModule,
 } from "vuex-module-decorators";
 import { toRaw } from "vue";
+import { isAxiosError } from "axios";
 import store from "./root";
 import {
   IComputeJob,
@@ -342,17 +343,11 @@ export class Jobs extends VuexModule {
   // be mistaken for a failed job.
   @Action
   async fetchJobStatus(jobId: string): Promise<number | null> {
-    return (await this.fetchJob(jobId))?.status ?? null;
-  }
-
-  // The job record straight from the server, or null when it could not be
-  // read (network failure, deleted job, bad id).
-  @Action
-  async fetchJob(jobId: string): Promise<IJobRecord | null> {
     try {
-      return (await main.girderRest.get(`job/${jobId}`)).data;
+      const response = await main.girderRest.get(`job/${jobId}`);
+      return response.data.status;
     } catch (error) {
-      logError(`Failed to get job ${jobId}`);
+      logError(`Failed to get status for job ${jobId}`);
       return null;
     }
   }
@@ -406,18 +401,36 @@ export class Jobs extends VuexModule {
       }
       this.clearStoredMessages(job.jobId);
     }
-    // The safety-net poll runs while anything is tracked (see
-    // JOB_POLL_INTERVAL_MS).
-    if (this.jobInfoMap[job.jobId] && pollTimer === null) {
-      pollTimer = setInterval(() => {
-        if (Object.keys(this.jobInfoMap).length === 0) {
-          stopJobPolling();
-        } else {
-          this.reconcileTrackedJobs(true);
-        }
-      }, JOB_POLL_INTERVAL_MS);
-    }
+    this.ensureJobPolling();
     return successPromise;
+  }
+
+  // Whether any tracked job is the current user's: only those are checked
+  // (see IJobInfo.userId).
+  get hasCheckableJobs() {
+    const userId = main.girderUser?._id;
+    return (
+      userId !== undefined &&
+      Object.values(this.jobInfoMap).some(
+        (jobInfo) => jobInfo.userId === userId,
+      )
+    );
+  }
+
+  // Runs the safety-net poll (see JOB_POLL_INTERVAL_MS) while the current
+  // user has tracked jobs.
+  @Action
+  ensureJobPolling() {
+    if (pollTimer !== null || !this.hasCheckableJobs) {
+      return;
+    }
+    pollTimer = setInterval(() => {
+      if (this.hasCheckableJobs) {
+        this.reconcileTrackedJobs(true);
+      } else {
+        stopJobPolling();
+      }
+    }, JOB_POLL_INTERVAL_MS);
   }
 
   // Settle a tracked job from its server record if it has already finished;
@@ -427,14 +440,21 @@ export class Jobs extends VuexModule {
     if (!this.jobInfoMap[jobId]) {
       return;
     }
-    const job = await this.fetchJob(jobId);
+    let job: IJobRecord;
+    try {
+      job = (await main.girderRest.get(`job/${jobId}`)).data;
+    } catch (error) {
+      if (!isAxiosError(error) || error.response?.status !== 400) {
+        // E.g. a network failure: try again later.
+        logError(`Failed to get job ${jobId}`);
+        return;
+      }
+      // Girder answers 400 for a job that no longer exists (deleted): it
+      // will never end, so settle it as failed rather than check it forever.
+      job = { _id: jobId, status: jobStates.error };
+    }
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
-    if (
-      !job ||
-      !jobInfo ||
-      jobInfo.settled ||
-      !isTerminalJobStatus(job.status)
-    ) {
+    if (!jobInfo || jobInfo.settled || !isTerminalJobStatus(job.status)) {
       return;
     }
     // Deliver the part of the log not seen yet, so listeners (progress,
@@ -585,11 +605,12 @@ export class Jobs extends VuexModule {
     for (const listener of jobInfo.listeners) {
       // A throwing listener must not keep the job from settling (it would
       // then be re-checked, and the listeners re-run, every poll).
-      try {
-        listener.eventCallback?.(jobEvent);
-        listener.errorCallback?.(jobEvent);
-      } catch (error) {
-        logError(`A listener of job ${jobId} failed`, error);
+      for (const callback of [listener.eventCallback, listener.errorCallback]) {
+        try {
+          callback?.(jobEvent);
+        } catch (error) {
+          logError(`A listener of job ${jobId} failed`, error);
+        }
       }
     }
     const status = jobEvent.status;
@@ -653,7 +674,9 @@ export class Jobs extends VuexModule {
     cancelReconnect();
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      this.initializeNotificationSubscription(true);
+      if (main.girderRest.token) {
+        this.initializeNotificationSubscription(true);
+      }
     }, delay);
   }
 
@@ -668,13 +691,15 @@ export class Jobs extends VuexModule {
       stableTimer = null;
       this.setConnectionErrors(0);
     }, STABLE_CONNECTION_MS);
+    // E.g. a user logging back in with jobs still tracked from before.
+    this.ensureJobPolling();
     await this.reconcileTrackedJobs(false);
   }
 
-  @Action
   // isReconnect: a backoff reconnect, which keeps the failure count. Any
   // other (re)connection -- logging in, a new job -- is a fresh start, even
   // after reconnecting gave up.
+  @Action
   async initializeNotificationSubscription(isReconnect: boolean = false) {
     if (!isReconnect) {
       this.setConnectionErrors(0);

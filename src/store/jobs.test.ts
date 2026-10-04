@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { watch } from "vue";
+import { AxiosError } from "axios";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -100,7 +101,10 @@ async function restGet(path: string, config?: any) {
   }
   const jobId = path.slice("job/".length);
   if (!serverJobs[jobId]) {
-    throw new Error("404");
+    // As Girder answers for a job that does not exist.
+    throw new AxiosError("Invalid job id", "ERR_BAD_REQUEST", undefined, null, {
+      status: 400,
+    } as any);
   }
   return { data: { _id: jobId, log: [], ...serverJobs[jobId] } };
 }
@@ -497,13 +501,45 @@ describe("jobs notification recovery", () => {
   it("settles a job even when a listener throws", async () => {
     await openStream();
     const jobId = nextJobId();
+    const errorCallback = vi.fn();
     const job = track(jobId, {
       eventCallback: () => {
         throw new Error("listener bug");
       },
+      errorCallback,
     });
     streamEvent(socket(), { _id: jobId, status: jobStates.success });
     await tick();
+    expect(job.settled).toBe(true);
+    expect(errorCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles a deleted job as failed instead of checking it forever", async () => {
+    await openStream();
+    const jobId = nextJobId();
+    const job = track(jobId); // never on the server: as if deleted
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(job.settled).toBe(false);
+    mocks.get.mockClear();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mocks.get).not.toHaveBeenCalled();
+  });
+
+  it("keeps checking a job it could not read for a transient reason", async () => {
+    await openStream();
+    const jobId = nextJobId();
+    serverJobs[jobId] = { status: jobStates.success };
+    mocks.get.mockImplementation(async (path: string, config?: any) => {
+      if (path !== "job") {
+        throw new Error("Network Error");
+      }
+      return restGet(path, config);
+    });
+    const job = track(jobId);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(job.settled).toBeUndefined();
+    mocks.get.mockImplementation(restGet);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(job.settled).toBe(true);
   });
 
