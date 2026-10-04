@@ -265,27 +265,36 @@ function streamDeliveredEnd(jobId: string): boolean {
   );
 }
 
-// The job document, retrying a failed read (getJobInfo returns null), or
-// null if every attempt failed.
-function readJobWithRetries(
+// Waits up to `ms` for the stream to buffer this job's end; true if it did.
+// Measured on the clock, not in iterations: a background tab throttles
+// timers, which would otherwise stretch the wait to minutes.
+async function waitForStreamEnd(jobId: string, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (!streamDeliveredEnd(jobId)) {
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await sleep(STREAM_GRACE_CHECK_MS);
+  }
+  return true;
+}
+
+// The job document, retrying a failed read (getJobInfo returns null) with
+// backoff; null if every attempt failed or the stream delivered the end
+// meanwhile (it may reconnect while the retries wait).
+async function readJobWithRetries(
   getJobInfo: (jobId: string) => Promise<IJob | null>,
   jobId: string,
 ): Promise<IJob | null> {
-  return pRetry(
-    async () => {
-      const job = await getJobInfo(jobId);
-      if (!job) {
-        throw new Error(`Could not read job ${jobId}`);
-      }
+  for (let attempt = 1; ; ++attempt) {
+    const job = await getJobInfo(jobId);
+    if (job || attempt >= JOB_READ_ATTEMPTS) {
       return job;
-    },
-    {
-      retries: JOB_READ_ATTEMPTS - 1,
-      minTimeout: JOB_READ_RETRY_MS,
-      factor: 2,
-      randomize: false,
-    },
-  ).catch(() => null);
+    }
+    if (await waitForStreamEnd(jobId, JOB_READ_RETRY_MS * 2 ** (attempt - 1))) {
+      return null;
+    }
+  }
 }
 
 // The request that ran `jobId` in-process has returned, so the job has
@@ -306,16 +315,7 @@ async function supplyMissedJobEnd(
   getJobInfo: (jobId: string) => Promise<IJob | null>,
   jobId: string,
 ) {
-  // Measured on the clock, not in iterations: a background tab throttles
-  // timers, which would otherwise stretch the grace period to minutes.
-  const graceEnds = Date.now() + STREAM_GRACE_MS;
-  while (!streamDeliveredEnd(jobId)) {
-    if (Date.now() >= graceEnds) {
-      break;
-    }
-    await sleep(STREAM_GRACE_CHECK_MS);
-  }
-  if (streamDeliveredEnd(jobId)) {
+  if (await waitForStreamEnd(jobId, STREAM_GRACE_MS)) {
     return; // the usual case: nothing to supply, nothing to read
   }
   const job = await readJobWithRetries(getJobInfo, jobId);

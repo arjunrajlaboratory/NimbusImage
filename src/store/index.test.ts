@@ -241,6 +241,24 @@ describe("addMultiSourceMetadata error propagation", () => {
       await expect(configure()).resolves.toBe("item1");
     });
 
+    it("stops retrying the read once the stream delivers the end", async () => {
+      // The first read fails; the stream reconnects during the backoff.
+      const getJob = vi.spyOn(main.api, "getJobInfo").mockResolvedValue(null);
+      const done = main.addMultiSourceMetadata({
+        parentId: "folder1",
+        metadata: "{}",
+        transcode: true,
+      });
+      await vi.advanceTimersByTimeAsync(2500); // grace + first read
+      jobs.storeMessage({
+        jobId: "job1",
+        event: { _id: "job1", status: jobStates.success },
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(done).resolves.toBe("item1");
+      expect(getJob).toHaveBeenCalledTimes(1);
+    });
+
     it("lets a stream that is merely late deliver the end itself", async () => {
       const getJob = finishedJob(jobStates.success, ["done\n"]);
       const done = main.addMultiSourceMetadata({
