@@ -1,0 +1,171 @@
+# Montage View
+
+A grid of image crops, one per object on the Object Browser's **current page**,
+shown in place of the image view. It is frontend-only: crops come from the
+existing `item/{id}/tiles/region` endpoint and outlines from the existing batch
+hydrate endpoint.
+
+Open it from the grid button in the dataset view's app bar (next to the 3D
+toggle) or the command palette ("Open montage view"). It closes on the back
+arrow, on a panel's "go to" button (which also navigates to that object), when
+switching to a different dataset (by id, not on a reload of the same one), in
+3D, and on leaving the dataset view.
+
+Clicking a panel toggles that object's selection (shared with the list and the
+image). Hovering a panel hovers the object everywhere, which also scrolls the
+Object Browser to its row — the same linking an image hover gives.
+Navigation is a button rather than double-click because a double-click also
+delivers two clicks, which would toggle the selection off and on first.
+
+## What it shows
+
+- **Exactly the list's page.** Same filters, sort, page and page size as the
+  Objects tab, in both client and server list modes. Changing the list's page
+  pages the montage.
+- **One square crop per object**, centered on its bounding box and padded by
+  `padding` image pixels on every side. A point has an empty bounding box, so
+  for points the padding alone sets the window (window side = 2 × padding).
+- **Same scale** (default): every panel uses the largest window on the page, so
+  object sizes compare directly. **Fit each**: each panel is zoomed to its own
+  object.
+- Crops use the current visible layers, colors and contrast (including personal
+  contrast overrides), at **each object's own XY/Z/Time**, not the viewer's
+  current frame.
+- **Outlines** (toggle) in the object's display color; points draw as a ring.
+- **Object number** (toggle): the list's Index column value.
+- **Property labels**: any computed property, printed under each panel as
+  `leafName: value`.
+- **Export PNG** draws the same panels into one image, using the on-screen
+  column count but at least √n columns, so a long page can't exceed the
+  browser's canvas size limit.
+
+Settings persist in localStorage (`montageSettings`). Label paths are filtered
+to properties the current configuration has, because property ids are
+per-configuration; choosing labels keeps the paths chosen under other
+configurations. Labels refetch when the store's property-value map is
+replaced (values computed or fetched).
+
+## How it works
+
+| Piece | Role |
+|---|---|
+| `src/store/montage.ts` | `isOpen`, persisted settings, and `listPageItems` (the published page) |
+| `AnnotationList.vue` (`currentPageForMontage`) | Publishes the page it shows: server rows in server mode; the sorted mirror `dataTableItems` sliced by page in client mode |
+| `src/components/Montage/MontageView.vue` | Resolves objects, hydrates outlines, fetches label values, builds crop URLs, toolbar, export |
+| `src/components/Montage/MontagePanel.vue` | One `<canvas>`; asks for its crop when scrolled into view (observed within the grid) and keeps the old crop until the new one has loaded |
+| `src/utils/montage.ts` | Pure geometry (`montageWindows`, `clipToImage`, …) and `drawMontagePanel`, used by both the panels and the export |
+| `src/utils/montageImageLoader.ts` | Concurrency-limited, reference-counted crop fetch + decode, LRU-cached under a byte budget; evicted bitmaps are `close()`d. Also `createLimiter`, the pool for crop builds |
+| `Viewer.vue` | Mounts the montage **over** the image viewer (not instead of it), so closing returns to the same camera and tile state |
+
+Why the list *publishes* its page instead of the montage re-deriving it: the
+client-mode order lives in the list (Vuetify sorting mirrored by
+`dataTableItems`), and server-mode paging is driven by the list's watchers.
+Re-deriving either would be a second implementation that drifts. The publish
+computed returns `[]` while the montage is closed, because the client path sorts
+every filtered item.
+
+Object resolution prefers the store's own full annotation (always fresh), then
+one hydrated by the montage, then the stub (or server row). Only unhydrated
+**non-point** objects are hydrated, in one `upenn_annotation/hydrate` request
+per page. Crop URLs wait for hydration so "same scale" windows aren't built from
+stub radii and then rebuilt.
+
+**Crops are built lazily.** A crop's URL carries a per-layer style, and in
+percentile contrast mode that style needs a histogram for the object's own
+frame. Building every panel's URL up front would fetch every frame's
+histograms for a page spread over many frames, so a panel asks for its crop
+only once visible, and builds share a pool of 4. Inputs (geometry, layers,
+panel size) settle 250ms after the last change into a numbered generation; a
+crop key is `generation:id`, keys are null while settling (panels keep their
+current image), and a key from an older generation is rejected as stale. The
+export builds the remaining offscreen crops itself, and is disabled while
+inputs are settling or outlines are hydrating.
+
+**A panel's image stays drawn at the rect it was fetched for**, not the
+current window's rect. When padding, scale mode or the page's largest object
+changes, the old crop stays correctly placed under the new window until the
+new one arrives, instead of stretching or flashing black.
+
+Crops are requested at screen density (capped at 2×) and never above native
+resolution; the canvas upsamples with smoothing off so pixels stay honest. The
+part of a window outside the image is drawn as background, which keeps the
+object centered and the scale uniform at image edges. Requests go through the
+authenticated client (`getSnapshotImage`), so each unique crop also triggers a
+CORS preflight, which is the same trade-off Snapshots makes.
+
+## Layering
+
+The overlay sits at z-index 1002: above ImageViewer's overlays (up to 1001),
+below floating palettes (1006). It narrows to fit between open palettes using
+App.vue's `--nimbus-left-palette-clear-x` / `--nimbus-right-edge-clear-x`, so
+the Object Browser and Layers panels stay usable beside it.
+
+## Not done (yet)
+
+- Neighbouring objects are not drawn in a panel, only the panel's own object.
+- A server-side montage endpoint (one sprite per page instead of one request
+  per crop) was deliberately deferred until it is shown to be needed.
+
+## Regression checklist
+
+Run `pnpm test src/utils/montage.test.ts src/utils/montageImageLoader.test.ts src/components/Montage src/components/AnnotationBrowser/AnnotationList.test.ts`.
+
+### Mirroring the list
+
+- [ ] **The montage is exactly the list's page, in display order.** — *"is the client list's current page in display order"*, *"is the server page's rows in server mode"*
+- [ ] **Sorting reorders the montage.** — *"follows the list's sort"*
+- [ ] **A page past the end is clamped, as Vuetify does.** — *"clamps a page past the end like the table does"*
+- [ ] **The page reaches the store when it changes.** — *"publishes the page to the montage store when it changes"*
+- [ ] **Panels keep the published order.** — *"shows the list page's objects in list order"*
+
+### Geometry and drawing
+
+- [ ] **Points get a window from padding alone.** — *"sizes a point object's window by the padding alone"*
+- [ ] **Same scale means one window size for every panel.** — *"gives every panel the largest window in uniform mode"*, *"gives every panel the same window size in uniform mode"*
+- [ ] **Edge objects stay centered; the crop is offset, not stretched.** — *"draws a clipped crop offset by the part of the window off-image"*
+- [ ] **Each crop is for the object's own frame.** — *"builds a crop only when a panel asks, for the object's own frame"*
+- [ ] **Outlines map into panel space; polygons close, lines don't.** — *"maps outline coordinates into panel space and closes polygons"*, *"leaves lines open"*
+- [ ] **Off-image objects report instead of requesting.** — *"reports an object outside the image instead of requesting it"*
+
+### Cost
+
+- [ ] **No sorting while the montage is closed.** — *"computes nothing while the montage is closed"*
+- [ ] **Only non-point stubs are hydrated, in one request per page.** — *"hydrates only unhydrated non-point objects, in one request"*
+- [ ] **A crop nobody holds is dropped before it starts** (fast paging must not queue stale pages). — *"drops a queued request nobody holds before it starts"*
+- [ ] **Concurrency is capped and identical crops are fetched once.** — *"never runs more than the concurrency limit at once"*, *"fetches a URL once and shares the result"*
+- [ ] **Failed crops are not cached.** — *"does not cache failures, so a later load retries"*
+- [ ] **Unmount cancels pending crop work.** — *"cancels pending crop work on unmount"*
+
+- [ ] **Crops are built only when a panel asks** (no up-front histogram fetches for offscreen panels). — *"builds a crop only when a panel asks, for the object's own frame"*
+- [ ] **One build per crop per generation.** — *"builds each crop once per settled generation"*
+- [ ] **The image cache is bounded by bytes and closes what it evicts, never a held image.** — *"evicts and closes the oldest unheld images past the byte budget"*, *"never closes an image someone still holds"*
+- [ ] **Crop builds are pooled.** — *"runs at most max tasks at once, in order"*
+
+### Display while inputs change
+
+- [ ] **A superseded crop key is rejected; keys are null while settling.** — *"rejects a crop key an input change has superseded"*
+- [ ] **The old crop stays up, at its own rect, until the replacement loads.** — *"keeps the old crop until its replacement has loaded"*, *"shows its crop at the rect that crop was fetched for"*
+- [ ] **A long export page stays within canvas limits** (≥ √n columns). — *"uses at least √n columns so a long page stays within canvas limits"*
+- [ ] **Export waits for crops that match the current inputs.** — *"disables export until the crops match the current inputs"*
+- [ ] **Expected build errors show on the panel without being logged.** — *"shows an expected build error without logging it"*
+
+### Lifecycle and interaction
+
+- [ ] **Closes for another dataset (by id), in 3D, and on leaving the view; stays open on a same-dataset reload.** — *"closes the montage for a different dataset"*, *"keeps the montage open when the same dataset is reloaded"*, *"closes the montage when switching to 3D"*, *"closes the montage when leaving the view"*
+- [ ] **Navigating doesn't toggle selection.** — *"navigates from its button without toggling selection"*
+- [ ] **Closing under the cursor clears the hover.** — *"clears its hover when it closes under the cursor"*
+- [ ] **Panels release their crops on unmount.** — *"releases its crop on unmount"*
+
+### Labels
+
+- [ ] **Labels from another configuration's properties are not shown, and choosing labels keeps theirs.** — *"only labels with properties this configuration has"*, *"keeps label choices made under other configurations"*
+- [ ] **Labels refresh when property values are recomputed.** — *"refetches labels when the store's property values change"*
+- [ ] **Clearing the padding field doesn't apply zero padding.** — *"ignores an emptied padding field"*
+
+### Process notes
+
+- Verify live on a client-mode dataset **and** one above the list threshold
+  (20K): only the latter exercises stubs, server rows and hydration.
+- Wrappers left mounted by other tests publish into the shared montage mock;
+  assert on the instance's own `currentPageForMontage`, not the mock's last
+  value.

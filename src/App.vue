@@ -173,6 +173,22 @@
               </button>
             </template>
           </v-tooltip>
+          <v-tooltip text="Montage of the Object Browser's current page">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: isMontageOpen }"
+                :disabled="is3DView"
+                aria-label="Montage view"
+                data-command-id="view.toggleMontage"
+                @click.stop="toggleMontage"
+              >
+                <v-icon size="18">mdi-view-grid-outline</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
         </div>
       </template>
       <v-spacer />
@@ -623,6 +639,7 @@ import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import volumeViewStore from "@/store/volumeView";
+import montageStore from "@/store/montage";
 import aiPanelStore from "@/store/aiPanel";
 import timelapseStore from "@/store/timelapse";
 import { logError } from "@/utils/log";
@@ -910,6 +927,11 @@ function togglePalette(id: PanelId) {
 const is3DView = computed(() => volumeViewStore.viewMode === "3d");
 function toggle3DView() {
   volumeViewStore.setViewMode(is3DView.value ? "2d" : "3d");
+}
+
+const isMontageOpen = computed(() => montageStore.isOpen);
+function toggleMontage() {
+  montageStore.setIsOpen(!montageStore.isOpen);
 }
 
 function closeAllPalettes() {
@@ -1292,6 +1314,15 @@ useCommand(() => [
     icon: "mdi-cube-scan",
     enabled: inViewer,
     run: toggle3DView,
+  },
+  {
+    id: "view.toggleMontage",
+    title: isMontageOpen.value ? "Close montage view" : "Open montage view",
+    group: "Actions",
+    keywords: ["grid", "gallery", "crops", "objects", "thumbnails"],
+    icon: "mdi-view-grid-outline",
+    enabled: () => inViewer() && !is3DView.value,
+    run: toggleMontage,
   },
   {
     id: "data.upload",

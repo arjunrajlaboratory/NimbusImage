@@ -193,7 +193,8 @@
         item-value="annotation.id"
         v-model="selectedIds"
         :page="page"
-        :items-per-page-options="[10, 50, 200]"
+        :items-per-page="itemsPerPage"
+        :items-per-page-options="[10, 50, 100, 200]"
         :sort-by="sortBy"
         @update:items-per-page="itemsPerPage = $event"
         @update:page="page = $event"
@@ -267,7 +268,7 @@
         v-model="selectedIds"
         :page="annotationListServer.page"
         :items-per-page="annotationListServer.pageSize"
-        :items-per-page-options="[10, 50, 200]"
+        :items-per-page-options="[10, 50, 100, 200]"
         @update:options="onServerOptions"
         class="compact-table"
         :class="{ 'is-loading': serverLoading }"
@@ -325,6 +326,7 @@ import { debounce } from "lodash";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import annotationListServer from "@/store/annotationListServer";
+import montageStore, { IMontageListItem } from "@/store/montage";
 import { TOUR_ANCHORS } from "@/tours/anchors";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
@@ -895,6 +897,37 @@ async function onHoveredIdOrItemsPerPageChanged() {
 // Stacked @Watch("hoveredId") @Watch("itemsPerPage") → single watch
 watch([hoveredId, itemsPerPage], onHoveredIdOrItemsPerPageChanged);
 
+// --- Montage ---------------------------------------------------------------
+// The montage shows exactly this list's current page, so publish it (ids in
+// display order + the Index column value). Gated on the montage being open
+// first: the client path sorts every filtered item (dataTableItems), which is
+// wasted work while nobody is looking.
+const currentPageForMontage = computed((): IMontageListItem[] => {
+  if (!montageStore.isOpen) {
+    return [];
+  }
+  if (isServerMode.value) {
+    return serverRowItems.value.map(({ annotation, index }) => ({
+      id: annotation.id,
+      index,
+    }));
+  }
+  const items = dataTableItems.value;
+  const perPage = Math.max(1, itemsPerPage.value);
+  // Vuetify clamps an out-of-range page when the list shrinks; mirror that.
+  const pageCount = Math.max(1, Math.ceil(items.length / perPage));
+  const start = (Math.min(page.value, pageCount) - 1) * perPage;
+  return items
+    .slice(start, start + perPage)
+    .map(({ annotation, index }) => ({ id: annotation.id, index }));
+});
+
+watch(
+  () => JSON.stringify(currentPageForMontage.value),
+  () => montageStore.setListPageItems(currentPageForMontage.value),
+  { immediate: true },
+);
+
 // --- Server-mode reactive refetch -----------------------------------------
 // Each watch body is a no-op in client mode (the client set is reactive on its
 // own). In server mode, a change to any query input resets to page 1 and
@@ -1110,6 +1143,7 @@ async function deleteUnselected() {
 }
 
 defineExpose({
+  currentPageForMontage,
   isLoggedIn,
   isDeletingAnnotations,
   isServerMode,

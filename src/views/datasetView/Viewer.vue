@@ -9,6 +9,12 @@
       @layers-ready="handleLayersReady"
     />
     <volume-viewer v-else class="main" />
+    <!-- Over the image viewer rather than replacing it, so closing the montage
+         returns to the same camera and tile state. -->
+    <montage-view
+      v-if="volumeViewMode === '2d' && montageStore.isOpen"
+      class="montage-overlay"
+    />
     <tool-suggestions />
     <annotation-color-legend v-if="volumeViewMode === '2d'" />
   </div>
@@ -22,12 +28,14 @@ import ImageViewer from "@/components/ImageViewer.vue";
 import VolumeViewer from "@/components/VolumeViewer.vue";
 import ToolSuggestions from "@/components/ToolSuggestions.vue";
 import AnnotationColorLegend from "@/components/AnnotationColorLegend.vue";
+import MontageView from "@/components/Montage/MontageView.vue";
 
 import store from "@/store";
 import timelapseStore from "@/store/timelapse";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import volumeViewStore from "@/store/volumeView";
+import montageStore from "@/store/montage";
 import toolSuggestionsStore from "@/store/toolSuggestions";
 
 const shouldResetMaps = ref(false);
@@ -141,6 +149,14 @@ function retrySuggestWhenReady(ready: boolean) {
 }
 
 watch(dataset, datasetChanged);
+// The montage mirrors one dataset's 2D list: close it for a different dataset
+// (by id — the dataset object is also replaced on a reload of the same one),
+// in 3D (where it is hidden, so the list would keep publishing for nothing),
+// and when leaving the view.
+watch([() => dataset.value?.id, volumeViewMode], () =>
+  montageStore.setIsOpen(false),
+);
+onBeforeUnmount(() => montageStore.setIsOpen(false));
 watch(configuration, configurationChanged);
 watch([dataset, configuration], fetchAnnotationData);
 watch(suggestPrerequisitesReady, retrySuggestWhenReady);
@@ -177,5 +193,24 @@ defineExpose({
 
 .main {
   flex: 1 1 0;
+}
+
+/* Below the dataset view's transparent app bar, above the canvas and its
+   overlays (ImageViewer's go up to 1001). Floating palettes (1006) stay on
+   top, and the montage narrows to fit between them (App.vue's palette
+   clearance vars) so the Object Browser and Layers stay usable beside it. */
+.montage-overlay {
+  position: absolute;
+  top: 64px;
+  left: 0;
+  right: var(--nimbus-right-edge-clear-x, 0px);
+  bottom: 0;
+  z-index: 1002;
+}
+
+/* `.any-left-palette-open` is set on <v-app> (an ancestor); scoped CSS only
+   scopes the last compound, so this matches. */
+.any-left-palette-open .montage-overlay {
+  left: var(--nimbus-left-palette-clear-x);
 }
 </style>
