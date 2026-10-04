@@ -215,10 +215,12 @@ defineExpose({
    clearance vars) so the Object Browser and Layers stay usable beside it. */
 .montage-overlay {
   position: absolute;
-  top: 64px;
-  left: 0;
-  right: var(--nimbus-right-edge-clear-x, 0px);
-  bottom: 0;
+  /* Inset like the floating palettes (8px below the bar, 16px from the
+     edges), so it reads as a panel rather than a hole in the canvas. */
+  top: 72px;
+  left: 16px;
+  right: max(var(--nimbus-right-edge-clear-x, 0px), 16px);
+  bottom: 16px;
   z-index: 1002;
 }
 

@@ -1,24 +1,31 @@
 <template>
   <div class="montage-view">
-    <div class="montage-toolbar">
-      <v-tooltip text="Back to the image view">
-        <template v-slot:activator="{ props: activatorProps }">
-          <v-btn
-            v-bind="activatorProps"
-            variant="text"
-            icon
-            size="small"
-            aria-label="Close montage"
-            @click="montageStore.setIsOpen(false)"
-          >
-            <v-icon>mdi-arrow-left</v-icon>
-          </v-btn>
-        </template>
-      </v-tooltip>
-      <span class="montage-count text-body-2">
-        {{ countLabel }}
+    <!-- Same header as FloatingPalette, so the montage reads as one of the
+         panels rather than a hole cut in the canvas. -->
+    <header class="montage-header">
+      <span class="montage-grip" aria-hidden="true">
+        <i></i><i></i><i></i>
       </span>
-      <v-divider vertical class="mx-2" />
+      <h4 class="montage-title">Montage</h4>
+      <span class="montage-count">{{ countLabel }}</span>
+      <button
+        type="button"
+        class="montage-close"
+        aria-label="Close montage"
+        title="Back to the image view"
+        @click="montageStore.setIsOpen(false)"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+    </header>
+    <div class="montage-toolbar">
       <div class="montage-control montage-size">
         <span class="text-caption">Size</span>
         <!-- Applied when the drag ends: every tick would otherwise resize
@@ -805,11 +812,86 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
+// Matches FloatingPalette's glass card (background, border, radius, shadow).
 .montage-view {
   display: flex;
   flex-direction: column;
-  background: rgb(var(--v-theme-background));
+  background: var(--nimbus-glass-bg);
+  backdrop-filter: var(--nimbus-glass-filter);
+  -webkit-backdrop-filter: var(--nimbus-glass-filter);
+  border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--nimbus-radius-lg, 12px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 0.5px rgba(255, 255, 255, 0.06),
+    0 20px 40px -16px rgba(0, 0, 0, 0.7),
+    0 8px 16px -8px rgba(0, 0, 0, 0.5);
   overflow: hidden;
+}
+
+.montage-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 10px 14px;
+  border-bottom: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
+  flex: 0 0 auto;
+}
+
+.montage-grip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2.5px;
+  padding-right: 2px;
+
+  i {
+    width: 12px;
+    height: 1.5px;
+    background: var(--nimbus-text-faint, #62666d);
+    border-radius: 2px;
+    display: block;
+  }
+}
+
+.montage-title {
+  font-family: var(--nimbus-font);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--nimbus-text-secondary, #d0d6e0);
+  margin: 0;
+}
+
+.montage-count {
+  flex: 1;
+  font-size: 12px;
+  color: var(--nimbus-text-muted, #8a8f98);
+}
+
+.montage-close {
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--nimbus-text-muted, #8a8f98);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+
+  svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--nimbus-text-secondary, #f3f5f7);
+  }
 }
 
 .montage-toolbar {
@@ -818,7 +900,7 @@ defineExpose({
   align-items: center;
   gap: 12px 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-bottom: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.06));
 }
 
 .montage-control {
