@@ -441,6 +441,21 @@ describe("MontageView", () => {
     expect(vm.panels[0].content.color).toBe("#00ff00");
   });
 
+  it("renders nothing for a build that runs after the montage closed", async () => {
+    mocks.annotations.set("pt", stub("pt", { shape: "point" }));
+    mocks.montage.listPageItems = [{ id: "pt", index: 1 }];
+    const vm = mountView();
+    await vi.advanceTimersByTimeAsync(300);
+    const key = vm.cropKeyFor("pt");
+    wrapper!.unmount();
+    wrapper = null;
+    // E.g. a build still queued behind an export when the user closed it.
+    const build = vm.loadCrop(key);
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(build).rejects.toMatchObject({ name: "StaleCropError" });
+    expect(mocks.getLayersDownloadUrls).not.toHaveBeenCalled();
+  });
+
   it("reports an object outside the image instead of requesting it", async () => {
     mocks.annotations.set(
       "out",

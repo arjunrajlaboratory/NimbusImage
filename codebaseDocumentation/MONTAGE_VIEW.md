@@ -119,6 +119,12 @@ below floating palettes (1006). It narrows to fit between open palettes using
 App.vue's `--nimbus-left-palette-clear-x` / `--nimbus-right-edge-clear-x`, so
 the Object Browser and Layers panels stay usable beside it.
 
+The selection action panel (Delete/Tag/Color/Copy IDs/Deselect All,
+z-index 1000) would sit under the montage, so while it is open App.vue sets
+`montage-open` on `<v-app>` and the panel lifts to 1003 and moves to the
+bottom (the montage toolbar runs along the top). Selecting panels in the
+montage is a main use, so its actions must stay reachable.
+
 ## Not done (yet)
 
 - Neighbouring objects are not drawn in a panel, only the panel's own object.
@@ -179,6 +185,7 @@ Run `pnpm test src/utils/montage.test.ts src/utils/montageImageLoader.test.ts sr
 - [ ] **Closes for another dataset (by id), in 3D, and on leaving the view; stays open on a same-dataset reload.** — *"closes the montage for a different dataset"*, *"keeps the montage open when the same dataset is reloaded"*, *"closes the montage when switching to 3D"*, *"closes the montage when leaving the view"*
 - [ ] **Navigating doesn't toggle selection.** — *"navigates from its button without toggling selection"*
 - [ ] **Closing under the cursor clears the hover.** — *"clears its hover when it closes under the cursor"*
+- [ ] **Closing mid-export stops the work and doesn't download.** — *"renders nothing for a build that runs after the montage closed"*
 - [ ] **Panels release their crops on unmount.** — *"releases its crop on unmount"*
 
 - [ ] **Color and tags come from the current stub, geometry from the hydrated copy.** — *"takes color from the store's stub over a hydrated copy"*

@@ -11,6 +11,9 @@
       // while it is up. How far in they sit is `--nimbus-right-edge-clear-x`
       // below, not a second class.
       'timelapse-palette-open': isDatasetView && timelapsePanel,
+      // The montage covers the canvas; the selection action panel lifts
+      // above it (see AnnotationActionPanel).
+      'montage-open': isDatasetView && isMontageOpen,
     }"
     :style="paletteGeometryVars"
   >

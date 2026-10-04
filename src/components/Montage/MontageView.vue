@@ -194,6 +194,9 @@ const EXPORT_BACKGROUND = "#202020";
 
 const gridEl = ref<HTMLElement | null>(null);
 const isExporting = ref(false);
+// Set on unmount so an export in flight stops building/fetching and never
+// downloads a montage the user already closed.
+let isUnmounted = false;
 const exportError = ref<string | null>(null);
 // Crops are requested at screen density (capped) so export can reuse them.
 const pixelRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
@@ -564,6 +567,10 @@ function cropKeyFor(id: string): string | null {
 }
 
 async function buildPanelCrop(input: ICropInput): Promise<IMontageCrop> {
+  // Queued builds outlive the view; don't render for one that's gone.
+  if (isUnmounted) {
+    throw new StaleCropError();
+  }
   const { annotation, window, imageRect, panelSize } = input;
   if (!imageRect) {
     throw new MontageCropError("Object is outside the image");
@@ -723,7 +730,9 @@ async function exportPng() {
         let imageRect: IImageRect | null = null;
         let request: IMontageImageRequest | null = null;
         try {
+          if (isUnmounted) return;
           const crop = await exportCrop(cropKey, input);
+          if (isUnmounted) return;
           request = loader.load(crop.url);
           image = await request.promise;
           imageRect = crop.imageRect;
@@ -749,6 +758,9 @@ async function exportPng() {
     if (!blob) {
       throw new Error("Could not encode the montage image.");
     }
+    if (isUnmounted) {
+      return;
+    }
     const href = URL.createObjectURL(blob);
     downloadToClient({ href, download: `${datasetName} - montage.png` });
     setTimeout(() => URL.revokeObjectURL(href), 0);
@@ -764,6 +776,7 @@ async function exportPng() {
 }
 
 onBeforeUnmount(() => {
+  isUnmounted = true;
   debouncedSettleCrops.cancel();
   debouncedLabelRefresh.cancel();
   hydrationController?.abort();
