@@ -118,11 +118,12 @@ const loading = computed(
   () =>
     loadingKind.value.all || (!!searchText.value && loadingKind.value.search),
 );
-// Per list, like loading: a failed search must not outlive its search text,
-// and must not hide a successfully loaded full list (or vice versa).
+// Per list, like loading: each list's failure shows only while that list is
+// the one displayed (search results while there is search text, else the
+// full list), so neither hides the other.
 const failedKind = ref({ all: false, search: false });
 const error = computed(() =>
-  failedKind.value.all || (!!searchText.value && failedKind.value.search)
+  failedKind.value[searchText.value ? "search" : "all"]
     ? "Could not load values"
     : "",
 );
@@ -210,6 +211,10 @@ watch(
   () => `${store.dataset?.id}|${props.propertyPath.join(".")}`,
   () => {
     allValues.value = null;
+    // Rows are keyed by index, so a removed row above can hand this
+    // component a new path; a search typed for the old one does not carry
+    // over. Clearing it lets the searchText watcher reset the search state.
+    search.value = "";
     searchedValues.value = null;
     requestSeq.search++;
     loadingKind.value.search = false;

@@ -389,6 +389,28 @@ describe("PropertyFilterHistogram", () => {
       );
     });
 
+    it("converts a restored numeric values filter once the property turns out to hold strings", async () => {
+      const histogram = ref<any[]>([]);
+      (filterStore as any).getHistogram = vi.fn(() => histogram.value);
+      (filterStore as any).propertyFilters = [
+        {
+          id: "existing-id",
+          propertyPath: ["propA", "sub1"],
+          range: { min: 0, max: 0 },
+          exclusive: false,
+          enabled: true,
+          valuesOrRange: "values",
+          values: [3, "KIT"],
+        },
+      ];
+      const wrapper = mountComponent();
+      histogram.value = stringHistogram;
+      await wrapper.vm.$nextTick();
+      expect(filterStore.updatePropertyFilter).toHaveBeenLastCalledWith(
+        expect.objectContaining({ valuesOrRange: "values", values: ["KIT"] }),
+      );
+    });
+
     it("numeric histograms keep the histogram UI", () => {
       (filterStore as any).getHistogram = vi.fn(() => [
         { count: 5, min: 0, max: 100 },

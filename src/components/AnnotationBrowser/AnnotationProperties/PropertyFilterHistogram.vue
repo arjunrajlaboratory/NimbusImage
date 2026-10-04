@@ -397,7 +397,13 @@ watch(hist, () => {
     // A string property has no numeric range: a new filter starts in Range
     // mode with numeric bounds no string can satisfy, which would hide every
     // annotation. Switch it to values mode with nothing picked (pass-all).
-    if (propertyFilter.value.valuesOrRange !== PropertyFilterMode.Values) {
+    // Also a values filter holding numbers (from the numeric textarea, in a
+    // configuration shared with another dataset): no string matches them.
+    const { valuesOrRange, values } = propertyFilter.value;
+    if (
+      valuesOrRange !== PropertyFilterMode.Values ||
+      (values ?? []).some((value) => typeof value !== "string")
+    ) {
       updateCategories(selectedCategories.value);
     }
     return;

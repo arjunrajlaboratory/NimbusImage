@@ -174,7 +174,7 @@ describe("PropertyCategoryFilter", () => {
     ]);
   });
 
-  it("drops a failed search's error with its search text, but keeps a failed full load's", async () => {
+  it("shows each list's failure only while that list is displayed", async () => {
     getPropertyDistinctValues.mockImplementation(
       async (_ds: string, _path: string[], search: string) => {
         if (search) throw new Error("boom");
@@ -190,12 +190,34 @@ describe("PropertyCategoryFilter", () => {
     (w.vm as any).search = "";
     await flushPromises();
     expect((w.vm as any).error).toBe("");
-
-    getPropertyDistinctValues.mockRejectedValue(new Error("down"));
-    const failed = await mountComponent();
-    (failed.vm as any).search = "k";
-    await flushPromises();
-    expect((failed.vm as any).error).toBe("Could not load values");
     w.unmount();
+
+    // A failed full load does not block a search that succeeds.
+    getPropertyDistinctValues.mockImplementation(
+      async (_ds: string, _path: string[], search: string) => {
+        if (!search) throw new Error("timeout");
+        return { values: [{ value: "ZAP70", count: 1 }], truncated: false };
+      },
+    );
+    const failed = await mountComponent();
+    expect((failed.vm as any).error).toBe("Could not load values");
+    (failed.vm as any).search = "zap";
+    await flushPromises();
+    vi.advanceTimersByTime(400);
+    await flushPromises();
+    expect((failed.vm as any).error).toBe("");
+    expect((failed.vm as any).shownEntries.map((e: any) => e.value)).toEqual([
+      "ZAP70",
+    ]);
+  });
+
+  it("clears the search when the component is reused for another path", async () => {
+    const w = await mountComponent();
+    (w.vm as any).search = "kit";
+    await flushPromises();
+    await w.setProps({ propertyPath: ["p", "sgRNA"] });
+    await flushPromises();
+    expect((w.vm as any).search).toBe("");
+    expect((w.vm as any).shownEntries).toHaveLength(4);
   });
 });
