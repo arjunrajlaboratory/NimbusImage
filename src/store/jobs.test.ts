@@ -84,6 +84,7 @@ class FakeSocket {
 vi.stubGlobal("WebSocket", FakeSocket);
 
 import store from "./root";
+import { logError } from "@/utils/log";
 import jobs, { stopJobPolling, unseenLogSuffix } from "./jobs";
 import { jobStates, UNFINISHED_JOB_STATUSES } from "./jobConstants";
 
@@ -601,6 +602,17 @@ describe("jobs notification recovery", () => {
     serverJobs[jobId] = { status: jobStates.cancelled };
     await vi.advanceTimersByTimeAsync(30_000);
     expect(job.settled).toBe(false);
+  });
+
+  it("logs no error for a socket it replaced", async () => {
+    await jobs.initializeNotificationSubscription();
+    const replaced = socket();
+    await jobs.initializeNotificationSubscription();
+    vi.mocked(logError).mockClear();
+    replaced.onerror?.({ target: replaced });
+    expect(logError).not.toHaveBeenCalled();
+    socket().onerror?.({ target: socket() });
+    expect(logError).toHaveBeenCalledTimes(1);
   });
 
   it("cancels a pending reconnect on a deliberate close", async () => {

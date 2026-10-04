@@ -661,6 +661,11 @@ export class Jobs extends VuexModule {
 
   @Action
   async handleError(event: Event) {
+    // A socket we replaced (closing one still connecting fires an error) is
+    // not a failure.
+    if (event.target !== toRaw(this.notificationSource)) {
+      return;
+    }
     // A close always follows an error; reconnecting is handleClose's job.
     logError("[jobs] WebSocket error", event);
   }
