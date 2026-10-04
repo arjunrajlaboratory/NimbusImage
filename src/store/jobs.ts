@@ -152,7 +152,9 @@ const STABLE_CONNECTION_MS = 10000;
 // list of the user's unfinished jobs.
 const JOB_POLL_INTERVAL_MS = 15000;
 const JOB_QUIET_MS = 30000;
-const UNFINISHED_JOBS_LIMIT = 100;
+// High enough that a long queue (e.g. a batch property computation) does
+// not push tracked jobs off the list and into one read each.
+const UNFINISHED_JOBS_LIMIT = 1000;
 
 // Timer handles are not store state.
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -450,8 +452,9 @@ export class Jobs extends VuexModule {
         return;
       }
       // Girder answers 400 for a job that no longer exists (deleted): it
-      // will never end, so settle it as failed rather than check it forever.
-      job = { _id: jobId, status: jobStates.error };
+      // will never end, so settle it as cancelled (no "Job Failed" pointing
+      // to a log that is gone) rather than check it forever.
+      job = { _id: jobId, status: jobStates.cancelled };
     }
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
     if (!jobInfo || jobInfo.settled || !isTerminalJobStatus(job.status)) {

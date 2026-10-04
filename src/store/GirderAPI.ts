@@ -298,7 +298,12 @@ export default class GirderAPI {
     limit: number,
   ): Promise<IJob[]> {
     const response = await this.client.get("job", {
-      params: { statuses: JSON.stringify(statuses), limit },
+      params: {
+        statuses: JSON.stringify(statuses),
+        limit,
+        sort: "created",
+        sortdir: -1,
+      },
     });
     return response.data;
   }

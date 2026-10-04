@@ -514,12 +514,13 @@ describe("jobs notification recovery", () => {
     expect(errorCallback).toHaveBeenCalledTimes(1);
   });
 
-  it("settles a deleted job as failed instead of checking it forever", async () => {
+  it("settles a deleted job instead of checking it forever", async () => {
     await openStream();
     const jobId = nextJobId();
     const job = track(jobId); // never on the server: as if deleted
     await vi.advanceTimersByTimeAsync(30_000);
     expect(job.settled).toBe(false);
+    expect(mocks.createNotification).not.toHaveBeenCalled();
     mocks.get.mockClear();
     await vi.advanceTimersByTimeAsync(120_000);
     expect(mocks.get).not.toHaveBeenCalled();

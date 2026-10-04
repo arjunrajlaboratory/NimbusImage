@@ -30,7 +30,8 @@ on "Preparing transcoding".
   before a logout or token expiry, are never settled in this one, and the poll
   runs only while the current user has tracked jobs.
 - **Deleted jobs.** If Girder answers 400 when we read a job, the job no longer
-  exists, so it is settled as failed.
+  exists, so it is settled as cancelled (unsuccessful, without a "Job Failed"
+  notification).
 - **Settling.** A `settled` flag, set synchronously, dedupes a second report of a
   job's end. The entry leaves `jobInfoMap` only after the end is handled (after
   the awaited notification). Watchers that read the map after the current tick,
@@ -57,9 +58,9 @@ Drawing on the stream:
   to a watcher until its end is handled"*.
 - A throwing listener cannot leave a job unsettled: *"settles a job even when a
   listener throws"*.
-- A deleted job (Girder answers 400) settles as failed rather than being checked
-  forever, while a transient read failure is retried: *"settles a deleted job as
-  failed instead of checking it forever"*, *"keeps checking a job it could not
+- A deleted job (Girder answers 400) settles as cancelled rather than being checked
+  forever, while a transient read failure is retried: *"settles a deleted job
+  instead of checking it forever"*, *"keeps checking a job it could not
   read for a transient reason"*.
 
 Cost:
