@@ -241,6 +241,12 @@ Watch out for stringify cost on large objects.
 
 Not every `{ deep: true }` is this bug — it only applies when the watched source is a **getter function that rebuilds a fresh object/array on each call** (a Vuex/Pinia getter, a `computed`, or a plain function reading store state). A `ref()`/`reactive()` passed **directly** as the watch source (not wrapped in a function) is the correct, safe use of `deep: true` — Vue tracks its stable identity and only fires on genuine in-place mutations. Don't blanket-remove `deep: true` without checking which case you're in.
 
+### Don't re-key a dataset/configuration watcher on ids
+
+`Viewer.vue`'s `watch([dataset, configuration], fetchAnnotationData)` looks like it should key on ids ("a reload of the same object shouldn't refetch"), but **`refreshDataset()` depends on the object swap**: it re-runs `setSelectedDataset` with the same id, which resets annotation and property state, and only this watcher repopulates it. Keying on ids left the viewer empty after unroll toggles and `addLargeImage` (caught in review of issue #1379). Before narrowing any watcher on `store.dataset`/`store.configuration`, find what resets state on a same-id reload and who repopulates it.
+
+Switching dataset views loads the dataset and configuration **concurrently**, so this watcher sees a mismatched pair (new configuration, old dataset) first. Gate per-dataset fetches on both matching `store.datasetView`, and guard the store action with a sequence token so a superseded fetch can't commit (`fetchAnnotations`, `src/store/__tests__/fetchAnnotationsStale.test.ts`).
+
 ### Every `throttle`/`debounce` needs a `cancel()` in `onBeforeUnmount`
 
 A trailing call that fires after teardown runs against a dead view — in
@@ -841,6 +847,10 @@ Shared mocks in this repo return constants chosen for the tests that existed whe
 - `geojs.util.distance2dToLineSquared` returns **100** and `pointInPolygon` returns **false** in `AnnotationViewer.test.ts`. Any line hit test compares against a squared tolerance (36 for the 6 px connection tolerance), so it can never match until the test sets `mockReturnValue(1)`.
 - `mockGeoJSAnnotation` doesn't derive `coordinates()` from the `vertices` option, so a feature built by the real draw path has correct `options()` and no usable geometry.
 - `geojsAnnotationFactory` drops its options argument unless you re-forward it — assertions on a feature's constructed `style` see `undefined`.
+
+### Unhandled rejections are invisible in tests by default — twice over
+
+`vitest.config.js` sets `dangerouslyIgnoreUnhandledErrors: true`, so an abandoned promise that later rejects never fails a run. Listening with `process.on("unhandledRejection", spy)` (then waiting a `setTimeout` turn, not a microtask flush) isn't enough on its own: **a promise returned by a `vi.fn` is already "handled"**, because vitest attaches handlers to record `mock.settledResults`. A test for "the superseded call's connections request rejects unobserved" passed with and without the fix until the request came from a plain function instead of a `vi.fn` (`fetchAnnotationsStale.test.ts`, PR #1380). Any test about an unobserved rejection must produce the promise from a non-spy function.
 
 Before concluding "the code doesn't work", check what the relevant mock actually returns. Equally: when a component test needs a *component* to do something, prefer asserting the side effect the component owns over re-deriving geometry through the mock.
 

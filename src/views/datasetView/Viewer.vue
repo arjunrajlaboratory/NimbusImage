@@ -101,17 +101,29 @@ function configurationChanged() {
 }
 
 // Fetch annotations whenever dataset or configuration changes, but only when
-// both are loaded. This avoids a race condition where the dataset watcher fires
-// before the configuration has finished loading, causing fetchAnnotations to
-// bail out early due to the missing configuration guard check.
+// both are loaded AND belong to the current dataset view. Switching views
+// loads the new dataset and configuration concurrently, so one lands first:
+// fetching then would load the old dataset under the new configuration's
+// stubThreshold — wasted work, and a full fetch of a dataset the old
+// threshold kept in stub mode (the OOM path).
 async function fetchAnnotationData() {
-  if (dataset.value && configuration.value) {
+  const view = store.datasetView;
+  if (
+    dataset.value &&
+    configuration.value &&
+    (!view ||
+      (view.datasetId === dataset.value.id &&
+        view.configurationId === configuration.value.id))
+  ) {
     // Await fetchAnnotations first: it determines stub-only (lazy) mode, which
     // fetchPropertyValues reads to decide between viewport-scoped lazy loading
     // and the wholesale load. Without the await, the property fetch races ahead
-    // while stubOnlyMode is still false and loads every value into memory.
-    await annotationStore.fetchAnnotations();
-    propertiesStore.fetchPropertyValues();
+    // while stubOnlyMode is still false and loads every value into memory. A
+    // superseded fetch resolves false while the newer one is still in flight,
+    // so the same reasoning skips the property fetch for it.
+    if (await annotationStore.fetchAnnotations()) {
+      propertiesStore.fetchPropertyValues();
+    }
   }
 }
 
@@ -142,6 +154,8 @@ function retrySuggestWhenReady(ready: boolean) {
 
 watch(dataset, datasetChanged);
 watch(configuration, configurationChanged);
+// Keyed on object identity, not ids: refreshDataset() reloads the same id
+// after resetting annotation and property state, and relies on this refetch.
 watch([dataset, configuration], fetchAnnotationData);
 watch(suggestPrerequisitesReady, retrySuggestWhenReady);
 
