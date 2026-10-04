@@ -195,6 +195,19 @@ describe("addMultiSourceMetadata error propagation", () => {
       );
     });
 
+    it("uses a log given as a single string", async () => {
+      vi.spyOn(main.api, "getJobInfo").mockResolvedValue({
+        status: jobStates.error,
+        log:
+          "Upload would exceed file storage quota (need 9.7 MB, only 1.9 " +
+          "MB available - used 15.4 GB out of 15.4 GB)\n",
+        title: "Conversion",
+      } as any);
+      expect(await messageOf(configure())).toContain(
+        "only 1.9 MB of your 15.4 GB quota remains",
+      );
+    });
+
     it("finishes a job that has no log", async () => {
       finishedJob(jobStates.success);
       const shown: string[] = [];

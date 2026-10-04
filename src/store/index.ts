@@ -326,9 +326,14 @@ async function supplyMissedJobEnd(
   ) {
     return; // unreadable or unfinished: wait on the stream as before
   }
-  // GET job/:id returns the log as a list of chunks.
+  // GET job/:id returns the log as a list of chunks, though IJob declares
+  // a string; accept either.
   const log: unknown = job.log;
-  const entries: string[] = Array.isArray(log) ? log.map(String) : [];
+  const entries: string[] = Array.isArray(log)
+    ? log.map(String)
+    : typeof log === "string" && log
+      ? [log]
+      : [];
   // Entries the stream already delivered form a prefix of the log; supply
   // the rest.
   const seen = (jobs.messageStore[jobId] ?? [])
