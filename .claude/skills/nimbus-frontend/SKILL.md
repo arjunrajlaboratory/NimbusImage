@@ -627,6 +627,15 @@ import store from "@/store";
 const result = await store.api.someMethod();
 ```
 
+## An omitted optional boolean prop is `false`, not `undefined`
+
+Vue casts an absent `Boolean` prop to `false`. So `defineProps<{ visible?:
+boolean }>()` plus a check like `props.visible !== false` ("undefined means
+visible") reads every caller that omits the prop as *hidden*. A `:visible`
+gate threaded down to `PropertyCategoryFilter` silently stopped all value
+loading this way until tests caught it. When the omitted case should mean
+true, use `withDefaults(defineProps<...>(), { visible: true })`.
+
 ## Opening a palette from a component that has no palette registry
 
 App.vue owns palette (right/left panel) visibility in local refs, so a
