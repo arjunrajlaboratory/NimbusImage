@@ -376,15 +376,18 @@ export class Jobs extends VuexModule {
 
   @Action
   async addJob(job: IComputeJob) {
+    // Open the stream if it is down and no reconnect is pending (one is
+    // pending during a backoff: leave it be, or each new job would undo the
+    // backoff). A new job is a fresh reason to try, even after reconnecting
+    // gave up. Either way, once the stream opens handleOpen checks this job
+    // too (it is registered below, before any open event can arrive), so a
+    // job that ended while the stream was down is still settled.
     if (
-      !this.notificationSource ||
-      this.notificationSource.readyState == WebSocket.CLOSED ||
-      this.notificationSource.readyState == WebSocket.CLOSING
+      reconnectTimer === null &&
+      (!this.notificationSource ||
+        this.notificationSource.readyState == WebSocket.CLOSED ||
+        this.notificationSource.readyState == WebSocket.CLOSING)
     ) {
-      // A new job is a fresh reason to try, even after reconnecting gave
-      // up. Once the new stream opens, handleOpen checks this job too (it
-      // is registered below, before any open event can arrive), so a job
-      // that ended while the stream was down is still settled.
       this.setConnectionErrors(0);
       await this.initializeNotificationSubscription();
     }
@@ -466,17 +469,11 @@ export class Jobs extends VuexModule {
     }
     let unfinished: Set<string>;
     try {
-      // Newest first (the default sort), so tracked jobs come before old
-      // ones left behind.
-      const response = await main.girderRest.get("job", {
-        params: {
-          statuses: JSON.stringify(UNFINISHED_JOB_STATUSES),
-          limit: UNFINISHED_JOBS_LIMIT,
-        },
-      });
-      unfinished = new Set(
-        response.data.map((job: { _id: string }) => job._id),
+      const jobs = await main.api.getUnfinishedUserJobs(
+        UNFINISHED_JOB_STATUSES,
+        UNFINISHED_JOBS_LIMIT,
       );
+      unfinished = new Set(jobs.map((job) => job._id));
     } catch (error) {
       logError("Failed to list unfinished jobs");
       return;
@@ -594,12 +591,13 @@ export class Jobs extends VuexModule {
     const success = status === jobStates.success;
     try {
       await notifyJobEnd(jobEvent, jobInfo.log);
-    } finally {
-      // Whatever happens to the notification (its chunk may fail to load),
-      // the job must settle: it is marked settled, so nothing else will.
-      jobInfo.successResolve(success);
-      this.removeJobInfo(jobId);
+    } catch (error) {
+      // E.g. the notification's chunk failed to load. The job must settle
+      // regardless: it is marked settled, so nothing else will.
+      logError(`Failed to report the end of job ${jobId}`, error);
     }
+    jobInfo.successResolve(success);
+    this.removeJobInfo(jobId);
     // A job is done, add badge to annotation panel if it is closed
     if (!main.isAnnotationPanelOpen) {
       main.setAnnotationPanelBadge(true);
@@ -684,6 +682,23 @@ export class Jobs extends VuexModule {
     // Replaced before closing, so handleClose sees a deliberate close.
     this.setNotificationSource(notificationSource);
     previousSource?.close();
+  }
+
+  // At logout: stop listening and forget every tracked job. They belong to
+  // the session that is ending, and must not be checked (or settled, running
+  // their listeners) in whichever session comes next. Their promises stay
+  // pending, as they would if their events never came.
+  @Action
+  async forgetJobs() {
+    await this.closeNotificationSubscription();
+    stopJobPolling();
+    this.clearJobTracking();
+  }
+
+  @Mutation
+  clearJobTracking() {
+    this.jobInfoMap = {};
+    this.messageStore = {};
   }
 
   @Action

@@ -16,6 +16,15 @@ vi.mock("./index", () => ({
       },
       apiRoot: "http://girder.test/api/v1",
     },
+    api: {
+      // Routed through the same mock as GET job/:id, as the request it is.
+      getUnfinishedUserJobs: async (statuses: number[], limit: number) =>
+        (
+          await mocks.get("job", {
+            params: { statuses: JSON.stringify(statuses), limit },
+          })
+        ).data,
+    },
     isAnnotationPanelOpen: true,
     setAnnotationPanelBadge: vi.fn(),
     girderUser: null,
@@ -70,7 +79,6 @@ class FakeSocket {
 }
 vi.stubGlobal("WebSocket", FakeSocket);
 
-import store from "./root";
 import jobs, { stopJobPolling, unseenLogSuffix } from "./jobs";
 import { jobStates, UNFINISHED_JOB_STATUSES } from "./jobConstants";
 
@@ -183,17 +191,9 @@ describe("jobs notification recovery", () => {
   });
 
   afterEach(async () => {
-    await jobs.closeNotificationSubscription();
-    stopJobPolling();
-    jobs.setConnectionErrors(0);
     // Forget jobs a test left unfinished, so later tests start clean.
-    const state = (store.state as any).jobs;
-    for (const jobId of Object.keys(state.jobInfoMap)) {
-      jobs.removeJobInfo(jobId);
-    }
-    for (const jobId of Object.keys(state.messageStore)) {
-      jobs.clearStoredMessages(jobId);
-    }
+    await jobs.forgetJobs();
+    jobs.setConnectionErrors(0);
     vi.useRealTimers();
   });
 
@@ -421,9 +421,10 @@ describe("jobs notification recovery", () => {
     expect(job.settled).toBe(true);
   });
 
-  it("opens one stream for several jobs added while it is down", async () => {
+  it("opens one stream for several jobs added after it gave up", async () => {
     await openStream();
-    socket().drop(); // a reconnect is now pending
+    jobs.setConnectionErrors(10);
+    socket().drop(); // no reconnect: it gave up
     const jobIds = [nextJobId(), nextJobId(), nextJobId()];
     for (const jobId of jobIds) {
       serverJobs[jobId] = { status: jobStates.running };
@@ -432,9 +433,6 @@ describe("jobs notification recovery", () => {
     await tick();
     expect(FakeSocket.instances).toHaveLength(2);
     expect(listCalls()).toHaveLength(1);
-    // The pending reconnect was cancelled: no further socket appears.
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(FakeSocket.instances).toHaveLength(2);
     // One at a time: under fake timers, concurrent dynamic imports of the
     // (mocked) progress module never resolve -- a harness artifact.
     for (const jobId of jobIds) {
@@ -442,6 +440,39 @@ describe("jobs notification recovery", () => {
       await tick();
     }
     expect(tracked.map((job) => job.settled)).toEqual([true, true, true]);
+  });
+
+  it("leaves a pending reconnect's backoff alone when a job is added", async () => {
+    await openStream();
+    jobs.setConnectionErrors(3);
+    socket().drop(); // reconnect in 8 s
+    const jobId = nextJobId();
+    serverJobs[jobId] = { status: jobStates.success };
+    const job = track(jobId);
+    await vi.advanceTimersByTimeAsync(7_999);
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(jobs.connectionErrors).toBe(4);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeSocket.instances).toHaveLength(2);
+    // The reconnect checks the job that was added meanwhile.
+    await tick();
+    expect(job.settled).toBe(true);
+  });
+
+  it("forgets tracked jobs and stops listening at logout", async () => {
+    await openStream();
+    const jobId = nextJobId();
+    serverJobs[jobId] = { status: jobStates.running };
+    const job = track(jobId);
+    await jobs.forgetJobs();
+    expect(socket().readyState).toBe(FakeSocket.CLOSED);
+    expect(jobs.getPromiseForJobId(jobId)).toBeUndefined();
+    // Nothing of the old session is checked in the next one.
+    serverJobs[jobId] = { status: jobStates.success };
+    await jobs.initializeNotificationSubscription();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(job.settled).toBeUndefined();
   });
 
   it("settles a job missing from the unfinished list only once it ended", async () => {
