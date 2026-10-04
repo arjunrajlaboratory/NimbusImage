@@ -65,7 +65,9 @@ computed returns `[]` while the montage is closed, because the client path sorts
 every filtered item.
 
 Object resolution prefers the store's own full annotation (always fresh), then
-one hydrated by the montage, then the stub (or server row). Only unhydrated
+one hydrated by the montage, then the stub (or server row). A hydrated copy
+contributes only geometry; color and tags come from the current stub, so a
+recolor from the Object Browser shows at once. Only unhydrated
 **non-point** objects are hydrated, in one `upenn_annotation/hydrate` request
 per page. Crop URLs wait for hydration so "same scale" windows aren't built from
 stub radii and then rebuilt.
@@ -75,7 +77,9 @@ percentile contrast mode that style needs a histogram for the object's own
 frame. Building every panel's URL up front would fetch every frame's
 histograms for a page spread over many frames, so a panel asks for its crop
 only once visible, and builds share a pool of 4. Inputs (geometry, layers,
-panel size) settle 250ms after the last change into a numbered generation; a
+panel size) settle 250ms after the last change into a numbered generation,
+which snapshots the dataset and layers each build will render with (so a
+queued or export build can't mix render states); a
 crop key is `generation:id`, keys are null while settling (panels keep their
 current image), and a key from an older generation is rejected as stale. The
 export builds the remaining offscreen crops itself (from the inputs it
@@ -156,6 +160,8 @@ Run `pnpm test src/utils/montage.test.ts src/utils/montageImageLoader.test.ts sr
 - [ ] **The image cache is bounded by bytes and closes what it evicts, never a held image.** — *"evicts and closes the oldest unheld images past the byte budget"*, *"never closes an image someone still holds"*
 - [ ] **Off-screen panels free their canvas and image.** — *"frees its image and canvas when scrolled away, and reloads on return"*
 - [ ] **A panel releases a crop still loading when it moves on**, so the loader can drop it before it starts. — *"releases a crop still loading when it moves on to another"*
+- [ ] **A generation renders with the layers it settled with.** — *"renders a generation with the layers it settled with"*
+- [ ] **An image released while decoding is closed, not orphaned.** — *"closes an image whose request was released while it decoded"*
 - [ ] **A queued build whose inputs changed doesn't run.** — *"drops a queued crop build whose inputs changed before it started"*
 
 ### Display while inputs change
@@ -174,6 +180,8 @@ Run `pnpm test src/utils/montage.test.ts src/utils/montageImageLoader.test.ts sr
 - [ ] **Navigating doesn't toggle selection.** — *"navigates from its button without toggling selection"*
 - [ ] **Closing under the cursor clears the hover.** — *"clears its hover when it closes under the cursor"*
 - [ ] **Panels release their crops on unmount.** — *"releases its crop on unmount"*
+
+- [ ] **Color and tags come from the current stub, geometry from the hydrated copy.** — *"takes color from the store's stub over a hydrated copy"*
 
 ### Labels
 

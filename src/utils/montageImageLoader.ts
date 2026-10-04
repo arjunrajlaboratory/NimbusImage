@@ -108,6 +108,13 @@ export class MontageImageLoader {
           .then(
             (image) => {
               entry.settled = true;
+              // Released after the fetch but before decoding finished: the
+              // entry was dropped, so nothing could ever evict or close this.
+              if (this.entries.get(url.href) !== entry) {
+                image.close();
+                reject(new MontageAbortError());
+                return;
+              }
               entry.image = image;
               resolve(image);
               this.evict();

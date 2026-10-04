@@ -122,6 +122,7 @@ vi.mock("@/utils/annotationNavigation", () => {
 });
 
 import MontageView from "./MontageView.vue";
+import store from "@/store";
 
 function stub(id: string, overrides: any = {}) {
   return {
@@ -399,6 +400,45 @@ describe("MontageView", () => {
     await vi.advanceTimersByTimeAsync(0);
     const crop = await pending;
     expect(crop.imageRect).toEqual(captured.imageRect);
+  });
+
+  it("renders a generation with the layers it settled with", async () => {
+    mocks.annotations.set("pt", stub("pt", { shape: "point" }));
+    mocks.montage.listPageItems = [{ id: "pt", index: 1 }];
+    const vm = mountView();
+    await vi.advanceTimersByTimeAsync(300);
+    const settledLayers = (store as any).layers;
+    // Layers change after settling (e.g. mid-export), before the build runs.
+    (store as any).layers = [{ id: "l2", channel: 1, color: "#f00" }];
+    try {
+      await vm.loadCrop(vm.cropKeyFor("pt"));
+      const [, , layers] = mocks.getLayersDownloadUrls.mock.calls.at(-1);
+      expect(layers).toBe(settledLayers);
+    } finally {
+      (store as any).layers = settledLayers;
+    }
+  });
+
+  it("takes color from the store's stub over a hydrated copy", async () => {
+    mocks.annotations.set("poly", stub("poly", { color: "#00ff00" }));
+    mocks.montage.listPageItems = [{ id: "poly", index: 1 }];
+    // The hydrate response carries the color from when it was fetched.
+    mocks.hydrateAnnotations.mockImplementationOnce(async (ids: string[]) =>
+      ids.map((id) => ({
+        ...mocks.annotations.get(id),
+        color: "#ff0000",
+        coordinates: [
+          { x: 0, y: 0 },
+          { x: 4, y: 4 },
+        ],
+        name: null,
+        datasetId: "ds1",
+      })),
+    );
+    const vm = mountView();
+    await flushPromises();
+    expect(vm.panels[0].content.outline.coordinates).toHaveLength(2);
+    expect(vm.panels[0].content.color).toBe("#00ff00");
   });
 
   it("reports an object outside the image instead of requesting it", async () => {

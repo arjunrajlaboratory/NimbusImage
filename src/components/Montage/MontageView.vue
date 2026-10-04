@@ -152,6 +152,8 @@ import montageStore, {
 import {
   AnnotationShape,
   IAnnotation,
+  IDataset,
+  IDisplayLayer,
   IAnnotationPropertyValues,
   TAnnotationOrStub,
   isHydratedAnnotation,
@@ -342,12 +344,19 @@ function storeAnnotation(id: string): TAnnotationOrStub | undefined {
 
 // The store's own (fresh) full annotation first, then one hydrated here, then
 // the stub.
+// the stub. A hydrated copy only contributes geometry: color and tags come
+// from the store's stub, which stays current when the object is recolored or
+// retagged (e.g. from the Object Browser) while the montage is open.
 function resolveAnnotation(id: string): TAnnotationOrStub | undefined {
   const fromStore = storeAnnotation(id);
   if (fromStore && isHydratedAnnotation(fromStore)) {
     return fromStore;
   }
-  return fetchedAnnotations.value.get(id) ?? fromStore;
+  const fetched = fetchedAnnotations.value.get(id);
+  if (fetched && fromStore) {
+    return { ...fetched, color: fromStore.color, tags: fromStore.tags };
+  }
+  return fetched ?? fromStore;
 }
 
 watch(
@@ -478,11 +487,16 @@ const countLabel = computed(() => {
 // Inputs settle 250ms after the last change (contrast drags, padding typing),
 // then get a new generation; a crop key is "generation:id". While inputs are
 // settling every key is null and panels keep showing their current crop.
+// Everything a build reads, snapshotted when the generation settles: a build
+// that runs later (queued, or for an export) must render the same state as
+// the rest of its generation, not whatever the layers are by then.
 interface ICropInput {
   annotation: TAnnotationOrStub;
   window: IImageRect;
   imageRect: IImageRect | null;
   panelSize: number;
+  dataset: IDataset;
+  layers: IDisplayLayer[];
 }
 
 const settledCrops = shallowRef({
@@ -497,9 +511,11 @@ const limitCropBuilds = pLimit(4);
 
 function settleCrops() {
   // Hydration changes the windows; the watcher re-fires when it ends.
-  if (!dataset.value || isHydrating.value) {
+  const currentDataset = dataset.value;
+  if (!currentDataset || isHydrating.value) {
     return;
   }
+  const layers = store.layers;
   cropBuilds.clear();
   settledCrops.value = {
     generation: settledCrops.value.generation + 1,
@@ -511,6 +527,8 @@ function settleCrops() {
           window: content.window,
           imageRect: content.imageRect,
           panelSize: settings.value.panelSize,
+          dataset: currentDataset,
+          layers,
         },
       ]),
     ),
@@ -550,7 +568,7 @@ async function buildPanelCrop(input: ICropInput): Promise<IMontageCrop> {
   if (!imageRect) {
     throw new MontageCropError("Object is outside the image");
   }
-  const currentDataset = dataset.value!;
+  const { dataset: currentDataset, layers } = input;
   const anyImage = currentDataset.anyImage();
   if (!anyImage) {
     throw new MontageCropError("Dataset has no images");
@@ -572,7 +590,7 @@ async function buildPanelCrop(input: ICropInput): Promise<IMontageCrop> {
     const [{ url }] = await getLayersDownloadUrls(
       baseUrl,
       "composite",
-      store.layers,
+      layers,
       currentDataset,
       { xy: XY, z: Z, time: Time },
       store.api,

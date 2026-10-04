@@ -138,4 +138,26 @@ describe("MontageImageLoader", () => {
     request.release();
     expect(image.close).toHaveBeenCalled();
   });
+
+  it("closes an image whose request was released while it decoded", async () => {
+    const { fetchImage, pending } = controllableFetch();
+    let finishDecode!: () => void;
+    const image = { width: 1, height: 1, close: vi.fn() };
+    const slowDecode = vi.fn(
+      () =>
+        new Promise<ImageBitmap>((resolve) => {
+          finishDecode = () => resolve(image as unknown as ImageBitmap);
+        }),
+    );
+    const loader = new MontageImageLoader(fetchImage, 6, 1000, slowDecode);
+    const request = loader.load(url(1));
+    pending.get(url(1).href)!.resolve(new ArrayBuffer(4));
+    await flush();
+    // Fetched, now decoding; the panel moves on.
+    request.release();
+    finishDecode();
+    await flush();
+    expect(image.close).toHaveBeenCalled();
+    expect(loader.cachedBytes).toBe(0);
+  });
 });
