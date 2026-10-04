@@ -491,6 +491,31 @@ describe("jobs notification recovery", () => {
     expect(job.settled).toBeUndefined();
   });
 
+  it("retries a stream that gave up, from the poll, while jobs are tracked", async () => {
+    await openStream();
+    const jobId = nextJobId();
+    serverJobs[jobId] = { status: jobStates.running };
+    const job = track(jobId);
+    jobs.setConnectionErrors(10);
+    socket().drop(); // gives up at once
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(FakeSocket.instances).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeSocket.instances).toHaveLength(2);
+    // Still failing: a single attempt per poll, not a new backoff series.
+    expect(jobs.connectionErrors).toBe(10);
+    socket().drop();
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(FakeSocket.instances).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeSocket.instances).toHaveLength(3);
+    // The server is back: the stream stays up and carries the job's end.
+    await tick();
+    streamEvent(socket(), { _id: jobId, status: jobStates.success });
+    await tick();
+    expect(job.settled).toBe(true);
+  });
+
   it("resets the give-up count on a fresh connection such as login", async () => {
     await openStream();
     jobs.setConnectionErrors(10);

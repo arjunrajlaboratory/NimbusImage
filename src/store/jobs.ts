@@ -427,11 +427,21 @@ export class Jobs extends VuexModule {
       return;
     }
     pollTimer = setInterval(() => {
-      if (this.hasCheckableJobs) {
-        this.reconcileTrackedJobs(true);
-      } else {
+      if (!this.hasCheckableJobs) {
         stopJobPolling();
+        return;
       }
+      // Reconnecting gave up: try once more, gently (the failure count is
+      // kept, so a failure gives up again at once), so running jobs get
+      // their progress back once the server is reachable.
+      if (
+        !this.notificationSource &&
+        reconnectTimer === null &&
+        main.girderRest.token
+      ) {
+        this.initializeNotificationSubscription(true);
+      }
+      this.reconcileTrackedJobs(true);
     }, JOB_POLL_INTERVAL_MS);
   }
 
