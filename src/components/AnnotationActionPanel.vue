@@ -197,4 +197,14 @@ async function copyAnnotationIds() {
      height. */
   top: var(--nimbus-action-panel-top, 72px);
 }
+
+/* Montage open: the montage covers the canvas at z-index 1002, and selecting
+   its panels is a main use, so lift this above it. Its toolbar runs along
+   the top, so drop to the bottom; the horizontal placement from the rules
+   above still applies. */
+.montage-open .action-panel {
+  top: auto;
+  bottom: 16px;
+  z-index: 1003;
+}
 </style>

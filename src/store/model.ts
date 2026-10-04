@@ -475,7 +475,7 @@ export interface IDownloadParameters {
   width?: number;
   height?: number;
   magnification?: number;
-  jpeqQuality?: number;
+  jpegQuality?: number;
   style?: string;
   tiffCompression?: string;
 }
@@ -1709,7 +1709,7 @@ export interface IAnnotationListPropertyFilter {
   mode: "range" | "values";
   min?: number;
   max?: number;
-  values?: number[];
+  values?: (number | string)[];
 }
 
 // One analysis gate as a query term: the DEFINITION (axes + polygon +
@@ -1908,7 +1908,9 @@ export interface IPropertyAnnotationFilter extends IAnnotationFilter {
     max: number;
   };
   valuesOrRange: PropertyFilterMode;
-  values?: number[];
+  // Values mode matches any of these (OR). Numbers come from the Values
+  // textarea; strings from the categorical picker (PropertyCategoryFilter).
+  values?: (number | string)[];
   // Whether to exclude or include annotations that don't have the property
 }
 
@@ -2142,6 +2144,11 @@ export interface IAnnotationPropertyValues {
   [annotationId: string]: {
     [propertyId: string]: TPropertyValue;
   };
+}
+
+export interface IPropertyDistinctValues {
+  values: { value: string; count: number }[];
+  truncated: boolean;
 }
 
 export type TPropertyHistogram = {

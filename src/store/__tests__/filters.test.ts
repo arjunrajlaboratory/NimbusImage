@@ -212,6 +212,37 @@ describe("filters property-filter server membership (D Stage 2)", () => {
 
       expect(filters.filteredAnnotations.map((a: any) => a.id)).toEqual(["a"]);
     });
+
+    it("matches string values with OR semantics client-side (categorical filter)", () => {
+      annotationMock.stubOnlyMode = false;
+      annotationMock.annotationsForIteration = [
+        makeStub("a"),
+        makeStub("b"),
+        makeStub("c"),
+        makeStub("d"),
+      ];
+      propertiesMock.propertyValues = {
+        a: { p: { gene: "KIT" } },
+        b: { p: { gene: "TP53" } },
+        c: { p: { gene: "MYC" } },
+        d: {},
+      };
+      filters.togglePropertyPathFiltering(["p", "gene"]);
+      filters.updatePropertyFilter({
+        id: "gene-filter",
+        propertyPath: ["p", "gene"],
+        range: { min: 0, max: 0 },
+        exclusive: false,
+        enabled: true,
+        valuesOrRange: PropertyFilterMode.Values,
+        values: ["KIT", "MYC"],
+      });
+
+      expect(filters.filteredAnnotations.map((a: any) => a.id)).toEqual([
+        "a",
+        "c",
+      ]);
+    });
   });
 });
 

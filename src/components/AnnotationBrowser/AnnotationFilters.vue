@@ -48,6 +48,7 @@
               v-for="(propertyPath, idx) in propertyPaths"
               :key="'property ' + idx"
               :propertyPath="propertyPath"
+              :visible="props.visible && propertyValuesOpen"
             />
           </div>
         </div>
@@ -132,9 +133,14 @@ import RoiFilters from "@/components/AnnotationBrowser/ROIFilters.vue";
 import AnnotationIdFilters from "@/components/AnnotationBrowser/AnnotationIdFilters.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
 
-defineProps<{
-  additionalTags?: string[];
-}>();
+const props = withDefaults(
+  defineProps<{
+    additionalTags?: string[];
+    // Whether the hosting palette is open.
+    visible?: boolean;
+  }>(),
+  { visible: true },
+);
 
 const advancedOpen = ref(false);
 const propertyValuesOpen = ref(filterStore.filterPaths.length > 0);

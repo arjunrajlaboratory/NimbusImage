@@ -1,11 +1,13 @@
 <template>
   <div class="filters-panel">
-    <annotation-filters />
+    <annotation-filters :visible="visible" />
   </div>
 </template>
 
 <script setup lang="ts">
 import AnnotationFilters from "@/components/AnnotationBrowser/AnnotationFilters.vue";
+
+withDefaults(defineProps<{ visible?: boolean }>(), { visible: true });
 </script>
 
 <style lang="scss" scoped>

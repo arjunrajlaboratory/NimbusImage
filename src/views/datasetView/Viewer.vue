@@ -9,6 +9,12 @@
       @layers-ready="handleLayersReady"
     />
     <volume-viewer v-else class="main" />
+    <!-- Over the image viewer rather than replacing it, so closing the montage
+         returns to the same camera and tile state. -->
+    <montage-view
+      v-if="volumeViewMode === '2d' && montageStore.isOpen"
+      class="montage-overlay"
+    />
     <tool-suggestions />
     <annotation-color-legend v-if="volumeViewMode === '2d'" />
   </div>
@@ -22,12 +28,14 @@ import ImageViewer from "@/components/ImageViewer.vue";
 import VolumeViewer from "@/components/VolumeViewer.vue";
 import ToolSuggestions from "@/components/ToolSuggestions.vue";
 import AnnotationColorLegend from "@/components/AnnotationColorLegend.vue";
+import MontageView from "@/components/Montage/MontageView.vue";
 
 import store from "@/store";
 import timelapseStore from "@/store/timelapse";
 import annotationStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import volumeViewStore from "@/store/volumeView";
+import montageStore from "@/store/montage";
 import toolSuggestionsStore from "@/store/toolSuggestions";
 
 const shouldResetMaps = ref(false);
@@ -101,17 +109,29 @@ function configurationChanged() {
 }
 
 // Fetch annotations whenever dataset or configuration changes, but only when
-// both are loaded. This avoids a race condition where the dataset watcher fires
-// before the configuration has finished loading, causing fetchAnnotations to
-// bail out early due to the missing configuration guard check.
+// both are loaded AND belong to the current dataset view. Switching views
+// loads the new dataset and configuration concurrently, so one lands first:
+// fetching then would load the old dataset under the new configuration's
+// stubThreshold — wasted work, and a full fetch of a dataset the old
+// threshold kept in stub mode (the OOM path).
 async function fetchAnnotationData() {
-  if (dataset.value && configuration.value) {
+  const view = store.datasetView;
+  if (
+    dataset.value &&
+    configuration.value &&
+    (!view ||
+      (view.datasetId === dataset.value.id &&
+        view.configurationId === configuration.value.id))
+  ) {
     // Await fetchAnnotations first: it determines stub-only (lazy) mode, which
     // fetchPropertyValues reads to decide between viewport-scoped lazy loading
     // and the wholesale load. Without the await, the property fetch races ahead
-    // while stubOnlyMode is still false and loads every value into memory.
-    await annotationStore.fetchAnnotations();
-    propertiesStore.fetchPropertyValues();
+    // while stubOnlyMode is still false and loads every value into memory. A
+    // superseded fetch resolves false while the newer one is still in flight,
+    // so the same reasoning skips the property fetch for it.
+    if (await annotationStore.fetchAnnotations()) {
+      propertiesStore.fetchPropertyValues();
+    }
   }
 }
 
@@ -141,7 +161,17 @@ function retrySuggestWhenReady(ready: boolean) {
 }
 
 watch(dataset, datasetChanged);
+// The montage mirrors one dataset's 2D list: close it for a different dataset
+// (by id — the dataset object is also replaced on a reload of the same one),
+// in 3D (where it is hidden, so the list would keep publishing for nothing),
+// and when leaving the view.
+watch([() => dataset.value?.id, volumeViewMode], () =>
+  montageStore.setIsOpen(false),
+);
+onBeforeUnmount(() => montageStore.setIsOpen(false));
 watch(configuration, configurationChanged);
+// Keyed on object identity, not ids: refreshDataset() reloads the same id
+// after resetting annotation and property state, and relies on this refetch.
 watch([dataset, configuration], fetchAnnotationData);
 watch(suggestPrerequisitesReady, retrySuggestWhenReady);
 
@@ -177,5 +207,26 @@ defineExpose({
 
 .main {
   flex: 1 1 0;
+}
+
+/* Below the dataset view's transparent app bar, above the canvas and its
+   overlays (ImageViewer's go up to 1001). Floating palettes (1006) stay on
+   top, and the montage narrows to fit between them (App.vue's palette
+   clearance vars) so the Object Browser and Layers stay usable beside it. */
+.montage-overlay {
+  position: absolute;
+  /* Inset like the floating palettes (8px below the bar, 16px from the
+     edges), so it reads as a panel rather than a hole in the canvas. */
+  top: 72px;
+  left: 16px;
+  right: max(var(--nimbus-right-edge-clear-x, 0px), 16px);
+  bottom: 16px;
+  z-index: 1002;
+}
+
+/* `.any-left-palette-open` is set on <v-app> (an ancestor); scoped CSS only
+   scopes the last compound, so this matches. */
+.any-left-palette-open .montage-overlay {
+  left: var(--nimbus-left-palette-clear-x);
 }
 </style>
