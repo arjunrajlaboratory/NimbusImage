@@ -14,7 +14,7 @@ on "Preparing transcoding".
   starts at 1 s, doubles with each failure up to 30 s, and gives up after 10
   failures or when the user is logged out. After it gives up, the poll tries
   again once per tick while jobs are tracked, so running jobs get their progress
-  back when the server returns. Logout closes the stream. The failure count resets only after a
+  back when the server returns. The failure count resets only after a
   connection has stayed open for 10 s, so a server that accepts the socket and
   drops it at once still backs off. A fresh connection, such as logging in or a
   new job after the reconnects gave up, starts the count again. A job added
@@ -89,7 +89,8 @@ Reconnecting:
 
 Sessions and logs:
 
-- *"does not check another session's jobs"*
+- *"does not check another session's jobs"*, *"does not settle a job whose user
+  changed during its status check"*
 - *"delivers only the unseen part of a recovered log"*, *"drops the part of a
   server tail we already saw"*, *"finds the longest overlap, not the first"*,
   *"treats the whole server log as new when nothing overlaps"*

@@ -467,7 +467,13 @@ export class Jobs extends VuexModule {
       job = { _id: jobId, status: jobStates.cancelled };
     }
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
-    if (!jobInfo || jobInfo.settled || !isTerminalJobStatus(job.status)) {
+    if (
+      !jobInfo ||
+      jobInfo.settled ||
+      // Re-checked after the request: the user may have changed meanwhile.
+      jobInfo.userId !== main.girderUser?._id ||
+      !isTerminalJobStatus(job.status)
+    ) {
       return;
     }
     // Deliver the part of the log not seen yet, so listeners (progress,

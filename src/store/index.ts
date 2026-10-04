@@ -1457,9 +1457,6 @@ export class Main extends VuexModule {
       sync.setSaving(error as Error);
     }
     this.loggedOut();
-    // The stream was opened with the old token: stop hearing that session's
-    // job events. Logging in again reopens it and re-checks its jobs.
-    await jobs.closeNotificationSubscription();
   }
 
   @Mutation

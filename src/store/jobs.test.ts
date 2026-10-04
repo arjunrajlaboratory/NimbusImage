@@ -516,6 +516,22 @@ describe("jobs notification recovery", () => {
     expect(job.settled).toBe(true);
   });
 
+  it("does not settle a job whose user changed during its status check", async () => {
+    await openStream();
+    const jobId = nextJobId();
+    serverJobs[jobId] = { status: jobStates.success };
+    mocks.get.mockImplementation(async (path: string, config?: any) => {
+      if (path !== "job") {
+        mocks.girderUser = { _id: "user-b" }; // logged out, B logged in
+      }
+      return restGet(path, config);
+    });
+    const job = track(jobId);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(jobCalls()).toHaveLength(1);
+    expect(job.settled).toBeUndefined();
+  });
+
   it("resets the give-up count on a fresh connection such as login", async () => {
     await openStream();
     jobs.setConnectionErrors(10);
