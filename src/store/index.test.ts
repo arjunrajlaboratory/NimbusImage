@@ -14,6 +14,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // here instead of only showing up against a live backend.
 import main from "./index";
 import jobs from "./jobs";
+import progress from "./progress";
+import { jobStates } from "./jobConstants";
 import rootStore from "./root";
 import "./filters";
 import "./properties";
@@ -207,6 +209,15 @@ describe("share-link bootstrap identity", () => {
 });
 
 function mockSuccessfulUploadAndTiles() {
+  // Unless a test says otherwise the stream has delivered the job's end,
+  // so the job is not read and the outcome comes from addJob.
+  jobs.clearStoredMessages("job1");
+  jobs.storeMessage({
+    jobId: "job1",
+    event: { _id: "job1", status: jobStates.success },
+  });
+  vi.spyOn(main.api, "getJobInfo").mockResolvedValue(null);
+  vi.spyOn(jobs, "initializeNotificationSubscription").mockResolvedValue();
   vi.spyOn(main.api, "uploadJSONFile").mockResolvedValue({
     data: { itemId: "item1" },
   } as any);
@@ -235,6 +246,8 @@ async function messageOf(promise: Promise<unknown>): Promise<string> {
 describe("addMultiSourceMetadata error propagation", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    // The jobs store is real and shared: drop events these tests buffered.
+    jobs.clearStoredMessages("job1");
   });
 
   it("surfaces the friendly storage-quota message when the transcode job fails due to quota", async () => {
@@ -283,6 +296,228 @@ describe("addMultiSourceMetadata error propagation", () => {
     );
   });
 
+  describe("when the stream missed the end of the finished job", () => {
+    // e.g. the notification stream dropped (a server restart) while the
+    // in-process transcode ran. The real jobs store is used: the read job's
+    // end is buffered and addJob replays it like a stream message.
+    let toasts: any[];
+    beforeEach(() => {
+      vi.useFakeTimers();
+      mockSuccessfulUploadAndTiles();
+      jobs.clearStoredMessages("job1"); // the stream delivered nothing
+      vi.spyOn(jobs, "initializeNotificationSubscription").mockResolvedValue();
+      toasts = [];
+      vi.spyOn(progress, "createNotification").mockImplementation(
+        (toast: any) => {
+          toasts.push(toast);
+          return "toast-id";
+        },
+      );
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Runs the action past the stream's grace period and any read retries.
+    const configure = async (eventCallback?: (event: any) => void) => {
+      const done = main.addMultiSourceMetadata({
+        parentId: "folder1",
+        metadata: "{}",
+        transcode: true,
+        eventCallback,
+      });
+      done.catch(() => {});
+      await vi.advanceTimersByTimeAsync(60000);
+      return done;
+    };
+
+    const finishedJob = (status: number, log?: string[]) =>
+      vi
+        .spyOn(main.api, "getJobInfo")
+        .mockResolvedValue({ status, log, title: "Conversion" } as any);
+
+    it("finishes, replaying the log entry by entry, with the usual toast", async () => {
+      finishedJob(jobStates.success, [
+        "Started large image conversion\n",
+        "Processing frame 2/2\n",
+        "Created a file of size 10\n",
+      ]);
+      const shown: string[] = [];
+      await expect(
+        configure((event) => event.text && shown.push(event.text)),
+      ).resolves.toBe("item1");
+      expect(shown).toEqual([
+        "Started large image conversion\n",
+        "Processing frame 2/2\n",
+        "Created a file of size 10\n",
+      ]);
+      expect(toasts.map((toast) => toast.title)).toEqual([
+        "Job Completed Successfully",
+      ]);
+      expect(jobs.messageStore.job1).toBeUndefined();
+    });
+
+    it("surfaces the quota message from the finished job's log", async () => {
+      finishedJob(jobStates.error, [
+        "Upload would exceed file storage quota (need 9.7 MB, only 1.9 " +
+          "MB available - used 15.4 GB out of 15.4 GB)\n",
+      ]);
+      expect(await messageOf(configure())).toBe(
+        "This operation needs 9.7 MB of storage, but only 1.9 MB of your " +
+          "15.4 GB quota remains (15.4 GB used). Free up space by deleting " +
+          "datasets you no longer need, or upgrade your account for more " +
+          "storage.",
+      );
+      expect(toasts.map((toast) => toast.title)).toEqual([
+        "Storage Quota Exceeded",
+      ]);
+    });
+
+    it("reports a cancelled job as a failure", async () => {
+      finishedJob(jobStates.cancelled);
+      expect(await messageOf(configure())).toBe(
+        "Failed to transcode the large image: the transcoding job failed. " +
+          "See the transcoding log for details.",
+      );
+    });
+
+    it("uses a log given as a single string", async () => {
+      vi.spyOn(main.api, "getJobInfo").mockResolvedValue({
+        status: jobStates.error,
+        log:
+          "Upload would exceed file storage quota (need 9.7 MB, only 1.9 " +
+          "MB available - used 15.4 GB out of 15.4 GB)\n",
+        title: "Conversion",
+      } as any);
+      expect(await messageOf(configure())).toContain(
+        "only 1.9 MB of your 15.4 GB quota remains",
+      );
+    });
+
+    it("finishes a job that has no log", async () => {
+      finishedJob(jobStates.success);
+      const shown: string[] = [];
+      await expect(
+        configure((event) => event.text && shown.push(event.text)),
+      ).resolves.toBe("item1");
+      expect(shown).toEqual([]);
+    });
+
+    it("supplies only what the stream had not delivered", async () => {
+      jobs.storeMessage({
+        jobId: "job1",
+        event: { _id: "job1", text: "Started large image conversion\n" },
+      });
+      finishedJob(jobStates.success, [
+        "Started large image conversion\n",
+        "Created a file of size 10\n",
+      ]);
+      const shown: string[] = [];
+      await configure((event) => event.text && shown.push(event.text));
+      expect(shown).toEqual([
+        "Started large image conversion\n",
+        "Created a file of size 10\n",
+      ]);
+    });
+
+    it("adds nothing when the stream did deliver the end", async () => {
+      jobs.storeMessage({
+        jobId: "job1",
+        event: { _id: "job1", text: "done\n", status: jobStates.success },
+      });
+      finishedJob(jobStates.success, ["done\n"]);
+      const shown: string[] = [];
+      await configure((event) => event.text && shown.push(event.text));
+      expect(shown).toEqual(["done\n"]);
+      expect(toasts).toHaveLength(1);
+    });
+
+    it("retries a failed read of the job", async () => {
+      vi.spyOn(main.api, "getJobInfo")
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ status: jobStates.success } as any);
+      await expect(configure()).resolves.toBe("item1");
+    });
+
+    it("stops retrying the read once the stream delivers the end", async () => {
+      // The first read fails; the stream reconnects during the backoff.
+      const getJob = vi.spyOn(main.api, "getJobInfo").mockResolvedValue(null);
+      const done = main.addMultiSourceMetadata({
+        parentId: "folder1",
+        metadata: "{}",
+        transcode: true,
+      });
+      await vi.advanceTimersByTimeAsync(2500); // grace + first read
+      jobs.storeMessage({
+        jobId: "job1",
+        event: { _id: "job1", status: jobStates.success },
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(done).resolves.toBe("item1");
+      expect(getJob).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not wait on a stalled read once the stream delivers the end", async () => {
+      // The read hangs (same outage); the stream reconnects meanwhile.
+      vi.spyOn(main.api, "getJobInfo").mockReturnValue(new Promise(() => {}));
+      const done = main.addMultiSourceMetadata({
+        parentId: "folder1",
+        metadata: "{}",
+        transcode: true,
+      });
+      await vi.advanceTimersByTimeAsync(3000); // past the grace period
+      jobs.storeMessage({
+        jobId: "job1",
+        event: { _id: "job1", status: jobStates.success },
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(done).resolves.toBe("item1");
+    });
+
+    it("lets a stream that is merely late deliver the end itself", async () => {
+      const getJob = finishedJob(jobStates.success, ["done\n"]);
+      const done = main.addMultiSourceMetadata({
+        parentId: "folder1",
+        metadata: "{}",
+        transcode: true,
+      });
+      // The real end arrives within the grace period.
+      await vi.advanceTimersByTimeAsync(500);
+      jobs.storeMessage({
+        jobId: "job1",
+        event: { _id: "job1", text: "done\n", status: jobStates.success },
+      });
+      await vi.advanceTimersByTimeAsync(5000);
+      await expect(done).resolves.toBe("item1");
+      expect(getJob).not.toHaveBeenCalled();
+      expect(toasts).toHaveLength(1);
+    });
+  });
+
+  it("waits on the stream as before when the job cannot be read", async () => {
+    vi.useFakeTimers();
+    try {
+      mockSuccessfulUploadAndTiles();
+      jobs.clearStoredMessages("job1"); // the stream delivered nothing
+      const getJob = vi.spyOn(main.api, "getJobInfo").mockResolvedValue(null);
+      const addJob = vi.spyOn(jobs, "addJob").mockResolvedValue(true);
+      const done = main.addMultiSourceMetadata({
+        parentId: "folder1",
+        metadata: "{}",
+        transcode: true,
+      });
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(getJob).toHaveBeenCalledTimes(5);
+      // Nothing was made up: the stream alone decides the outcome.
+      expect(jobs.messageStore.job1).toBeUndefined();
+      await expect(done).resolves.toBe("item1");
+      expect(addJob).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("resolves with the item id when transcoding succeeds", async () => {
     mockSuccessfulUploadAndTiles();
     vi.spyOn(jobs, "addJob").mockResolvedValue(true);
@@ -294,6 +529,265 @@ describe("addMultiSourceMetadata error propagation", () => {
         transcode: true,
       }),
     ).resolves.toBe("item1");
+  });
+});
+
+describe("addMultiSourceMetadata transcode progress", () => {
+  // The transcode request runs the job in-process and returns when it is
+  // done; its events reach the stream's buffer meanwhile. The real jobs
+  // store is used.
+  let toasts: any[];
+  let shown: string[];
+  let finishRequest: (value: any) => void;
+  let failRequest: (error: any) => void;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockSuccessfulUploadAndTiles();
+    jobs.clearStoredMessages("job1"); // the stream delivered nothing yet
+    vi.spyOn(main.api, "generateTiles").mockReturnValue(
+      new Promise((resolve, reject) => {
+        finishRequest = resolve;
+        failRequest = reject;
+      }),
+    );
+    vi.spyOn(jobs, "initializeNotificationSubscription").mockResolvedValue();
+    toasts = [];
+    vi.spyOn(progress, "createNotification").mockImplementation(
+      (toast: any) => {
+        toasts.push(toast);
+        return "toast-id";
+      },
+    );
+    shown = [];
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    jobs.clearStoredMessages("job1");
+    jobs.clearStoredMessages("job2");
+  });
+
+  const configure = () => {
+    const done = main.addMultiSourceMetadata({
+      parentId: "folder1",
+      metadata: "{}",
+      transcode: true,
+      eventCallback: (event) => event.text && shown.push(event.text),
+    });
+    done.catch(() => {});
+    return done;
+  };
+  // What the stream buffers: the job's status event (carrying its
+  // document), then log lines and the end.
+  const stream = (event: Record<string, any>, jobId = "job1") =>
+    jobs.storeMessage({ jobId, event: { _id: jobId, ...event } as any });
+  const started = (jobId = "job1", itemId = "item1") =>
+    stream(
+      {
+        status: jobStates.running,
+        type: "large_image_tiff",
+        meta: { itemId },
+      },
+      jobId,
+    );
+  const gatewayTimeout = { response: { status: 504 } };
+
+  it("shows the job's progress while the request is still running", async () => {
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    started();
+    stream({ text: "Processing frame 1/2\n" });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(shown).toEqual(["Processing frame 1/2\n"]);
+    stream({ text: "Processing frame 2/2\n" });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(shown).toHaveLength(2);
+    stream({ status: jobStates.success });
+    finishRequest({ data: { _id: "job1" } });
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(done).resolves.toBe("item1");
+    // Each line once: the replay skips what was already shown.
+    expect(shown).toEqual(["Processing frame 1/2\n", "Processing frame 2/2\n"]);
+    expect(toasts.map((toast) => toast.title)).toEqual([
+      "Job Completed Successfully",
+    ]);
+    expect(jobs.messageStore.job1).toBeUndefined();
+  });
+
+  it("does not show another item's transcode", async () => {
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    started("job2", "other-item");
+    stream({ text: "someone else's frame\n" }, "job2");
+    await vi.advanceTimersByTimeAsync(300);
+    expect(shown).toEqual([]);
+    stream({ status: jobStates.success });
+    finishRequest({ data: { _id: "job1" } });
+    await expect(done).resolves.toBe("item1");
+    expect(shown).toEqual([]);
+    expect(jobs.messageStore.job2).toHaveLength(2);
+  });
+
+  it("follows the job to its end after a gateway timeout", async () => {
+    const findJob = vi.spyOn(main.api, "findTranscodeJob");
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    started();
+    stream({ text: "Processing frame 1/2\n" });
+    failRequest(gatewayTimeout);
+    await vi.advanceTimersByTimeAsync(1000);
+    stream({ text: "Processing frame 2/2\n" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(shown).toHaveLength(2);
+    stream({ status: jobStates.success });
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(done).resolves.toBe("item1");
+    expect(shown).toHaveLength(2);
+    expect(findJob).not.toHaveBeenCalled();
+    expect(toasts).toHaveLength(1);
+  });
+
+  it("finds the job by listing transcodes when the stream missed its start", async () => {
+    vi.spyOn(main.api, "findTranscodeJob").mockResolvedValue({
+      _id: "job1",
+    } as any);
+    vi.spyOn(main.api, "getJobInfo").mockResolvedValue({
+      status: jobStates.success,
+      log: ["Processing frame 1/1\n"],
+      title: "Conversion",
+    } as any);
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    failRequest(gatewayTimeout);
+    await vi.advanceTimersByTimeAsync(31000);
+    await expect(done).resolves.toBe("item1");
+    expect(shown).toEqual(["Processing frame 1/1\n"]);
+    expect(toasts.map((toast) => toast.title)).toEqual([
+      "Job Completed Successfully",
+    ]);
+  });
+
+  it("keeps following a job that is still updating", async () => {
+    vi.spyOn(main.api, "findTranscodeJob").mockResolvedValue({
+      _id: "job1",
+    } as any);
+    let reads = 0;
+    vi.spyOn(main.api, "getJobInfo").mockImplementation(
+      async () =>
+        ({ status: jobStates.running, updated: `t${++reads}` }) as any,
+    );
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    failRequest(gatewayTimeout);
+    await vi.advanceTimersByTimeAsync(40 * 60 * 1000);
+    stream({ status: jobStates.success });
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(done).resolves.toBe("item1");
+    expect(reads).toBeGreaterThan(60);
+  });
+
+  it("gives up on a job that stops updating", async () => {
+    vi.spyOn(main.api, "findTranscodeJob").mockResolvedValue({
+      _id: "job1",
+    } as any);
+    vi.spyOn(main.api, "getJobInfo").mockResolvedValue({
+      status: jobStates.running,
+      updated: "t0",
+    } as any);
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    failRequest(gatewayTimeout);
+    await vi.advanceTimersByTimeAsync(61 * 60 * 1000);
+    expect(await messageOf(done)).toBe(
+      "Failed to transcode the large image: the transcoding job stopped " +
+        "responding. See the transcoding log for details.",
+    );
+  });
+
+  it("does not wait on a stalled read of the job once the stream delivers the end", async () => {
+    const getJob = vi
+      .spyOn(main.api, "getJobInfo")
+      .mockReturnValue(new Promise(() => {}));
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    started();
+    failRequest(gatewayTimeout);
+    await vi.advanceTimersByTimeAsync(31000); // quiet: the job is read
+    expect(getJob).toHaveBeenCalledTimes(1);
+    stream({ text: "Processing frame 2/2\n" });
+    stream({ status: jobStates.success });
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(done).resolves.toBe("item1");
+    expect(shown).toEqual(["Processing frame 2/2\n"]);
+  });
+
+  it("reports the gateway timeout when the jobs cannot be listed", async () => {
+    const findJob = vi
+      .spyOn(main.api, "findTranscodeJob")
+      .mockRejectedValue(new Error("listing failed"));
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    failRequest(Object.assign(new Error("Gateway Timeout"), gatewayTimeout));
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(await messageOf(done)).toBe("Gateway Timeout");
+    expect(findJob).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not show other jobs on the same item", async () => {
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    stream(
+      {
+        status: jobStates.running,
+        type: "large_image_cache_histograms",
+        meta: { itemId: "item1" },
+      },
+      "job2",
+    );
+    stream({ text: "Caching histograms\n" }, "job2");
+    await vi.advanceTimersByTimeAsync(300);
+    expect(shown).toEqual([]);
+    stream({ status: jobStates.success });
+    finishRequest({ data: { _id: "job1" } });
+    await expect(done).resolves.toBe("item1");
+    expect(shown).toEqual([]);
+  });
+
+  it("reopens a closed stream before the job starts", async () => {
+    jobs.setNotificationSource({ readyState: WebSocket.CLOSED } as any);
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    const [reopened] = vi.mocked(jobs.initializeNotificationSubscription).mock
+      .invocationCallOrder;
+    const [requested] = vi.mocked(main.api.generateTiles).mock
+      .invocationCallOrder;
+    expect(reopened).toBeLessThan(requested);
+    stream({ status: jobStates.success });
+    finishRequest({ data: { _id: "job1" } });
+    await expect(done).resolves.toBe("item1");
+    jobs.setNotificationSource(null);
+  });
+
+  it("fails with the request's error when no job started", async () => {
+    vi.spyOn(main.api, "findTranscodeJob").mockResolvedValue(undefined);
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    failRequest(Object.assign(new Error("Gateway Timeout"), gatewayTimeout));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await messageOf(done)).toBe("Gateway Timeout");
+  });
+
+  it("fails as before when the request fails otherwise", async () => {
+    const findJob = vi.spyOn(main.api, "findTranscodeJob");
+    const done = configure();
+    await vi.advanceTimersByTimeAsync(0);
+    started();
+    failRequest(
+      Object.assign(new Error("Server Error"), { response: { status: 500 } }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await messageOf(done)).toBe("Server Error");
+    expect(findJob).not.toHaveBeenCalled();
   });
 });
 

@@ -512,9 +512,10 @@ export default class GirderAPI {
       .then((r) => asDatasetView(r.data));
   }
 
-  async getSnapshotImage(url: URL): Promise<ArrayBuffer> {
+  async getSnapshotImage(url: URL, signal?: AbortSignal): Promise<ArrayBuffer> {
     const response = await this.client.get<ArrayBuffer>(url.href, {
       responseType: "arraybuffer",
+      signal,
     });
     if (response.data.byteLength === 0) {
       throw new Error("Snapshot crop contains no image data.");
@@ -1094,6 +1095,20 @@ export default class GirderAPI {
     const jobId = responses[0].data.scheduledJob;
     await progressStore.trackHistogramJob(jobId);
     return responses;
+  }
+
+  // The large-image transcode job started for `itemId`, if any, among the
+  // most recent ones; throws if the jobs cannot be listed.
+  async findTranscodeJob(itemId: string): Promise<IJob | undefined> {
+    const response = await this.client.get("job", {
+      params: {
+        types: JSON.stringify(["large_image_tiff"]),
+        limit: 10,
+        sort: "created",
+        sortdir: -1,
+      },
+    });
+    return (response.data as IJob[]).find((job) => job.meta?.itemId === itemId);
   }
 
   async findJobs(type: TJobType, statuses: number[]): Promise<any[]> {

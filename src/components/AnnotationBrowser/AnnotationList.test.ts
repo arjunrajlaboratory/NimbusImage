@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
-import { reactive } from "vue";
+import { nextTick, reactive } from "vue";
 
 const mockSetXY = vi.fn();
 const mockSetZ = vi.fn();
@@ -138,6 +138,23 @@ vi.mock("@/store/annotationListServer", () => ({
     setIdSubstring: (...a: any[]) => mockSetIdSubstring(...a),
   },
 }));
+
+// Reactive so the component's publish watcher re-runs when a test opens it;
+// the setter replaces the array like the real mutation.
+const montageMock = vi.hoisted(() => ({
+  state: null as any,
+}));
+vi.mock("@/store/montage", async () => {
+  const { reactive } = await import("vue");
+  montageMock.state = reactive({
+    isOpen: false,
+    listPageItems: [] as { id: string; index: number }[],
+    setListPageItems(items: { id: string; index: number }[]) {
+      montageMock.state.listPageItems = [...items];
+    },
+  });
+  return { default: montageMock.state };
+});
 
 vi.mock("@/utils/paths", () => ({
   getStringFromPropertiesAndPath: vi.fn(() => "42"),
@@ -1404,6 +1421,116 @@ describe("AnnotationList", () => {
           id: "ann1",
         });
       }
+    });
+  });
+  describe("montage page publishing", () => {
+    // Assertions read this instance's own computed: wrappers left mounted by
+    // earlier tests also publish into the shared montage mock when isOpen
+    // flips, so the mock's last value can come from a different instance.
+    const mounted: { unmount: () => void }[] = [];
+    function mountTracked() {
+      const wrapper = mountComponent();
+      mounted.push(wrapper);
+      return wrapper;
+    }
+
+    beforeEach(() => {
+      montageMock.state.isOpen = false;
+      montageMock.state.listPageItems = [];
+    });
+
+    afterEach(() => {
+      mounted.splice(0).forEach((wrapper) => wrapper.unmount());
+      montageMock.state.isOpen = false;
+    });
+
+    function clientAnnotations(count: number) {
+      const annotations = Array.from({ length: count }, (_, i) =>
+        makeAnnotation({ id: `ann${i + 1}` }),
+      );
+      (filterStore as any).filteredAnnotations = annotations;
+      (annotationStore as any).annotationIdToIdx = Object.fromEntries(
+        annotations.map((annotation, i) => [annotation.id, i + 1]),
+      );
+    }
+
+    it("computes nothing while the montage is closed", () => {
+      clientAnnotations(15);
+      const vm = mountTracked().vm as any;
+      expect(vm.currentPageForMontage).toEqual([]);
+    });
+
+    it("is the client list's current page in display order", () => {
+      clientAnnotations(15);
+      montageMock.state.isOpen = true;
+      const vm = mountTracked().vm as any;
+      vm.page = 2;
+      expect(vm.currentPageForMontage).toEqual(
+        [11, 12, 13, 14, 15].map((n) => ({ id: `ann${n}`, index: n })),
+      );
+    });
+
+    it("follows the list's sort", () => {
+      clientAnnotations(15);
+      montageMock.state.isOpen = true;
+      const vm = mountTracked().vm as any;
+      vm.sortBy = [{ key: "index", order: "desc" }];
+      expect(vm.currentPageForMontage.map((i: any) => i.index)).toEqual([
+        15, 14, 13, 12, 11, 10, 9, 8, 7, 6,
+      ]);
+    });
+
+    it("clamps a page past the end like the table does", () => {
+      clientAnnotations(15);
+      montageMock.state.isOpen = true;
+      const vm = mountTracked().vm as any;
+      vm.page = 7;
+      expect(vm.currentPageForMontage.map((i: any) => i.id)).toEqual([
+        "ann11",
+        "ann12",
+        "ann13",
+        "ann14",
+        "ann15",
+      ]);
+    });
+
+    it("is the server page's rows in server mode", () => {
+      (annotationStore as any).stubOnlyMode = true;
+      (annotationListServer as any).page = 2;
+      (annotationListServer as any).pageSize = 50;
+      (annotationListServer as any).rows = ["srvA", "srvB"].map((id) => ({
+        id,
+        centroid: { x: 1, y: 2 },
+        location: { XY: 0, Z: 0, Time: 0 },
+        shape: "point",
+        channel: 0,
+        tags: [],
+        color: null,
+        values: {},
+      }));
+      montageMock.state.isOpen = true;
+      const vm = mountTracked().vm as any;
+      expect(vm.currentPageForMontage).toEqual([
+        { id: "srvA", index: 50 },
+        { id: "srvB", index: 51 },
+      ]);
+    });
+
+    it("publishes the page to the montage store when it changes", async () => {
+      clientAnnotations(15);
+      montageMock.state.isOpen = true;
+      const vm = mountTracked().vm as any;
+      await nextTick();
+      // Only this instance reacts to its own page.
+      vm.page = 2;
+      await nextTick();
+      expect(montageMock.state.listPageItems.map((i: any) => i.id)).toEqual([
+        "ann11",
+        "ann12",
+        "ann13",
+        "ann14",
+        "ann15",
+      ]);
     });
   });
 });

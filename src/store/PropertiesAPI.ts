@@ -10,6 +10,7 @@ import {
   IAnnotationLocation,
   IDisplayLayer,
   TPropertyHistogram,
+  IPropertyDistinctValues,
   IScales,
   TPropertyValue,
 } from "./model";
@@ -69,6 +70,21 @@ export default class PropertiesAPI {
       .get(
         `annotation_property_values/histogram?datasetId=${datasetId}&propertyPath=${joinedPath}&buckets=${buckets}`,
       )
+      .then((res) => res.data);
+  }
+
+  // Distinct string values at a property path with their annotation counts,
+  // most common first. `truncated` means more values exist than were
+  // returned; narrow with `search` (case-insensitive substring).
+  async getPropertyDistinctValues(
+    datasetId: string,
+    propertyPath: string[],
+    search: string = "",
+  ): Promise<IPropertyDistinctValues> {
+    return this.client
+      .get("annotation_property_values/distinct", {
+        params: { datasetId, propertyPath: propertyPath.join("."), search },
+      })
       .then((res) => res.data);
   }
 

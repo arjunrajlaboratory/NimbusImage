@@ -1386,13 +1386,18 @@ export class Properties extends VuexModule {
   @Action({ rawError: true })
   async fetchAllPropertyValues() {
     const generation = propertyDatasetGeneration;
+    // Claim before the early return so a bail-out also supersedes an in-flight
+    // load (see allPropertyValuesGuard).
+    const token = allPropertyValuesGuard.next();
     if (!main.dataset?.id) {
       return;
     }
     const datasetId = main.dataset.id;
     const values = await this.propertiesAPI.getPropertyValues(datasetId);
+    // A dataset switch can overlap two loads; the old one must not land last.
     if (
       generation !== propertyDatasetGeneration ||
+      !allPropertyValuesGuard.isCurrent(token) ||
       main.dataset?.id !== datasetId
     ) {
       return;
@@ -1617,8 +1622,14 @@ export default propertiesModule;
 // Stale-response guard for the visible-property-value fetch: rapid pans can fire
 // overlapping fetches scoped to different visible sets; only the latest may
 // merge. Without it, a slow earlier fetch resolving last prunes freshly-fetched
-// entries against its stale keepIds.
+// entries against its stale keepIds. The wholesale load has its own guard
+// (allPropertyValuesGuard) rather than sharing this one: a spatial table switch
+// bumps this one, and must not drop the ordinary load.
 const visiblePropertyValuesGuard = createSequenceGuard();
+
+// Stale-response guard for the wholesale load: overlapping loads (of one
+// dataset, or across a switch) commit only the latest.
+const allPropertyValuesGuard = createSequenceGuard();
 
 /**
  * Fetch property values for the given ids (lazy mode) and merge them scoped to
@@ -1642,7 +1653,10 @@ async function _fetchVisiblePropertyValues(
       idsToFetch,
       paths,
     );
-    if (visiblePropertyValuesGuard.isCurrent(token)) {
+    if (
+      visiblePropertyValuesGuard.isCurrent(token) &&
+      main.dataset?.id === datasetId
+    ) {
       propertiesModule.mergeVisiblePropertyValues({ newEntries, keepIds });
     }
   } catch (error) {

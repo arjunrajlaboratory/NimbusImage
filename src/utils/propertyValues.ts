@@ -188,6 +188,20 @@ export function histogramBounds(
 }
 
 /**
+ * True when a property holds strings (gene names, barcodes...) rather than
+ * numbers. The histogram endpoint buckets with Mongo's $bucketAuto, which
+ * orders strings too, so a string property comes back with string bucket
+ * bounds despite TPropertyHistogram's numeric typing — that is the signal.
+ */
+export function isCategoricalHistogram(
+  histogram: TPropertyHistogram | null | undefined,
+): boolean {
+  return (
+    !!histogram?.length && typeof (histogram[0].min as unknown) === "string"
+  );
+}
+
+/**
  * Payload for the server-side uncomputed-count endpoint: each property reduced
  * to the fields the backend needs to reproduce canComputeAnnotationProperty
  * (id, shape, and the {tags, exclusive} tag rule). The tags object is passed

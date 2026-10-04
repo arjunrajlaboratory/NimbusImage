@@ -68,6 +68,13 @@ MAX_LIST_LIMIT = 10_000
 # frontend's displayed-column cap and a whole marker panel.
 MAX_SUMMARY_PROPERTY_PATHS = 200
 
+# Distinct-values endpoint (categorical property filter). A screening library
+# has a few thousand genes; past this many values a scrolled list stops being
+# usable and the client narrows by search instead. Bounds the response, not
+# the work (that is AGGREGATION_MAX_TIME_MS).
+MAX_DISTINCT_VALUES = 20_000
+MAX_DISTINCT_SEARCH_LENGTH = 200
+
 
 def requireCountWithin(count, limit, name):
     """Raise RestException(400) if `count` exceeds `limit`."""

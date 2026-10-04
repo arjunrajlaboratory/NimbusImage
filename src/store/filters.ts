@@ -1665,7 +1665,8 @@ function collectAnnotationsPassingNonGateFilters(
             return (
               !filter.values ||
               filter.values.length === 0 ||
-              (typeof value === "number" && filter.values.includes(value))
+              ((typeof value === "number" || typeof value === "string") &&
+                filter.values.includes(value))
             );
           }
           return (

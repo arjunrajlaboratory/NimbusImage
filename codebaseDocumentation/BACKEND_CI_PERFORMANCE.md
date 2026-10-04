@@ -84,9 +84,9 @@ locally when changing it.
 ## Local runs on Apple Silicon
 
 `test_dataset_multi_source.py` used to segfault inside pylibtiff on arm64
-macOS (a ctypes variadic-call ABI issue; Linux and CI are unaffected).
-`_restoreVariadicTIFFGetField()` in `test/conftest.py` (from PR #1347) fixes
-it at import, ahead of the stale-model fixture.
+macOS (a ctypes variadic-call ABI issue; Linux and CI were unaffected).
+`_restoreVariadicTIFFGetField()` in `test/conftest.py` fixes it, so local
+`tox` runs the whole suite.
 
 ## Regression checklist
 

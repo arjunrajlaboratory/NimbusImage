@@ -328,6 +328,126 @@ describe("PropertyFilterHistogram", () => {
     expect(filterStore.updatePropertyFilter).not.toHaveBeenCalled();
   });
 
+  describe("string-valued (categorical) properties", () => {
+    const stringHistogram = [
+      { count: 3, min: "AADAC", max: "KIT" },
+      { count: 2, min: "KIT", max: "ZAP70" },
+    ];
+
+    it("switches a new range filter to pass-all values mode when the histogram is strings", async () => {
+      const histogram = ref<any[]>([]);
+      (filterStore as any).getHistogram = vi.fn(() => histogram.value);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.isCategorical).toBe(false);
+      (filterStore as any).propertyFilters = [vm.propertyFilter];
+      (filterStore.updatePropertyFilter as any).mockClear();
+
+      histogram.value = stringHistogram;
+      await wrapper.vm.$nextTick();
+
+      expect(vm.isCategorical).toBe(true);
+      // The final write is the mode switch, not a numeric range sync with
+      // string bounds. (Earlier calls are the non-reactive store mock
+      // re-creating the filter, which the real store does not do.)
+      expect(filterStore.updatePropertyFilter).toHaveBeenLastCalledWith(
+        expect.objectContaining({ valuesOrRange: "values", values: [] }),
+      );
+    });
+
+    it("creates a new filter in pass-all values mode when the string histogram is already cached", () => {
+      (filterStore as any).getHistogram = vi.fn(() => stringHistogram);
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).propertyFilter).toMatchObject({
+        valuesOrRange: "values",
+        values: [],
+        range: { min: 0, max: 0 },
+      });
+    });
+
+    it("keeps restored string selections and renders the category picker", () => {
+      (filterStore as any).propertyFilters = [
+        {
+          id: "existing-id",
+          propertyPath: ["propA", "sub1"],
+          range: { min: 0, max: 0 },
+          exclusive: false,
+          enabled: true,
+          valuesOrRange: "values",
+          values: ["KIT", "TP53"],
+        },
+      ];
+      (filterStore as any).getHistogram = vi.fn(() => stringHistogram);
+      const wrapper = mountComponent();
+      const picker = wrapper.findComponent({ name: "PropertyCategoryFilter" });
+      expect(picker.exists()).toBe(true);
+      expect(picker.props("modelValue")).toEqual(["KIT", "TP53"]);
+
+      picker.vm.$emit("update:modelValue", ["KIT"]);
+      expect(filterStore.updatePropertyFilter).toHaveBeenCalledWith(
+        expect.objectContaining({ valuesOrRange: "values", values: ["KIT"] }),
+      );
+    });
+
+    it("converts a restored numeric values filter once the property turns out to hold strings", async () => {
+      const histogram = ref<any[]>([]);
+      (filterStore as any).getHistogram = vi.fn(() => histogram.value);
+      (filterStore as any).propertyFilters = [
+        {
+          id: "existing-id",
+          propertyPath: ["propA", "sub1"],
+          range: { min: 0, max: 0 },
+          exclusive: false,
+          enabled: true,
+          valuesOrRange: "values",
+          values: [3, "KIT"],
+        },
+      ];
+      const wrapper = mountComponent();
+      histogram.value = stringHistogram;
+      await wrapper.vm.$nextTick();
+      expect(filterStore.updatePropertyFilter).toHaveBeenLastCalledWith(
+        expect.objectContaining({ valuesOrRange: "values", values: ["KIT"] }),
+      );
+    });
+
+    it("resets restored string selections to the full range when the property is numeric here", async () => {
+      const histogram = ref<any[]>([]);
+      (filterStore as any).getHistogram = vi.fn(() => histogram.value);
+      (filterStore as any).propertyFilters = [
+        {
+          id: "existing-id",
+          propertyPath: ["propA", "sub1"],
+          range: { min: 0, max: 0 },
+          exclusive: false,
+          enabled: true,
+          valuesOrRange: "values",
+          values: ["KIT"],
+        },
+      ];
+      const wrapper = mountComponent();
+      histogram.value = [{ count: 5, min: 2, max: 40 }];
+      await wrapper.vm.$nextTick();
+      expect(filterStore.updatePropertyFilter).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          valuesOrRange: "range",
+          values: undefined,
+          range: { min: 2, max: 40 },
+        }),
+      );
+    });
+
+    it("numeric histograms keep the histogram UI", () => {
+      (filterStore as any).getHistogram = vi.fn(() => [
+        { count: 5, min: 0, max: 100 },
+      ]);
+      const wrapper = mountComponent();
+      expect(
+        wrapper.findComponent({ name: "PropertyCategoryFilter" }).exists(),
+      ).toBe(false);
+    });
+  });
+
   it("hist returns histogram from filterStore", () => {
     const histData = [
       { count: 5, min: 10, max: 15 },
