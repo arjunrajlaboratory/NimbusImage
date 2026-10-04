@@ -291,6 +291,23 @@ export default class GirderAPI {
     }
   }
 
+  // The current user's jobs in the given statuses, newest first. Throws on
+  // failure: an empty list would read as "none of them is unfinished".
+  async getUnfinishedUserJobs(
+    statuses: readonly number[],
+    limit: number,
+  ): Promise<IJob[]> {
+    const response = await this.client.get("job", {
+      params: {
+        statuses: JSON.stringify(statuses),
+        limit,
+        sort: "created",
+        sortdir: -1,
+      },
+    });
+    return response.data;
+  }
+
   async getJobInfo(jobId: string): Promise<IJob | null> {
     try {
       const response = await this.client.get(`job/${jobId}`);
