@@ -118,7 +118,14 @@ const loading = computed(
   () =>
     loadingKind.value.all || (!!searchText.value && loadingKind.value.search),
 );
-const error = ref("");
+// Per list, like loading: a failed search must not outlive its search text,
+// and must not hide a successfully loaded full list (or vice versa).
+const failedKind = ref({ all: false, search: false });
+const error = computed(() =>
+  failedKind.value.all || (!!searchText.value && failedKind.value.search)
+    ? "Could not load values"
+    : "",
+);
 
 const selectedSet = computed(() => new Set(props.modelValue));
 const searchesLocally = computed(
@@ -167,7 +174,7 @@ async function fetchValues(searchFor: string) {
   const seq = ++requestSeq[kind];
   const isCurrent = () => seq === requestSeq[kind];
   loadingKind.value[kind] = true;
-  error.value = "";
+  failedKind.value[kind] = false;
   try {
     const result = await propertyStore.propertiesAPI.getPropertyDistinctValues(
       datasetId,
@@ -184,7 +191,7 @@ async function fetchValues(searchFor: string) {
     }
   } catch (e) {
     if (isCurrent()) {
-      error.value = "Could not load values";
+      failedKind.value[kind] = true;
     }
     logError("Failed to load property values", e);
   } finally {
@@ -196,8 +203,11 @@ async function fetchValues(searchFor: string) {
 
 const debouncedServerSearch = debounce(fetchValues, 300);
 
+// Keyed on the dataset too: the Filters panel keys these rows by index, so
+// after a dataset switch with the same configuration this component can be
+// reused for an identical path whose values belong to the old dataset.
 watch(
-  () => props.propertyPath.join("."),
+  () => `${store.dataset?.id}|${props.propertyPath.join(".")}`,
   () => {
     allValues.value = null;
     searchedValues.value = null;
@@ -211,6 +221,7 @@ watch(
 
 watch(searchText, (text) => {
   searchedValues.value = null;
+  failedKind.value.search = false;
   requestSeq.search++;
   loadingKind.value.search = false;
   if (text && !searchesLocally.value) {
@@ -259,6 +270,7 @@ defineExpose({
   search,
   allValues,
   shownEntries,
+  error,
   toggle,
   selectShown,
   toggleFirstShown,

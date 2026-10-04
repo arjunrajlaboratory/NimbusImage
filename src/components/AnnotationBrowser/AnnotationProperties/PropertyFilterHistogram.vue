@@ -225,14 +225,27 @@ const propertyFilter = computed(() => {
       arePathEquals(value.propertyPath, props.propertyPath),
   );
   if (!filter) {
-    const newFilter: IPropertyAnnotationFilter = {
-      range: { min: defaultMin.value, max: defaultMax.value },
-      id: uuidv4(),
-      propertyPath: props.propertyPath,
-      exclusive: false,
-      enabled: true,
-      valuesOrRange: PropertyFilterMode.Range,
-    };
+    // With a string histogram already cached (e.g. a removed filter re-added)
+    // the hist watcher never fires, so start in pass-all values mode here: a
+    // range filter would get string bounds and hide everything.
+    const newFilter: IPropertyAnnotationFilter = isCategorical.value
+      ? {
+          range: { min: 0, max: 0 },
+          id: uuidv4(),
+          propertyPath: props.propertyPath,
+          exclusive: false,
+          enabled: true,
+          valuesOrRange: PropertyFilterMode.Values,
+          values: [],
+        }
+      : {
+          range: { min: defaultMin.value, max: defaultMax.value },
+          id: uuidv4(),
+          propertyPath: props.propertyPath,
+          exclusive: false,
+          enabled: true,
+          valuesOrRange: PropertyFilterMode.Range,
+        };
     filterStore.updatePropertyFilter(newFilter);
     return newFilter;
   }

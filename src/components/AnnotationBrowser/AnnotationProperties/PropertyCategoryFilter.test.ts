@@ -5,15 +5,17 @@ const { getPropertyDistinctValues } = vi.hoisted(() => ({
   getPropertyDistinctValues: vi.fn(),
 }));
 
-vi.mock("@/store", () => ({
-  default: { dataset: { id: "ds1" } },
-}));
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  return { default: reactive({ dataset: { id: "ds1" } }) };
+});
 
 vi.mock("@/store/properties", () => ({
   default: { propertiesAPI: { getPropertyDistinctValues } },
 }));
 
 import PropertyCategoryFilter from "./PropertyCategoryFilter.vue";
+import store from "@/store";
 
 const GENES = {
   values: [
@@ -45,6 +47,7 @@ describe("PropertyCategoryFilter", () => {
     vi.useFakeTimers();
     getPropertyDistinctValues.mockReset();
     getPropertyDistinctValues.mockResolvedValue(GENES);
+    (store as any).dataset = { id: "ds1" };
   });
 
   afterEach(() => {
@@ -151,5 +154,48 @@ describe("PropertyCategoryFilter", () => {
     pending.a({ values: [{ value: "A-stale", count: 1 }], truncated: false });
     await flushPromises();
     expect((w.vm as any).shownEntries.map((e: any) => e.value)).toEqual(["AB"]);
+  });
+
+  it("reloads the values when the dataset changes under the same path", async () => {
+    const w = await mountComponent();
+    getPropertyDistinctValues.mockResolvedValue({
+      values: [{ value: "OTHER", count: 1 }],
+      truncated: false,
+    });
+    (store as any).dataset = { id: "ds2" };
+    await flushPromises();
+    expect(getPropertyDistinctValues).toHaveBeenLastCalledWith(
+      "ds2",
+      ["p", "gene"],
+      "",
+    );
+    expect((w.vm as any).shownEntries.map((e: any) => e.value)).toEqual([
+      "OTHER",
+    ]);
+  });
+
+  it("drops a failed search's error with its search text, but keeps a failed full load's", async () => {
+    getPropertyDistinctValues.mockImplementation(
+      async (_ds: string, _path: string[], search: string) => {
+        if (search) throw new Error("boom");
+        return { ...GENES, truncated: true };
+      },
+    );
+    const w = await mountComponent();
+    (w.vm as any).search = "zap";
+    await flushPromises();
+    vi.advanceTimersByTime(400);
+    await flushPromises();
+    expect((w.vm as any).error).toBe("Could not load values");
+    (w.vm as any).search = "";
+    await flushPromises();
+    expect((w.vm as any).error).toBe("");
+
+    getPropertyDistinctValues.mockRejectedValue(new Error("down"));
+    const failed = await mountComponent();
+    (failed.vm as any).search = "k";
+    await flushPromises();
+    expect((failed.vm as any).error).toBe("Could not load values");
+    w.unmount();
   });
 });

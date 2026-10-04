@@ -355,6 +355,16 @@ describe("PropertyFilterHistogram", () => {
       );
     });
 
+    it("creates a new filter in pass-all values mode when the string histogram is already cached", () => {
+      (filterStore as any).getHistogram = vi.fn(() => stringHistogram);
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).propertyFilter).toMatchObject({
+        valuesOrRange: "values",
+        values: [],
+        range: { min: 0, max: 0 },
+      });
+    });
+
     it("keeps restored string selections and renders the category picker", () => {
       (filterStore as any).propertyFilters = [
         {
