@@ -2203,6 +2203,9 @@ export interface IJobEventData {
   title?: string;
   text?: string;
   status?: number;
+  // On status events, which carry the job document
+  type?: string;
+  meta?: Record<string, any>;
 }
 
 export interface IProgressInfo {
