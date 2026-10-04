@@ -241,6 +241,12 @@ Watch out for stringify cost on large objects.
 
 Not every `{ deep: true }` is this bug — it only applies when the watched source is a **getter function that rebuilds a fresh object/array on each call** (a Vuex/Pinia getter, a `computed`, or a plain function reading store state). A `ref()`/`reactive()` passed **directly** as the watch source (not wrapped in a function) is the correct, safe use of `deep: true` — Vue tracks its stable identity and only fires on genuine in-place mutations. Don't blanket-remove `deep: true` without checking which case you're in.
 
+### Don't re-key a dataset/configuration watcher on ids
+
+`Viewer.vue`'s `watch([dataset, configuration], fetchAnnotationData)` looks like it should key on ids ("a reload of the same object shouldn't refetch"), but **`refreshDataset()` depends on the object swap**: it re-runs `setSelectedDataset` with the same id, which resets annotation and property state, and only this watcher repopulates it. Keying on ids left the viewer empty after unroll toggles and `addLargeImage` (caught in review of issue #1379). Before narrowing any watcher on `store.dataset`/`store.configuration`, find what resets state on a same-id reload and who repopulates it.
+
+Switching dataset views loads the dataset and configuration **concurrently**, so this watcher sees a mismatched pair (new configuration, old dataset) first. Gate per-dataset fetches on both matching `store.datasetView`, and guard the store action with a sequence token so a superseded fetch can't commit (`fetchAnnotations`, `src/store/__tests__/fetchAnnotationsStale.test.ts`).
+
 ### Every `throttle`/`debounce` needs a `cancel()` in `onBeforeUnmount`
 
 A trailing call that fires after teardown runs against a dead view — in

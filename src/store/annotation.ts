@@ -66,6 +66,7 @@ import {
 import { logError } from "@/utils/log";
 import { TIMELAPSE_CONNECTION_TAG } from "./constants";
 import { stubPerf } from "@/utils/stubPerf";
+import { createSequenceGuard } from "@/utils/sequenceGuard";
 import { annotationLoadingTitle } from "@/utils/loadingLabels";
 import progress from "./progress";
 import { IAnnotationSetup } from "@/tools/creation/templates/AnnotationConfiguration.vue";
@@ -2100,17 +2101,32 @@ export class Annotations extends VuexModule {
     }
   }
 
+  // Overlapping calls (e.g. a dataset switch) resolve in any order; only the
+  // latest call, still for the current dataset, commits. A superseded call
+  // waits for the latest one to settle, then resolves true iff the store holds
+  // its dataset — so callers chaining work that reads the committed state
+  // (stubOnlyMode) run it once that state is final, and skip it after a
+  // dataset switch.
   @Action
-  async fetchAnnotations() {
+  async fetchAnnotations(): Promise<boolean> {
+    // Claim the token before the early return: a bail-out must also supersede
+    // an in-flight fetch, or that fetch would commit over the cleared state.
+    const token = annotationFetchGuard.next();
+    let settle!: () => void;
+    latestAnnotationFetch = new Promise<void>((resolve) => (settle = resolve));
     this.setAnnotations([]);
     this.setConnections([]);
     if (!main.dataset || !main.configuration) {
       stubPerf.setDataset(null);
-      return;
+      settle();
+      return true;
     }
     stubPerf.setDataset(main.dataset.id);
+    const datasetId = main.dataset.id;
+    const isCurrent = () =>
+      annotationFetchGuard.isCurrent(token) && main.dataset?.id === datasetId;
+    const superseded = () => annotationFetchSettledFor(datasetId);
     try {
-      const datasetId = main.dataset.id;
       const connectionsPromise =
         this.annotationsAPI.getConnectionsForDatasetId(datasetId);
 
@@ -2130,6 +2146,9 @@ export class Annotations extends VuexModule {
         );
         count = Number.POSITIVE_INFINITY;
       }
+      if (!isCurrent()) {
+        return superseded();
+      }
 
       if (count <= stubThreshold) {
         // Under threshold: full fetch only. Full annotations are a superset of
@@ -2141,6 +2160,9 @@ export class Annotations extends VuexModule {
           this.annotationsAPI.getAnnotationsForDatasetId(datasetId),
           connectionsPromise,
         ]);
+        if (!isCurrent()) {
+          return superseded();
+        }
         this.setConnections(connections?.length ? connections : []);
         this.setAnnotations(annotations?.length ? annotations : []);
       } else {
@@ -2159,6 +2181,9 @@ export class Annotations extends VuexModule {
             this.annotationsAPI.getAnnotationStubs(datasetId),
             connectionsPromise,
           ]);
+          if (!isCurrent()) {
+            return superseded();
+          }
           this.setConnections(connections?.length ? connections : []);
           this.setAnnotations([]);
           if (stubs?.length) {
@@ -2170,10 +2195,17 @@ export class Annotations extends VuexModule {
         }
       }
       this.bumpMutationCounter();
+      return true;
     } catch (error) {
+      if (!isCurrent()) {
+        return superseded();
+      }
       this.setAnnotations([]);
       this.setConnections([]);
       logError((error as Error).message);
+      return true;
+    } finally {
+      settle();
     }
   }
 
@@ -3041,6 +3073,22 @@ export class Annotations extends VuexModule {
     // protects selected ids from LRU eviction (up to the hard cap).
     _hydrateFromBackend(this.annotationsAPI, capped, []);
   }
+}
+
+// Orders overlapping fetchAnnotations calls; see fetchAnnotations.
+const annotationFetchGuard = createSequenceGuard();
+// Settles when the most recently started fetchAnnotations call finishes.
+let latestAnnotationFetch: Promise<void> = Promise.resolve();
+
+// Wait until no fetchAnnotations call is in flight (a newer one may start
+// while we wait), then report whether the store holds `datasetId`.
+async function annotationFetchSettledFor(datasetId: string) {
+  let awaited: Promise<void>;
+  do {
+    awaited = latestAnnotationFetch;
+    await awaited;
+  } while (awaited !== latestAnnotationFetch);
+  return main.dataset?.id === datasetId;
 }
 
 const annotationModule = getModule(Annotations);
