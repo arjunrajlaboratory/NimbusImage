@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   createNotification: vi.fn(),
   girderRest: { token: "token" as string | null },
+  girderUser: { _id: "user-a" } as { _id: string } | null,
 }));
 
 vi.mock("./index", () => ({
@@ -27,7 +28,9 @@ vi.mock("./index", () => ({
     },
     isAnnotationPanelOpen: true,
     setAnnotationPanelBadge: vi.fn(),
-    girderUser: null,
+    get girderUser() {
+      return mocks.girderUser;
+    },
     dataset: null,
     configuration: null,
   },
@@ -79,6 +82,7 @@ class FakeSocket {
 }
 vi.stubGlobal("WebSocket", FakeSocket);
 
+import store from "./root";
 import jobs, { stopJobPolling, unseenLogSuffix } from "./jobs";
 import { jobStates, UNFINISHED_JOB_STATUSES } from "./jobConstants";
 
@@ -188,12 +192,21 @@ describe("jobs notification recovery", () => {
     mocks.get.mockImplementation(restGet);
     mocks.createNotification.mockReset();
     mocks.girderRest.token = "token";
+    mocks.girderUser = { _id: "user-a" };
   });
 
   afterEach(async () => {
-    // Forget jobs a test left unfinished, so later tests start clean.
-    await jobs.forgetJobs();
+    await jobs.closeNotificationSubscription();
+    stopJobPolling();
     jobs.setConnectionErrors(0);
+    // Forget jobs a test left unfinished, so later tests start clean.
+    const state = (store.state as any).jobs;
+    for (const jobId of Object.keys(state.jobInfoMap)) {
+      jobs.removeJobInfo(jobId);
+    }
+    for (const jobId of Object.keys(state.messageStore)) {
+      jobs.clearStoredMessages(jobId);
+    }
     vi.useRealTimers();
   });
 
@@ -459,20 +472,39 @@ describe("jobs notification recovery", () => {
     expect(job.settled).toBe(true);
   });
 
-  it("forgets tracked jobs and stops listening at logout", async () => {
+  it("does not check another session's jobs", async () => {
     await openStream();
     const jobId = nextJobId();
     serverJobs[jobId] = { status: jobStates.running };
     const job = track(jobId);
-    await jobs.forgetJobs();
-    expect(socket().readyState).toBe(FakeSocket.CLOSED);
-    expect(jobs.getPromiseForJobId(jobId)).toBeUndefined();
-    // Nothing of the old session is checked in the next one.
+    // User A logs out (or their token expires) and user B logs in; A's job
+    // ends meanwhile.
     serverJobs[jobId] = { status: jobStates.success };
+    mocks.girderUser = { _id: "user-b" };
     await jobs.initializeNotificationSubscription();
     await vi.advanceTimersByTimeAsync(120_000);
     expect(mocks.get).not.toHaveBeenCalled();
     expect(job.settled).toBeUndefined();
+  });
+
+  it("resets the give-up count on a fresh connection such as login", async () => {
+    await openStream();
+    jobs.setConnectionErrors(10);
+    await jobs.initializeNotificationSubscription();
+    expect(jobs.connectionErrors).toBe(0);
+  });
+
+  it("settles a job even when a listener throws", async () => {
+    await openStream();
+    const jobId = nextJobId();
+    const job = track(jobId, {
+      eventCallback: () => {
+        throw new Error("listener bug");
+      },
+    });
+    streamEvent(socket(), { _id: jobId, status: jobStates.success });
+    await tick();
+    expect(job.settled).toBe(true);
   });
 
   it("settles a job missing from the unfinished list only once it ended", async () => {

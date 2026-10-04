@@ -1457,7 +1457,6 @@ export class Main extends VuexModule {
       sync.setSaving(error as Error);
     }
     this.loggedOut();
-    await jobs.forgetJobs();
   }
 
   @Mutation

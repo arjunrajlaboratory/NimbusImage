@@ -122,6 +122,10 @@ interface IJobInfo {
   // When the job last showed signs of life (registered, or any event);
   // jobs quiet for JOB_QUIET_MS get their status checked.
   lastEventAt: number;
+  // The user who started it. Status checks only cover the current user's
+  // jobs: another session's jobs (before a logout or a token expiry) must
+  // not be settled, running their listeners, in this one.
+  userId: string | undefined;
 }
 
 // A job as GET job/:id returns it: the event fields plus its log (the
@@ -368,6 +372,7 @@ export class Jobs extends VuexModule {
         successResolve,
         log: "",
         lastEventAt: Date.now(),
+        userId: main.girderUser?._id,
       };
       this.jobInfoMap[job.jobId] = jobData;
     }
@@ -388,7 +393,6 @@ export class Jobs extends VuexModule {
         this.notificationSource.readyState == WebSocket.CLOSED ||
         this.notificationSource.readyState == WebSocket.CLOSING)
     ) {
-      this.setConnectionErrors(0);
       await this.initializeNotificationSubscription();
     }
     this.rawAddJob(job);
@@ -403,12 +407,12 @@ export class Jobs extends VuexModule {
       this.clearStoredMessages(job.jobId);
     }
     // The safety-net poll runs while anything is tracked (see
-    // JOB_POLL_INTERVAL_MS); skipped while logged out.
+    // JOB_POLL_INTERVAL_MS).
     if (this.jobInfoMap[job.jobId] && pollTimer === null) {
       pollTimer = setInterval(() => {
         if (Object.keys(this.jobInfoMap).length === 0) {
           stopJobPolling();
-        } else if (main.girderRest.token) {
+        } else {
           this.reconcileTrackedJobs(true);
         }
       }, JOB_POLL_INTERVAL_MS);
@@ -456,10 +460,15 @@ export class Jobs extends VuexModule {
   @Action
   async reconcileTrackedJobs(onlyQuiet: boolean) {
     const now = Date.now();
-    const jobIds = Object.keys(this.jobInfoMap).filter(
-      (jobId) =>
-        !onlyQuiet || now - this.jobInfoMap[jobId].lastEventAt >= JOB_QUIET_MS,
-    );
+    const userId = main.girderUser?._id;
+    const jobIds = Object.keys(this.jobInfoMap).filter((jobId) => {
+      const jobInfo = this.jobInfoMap[jobId];
+      return (
+        userId !== undefined &&
+        jobInfo.userId === userId &&
+        (!onlyQuiet || now - jobInfo.lastEventAt >= JOB_QUIET_MS)
+      );
+    });
     if (jobIds.length === 0) {
       return;
     }
@@ -574,8 +583,14 @@ export class Jobs extends VuexModule {
     }
 
     for (const listener of jobInfo.listeners) {
-      listener.eventCallback?.(jobEvent);
-      listener.errorCallback?.(jobEvent);
+      // A throwing listener must not keep the job from settling (it would
+      // then be re-checked, and the listeners re-run, every poll).
+      try {
+        listener.eventCallback?.(jobEvent);
+        listener.errorCallback?.(jobEvent);
+      } catch (error) {
+        logError(`A listener of job ${jobId} failed`, error);
+      }
     }
     const status = jobEvent.status;
     if (!isTerminalJobStatus(status)) {
@@ -621,12 +636,12 @@ export class Jobs extends VuexModule {
     }
     this.setNotificationSource(null);
     cancelStableTimer();
-    // Logged out (the token is gone), or failing for a long while: stop;
-    // addJob reconnects on demand.
-    if (
-      !main.girderRest.token ||
-      this.connectionErrors >= RECONNECT_MAX_ATTEMPTS
-    ) {
+    // Logged out (the token is gone), or failing for a long while: stop.
+    // Logging in and addJob reconnect on demand.
+    if (!main.girderRest.token) {
+      return;
+    }
+    if (this.connectionErrors >= RECONNECT_MAX_ATTEMPTS) {
       logError("Can't connect to girder notification stream");
       return;
     }
@@ -638,7 +653,7 @@ export class Jobs extends VuexModule {
     cancelReconnect();
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      this.initializeNotificationSubscription();
+      this.initializeNotificationSubscription(true);
     }, delay);
   }
 
@@ -657,7 +672,13 @@ export class Jobs extends VuexModule {
   }
 
   @Action
-  async initializeNotificationSubscription() {
+  // isReconnect: a backoff reconnect, which keeps the failure count. Any
+  // other (re)connection -- logging in, a new job -- is a fresh start, even
+  // after reconnecting gave up.
+  async initializeNotificationSubscription(isReconnect: boolean = false) {
+    if (!isReconnect) {
+      this.setConnectionErrors(0);
+    }
     // No await anywhere here: the new socket is in place before any other
     // caller (e.g. several addJobs at once) can look, so they share it
     // instead of each opening one.
@@ -682,23 +703,6 @@ export class Jobs extends VuexModule {
     // Replaced before closing, so handleClose sees a deliberate close.
     this.setNotificationSource(notificationSource);
     previousSource?.close();
-  }
-
-  // At logout: stop listening and forget every tracked job. They belong to
-  // the session that is ending, and must not be checked (or settled, running
-  // their listeners) in whichever session comes next. Their promises stay
-  // pending, as they would if their events never came.
-  @Action
-  async forgetJobs() {
-    await this.closeNotificationSubscription();
-    stopJobPolling();
-    this.clearJobTracking();
-  }
-
-  @Mutation
-  clearJobTracking() {
-    this.jobInfoMap = {};
-    this.messageStore = {};
   }
 
   @Action
