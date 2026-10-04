@@ -1223,11 +1223,21 @@ export class Properties extends VuexModule {
 
   @Action({ rawError: true })
   async fetchAllPropertyValues() {
+    // Claim before the early return so a bail-out also supersedes an in-flight
+    // load (see propertyValuesGuard).
+    const token = propertyValuesGuard.next();
     if (!main.dataset?.id) {
       return;
     }
-    const values = await this.propertiesAPI.getPropertyValues(main.dataset.id);
-    this.updatePropertyValues(values);
+    const datasetId = main.dataset.id;
+    const values = await this.propertiesAPI.getPropertyValues(datasetId);
+    // A dataset switch can overlap two loads; the old one must not land last.
+    if (
+      propertyValuesGuard.isCurrent(token) &&
+      main.dataset?.id === datasetId
+    ) {
+      this.updatePropertyValues(values);
+    }
   }
 
   @Action({ rawError: true })
@@ -1254,7 +1264,7 @@ export class Properties extends VuexModule {
     }
     // Claim the latest token up front so any in-flight fetch from a prior call
     // is superseded (and a synchronous prune below reflects the latest set).
-    const token = visiblePropertyValuesGuard.next();
+    const token = propertyValuesGuard.next();
     const visibleIds = [...annotations.visibleAnnotationIds];
     const keepIds = new Set(visibleIds);
     const paths = this.displayedPropertyPaths;
@@ -1443,11 +1453,14 @@ export class Properties extends VuexModule {
 const propertiesModule = getModule(Properties);
 export default propertiesModule;
 
-// Stale-response guard for the visible-property-value fetch: rapid pans can fire
-// overlapping fetches scoped to different visible sets; only the latest may
-// merge. Without it, a slow earlier fetch resolving last prunes freshly-fetched
-// entries against its stale keepIds.
-const visiblePropertyValuesGuard = createSequenceGuard();
+// Stale-response guard shared by both property-value commit paths: the
+// wholesale load (fetchAllPropertyValues) and the visible-set fetch. Rapid pans
+// fire overlapping visible fetches scoped to different sets, and a dataset
+// switch overlaps loads for two datasets (possibly one of each kind); only the
+// latest may commit. Without it, a slow earlier fetch resolving last prunes
+// freshly-fetched entries against its stale keepIds, or replaces the new
+// dataset's values with the old one's.
+const propertyValuesGuard = createSequenceGuard();
 
 /**
  * Fetch property values for the given ids (lazy mode) and merge them scoped to
@@ -1471,7 +1484,10 @@ async function _fetchVisiblePropertyValues(
       idsToFetch,
       paths,
     );
-    if (visiblePropertyValuesGuard.isCurrent(token)) {
+    if (
+      propertyValuesGuard.isCurrent(token) &&
+      main.dataset?.id === datasetId
+    ) {
       propertiesModule.mergeVisiblePropertyValues({ newEntries, keepIds });
     }
   } catch (error) {
