@@ -33,6 +33,33 @@ tracking (`src/store/jobs.ts`) is unchanged. (A general fix in `jobs.ts`,
    message and cleanup all go through the normal path.
 5. An unreadable or unfinished job is left to the stream, as before.
 
+## Live progress and gateway timeouts
+
+Girder 5's jobs plugin runs local jobs synchronously (Girder 3 ran them on
+a background thread, and large_image passed `asynchronous=True`), which is
+why the request blocks. Two consequences, both handled in `transcodeItem`
+without changing the backend path:
+
+- **Progress.** While the request is open, the job's events already reach
+  the stream's buffer; the page could not tell they were its own. Its
+  status events carry the job document, whose `meta.itemId` names the item
+  just uploaded, so the buffer is checked every 250 ms and the job's events
+  are passed to the progress display as they arrive. The replay by
+  `addJob` skips those already shown (matched by event identity).
+- **Proxy timeouts.** Production HAProxy has `timeout server 300s`
+  (AWSDeploy `templates/startup_haproxy.tftpl`): a longer transcode gets a
+  504 while Girder keeps running the job. On a 504 only, the job is found
+  (in the buffer, else by listing `large_image_tiff` jobs for the item) and
+  followed to its end. If the stream stays quiet for 30 s the job is read
+  (raced against the stream, like the reads above), and its end supplied
+  when finished; a job that shows no update -- or cannot be read -- for an
+  hour is reported as failed. Any other request error fails the upload as
+  before: a dropped connection or a 502 usually means Girder itself went
+  down, and the job died with it (it stays `running` in the database
+  forever), so following it would only freeze the page.
+- **A closed stream** (e.g. after a server restart) is reopened before the
+  request starts, the check `addJob` makes, so the job's events arrive live.
+
 Known limits: duplicated log lines if the server kept only the tail of a
 very long log or the stream had a gap mid-job; a quota line lost in such a
 gap (with the end delivered) is not recovered; a stream more than the
@@ -76,6 +103,28 @@ Each invariant names the test that holds it (`src/store/index.test.ts`).
 - An unreadable job leaves the store untouched and waits on the stream —
   *"waits on the stream as before when the job cannot be read"*.
 
+**Live progress and gateway timeouts**
+- Progress shows while the request is open, each line once —
+  *"shows the job's progress while the request is still running"*.
+- Only this item's transcode is shown —
+  *"does not show another item's transcode"*.
+- A 504 follows the job instead of failing —
+  *"follows the job to its end after a gateway timeout"*,
+  *"finds the job by listing transcodes when the stream missed its start"*.
+- Following is bounded by the job's updates, not by time —
+  *"keeps following a job that is still updating"*,
+  *"gives up on a job that stops updating"*.
+- A stalled read of the job does not hold up an end the stream delivers —
+  *"does not wait on a stalled read of the job once the stream delivers the end"*.
+- Only this item's transcode job is shown, not its cache jobs —
+  *"does not show other jobs on the same item"*.
+- A closed stream is reopened before the job starts —
+  *"reopens a closed stream before the job starts"*.
+- Other failures fail as before, with the request's own error —
+  *"fails with the request's error when no job started"*,
+  *"reports the gateway timeout when the jobs cannot be listed"*,
+  *"fails as before when the request fails otherwise"*.
+
 **Process**
 - Verify live, not only in tests: open the configuration page for a
   folder of ND2 tiles, assign XY and tick Composite (transcode turns on),
@@ -83,6 +132,11 @@ Each invariant names the test that holds it (`src/store/index.test.ts`).
   page stays on "Preparing transcoding"; with it, Girder's log shows a
   `GET job/:id` about 2 s after the transcode `POST` returns and the page
   moves on. Also run one submit without a restart and confirm there is no
-  read of the transcode job.
+  read of the transcode job and the progress bar moves before the request
+  returns. For a gateway timeout, replace `store.state.main.api.generateTiles`
+  in the page with a wrapper that calls the original but rejects with
+  `{response: {status: 504}}` after a few seconds: the page should keep
+  following the job to its end. Restarting Girder mid-transcode should fail
+  promptly with "Network Error", not hang.
 - Editing `src/store/*.ts` under a running dev server breaks Vuex hot
   reload: hard-reload every open tab before trusting it.
