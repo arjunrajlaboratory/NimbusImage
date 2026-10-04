@@ -34,6 +34,7 @@ import girderResources from "./girderResources";
 
 import { getLayerImages, getLayerSliceIndexes } from "./images";
 import jobs from "./jobs";
+import { jobStates } from "./jobConstants";
 import progress from "./progress";
 
 import {
@@ -56,6 +57,7 @@ import {
   IContrast,
   IMapEntry,
   IHistoryEntry,
+  IJob,
   IJobEventData,
   IScales,
   TUnitLength,
@@ -236,6 +238,121 @@ let recentDatasetViewsRequestId = 0;
 // Annotation-browser persistence bookkeeping. Module-level rather than Vuex
 // state because the debounce timer is never read by the UI.
 let annotationBrowserSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+const FINISHED_JOB_STATUSES: number[] = [
+  jobStates.success,
+  jobStates.error,
+  jobStates.cancelled,
+];
+// How long the notification stream gets to deliver a job's end after the
+// request that ran it returned, before the job is read instead: a healthy
+// stream can trail the HTTP response by a moment.
+const STREAM_GRACE_MS = 2000;
+const STREAM_GRACE_CHECK_MS = 100;
+// Reading the job after a dropped stream: retried with backoff (2, 4, 8,
+// 16 s), since the drop may be a server restart still finishing.
+const JOB_READ_ATTEMPTS = 5;
+const JOB_READ_RETRY_MS = 2000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Whether the notification stream has buffered this job's end.
+function streamDeliveredEnd(jobId: string): boolean {
+  return (jobs.messageStore[jobId] ?? []).some(
+    (event: IJobEventData) =>
+      event.status !== undefined &&
+      FINISHED_JOB_STATUSES.includes(event.status),
+  );
+}
+
+// The job document, retrying a failed read (getJobInfo returns null), or
+// null if every attempt failed.
+function readJobWithRetries(
+  getJobInfo: (jobId: string) => Promise<IJob | null>,
+  jobId: string,
+): Promise<IJob | null> {
+  return pRetry(
+    async () => {
+      const job = await getJobInfo(jobId);
+      if (!job) {
+        throw new Error(`Could not read job ${jobId}`);
+      }
+      return job;
+    },
+    {
+      retries: JOB_READ_ATTEMPTS - 1,
+      minTimeout: JOB_READ_RETRY_MS,
+      factor: 2,
+      randomize: false,
+    },
+  ).catch(() => null);
+}
+
+// The request that ran `jobId` in-process has returned, so the job has
+// finished and its events should be buffered from the notification stream,
+// for addJob to replay. If the stream was down meanwhile (a server
+// restart, a network drop) its end never arrives: read the job and buffer
+// the missing events -- the log entries the stream did not carry, then the
+// final status -- with the jobs store's storeMessage, so addJob replays
+// them exactly as if the stream had: progress per entry, toasts, quota
+// message and cleanup included.
+//
+// Known limits: if the server kept only the tail of a very long log, or
+// the stream had a gap mid-job, some log lines may be shown twice, and a
+// quota line lost in such a gap (with the end delivered) is not recovered.
+// A stream more than the grace period late can repeat a toast, and its
+// late events stay buffered in the jobs store.
+async function supplyMissedJobEnd(
+  getJobInfo: (jobId: string) => Promise<IJob | null>,
+  jobId: string,
+) {
+  // Measured on the clock, not in iterations: a background tab throttles
+  // timers, which would otherwise stretch the grace period to minutes.
+  const graceEnds = Date.now() + STREAM_GRACE_MS;
+  while (!streamDeliveredEnd(jobId)) {
+    if (Date.now() >= graceEnds) {
+      break;
+    }
+    await sleep(STREAM_GRACE_CHECK_MS);
+  }
+  if (streamDeliveredEnd(jobId)) {
+    return; // the usual case: nothing to supply, nothing to read
+  }
+  const job = await readJobWithRetries(getJobInfo, jobId);
+  if (
+    !job ||
+    !FINISHED_JOB_STATUSES.includes(job.status) ||
+    streamDeliveredEnd(jobId)
+  ) {
+    return; // unreadable or unfinished: wait on the stream as before
+  }
+  // GET job/:id returns the log as a list of chunks.
+  const log: unknown = job.log;
+  const entries: string[] = Array.isArray(log) ? log.map(String) : [];
+  // Entries the stream already delivered form a prefix of the log; supply
+  // the rest.
+  const seen = (jobs.messageStore[jobId] ?? [])
+    .map((event: IJobEventData) =>
+      typeof event.text === "string" ? event.text : "",
+    )
+    .join("");
+  let delivered = 0;
+  let offset = 0;
+  while (
+    delivered < entries.length &&
+    seen.startsWith(entries[delivered], offset)
+  ) {
+    offset += entries[delivered].length;
+    delivered += 1;
+  }
+  for (const text of entries.slice(delivered)) {
+    jobs.storeMessage({ jobId, event: { _id: jobId, text } });
+  }
+  jobs.storeMessage({
+    jobId,
+    event: { _id: jobId, status: job.status, title: job.title },
+  });
+}
 
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
@@ -2052,6 +2169,9 @@ export class Main extends VuexModule {
         // Accumulate the job log so that on failure we can tell the user
         // why the job failed (e.g. a storage quota breach during the
         // server-side upload of the transcoded file).
+        // The request above runs the job in-process and returns only once
+        // it is done; supply its end if the notification stream missed it.
+        await supplyMissedJobEnd((id) => this.api.getJobInfo(id), jobId);
         let jobLog = "";
         const success = await jobs.addJob({
           jobId,
