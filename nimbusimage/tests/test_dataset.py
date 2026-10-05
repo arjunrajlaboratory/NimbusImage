@@ -136,7 +136,8 @@ class TestDatasetConfigure:
 
     def test_configure_omits_transcode_unless_given(self, mock_gc):
         """None must not be sent: the server picks the default (off only
-        when every file is .nd2), and a literal null is a 400."""
+        when every file is .nd2 and at most 16 tiles are composited), and a
+        literal null is a 400."""
         mock_gc.post.return_value = self._plan(itemId="i", jobId=None)
         Dataset(mock_gc, "folder_123").configure()
         assert "transcode" not in mock_gc.post.call_args[1]["json"]
@@ -209,16 +210,46 @@ class TestDatasetConfigure:
         assert plan.transcode_default is False
 
     def test_compositing_is_reported(self, mock_gc):
-        """Asking for compositing is not the same as getting it -- it needs a
-        single source with ND2 frame metadata -- so the server reports what
-        actually happened and the model has to carry it."""
+        """Asking for compositing is not the same as getting it -- it needs
+        ND2 stage positions and, for a folder of files, XY assigned -- so
+        a dry run reports what would happen (a real run that cannot honor
+        the request fails instead) and the model has to carry it."""
         mock_gc.post.return_value = self._plan(itemId="i", compositing=True)
         assert Dataset(mock_gc, "f").configure().compositing is True
 
-        mock_gc.post.return_value = self._plan(itemId="i", compositing=False)
-        result = Dataset(mock_gc, "f").configure(enable_compositing=True)
+        mock_gc.post.return_value = self._plan(compositing=False)
+        result = Dataset(mock_gc, "f").configure(
+            dry_run=True, enable_compositing=True,
+        )
         assert mock_gc.post.call_args[1]["json"]["enableCompositing"] is True
         assert result.compositing is False
+
+    def test_compositing_check_is_carried(self, mock_gc):
+        """A duplicate tile refuses compositing; the dry run says why."""
+        check = {"error": "duplicate", "warning": None}
+        mock_gc.post.return_value = self._plan(
+            compositing=False, compositingCheck=check,
+            validationError="duplicate",
+        )
+        plan = Dataset(mock_gc, "f").configure(
+            dry_run=True, enable_compositing=True,
+        )
+        assert plan.compositing_check == check
+        assert plan.is_valid is False
+
+    def test_tile_folder_recipe_sends_override_and_compositing(self, mock_gc):
+        """A folder of single-tile ND2 files composites only once the tile
+        variable is on XY, so the override and the flag go in one body."""
+        mock_gc.post.return_value = self._plan(itemId="i", compositing=True)
+        assignments = {"XY": {"source": "filename", "guess": "C"},
+                       "C": {"source": "file", "guess": "C"}}
+        result = Dataset(mock_gc, "f").configure(
+            assignments=assignments, enable_compositing=True,
+        )
+        body = mock_gc.post.call_args[1]["json"]
+        assert body["assignments"] == assignments
+        assert body["enableCompositing"] is True
+        assert result.compositing is True
 
     def test_assignments_override_is_forwarded(self, mock_gc):
         mock_gc.post.return_value = self._plan(itemId="i", jobId=None)

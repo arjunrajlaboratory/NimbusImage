@@ -356,16 +356,49 @@
               <span>Clear assignment</span>
             </v-tooltip>
             <v-checkbox
-              v-if="canDoCompositing && dimension === 'XY'"
+              v-if="showCompositeCheckbox && dimension === 'XY'"
               density="compact"
               hide-details
               label="Composite"
               class="mt-0 ml-4"
               v-model="enableCompositing"
+              :disabled="
+                compositingCheckResult.error !== null && !enableCompositing
+              "
             />
           </div>
         </div>
       </div>
+      <v-alert
+        v-if="compositingRefusal"
+        type="error"
+        variant="tonal"
+        density="compact"
+        class="mt-3"
+        data-test="compositing-error"
+      >
+        Can't composite: {{ compositingRefusal }}
+      </v-alert>
+      <v-alert
+        v-else-if="canDoCompositing && compositingCheckResult.error"
+        type="info"
+        variant="tonal"
+        density="compact"
+        class="mt-3"
+        data-test="compositing-unavailable"
+      >
+        Composite is unavailable: {{ compositingCheckResult.error }}
+      </v-alert>
+      <v-alert
+        v-else-if="shouldDoCompositing && compositingCheckResult.warning"
+        type="warning"
+        variant="tonal"
+        density="compact"
+        class="mt-3"
+        data-test="compositing-warning"
+      >
+        {{ compositingCheckResult.warning }}
+      </v-alert>
     </v-card>
     <v-row>
       <v-col class="d-flex justify-end">
@@ -490,7 +523,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted } from "vue";
+import { ref, shallowRef, reactive, computed, watch, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import store from "@/store";
 
@@ -502,15 +535,22 @@ import {
 } from "@/utils/parsing";
 import { IGirderItem } from "@/girder";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
-import { ITileMeta } from "@/store/GirderAPI";
-import {
-  IGeoJSPositionWithTransform,
-  IJobEventData,
-  IDimensionStrategy,
-} from "@/store/model";
+import { ISourceMetadataEntry, ITileMeta } from "@/store/GirderAPI";
+import { IJobEventData, IDimensionStrategy } from "@/store/model";
 import { logError, logWarning } from "@/utils/log";
 import { parseTranscodeOutput } from "@/utils/strings";
 import { extractDimensionLabelsFromND2 } from "@/utils/ND2FileParsing";
+import {
+  canCompositeByStagePosition,
+  compositeTranscodeDefault,
+  compositingCheck,
+  compositingCoordinates,
+  compositingFrameMetadataIndex,
+  COMPOSITING_UNAVAILABLE,
+  ICompositingCheck,
+  ICompositingLayout,
+} from "@/utils/ND2Compositing";
+import { chunk } from "lodash";
 import pLimit from "p-limit";
 import pRetry, { AbortError } from "p-retry";
 
@@ -611,6 +651,9 @@ interface ICompositingSource {
   };
 }
 
+// Items per source-metadata request (the endpoint allows up to 100).
+const SOURCE_METADATA_BATCH_SIZE = 50;
+
 // --- Props & Emits ---
 
 const props = withDefaults(
@@ -632,11 +675,17 @@ const router = useRouter();
 
 // --- Reactive state ---
 
-const tilesInternalMetadata = ref<{ [key: string]: any }[] | null>(null);
-const tilesMetadata = ref<ITileMeta[] | null>(null);
+// Replaced wholesale, never mutated in place: shallow refs keep the
+// compositing computeds from walking every frame entry through proxies.
+const tilesInternalMetadata = shallowRef<{ [key: string]: any }[] | null>(null);
+const tilesMetadata = shallowRef<ITileMeta[] | null>(null);
 
 const enableCompositing = ref(false);
-const transcode = ref(false);
+// Transcode default from the file types alone (on unless all are .nd2).
+const fileTranscodeDefault = ref(false);
+// An explicit transcode choice (the checkbox, or a saved strategy); null
+// follows the default, which compositing many files turns on.
+const transcodeOverride = ref<boolean | null>(null);
 
 const isUploading = ref(false);
 const logs = ref("");
@@ -718,18 +767,64 @@ const initProgressPercent = computed(() =>
 
 const initPendingDisplay = computed(() => initPending.value.slice(0, 5));
 
+// Reads the XY assignment so the Composite option appears as soon as the
+// user moves a folder's tile-index variable to XY.
 const canDoCompositing = computed(
   () =>
     tilesInternalMetadata.value !== null &&
-    tilesInternalMetadata.value.length === 1 &&
-    tilesInternalMetadata.value[0].nd2_frame_metadata &&
     tilesMetadata.value !== null &&
-    tilesMetadata.value.length === 1,
+    // During a re-initialization girderItems is already the new folder's
+    // while the metadata is still the old one's.
+    tilesMetadata.value.length === girderItems.value.length &&
+    canCompositeByStagePosition(
+      tilesMetadata.value,
+      tilesInternalMetadata.value,
+      assignments.XY?.value.size ?? 0,
+    ),
+);
+
+// Stage-layout problems, whenever compositing is possible: an error
+// (duplicate positions) refuses it, a warning (sparse layout) does not.
+// Stage positions in mosaic pixels; depends only on the metadata, so the
+// check and generateJson share one computation.
+const compositingLayout = computed<ICompositingLayout | null>(() =>
+  canDoCompositing.value
+    ? compositingCoordinates(tilesMetadata.value!, tilesInternalMetadata.value!)
+    : null,
+);
+
+const compositingCheckResult = computed<ICompositingCheck>(() =>
+  compositingLayout.value
+    ? compositingCheck(
+        girderItems.value.map((item) => item.name),
+        tilesMetadata.value!,
+        compositingLayout.value,
+        (itemIdx, frameIdx) => getValueFromAssignments("XY", itemIdx, frameIdx),
+      )
+    : { error: null, warning: null, tileCount: null },
 );
 
 const shouldDoCompositing = computed(
-  () => canDoCompositing.value && enableCompositing.value,
+  () =>
+    canDoCompositing.value &&
+    enableCompositing.value &&
+    compositingCheckResult.value.error === null,
 );
+
+// Compositing many tiles makes zoomed-out views read every source, so it
+// turns transcode on by default; an explicit choice always wins.
+const transcode = computed<boolean>({
+  get: () =>
+    transcodeOverride.value ??
+    compositeTranscodeDefault(
+      fileTranscodeDefault.value,
+      shouldDoCompositing.value,
+      compositingCheckResult.value.tileCount,
+    ),
+  set: (value) => {
+    transcodeOverride.value = value;
+  },
+});
 
 const fileCount = computed(() => girderItems.value.length);
 
@@ -937,8 +1032,32 @@ const assignmentError = computed((): string | null => {
   return null;
 });
 
+// Shown whenever compositing is possible, and also while it is requested
+// but impossible (e.g. by a saved batch strategy), so it can be unticked.
+const showCompositeCheckbox = computed(
+  () => canDoCompositing.value || enableCompositing.value,
+);
+
+// Composite was asked for (by the checkbox or a saved batch strategy) but
+// cannot be honored: a duplicate stage position, or files that cannot be
+// composited at all. Kept as a refusal rather than a quiet fallback, so an
+// automated batch submit fails like the API's 400 instead of configuring
+// the folder as separate XY positions, which cannot be redone.
+const compositingRefusal = computed((): string | null => {
+  if (!enableCompositing.value) {
+    return null;
+  }
+  if (!canDoCompositing.value) {
+    return COMPOSITING_UNAVAILABLE;
+  }
+  return compositingCheckResult.value.error;
+});
+
 const submitError = computed(
-  (): string | null => mixedSourceDtypeError.value ?? assignmentError.value,
+  (): string | null =>
+    mixedSourceDtypeError.value ??
+    assignmentError.value ??
+    compositingRefusal.value,
 );
 
 const isRGBAssignmentValid = computed(() => {
@@ -1317,6 +1436,7 @@ function getDimensionStrategy(): IDimensionStrategy {
     T: null,
     C: null,
     transcode: transcode.value,
+    composite: enableCompositing.value,
   };
 
   for (const dim of ["XY", "Z", "T", "C"] as const) {
@@ -1359,15 +1479,20 @@ async function initialize() {
 }
 
 async function initializeImplementation() {
-  const fetchedItems = await store.api.getItems(props.datasetId);
+  // One dataset id for the whole load: if the prop changes mid-load, the
+  // queued metadata batches must still ask about the folder these items
+  // came from (the reinitialize loop then loads the new one).
+  const datasetId = props.datasetId;
+  const fetchedItems = await store.api.getItems(datasetId);
 
   girderItems.value = fetchedItems;
 
   const names = fetchedItems.map((item: IGirderItem) => item.name);
 
-  transcode.value = !names.every((name: string) =>
+  fileTranscodeDefault.value = !names.every((name: string) =>
     name.toLowerCase().endsWith(".nd2"),
   );
+  transcodeOverride.value = null;
 
   if (names.length > 1) {
     collectFilenameMetadata2(names).forEach((filenameData) => {
@@ -1410,76 +1535,123 @@ async function initializeImplementation() {
   initInFlight.value = [];
   initError.value = null;
 
+  // Metadata comes in batches (one request per SOURCE_METADATA_BATCH_SIZE
+  // items, not two per item): a folder of tiles can hold thousands of files.
+  const results: {
+    tilesMetadata: ITileMeta;
+    internalMetadata: { [key: string]: any };
+  }[] = new Array(fetchedItems.length);
+  const batches = chunk([...fetchedItems.keys()], SOURCE_METADATA_BATCH_SIZE);
   const limit = pLimit(4);
 
   try {
-    const promises = fetchedItems.map((item: IGirderItem, idx: number) =>
-      limit(async () => {
-        try {
-          initInFlight.value.push(item.name);
-
-          const tilesMeta = await pRetry(async () => store.api.getTiles(item), {
-            retries: hasOibFiles ? 15 : 10,
-            onFailedAttempt: (error: any) => {
-              const attemptNumber = error?.attemptNumber || 0;
-              const message =
-                error?.response?.data?.message || error?.message || "";
-              logError(
-                `Error retrieving tiles for item ${item._id} (attempt ${attemptNumber}):`,
-                message,
-              );
-
-              if (
-                !hasOibFiles &&
-                error?.response?.data?.message !==
-                  "No large image file in this item."
-              ) {
-                throw new AbortError(message);
-              }
-            },
-            factor: 1,
-            minTimeout: hasOibFiles ? 3000 : 1000,
-            maxTimeout: hasOibFiles ? 3000 : 1000,
-            randomize: false,
-          });
-
-          const internalMetadata = await pRetry(
-            async () => store.api.getTilesInternalMetadata(item),
-            { retries: 3 },
-          );
-
-          initCompleted.value++;
-          initPending.value = initPending.value.filter(
-            (name) => name !== item.name,
-          );
-          initInFlight.value = initInFlight.value.filter(
-            (name) => name !== item.name,
-          );
-
-          return { idx, tilesMetadata: tilesMeta, internalMetadata };
-        } catch (error: any) {
-          initInFlight.value = initInFlight.value.filter(
-            (name) => name !== item.name,
-          );
-
-          initError.value = {
-            name: item.name,
-            message:
-              error?.response?.data?.message ||
-              error?.message ||
-              "Unknown error",
+    await Promise.all(
+      batches.map((batch) =>
+        limit(async () => {
+          // Items not yet readable as large images (still being marked, or
+          // OIB conversion) are retried; any other error stops.
+          let pending = batch;
+          const finish = (idx: number) => {
+            const name = fetchedItems[idx].name;
+            initPending.value = initPending.value.filter((n) => n !== name);
+            initInFlight.value = initInFlight.value.filter((n) => n !== name);
           };
-          throw error;
-        }
-      }),
+          initInFlight.value.push(
+            ...batch.map((idx) => fetchedItems[idx].name),
+          );
+          try {
+            await pRetry(
+              async () => {
+                let entries: ISourceMetadataEntry[];
+                try {
+                  entries = await store.api.getSourceMetadata(
+                    datasetId,
+                    pending.map((idx) => fetchedItems[idx]._id),
+                  );
+                } catch (error: any) {
+                  // The request itself failed (not one item). A 4xx will
+                  // fail the same way again; a network error or 5xx (each
+                  // request opens 50 tile sources) is worth retrying.
+                  const status = error?.response?.status;
+                  if (!hasOibFiles && status >= 400 && status < 500) {
+                    throw new AbortError(
+                      error?.response?.data?.message ||
+                        error?.message ||
+                        "Unknown error",
+                    );
+                  }
+                  throw error;
+                }
+                const notReady: number[] = [];
+                entries.forEach((entry, k) => {
+                  const idx = pending[k];
+                  if (entry.error === undefined) {
+                    results[idx] = {
+                      tilesMetadata: entry.tiles!,
+                      internalMetadata: entry.internalMetadata!,
+                    };
+                    initCompleted.value++;
+                    finish(idx);
+                  } else if (hasOibFiles || entry.notReady) {
+                    notReady.push(idx);
+                  } else {
+                    initError.value = {
+                      name: fetchedItems[idx].name,
+                      message: entry.error,
+                    };
+                    throw new AbortError(entry.error);
+                  }
+                });
+                pending = notReady;
+                if (pending.length) {
+                  throw new Error(
+                    `${pending.length} item(s) not ready, e.g. ` +
+                      fetchedItems[pending[0]].name,
+                  );
+                }
+              },
+              {
+                retries: hasOibFiles ? 15 : 10,
+                onFailedAttempt: ({ error, attemptNumber }: any) => {
+                  logError(
+                    `Error retrieving source metadata (attempt ${attemptNumber}):`,
+                    error?.response?.data?.message || error?.message || "",
+                  );
+                },
+                factor: 1,
+                minTimeout: hasOibFiles ? 3000 : 1000,
+                maxTimeout: hasOibFiles ? 3000 : 1000,
+                randomize: false,
+              },
+            );
+          } catch (error: any) {
+            if (!initError.value) {
+              // A failed request covers the whole batch, so name it as such.
+              const first = fetchedItems[pending[0] ?? batch[0]].name;
+              initError.value = {
+                name:
+                  pending.length > 1
+                    ? `${first} (or one of ${pending.length - 1} other ` +
+                      "files in the same request)"
+                    : first,
+                message:
+                  error?.response?.data?.message ||
+                  error?.message ||
+                  "Unknown error",
+              };
+            }
+            const failedNames = pending.map((idx) => fetchedItems[idx].name);
+            initInFlight.value = initInFlight.value.filter(
+              (name) => !failedNames.includes(name),
+            );
+            throw error;
+          }
+        }),
+      ),
     );
 
-    const promiseResults = await Promise.all(promises);
-    promiseResults.sort((a: any, b: any) => a.idx - b.idx);
-    tilesMetadata.value = promiseResults.map((r: any) => r.tilesMetadata);
-    tilesInternalMetadata.value = promiseResults.map(
-      (r: any) => r.internalMetadata,
-    );
+    tilesMetadata.value = results.map((r) => r.tilesMetadata);
+    tilesInternalMetadata.value = results.map((r) => r.internalMetadata);
   } catch (error) {
     logError("Failed to process tiles metadata:", error);
     throw error;
@@ -1552,11 +1724,17 @@ async function submit() {
 }
 
 async function generateJson(): Promise<string | null> {
-  if (mixedSourceDtypeError.value) {
-    generationErrorMessage.value = mixedSourceDtypeError.value;
+  const refusal = mixedSourceDtypeError.value ?? compositingRefusal.value;
+  if (refusal) {
+    generationErrorMessage.value = refusal;
     emit("generationError", generationErrorMessage.value);
     return null;
   }
+
+  // Read once: the upload below is awaited, and the labels saved after it
+  // must describe the config generated here, even if the user toggles
+  // Composite or reassigns XY in the meantime.
+  const composited = shouldDoCompositing.value;
 
   let channels: string[] | null = null;
   const channelAssignment = assignments.C?.value;
@@ -1617,20 +1795,22 @@ async function generateJson(): Promise<string | null> {
 
   const sources: ICompositingSource[] | IBasicSource[] = [];
 
-  if (shouldDoCompositing.value) {
+  if (composited) {
     const compositingSources: ICompositingSource[] =
       sources as ICompositingSource[];
     if (!tilesMetadata.value) {
       return null;
     }
+    const { coordinates, itemOffsets } = compositingLayout.value!;
     for (let itemIdx = 0; itemIdx < girderItems.value.length; ++itemIdx) {
       const item = girderItems.value[itemIdx];
       const nFrames = tilesMetadata.value[itemIdx].frames?.length || 1;
+      const itemSources: ICompositingSource[] = [];
 
       if (isMultiBandRGBFile.value && splitRGBBands.value) {
         for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
           for (let bandIdx = 0; bandIdx < rgbBandCount.value; bandIdx++) {
-            compositingSources.push({
+            itemSources.push({
               path: item.name,
               xySet: getValueFromAssignments("XY", itemIdx, frameIdx),
               zSet: getValueFromAssignments("Z", itemIdx, frameIdx),
@@ -1643,7 +1823,7 @@ async function generateJson(): Promise<string | null> {
         }
       } else {
         for (let frameIdx = 0; frameIdx < nFrames; ++frameIdx) {
-          compositingSources.push({
+          itemSources.push({
             path: item.name,
             xySet: getValueFromAssignments("XY", itemIdx, frameIdx),
             zSet: getValueFromAssignments("Z", itemIdx, frameIdx),
@@ -1653,103 +1833,22 @@ async function generateJson(): Promise<string | null> {
           });
         }
       }
+
+      // Each source takes its own file's stage position, and xySet
+      // collapses to the single composited position.
+      itemSources.forEach((source) => {
+        source.position =
+          coordinates[
+            itemOffsets[itemIdx] +
+              compositingFrameMetadataIndex(
+                tilesMetadata.value![itemIdx],
+                source.frames[0],
+              )
+          ];
+        source.xySet = 0;
+      });
+      compositingSources.push(...itemSources);
     }
-    const { mm_x, mm_y } = tilesMetadata.value![0];
-    const { sizeX, sizeY } = tilesMetadata.value![0];
-    const framesMetadata = tilesInternalMetadata.value![0].nd2_frame_metadata;
-    const coordinates: IGeoJSPositionWithTransform[] = framesMetadata.map(
-      (f: any) => {
-        const framePos = f.position.stagePositionUm;
-        const pos = {
-          x: framePos[0] / (mm_x * 1000),
-          y: framePos[1] / (mm_y * 1000),
-          s11: 1,
-          s12: 0,
-          s21: 0,
-          s22: 1,
-        };
-        if (
-          tilesInternalMetadata.value![0].nd2 &&
-          tilesInternalMetadata.value![0].nd2.channels
-        ) {
-          const chan = tilesInternalMetadata.value![0].nd2.channels;
-          const chan0 =
-            chan.volume !== undefined ? chan.volume : chan[0].volume;
-          if (
-            chan0.cameraTransformationMatrix &&
-            (Math.abs(chan0.cameraTransformationMatrix[0] - 1) > 0.01 ||
-              Math.abs(chan0.cameraTransformationMatrix[3] - 1) > 0.01)
-          ) {
-            if (
-              Math.abs(chan0.cameraTransformationMatrix[0] - -1) < 0.01 &&
-              Math.abs(chan0.cameraTransformationMatrix[3] - -1) < 0.01
-            ) {
-              pos.s11 = -1.0;
-              pos.s12 = 0.0;
-              pos.s21 = 0.0;
-              pos.s22 = -1.0;
-            } else {
-              pos.s11 = chan0.cameraTransformationMatrix[0];
-              pos.s12 = chan0.cameraTransformationMatrix[1];
-              pos.s21 = chan0.cameraTransformationMatrix[2];
-              pos.s22 = chan0.cameraTransformationMatrix[3];
-            }
-          }
-        }
-        return pos;
-      },
-    );
-    const corners = [
-      { x: 0, y: 0 },
-      { x: sizeX, y: 0 },
-      { x: 0, y: sizeY },
-      { x: sizeX, y: sizeY },
-    ];
-    const transformedCorners = corners.map((corner) => ({
-      x:
-        (coordinates[0]?.s11 ?? 1) * corner.x +
-        (coordinates[0]?.s12 ?? 0) * corner.y,
-      y:
-        (coordinates[0]?.s21 ?? 0) * corner.x +
-        (coordinates[0]?.s22 ?? 1) * corner.y,
-    }));
-    const offsetMin = {
-      x: Math.min(...transformedCorners.map((c) => c.x)),
-      y: Math.min(...transformedCorners.map((c) => c.y)),
-    };
-    const offsetMax = {
-      x: Math.max(...transformedCorners.map((c) => c.x)),
-      y: Math.max(...transformedCorners.map((c) => c.y)),
-    };
-    const minCoordinate = {
-      x:
-        Math.min(...coordinates.map((coordinate) => coordinate.x)) +
-        offsetMin.x,
-      y:
-        Math.min(...coordinates.map((coordinate) => coordinate.y)) -
-        offsetMax.y,
-    };
-    const maxCoordinate = {
-      x:
-        Math.max(...coordinates.map((coordinate) => coordinate.x)) +
-        offsetMax.x,
-      y:
-        Math.max(...coordinates.map((coordinate) => coordinate.y)) -
-        offsetMin.y,
-    };
-    let finalCoordinates = coordinates.map((coordinate) => ({
-      x: Math.round(coordinate.x - minCoordinate.x),
-      y: Math.round(maxCoordinate.y - coordinate.y),
-      s11: coordinate.s11,
-      s12: coordinate.s12,
-      s21: coordinate.s21,
-      s22: coordinate.s22,
-    }));
-    compositingSources.forEach((source, sourceIdx) => {
-      source.position =
-        finalCoordinates[Math.floor(sourceIdx / channels!.length)];
-      source.xySet = 0;
-    });
   } else {
     const basicSources: IBasicSource[] = sources as IBasicSource[];
     for (let itemIdx = 0; itemIdx < girderItems.value.length; ++itemIdx) {
@@ -1864,7 +1963,9 @@ async function generateJson(): Promise<string | null> {
 
     try {
       const dimensionLabels = {
-        xy: xyLabels,
+        // A composite has one XY position, so per-tile XY labels would
+        // name the whole mosaic after its first tile.
+        xy: composited ? null : xyLabels,
         z: zLabels,
         t: tLabels,
       };
@@ -1931,6 +2032,7 @@ async function reinitializeAndApplyStrategy(
 
 function applyDimensionStrategy(strategy: IDimensionStrategy): void {
   transcode.value = strategy.transcode;
+  enableCompositing.value = strategy.composite ?? false;
 
   for (const dim of ["XY", "Z", "T", "C"] as const) {
     const savedStrategy = strategy[dim];
@@ -1988,7 +2090,7 @@ watch(
 );
 
 watch(
-  () => transcode.value,
+  () => [transcode.value, enableCompositing.value],
   () => saveDimensionStrategyToStore(),
 );
 
@@ -2038,6 +2140,10 @@ defineExpose({
   initProgressPercent,
   initPendingDisplay,
   canDoCompositing,
+  compositingCheckResult,
+  fileTranscodeDefault,
+  transcodeOverride,
+  compositingLayout,
   shouldDoCompositing,
   fileCount,
   framesPerFile,
@@ -2048,6 +2154,8 @@ defineExpose({
   filenameLegend,
   assignmentItems,
   submitError,
+  compositingRefusal,
+  showCompositeCheckbox,
   isRGBAssignmentValid,
   generationErrorMessage,
   // Methods

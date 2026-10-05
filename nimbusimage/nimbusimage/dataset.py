@@ -276,7 +276,8 @@ class Dataset:
         This is the API equivalent of the web UI's dataset-configuration
         screen: it works out which filename tokens and file metadata map to
         XY / Z / Time / Channel, writes the multi-source configuration, and
-        (unless every file is ``.nd2``) schedules a transcode job.
+        (unless every file is ``.nd2`` and at most 16 tiles are composited)
+        schedules a transcode job.
 
         **Start with ``dry_run=True``.** It computes and returns everything
         without writing, including ``validation_error`` and ``variables``.
@@ -295,14 +296,28 @@ class Dataset:
                 ``None`` leaves a dimension unassigned, and omitted
                 dimensions keep their default.
             transcode: Convert to a single tiled TIFF. Defaults to the
-                same rule the UI uses (on unless every file is ``.nd2``).
+                same rule the UI uses: on unless every file is ``.nd2``,
+                and also on when compositing more than 16 tiles (stage
+                positions, from many files or one multi-position file; a
+                long job for thousands of tiles; pass ``False`` to skip).
             split_rgb_bands: Split an RGB image into three channels.
-            enable_compositing: Lay out a single multi-position ND2 by
-                stage coordinates instead of as separate XY positions. Only
-                takes effect for a single source with ND2 frame metadata --
-                check ``result.compositing`` for what actually happened,
-                and note that when it applies, XY collapses to one
-                position.
+            enable_compositing: Lay out ND2 files by their stage
+                positions instead of as separate XY positions. Takes effect
+                for one multi-position ND2, or for a folder of ND2 files
+                (e.g. one per tile) of the same tile size once the variable
+                that tells the files apart is assigned to ``XY`` -- the
+                filename parser often guesses a bare tile number as ``C``,
+                so dry-run first and pass an ``assignments`` override that
+                moves it to ``XY``. ``result.compositing`` says whether it
+                applies (XY then collapses to one position). A request that
+                cannot be honored -- files that cannot composite, or two
+                tiles at the same stage position -- shows up as the dry
+                run's ``validation_error`` and makes a real run fail rather
+                than fall back to separate positions.
+                ``result.compositing_check`` explains a duplicate or warns
+                about a sparse layout, and counts the composited tiles
+                (``tileCount``). Compositing more than
+                16 tiles transcodes by default.
             create_view: Also create the collection and dataset view the
                 web UI needs. On by default: without them the dataset is
                 readable through this API but has nothing to open in the

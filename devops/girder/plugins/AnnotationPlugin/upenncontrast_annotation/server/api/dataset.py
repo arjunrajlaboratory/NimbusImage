@@ -61,15 +61,21 @@ from girder_large_image.models.image_item import ImageItem
 
 from ..helpers.default_configuration import build_default_configuration
 from ..helpers.multi_source import (
-    UP_DIMS, compute_configuration, validate_assignments,
-    validate_source_dtypes,
+    UP_DIMS, compositing_refusal, compute_configuration,
+    slim_internal_metadata, validate_assignments, validate_source_dtypes,
 )
-from ..helpers.validation import optionalBoolean
+from ..helpers.validation import (
+    optionalBoolean, requireCountWithin, requireObjectId,
+)
 from ..models.collection import Collection as CollectionModel
 from ..models.datasetView import DatasetView as DatasetViewModel
 from ..models.userColors import UserColors as UserColorsModel
 
 MULTI_SOURCE_ITEM_NAME = "multi-source2.json"
+
+# Items per source_metadata request: each opens a tile source, so a folder
+# of thousands of tiles is fetched in pages rather than in one request.
+MAX_SOURCE_METADATA_ITEMS = 100
 
 # Folder metadata keys this endpoint writes, and therefore has to be able to
 # put back exactly as it found them.
@@ -77,6 +83,18 @@ _MANAGED_FOLDER_KEYS = ("dimensionLabels", "selectedLargeImageId")
 _ABSENT = object()
 
 logger = logging.getLogger(__name__)
+
+
+def _notReadyReason(item):
+    """Why ``item`` has no large image yet (it is still being marked or
+    converted), or None. Checked before opening it, so callers can retry
+    exactly these items instead of matching error text."""
+    largeImage = item.get("largeImage")
+    if largeImage is None:
+        return "No large image file in this item."
+    if largeImage.get("expected"):
+        return "The large image file for this item is still pending creation."
+    return None
 
 
 class Dataset(Resource):
@@ -92,6 +110,87 @@ class Dataset(Resource):
         self._userColorsModel = UserColorsModel()
 
         self.route("POST", (":id", "multi_source"), self.createMultiSource)
+        self.route("GET", (":id", "source_metadata"), self.getSourceMetadata)
+
+    @access.user(scope=TokenScope.DATA_READ)
+    @autoDescribeRoute(
+        Description(
+            "Tile metadata and slim internal metadata for several items of "
+            "a dataset folder, in one request."
+        )
+        .notes(
+            "What the multi-source configuration screen needs for each "
+            "item, batched so that a folder of thousands of tiles does not "
+            "take two requests per file. internalMetadata keeps only the "
+            "fields the configuration reads (nd2_experiment, each frame's "
+            "stage position and the camera matrix), dropping nd2_text, "
+            "nd2_custom and the rest. Returns one entry per requested id, "
+            "in order: {itemId, tiles, internalMetadata}, or {itemId, "
+            "error, notReady} when the item has no readable large image; "
+            "notReady is true when it is still being marked or converted "
+            "(so worth retrying). At most %d ids per request."
+            % MAX_SOURCE_METADATA_ITEMS
+        )
+        .modelParam(
+            "id", "The dataset folder id.", model=Folder,
+            destName="folder", level=AccessType.READ, paramType="path",
+        )
+        .jsonParam(
+            "itemIds", "A JSON list of item ids in this folder.",
+            requireArray=True,
+        )
+        .errorResponse("ID was invalid.")
+        .errorResponse("Read access was denied for the folder.", 403)
+    )
+    def getSourceMetadata(self, folder, itemIds):
+        requireCountWithin(
+            len(itemIds), MAX_SOURCE_METADATA_ITEMS, "itemIds"
+        )
+        objectIds = [requireObjectId(itemId, "itemIds") for itemId in itemIds]
+        # Items have no ACL of their own (see createMultiSource): selecting
+        # them by folderId under the READ check above is the access check.
+        itemsById = {
+            item["_id"]: item
+            for item in Item().find({
+                "_id": {"$in": objectIds}, "folderId": folder["_id"],
+            })
+        }
+        results = []
+        for itemId, objectId in zip(itemIds, objectIds):
+            item = itemsById.get(objectId)
+            if item is None:
+                results.append({
+                    "itemId": itemId, "error": "Item is not in this dataset.",
+                })
+                continue
+            notReady = _notReadyReason(item)
+            if notReady is not None:
+                results.append({
+                    "itemId": itemId, "error": notReady, "notReady": True,
+                })
+                continue
+            try:
+                tiles, internal = self._readSourceMetadata(item)
+            except TileGeneralError as e:
+                results.append({"itemId": itemId, "error": str(e)})
+                continue
+            results.append({
+                "itemId": itemId, "tiles": tiles, "internalMetadata": internal,
+            })
+        return results
+
+    def _readSourceMetadata(self, item):
+        """Tile metadata and slim internal metadata for one source item,
+        read together so its tile source is opened once (from large_image's
+        cache) rather than in two passes over every item. Slimmed as it is
+        read: full ND2 internal metadata for thousands of tiles would
+        otherwise all be held at once."""
+        return (
+            self._imageItemModel.getMetadata(item),
+            slim_internal_metadata(
+                self._imageItemModel.getInternalMetadata(item)
+            ),
+        )
 
     @access.user(scope=TokenScope.DATA_WRITE)
     @autoDescribeRoute(
@@ -120,10 +219,18 @@ class Dataset(Resource):
             "the sources) or starting from a new dataset.\n\n"
             "Body options, all optional: assignments (per-dimension "
             "overrides, see below); transcode (default: on unless every "
-            "file is .nd2); splitRGBBands (default true -- an RGB file "
+            "file is .nd2, and also on when compositing more than 16 "
+            "tiles, i.e. stage positions, from many files or one); "
+            "splitRGBBands (default true -- an RGB file "
             "becomes three channels); enableCompositing (default false -- "
-            "lay a single multi-position ND2 out by stage coordinates, "
-            "which collapses XY to one position); createView (default "
+            "lay ND2 files out by their stage positions -- one "
+            "multi-position file, or one file per tile with the tile "
+            "variable assigned to XY -- which collapses XY to one "
+            "position. A request that cannot be honored -- two XY "
+            "positions at the same stage position, or files that cannot "
+            "be composited at all -- is a 400 with the reason on a real "
+            "run and the validationError of a dry run, never a quiet "
+            "fallback to separate XY positions); createView (default "
             "true -- also create the collection and dataset view the web "
             "UI needs, without which the dataset cannot be opened in the "
             "browser and does not appear in listings that enumerate "
@@ -131,7 +238,14 @@ class Dataset(Resource):
             "Response: config, dimensionLabels, variables, assignments, "
             "transcode, transcodeDefault, isRGBFile, rgbBandCount and "
             "compositing (whether compositing was actually applied, which "
-            "requires a single source with ND2 frame metadata) always; "
+            "requires ND2 files with stage positions: one multi-position "
+            "file, or several files of the same tile size with XY "
+            "assigned) and compositingCheck ({error, warning} about the "
+            "stage layout whenever compositing is possible, requested or "
+            "not: error names two XY positions at the same stage position, "
+            "warning says the tiles cover little of the mosaic, e.g. "
+            "separate wells; tileCount counts the composited tiles) "
+            "always; "
             "itemId, jobId, collectionId and viewId on a real run; "
             "validationError on a dry run." % (
                 MULTI_SOURCE_ITEM_NAME
@@ -208,13 +322,12 @@ class Dataset(Resource):
             newlyMarked = self._markLargeImages(items, user, token)
 
             itemNames = [item["name"] for item in items]
-            tilesMetadata = [
-                self._imageItemModel.getMetadata(item) for item in items
-            ]
-            internalMetadata = [
-                self._imageItemModel.getInternalMetadata(item)
-                for item in items
-            ]
+            tilesMetadata = []
+            internalMetadata = []
+            for item in items:
+                tiles, internal = self._readSourceMetadata(item)
+                tilesMetadata.append(tiles)
+                internalMetadata.append(internal)
 
             try:
                 result = compute_configuration(
@@ -240,6 +353,15 @@ class Dataset(Resource):
                 )
             except ValueError as e:
                 validationError = str(e)
+            # Asking for compositing and not getting it (a duplicate
+            # position, or files that cannot composite) is a failure, not a
+            # quiet fallback: a real run would otherwise configure every
+            # tile as its own XY position, which cannot be redone (a second
+            # call returns 409).
+            if validationError is None:
+                validationError = compositing_refusal(
+                    result, enableCompositing,
+                )
 
             transcode = (
                 result["transcodeDefault"] if transcodeOption is None
@@ -383,12 +505,14 @@ class Dataset(Resource):
                 "rgbBandCount": result["rgbBandCount"],
                 "transcodeDefault": result["transcodeDefault"],
                 # Whether compositing actually happened, which is not the
-                # same as having asked for it: it needs a single source with
-                # ND2 frame metadata. Returned by both paths so the two
+                # same as having asked for it: it needs ND2 stage positions
+                # (and XY assigned, for a folder of files) and no duplicate
+                # positions. Returned by both paths so the two
                 # response shapes differ only in what a dry run cannot have
                 # (ids) and what a real run raises instead of reporting
                 # (validationError).
                 "compositing": result["compositing"],
+                "compositingCheck": result["compositingCheck"],
             }
         except Exception:
             # Newest resources first, so a view is never left pointing at a
