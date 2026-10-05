@@ -303,24 +303,67 @@ class TestPropertyValueDatasetBinding:
         assert "does not belong to dataset" in resp.json["message"]
         assert self._storedValues(annotation) == [{"propA": 1}]
 
-    def testRejectsNonexistentAnnotation(self, admin):
-        folder, _ = _makeAnnotations(admin, 1)
-        with pytest.raises(ValidationException) as excinfo:
-            AnnotationPropertyValues().appendMultipleValues([{
-                "annotationId": ObjectId(),
-                "datasetId": folder["_id"],
-                "values": {"propA": 1},
-            }])
-        assert "does not belong to dataset" in str(excinfo.value)
+    def _postMultiple(self, server, user, entries):
+        return server.request(
+            path="/annotation_property_values/multiple",
+            method="POST",
+            user=user,
+            body=json.dumps([
+                {**entry, "annotationId": str(entry["annotationId"]),
+                 "datasetId": str(entry["datasetId"])}
+                for entry in entries
+            ]),
+            type="application/json",
+        )
 
-    def testRejectedBatchWritesNothing(self, admin):
+    def testRejectsNonexistentAnnotation(self, admin, server):
+        folder, _ = _makeAnnotations(admin, 1)
+        resp = self._postMultiple(server, admin, [{
+            "annotationId": ObjectId(),
+            "datasetId": folder["_id"],
+            "values": {"propA": 1},
+        }])
+        assertStatus(resp, 400)
+        assert "does not belong to dataset" in resp.json["message"]
+
+    def testRejectsEntryMissingAnId(self, admin, server):
+        folder, annotations = _makeAnnotations(admin, 1)
+        for entry in (
+            {"annotationId": str(annotations[0]["_id"]),
+             "values": {"propA": 1}},
+            {"datasetId": str(folder["_id"]), "values": {"propA": 1}},
+        ):
+            resp = server.request(
+                path="/annotation_property_values/multiple",
+                method="POST",
+                user=admin,
+                body=json.dumps([entry]),
+                type="application/json",
+            )
+            assertStatus(resp, 400)
+        assert self._storedValues(annotations[0]) == []
+
+    def testRejectsMalformedMultipleBody(self, admin, server):
+        # The dataset check runs before the model's schema validation, so
+        # the endpoint must reject non-object entries itself.
+        for body in (["not an entry"], {"annotationId": "x"}, [5]):
+            resp = server.request(
+                path="/annotation_property_values/multiple",
+                method="POST",
+                user=admin,
+                body=json.dumps(body),
+                type="application/json",
+            )
+            assertStatus(resp, 400)
+
+    def testRejectedBatchWritesNothing(self, admin, server):
         folder, annotations = _makeAnnotations(admin, 2)
         other, _ = self._victim(admin)
-        with pytest.raises(ValidationException):
-            AnnotationPropertyValues().appendMultipleValues([
-                {"annotationId": annotations[0]["_id"],
-                 "datasetId": folder["_id"], "values": {"propB": 2}},
-                {"annotationId": annotations[1]["_id"],
-                 "datasetId": other["_id"], "values": {"propB": 2}},
-            ])
+        resp = self._postMultiple(server, admin, [
+            {"annotationId": annotations[0]["_id"],
+             "datasetId": folder["_id"], "values": {"propB": 2}},
+            {"annotationId": annotations[1]["_id"],
+             "datasetId": other["_id"], "values": {"propB": 2}},
+        ])
+        assertStatus(resp, 400)
         assert self._storedValues(annotations[0]) == []

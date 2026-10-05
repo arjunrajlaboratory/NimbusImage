@@ -1118,11 +1118,7 @@ class TestServerListCountConsistency:
         real = makeAnnotation(folder["_id"])
         pv.appendValues({"p": {"Area": 42}}, real["_id"], folder["_id"])
         # Orphan value doc: annotationId points at a non-existent annotation.
-        # Inserted directly: appendValues rejects unknown annotations.
-        pv.collection.insert_one({
-            "annotationId": ObjectId(), "datasetId": folder["_id"],
-            "values": {"p": {"Area": 99}},
-        })
+        pv.appendValues({"p": {"Area": 99}}, ObjectId(), folder["_id"])
 
         resp = postList(server, admin, "/upenn_annotation/list", {
             "datasetId": str(folder["_id"]),

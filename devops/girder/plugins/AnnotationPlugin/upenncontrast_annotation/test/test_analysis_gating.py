@@ -400,11 +400,9 @@ class TestAnalysisGateIdsEndpoint:
         # A property-value doc whose annotation is gone must not resolve:
         # annotation docs anchor existence (unlike listIds' PV-driven path).
         folder, anns, _ = self._setup(admin)
-        # Inserted directly: appendValues rejects unknown annotations.
-        AnnotationPropertyValues().collection.insert_one({
-            "annotationId": ObjectId(), "datasetId": folder["_id"],
-            "values": {"p": {"Area": 5, "Mean": 5}},
-        })
+        AnnotationPropertyValues().appendValues(
+            {"p": {"Area": 5, "Mean": 5}}, ObjectId(), folder["_id"]
+        )
         resp = postJson(
             server, admin, "/upenn_annotation/analysis/gate_ids",
             {

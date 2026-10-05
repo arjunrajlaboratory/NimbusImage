@@ -119,6 +119,11 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
         sibling property workers wrote the same annotations at once: writers
         overwrote each other's values or failed with E11000 (issue #1356).
 
+        Callers must ensure each entry's annotation belongs to its datasetId:
+        the upsert matches by annotationId alone. API endpoints check this
+        with requireAnnotationsInDatasets; the import creates the annotations
+        in the dataset it writes to.
+
         :returns: The stored documents for the written annotations.
         """
         if len(list_of_property_values) == 0:
@@ -127,7 +132,6 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
         annotationIds = [
             entry["annotationId"] for entry in list_of_property_values
         ]
-        self._requireAnnotationsInDatasets(list_of_property_values)
         if self.is_recording:
             for before in self.find({"annotationId": {"$in": annotationIds}}):
                 self.record.changeDocument(before, None)
@@ -157,38 +161,11 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
                 self.record.changeDocument(None, after)
         return documents
 
-    def _requireAnnotationsInDatasets(self, entries):
-        """Reject entries whose annotation is not in the entry's dataset.
-
-        Callers authorize a write by the entry's datasetId, while the upsert
-        matches the values document by annotationId alone. Without this
-        check, WRITE access to one dataset let a caller overwrite the values
-        of any annotation in another.
-        """
-        # Imported here: annotation.py imports this module.
-        from .annotation import Annotation
-
-        annotationModel = Annotation()
-        annotationIds = list({entry["annotationId"] for entry in entries})
-        datasetOf = {}
-        for start in range(0, len(annotationIds), MAX_IDS_PER_QUERY):
-            chunk = annotationIds[start:start + MAX_IDS_PER_QUERY]
-            for annotation in annotationModel.find(
-                {"_id": {"$in": chunk}}, fields={"datasetId": 1}
-            ):
-                datasetOf[annotation["_id"]] = annotation["datasetId"]
-        for entry in entries:
-            if datasetOf.get(entry["annotationId"]) != entry["datasetId"]:
-                raise ValidationException(
-                    "Annotation %s does not belong to dataset %s"
-                    % (entry["annotationId"], entry["datasetId"])
-                )
-
     @staticmethod
     def _upsertValues(entry):
         annotationId = entry["annotationId"]
-        # datasetId is $set, not only set on insert: the annotation is
-        # verified to be in this dataset, and the pre-#1356 merge could move
+        # datasetId is $set, not only set on insert: callers verify the
+        # annotation is in this dataset, and the pre-#1356 merge could move
         # a values document to whichever dataset the caller named.
         values = entry["values"]
         update = {
