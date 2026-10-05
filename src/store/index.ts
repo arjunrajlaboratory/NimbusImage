@@ -34,6 +34,7 @@ import girderResources from "./girderResources";
 
 import { getLayerImages, getLayerSliceIndexes } from "./images";
 import jobs from "./jobs";
+import { jobStates } from "./jobConstants";
 import progress from "./progress";
 
 import {
@@ -56,6 +57,7 @@ import {
   IContrast,
   IMapEntry,
   IHistoryEntry,
+  IJob,
   IJobEventData,
   IScales,
   TUnitLength,
@@ -236,6 +238,317 @@ let recentDatasetViewsRequestId = 0;
 // Annotation-browser persistence bookkeeping. Module-level rather than Vuex
 // state because the debounce timer is never read by the UI.
 let annotationBrowserSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+const FINISHED_JOB_STATUSES: number[] = [
+  jobStates.success,
+  jobStates.error,
+  jobStates.cancelled,
+];
+// How long the notification stream gets to deliver a job's end after the
+// request that ran it returned, before the job is read instead: a healthy
+// stream can trail the HTTP response by a moment.
+const STREAM_GRACE_MS = 2000;
+const STREAM_GRACE_CHECK_MS = 100;
+// Reading the job after a dropped stream: retried with backoff (2, 4, 8,
+// 16 s), since the drop may be a server restart still finishing.
+const JOB_READ_ATTEMPTS = 5;
+const JOB_READ_RETRY_MS = 2000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Whether the notification stream has buffered this job's end.
+function streamDeliveredEnd(jobId: string): boolean {
+  return (jobs.messageStore[jobId] ?? []).some(
+    (event: IJobEventData) =>
+      event.status !== undefined &&
+      FINISHED_JOB_STATUSES.includes(event.status),
+  );
+}
+
+// Waits up to `ms` for the stream to buffer this job's end; true if it did.
+// Measured on the clock, not in iterations: a background tab throttles
+// timers, which would otherwise stretch the wait to minutes.
+async function waitForStreamEnd(jobId: string, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (!streamDeliveredEnd(jobId)) {
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await sleep(STREAM_GRACE_CHECK_MS);
+  }
+  return true;
+}
+
+// One read of the job, or null as soon as the stream delivers the end
+// while the read is still in flight (a read stalled by the same outage
+// would otherwise hold everything up until the request times out).
+function readJobUnlessStreamEnds(
+  getJobInfo: (jobId: string) => Promise<IJob | null>,
+  jobId: string,
+  onCheck?: () => void,
+): Promise<IJob | null> {
+  let readDone = false;
+  const read = getJobInfo(jobId).finally(() => {
+    readDone = true;
+  });
+  const streamEnd = (async () => {
+    while (!readDone && !streamDeliveredEnd(jobId)) {
+      onCheck?.();
+      await sleep(STREAM_GRACE_CHECK_MS);
+    }
+    return null;
+  })();
+  return Promise.race([read, streamEnd]);
+}
+
+// The job document, retrying a failed read (getJobInfo returns null) with
+// backoff; null if every attempt failed or the stream delivered the end
+// meanwhile (it may reconnect while a read or the retries wait).
+async function readJobWithRetries(
+  getJobInfo: (jobId: string) => Promise<IJob | null>,
+  jobId: string,
+): Promise<IJob | null> {
+  for (let attempt = 1; ; ++attempt) {
+    const job = await readJobUnlessStreamEnds(getJobInfo, jobId);
+    if (job || attempt >= JOB_READ_ATTEMPTS) {
+      return job;
+    }
+    if (await waitForStreamEnd(jobId, JOB_READ_RETRY_MS * 2 ** (attempt - 1))) {
+      return null;
+    }
+  }
+}
+
+// The request that ran `jobId` in-process has returned, so the job has
+// finished and its events should be buffered from the notification stream,
+// for addJob to replay. If the stream was down meanwhile (a server
+// restart, a network drop) its end never arrives: read the job and buffer
+// the missing events -- the log entries the stream did not carry, then the
+// final status -- with the jobs store's storeMessage, so addJob replays
+// them exactly as if the stream had: progress per entry, toasts, quota
+// message and cleanup included.
+//
+// Known limits: if the server kept only the tail of a very long log, or
+// the stream had a gap mid-job, some log lines may be shown twice, and a
+// quota line lost in such a gap (with the end delivered) is not recovered.
+// A stream more than the grace period late can repeat a toast, and its
+// late events stay buffered in the jobs store.
+async function supplyMissedJobEnd(
+  getJobInfo: (jobId: string) => Promise<IJob | null>,
+  jobId: string,
+) {
+  if (await waitForStreamEnd(jobId, STREAM_GRACE_MS)) {
+    return; // the usual case: nothing to supply, nothing to read
+  }
+  const job = await readJobWithRetries(getJobInfo, jobId);
+  if (
+    !job ||
+    !FINISHED_JOB_STATUSES.includes(job.status) ||
+    streamDeliveredEnd(jobId)
+  ) {
+    return; // unreadable or unfinished: wait on the stream as before
+  }
+  supplyJobEnd(jobId, job);
+}
+
+// Buffers what the stream has not delivered of a finished job -- the log
+// entries it did not carry, then the final status -- for addJob to replay.
+function supplyJobEnd(jobId: string, job: IJob) {
+  // GET job/:id returns the log as a list of chunks, though IJob declares
+  // a string; accept either.
+  const log: unknown = job.log;
+  const entries: string[] = Array.isArray(log)
+    ? log.map(String)
+    : typeof log === "string" && log
+      ? [log]
+      : [];
+  // Entries the stream already delivered form a prefix of the log; supply
+  // the rest.
+  const seen = (jobs.messageStore[jobId] ?? [])
+    .map((event: IJobEventData) =>
+      typeof event.text === "string" ? event.text : "",
+    )
+    .join("");
+  let delivered = 0;
+  let offset = 0;
+  while (
+    delivered < entries.length &&
+    seen.startsWith(entries[delivered], offset)
+  ) {
+    offset += entries[delivered].length;
+    delivered += 1;
+  }
+  for (const text of entries.slice(delivered)) {
+    jobs.storeMessage({ jobId, event: { _id: jobId, text } });
+  }
+  jobs.storeMessage({
+    jobId,
+    event: { _id: jobId, status: job.status, title: job.title },
+  });
+}
+
+// While a transcode runs, how often the stream's buffer is checked for its
+// events (to show progress before the request that runs it returns).
+const TRANSCODE_PROGRESS_CHECK_MS = 250;
+// After a gateway timeout cut the request off: how long the stream may go
+// quiet before the job is read instead, and how long the job may go without
+// any update (or cannot be read) before it is given up on: its server
+// process died with it.
+const TRANSCODE_QUIET_READ_MS = 30000;
+const TRANSCODE_STALL_MS = 60 * 60 * 1000;
+
+// The transcode job of `itemId` whose events the stream has buffered, if
+// any: its status events carry the job's type and meta.itemId.
+function bufferedTranscodeJobId(itemId: string): string | undefined {
+  return Object.keys(jobs.messageStore).find((jobId) =>
+    jobs.messageStore[jobId].some(
+      (event: IJobEventData) =>
+        event.type === "large_image_tiff" && event.meta?.itemId === itemId,
+    ),
+  );
+}
+
+// Transcodes `itemId`. Resolves once the job has finished -- with its end
+// buffered for addJob to replay, unless neither the stream nor a read of
+// the job supplied it, in which case addJob waits on the stream as before --
+// with the job's id and the buffered events already passed to `onEvent`,
+// which the replay should skip.
+//
+// The request runs the job in-process and returns only when it is done
+// (Girder 5 runs local jobs synchronously), so the page cannot track the
+// job by id while it runs. Its events reach the stream's buffer meanwhile:
+// they are found by item and passed to `onEvent` as they arrive, so the
+// progress shows live.
+//
+// A proxy in front of Girder (HAProxy's `timeout server` in production) can
+// answer a long request with a 504 while the job carries on. The job is
+// then found -- in the buffer, or by listing transcode jobs -- and followed
+// to its end, instead of failing an upload that will succeed.
+async function transcodeItem(
+  api: GirderAPI,
+  itemId: string,
+  onEvent: (event: IJobEventData) => void,
+): Promise<{ jobId: string; delivered: Set<IJobEventData> }> {
+  const delivered = new Set<IJobEventData>();
+  let jobId: string | undefined;
+  // Passes on the job's newly buffered events; returns how many.
+  const forward = () => {
+    jobId ??= bufferedTranscodeJobId(itemId);
+    let count = 0;
+    for (const event of jobId ? jobs.messageStore[jobId] ?? [] : []) {
+      if (!delivered.has(event)) {
+        delivered.add(event);
+        onEvent(event);
+        count += 1;
+      }
+    }
+    return count;
+  };
+
+  // Reopen a stream that has closed (e.g. a server restart) -- the check
+  // addJob makes, made before the job starts so its events arrive live.
+  const source = jobs.notificationSource;
+  if (
+    !source ||
+    source.readyState === WebSocket.CLOSED ||
+    source.readyState === WebSocket.CLOSING
+  ) {
+    await jobs.initializeNotificationSubscription();
+  }
+
+  let outcome: { jobId?: string; error?: unknown } | undefined;
+  const request = api.generateTiles(itemId, true, true).then(
+    (response) => {
+      outcome = { jobId: response.data?._id };
+    },
+    (error) => {
+      outcome = { error };
+    },
+  );
+  while (!outcome) {
+    forward();
+    await Promise.race([request, sleep(TRANSCODE_PROGRESS_CHECK_MS)]);
+  }
+
+  if (!outcome.error) {
+    if (!outcome.jobId) {
+      throw new Error("Failed to transcode the large image: no job received");
+    }
+    // The job has finished; supply its end if the stream missed it.
+    await supplyMissedJobEnd((id) => api.getJobInfo(id), outcome.jobId);
+    return { jobId: outcome.jobId, delivered };
+  }
+  if ((outcome.error as AxiosError)?.response?.status !== 504) {
+    throw outcome.error;
+  }
+  forward();
+  if (!jobId) {
+    try {
+      jobId = (
+        await pRetry(() => api.findTranscodeJob(itemId), {
+          retries: 2,
+          minTimeout: 2000,
+        })
+      )?._id;
+    } catch {
+      // Report the request's failure, not the listing's.
+    }
+  }
+  if (!jobId) {
+    throw outcome.error; // the job never started, or cannot be found
+  }
+  await followJobToEnd(api, jobId, forward);
+  return { jobId, delivered };
+}
+
+// Follows a running job until its end is buffered: passing on its events
+// with `forward`, and reading the job whenever the stream has been quiet a
+// while (it may have dropped too), to supply an end the stream missed.
+async function followJobToEnd(
+  api: GirderAPI,
+  jobId: string,
+  forward: () => number,
+) {
+  let quietSince = Date.now();
+  let lastUpdated: string | undefined;
+  let lastUpdatedAt = Date.now();
+  while (!streamDeliveredEnd(jobId)) {
+    if (forward() > 0) {
+      quietSince = Date.now();
+    }
+    if (Date.now() - quietSince < TRANSCODE_QUIET_READ_MS) {
+      await sleep(TRANSCODE_PROGRESS_CHECK_MS);
+      continue;
+    }
+    // Raced against the stream: a read stalled by the same trouble that cut
+    // the request off must not hold up an end the stream delivers.
+    const job = await readJobUnlessStreamEnds(
+      (id) => api.getJobInfo(id),
+      jobId,
+      forward,
+    );
+    quietSince = Date.now();
+    if (streamDeliveredEnd(jobId)) {
+      break;
+    }
+    if (job && FINISHED_JOB_STATUSES.includes(job.status)) {
+      supplyJobEnd(jobId, job);
+      break;
+    }
+    if (job && job.updated !== lastUpdated) {
+      lastUpdated = job.updated;
+      lastUpdatedAt = Date.now();
+    } else if (Date.now() - lastUpdatedAt >= TRANSCODE_STALL_MS) {
+      throw new Error(
+        job
+          ? "Failed to transcode the large image: the transcoding job " +
+            "stopped responding. See the transcoding log for details."
+          : "Failed to transcode the large image: lost contact with the " +
+            "server while the transcoding job ran.",
+      );
+    }
+  }
+}
 
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
@@ -2042,25 +2355,29 @@ export class Main extends VuexModule {
 
       // When transcoding, force the regeneration of large image for the new file
       if (transcode) {
-        const response = await this.api.generateTiles(itemId, true, true);
-        const jobId = response.data?._id;
-        if (!jobId) {
-          throw new Error(
-            "Failed to transcode the large image: no job received",
-          );
-        }
         // Accumulate the job log so that on failure we can tell the user
         // why the job failed (e.g. a storage quota breach during the
         // server-side upload of the transcoded file).
         let jobLog = "";
+        const onEvent = (jobData: IJobEventData) => {
+          if (typeof jobData.text === "string") {
+            jobLog += jobData.text;
+          }
+          eventCallback?.(jobData);
+        };
+        const { jobId, delivered } = await transcodeItem(
+          this.api,
+          itemId,
+          onEvent,
+        );
         const success = await jobs.addJob({
           jobId,
           datasetId: parentId,
+          // The replay includes the events shown while the job ran.
           eventCallback: (jobData: IJobEventData) => {
-            if (typeof jobData.text === "string") {
-              jobLog += jobData.text;
+            if (!delivered.has(jobData)) {
+              onEvent(jobData);
             }
-            eventCallback?.(jobData);
           },
         });
         if (!success) {

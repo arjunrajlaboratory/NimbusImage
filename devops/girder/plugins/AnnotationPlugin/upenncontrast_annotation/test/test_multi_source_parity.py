@@ -38,8 +38,10 @@ if _SERVER not in sys.path:
 from helpers.filename_parsing import collect_filename_metadata  # noqa: E402
 from helpers.multi_source import (  # noqa: E402
     build_dimensions,
+    compositing_refusal,
     compute_configuration,
     get_default_assignments,
+    slim_internal_metadata,
     validate_assignments,
     validate_source_dtypes,
 )
@@ -116,6 +118,10 @@ def _assert_validation_parity(inp, expected):
         )
     except ValueError as exc:
         error = str(exc)
+    if error is None:
+        error = compositing_refusal(
+            result, options.get("enableCompositing", False),
+        )
 
     assert error == expected["submitError"]
 
@@ -178,6 +184,7 @@ def test_parity(path):
     assert result["transcodeDefault"] == expected["transcodeDefault"]
     assert default_assignments == expected["defaultAssignments"]
     assert filename_variables == expected["filenameVariables"]
+    assert result["compositingCheck"] == expected["compositingCheck"]
 
 
 def _load(name):
@@ -204,12 +211,14 @@ class TestCompositingCollapsesXY:
     """
 
     @staticmethod
-    def _run(enable_compositing):
-        inp = _load("nd2_compositing_identity.json")
+    def _run(enable_compositing, fixture="nd2_compositing_identity.json",
+             use_fixture_strategy=True):
+        inp = _load(fixture)
+        strategy = (inp.get("options") or {}).get("assignmentStrategy")
         return compute_configuration(
             inp["itemNames"], inp["tilesMetadata"],
             inp["tilesInternalMetadata"],
-            strategy=(inp.get("options") or {}).get("assignmentStrategy"),
+            strategy=strategy if use_fixture_strategy else None,
             split_rgb_bands=True,
             enable_compositing=enable_compositing,
         )
@@ -224,6 +233,26 @@ class TestCompositingCollapsesXY:
         assert result["compositing"] is False
         # ...and then the XY assignment's size is the real extent.
         assert "xySet" not in result["config"]["sources"][0]
+
+    def test_folder_of_single_position_files_composites(self):
+        result = self._run(True, "nd2_compositing_multifile.json")
+        assert result["compositing"] is True
+        sources = result["config"]["sources"]
+        assert {s["xySet"] for s in sources} == {0}
+        # One stage position per file, shared by that file's channels.
+        positions = {
+            s["path"]: (s["position"]["x"], s["position"]["y"])
+            for s in sources
+        }
+        assert len(set(positions.values())) == 4
+
+    def test_folder_does_not_composite_until_xy_is_assigned(self):
+        # The parser guesses the bare tile number as C, so with default
+        # assignments XY is empty and there is nothing to lay out.
+        result = self._run(True, "nd2_compositing_multifile.json",
+                           use_fixture_strategy=False)
+        assert result["assignments"]["XY"] is None
+        assert result["compositing"] is False
 
 
 class TestOneVariableCanDriveTwoDimensions:
@@ -334,3 +363,256 @@ class TestRgbLayoutComesFromTheFirstSourceOnly:
         grey = {"bandCount": 1, "frames": [], "sizeX": 16, "sizeY": 16,
                 "dtype": "uint8"}
         validate_source_dtypes([rgb, grey])
+
+
+@pytest.mark.parametrize("path", _PATHS, ids=_fixture_id)
+def test_slim_internal_metadata_changes_nothing(path):
+    """The endpoints slim ND2 internal metadata down to what the
+    configuration reads; for every fixture, the configuration computed from
+    the slim copy (with bulky ND2 fields added first) must be identical."""
+    with open(path, encoding="utf-8") as handle:
+        inp = json.load(handle)["input"]
+    if "itemNames" not in inp:
+        pytest.skip("not a configuration fixture")
+    bulky = [
+        dict(meta or {}, nd2_text="x" * 1000, nd2_custom={"a": 1})
+        for meta in inp["tilesInternalMetadata"]
+    ]
+    options = inp.get("options") or {}
+
+    def configure(internal):
+        try:
+            return compute_configuration(
+                inp["itemNames"], inp["tilesMetadata"], internal,
+                strategy=options.get("assignmentStrategy"),
+                split_rgb_bands=options.get("splitRGBBands", True),
+                enable_compositing=options.get("enableCompositing", False),
+            )
+        except ValueError as e:
+            return str(e)
+
+    full = configure(bulky)
+    slim = configure([slim_internal_metadata(meta) for meta in bulky])
+    assert slim == full
+
+
+def _tile(frames, channels=2, **overrides):
+    meta = {
+        "sizeX": 1000, "sizeY": 1000, "mm_x": 0.001, "mm_y": 0.001,
+        "bandCount": 1, "frames": [{} for _ in range(frames)],
+        "IndexRange": {"IndexC": channels} if channels > 1 else None,
+    }
+    meta.update(overrides)
+    return meta
+
+
+def _stages(points, matrix=None, **extra):
+    meta = {"nd2_frame_metadata": [
+        {"position": {"stagePositionUm": [x, y, 0]}} for x, y in points
+    ]}
+    if matrix is not None:
+        meta["nd2"] = {"channels": [
+            {"volume": {"cameraTransformationMatrix": matrix}}
+        ]}
+    meta.update(extra)
+    return meta
+
+
+class TestCompositingRobustness:
+    """The stage-layout check runs for every import that could composite,
+    asked or not, so metadata it cannot use must make compositing
+    unavailable -- never turn a plain import into an exception."""
+
+    @staticmethod
+    def _configure(tiles, internal, enable_compositing=False):
+        return compute_configuration(
+            ["a.nd2"], tiles, internal,
+            enable_compositing=enable_compositing,
+        )
+
+    def test_missing_pixel_size_does_not_raise(self):
+        result = self._configure(
+            [_tile(2, mm_x=None)], [_stages([(0, 0)])],
+        )
+        assert result["compositing"] is False
+        assert result["compositingCheck"]["error"] is None
+        assert result["compositingCheck"]["warning"] is None
+
+    def test_channel_without_volume_is_the_identity(self):
+        internal = [_stages([(0, 0)], nd2={"channels": [{}]})]
+        result = self._configure([_tile(2)], internal, True)
+        assert result["compositing"] is True
+        assert result["config"]["sources"][0]["position"]["s11"] == 1
+
+    def test_frames_past_the_stage_entries_cannot_composite(self):
+        result = self._configure([_tile(6)], [_stages([(0, 0)])], True)
+        assert result["compositing"] is False
+
+    def test_mixed_camera_orientations_cannot_composite(self):
+        result = compute_configuration(
+            ["t_1.nd2", "t_2.nd2"], [_tile(2), _tile(2)],
+            [_stages([(0, 0)], [-1, 0, 0, -1]),
+             _stages([(1000, 0)], [1, 0, 0, 1])],
+            strategy={"XY": {"source": "filename", "guess": "C"},
+                      "C": {"source": "file", "guess": "C"}},
+            enable_compositing=True,
+        )
+        assert result["compositing"] is False
+
+    def test_truncated_file_keeps_channel_pairs_together(self):
+        # 6 positions recorded, but only 12 frames (6 per channel) readable.
+        points = [(1000 * i, 0) for i in range(6)]
+        result = self._configure([_tile(12)], [_stages(points)], True)
+        sources = result["config"]["sources"]
+        assert sources[10]["position"] == sources[11]["position"]
+        assert sources[0]["position"] != sources[2]["position"]
+
+    def test_malformed_camera_matrix_is_the_identity(self):
+        internal = [_stages([(0, 0)], [None, 0, 0, "x"])]
+        result = self._configure([_tile(2)], internal, True)
+        assert result["compositing"] is True
+        assert result["config"]["sources"][0]["position"]["s11"] == 1
+
+    def test_non_object_frame_entry_does_not_raise(self):
+        internal = [{"nd2_frame_metadata": [["not", "a", "dict"]]}]
+        result = self._configure([_tile(2)], internal, True)
+        assert result["compositing"] is False
+        assert slim_internal_metadata(internal[0]) == {
+            "nd2_frame_metadata": [{"position": {"stagePositionUm": None}}],
+        }
+
+    def test_composited_xy_has_no_per_tile_labels(self):
+        inp = _load("nd2_compositing_multifile.json")
+        result = compute_configuration(
+            inp["itemNames"], inp["tilesMetadata"],
+            inp["tilesInternalMetadata"],
+            strategy=inp["options"]["assignmentStrategy"],
+            enable_compositing=True,
+        )
+        assert result["compositing"] is True
+        assert result["dimensionLabels"]["xy"] is None
+
+    def test_duplicate_reports_no_sparse_warning(self):
+        # A wide grid whose third tile repeats the first: the check stops at
+        # the duplicate, so a coverage figure would be meaningless.
+        points = [(0, 0), (1000, 0), (3, 0)] + [
+            (1000 * i, 0) for i in range(2, 60)
+        ]
+        names = ["t_%d.nd2" % i for i in range(len(points))]
+        result = compute_configuration(
+            names, [_tile(2) for _ in points],
+            [_stages([p]) for p in points],
+            strategy={"XY": {"source": "filename", "guess": "C"},
+                      "C": {"source": "file", "guess": "C"}},
+            enable_compositing=True,
+        )
+        assert "same stage position" in result["compositingCheck"]["error"]
+        assert result["compositingCheck"]["warning"] is None
+
+    def test_long_stacks_at_one_position_are_checked_quickly(self):
+        # 10 positions x 3000 Z/T entries each, 2 channels: every entry of
+        # a position merges into one tile, so the check stays linear.
+        import time
+        points = [
+            (1000 * p, 0) for p in range(10) for _ in range(3000)
+        ]
+        started = time.monotonic()
+        result = self._configure(
+            [_tile(2 * len(points))], [_stages(points)],
+        )
+        assert time.monotonic() - started < 2
+        assert result["compositingCheck"]["error"] is None
+        assert result["compositingCheck"]["warning"] is None
+
+    def test_multi_position_file_counts_tiles_for_transcode(self):
+        # One ND2 with 20 positions: compositing it transcodes by default,
+        # though it is a single file.
+        points = [(1000 * i, 0) for i in range(20)]
+        composited = self._configure([_tile(40)], [_stages(points)], True)
+        assert composited["compositingCheck"]["tileCount"] == 20
+        assert composited["transcodeDefault"] is True
+        separate = self._configure([_tile(40)], [_stages(points)])
+        assert separate["transcodeDefault"] is False
+
+    def test_duplicate_next_to_any_merged_point_is_caught(self):
+        # Same-XY points at x=0 and x=99 merge into one tile; a different-XY
+        # point at x=198 is 99 px (< 100 px tolerance) from the merged one.
+        from helpers.multi_source import (  # noqa: E402
+            _compositing_positions, compositing_check,
+        )
+        tiles = [_tile(1, 1), _tile(1, 1), _tile(1, 1)]
+        internal = [_stages([(0, 0)]), _stages([(99, 0)]),
+                    _stages([(198, 0)])]
+        check = compositing_check(
+            ["a.nd2", "b.nd2", "c.nd2"], tiles,
+            _compositing_positions(tiles, internal),
+            lambda item_idx, frame_idx: 0 if item_idx < 2 else 1,
+        )
+        assert '"b.nd2" (XY 1) and "c.nd2" (XY 2)' in check["error"]
+
+    def test_tolerances_use_the_rotated_tile(self):
+        # 2000 x 500 tiles rotated 90 degrees: 500 wide on screen, so 100 px
+        # apart is not a duplicate (it would be against the raw 2000 px).
+        from helpers.multi_source import (  # noqa: E402
+            _compositing_positions, compositing_check,
+        )
+        rotated = _tile(1, 1, sizeX=2000, sizeY=500)
+        tiles = [rotated, rotated]
+        internal = [_stages([(0, 0)], [0, -1, 1, 0]),
+                    _stages([(100, 0)], [0, -1, 1, 0])]
+        layout = _compositing_positions(tiles, internal)
+        assert layout[2] == (500, 2000)
+        check = compositing_check(
+            ["a.nd2", "b.nd2"], tiles, layout,
+            lambda item_idx, frame_idx: item_idx,
+        )
+        assert check["error"] is None
+
+    def test_degenerate_camera_matrix_cannot_composite(self):
+        # An all-zero matrix collapses the tile; it must not divide by zero.
+        result = self._configure(
+            [_tile(2)], [_stages([(0, 0)], [0, 0, 0, 0])],
+        )
+        assert result["compositing"] is False
+        assert result["compositingCheck"]["error"] is None
+
+    def test_point_near_a_merged_box_but_far_from_its_points(self):
+        # Same-XY points at (0,99) and (99,0); a different-XY point at
+        # (149,149) is more than 100 px from each in one axis.
+        from helpers.multi_source import (  # noqa: E402
+            _compositing_positions, compositing_check,
+        )
+        tiles = [_tile(1, 1), _tile(1, 1), _tile(1, 1)]
+        internal = [_stages([(0, -99)]), _stages([(99, 0)]),
+                    _stages([(149, -149)])]
+        check = compositing_check(
+            ["a.nd2", "b.nd2", "c.nd2"], tiles,
+            _compositing_positions(tiles, internal),
+            lambda item_idx, frame_idx: 0 if item_idx < 2 else 1,
+        )
+        assert check["error"] is None
+
+    def test_shear_with_identity_diagonal_is_kept(self):
+        result = self._configure(
+            [_tile(2)], [_stages([(0, 0)], [1, 0.5, 0, 1])], True,
+        )
+        position = result["config"]["sources"][0]["position"]
+        assert (position["s11"], position["s12"]) == (1, 0.5)
+
+    def test_singular_camera_matrix_cannot_composite(self):
+        # Rank one: maps the whole tile onto a line.
+        result = self._configure(
+            [_tile(2)], [_stages([(0, 0)], [2, 2, 1, 1])],
+        )
+        assert result["compositing"] is False
+
+    def test_singular_matrix_on_a_later_file_cannot_composite(self):
+        # det([2, 2, 1, 1.006]) = 0.012 passes; [2, 2, 1, 1] is within 0.01
+        # of it but singular.
+        from helpers.multi_source import _can_composite  # noqa: E402
+        assert _can_composite(
+            [_tile(2), _tile(2)],
+            [_stages([(0, 0)], [2, 2, 1, 1.006]),
+             _stages([(1000, 0)], [2, 2, 1, 1])],
+            2,
+        ) is False

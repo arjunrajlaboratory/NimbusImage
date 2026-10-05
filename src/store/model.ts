@@ -475,7 +475,7 @@ export interface IDownloadParameters {
   width?: number;
   height?: number;
   magnification?: number;
-  jpeqQuality?: number;
+  jpegQuality?: number;
   style?: string;
   tiffCompression?: string;
 }
@@ -1709,7 +1709,7 @@ export interface IAnnotationListPropertyFilter {
   mode: "range" | "values";
   min?: number;
   max?: number;
-  values?: number[];
+  values?: (number | string)[];
 }
 
 // One analysis gate as a query term: the DEFINITION (axes + polygon +
@@ -1908,7 +1908,9 @@ export interface IPropertyAnnotationFilter extends IAnnotationFilter {
     max: number;
   };
   valuesOrRange: PropertyFilterMode;
-  values?: number[];
+  // Values mode matches any of these (OR). Numbers come from the Values
+  // textarea; strings from the categorical picker (PropertyCategoryFilter).
+  values?: (number | string)[];
   // Whether to exclude or include annotations that don't have the property
 }
 
@@ -2144,6 +2146,11 @@ export interface IAnnotationPropertyValues {
   };
 }
 
+export interface IPropertyDistinctValues {
+  values: { value: string; count: number }[];
+  truncated: boolean;
+}
+
 export type TPropertyHistogram = {
   count: number;
   min: number;
@@ -2203,6 +2210,9 @@ export interface IJobEventData {
   title?: string;
   text?: string;
   status?: number;
+  // On status events, which carry the job document
+  type?: string;
+  meta?: Record<string, any>;
 }
 
 export interface IProgressInfo {
@@ -2755,6 +2765,9 @@ export interface IDimensionStrategy {
   T: { source: "file" | "filename" | "images"; guess: string } | null;
   C: { source: "file" | "filename" | "images"; guess: string } | null;
   transcode: boolean;
+  // Whether Composite was ticked; absent in strategies saved before it was
+  // recorded (treated as off).
+  composite?: boolean;
 }
 
 // Self-accept HMR to prevent vuex-module-decorators from re-registering

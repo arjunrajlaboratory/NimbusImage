@@ -76,11 +76,10 @@ Result: all 801 tests pass locally in 1 min 57 s, with setup flat at about
 
 ## Local runs on Apple Silicon
 
-`test_dataset_multi_source.py` can segfault inside pylibtiff on arm64 macOS
-(a ctypes variadic-call ABI issue; Linux and CI are unaffected). The fix,
-`_restoreVariadicTIFFGetField()` in `test/conftest.py`, ships with PR #1347.
-Until that merges, run that file in the Linux Girder container or exclude it
-locally.
+`test_dataset_multi_source.py` used to segfault inside pylibtiff on arm64
+macOS (a ctypes variadic-call ABI issue; Linux and CI were unaffected).
+`_restoreVariadicTIFFGetField()` in `test/conftest.py` fixes it, so local
+`tox` runs the whole suite.
 
 ## Regression checklist
 

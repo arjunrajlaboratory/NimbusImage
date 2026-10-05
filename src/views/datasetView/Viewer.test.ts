@@ -1,5 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { shallowMount, flushPromises } from "@vue/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  shallowMount,
+  flushPromises,
+  enableAutoUnmount,
+} from "@vue/test-utils";
 import { reactive } from "vue";
 
 const { volumeViewMock, filtersMock } = vi.hoisted(() => ({
@@ -16,19 +20,40 @@ vi.mock("@/components/ImageViewer.vue", () => ({
   default: { template: "<div></div>", name: "ImageViewer" },
 }));
 
-vi.mock("@/store", () => ({
-  default: {
-    dataset: { id: "ds-1", name: "Test", time: { length: 5 } },
-    configuration: { id: "config-1" },
-    isLoggedIn: true,
-    toolTemplateList: [{ type: "create" }],
-    setShowTimelapseMode: vi.fn(),
-  },
+// Reactive so the dataset/configuration and montage-closing watchers can be
+// driven by assignment.
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      dataset: { id: "ds-1", name: "Test", time: { length: 5 } },
+      configuration: { id: "config-1" },
+      datasetView: null,
+      isLoggedIn: true,
+      toolTemplateList: [{ type: "create" }],
+      setShowTimelapseMode: vi.fn(),
+    }),
+  };
+});
+
+vi.mock("@/components/Montage/MontageView.vue", () => ({
+  default: { template: "<div></div>", name: "MontageView" },
 }));
+
+vi.mock("@/store/montage", async () => {
+  const { reactive } = await import("vue");
+  const montage = reactive({
+    isOpen: false,
+    setIsOpen: (value: boolean) => {
+      montage.isOpen = value;
+    },
+  });
+  return { default: montage };
+});
 
 vi.mock("@/store/annotation", () => ({
   default: {
-    fetchAnnotations: vi.fn(),
+    fetchAnnotations: vi.fn().mockResolvedValue(true),
   },
 }));
 
@@ -39,9 +64,10 @@ vi.mock("@/store/properties", () => ({
   },
 }));
 
-vi.mock("@/store/volumeView", () => ({
-  default: volumeViewMock,
-}));
+vi.mock("@/store/volumeView", async () => {
+  const { reactive } = await import("vue");
+  return { default: reactive(volumeViewMock) };
+});
 
 vi.mock("@/store/filters", () => ({
   default: {
@@ -65,6 +91,12 @@ import propertiesStore from "@/store/properties";
 import toolSuggestionsStore from "@/store/toolSuggestions";
 import Viewer from "./Viewer.vue";
 import volumeViewStore from "@/store/volumeView";
+import montageStore from "@/store/montage";
+import { nextTick } from "vue";
+
+// The store mock is shared and reactive: a component left mounted by an
+// earlier test would keep firing its watchers into later assertions.
+enableAutoUnmount(afterEach);
 
 function mountComponent() {
   return shallowMount(Viewer, {});
@@ -92,6 +124,13 @@ describe("Viewer", () => {
     // stub-only mode determined first), so flush the microtask queue.
     await flushPromises();
     expect(propertiesStore.fetchPropertyValues).toHaveBeenCalled();
+  });
+
+  it("skips the property fetch when fetchAnnotations was superseded", async () => {
+    vi.mocked(annotationStore.fetchAnnotations).mockResolvedValueOnce(false);
+    mountComponent();
+    await flushPromises();
+    expect(propertiesStore.fetchPropertyValues).not.toHaveBeenCalled();
   });
 
   it("mounted calls fetchProperties", () => {
@@ -242,5 +281,115 @@ describe("Viewer analysis gate refresh", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("Viewer montage lifecycle", () => {
+  beforeEach(() => {
+    (volumeViewStore as any).viewMode = "2d";
+    (store as any).dataset = { id: "ds-1", name: "Test", time: { length: 5 } };
+    montageStore.setIsOpen(false);
+  });
+
+  it("closes the montage for a different dataset", async () => {
+    mountComponent();
+    montageStore.setIsOpen(true);
+    (store as any).dataset = { id: "ds-2", name: "Other", time: { length: 1 } };
+    await nextTick();
+    expect(montageStore.isOpen).toBe(false);
+  });
+
+  it("keeps the montage open when the same dataset is reloaded", async () => {
+    mountComponent();
+    montageStore.setIsOpen(true);
+    (store as any).dataset = { id: "ds-1", name: "Test", time: { length: 5 } };
+    await nextTick();
+    expect(montageStore.isOpen).toBe(true);
+  });
+
+  it("closes the montage when switching to 3D", async () => {
+    mountComponent();
+    montageStore.setIsOpen(true);
+    (volumeViewStore as any).viewMode = "3d";
+    await nextTick();
+    expect(montageStore.isOpen).toBe(false);
+  });
+
+  it("closes the montage when leaving the view", () => {
+    const wrapper = mountComponent();
+    montageStore.setIsOpen(true);
+    wrapper.unmount();
+    expect(montageStore.isOpen).toBe(false);
+  });
+});
+
+// Switching dataset views loads the dataset and configuration concurrently
+// (issue #1379). Fetching on whichever lands first loads the old dataset under
+// the new configuration's stubThreshold.
+describe("Viewer annotation fetch on dataset view switch", () => {
+  const s = store as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    s.dataset = { id: "ds-1", name: "Test", time: { length: 5 } };
+    s.configuration = { id: "config-1" };
+    s.datasetView = {
+      id: "view-1",
+      datasetId: "ds-1",
+      configurationId: "config-1",
+    };
+  });
+
+  it("waits until both the dataset and configuration match the new view", async () => {
+    mountComponent();
+    await flushPromises();
+    vi.clearAllMocks();
+
+    s.datasetView = {
+      id: "view-2",
+      datasetId: "ds-2",
+      configurationId: "config-2",
+    };
+    // Configuration lands first, dataset still the old one.
+    s.configuration = { id: "config-2" };
+    await flushPromises();
+    expect(annotationStore.fetchAnnotations).not.toHaveBeenCalled();
+
+    s.dataset = { id: "ds-2", name: "Other", time: { length: 1 } };
+    await flushPromises();
+    expect(annotationStore.fetchAnnotations).toHaveBeenCalledTimes(1);
+    expect(propertiesStore.fetchPropertyValues).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits when the dataset lands before the configuration", async () => {
+    mountComponent();
+    await flushPromises();
+    vi.clearAllMocks();
+
+    s.datasetView = {
+      id: "view-2",
+      datasetId: "ds-2",
+      configurationId: "config-2",
+    };
+    s.dataset = { id: "ds-2", name: "Other", time: { length: 1 } };
+    await flushPromises();
+    expect(annotationStore.fetchAnnotations).not.toHaveBeenCalled();
+
+    s.configuration = { id: "config-2" };
+    await flushPromises();
+    expect(annotationStore.fetchAnnotations).toHaveBeenCalledTimes(1);
+  });
+
+  // refreshDataset() (unroll toggles, addLargeImage) reloads the same id after
+  // resetting annotation and property state; only this refetch repopulates it.
+  it("refetches when refreshDataset reloads the same dataset id", async () => {
+    mountComponent();
+    await flushPromises();
+    vi.clearAllMocks();
+
+    s.dataset = { id: "ds-1", name: "Test (reloaded)", time: { length: 5 } };
+    await flushPromises();
+    expect(annotationStore.fetchAnnotations).toHaveBeenCalledTimes(1);
+    expect(propertiesStore.fetchPropertyValues).toHaveBeenCalledTimes(1);
   });
 });

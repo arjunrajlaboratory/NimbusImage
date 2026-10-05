@@ -34,6 +34,21 @@ from decimal import Decimal, ROUND_HALF_UP
 
 UP_DIMS = ("XY", "Z", "T", "C")
 
+# Compositing sanity checks and defaults; the frontend's copies live in
+# src/utils/ND2Compositing.ts. Two XY positions closer than this fraction
+# of a tile are the same field imaged twice.
+DUPLICATE_POSITION_FRACTION = 0.1
+# Tiles covering less than this fraction of the mosaic's bounding box look
+# like separate regions (e.g. different wells), not one stitched area.
+SPARSE_COVERAGE_FRACTION = 0.25
+# A composite of more tiles than this renders zoomed-out views from that
+# many sources unless it is transcoded, so transcode becomes the default.
+COMPOSITE_TRANSCODE_TILE_THRESHOLD = 16
+# Sub-cells per tolerance cell (per axis) in the duplicate check.
+DUPLICATE_SUBCELLS = 8
+# Camera matrices closer than this are the same orientation.
+CAMERA_MATRIX_TOLERANCE = 0.01
+
 _DIMENSION_NAMES = {
     "XY": "Positions",
     "Z": "Z",
@@ -651,91 +666,411 @@ def _extract_dimension_labels(assignments, internal_metadata, dim):
 
 def _camera_matrix_source(nd2):
     """Return the camera transformation matrix (or None) mirroring
-    ``chan.volume !== undefined ? chan.volume : chan[0].volume``."""
+    ``chan.volume !== undefined ? chan.volume : chan[0]?.volume``; a
+    channel without a (dict) volume has no matrix."""
     channels = nd2.get("channels")
     if not channels:
         return None
-    # JS `chan.volume !== undefined ? chan.volume : chan[0].volume`: an
-    # explicit null volume IS taken, so test key presence rather than
-    # `is not None`. A list has no "volume" key, so it falls through.
-    if isinstance(channels, dict) and "volume" in channels:
-        volume = channels["volume"]
+    if isinstance(channels, dict):
+        volume = channels.get("volume")
+    elif isinstance(channels, list) and isinstance(channels[0], dict):
+        volume = channels[0].get("volume")
     else:
-        volume = channels[0]["volume"]
+        volume = None
+    if not isinstance(volume, dict):
+        return None
     return volume.get("cameraTransformationMatrix")
 
 
+def _is_positive_number(value):
+    return _is_finite(value) and value > 0
+
+
+def _frame_count(tile_meta):
+    return len(tile_meta.get("frames") or []) or 1
+
+
+def _channels_in_file(tile_meta):
+    return (tile_meta.get("IndexRange") or {}).get("IndexC") or 1
+
+
+def _compositing_frame_metadata_index(tile_meta, frame_idx):
+    """Port of ``compositingFrameMetadataIndex``: which of a file's
+    ``nd2_frame_metadata`` entries frame ``frame_idx`` uses. ND2 records one
+    entry per camera frame (position x Z x T) and large_image lists the
+    file's channels fastest within it, so the entry is the frame index
+    divided by the file's own channel count."""
+    return math.floor(frame_idx / _channels_in_file(tile_meta))
+
+
+def _stage_position(frame):
+    """``frame?.position?.stagePositionUm`` for any JSON value."""
+    position = frame.get("position") if isinstance(frame, dict) else None
+    return (
+        position.get("stagePositionUm") if isinstance(position, dict)
+        else None
+    )
+
+
+def _has_stage_positions(internal_meta):
+    frames_metadata = (
+        internal_meta.get("nd2_frame_metadata")
+        if isinstance(internal_meta, dict) else None
+    )
+    return (
+        isinstance(frames_metadata, list)
+        and len(frames_metadata) > 0
+        and all(
+            isinstance(_stage_position(frame), list)
+            and len(_stage_position(frame)) >= 2
+            and all(_is_finite(v) for v in _stage_position(frame)[:2])
+            for frame in frames_metadata
+        )
+    )
+
+
+def _camera_transform(internal_meta):
+    """Port of ``cameraTransform``: every coefficient within 0.01 of I is
+    the identity, within 0.01 of -I snaps to -I (all four, so a shear such
+    as [1, 0.5, 0, 1] is kept), and a missing or malformed matrix is the
+    identity."""
+    identity = {"s11": 1, "s12": 0, "s21": 0, "s22": 1}
+    nd2 = internal_meta.get("nd2")
+    matrix = _camera_matrix_source(nd2) if isinstance(nd2, dict) else None
+    if not (isinstance(matrix, list) and len(matrix) >= 4
+            and all(_is_finite(v) for v in matrix[:4])):
+        return identity
+    if all(abs(m - t) <= CAMERA_MATRIX_TOLERANCE
+           for m, t in zip(matrix, (1, 0, 0, 1))):
+        return identity
+    if all(abs(m - t) < CAMERA_MATRIX_TOLERANCE
+           for m, t in zip(matrix, (-1, 0, 0, -1))):
+        return {"s11": -1.0, "s12": 0.0, "s21": 0.0, "s22": -1.0}
+    return {"s11": matrix[0], "s12": matrix[1],
+            "s21": matrix[2], "s22": matrix[3]}
+
+
+def _tile_footprint(transform, size_x, size_y):
+    """Port of ``tileFootprint``: one tile's mosaic-space corners under
+    ``transform``, as ``(width, height, min_x, min_y)``."""
+    corners = [(0, 0), (size_x, 0), (0, size_y), (size_x, size_y)]
+    xs = [transform["s11"] * x + transform["s12"] * y for x, y in corners]
+    ys = [transform["s21"] * x + transform["s22"] * y for x, y in corners]
+    return max(xs) - min(xs), max(ys) - min(ys), min(xs), min(ys)
+
+
+def _same_transform(a, b):
+    return all(
+        abs(a[key] - b[key]) <= CAMERA_MATRIX_TOLERANCE
+        for key in ("s11", "s12", "s21", "s22")
+    )
+
+
+def _can_composite(tiles_metadata, internal_metadata, xy_assignment_size):
+    """Port of ``canCompositeByStagePosition``: every file has a stage
+    position for each camera frame its frames use, a usable pixel size and
+    the same camera orientation; several files also need the same tile
+    geometry and an XY assignment that tells their positions apart."""
+    if (
+        len(tiles_metadata) == 0
+        or len(tiles_metadata) != len(internal_metadata)
+        or not all(_has_stage_positions(m) for m in internal_metadata)
+        or not all(
+            _is_positive_number(tile.get(key))
+            for tile in tiles_metadata
+            for key in ("sizeX", "sizeY", "mm_x", "mm_y")
+        )
+        or not all(
+            _compositing_frame_metadata_index(tile, _frame_count(tile) - 1)
+            < len(internal_metadata[item_idx]["nd2_frame_metadata"])
+            for item_idx, tile in enumerate(tiles_metadata)
+        )
+    ):
+        return False
+    transforms = [_camera_transform(meta) for meta in internal_metadata]
+
+    def usable(transform, tile):
+        # A singular matrix (all zeros, or rank one like [2, 2, 1, 1]) maps
+        # the tile onto a point or a line. Checked for every file: one that
+        # is merely close to a usable first matrix can still be singular.
+        determinant = (transform["s11"] * transform["s22"]
+                       - transform["s12"] * transform["s21"])
+        width, height, _min_x, _min_y = _tile_footprint(
+            transform, tile["sizeX"], tile["sizeY"],
+        )
+        return (abs(determinant) >= CAMERA_MATRIX_TOLERANCE
+                and width > 0 and height > 0
+                and _same_transform(transform, transforms[0]))
+
+    if not all(
+        usable(transform, tile)
+        for transform, tile in zip(transforms, tiles_metadata)
+    ):
+        return False
+    if len(tiles_metadata) == 1:
+        return True
+    first = tiles_metadata[0]
+    return xy_assignment_size > 1 and all(
+        tile.get(key) == first.get(key)
+        for tile in tiles_metadata
+        for key in ("sizeX", "sizeY", "mm_x", "mm_y")
+    )
+
+
 def _compositing_positions(tiles_metadata, internal_metadata):
-    """Compute ``finalCoordinates`` for the compositing path."""
+    """Port of ``compositingCoordinates``: pixel positions for every
+    ``nd2_frame_metadata`` entry of every item, concatenated in item order,
+    the offset where each item's entries start, and one tile's
+    mosaic-space ``(width, height)``. All files share the
+    first file's pixel size and camera orientation (the gate checks both),
+    which also sets the mosaic's extent."""
     first_tile = tiles_metadata[0]
     mm_x = first_tile["mm_x"]
     mm_y = first_tile["mm_y"]
     size_x = first_tile["sizeX"]
     size_y = first_tile["sizeY"]
-    frames_metadata = internal_metadata[0]["nd2_frame_metadata"]
-    nd2 = internal_metadata[0].get("nd2")
 
     coordinates = []
-    for frame in frames_metadata:
-        stage = frame["position"]["stagePositionUm"]
-        pos = {
-            "x": stage[0] / (mm_x * 1000),
-            "y": stage[1] / (mm_y * 1000),
-            "s11": 1, "s12": 0, "s21": 0, "s22": 1,
-        }
-        if nd2 and nd2.get("channels"):
-            matrix = _camera_matrix_source(nd2)
-            if matrix and (abs(matrix[0] - 1) > 0.01
-                           or abs(matrix[3] - 1) > 0.01):
-                if abs(matrix[0] + 1) < 0.01 and abs(matrix[3] + 1) < 0.01:
-                    pos["s11"], pos["s12"] = -1.0, 0.0
-                    pos["s21"], pos["s22"] = 0.0, -1.0
-                else:
-                    pos["s11"], pos["s12"] = matrix[0], matrix[1]
-                    pos["s21"], pos["s22"] = matrix[2], matrix[3]
-        coordinates.append(pos)
+    item_offsets = []
+    for internal_meta in internal_metadata:
+        item_offsets.append(len(coordinates))
+        transform = _camera_transform(internal_meta)
+        for frame in internal_meta["nd2_frame_metadata"]:
+            stage = frame["position"]["stagePositionUm"]
+            coordinates.append({
+                "x": stage[0] / (mm_x * 1000),
+                "y": stage[1] / (mm_y * 1000),
+                **transform,
+            })
 
-    corners = [
-        {"x": 0, "y": 0}, {"x": size_x, "y": 0},
-        {"x": 0, "y": size_y}, {"x": size_x, "y": size_y},
-    ]
     first = coordinates[0] if coordinates else {}
-    s11 = first.get("s11", 1)
-    s12 = first.get("s12", 0)
-    s21 = first.get("s21", 0)
-    s22 = first.get("s22", 1)
-    transformed = [
+    # One tile's mosaic-space footprint: a rotated non-square tile swaps
+    # width and height.
+    tile_width, tile_height, corner_min_x, corner_min_y = _tile_footprint(
+        {key: first.get(key, default) for key, default in (
+            ("s11", 1), ("s12", 0), ("s21", 0), ("s22", 1))},
+        size_x, size_y,
+    )
+    min_x = min(c["x"] for c in coordinates) + corner_min_x
+    max_y = max(c["y"] for c in coordinates) - corner_min_y
+    final_coordinates = [
         {
-            "x": s11 * corner["x"] + s12 * corner["y"],
-            "y": s21 * corner["x"] + s22 * corner["y"],
-        }
-        for corner in corners
-    ]
-    offset_min = {
-        "x": min(c["x"] for c in transformed),
-        "y": min(c["y"] for c in transformed),
-    }
-    offset_max = {
-        "x": max(c["x"] for c in transformed),
-        "y": max(c["y"] for c in transformed),
-    }
-    min_coordinate = {
-        "x": min(c["x"] for c in coordinates) + offset_min["x"],
-        "y": min(c["y"] for c in coordinates) - offset_max["y"],
-    }
-    max_coordinate = {
-        "x": max(c["x"] for c in coordinates) + offset_max["x"],
-        "y": max(c["y"] for c in coordinates) - offset_min["y"],
-    }
-    return [
-        {
-            "x": js_math_round(c["x"] - min_coordinate["x"]),
-            "y": js_math_round(max_coordinate["y"] - c["y"]),
+            "x": js_math_round(c["x"] - min_x),
+            "y": js_math_round(max_y - c["y"]),
             "s11": c["s11"], "s12": c["s12"],
             "s21": c["s21"], "s22": c["s22"],
         }
         for c in coordinates
     ]
+    tile_size = (tile_width, tile_height)
+    return final_coordinates, item_offsets, tile_size
+
+
+def slim_internal_metadata(internal_meta):
+    """Keep only the internal-metadata fields the configuration reads.
+
+    ND2 internal metadata also carries ``nd2_text``, ``nd2_custom`` and full
+    per-frame records, which for a folder of thousands of tiles is far more
+    than the configuration needs. This keeps ``nd2_experiment`` (dimension
+    labels), each frame's stage position and the first channel's camera
+    matrix, in the same shapes, so every reader behaves as on the full
+    metadata.
+    """
+    if not isinstance(internal_meta, dict):
+        return internal_meta
+    slim = {}
+    if "nd2_experiment" in internal_meta:
+        slim["nd2_experiment"] = internal_meta["nd2_experiment"]
+    frames = internal_meta.get("nd2_frame_metadata")
+    if isinstance(frames, list):
+        slim["nd2_frame_metadata"] = [
+            {"position": {"stagePositionUm": _stage_position(frame)}}
+            for frame in frames
+        ]
+    elif "nd2_frame_metadata" in internal_meta:
+        slim["nd2_frame_metadata"] = frames
+    nd2 = internal_meta.get("nd2")
+    if isinstance(nd2, dict) and "channels" in nd2:
+        slim["nd2"] = {"channels": _slim_channels(nd2["channels"])}
+    return slim
+
+
+def _slim_volume(volume):
+    if not isinstance(volume, dict):
+        return volume
+    if "cameraTransformationMatrix" not in volume:
+        return {}
+    return {
+        "cameraTransformationMatrix": volume["cameraTransformationMatrix"],
+    }
+
+
+def _slim_channels(channels):
+    """Keep the one volume ``_camera_matrix_source`` reads."""
+    if isinstance(channels, dict):
+        if "volume" in channels:
+            return {"volume": _slim_volume(channels["volume"])}
+        return {}
+    if isinstance(channels, list) and channels:
+        first = channels[0]
+        if isinstance(first, dict) and "volume" in first:
+            return [{"volume": _slim_volume(first["volume"])}]
+        return [{}]
+    return channels
+
+
+def compositing_check(item_names, tiles_metadata, layout, xy_value):
+    """Port of ``compositingCheck``: problems with laying these sources out
+    by stage position, from every stage entry the sources use.
+
+    ``error``: two entries with different XY values at the same stage
+    position (the same field imaged twice), which refuses compositing.
+    Entries sharing an XY value there (a Z stack, or channels split across
+    files) are one tile. ``warning``: the tiles cover little of the mosaic,
+    which does not refuse it. ``tileCount``: the distinct tiles the
+    composite holds (None with an error). ``layout`` is
+    ``_compositing_positions``'s result and ``xy_value(item_idx,
+    frame_idx)`` the frame's XY assignment.
+    """
+    # Measured in mosaic space: the camera transform can rotate the tile.
+    final_coordinates, item_offsets, (size_x, size_y) = layout
+    tol_x = DUPLICATE_POSITION_FRACTION * size_x
+    tol_y = DUPLICATE_POSITION_FRACTION * size_y
+
+    points = []
+    for item_idx in range(len(item_names)):
+        tile = tiles_metadata[item_idx]
+        last_entry = -1
+        for frame_idx in range(_frame_count(tile)):
+            entry = _compositing_frame_metadata_index(tile, frame_idx)
+            if entry == last_entry:
+                continue
+            last_entry = entry
+            position = final_coordinates[item_offsets[item_idx] + entry]
+            points.append({
+                "x": position["x"], "y": position["y"],
+                "xy": xy_value(item_idx, frame_idx), "item": item_idx,
+            })
+
+    # Points are bucketed into tolerance-sized cells, each split into
+    # DUPLICATE_SUBCELLS x DUPLICATE_SUBCELLS sub-cells. Each sub-cell keeps
+    # one box per XY value covering every point of that value merged there,
+    # so a long Z/T stack at one position stays a few entries (linear), and
+    # no merged point is forgotten: a different-XY point within tolerance
+    # of any of them is caught. A box spans at most 1/DUPLICATE_SUBCELLS of
+    # the tolerance, which bounds how far "near a box" can overstate "near
+    # a point".
+    def near(box, x, y):
+        return (max(box["minX"] - x, x - box["maxX"], 0) < tol_x
+                and max(box["minY"] - y, y - box["maxY"], 0) < tol_y)
+
+    error = None
+    tile_count = 0
+    cells = {}
+    for index, point in enumerate(points):
+        cell_x = math.floor(point["x"] / tol_x)
+        cell_y = math.floor(point["y"] / tol_y)
+        duplicate_of = None
+        same_tile = False
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for box in cells.get((cell_x + dx, cell_y + dy), []):
+                    if not near(box, point["x"], point["y"]):
+                        continue
+                    if box["xy"] == point["xy"]:
+                        same_tile = True
+                    elif duplicate_of is None or box["first"] < duplicate_of:
+                        duplicate_of = box["first"]
+        if duplicate_of is not None:
+            first = points[duplicate_of]
+            error = (
+                '"%s" (XY %d) and "%s" (XY %d) are at the same stage '
+                "position, so compositing would draw one on top of the "
+                "other. Remove the duplicate, or leave Composite off to "
+                "keep them as separate XY positions." % (
+                    item_names[first["item"]], first["xy"] + 1,
+                    item_names[point["item"]], point["xy"] + 1,
+                )
+            )
+            break
+        if not same_tile:
+            tile_count += 1
+        cell = cells.setdefault((cell_x, cell_y), [])
+        sub = (
+            math.floor(point["x"] / (tol_x / DUPLICATE_SUBCELLS)),
+            math.floor(point["y"] / (tol_y / DUPLICATE_SUBCELLS)),
+        )
+        box = next(
+            (b for b in cell if b["xy"] == point["xy"] and b["sub"] == sub),
+            None,
+        )
+        if box is not None:
+            box["minX"] = min(box["minX"], point["x"])
+            box["maxX"] = max(box["maxX"], point["x"])
+            box["minY"] = min(box["minY"], point["y"])
+            box["maxY"] = max(box["maxY"], point["y"])
+        else:
+            cell.append({
+                "xy": point["xy"], "sub": sub, "first": index,
+                "minX": point["x"], "maxX": point["x"],
+                "minY": point["y"], "maxY": point["y"],
+            })
+
+    warning = None
+    if error is None and tile_count > 1:
+        width = (max(p["x"] for p in points) - min(p["x"] for p in points)
+                 + size_x)
+        height = (max(p["y"] for p in points) - min(p["y"] for p in points)
+                  + size_y)
+        coverage = tile_count * size_x * size_y / (width * height)
+        if coverage < SPARSE_COVERAGE_FRACTION:
+            warning = (
+                "The %d tiles cover only %d%% of the %d \u00d7 %d px "
+                "composite, so they look like separate regions (for "
+                "example, different wells). Consider leaving Composite off "
+                "to keep them as separate XY positions." % (
+                    tile_count, js_math_round(coverage * 100),
+                    js_math_round(width), js_math_round(height),
+                )
+            )
+    return {
+        "error": error, "warning": warning,
+        "tileCount": tile_count if error is None else None,
+    }
+
+
+COMPOSITING_UNAVAILABLE = (
+    "Composite was requested, but these files cannot be laid out by stage "
+    "position: that needs ND2 stage positions for every frame, one tile "
+    "size, pixel size and camera orientation, and (for several files) an "
+    "XY assignment that tells them apart. Leave Composite off to configure "
+    "them as separate XY positions."
+)
+
+
+def compositing_refusal(result, enable_compositing):
+    """Port of the component's ``compositingRefusal``: why a requested
+    composite cannot be honored (a duplicate stage position, or files that
+    cannot be composited at all), or None. It ranks after the dtype and
+    assignment errors, as in ``submitError``, and turns the request into a
+    failure rather than a quiet fallback to separate XY positions, which
+    cannot be redone."""
+    if not enable_compositing:
+        return None
+    if result["compositingCheck"]["error"] is not None:
+        return result["compositingCheck"]["error"]
+    return None if result["compositing"] else COMPOSITING_UNAVAILABLE
+
+
+def composite_transcode_default(transcode_default, compositing, tile_count):
+    """Port of ``compositeTranscodeDefault``: transcode by default when
+    compositing many tiles (composited positions, from many files or one
+    multi-position file), whose zoomed-out views otherwise read every
+    source."""
+    return transcode_default or (
+        compositing
+        and (tile_count or 0) > COMPOSITE_TRANSCODE_TILE_THRESHOLD
+    )
 
 
 def generate_multi_source_config(item_names, tiles_metadata,
@@ -766,28 +1101,41 @@ def generate_multi_source_config(item_names, tiles_metadata,
                 expanded.append(channel + suffix)
         channels = expanded
 
-    can_do_compositing = (
-        len(internal_metadata) == 1
-        and _truthy(internal_metadata[0].get("nd2_frame_metadata"))
-        and len(tiles_metadata) == 1
+    xy_assignment = assignments.get("XY")
+    can_do_compositing = _can_composite(
+        tiles_metadata, internal_metadata,
+        xy_assignment["size"] if xy_assignment else 0,
     )
-    should_composite = can_do_compositing and enable_compositing
-
-    sources = []
 
     def value(dim, item_idx, frame_idx):
         return _value_from_assignments(
             assignments, item_names, dim, item_idx, frame_idx,
         )
 
+    check = {"error": None, "warning": None, "tileCount": None}
+    layout = None
+    if can_do_compositing:
+        layout = _compositing_positions(tiles_metadata, internal_metadata)
+        check = compositing_check(
+            item_names, tiles_metadata, layout,
+            lambda item_idx, frame_idx: value("XY", item_idx, frame_idx),
+        )
+    should_composite = (
+        can_do_compositing and enable_compositing and check["error"] is None
+    )
+
+    sources = []
+
     if should_composite:
+        final_coordinates, item_offsets, _tile_size = layout
         for item_idx in range(len(item_names)):
             name = item_names[item_idx]
-            n_frames = len(tiles_metadata[item_idx].get("frames") or []) or 1
+            n_frames = _frame_count(tiles_metadata[item_idx])
+            item_sources = []
             if is_multiband_rgb and split_rgb_bands:
                 for frame_idx in range(n_frames):
                     for band_idx in range(rgb_band_count):
-                        sources.append({
+                        item_sources.append({
                             "path": name,
                             "xySet": value("XY", item_idx, frame_idx),
                             "zSet": value("Z", item_idx, frame_idx),
@@ -798,7 +1146,7 @@ def generate_multi_source_config(item_names, tiles_metadata,
                         })
             else:
                 for frame_idx in range(n_frames):
-                    sources.append({
+                    item_sources.append({
                         "path": name,
                         "xySet": value("XY", item_idx, frame_idx),
                         "zSet": value("Z", item_idx, frame_idx),
@@ -807,14 +1155,17 @@ def generate_multi_source_config(item_names, tiles_metadata,
                         "frames": [frame_idx],
                     })
 
-        final_coordinates = _compositing_positions(
-            tiles_metadata, internal_metadata,
-        )
-        for source_idx, source in enumerate(sources):
-            source["position"] = final_coordinates[
-                math.floor(source_idx / len(channels))
-            ]
-            source["xySet"] = 0
+            # Each source takes its own file's stage position, and xySet
+            # collapses to the single composited position.
+            for source in item_sources:
+                source["position"] = final_coordinates[
+                    item_offsets[item_idx]
+                    + _compositing_frame_metadata_index(
+                        tiles_metadata[item_idx], source["frames"][0],
+                    )
+                ]
+                source["xySet"] = 0
+            sources.extend(item_sources)
     else:
         for item_idx in range(len(item_names)):
             name = item_names[item_idx]
@@ -863,7 +1214,12 @@ def generate_multi_source_config(item_names, tiles_metadata,
         "uniformSources": True,
         "singleBand": is_multiband_rgb,
     }
-    dimension_labels = {"xy": xy_labels, "z": z_labels, "t": t_labels}
+    # A composite has one XY position, so per-tile XY labels would name the
+    # whole mosaic after its first tile.
+    dimension_labels = {
+        "xy": None if should_composite else xy_labels,
+        "z": z_labels, "t": t_labels,
+    }
     # `compositing` is not just an echo of the request: the sources are
     # laid out by stage position and every xySet is forced to 0, so the
     # resulting image has ONE xy position regardless of the assignment's
@@ -872,6 +1228,7 @@ def generate_multi_source_config(item_names, tiles_metadata,
         "config": config,
         "dimensionLabels": dimension_labels,
         "compositing": should_composite,
+        "compositingCheck": check,
     }
 
 
@@ -894,8 +1251,12 @@ def compute_configuration(item_names, tiles_metadata, internal_metadata, *,
 
     Returns a dict with ``config``, ``dimensionLabels``, ``compositing``
     (whether the sources were actually composited, which collapses xy to a
-    single position), ``variables`` (the dimensions), ``assignments``
-    (summaries), ``transcodeDefault``, ``isRGBFile`` and ``rgbBandCount``.
+    single position), ``compositingCheck`` (``{error, warning}`` about the
+    stage layout whenever compositing is possible, requested or not; an
+    error refuses compositing), ``variables`` (the dimensions),
+    ``assignments`` (summaries), ``transcodeDefault`` (also on when
+    compositing more than ``COMPOSITE_TRANSCODE_TILE_THRESHOLD`` tiles),
+    ``isRGBFile`` and ``rgbBandCount``.
     """
     built = build_dimensions(item_names, tiles_metadata)
     dimensions = built["dimensions"]
@@ -919,12 +1280,16 @@ def compute_configuration(item_names, tiles_metadata, internal_metadata, *,
         "config": generated["config"],
         "dimensionLabels": generated["dimensionLabels"],
         "compositing": generated["compositing"],
+        "compositingCheck": generated["compositingCheck"],
         "variables": dimensions,
         "assignments": {
             dim: _assignment_summary(assignments.get(dim))
             for dim in UP_DIMS
         },
-        "transcodeDefault": built["transcodeDefault"],
+        "transcodeDefault": composite_transcode_default(
+            built["transcodeDefault"], generated["compositing"],
+            generated["compositingCheck"]["tileCount"],
+        ),
         "isRGBFile": is_rgb_file,
         "rgbBandCount": rgb_band_count,
     }

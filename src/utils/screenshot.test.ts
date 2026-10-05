@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { getChannelsDownloadUrls, getLayersDownloadUrls } from "./screenshot";
+import {
+  LayerSelectionError,
+  getChannelsDownloadUrls,
+  getDownloadParameters,
+  getLayersDownloadUrls,
+} from "./screenshot";
 import { newLayer, type IDataset, type IFrameInfo } from "@/store/model";
 import { parseTiles, type ITileMeta } from "@/store/GirderAPI";
 import type { IGirderItem } from "@/girder";
@@ -39,6 +44,19 @@ describe("scaled snapshot planes", () => {
       ),
     ).rejects.toThrow("No image");
     expect(api.getLayerHistogram).not.toHaveBeenCalled();
+  });
+  it("types layer-selection failures so callers can tell them apart", async () => {
+    const { dataset, layer, api } = fixture();
+    await expect(
+      getLayersDownloadUrls(
+        new URL("http://localhost/region"),
+        "composite",
+        [layer],
+        dataset,
+        location,
+        api,
+      ),
+    ).rejects.toBeInstanceOf(LayerSelectionError);
   });
   it("rejects empty layer selections", async () => {
     const { dataset, layer, api } = fixture();
@@ -191,5 +209,18 @@ describe("snapshot crop validation", () => {
     expect(() =>
       getDownloadParameters(bounds, "tiff", 4000000, 95, "channels"),
     ).toThrow("positive width and height");
+  });
+});
+
+describe("snapshot download parameters", () => {
+  it("passes JPEG quality under the key the server reads", () => {
+    const params = getDownloadParameters(
+      { left: 0, top: 0, right: 10, bottom: 10 },
+      "jpeg",
+      4_000_000,
+      80,
+      "layers",
+    );
+    expect(params?.jpegQuality).toBe(80);
   });
 });

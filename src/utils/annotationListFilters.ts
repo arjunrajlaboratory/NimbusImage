@@ -43,7 +43,7 @@ export interface IListPropertyFilterInput {
   propertyPath: string[];
   valuesOrRange: "values" | "range";
   range: { min: number; max: number };
-  values?: number[];
+  values?: (number | string)[];
   enabled?: boolean;
 }
 

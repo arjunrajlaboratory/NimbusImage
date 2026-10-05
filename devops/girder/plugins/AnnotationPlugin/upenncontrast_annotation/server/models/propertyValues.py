@@ -1,3 +1,5 @@
+import re
+
 import fastjsonschema
 
 from bson.objectid import ObjectId
@@ -271,6 +273,35 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
             value = document.get("value")
             if value is not None:
                 yield document["annotationId"], value
+
+    def distinctStringValues(self, datasetId, propertyPath, search, limit):
+        """The distinct STRING values at propertyPath (a list of keys) with
+        their annotation counts, most common first (ties by value), for the
+        categorical property filter. Returns (entries, truncated), where
+        entries is a list of {value, count} of at most `limit` and truncated
+        says more distinct values exist than were returned.
+
+        `search` (optional) keeps only values containing it,
+        case-insensitively; it is matched literally, not as a pattern.
+        Numeric values are excluded: those properties filter by range, and a
+        mixed property's numbers would only crowd the list."""
+        valueKey = "values." + ".".join(propertyPath)
+        condition = {"$type": "string"}
+        if search:
+            condition["$regex"] = re.escape(search)
+            condition["$options"] = "i"
+        pipeline = [
+            {"$match": {"datasetId": datasetId, valueKey: condition}},
+            {"$group": {"_id": "$" + valueKey, "count": {"$sum": 1}}},
+            {"$sort": {"count": -1, "_id": 1}},
+            # One extra row tells "exactly limit" apart from "more exist".
+            {"$limit": limit + 1},
+            {"$project": {"_id": 0, "value": "$_id", "count": 1}},
+        ]
+        entries = list(self.collection.aggregate(
+            pipeline, maxTimeMS=AGGREGATION_MAX_TIME_MS
+        ))
+        return entries[:limit], len(entries) > limit
 
     def delete(self, propertyId, datasetId):
         # Could use self.collection.updateMany but girder doesn't expose it

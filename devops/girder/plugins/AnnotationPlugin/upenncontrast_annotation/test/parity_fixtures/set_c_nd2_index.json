@@ -463,6 +463,11 @@
       "xy": [],
       "z": [],
       "t": []
+    },
+    "compositingCheck": {
+      "error": null,
+      "warning": null,
+      "tileCount": null
     }
   }
 }

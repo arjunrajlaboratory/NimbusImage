@@ -365,9 +365,16 @@ export default class GirderAPI {
     return this.client.get(`item/${toId(item)}/tiles`).then((r) => r.data);
   }
 
-  getTilesInternalMetadata(item: string | IGirderItem): Promise<any> {
+  // Tile metadata plus slim internal metadata for up to 100 items of a
+  // dataset folder in one request; see `dataset/:id/source_metadata`.
+  getSourceMetadata(
+    datasetId: string,
+    itemIds: string[],
+  ): Promise<ISourceMetadataEntry[]> {
     return this.client
-      .get(`item/${toId(item)}/tiles/internal_metadata`)
+      .get(`dataset/${datasetId}/source_metadata`, {
+        params: { itemIds: JSON.stringify(itemIds) },
+      })
       .then((r) => r.data);
   }
 
@@ -508,9 +515,10 @@ export default class GirderAPI {
       .then((r) => asDatasetView(r.data));
   }
 
-  async getSnapshotImage(url: URL): Promise<ArrayBuffer> {
+  async getSnapshotImage(url: URL, signal?: AbortSignal): Promise<ArrayBuffer> {
     const response = await this.client.get<ArrayBuffer>(url.href, {
       responseType: "arraybuffer",
+      signal,
     });
     if (response.data.byteLength === 0) {
       throw new Error("Snapshot crop contains no image data.");
@@ -1092,6 +1100,20 @@ export default class GirderAPI {
     return responses;
   }
 
+  // The large-image transcode job started for `itemId`, if any, among the
+  // most recent ones; throws if the jobs cannot be listed.
+  async findTranscodeJob(itemId: string): Promise<IJob | undefined> {
+    const response = await this.client.get("job", {
+      params: {
+        types: JSON.stringify(["large_image_tiff"]),
+        limit: 10,
+        sort: "created",
+        sortdir: -1,
+      },
+    });
+    return (response.data as IJob[]).find((job) => job.meta?.itemId === itemId);
+  }
+
   async findJobs(type: TJobType, statuses: number[]): Promise<any[]> {
     const params = {
       types: JSON.stringify([type]),
@@ -1368,6 +1390,17 @@ export interface IHistogramOptions {
   height: number;
   resample: boolean;
   cache: "schedule" | "report" | "none";
+}
+
+// One item's entry from `getSourceMetadata`: its metadata, or the reason
+// it has none (`notReady` when it is still being marked or converted, so
+// worth retrying).
+export interface ISourceMetadataEntry {
+  itemId: string;
+  tiles?: ITileMeta;
+  internalMetadata?: { [key: string]: any };
+  error?: string;
+  notReady?: boolean;
 }
 
 export interface ITileMeta {

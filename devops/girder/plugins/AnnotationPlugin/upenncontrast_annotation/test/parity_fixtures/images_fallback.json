@@ -118,6 +118,11 @@
         "7"
       ],
       "t": null
+    },
+    "compositingCheck": {
+      "error": null,
+      "warning": null,
+      "tileCount": null
     }
   }
 }

@@ -175,7 +175,8 @@ unbound, so the dependency was reverted rather than left in as dead weight.)
 The regression test therefore has to establish the precondition itself. Binding
 the genuine `checkForLargeImageFiles` was tried first and is unusable: probing
 the multi-source JSON walks every installed source and `large_image_source_tiff`
-segfaults pylibtiff on arm64 (crash inside `libtiff.GetField`). The
+segfaulted pylibtiff on arm64 (crash inside `libtiff.GetField`; since fixed,
+see below). The
 `largeImageAutoSet` fixture instead writes the same `largeImage` shape autoSet
 writes (`fileId` + `sourceName`, no `originalId`/`jobId`), which is the only
 part of it this endpoint interacts with.
@@ -537,11 +538,17 @@ mongodb://mongodb:27017"` and
 - A green `tox` also says nothing about handlers that only exist when a plugin
   is *loaded*. `pytest_girder` loads one plugin; anything driven by
   `girder_large_image`'s event bindings has to be established by the test.
-- **This suite cannot be trusted on arm64 macOS.** `large_image_source_tiff`
-  segfaults pylibtiff (`libtiff.GetField`) while probing the synthetic TIFFs,
+- **Fixed: the arm64 macOS pylibtiff segfault.** Root cause:
+  `large_image_source_tiff.tiff_reader.patchLibtiff()` sets
+  `TIFFGetField.argtypes = None`, and under the Apple arm64 ABI a variadic
+  argument then travels in a register instead of on the stack, so libtiff
+  writes through a garbage pointer. `test/conftest.py`
+  (`_restoreVariadicTIFFGetField`) restores pylibtiff's fixed argtypes on
+  darwin/arm64. Historically: `large_image_source_tiff`
+  segfaulted pylibtiff (`libtiff.GetField`) while probing the synthetic TIFFs,
   intermittently and depending on test selection — including on tests nobody
-  touched. Run the backend suite in the Linux girder container instead, which
-  is deterministic:
+  touched. Local tox is deterministic now; the Linux girder container remains
+  an alternative:
 
   ```bash
   docker exec girder bash -lc "pip install -q pytest 'pytest-girder>5' \

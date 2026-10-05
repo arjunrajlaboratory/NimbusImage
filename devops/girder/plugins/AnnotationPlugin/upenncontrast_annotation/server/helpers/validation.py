@@ -56,6 +56,13 @@ MAX_HISTOGRAM_BINS = 512
 # clamped down rather than served.
 MAX_LIST_LIMIT = 10_000
 
+# Distinct-values endpoint (categorical property filter). A screening library
+# has a few thousand genes; past this many values a scrolled list stops being
+# usable and the client narrows by search instead. Bounds the response, not
+# the work (that is AGGREGATION_MAX_TIME_MS).
+MAX_DISTINCT_VALUES = 20_000
+MAX_DISTINCT_SEARCH_LENGTH = 200
+
 
 def requireCountWithin(count, limit, name):
     """Raise RestException(400) if `count` exceeds `limit`."""

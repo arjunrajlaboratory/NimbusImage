@@ -23,7 +23,15 @@
       </v-btn>
     </div>
 
-    <div class="pfh-controls">
+    <property-category-filter
+      v-if="isCategorical"
+      :property-path="propertyPath"
+      :model-value="selectedCategories"
+      :visible="visible"
+      @update:model-value="updateCategories"
+    />
+
+    <div v-else class="pfh-controls">
       <v-btn-toggle
         v-model="propertyFilter.valuesOrRange"
         mandatory
@@ -55,7 +63,12 @@
       </template>
     </div>
 
-    <template v-if="propertyFilter.valuesOrRange === PropertyFilterMode.Range">
+    <template
+      v-if="
+        !isCategorical &&
+        propertyFilter.valuesOrRange === PropertyFilterMode.Range
+      "
+    >
       <div class="wrapper" ref="wrapper" :style="{ width: `${width}px` }">
         <svg :width="width" :height="height" v-if="hist">
           <path class="path" :d="area" />
@@ -89,7 +102,7 @@
       </div>
     </template>
 
-    <template v-else>
+    <template v-else-if="!isCategorical">
       <v-textarea
         v-model="valuesInput"
         density="compact"
@@ -109,12 +122,16 @@ import { ref, computed, watch, onMounted, nextTick } from "vue";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import { arePathEquals } from "@/utils/paths";
-import { histogramBounds } from "@/utils/propertyValues";
+import {
+  histogramBounds,
+  isCategoricalHistogram,
+} from "@/utils/propertyValues";
 import { selectAll, event as d3Event } from "d3-selection";
 import { drag, D3DragEvent } from "d3-drag";
 
 import { IPropertyAnnotationFilter, PropertyFilterMode } from "@/store/model";
 import TagFilterEditor from "@/components/AnnotationBrowser/TagFilterEditor.vue";
+import PropertyCategoryFilter from "@/components/AnnotationBrowser/AnnotationProperties/PropertyCategoryFilter.vue";
 import { area as d3Area, curveStepBefore } from "d3-shape";
 import { v4 as uuidv4 } from "uuid";
 import { logError } from "@/utils/log";
@@ -125,7 +142,14 @@ import debounce from "lodash/debounce";
 // Suppress unused import warnings for template-only components
 void TagFilterEditor;
 
-const props = defineProps<{ propertyPath: string[] }>();
+const props = withDefaults(
+  defineProps<{
+    propertyPath: string[];
+    // Whether this row can be seen (see PropertyCategoryFilter's `visible`).
+    visible?: boolean;
+  }>(),
+  { visible: true },
+);
 
 // Template refs
 const wrapper = ref<HTMLElement>();
@@ -209,14 +233,27 @@ const propertyFilter = computed(() => {
       arePathEquals(value.propertyPath, props.propertyPath),
   );
   if (!filter) {
-    const newFilter: IPropertyAnnotationFilter = {
-      range: { min: defaultMin.value, max: defaultMax.value },
-      id: uuidv4(),
-      propertyPath: props.propertyPath,
-      exclusive: false,
-      enabled: true,
-      valuesOrRange: PropertyFilterMode.Range,
-    };
+    // With a string histogram already cached (e.g. a removed filter re-added)
+    // the hist watcher never fires, so start in pass-all values mode here: a
+    // range filter would get string bounds and hide everything.
+    const newFilter: IPropertyAnnotationFilter = isCategorical.value
+      ? {
+          range: { min: 0, max: 0 },
+          id: uuidv4(),
+          propertyPath: props.propertyPath,
+          exclusive: false,
+          enabled: true,
+          valuesOrRange: PropertyFilterMode.Values,
+          values: [],
+        }
+      : {
+          range: { min: defaultMin.value, max: defaultMax.value },
+          id: uuidv4(),
+          propertyPath: props.propertyPath,
+          exclusive: false,
+          enabled: true,
+          valuesOrRange: PropertyFilterMode.Range,
+        };
     filterStore.updatePropertyFilter(newFilter);
     return newFilter;
   }
@@ -228,6 +265,24 @@ const propertyFullName = computed(() =>
 );
 
 const hist = computed(() => filterStore.getHistogram(props.propertyPath) || []);
+
+// String-valued properties (gene names, barcodes) filter by picking values
+// rather than by histogram range.
+const isCategorical = computed(() => isCategoricalHistogram(hist.value));
+
+const selectedCategories = computed(() =>
+  (propertyFilter.value.values ?? []).filter(
+    (value): value is string => typeof value === "string",
+  ),
+);
+
+function updateCategories(values: string[]) {
+  filterStore.updatePropertyFilter({
+    ...propertyFilter.value,
+    valuesOrRange: PropertyFilterMode.Values,
+    values,
+  });
+}
 
 const area = computed(() => {
   const nInitial = hist.value.length;
@@ -346,6 +401,40 @@ function removeFilter() {
 }
 
 watch(hist, () => {
+  if (isCategorical.value) {
+    // A string property has no numeric range: a new filter starts in Range
+    // mode with numeric bounds no string can satisfy, which would hide every
+    // annotation. Switch it to values mode with nothing picked (pass-all).
+    // Also a values filter holding numbers (from the numeric textarea, in a
+    // configuration shared with another dataset): no string matches them.
+    const { valuesOrRange, values } = propertyFilter.value;
+    if (
+      valuesOrRange !== PropertyFilterMode.Values ||
+      (values ?? []).some((value) => typeof value !== "string")
+    ) {
+      updateCategories(selectedCategories.value);
+    }
+    return;
+  }
+  // The inverse: string selections restored (from a shared configuration)
+  // onto a path that is numeric in this dataset match no value. Reset to the
+  // full histogram range, which passes everything, rather than hide it all.
+  if (
+    hist.value.length > 0 &&
+    (propertyFilter.value.values ?? []).some(
+      (value) => typeof value === "string",
+    )
+  ) {
+    defaultMinMax.value = true;
+    filterStore.updatePropertyFilter({
+      ...propertyFilter.value,
+      valuesOrRange: PropertyFilterMode.Range,
+      values: undefined,
+      range: { min: defaultMin.value, max: defaultMax.value },
+    });
+    initializeHandles();
+    return;
+  }
   // Once the server histogram (authoritative full-data range) arrives, sync the
   // stored default range to it — only while the user is still on defaults
   // (hasn't dragged a handle). Without this, a filter created before the
@@ -390,6 +479,9 @@ defineExpose({
   propertyFilter,
   propertyFullName,
   hist,
+  isCategorical,
+  selectedCategories,
+  updateCategories,
   area,
   initializeHandles,
   updateValuesFilter,

@@ -12,6 +12,10 @@ from ..helpers.access_helpers import (
     requireDatasetsAccess,
 )
 from ..helpers.validation import (
+    MAX_DISTINCT_SEARCH_LENGTH,
+    MAX_DISTINCT_VALUES,
+    isValidPropertyPath,
+    requireInt,
     requireList,
     requireObjectBody,
     requireObjectId,
@@ -36,6 +40,7 @@ class PropertyValues(Resource):
         self.route("GET", (), self.find)
         self.route("GET", ("count",), self.count)
         self.route("GET", ("histogram",), self.histogram)
+        self.route("GET", ("distinct",), self.distinct)
 
     # TODO: anytime a dataset is mentioned, load the dataset and check for
     #   existence and that the user has access to it
@@ -288,3 +293,64 @@ class PropertyValues(Resource):
             return self._annotationPropertyValuesModel.histogram(
                 params["propertyPath"], params["datasetId"]
             )
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description(
+            "List the distinct string values of a property in a dataset"
+        )
+        .notes(
+            "Returns {values: [{value, count}], truncated}, most common "
+            "first. Only string values are listed (numeric properties "
+            "filter by range). truncated is true when more distinct values "
+            "exist than limit; narrow with search."
+        )
+        .param("datasetId", "The id of the dataset")
+        .param(
+            "propertyPath",
+            "The path to the property, keys separated with dots",
+        )
+        .param(
+            "search",
+            "Keep only values containing this text (case-insensitive)",
+            required=False,
+        )
+        .param(
+            "limit",
+            "Maximum number of values to return (default and maximum %d)"
+            % MAX_DISTINCT_VALUES,
+            required=False,
+            dataType="integer",
+        )
+        .errorResponse()
+    )
+    def distinct(self, params):
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
+        propertyPath = (params.get("propertyPath") or "").split(".")
+        if not isValidPropertyPath(propertyPath):
+            raise RestException("propertyPath is not a valid path", code=400)
+        search = params.get("search") or ""
+        if len(search) > MAX_DISTINCT_SEARCH_LENGTH:
+            raise RestException(
+                "search must be at most %d characters"
+                % MAX_DISTINCT_SEARCH_LENGTH,
+                code=400,
+            )
+        limit = MAX_DISTINCT_VALUES
+        if params.get("limit") is not None:
+            limit = min(
+                max(requireInt(params["limit"], "limit"), 1),
+                MAX_DISTINCT_VALUES,
+            )
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True,
+        )
+        values, truncated = (
+            self._annotationPropertyValuesModel.distinctStringValues(
+                datasetId, propertyPath, search, limit
+            )
+        )
+        return {"values": values, "truncated": truncated}
