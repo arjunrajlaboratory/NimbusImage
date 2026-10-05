@@ -62,7 +62,7 @@ def _createAnnotations(datasetId, annotations):
         doc["datasetId"] = datasetId
         docs.append(doc)
 
-    # saveMany() inserts via insert_many(), which preserves list order,
+    # saveMany() returns the documents in the order it was given them,
     # so zipping the pre-creation old ids with the created docs lines
     # each new document up with the old id it came from.
     createdDocs = AnnotationModel().createMultiple(docs)

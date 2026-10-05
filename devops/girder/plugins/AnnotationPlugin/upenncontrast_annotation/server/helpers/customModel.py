@@ -2,11 +2,27 @@ from girder import events
 from girder.exceptions import ValidationException
 from girder.models.model_base import AccessControlledModel
 
-from pymongo.errors import BulkWriteError, WriteError
+from pymongo import InsertOne, ReplaceOne
+from pymongo.errors import BulkWriteError
 from bson.objectid import ObjectId
 
 from upenncontrast_annotation.server.helpers.serialization import \
     convertIdsToObjectIds
+
+
+def bulkWriteErrorMessage(error):
+    """Readable summary of a pymongo BulkWriteError.
+
+    ``error.details`` is a dict, so it must be formatted rather than
+    concatenated onto a message (issue #1357).
+    """
+    writeErrors = error.details.get("writeErrors") or []
+    if not writeErrors:
+        return str(error.details)
+    return "; ".join(
+        writeError.get("errmsg", str(writeError))
+        for writeError in writeErrors[:3]
+    )
 
 
 class CustomNimbusImageModel(AccessControlledModel):
@@ -46,34 +62,37 @@ class CustomNimbusImageModel(AccessControlledModel):
             if event.defaultPrevented:
                 return documents
 
-        idsToRemove = [
+        # Replace existing documents in place and insert new ones in a single
+        # bulk write. Each replacement is atomic per document: an earlier
+        # delete-then-insert let concurrent writers of the same documents
+        # race into E11000 duplicate-key errors after one had already
+        # deleted its batch (issue #1356).
+        replacedIds = [
             ObjectId(document["_id"])
             for document in documents
             if "_id" in document
         ]
-        if len(idsToRemove) > 0:
-            try:
-                self.removeWithQuery({"_id": {"$in": idsToRemove}})
-            except WriteError as e:
-                raise ValidationException(
-                    "Database save many failed while deleting duplicate keys: "
-                    + e.details
-                )
-
+        operations = []
+        for document in documents:
+            if "_id" in document:
+                document["_id"] = ObjectId(document["_id"])
+                operations.append(ReplaceOne(
+                    {"_id": document["_id"]}, document, upsert=True
+                ))
+            else:
+                # InsertOne sets the new _id on the document itself.
+                operations.append(InsertOne(document))
         try:
-            documentIds = self.collection.insert_many(documents).inserted_ids
+            self.collection.bulk_write(operations)
         except BulkWriteError as e:
             raise ValidationException(
-                "Database save many failed: " + e.details
-            )
-
-        for document, documentId in zip(documents, documentIds):
-            document["_id"] = documentId
+                "Database save many failed: %s" % bulkWriteErrorMessage(e)
+            ) from e
 
         if triggerEvents:
             events.trigger(
                 "model.%s.saveMany.after" % self.name,
-                {"newDocuments": documents, "removedIds": idsToRemove},
+                {"newDocuments": documents, "removedIds": replacedIds},
             )
 
         return documents

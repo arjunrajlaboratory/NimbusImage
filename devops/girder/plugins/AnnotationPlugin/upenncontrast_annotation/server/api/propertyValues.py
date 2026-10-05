@@ -7,7 +7,10 @@ from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
 
-from ..helpers.access_helpers import requireDatasetsAccess
+from ..helpers.access_helpers import (
+    requireAnnotationsInDatasets,
+    requireDatasetsAccess,
+)
 from ..helpers.validation import (
     MAX_DISTINCT_SEARCH_LENGTH,
     MAX_DISTINCT_VALUES,
@@ -68,6 +71,7 @@ class PropertyValues(Resource):
             level=AccessType.WRITE,
             exc=True,
         )
+        requireAnnotationsInDatasets([params])
         return self._annotationPropertyValuesModel.appendValues(
             self.getBodyJson(),
             params["annotationId"],
@@ -87,14 +91,18 @@ class PropertyValues(Resource):
         )
     )
     def addMultiple(self, params):
+        body = requireList(self.getBodyJson(), "Request body")
+        for entry in body:
+            requireObjectBody(entry, "Each property value entry")
         propertyValuesList = self._annotationPropertyValuesModel.\
-            convertIdsToObjectIds(self.getBodyJson())
+            convertIdsToObjectIds(body)
         datasetIds = {
             entry["datasetId"]
             for entry in propertyValuesList
             if "datasetId" in entry
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
+        requireAnnotationsInDatasets(propertyValuesList)
         return self._annotationPropertyValuesModel.appendMultipleValues(
             propertyValuesList
         )
