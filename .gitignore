@@ -50,3 +50,6 @@ src/**/*.js
 *.egg-info
 *.tox
 CLAUDE.local.md
+
+# Local scratch space (test data, API keys, demo assets)
+/tmp/
