@@ -673,6 +673,7 @@ import progress from "@/store/progress";
 import geojs from "geojs";
 import { formatDate } from "@/utils/date";
 import { downloadToClient } from "@/utils/download";
+import { buildSnapshotFilename } from "@/utils/snapshotFilename";
 import GIF from "gif.js";
 import { cloneDeep } from "lodash";
 import {
@@ -897,38 +898,9 @@ function sanitizeSnapshotFilename(name: string | null): string {
   return sanitized || "snapshot";
 }
 
-// macOS (and most filesystems) reject names over 255 bytes; Archive Utility
-// then extracts nothing and reports the whole ZIP as empty.
-const MAX_ZIP_ENTRY_NAME_BYTES = 255;
-const utf8Encoder = new TextEncoder();
-const utf8Length = (text: string) => utf8Encoder.encode(text).length;
-
-// Keep both ends: the start names the snapshot/layers, the end carries the
-// XY/T/Z coordinates that distinguish entries of one export.
-function truncateMiddleToBytes(text: string, maxBytes: number) {
-  if (utf8Length(text) <= maxBytes) {
-    return text;
-  }
-  // ASCII: fflate does not flag entry names as UTF-8, so some unzippers
-  // would misread a Unicode ellipsis.
-  const ellipsis = "...";
-  const chars = Array.from(text);
-  let headBudget = Math.floor((maxBytes - utf8Length(ellipsis)) / 2);
-  let tailBudget = maxBytes - utf8Length(ellipsis) - headBudget;
-  let head = "";
-  for (const char of chars) {
-    if (utf8Length(char) > headBudget) break;
-    head += char;
-    headBudget -= utf8Length(char);
-  }
-  let tail = "";
-  for (const char of chars.reverse()) {
-    if (utf8Length(char) > tailBudget) break;
-    tail = char + tail;
-    tailBudget -= utf8Length(char);
-  }
-  return `${head.trimEnd()}${ellipsis}${tail.trimStart()}`;
-}
+// Download URLs whose filename buildSnapshotFilename had to shorten, so the
+// download that eventually consumes them can tell the user.
+const shortenedFilenameUrls = new WeakSet<URL>();
 
 function getUniqueZipEntryName(name: string | null, filenames: Set<string>) {
   const sanitizedName = sanitizeSnapshotFilename(name);
@@ -936,14 +908,9 @@ function getUniqueZipEntryName(name: string | null, filenames: Set<string>) {
   const baseName =
     pointIdx > 0 ? sanitizedName.slice(0, pointIdx) : sanitizedName;
   const extension = pointIdx > 0 ? sanitizedName.slice(pointIdx) : "";
-  const fitName = (suffix: string) =>
-    `${truncateMiddleToBytes(
-      baseName,
-      MAX_ZIP_ENTRY_NAME_BYTES - utf8Length(suffix + extension),
-    )}${suffix}${extension}`;
-  let fileName = fitName("");
+  let fileName = sanitizedName;
   for (let counter = 1; filenames.has(fileName); counter++) {
-    fileName = fitName(` (${counter})`);
+    fileName = `${baseName} (${counter})${extension}`;
   }
   filenames.add(fileName);
   return fileName;
@@ -2144,8 +2111,17 @@ async function getUrlsForSnapshot(
       for (const { url, channel } of channelUrls) {
         const channelName =
           dataset.channelNames.get(channel) ?? "Unknown channel";
-        const fileName = `${name} - ${channelName} - ${dataset.name} - ${configurationName} - ${dateStr}${coordinateSuffix}.${extension}`;
+        const { fileName, shortened } = buildSnapshotFilename({
+          snapshotName: name,
+          label: channelName,
+          datasetName: dataset.name,
+          configurationName,
+          dateStr,
+          coordinateSuffix,
+          extension,
+        });
         url.searchParams.set("contentDispositionFilename", fileName);
+        if (shortened) shortenedFilenameUrls.add(url);
         urls.push(url);
       }
     } else {
@@ -2163,8 +2139,17 @@ async function getUrlsForSnapshot(
             layers.find((layer) => layer.id === layerId)?.name ??
             "Unknown layer",
         );
-        const fileName = `${name} - ${layerNames.join(" ")} - ${dataset.name} - ${configurationName} - ${dateStr}${coordinateSuffix}.${extension}`;
+        const { fileName, shortened } = buildSnapshotFilename({
+          snapshotName: name,
+          label: layerNames.join(" "),
+          datasetName: dataset.name,
+          configurationName,
+          dateStr,
+          coordinateSuffix,
+          extension,
+        });
         url.searchParams.set("contentDispositionFilename", fileName);
+        if (shortened) shortenedFilenameUrls.add(url);
         urls.push(url);
       }
     }
@@ -2214,6 +2199,17 @@ async function downloadUrls(
   if (urls.length <= 0) {
     return;
   }
+  const shortenedNames = urls.some(({ url }) => shortenedFilenameUrls.has(url));
+  const warnShortenedNames = () => {
+    if (!shortenedNames) return;
+    progress.createNotification({
+      type: NotificationType.WARNING,
+      title: "File names shortened",
+      message:
+        'Some file names were too long to save or unzip reliably, so their longest parts (collection and dataset names first) were shortened with "...". XY/T/Z positions are always kept.',
+      timeout: 10,
+    });
+  };
 
   if (urls.length === 1) {
     const { url, scalebarSpec } = urls[0];
@@ -2234,6 +2230,7 @@ async function downloadUrls(
     } finally {
       URL.revokeObjectURL(objectUrl);
     }
+    warnShortenedNames();
     return;
   }
 
@@ -2266,19 +2263,14 @@ async function downloadUrls(
       level: ["jpeg", "png"].includes(format.value) ? 0 : 9,
     };
     const filenames: Set<string> = new Set();
-    let shortenedNames = false;
-    const zipEntries = urls.map(({ url, scalebarSpec }) => {
-      const requestedName =
-        url.searchParams.get("contentDispositionFilename") || "snapshot";
-      shortenedNames ||=
-        utf8Length(sanitizeSnapshotFilename(requestedName)) >
-        MAX_ZIP_ENTRY_NAME_BYTES;
-      return {
-        url,
-        scalebarSpec,
-        fileName: getUniqueZipEntryName(requestedName, filenames),
-      };
-    });
+    const zipEntries = urls.map(({ url, scalebarSpec }) => ({
+      url,
+      scalebarSpec,
+      fileName: getUniqueZipEntryName(
+        url.searchParams.get("contentDispositionFilename") || "snapshot",
+        filenames,
+      ),
+    }));
     // The region endpoint serves one image per request. Process sequentially
     // so a large stack does not allocate all decoded crops at once.
     for (const [
@@ -2312,15 +2304,7 @@ async function downloadUrls(
     };
     downloadToClient(params);
     URL.revokeObjectURL(dataURL);
-    if (shortenedNames) {
-      progress.createNotification({
-        type: NotificationType.WARNING,
-        title: "File names shortened",
-        message:
-          'Some file names were too long to unzip, so their middle was replaced with "...". The start and end of each name, including any XY/T/Z position, are kept.',
-        timeout: 10,
-      });
-    }
+    warnShortenedNames();
   } finally {
     zip.terminate();
     if (!batchProgressId) progress.complete(progressId);

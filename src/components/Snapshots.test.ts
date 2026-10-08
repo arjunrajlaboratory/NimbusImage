@@ -1892,7 +1892,7 @@ describe("Snapshots.vue", () => {
       });
     });
 
-    it("downloadUrls keeps zip entry names within the 255-byte filename limit and warns", async () => {
+    it("shortens long snapshot filenames but keeps channel names and warns", async () => {
       Object.assign(URL, {
         createObjectURL: vi.fn(() => "blob:snapshot"),
         revokeObjectURL: vi.fn(),
@@ -1900,29 +1900,37 @@ describe("Snapshots.vue", () => {
       (store.api.getSnapshotImage as any)
         .mockResolvedValueOnce(new ArrayBuffer(1))
         .mockResolvedValueOnce(new ArrayBuffer(1));
+      mockedGetChannelsDownloadUrls.mockReturnValueOnce([
+        { url: new URL("http://localhost/api/v1/channel1"), channel: 1 },
+        { url: new URL("http://localhost/api/v1/channel2"), channel: 2 },
+      ]);
+      (wrapper.vm as any).downloadMode = "channels";
+      (wrapper.vm as any).exportChannel = "all";
 
-      // Two exports whose long names differ only in the coordinate suffix, and
-      // a multi-byte character to check the limit is in bytes, not characters.
-      const longName = (time: number) =>
-        `snap - ${"Layér ".repeat(40)}- dataset - collection - XY1_T${time}_Z1.tiff`;
-      const urls = [1, 2].map((time) => {
-        const url = new URL(`http://localhost/api/v1/${time}`);
-        url.searchParams.set("contentDispositionFilename", longName(time));
-        return { url, scalebarSpec: null };
-      });
-
-      await (wrapper.vm as any).downloadUrls(urls);
+      // A long snapshot name would push the channel name into a plain
+      // middle cut; the multi-byte "é" checks the limit is in bytes.
+      const urls = await (wrapper.vm as any).getUrlsForSnapshot(
+        { xy: 0, z: 0, time: 0 },
+        { left: 0, top: 0, right: 100, bottom: 100 },
+        "dataset1",
+        "Snapshot ".repeat(15),
+        (store as any).layers,
+        `Collection ${"é".repeat(120)}`,
+      );
+      await (wrapper.vm as any).downloadUrls(
+        urls.map((url: URL) => ({ url, scalebarSpec: null })),
+      );
 
       const entryNames = mockedZipDeflate.mock.calls.map(
         ([fileName]) => fileName as string,
       );
       expect(entryNames).toHaveLength(2);
-      for (const [index, entryName] of entryNames.entries()) {
-        expect(new TextEncoder().encode(entryName).length).toBeLessThanOrEqual(
-          255,
-        );
-        expect(entryName.startsWith("snap - Layér")).toBe(true);
-        expect(entryName.endsWith(`XY1_T${index + 1}_Z1.tiff`)).toBe(true);
+      for (const [index, channelName] of ["GFP", "RFP"].entries()) {
+        expect(
+          new TextEncoder().encode(entryNames[index]).length,
+        ).toBeLessThanOrEqual(200);
+        expect(entryNames[index]).toContain(` - ${channelName} - `);
+        expect(entryNames[index]).not.toMatch(/\(\d+\)/);
       }
       expect(mockedProgress.createNotification).toHaveBeenCalledTimes(1);
       expect(mockedProgress.createNotification).toHaveBeenCalledWith(
