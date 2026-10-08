@@ -3077,6 +3077,9 @@ export interface IDimensionStrategy {
   T: { source: "file" | "filename" | "images"; guess: string } | null;
   C: { source: "file" | "filename" | "images"; guess: string } | null;
   transcode: boolean;
+  // Whether Composite was ticked; absent in strategies saved before it was
+  // recorded (treated as off).
+  composite?: boolean;
 }
 
 // Self-accept HMR to prevent vuex-module-decorators from re-registering

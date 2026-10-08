@@ -126,7 +126,8 @@ curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"dryRun": true}' \
   "http://localhost:8080/api/v1/dataset/$DATASET_ID/multi_source"
 
-# Configure for real (transcode defaults to true unless every file is .nd2)
+# Configure for real (transcode defaults to true unless every file is .nd2,
+# and also when compositing more than 16 tiles, i.e. stage positions)
 curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"transcode": false}' \
   "http://localhost:8080/api/v1/dataset/$DATASET_ID/multi_source"
@@ -174,8 +175,40 @@ A second call on a configured folder returns 409.
 On success the response has `itemId` (the new `multi-source2.json`), `jobId`
 (the transcode job, or `null`), `collectionId` / `viewId` (or `null` with
 `createView: false`), the config, and `compositing` — whether compositing was
-actually applied, which needs a single source with ND2 frame metadata and
-collapses XY to one position when it happens.
+actually applied, which needs ND2 files with stage positions (one
+multi-position file, or one file per tile with XY assigned) and collapses XY to
+one position when it happens.
+
+**Compositing a folder of tiles** (one single-position `.nd2` per field, e.g.
+Nikon's `…_Point1_0001_…_Seq0001.nd2`): the filename parser guesses the bare
+tile number as `C`, so a dry run shows it as a `filename`/`C` variable with
+`assignments.XY` null. Move it to XY and ask for compositing in the same call:
+
+```bash
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"assignments": {"XY": {"source": "filename", "guess": "C"},
+                       "C": {"source": "file", "guess": "C"}},
+       "enableCompositing": true, "transcode": false}' \
+  "http://localhost:8080/api/v1/dataset/$DATASET_ID/multi_source"
+```
+
+Every file must have stage positions and the same `sizeX`/`sizeY`/`mm_x`/
+`mm_y`. Asking for compositing when that does not hold is a 400 on a real run
+(the dry run's `validationError`), never a quiet fallback to separate XY
+positions. `compositingCheck` (`{error, warning}`) explains the layout
+whenever compositing is possible: an `error` (two XY positions at the same
+stage position) refuses it, and a real run that asked for compositing then
+returns 400; a `warning` (tiles covering under 25% of the mosaic, e.g. two
+wells) does not; `tileCount` counts the composited tiles. Compositing more
+than 16 tiles (stage positions, from many files or one multi-position file)
+transcodes by default.
+
+`GET /dataset/{id}/source_metadata?itemIds=[...]` (≤100 ids, folder READ)
+returns `[{itemId, tiles, internalMetadata}]` — tile metadata plus internal
+metadata slimmed to what configuration reads — or `{itemId, error}` for an
+item it cannot read, with `notReady: true` when that item is still being
+marked or converted (retry those). The configuration screen uses it in
+batches of 50.
 
 **`jobId` is yours to check.** The response returns once the transcode is
 queued. If that job later fails, the dataset stays configured with a broken

@@ -144,6 +144,11 @@
       "xy": null,
       "z": null,
       "t": null
+    },
+    "compositingCheck": {
+      "error": null,
+      "warning": null,
+      "tileCount": null
     }
   }
 }

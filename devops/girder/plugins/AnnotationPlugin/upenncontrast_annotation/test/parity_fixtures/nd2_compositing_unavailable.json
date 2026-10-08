@@ -1,0 +1,50 @@
+{
+  "name": "nd2_compositing_unavailable",
+  "kind": "validation",
+  "description": "Composite requested (e.g. by a saved batch strategy) for a file that cannot be composited by stage position (no ND2 stage metadata). Both ends refuse with the same message instead of silently configuring separate XY positions: the component's submitError and generateJson, and the API's validationError (a 400 on a real run).",
+  "input": {
+    "itemNames": [
+      "image.tif"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 10,
+        "mm_x": 0.001,
+        "mm_y": 0.001,
+        "sizeX": 512,
+        "sizeY": 512,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "IndexT": 0,
+            "IndexZ": 0,
+            "IndexC": 0,
+            "IndexXY": 0
+          }
+        ],
+        "channels": [
+          "Default"
+        ],
+        "bandCount": 1,
+        "IndexRange": null,
+        "IndexStride": null
+      }
+    ],
+    "tilesInternalMetadata": [
+      {}
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": true,
+      "assignmentStrategy": null
+    }
+  },
+  "expected": {
+    "submitError": "Composite was requested, but these files cannot be laid out by stage position: that needs ND2 stage positions for every frame, one tile size, pixel size and camera orientation, and (for several files) an XY assignment that tells them apart. Leave Composite off to configure them as separate XY positions.",
+    "generationErrorMessage": "Composite was requested, but these files cannot be laid out by stage position: that needs ND2 stage positions for every frame, one tile size, pixel size and camera orientation, and (for several files) an XY assignment that tells them apart. Leave Composite off to configure them as separate XY positions.",
+    "generatedItemId": null,
+    "configUploaded": false
+  }
+}

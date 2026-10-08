@@ -509,6 +509,11 @@
         "5 min",
         "7.5 min"
       ]
+    },
+    "compositingCheck": {
+      "error": null,
+      "warning": null,
+      "tileCount": null
     }
   }
 }

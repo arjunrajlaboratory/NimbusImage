@@ -179,6 +179,9 @@ Review base: `master` (`da7a9e4e`)
   removeWithQuery + insert_many, whose internal remove would otherwise bump
   the global epoch. Replacing the ambient flag with explicit argument
   threading is a legibility refactor tracked as a follow-up issue.
+  _Update (issues #1356/#1357):_ `saveMany` now replaces documents in place
+  with one `bulk_write` (no removeWithQuery), so `Annotation.saveMany` no
+  longer sets the flag; only `remove()` still does.
 
 ## R15 — Stub-free handoff not gated on raster availability (Codex round, P2)
 

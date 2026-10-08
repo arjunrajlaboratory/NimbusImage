@@ -139,7 +139,9 @@ class TestAtomicPropertyValues:
 
         monkeypatch.setattr(model.collection, 'replace_one', noReplacement)
         monkeypatch.setattr(model.collection, 'insert_many', noReplacement)
-        values = {'ordinary': '$literal', 'spatialCopy': {'CD3E': 0}}
+        # Rewriting a property replaces its value (test_save_many); an
+        # append must leave the properties it does not carry untouched.
+        values = {'ordinary': '$literal'}
         if bulk:
             result = model.appendMultipleValues([{
                 'datasetId': datasetId, 'annotationId': annotationId,

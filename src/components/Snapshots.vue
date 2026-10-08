@@ -673,6 +673,7 @@ import progress from "@/store/progress";
 import geojs from "geojs";
 import { formatDate } from "@/utils/date";
 import { downloadToClient } from "@/utils/download";
+import { buildSnapshotFilename } from "@/utils/snapshotFilename";
 import GIF from "gif.js";
 import { cloneDeep } from "lodash";
 import {
@@ -689,6 +690,7 @@ import {
   IGeoJSMap,
   ISnapshot,
   copyLayerWithoutPrivateAttributes,
+  NotificationType,
   ProgressType,
   TUnitLength,
 } from "@/store/model";
@@ -895,6 +897,10 @@ function sanitizeSnapshotFilename(name: string | null): string {
     .trim();
   return sanitized || "snapshot";
 }
+
+// Download URLs whose filename buildSnapshotFilename had to shorten, so the
+// download that eventually consumes them can tell the user.
+const shortenedFilenameUrls = new WeakSet<URL>();
 
 function getUniqueZipEntryName(name: string | null, filenames: Set<string>) {
   const sanitizedName = sanitizeSnapshotFilename(name);
@@ -2105,8 +2111,17 @@ async function getUrlsForSnapshot(
       for (const { url, channel } of channelUrls) {
         const channelName =
           dataset.channelNames.get(channel) ?? "Unknown channel";
-        const fileName = `${name} - ${channelName} - ${dataset.name} - ${configurationName} - ${dateStr}${coordinateSuffix}.${extension}`;
+        const { fileName, shortened } = buildSnapshotFilename({
+          snapshotName: name,
+          label: channelName,
+          datasetName: dataset.name,
+          configurationName,
+          dateStr,
+          coordinateSuffix,
+          extension,
+        });
         url.searchParams.set("contentDispositionFilename", fileName);
+        if (shortened) shortenedFilenameUrls.add(url);
         urls.push(url);
       }
     } else {
@@ -2124,8 +2139,17 @@ async function getUrlsForSnapshot(
             layers.find((layer) => layer.id === layerId)?.name ??
             "Unknown layer",
         );
-        const fileName = `${name} - ${layerNames.join(" ")} - ${dataset.name} - ${configurationName} - ${dateStr}${coordinateSuffix}.${extension}`;
+        const { fileName, shortened } = buildSnapshotFilename({
+          snapshotName: name,
+          label: layerNames.join(" "),
+          datasetName: dataset.name,
+          configurationName,
+          dateStr,
+          coordinateSuffix,
+          extension,
+        });
         url.searchParams.set("contentDispositionFilename", fileName);
+        if (shortened) shortenedFilenameUrls.add(url);
         urls.push(url);
       }
     }
@@ -2175,6 +2199,17 @@ async function downloadUrls(
   if (urls.length <= 0) {
     return;
   }
+  const shortenedNames = urls.some(({ url }) => shortenedFilenameUrls.has(url));
+  const warnShortenedNames = () => {
+    if (!shortenedNames) return;
+    progress.createNotification({
+      type: NotificationType.WARNING,
+      title: "File names shortened",
+      message:
+        'Some file names were too long to save or unzip reliably, so their longest parts (collection and dataset names first) were shortened with "...". XY/T/Z positions are always kept.',
+      timeout: 10,
+    });
+  };
 
   if (urls.length === 1) {
     const { url, scalebarSpec } = urls[0];
@@ -2195,6 +2230,7 @@ async function downloadUrls(
     } finally {
       URL.revokeObjectURL(objectUrl);
     }
+    warnShortenedNames();
     return;
   }
 
@@ -2268,6 +2304,7 @@ async function downloadUrls(
     };
     downloadToClient(params);
     URL.revokeObjectURL(dataURL);
+    warnShortenedNames();
   } finally {
     zip.terminate();
     if (!batchProgressId) progress.complete(progressId);

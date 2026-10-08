@@ -180,9 +180,9 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # The property-values model, for PV-driven list queries. Girder
         # model instances are cached singletons, so this is cheap.
         self._pvModel = AnnotationPropertyValues()
-        # saveMany replaces existing rows through removeWithQuery. Suppress
-        # that internal removal's broad invalidation in the current thread;
-        # saveMany bumps the saved documents' datasets after success.
+        # Suppress removeWithQuery's broad invalidation for removals made
+        # while remove() runs in the current thread; remove() bumps the
+        # removed document's dataset itself after success.
         self._rasterMutationState = threading.local()
 
     jsonValidate = staticmethod(
@@ -264,14 +264,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
     def saveMany(self, documents, validate=True, triggerEvents=True):
         for document in documents:
             self._setGeometryHash(document)
-        previous = getattr(
-            self._rasterMutationState, "suppressRemoveBump", False
-        )
-        self._rasterMutationState.suppressRemoveBump = True
-        try:
-            saved = super().saveMany(documents, validate, triggerEvents)
-        finally:
-            self._rasterMutationState.suppressRemoveBump = previous
+        saved = super().saveMany(documents, validate, triggerEvents)
         for datasetId in set(
             document.get("datasetId") for document in saved
         ):

@@ -52,3 +52,6 @@ src/**/*.js
 CLAUDE.local.md
 # setuptools build output from installing a sibling plugin in tox
 devops/girder/plugins/*/build/
+
+# Local scratch space (test data, API keys, demo assets)
+/tmp/

@@ -1,0 +1,222 @@
+{
+  "name": "nd2_compositing_duplicate",
+  "description": "Three single-position ND2 tiles where the third re-images the first field (3 um away, within stage error), with Composite requested. Both ends refuse: the component sets submitError and generateJson emits a generation error without uploading (so an automated batch submit fails), and the API reports the same message as validationError (a 400 on a real run).",
+  "input": {
+    "itemNames": [
+      "Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2",
+      "Well1_Point1_3118_ChannelCTG,DAPI_Seq3118.nd2",
+      "Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2"
+    ],
+    "tilesMetadata": [
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "Frame": 0,
+            "IndexC": 0,
+            "Index": 0,
+            "Channel": "CTG"
+          },
+          {
+            "Frame": 1,
+            "IndexC": 1,
+            "Index": 0,
+            "Channel": "DAPI"
+          }
+        ],
+        "channels": [
+          "CTG",
+          "DAPI"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      },
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "Frame": 0,
+            "IndexC": 0,
+            "Index": 0,
+            "Channel": "CTG"
+          },
+          {
+            "Frame": 1,
+            "IndexC": 1,
+            "Index": 0,
+            "Channel": "DAPI"
+          }
+        ],
+        "channels": [
+          "CTG",
+          "DAPI"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      },
+      {
+        "levels": 1,
+        "magnification": 40,
+        "mm_x": 0.0005,
+        "mm_y": 0.0005,
+        "sizeX": 1024,
+        "sizeY": 1024,
+        "tileWidth": 256,
+        "tileHeight": 256,
+        "frames": [
+          {
+            "Frame": 0,
+            "IndexC": 0,
+            "Index": 0,
+            "Channel": "CTG"
+          },
+          {
+            "Frame": 1,
+            "IndexC": 1,
+            "Index": 0,
+            "Channel": "DAPI"
+          }
+        ],
+        "channels": [
+          "CTG",
+          "DAPI"
+        ],
+        "bandCount": 1,
+        "IndexRange": {
+          "IndexC": 2
+        },
+        "IndexStride": {
+          "IndexC": 1
+        }
+      }
+    ],
+    "tilesInternalMetadata": [
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                1000,
+                -2000,
+                2945
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": [
+            {
+              "volume": {
+                "cameraTransformationMatrix": [
+                  -0.9999992536874144,
+                  0.0012217301724580128,
+                  -0.0012217301724580128,
+                  -0.9999992536874144
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                488,
+                -2000,
+                2945
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": [
+            {
+              "volume": {
+                "cameraTransformationMatrix": [
+                  -0.9999992536874144,
+                  0.0012217301724580128,
+                  -0.0012217301724580128,
+                  -0.9999992536874144
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "nd2_frame_metadata": [
+          {
+            "position": {
+              "stagePositionUm": [
+                1003,
+                -2000,
+                2945
+              ]
+            }
+          }
+        ],
+        "nd2": {
+          "channels": [
+            {
+              "volume": {
+                "cameraTransformationMatrix": [
+                  -0.9999992536874144,
+                  0.0012217301724580128,
+                  -0.0012217301724580128,
+                  -0.9999992536874144
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "options": {
+      "splitRGBBands": true,
+      "enableCompositing": true,
+      "assignmentStrategy": {
+        "XY": {
+          "source": "filename",
+          "guess": "C"
+        },
+        "C": {
+          "source": "file",
+          "guess": "C"
+        }
+      }
+    }
+  },
+  "expected": {
+    "submitError": "\"Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2\" (XY 1) and \"Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2\" (XY 3) are at the same stage position, so compositing would draw one on top of the other. Remove the duplicate, or leave Composite off to keep them as separate XY positions.",
+    "generationErrorMessage": "\"Well1_Point1_3117_ChannelCTG,DAPI_Seq3117.nd2\" (XY 1) and \"Well1_Point1_3119_ChannelCTG,DAPI_Seq3119.nd2\" (XY 3) are at the same stage position, so compositing would draw one on top of the other. Remove the duplicate, or leave Composite off to keep them as separate XY positions.",
+    "generatedItemId": null,
+    "configUploaded": false
+  },
+  "kind": "validation"
+}

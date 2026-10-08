@@ -1,6 +1,6 @@
 {
   "name": "nd2_compositing_flipped",
-  "description": "Same as nd2_compositing_identity but the camera transform is flipped [-1,0,0,-1], exercising the s=(-1,0,0,-1) branch.",
+  "description": "Same as nd2_compositing_identity but the camera transform is flipped [-1,0,0,-1], exercising the s=(-1,0,0,-1) branch. One nd2_frame_metadata entry per camera frame (4 positions), as real ND2 files record them.",
   "input": {
     "itemNames": [
       "composite.nd2"
@@ -95,24 +95,6 @@
           {
             "position": {
               "stagePositionUm": [
-                0,
-                0,
-                0
-              ]
-            }
-          },
-          {
-            "position": {
-              "stagePositionUm": [
-                512,
-                0,
-                0
-              ]
-            }
-          },
-          {
-            "position": {
-              "stagePositionUm": [
                 512,
                 0,
                 0
@@ -123,24 +105,6 @@
             "position": {
               "stagePositionUm": [
                 0,
-                512,
-                0
-              ]
-            }
-          },
-          {
-            "position": {
-              "stagePositionUm": [
-                0,
-                512,
-                0
-              ]
-            }
-          },
-          {
-            "position": {
-              "stagePositionUm": [
-                512,
                 512,
                 0
               ]
@@ -243,7 +207,7 @@
             2
           ],
           "position": {
-            "x": 1024,
+            "x": 2048,
             "y": 2048,
             "s11": -1,
             "s12": 0,
@@ -261,7 +225,7 @@
             3
           ],
           "position": {
-            "x": 1024,
+            "x": 2048,
             "y": 2048,
             "s11": -1,
             "s12": 0,
@@ -279,8 +243,8 @@
             4
           ],
           "position": {
-            "x": 2048,
-            "y": 2048,
+            "x": 1024,
+            "y": 1024,
             "s11": -1,
             "s12": 0,
             "s21": 0,
@@ -297,8 +261,8 @@
             5
           ],
           "position": {
-            "x": 2048,
-            "y": 2048,
+            "x": 1024,
+            "y": 1024,
             "s11": -1,
             "s12": 0,
             "s21": 0,
@@ -316,7 +280,7 @@
           ],
           "position": {
             "x": 2048,
-            "y": 2048,
+            "y": 1024,
             "s11": -1,
             "s12": 0,
             "s21": 0,
@@ -334,7 +298,7 @@
           ],
           "position": {
             "x": 2048,
-            "y": 2048,
+            "y": 1024,
             "s11": -1,
             "s12": 0,
             "s21": 0,
@@ -346,9 +310,14 @@
       "singleBand": false
     },
     "dimensionLabels": {
-      "xy": [],
+      "xy": null,
       "z": null,
       "t": null
+    },
+    "compositingCheck": {
+      "error": null,
+      "warning": null,
+      "tileCount": 4
     }
   }
 }

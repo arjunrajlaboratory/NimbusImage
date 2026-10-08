@@ -17,14 +17,42 @@ const mockScheduleMaxMergeCache = vi.fn().mockResolvedValue(undefined);
 const mockScheduleHistogramCache = vi.fn().mockResolvedValue(undefined);
 const mockSetUploadDimensionStrategy = vi.fn();
 
+// The component fetches metadata in batches (getSourceMetadata); answer
+// each batch from the per-item mocks, keyed by the items getItems returned,
+// turning a rejection into that item's `error` as the endpoint does.
+async function sourceMetadataFromItemMocks(
+  _datasetId: string,
+  itemIds: string[],
+) {
+  const results = mockGetItems.mock.results;
+  const items: any[] = (await results[results.length - 1]?.value) ?? [];
+  return Promise.all(
+    itemIds.map(async (itemId) => {
+      const item = items.find((i) => i._id === itemId) ?? { _id: itemId };
+      try {
+        return {
+          itemId,
+          tiles: await mockGetTiles(item),
+          internalMetadata: await mockGetTilesInternalMetadata(item),
+        };
+      } catch (error: any) {
+        return {
+          itemId,
+          error:
+            error?.response?.data?.message ?? error?.message ?? String(error),
+        };
+      }
+    }),
+  );
+}
+
 // --- Store mock (mirrors MultiSourceConfiguration.test.ts) ---
 vi.mock("@/store", () => ({
   default: {
     api: {
       getItems: (...args: any[]) => mockGetItems(...args),
-      getTiles: (...args: any[]) => mockGetTiles(...args),
-      getTilesInternalMetadata: (...args: any[]) =>
-        mockGetTilesInternalMetadata(...args),
+      getSourceMetadata: (datasetId: string, itemIds: string[]) =>
+        sourceMetadataFromItemMocks(datasetId, itemIds),
       createLargeImage: (...args: any[]) => mockCreateLargeImage(...args),
       updateDatasetMetadata: (...args: any[]) =>
         mockUpdateDatasetMetadata(...args),
@@ -281,13 +309,14 @@ describe("MultiSourceConfig parity", () => {
 
         // Apply options.
         vm.splitRGBBands = options.splitRGBBands;
-        vm.enableCompositing = options.enableCompositing;
         if (options.assignmentStrategy) {
           vm.applyDimensionStrategy(
             buildFullStrategy(vm, options.assignmentStrategy),
           );
           await nextTick();
         }
+        // After the strategy, which restores its own saved Composite choice.
+        vm.enableCompositing = options.enableCompositing;
 
         mockAddMultiSourceMetadata.mockClear();
         mockUpdateDatasetMetadata.mockClear();
@@ -310,6 +339,7 @@ describe("MultiSourceConfig parity", () => {
           transcodeDefault,
           config,
           dimensionLabels,
+          compositingCheck: vm.compositingCheckResult,
         };
 
         if (UPDATE_GOLDENS) {
@@ -361,13 +391,14 @@ describe("MultiSourceConfig parity", () => {
         await nextTick();
 
         vm.splitRGBBands = options.splitRGBBands;
-        vm.enableCompositing = options.enableCompositing;
         if (options.assignmentStrategy) {
           vm.applyDimensionStrategy(
             buildFullStrategy(vm, options.assignmentStrategy),
           );
           await nextTick();
         }
+        // After the strategy, which restores its own saved Composite choice.
+        vm.enableCompositing = options.enableCompositing;
 
         // submitError is what disables Submit; generationErrorMessage is what
         // generateJson reports if it is called anyway.

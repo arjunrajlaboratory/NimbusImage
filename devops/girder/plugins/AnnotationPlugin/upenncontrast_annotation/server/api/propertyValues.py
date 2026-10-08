@@ -7,7 +7,10 @@ from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
 
-from ..helpers.access_helpers import requireDatasetsAccess
+from ..helpers.access_helpers import (
+    requireAnnotationsInDatasets,
+    requireDatasetsAccess,
+)
 from ..helpers.serialization import jsonSafe
 from ..helpers.validation import (
     MAX_DISTINCT_SEARCH_LENGTH,
@@ -23,7 +26,6 @@ from ..helpers.validation import (
 from ..models.propertyValues import (
     AnnotationPropertyValues as PropertyValuesModel,
 )
-from ..models.annotation import Annotation
 
 
 class PropertyValues(Resource):
@@ -40,34 +42,6 @@ class PropertyValues(Resource):
         self.route("GET", ("count",), self.count)
         self.route("GET", ("histogram",), self.histogram)
         self.route("GET", ("distinct",), self.distinct)
-
-    def _requireAnnotationDatasets(self, entries):
-        # Dataset WRITE alone does not authorize an annotationId supplied by
-        # the caller. Global annotation-keyed upserts must not rehome another
-        # dataset's values. Validate the entire batch before the first write.
-        if not entries:
-            return
-        if not all(isinstance(entry, dict) for entry in entries):
-            raise RestException("Property values must be objects", code=400)
-        annotationDatasets = {
-            annotation['_id']: annotation['datasetId']
-            for annotation in Annotation().find({
-                '_id': {'$in': list({
-                    entry.get('annotationId') for entry in entries
-                })},
-                'datasetId': {'$in': list({
-                    entry.get('datasetId') for entry in entries
-                })},
-            }, fields=['_id', 'datasetId'])
-        }
-        if any(
-            entry.get('annotationId') not in annotationDatasets or
-            annotationDatasets[entry['annotationId']] != entry.get('datasetId')
-            for entry in entries
-        ):
-            raise RestException(
-                "Each annotation must belong to its supplied dataset", code=400
-            )
 
     # TODO: anytime a dataset is mentioned, load the dataset and check for
     #   existence and that the user has access to it
@@ -98,7 +72,7 @@ class PropertyValues(Resource):
             level=AccessType.WRITE,
             exc=True,
         )
-        self._requireAnnotationDatasets([params])
+        requireAnnotationsInDatasets([params])
         return jsonSafe(self._annotationPropertyValuesModel.appendValues(
             self.getBodyJson(),
             params["annotationId"],
@@ -118,15 +92,18 @@ class PropertyValues(Resource):
         )
     )
     def addMultiple(self, params):
+        body = requireList(self.getBodyJson(), "Request body")
+        for entry in body:
+            requireObjectBody(entry, "Each property value entry")
         propertyValuesList = self._annotationPropertyValuesModel.\
-            convertIdsToObjectIds(self.getBodyJson())
+            convertIdsToObjectIds(body)
         datasetIds = {
             entry["datasetId"]
             for entry in propertyValuesList
             if "datasetId" in entry
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
-        self._requireAnnotationDatasets(propertyValuesList)
+        requireAnnotationsInDatasets(propertyValuesList)
         return jsonSafe(
             self._annotationPropertyValuesModel.appendMultipleValues(
                 propertyValuesList

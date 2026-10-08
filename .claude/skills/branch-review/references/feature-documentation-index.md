@@ -14,6 +14,7 @@ Use this index to load relevant architecture docs when reviewing feature-specifi
 | Batch property compute | `codebaseDocumentation/BATCH_PROPERTY_COMPUTE.md` |
 | Annotation rendering / draw path / stubs / hydration / z-scrub perf | `codebaseDocumentation/ANNOTATION-STUBS.md`, `codebaseDocumentation/ANNOTATION_PERFORMANCE_OPTIMIZATIONS.md`, `codebaseDocumentation/ZSCRUB_FEATURE_REUSE.md`, `codebaseDocumentation/VIEWPORT-BOUND-BUDGET.md` |
 | Component tests (`*.test.ts` under `src/components/`), watcher/draw/mock behavior | `codebaseDocumentation/FRONTEND_COMPONENT_TESTING.md` |
+| Dataset configuration, multi-source, compositing | `codebaseDocumentation/MULTIFILE_ND2_COMPOSITING.md` |
 
 ## File Pattern -> Feature Area Mapping
 
@@ -27,6 +28,7 @@ Use this index to load relevant architecture docs when reviewing feature-specifi
 | `AnnotationProperties.vue`, `computePropertyBatch` | Batch property |
 | `AnnotationViewer.vue`, `ImageViewer.vue`, `utils/annotation.ts` draw/stub helpers | Annotation rendering |
 | `*.test.ts` under `src/components/` (mounting components) | Component tests |
+| `MultiSourceConfiguration.vue`, `utils/ND2Compositing.ts`, `helpers/multi_source.py`, `helpers/filename_parsing.py`, `utils/parsing.ts`, `api/dataset.py` `multi_source` | Dataset configuration / compositing |
 
 ## Cross-Cutting Patterns
 

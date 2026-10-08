@@ -222,6 +222,47 @@ The API and model layers have strict responsibilities. Never mix them.
 - Must be abstract from HTTP/API concerns
 - Should not know about request parameters or HTTP status codes
 
+### Validating caller input is an API job — even when the model "could" do it
+
+The layer rule is about **whose data it is**, not which exception type gets
+raised. A check that asks *"is what this caller sent consistent with what they
+are authorized for?"* — does this `annotationId` belong to the `datasetId`
+they have WRITE on, does this property id exist in this dataset, is this
+parent in the same dataset as the child — is input validation, and it goes in
+the API method (or a `server/helpers/` function the API calls), next to the
+access check it completes. The model receives already-validated data and does
+the DB modification (pchoisel, PR #1358: *"This check needs to be done at the
+API level, not in the model. The API is responsible for validating the input
+data and passing it to the model for the DB modification"*).
+
+- Raising `ValidationException` instead of `RestException` does **not** make a
+  request-input check belong in the model. PR #1358 put a
+  "annotation belongs to dataset" lookup in
+  `AnnotationPropertyValues.appendMultipleValues` raising
+  `ValidationException`; it passed every layer grep and was still flagged.
+- Putting it in the model also taxes internal callers that already know the
+  answer (the import path writes values for annotations it just created in
+  that dataset) and forces tests to bypass the model (`collection.insert_one`)
+  to set up legitimate fixtures — both are tells the check is misplaced.
+- When several endpoints need the same check, write it once in
+  `server/helpers/` (e.g. `requireAnnotationsInDatasets` in
+  `helpers/access_helpers.py`, beside `requireDatasetsAccess`), batch-load with
+  `$in`, raise `RestException(code=400)`, and call it from each endpoint.
+- Document the precondition in the model method's docstring ("callers must
+  ensure each annotation belongs to its datasetId") so internal callers know
+  the model trusts them.
+- Test it at the endpoint (`server.request(...)` → `assertStatus(resp, 400)`),
+  not by calling the model directly.
+- **Moving a check up a layer reorders it ahead of the model's schema
+  validation.** The model's `jsonValidate` used to turn a non-object entry
+  into a 400; once the API helper ran first and called `entry.get(...)`, a
+  string entry or a dict-instead-of-list body became a 500. Guard the body's
+  shape (`requireList`, `requireObjectBody` per entry) before the new check,
+  and use `.get()` for ids the schema doesn't require.
+
+Domain invariants that hold regardless of who calls (schema shape, "a
+connection can't link an annotation to itself") still belong in the model.
+
 ```python
 # Good - API handles input, model handles logic
 # In server/api/annotation.py
@@ -395,6 +436,42 @@ Rules:
    were applied — otherwise "stripped" and "applied but harmless" look the
    same.
 
+## Concurrent writers: no read-merge-write, no delete-then-insert
+
+Property workers run in bursts (4–5 jobs within a second, several over the
+same annotations), so any write path is hit concurrently in production.
+Issue #1356: `saveMany` "updated" documents by `removeWithQuery` then
+`insert_many`, and property values merged by reading the stored doc in
+Python first. Two writers raced into `E11000 ... index: _id_`, the loser had
+already deleted its batch (lost data), and a stale merge overwrote a
+sibling's values.
+
+- **Merge on the server.** `UpdateOne({key: k}, {"$set": {"values.<id>": v}},
+  upsert=True)` per document in one `bulk_write` — never find, merge in
+  Python, then write back.
+- **Replace in place.** `ReplaceOne({"_id": id}, doc, upsert=True)` is atomic
+  per document; delete-then-insert is not.
+- **Racing upserts duplicate documents** unless the filter key is unique.
+  If adding a unique index would need a data migration, set
+  `_id` to the natural key on insert (`$setOnInsert: {"_id": annotationId}`):
+  the loser gets an `11000` on `_id` instead of a second document, and one
+  retry of just those ops (`ordered=False`, retry by `writeErrors[].index`)
+  merges into the winner's.
+- **`BulkWriteError.details` / `WriteError.details` are dicts.** Format them
+  (`"%s" % ...`) and `raise ... from e`; `"msg" + e.details` turned the real
+  error into a `TypeError` 500 (issue #1357).
+- **Authorize by the key the write matches on.** The endpoint checked WRITE
+  on the body's `datasetId`, but the upsert matched by `annotationId` alone,
+  so WRITE on your own dataset let you overwrite another dataset's values
+  (Codex P1, PR #1358). When the check and the write key differ, verify
+  they agree first (batch-load the annotations' `datasetId`s and reject
+  mismatches) — in the **API layer**: `requireAnnotationsInDatasets` in
+  `helpers/access_helpers.py`, called by both endpoints. It first landed in
+  the model and was flagged (see "Validating caller input is an API job").
+- **Test with real threads + a `threading.Barrier`** over a few hundred
+  documents and several rounds (`test/test_save_many.py`). It fails reliably
+  without the fix; a single-threaded test cannot see the race.
+
 ## Returning a large JSON body from numpy (orjson + raw response)
 
 Two traps, both hit by the spatial plugin's `column` endpoint (hundreds of thousands
@@ -430,8 +507,9 @@ virtual paths explicitly — the six existing consumers are listed in
 - Providers key by id **string**; Mongo paths yield ObjectIds. `colorByProperty`'s
   membership guard compared the two and silently emptied the map ("No values found").
   Convert at the boundary.
-- `validateMultiple` in the property-values model lets the STORED sub-dict win on merge,
-  so a virtual path must never be persisted through it — providers are read-only.
+- `appendMultipleValues` `$set`s every property id it is given, so writing a virtual
+  path through it would persist (and then shadow) the provider's value — providers are
+  read-only; never store a virtual path.
 - **A derived table's rows are not the dataset's cells.** The spatial table keeps rows for
   deleted or moved cells until a recompute, so any read meaning "all cells" (an
   unfiltered aggregate, `values()`, a complement like "everything else") must go through
