@@ -86,6 +86,7 @@ vi.mock("@/store/progress", () => ({
     create: vi.fn().mockResolvedValue("progress1"),
     update: vi.fn(),
     complete: vi.fn(),
+    createNotification: vi.fn(),
   },
 }));
 
@@ -1884,10 +1885,52 @@ describe("Snapshots.vue", () => {
         "snap2 - c_1_3 t_1_145 (1).png",
         expect.any(Object),
       );
+      expect(mockedProgress.createNotification).not.toHaveBeenCalled();
       expect(mockedDownloadToClient).toHaveBeenCalledWith({
         href: "blob:snapshot",
         download: "snapshot.zip",
       });
+    });
+
+    it("downloadUrls keeps zip entry names within the 255-byte filename limit and warns", async () => {
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:snapshot"),
+        revokeObjectURL: vi.fn(),
+      });
+      (store.api.getSnapshotImage as any)
+        .mockResolvedValueOnce(new ArrayBuffer(1))
+        .mockResolvedValueOnce(new ArrayBuffer(1));
+
+      // Two exports whose long names differ only in the coordinate suffix, and
+      // a multi-byte character to check the limit is in bytes, not characters.
+      const longName = (time: number) =>
+        `snap - ${"Layér ".repeat(40)}- dataset - collection - XY1_T${time}_Z1.tiff`;
+      const urls = [1, 2].map((time) => {
+        const url = new URL(`http://localhost/api/v1/${time}`);
+        url.searchParams.set("contentDispositionFilename", longName(time));
+        return { url, scalebarSpec: null };
+      });
+
+      await (wrapper.vm as any).downloadUrls(urls);
+
+      const entryNames = mockedZipDeflate.mock.calls.map(
+        ([fileName]) => fileName as string,
+      );
+      expect(entryNames).toHaveLength(2);
+      for (const [index, entryName] of entryNames.entries()) {
+        expect(new TextEncoder().encode(entryName).length).toBeLessThanOrEqual(
+          255,
+        );
+        expect(entryName.startsWith("snap - Layér")).toBe(true);
+        expect(entryName.endsWith(`XY1_T${index + 1}_Z1.tiff`)).toBe(true);
+      }
+      expect(mockedProgress.createNotification).toHaveBeenCalledTimes(1);
+      expect(mockedProgress.createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "warning",
+          title: "File names shortened",
+        }),
+      );
     });
 
     it("downloadUrls assigns sanitized duplicate zip filenames in input order", async () => {

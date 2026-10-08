@@ -689,6 +689,7 @@ import {
   IGeoJSMap,
   ISnapshot,
   copyLayerWithoutPrivateAttributes,
+  NotificationType,
   ProgressType,
   TUnitLength,
 } from "@/store/model";
@@ -896,15 +897,53 @@ function sanitizeSnapshotFilename(name: string | null): string {
   return sanitized || "snapshot";
 }
 
+// macOS (and most filesystems) reject names over 255 bytes; Archive Utility
+// then extracts nothing and reports the whole ZIP as empty.
+const MAX_ZIP_ENTRY_NAME_BYTES = 255;
+const utf8Encoder = new TextEncoder();
+const utf8Length = (text: string) => utf8Encoder.encode(text).length;
+
+// Keep both ends: the start names the snapshot/layers, the end carries the
+// XY/T/Z coordinates that distinguish entries of one export.
+function truncateMiddleToBytes(text: string, maxBytes: number) {
+  if (utf8Length(text) <= maxBytes) {
+    return text;
+  }
+  // ASCII: fflate does not flag entry names as UTF-8, so some unzippers
+  // would misread a Unicode ellipsis.
+  const ellipsis = "...";
+  const chars = Array.from(text);
+  let headBudget = Math.floor((maxBytes - utf8Length(ellipsis)) / 2);
+  let tailBudget = maxBytes - utf8Length(ellipsis) - headBudget;
+  let head = "";
+  for (const char of chars) {
+    if (utf8Length(char) > headBudget) break;
+    head += char;
+    headBudget -= utf8Length(char);
+  }
+  let tail = "";
+  for (const char of chars.reverse()) {
+    if (utf8Length(char) > tailBudget) break;
+    tail = char + tail;
+    tailBudget -= utf8Length(char);
+  }
+  return `${head.trimEnd()}${ellipsis}${tail.trimStart()}`;
+}
+
 function getUniqueZipEntryName(name: string | null, filenames: Set<string>) {
   const sanitizedName = sanitizeSnapshotFilename(name);
   const pointIdx = sanitizedName.lastIndexOf(".");
   const baseName =
     pointIdx > 0 ? sanitizedName.slice(0, pointIdx) : sanitizedName;
   const extension = pointIdx > 0 ? sanitizedName.slice(pointIdx) : "";
-  let fileName = sanitizedName;
+  const fitName = (suffix: string) =>
+    `${truncateMiddleToBytes(
+      baseName,
+      MAX_ZIP_ENTRY_NAME_BYTES - utf8Length(suffix + extension),
+    )}${suffix}${extension}`;
+  let fileName = fitName("");
   for (let counter = 1; filenames.has(fileName); counter++) {
-    fileName = `${baseName} (${counter})${extension}`;
+    fileName = fitName(` (${counter})`);
   }
   filenames.add(fileName);
   return fileName;
@@ -2227,14 +2266,19 @@ async function downloadUrls(
       level: ["jpeg", "png"].includes(format.value) ? 0 : 9,
     };
     const filenames: Set<string> = new Set();
-    const zipEntries = urls.map(({ url, scalebarSpec }) => ({
-      url,
-      scalebarSpec,
-      fileName: getUniqueZipEntryName(
-        url.searchParams.get("contentDispositionFilename") || "snapshot",
-        filenames,
-      ),
-    }));
+    let shortenedNames = false;
+    const zipEntries = urls.map(({ url, scalebarSpec }) => {
+      const requestedName =
+        url.searchParams.get("contentDispositionFilename") || "snapshot";
+      shortenedNames ||=
+        utf8Length(sanitizeSnapshotFilename(requestedName)) >
+        MAX_ZIP_ENTRY_NAME_BYTES;
+      return {
+        url,
+        scalebarSpec,
+        fileName: getUniqueZipEntryName(requestedName, filenames),
+      };
+    });
     // The region endpoint serves one image per request. Process sequentially
     // so a large stack does not allocate all decoded crops at once.
     for (const [
@@ -2268,6 +2312,15 @@ async function downloadUrls(
     };
     downloadToClient(params);
     URL.revokeObjectURL(dataURL);
+    if (shortenedNames) {
+      progress.createNotification({
+        type: NotificationType.WARNING,
+        title: "File names shortened",
+        message:
+          'Some file names were too long to unzip, so their middle was replaced with "...". The start and end of each name, including any XY/T/Z position, are kept.',
+        timeout: 10,
+      });
+    }
   } finally {
     zip.terminate();
     if (!batchProgressId) progress.complete(progressId);

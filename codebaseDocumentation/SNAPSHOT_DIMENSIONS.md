@@ -57,6 +57,7 @@ bounds transient decoded-image memory, not the final archive size.
 ### Cost and cleanup
 
 - ZIP requests run serially and preserve deterministic filenames/bytes: `Snapshots.test.ts` — *"downloadUrls assigns sanitized duplicate zip filenames in input order"*.
+- ZIP entry names stay within 255 UTF-8 bytes, truncated in the middle so the snapshot/layer prefix and the XY/T/Z suffix survive. Longer names make macOS Archive Utility extract nothing and call the archive "empty" (a regression once the coordinate suffix was appended); a warning notification says names were shortened: `Snapshots.test.ts` — *"downloadUrls keeps zip entry names within the 255-byte filename limit and warns"*.
 - Download failures clear progress and produce no archive: `Snapshots.test.ts` — *"cleans up ZIP progress without downloading on a network failure"* and *"reports failed exports and resets the download lock"*.
 - Completed archives release object URLs: `Snapshots.test.ts` — TIFF byte-preservation cases assert `revokeObjectURL`.
 - Binary requests use the authenticated API client and propagate failures: `GirderAPI.snapshot.test.ts` — *"fetches binary bytes with the authenticated client and propagates failures"*.
