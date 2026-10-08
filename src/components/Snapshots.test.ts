@@ -86,6 +86,7 @@ vi.mock("@/store/progress", () => ({
     create: vi.fn().mockResolvedValue("progress1"),
     update: vi.fn(),
     complete: vi.fn(),
+    createNotification: vi.fn(),
   },
 }));
 
@@ -1884,10 +1885,60 @@ describe("Snapshots.vue", () => {
         "snap2 - c_1_3 t_1_145 (1).png",
         expect.any(Object),
       );
+      expect(mockedProgress.createNotification).not.toHaveBeenCalled();
       expect(mockedDownloadToClient).toHaveBeenCalledWith({
         href: "blob:snapshot",
         download: "snapshot.zip",
       });
+    });
+
+    it("shortens long snapshot filenames but keeps channel names and warns", async () => {
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:snapshot"),
+        revokeObjectURL: vi.fn(),
+      });
+      (store.api.getSnapshotImage as any)
+        .mockResolvedValueOnce(new ArrayBuffer(1))
+        .mockResolvedValueOnce(new ArrayBuffer(1));
+      mockedGetChannelsDownloadUrls.mockReturnValueOnce([
+        { url: new URL("http://localhost/api/v1/channel1"), channel: 1 },
+        { url: new URL("http://localhost/api/v1/channel2"), channel: 2 },
+      ]);
+      (wrapper.vm as any).downloadMode = "channels";
+      (wrapper.vm as any).exportChannel = "all";
+
+      // A long snapshot name would push the channel name into a plain
+      // middle cut; the multi-byte "é" checks the limit is in bytes.
+      const urls = await (wrapper.vm as any).getUrlsForSnapshot(
+        { xy: 0, z: 0, time: 0 },
+        { left: 0, top: 0, right: 100, bottom: 100 },
+        "dataset1",
+        "Snapshot ".repeat(15),
+        (store as any).layers,
+        `Collection ${"é".repeat(120)}`,
+      );
+      await (wrapper.vm as any).downloadUrls(
+        urls.map((url: URL) => ({ url, scalebarSpec: null })),
+      );
+
+      const entryNames = mockedZipDeflate.mock.calls.map(
+        ([fileName]) => fileName as string,
+      );
+      expect(entryNames).toHaveLength(2);
+      for (const [index, channelName] of ["GFP", "RFP"].entries()) {
+        expect(
+          new TextEncoder().encode(entryNames[index]).length,
+        ).toBeLessThanOrEqual(200);
+        expect(entryNames[index]).toContain(` - ${channelName} - `);
+        expect(entryNames[index]).not.toMatch(/\(\d+\)/);
+      }
+      expect(mockedProgress.createNotification).toHaveBeenCalledTimes(1);
+      expect(mockedProgress.createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "warning",
+          title: "File names shortened",
+        }),
+      );
     });
 
     it("downloadUrls assigns sanitized duplicate zip filenames in input order", async () => {
