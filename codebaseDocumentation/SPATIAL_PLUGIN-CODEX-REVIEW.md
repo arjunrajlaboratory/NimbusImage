@@ -343,6 +343,9 @@ All five original findings had failing regressions before their fixes.
   annotation-driven and property-driven joins, and legacy migration. Both writers now
   use the same immutable annotation key as readers; datasetId remains mutable metadata.
   Existing append precedence (stored values win) and nested merge semantics remain.
+  *(Superseded by the merge of master's #1358: an append now `$set`s each property it
+  carries, so a recompute replaces the stored value; `setSubValuesMany` still merges
+  nested keys.)*
   The final ownership sweep also found that global-key upserts require checking
   annotation membership, not just access to the supplied dataset. Both REST writers
   now validate all annotation/dataset pairs with one query before any write; a
