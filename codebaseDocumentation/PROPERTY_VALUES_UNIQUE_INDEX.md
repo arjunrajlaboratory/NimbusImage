@@ -68,30 +68,31 @@ updated only one of them, so values appeared to vanish or go stale.
 
 The script is
 `devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/scripts/dedup_property_values.py`,
-next to the other DB migration scripts, so it ships in the Girder image. Run it inside the
-running `girder` container, which has the DB configuration. It deliberately does **not**
-import the `AnnotationPropertyValues` model: instantiating that model runs the very
-startup migration this procedure replaces (`migrate_database.py` does import it).
+next to the other DB migration scripts. It deliberately does **not** import the
+`AnnotationPropertyValues` model: instantiating that model runs the very startup
+migration this procedure replaces (`migrate_database.py` does import it).
+
+**Run it before any #1347-or-later backend starts**, because that backend runs the
+startup migration itself the moment it boots. So run it inside a `girder` container that
+is still on older code (it has the DB configuration but not the script yet):
 
 ```bash
-S=/src/AnnotationPlugin/upenncontrast_annotation/scripts
+docker cp dedup_property_values.py girder:/tmp/
 
 # 1. Report: duplicate count, group sizes, how the copies relate. Read-only.
-docker exec girder python $S/dedup_property_values.py
+docker exec girder python /tmp/dedup_property_values.py
 
 # 2. Merge. Backs up every affected document first; safe to re-run.
-docker exec girder python $S/dedup_property_values.py --apply
+docker exec girder python /tmp/dedup_property_values.py --apply
 
 # 3. Rebuild annotationId_1 as unique (refuses while duplicates remain).
-docker exec girder python $S/dedup_property_values.py --make-unique
+docker exec girder python /tmp/dedup_property_values.py --make-unique
 ```
 
-**Order matters:** run all three **before any #1347-or-later backend starts**, because
-that backend runs the startup migration itself the moment it boots. On an install still
-running older code, the script is not in the image yet: `docker cp` it into a running
-pre-#1347 `girder` container and run `python /tmp/dedup_property_values.py ...`. Then
-deploy. If the collection is small and has no duplicates, the
-startup migration is fine on its own; step 1 tells you.
+Then deploy. If the collection is small and has no duplicates, the startup migration is
+fine on its own; step 1 tells you. On #1347+ images the script also ships at
+`/src/AnnotationPlugin/upenncontrast_annotation/scripts/`, handy for re-checking with
+step 1 later.
 
 - **Merge rule:** each group is merged into its **oldest** document. The `values` dicts
   are merged per property (deep-merged within a property); where copies disagree, the
@@ -102,10 +103,12 @@ startup migration is fine on its own; step 1 tells you.
 - **`datasetId`** on the kept document is set from the live `upenn_annotation`, as the
   app's coalesce does, since pre-#1356 writes could move a values document between
   datasets. The report counts groups whose copies disagree on `datasetId`.
-- **Concurrent writes are not lost.** The kept document gains only the properties the
-  merge changed (`$set` per property, the granularity the app writes at), and an extra
-  is deleted only if it is unchanged since it was read. A group that changed mid-merge
-  is left in place and reported; run `--apply` again. Still, prefer a quiet window.
+- **Concurrent writes are not overwritten.** The kept document's update only applies
+  while the properties it changes still hold the values that were read, and it sets
+  only those properties (the granularity the app writes at). Extras are deleted only
+  after the kept document is verified, and only if unchanged since they were read. A
+  group written to mid-merge is left in place and reported (`skipped_changed`); run
+  `--apply` again. Still, prefer a quiet window.
 - **Backup:** originals of every merged group (kept documents included) go to
   `annotation_property_values_dedup_backup` (`--backup-collection` to change). To resume
   an interrupted run, use the same name: a document already backed up keeps its true

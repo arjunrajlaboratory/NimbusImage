@@ -16,22 +16,27 @@ skips the drop and its ``create_index`` is an instant no-op.
 This script deliberately does not import the AnnotationPropertyValues
 model: instantiating it runs that same startup migration.
 
-Usage, inside the running girder container (which has the DB config)::
+Usage, inside a running girder container (which has the DB config) that
+is still on pre-#1347 code -- so copy the script in::
 
-    S=/src/AnnotationPlugin/upenncontrast_annotation/scripts
-    docker exec girder python $S/dedup_property_values.py            # report
-    docker exec girder python $S/dedup_property_values.py --apply
-    docker exec girder python $S/dedup_property_values.py --make-unique
+    docker cp dedup_property_values.py girder:/tmp/
+    docker exec girder python /tmp/dedup_property_values.py            # report
+    docker exec girder python /tmp/dedup_property_values.py --apply
+    docker exec girder python /tmp/dedup_property_values.py --make-unique
+
+On #1347+ images it is also at
+/src/AnnotationPlugin/upenncontrast_annotation/scripts/, for re-checks.
 
 ``--apply`` merges each duplicate group into its OLDEST document. The
 ``values`` dicts are merged per property; where copies disagree, the most
 recently CREATED copy (largest ``_id``) wins. The keeper's ``datasetId``
 is set from the live annotation. Every document of every merged group,
 keeper included, is first copied to the backup collection, so the merge
-is reversible. Writes are guarded: the keeper only gains the properties the
-merge changed, and an extra is deleted only if it is unchanged since it was
-read, so a concurrent write is never lost -- a group that changed mid-merge
-is left for the next run. Re-running is safe and resumes an interrupted
+is reversible. Writes are guarded: the keeper's update only applies while
+the properties it changes still hold the values that were read, extras are
+deleted only after the keeper is verified and only if unchanged since they
+were read, so a group written to mid-merge is left for the next run rather
+than overwritten. Re-running is safe and resumes an interrupted
 run; pass the same ``--backup-collection``.
 
 ``--make-unique`` refuses to run while duplicates remain or an index build
@@ -150,7 +155,15 @@ def classify(documents):
 
 
 def planGroup(documents, liveDatasetId, stats):
-    """Return the guarded write operations that merge one group."""
+    """Plan one group's merge as guarded writes.
+
+    Returns (keeperUpdate or None, expected, extraDeletes). ``keeperUpdate``
+    only matches while every property it changes still holds the value that
+    was read, so a concurrent write to the keeper makes it a no-op instead
+    of being overwritten. ``expected`` is what those properties must hold
+    afterwards; extras are deleted only once the keeper is verified, and
+    only if unchanged since they were read.
+    """
     documents.sort(key=lambda d: d['_id'])
     keeper, extras = documents[0], documents[1:]
     stats['groups'] += 1
@@ -158,33 +171,73 @@ def planGroup(documents, liveDatasetId, stats):
     stats[classify(documents)] += 1
     if len({d.get('datasetId') for d in documents}) > 1:
         stats['mixed_datasetId'] += 1
+    stats['documents_to_delete'] += len(extras)
 
-    keeperValues = keeper.get('values') or {}
+    keeperValues = keeper.get('values')
     merged = mergedValues(documents)
-    changes = {
-        'values.%s' % propertyId: value
-        for propertyId, value in merged.items()
-        if keeperValues.get(propertyId) != value
-    }
+    guard = {'_id': keeper['_id']}
+    if isinstance(keeperValues, dict):
+        changes = {}
+        for propertyId, value in merged.items():
+            if keeperValues.get(propertyId) == value:
+                continue
+            path = 'values.%s' % propertyId
+            changes[path] = value
+            guard[path] = (keeperValues[propertyId]
+                           if propertyId in keeperValues
+                           else {'$exists': False})
+    else:
+        # values missing or null: a dotted $set would fail; set it whole.
+        changes = {'values': merged}
+        guard['values'] = keeperValues
+    expected = dict(changes)
     if liveDatasetId is None:
         stats['annotation_missing'] += 1
     elif keeper.get('datasetId') != liveDatasetId:
         changes['datasetId'] = liveDatasetId
+        guard['datasetId'] = keeper.get('datasetId')
         stats['datasetId_corrected'] += 1
 
-    operations = []
-    if changes:
-        # Property-level $set: a concurrent write to another property of
-        # the keeper survives.
-        operations.append(UpdateOne({'_id': keeper['_id']},
-                                    {'$set': changes}))
-    for extra in extras:
-        # Delete only an unchanged extra; a changed one stays and the next
-        # run merges it.
-        operations.append(DeleteOne({'_id': extra['_id'],
-                                     'values': extra.get('values')}))
-    stats['documents_to_delete'] += len(extras)
-    return operations
+    keeperUpdate = UpdateOne(guard, {'$set': changes}) if changes else None
+    extraDeletes = [
+        DeleteOne({'_id': extra['_id'], 'values': extra.get('values')})
+        for extra in extras]
+    return keeper['_id'], keeperUpdate, expected, extraDeletes
+
+
+def keeperHolds(document, expected):
+    """True if the keeper now holds every value the merge wrote."""
+    values = document.get('values')
+    for path, value in expected.items():
+        if path == 'values':
+            current = values
+        else:
+            current = (values or {}).get(path.split('.', 1)[1])
+        if current != value:
+            return False
+    return True
+
+
+def applyBatch(coll, plans, stats):
+    """Run a batch's keeper updates, then delete only verified extras."""
+    updates = [plan[1] for plan in plans if plan[1] is not None]
+    if updates:
+        result = coll.bulk_write(updates, ordered=False)
+        stats['modified'] += result.modified_count
+    keepers = {
+        document['_id']: document
+        for document in coll.find({'_id': {'$in': [p[0] for p in plans]}})}
+    deletes = []
+    for keeperId, _, expected, extraDeletes in plans:
+        keeper = keepers.get(keeperId)
+        if keeper is None or not keeperHolds(keeper, expected):
+            # Changed concurrently: keep the extras, merge them next run.
+            stats['skipped_changed'] += 1
+            continue
+        deletes.extend(extraDeletes)
+    if deletes:
+        result = coll.bulk_write(deletes, ordered=False)
+        stats['deleted'] += result.deleted_count
 
 
 def dedup(db, backupName, batchSize, apply):
@@ -211,15 +264,15 @@ def dedup(db, backupName, batchSize, apply):
             a['_id']: a.get('datasetId')
             for a in db[ANNOTATIONS].find({'_id': {'$in': ids}},
                                           {'datasetId': 1})}
-        backups, operations = [], []
+        backups, plans = [], []
         for annotationId, documents in groups.items():
             if len(documents) < 2:
                 stats['already_single'] += 1
                 continue
             backups.extend(documents)
-            operations.extend(planGroup(
+            plans.append(planGroup(
                 documents, liveDatasetIds.get(annotationId), stats))
-        if apply and operations:
+        if apply and plans:
             try:
                 db[backupName].insert_many(backups, ordered=False)
             except BulkWriteError as error:
@@ -231,9 +284,7 @@ def dedup(db, backupName, batchSize, apply):
                 if any(e.get('code') != DUPLICATE_KEY_ERROR
                        for e in writeErrors):
                     raise
-            result = coll.bulk_write(operations, ordered=True)
-            stats['modified'] += result.modified_count
-            stats['deleted'] += result.deleted_count
+            applyBatch(coll, plans, stats)
         log('batch %d/%d %s' % (batchIndex + 1, batches, dict(stats)))
 
     log('%s: %s in %.0fs' % (
@@ -305,7 +356,7 @@ def makeUnique(db):
                 restored = None
                 log('restore raised %s' % error)
             if restored:
-                log('restored plain index: %s' % restored)
+                log('annotationId index now: %s' % restored)
             else:
                 log('!!! %s HAS NO %s INDEX. Every lookup by annotationId '
                     'is now a collection scan. Recreate it by hand NOW: '
