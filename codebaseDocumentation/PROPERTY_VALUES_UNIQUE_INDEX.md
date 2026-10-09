@@ -66,40 +66,68 @@ updated only one of them, so values appeared to vanish or go stale.
 
 ## Operator procedure (before deploying #1347+ to a large install)
 
-The script is `devops/girder/scripts/dedup_property_values.py`. It is not baked into the
-image; copy it into the running `girder` container, which has the DB configuration:
+The script is
+`devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/scripts/dedup_property_values.py`,
+next to the other DB migration scripts, so it ships in the Girder image. Run it inside the
+running `girder` container, which has the DB configuration. It deliberately does **not**
+import the `AnnotationPropertyValues` model: instantiating that model runs the very
+startup migration this procedure replaces (`migrate_database.py` does import it).
 
 ```bash
-docker cp devops/girder/scripts/dedup_property_values.py girder:/tmp/
+S=/src/AnnotationPlugin/upenncontrast_annotation/scripts
 
 # 1. Report: duplicate count, group sizes, how the copies relate. Read-only.
-docker exec girder python /tmp/dedup_property_values.py
+docker exec girder python $S/dedup_property_values.py
 
 # 2. Merge. Backs up every affected document first; safe to re-run.
-docker exec girder python /tmp/dedup_property_values.py --apply
+docker exec girder python $S/dedup_property_values.py --apply
 
 # 3. Rebuild annotationId_1 as unique (refuses while duplicates remain).
-docker exec girder python /tmp/dedup_property_values.py --make-unique
+docker exec girder python $S/dedup_property_values.py --make-unique
 ```
 
-Then deploy. If the collection is small and has no duplicates, the startup migration
-is fine on its own; run step 1 to find out.
+**Order matters:** run all three **before any #1347-or-later backend starts**, because
+that backend runs the startup migration itself the moment it boots. On an install still
+running older code, the script is not in the image yet: `docker cp` it into a running
+pre-#1347 `girder` container and run `python /tmp/dedup_property_values.py ...`. Then
+deploy. If the collection is small and has no duplicates, the
+startup migration is fine on its own; step 1 tells you.
 
 - **Merge rule:** each group is merged into its **oldest** document. The `values` dicts
-  are deep-merged; on a conflicting leaf the **newest** document (largest `_id`) wins,
-  which is what a single document would hold had the race never happened. This differs
-  from the startup `_coalesceDuplicateDocuments`, which keeps the oldest value.
-- **Backup:** originals of every merged group (keepers included) go to
-  `annotation_property_values_dedup_backup_<YYYYMMDD>` (override with
-  `--backup-collection`). Drop it once you're satisfied.
-- **Cost:** the duplicate scan streams the `annotationId` index from a secondary
-  (~80 s for 35M docs). The merge ran at ~190 groups/s (68 min for 765k groups) at the
-  default `--batch-size 2000`.
-- **Index gap:** `--make-unique` drops the plain index before building the unique one,
-  so lookups are unindexed for the build (~3 min at 35M docs). Run it in a quiet window.
-  It waits for the server-side build, and restores the plain index if the unique build
-  fails. A DB user with `collMod` can avoid the gap by converting in place
-  (`collMod` `prepareUnique: true`, then `unique: true`); the production app user cannot.
+  are merged per property (deep-merged within a property); where copies disagree, the
+  most recently **created** copy (largest `_id`) wins. `_id` order is creation order,
+  not last-write order, so this is a best guess at the latest value, not a guarantee.
+  For the 2026-10-09 data it decided 4,758 groups. The startup
+  `_coalesceDuplicateDocuments` keeps the oldest value instead.
+- **`datasetId`** on the kept document is set from the live `upenn_annotation`, as the
+  app's coalesce does, since pre-#1356 writes could move a values document between
+  datasets. The report counts groups whose copies disagree on `datasetId`.
+- **Concurrent writes are not lost.** The kept document gains only the properties the
+  merge changed (`$set` per property, the granularity the app writes at), and an extra
+  is deleted only if it is unchanged since it was read. A group that changed mid-merge
+  is left in place and reported; run `--apply` again. Still, prefer a quiet window.
+- **Backup:** originals of every merged group (kept documents included) go to
+  `annotation_property_values_dedup_backup` (`--backup-collection` to change). To resume
+  an interrupted run, use the same name: a document already backed up keeps its true
+  original. Drop the backup once you're satisfied.
+- **Documents without an `annotationId`** are counted, never merged. More than one blocks
+  a unique index, so `--make-unique` refuses until they're dealt with by hand.
+- **Cost:** the duplicate scan streams the `annotationId` index (from a secondary for the
+  report, ~80 s for 35M docs). The merge ran at ~190 groups/s (68 min for 765k groups)
+  at the default `--batch-size 2000`.
+- **Index gap:** `--make-unique` drops the plain index before building the unique one, so
+  lookups are unindexed for the build (~3 min at 35M docs). Run it in a quiet window. It
+  waits on the server-side build, and whatever happens after the drop it ends by making
+  sure an `annotationId_1` exists, restoring the plain index if the unique build failed.
+  If even that fails it says so loudly. A DB user with `collMod` can avoid the gap by
+  converting in place (`collMod` `prepareUnique: true`, then `unique: true`); the
+  production app user cannot.
+- If `annotationId_1` is missing altogether, the script stops and tells you to recreate
+  the plain index first.
+
+The 2026-10-09 production run used an earlier version of this script. It had
+whole-`values` replacement and no write guards or `datasetId` reconciliation; neither
+mattered there, because every group was within one dataset and nothing was writing.
 
 ## Index changes on large collections: the rule
 

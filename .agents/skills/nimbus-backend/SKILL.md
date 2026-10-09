@@ -497,9 +497,11 @@ crash-looping:
 Rules:
 
 - **Ship index changes on existing collections as an operator step**: a
-  script run once, with a dry-run mode, then verified. Example:
-  `devops/girder/scripts/dedup_property_values.py`. `ensureIndices` on a
-  **new** (empty) collection at startup is fine.
+  script run once, with a report-only mode, then verified, and run BEFORE
+  the new backend boots. Example:
+  `upenncontrast_annotation/scripts/dedup_property_values.py`. Such a
+  script must not instantiate the model whose `__init__` changes the index.
+  `ensureIndices` on a **new** (empty) collection at startup is fine.
 - **Never drop an index before its replacement exists.** Build the new one
   alongside, or convert in place (`collMod` `prepareUnique` → `unique`)
   where permitted.
