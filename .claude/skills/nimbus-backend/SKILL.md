@@ -472,6 +472,50 @@ sibling's values.
   documents and several rounds (`test/test_save_many.py`). It fails reliably
   without the fix; a single-threaded test cannot see the race.
 
+## Index changes on existing collections: not at startup
+
+Any `create_index` / `drop_index` / `ensureIndices` you add to a model
+`__init__` or `initialize` runs on **every Girder start, in every uvicorn
+worker at once** (production: 9), against production-sized collections
+(`annotation_property_values` is 35M documents). PR #1347 dropped the
+non-unique `annotationId_1` there and rebuilt it unique. In production
+(2026-10-09) that left the collection with **no index for 6 h** and Girder
+crash-looping:
+
+- **Workers race.** One drops the index; the rest hit `IndexNotFound`.
+- **Builds outlive the 60 s client socket timeout.** The worker raises
+  `TimeoutError` and restarts; the server-side build does **not** stop. Each
+  restart queues another `createIndexes`, and Mongo runs the queue serially
+  long after the instance is gone (72 builds, ~4 h).
+- **Drop-then-build leaves nothing** when the build is slow or fails.
+- **A unique build fails outright on existing duplicates**, and an
+  `except DuplicateKeyError: coalesce()` fallback never fires if the
+  client timed out first. 765k duplicate groups were in the data.
+- The production app DB user cannot run `collMod`, `currentOp`, or read
+  Atlas logs, so you can't watch or convert an index from the app.
+
+Rules:
+
+- **Ship index changes on existing collections as an operator step**: a
+  script run once, with a dry-run mode, then verified. Example:
+  `devops/girder/scripts/dedup_property_values.py`. `ensureIndices` on a
+  **new** (empty) collection at startup is fine.
+- **Never drop an index before its replacement exists.** Build the new one
+  alongside, or convert in place (`collMod` `prepareUnique` → `unique`)
+  where permitted.
+- **Before adding a uniqueness constraint, count the violations** on real
+  data (stream the index in key order and count adjacent repeats; see the
+  script) and ship the merge as part of the operator step.
+- **Startup code must work before and after the operator step.** E.g.
+  #1347's startup is safe once the index is already unique: no drop, and
+  `create_index(unique=True)` is an instant no-op.
+- **Flag it in the PR description** under a "Deploy" heading: which
+  collection, its production size, and the command the operator must run
+  before rolling backends.
+
+Full incident, numbers, and procedure:
+`codebaseDocumentation/PROPERTY_VALUES_UNIQUE_INDEX.md`.
+
 ## Returning a large JSON body from numpy (orjson + raw response)
 
 Two traps, both hit by the spatial plugin's `column` endpoint (hundreds of thousands
