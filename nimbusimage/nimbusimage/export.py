@@ -1,4 +1,4 @@
-"""ExportAccessor — JSON and CSV export."""
+"""ExportAccessor — JSON, CSV and GeoJSON export."""
 
 from __future__ import annotations
 from typing import TYPE_CHECKING
@@ -78,3 +78,36 @@ class ExportAccessor:
                 f.write(data)
 
         return data
+
+    def to_geojson(
+        self,
+        annotation_ids: list[str] | None = None,
+        path: str | None = None,
+    ) -> dict:
+        """Export annotations as a GeoJSON FeatureCollection in image pixels
+        (origin top-left, QuPath's convention); tags go in
+        ``properties.tags`` and the first tag in ``classification.name``.
+
+        Args:
+            annotation_ids: Annotations to export. ``None`` exports all of
+                them; an empty list exports none.
+            path: If provided, write the collection to this file path.
+
+        Returns:
+            The FeatureCollection (also written to path if provided).
+        """
+        import json as json_mod
+
+        body = {"datasetId": self._dataset_id}
+        if annotation_ids is not None:
+            body["annotationIds"] = list(annotation_ids)
+        response = self._gc.sendRestRequest(
+            "POST", "export/geojson",
+            data=json_mod.dumps(body),
+            headers={"Content-Type": "application/json"},
+            jsonResp=False,
+        )
+        if path is not None:
+            with open(path, "wb") as f:
+                f.write(response.content)
+        return json_mod.loads(response.content)

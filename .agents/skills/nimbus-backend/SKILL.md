@@ -472,6 +472,71 @@ sibling's values.
   documents and several rounds (`test/test_save_many.py`). It fails reliably
   without the fix; a single-threaded test cannot see the race.
 
+## Returning a large JSON body from numpy (orjson + raw response)
+
+Two traps, both hit by the spatial plugin's `column` endpoint (hundreds of thousands
+of `(annotationId, value)` pairs):
+
+- **Girder JSON-encodes whatever the handler returns.** Returning `orjson.dumps(...)`
+  bytes without marking the response raw ships a JSON *string* containing JSON — the
+  client's `resp.json` is a `str`. Call `setRawResponse()` (from `girder.api.rest`)
+  and set the `Content-Type` header yourself, or return a generator (the annotation
+  plugin's `_streamJsonArray` pattern).
+- **`orjson.OPT_SERIALIZE_NUMPY` takes numeric and bool arrays only.** A unicode
+  (`U24`) array of ids raises `TypeError: unsupported datatype in numpy array`;
+  `.tolist()` the string array, keep the numeric one as numpy. Cast integral floats
+  to `int64` first if the sibling endpoint returns ints, so the two agree.
+
+```python
+setRawResponse()
+setResponseHeader("Content-Type", "application/json")
+return orjson.dumps(
+    {"annotationIds": ids.tolist(), "values": values},
+    option=orjson.OPT_SERIALIZE_NUMPY,
+)
+```
+
+## Virtual property paths (`helpers/valueProviders.py`)
+
+A property path whose first segment is a registered prefix is answered by another
+plugin's provider, not Mongo. If you add a new consumer of property paths (anything that
+reads `values.<path>` or filters/sorts on one), route it through the hook or refuse
+virtual paths explicitly — the six existing consumers are listed in
+`codebaseDocumentation/SPATIAL_PLUGIN.md` "Phase 2". Two traps from wiring them:
+
+- Providers key by id **string**; Mongo paths yield ObjectIds. `colorByProperty`'s
+  membership guard compared the two and silently emptied the map ("No values found").
+  Convert at the boundary.
+- `appendMultipleValues` `$set`s every property id it is given, so writing a virtual
+  path through it would persist (and then shadow) the provider's value — providers are
+  read-only; never store a virtual path.
+- **A derived table's rows are not the dataset's cells.** The spatial table keeps rows for
+  deleted or moved cells until a recompute, so any read meaning "all cells" (an
+  unfiltered aggregate, `values()`, a complement like "everything else") must go through
+  `store.liveRowMask()`, never `rows=None` / `~maskA` / `store.annotationIds`. Codex found
+  this one call site per round for four rounds; the fix was one cached mask used by all.
+  The Mongo twin: property values are scoped by `datasetId`, so anything that moves an
+  annotation between datasets must move its value documents too (`updateMultiple`).
+
+## A second plugin next to `upenncontrast_annotation`
+
+`upenncontrast_spatial` (`devops/girder/plugins/SpatialPlugin/`) is the template:
+
+- Declare the dependency by calling `getPlugin("upenncontrast_annotation").load(info)`
+  first thing in `load()` — Girder 5 has no `dependencies` attribute; the wrapper makes
+  the second load a no-op.
+- The annotation plugin's `server/` tree has no `__init__.py`, so its sdist/wheel does
+  **not** ship it (its own tests import from the source tree). A sibling plugin's tox must
+  install it **editable**: `deps = -e {toxinidir}/../AnnotationPlugin`. That install
+  leaves `AnnotationPlugin/build/` behind — gitignored.
+- Import the annotation plugin's `validation.py` helpers, access helpers and models;
+  never mirror a private method's field list. When you need one (the spatial API needed
+  `_hasAnnotationFieldFilters`), add a public method on the annotation model
+  (`narrowsPopulation`) and call that.
+- `@pytest.mark.plugin("upenncontrast_spatial")` loads both plugins; the "Event binding
+  already exists" warnings in the test log are the annotation plugin's handlers being
+  bound once per plugin load and are harmless.
+
 ## Loading Plugin Changes Into the Running Backend
 
 The `girder` container bakes the plugin into its image (no source mount). After editing backend plugin code:

@@ -1,8 +1,9 @@
 """
-Export API for downloading annotation data as JSON or CSV.
+Export API for downloading annotation data as JSON, CSV, or GeoJSON.
 
 This endpoint exports annotations, connections, properties, and property
-values for a dataset.
+values for a dataset. The GeoJSON export carries geometry and tags only, in
+the pixel-coordinate convention QuPath uses (origin top-left, y down).
 """
 
 import orjson
@@ -15,6 +16,7 @@ from girder.api import access
 from girder.api.describe import autoDescribeRoute, Description
 from girder.api.rest import Resource, setResponseHeader, setContentDisposition
 from girder.constants import AccessType, TokenScope
+from girder.exceptions import RestException
 from girder.models.folder import Folder
 
 from ..models.annotation import Annotation as AnnotationModel
@@ -25,7 +27,8 @@ from ..models.propertyValues import (
 from ..models.property import AnnotationProperty as PropertyModel
 from ..models.collection import Collection as CollectionModel
 from ..models.datasetView import DatasetView as DatasetViewModel
-from ..helpers.serialization import orJsonDefaults
+from ..helpers import valueProviders
+from ..helpers.serialization import orJsonDefaults, streamJsonArray
 from ..helpers.validation import (
     requireObjectId,
     validateAnnotationIdCount,
@@ -92,6 +95,71 @@ def _deduplicateColumnNames(names):
     return result
 
 
+# GeoJSON geometry type per annotation shape. A rectangle is stored as its
+# four corners (or, as the schema also allows, two opposite ones) and exports
+# as a Polygon like any other closed shape.
+GEOJSON_GEOMETRY_TYPES = {
+    "point": "Point",
+    "line": "LineString",
+    "polygon": "Polygon",
+    "rectangle": "Polygon",
+}
+
+# Fewest vertices each geometry needs to be valid GeoJSON (a Polygon's ring
+# is counted before it is closed). An annotation with fewer is skipped rather
+# than written as a geometry other tools would reject.
+GEOJSON_MIN_VERTICES = {"Point": 1, "LineString": 2, "Polygon": 3}
+
+
+def annotationToGeoJsonFeature(annotation):
+    """Return a GeoJSON Feature for an annotation document, or None when its
+    shape has no GeoJSON equivalent or it has too few vertices.
+
+    Coordinates are image pixels, [x, y]; any z is dropped (the z-slice is
+    the annotation's location, not a coordinate). Polygon rings are closed,
+    as RFC 7946 requires. The properties follow QuPath's object layout so a
+    QuPath import reads the first tag as the object's class; `tags` keeps
+    every tag so a NimbusImage re-import is lossless."""
+    geometryType = GEOJSON_GEOMETRY_TYPES.get(annotation.get("shape"))
+    if geometryType is None:
+        return None
+    positions = [
+        [point["x"], point["y"]]
+        for point in annotation.get("coordinates") or []
+    ]
+    if annotation.get("shape") == "rectangle" and len(positions) == 2:
+        (x0, y0), (x1, y1) = positions
+        positions = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    if len(positions) < GEOJSON_MIN_VERTICES[geometryType]:
+        return None
+
+    if geometryType == "Point":
+        coordinates = positions[0]
+    elif geometryType == "LineString":
+        coordinates = positions
+    else:
+        ring = positions.copy()
+        if ring[0] != ring[-1]:
+            ring.append(ring[0])
+        coordinates = [ring]
+
+    tags = [str(tag) for tag in annotation.get("tags") or []]
+    properties = {
+        "objectType": "annotation",
+        "name": annotation.get("name"),
+        "tags": tags,
+    }
+    if tags:
+        properties["classification"] = {"name": tags[0]}
+
+    return {
+        "type": "Feature",
+        "id": str(annotation["_id"]),
+        "geometry": {"type": geometryType, "coordinates": coordinates},
+        "properties": properties,
+    }
+
+
 class Export(Resource):
     """REST API resource for exporting annotation data."""
 
@@ -108,6 +176,7 @@ class Export(Resource):
 
         self.route("GET", ("json",), self.exportJson)
         self.route("POST", ("csv",), self.exportCsv)
+        self.route("POST", ("geojson",), self.exportGeoJson)
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
@@ -370,7 +439,9 @@ class Export(Resource):
         - Fixed columns: Id, Channel, XY, Z, Time, Tags, Shape, Name
         - XY, Z, Time are 1-indexed (location + 1)
         - Quoted columns: Id, Tags, Shape, Name
-        - Property columns: Named as "PropertyName / SubKey1 / SubKey2"
+        - Property columns: Named as "PropertyName / SubKey1 / SubKey2";
+          a virtual path (valueProviders) is named by its segments, e.g.
+          "spatial / CD3E"
         """
         # Extract parameters from body
         datasetId = body.get("datasetId")
@@ -394,8 +465,13 @@ class Export(Resource):
         # that id strings are valid ObjectIds. Convert them all here at the
         # API boundary: the CSV body is generated lazily while streaming, so
         # an InvalidId raised there could not become a clean 400 anymore.
+        # Virtual paths (valueProviders, e.g. ["spatial", "CD3E"]) name a
+        # provider prefix, not a property id.
         parsedPropertyPaths = propertyPaths or []
-        for path in parsedPropertyPaths:
+        storedPaths, virtualPaths = valueProviders.splitPaths(
+            parsedPropertyPaths
+        )
+        for path in storedPaths:
             if path:
                 requireObjectId(path[0], "propertyPaths property id")
 
@@ -406,6 +482,17 @@ class Export(Resource):
                 requireObjectId(aid, "annotationIds entry")
                 for aid in annotationIds
             ]
+
+        # Virtual values are fetched here, before streaming starts, for the
+        # same reason: a provider raises ValueError for a key it cannot
+        # resolve (an unknown gene), which must be a 400, not a truncated
+        # download.
+        try:
+            virtualValues = self._getVirtualValues(
+                datasetObjectId, virtualPaths, parsedAnnotationIds
+            )
+        except ValueError as exc:
+            raise RestException(str(exc), code=400)
 
         # Validate delimiter
         if delimiter not in (",", "\t"):
@@ -443,9 +530,121 @@ class Export(Resource):
                 undefinedValue,
                 delimiter,
                 sanitizeColumnNames,
+                virtualValues,
             )
 
         return generate
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @autoDescribeRoute(
+        Description("Export dataset annotations as a GeoJSON collection")
+        .notes("""
+            Uses POST so a large annotation subset fits in the body. Each
+            annotation becomes one Feature in image pixel coordinates
+            (origin top-left, y down; QuPath's convention): polygons and
+            rectangles as Polygon (ring closed), lines as LineString, points
+            as Point. Properties are {objectType, name, tags,
+            classification: {name: <first tag>}}; classification is omitted
+            for an untagged annotation.
+        """)
+        .jsonParam(
+            "body",
+            "Export parameters",
+            paramType="body",
+            required=True,
+            schema={
+                "type": "object",
+                "properties": {
+                    "datasetId": {
+                        "type": "string",
+                        "description": "The dataset ID (required)"
+                    },
+                    "annotationIds": {
+                        "type": "array",
+                        "description": (
+                            "Annotation IDs to export. Omit for all "
+                            "annotations; an empty array exports none."
+                        ),
+                        "items": {"type": "string"}
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Filename for download",
+                        "default": "annotations.geojson"
+                    }
+                },
+                "required": ["datasetId"]
+            }
+        )
+        .errorResponse("Dataset not found or access denied", 404)
+    )
+    def exportGeoJson(self, body):
+        """Stream a dataset's annotations as a GeoJSON FeatureCollection.
+
+        `annotationIds` is three-state: absent exports every annotation, a
+        list exports exactly those, and an empty list exports an empty
+        collection without querying."""
+        datasetObjectId = requireObjectId(body.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetObjectId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True
+        )
+
+        # Convert every id here, at the boundary: the body streams lazily,
+        # so an InvalidId raised mid-stream could no longer become a 400.
+        annotationIds = body.get("annotationIds")
+        parsedAnnotationIds = None
+        if annotationIds is not None:
+            validateAnnotationIdCount(len(annotationIds))
+            parsedAnnotationIds = [
+                requireObjectId(aid, "annotationIds entry")
+                for aid in annotationIds
+            ]
+
+        filename = body.get("filename") or "annotations.geojson"
+        if not filename.endswith(".geojson"):
+            filename += ".geojson"
+        setResponseHeader("Content-Type", "application/geo+json")
+        setContentDisposition(filename, disposition="attachment")
+
+        features = (
+            feature
+            for feature in map(
+                annotationToGeoJsonFeature,
+                self._iterAnnotations(datasetObjectId, parsedAnnotationIds),
+            )
+            if feature is not None
+        )
+        return streamJsonArray(
+            features,
+            prefix=b'{"type":"FeatureCollection","features":[',
+            suffix=b"]}",
+        )
+
+    def _getVirtualValues(self, datasetId, virtualPaths, annotationIds):
+        """{annotationId(str): nested values} for the virtual paths, one
+        provider call per path for the whole export: the provider's dense
+        answer for a full export, or its answer for exactly the requested
+        ids for a subset."""
+        result = {}
+        for path in virtualPaths:
+            provider = valueProviders.providerFor(path)
+            if annotationIds is None:
+                pairs = provider.values(datasetId, path).items()
+            else:
+                idStrings = [str(i) for i in annotationIds]
+                pairs = zip(
+                    idStrings,
+                    provider.valuesForIds(datasetId, path, idStrings),
+                )
+            for annotationId, value in pairs:
+                if value is not None:
+                    valueProviders.nestValue(
+                        result.setdefault(annotationId, {}), path, value
+                    )
+        return result
 
     def _generateCsvLines(
         self,
@@ -455,8 +654,11 @@ class Export(Resource):
         undefinedValue="",
         delimiter=",",
         sanitizeColumnNames=False,
+        virtualValues=None,
     ):
-        """Generate CSV lines for a dataset."""
+        """Generate CSV lines for a dataset. `virtualValues` holds the
+        virtual paths' values ({annotationId: nested values}), fetched by
+        the caller before streaming (_getVirtualValues)."""
         propertyNameMap = self._buildPropertyNameMap(parsedPropertyPaths)
         columns, includedPaths = self._buildCsvColumns(
             parsedPropertyPaths,
@@ -472,6 +674,10 @@ class Export(Resource):
             else:
                 headerRow.append(col.name)
         yield delimiter.join(headerRow) + '\n'
+        virtualValues = virtualValues or {}
+        isVirtual = [
+            valueProviders.isVirtualPath(path) for path in includedPaths
+        ]
 
         # An explicitly empty subset has no rows, so skip the dataset-wide
         # property-values scan below entirely.
@@ -504,8 +710,11 @@ class Export(Resource):
 
             # Add property values
             annPropValues = propertyValues.get(annId, {})
-            for path in includedPaths:
-                value = self._getValueFromPath(annPropValues, path)
+            annVirtualValues = virtualValues.get(annId, {})
+            for path, virtual in zip(includedPaths, isVirtual):
+                value = self._getValueFromPath(
+                    annVirtualValues if virtual else annPropValues, path
+                )
                 if value is None:
                     row.append(undefinedValue)
                 elif isinstance(value, dict):
@@ -597,10 +806,11 @@ class Export(Resource):
         if not propertyPaths:
             return {}
 
-        # Collect unique property IDs
+        # Collect unique property IDs (virtual paths carry a provider
+        # prefix, not an id, and are named from their segments)
         propertyIds = set()
         for path in propertyPaths:
-            if path and len(path) > 0:
+            if path and not valueProviders.isVirtualPath(path):
                 propertyIds.add(path[0])
 
         if not propertyIds:
@@ -637,7 +847,10 @@ class Export(Resource):
             return None
 
         propertyId = path[0]
-        propertyName = propertyNameMap.get(propertyId)
+        propertyName = (
+            propertyId if valueProviders.isVirtualPath(path)
+            else propertyNameMap.get(propertyId)
+        )
         if not propertyName:
             return None
 

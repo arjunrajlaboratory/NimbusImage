@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nimbusimage"
-version = "0.2.3"
+version = "0.3.0"
 description = "Python API for NimbusImage"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,8 +30,13 @@ dependencies = [
 
 [project.optional-dependencies]
 worker = ["large-image"]
-dev = ["pytest", "pytest-mock", "tifffile"]
+xenium = ["zarr", "numcodecs", "tifffile", "scipy", "anndata<0.14", "pandas"]
+xenium-umap = ["nimbusimage[xenium]", "scikit-learn", "umap-learn"]
+dev = ["pytest", "pytest-mock", "tifffile", "nimbusimage[xenium]"]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
+
+[project.scripts]
+nimbusimage-xenium = "nimbusimage.xenium.cli:main"
 
 [project.urls]
 Homepage = "https://nimbusimage.com"

@@ -63,3 +63,54 @@ export function decodeAxis(encoded: string | null): TAnalysisAxis | null {
   }
   return null;
 }
+
+/**
+ * The two property paths of a dataset's UMAP embedding, if it has one: the
+ * first property whose name mentions UMAP (case-insensitive) and that has
+ * two numeric sub-values, preferring ones named x / y, then the two
+ * lowest-numbered components (0 / 1 or 1 / 2, x first). Null when
+ * nothing qualifies, which hides the UMAP buttons.
+ *
+ * `paths` are computed property paths ([propertyId, subId]);
+ * `propertyName(path)` is the property's display name for the path.
+ */
+export function findUmapAxes(
+  paths: string[][],
+  propertyName: (path: string[]) => string,
+): { xAxis: TAnalysisAxis; yAxis: TAnalysisAxis } | null {
+  const groups = new Map<string, string[][]>();
+  for (const path of paths) {
+    if (path.length < 2 || !/umap/i.test(propertyName(path))) {
+      continue;
+    }
+    const parent = createPathStringFromPathArray(path.slice(0, -1));
+    groups.set(parent, [...(groups.get(parent) ?? []), path]);
+  }
+  const leafOf = (path: string[]) => path[path.length - 1].toLowerCase();
+  const letterRank = (leaf: string) =>
+    /(^|[^a-z])x$/.test(leaf) ? 0 : /(^|[^a-z])y$/.test(leaf) ? 1 : 2;
+  // Components may be numbered from 0 (`0`/`1`, `UMAP_0`/`UMAP_1`) or from 1:
+  // either way the lowest number is x and the next is y.
+  const componentIndex = (leaf: string) => {
+    const match = /(\d+)$/.exec(leaf);
+    return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+  };
+  const compare = (a: string[], b: string[]) => {
+    const [leafA, leafB] = [leafOf(a), leafOf(b)];
+    return (
+      letterRank(leafA) - letterRank(leafB) ||
+      componentIndex(leafA) - componentIndex(leafB)
+    );
+  };
+  for (const members of groups.values()) {
+    if (members.length < 2) {
+      continue;
+    }
+    const [x, y] = [...members].sort(compare);
+    return {
+      xAxis: { type: "property", path: x },
+      yAxis: { type: "property", path: y },
+    };
+  }
+  return null;
+}

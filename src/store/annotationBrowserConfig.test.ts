@@ -146,6 +146,86 @@ describe("annotation browser config persistence", () => {
   });
 
   describe("resolveAnnotationBrowserConfig", () => {
+    it("preserves virtual columns, filters, labels and gates on reload", () => {
+      const path = ["spatial", "CD3E"];
+      const config = {
+        displayedPropertyPaths: [path],
+        filterPaths: [path],
+        propertyFilters: [{ ...makeFilter("spatial"), propertyPath: path }],
+        trackLabelPath: path,
+        analysisPlots: [
+          {
+            id: "gene-gate",
+            xAxis: { type: "property" as const, path },
+            yAxis: { type: "property" as const, path },
+            gateEnabled: true,
+            gate: {
+              categoryKeyVersion: 1 as const,
+              vertices: [
+                { x: 0, y: 0 },
+                { x: 1, y: 0 },
+                { x: 1, y: 1 },
+              ],
+              xCategories: null,
+              yCategories: null,
+            },
+          },
+        ],
+      };
+      expect(resolveAnnotationBrowserConfig(config, [])).toEqual(config);
+      expect(
+        resolveAnnotationBrowserConfig(
+          {
+            displayedPropertyPaths: [
+              ["spatial"],
+              ["spatial", ""],
+              ["spatial", "gene", "extra"],
+            ],
+          },
+          [],
+        ).displayedPropertyPaths,
+      ).toEqual([]);
+    });
+
+    it("keeps a plot's display and color, and drops unknown ones", () => {
+      const path = ["spatial", "CD3E"];
+      const axis = { type: "property" as const, path };
+      const plot = {
+        id: "umap",
+        xAxis: axis,
+        yAxis: axis,
+        gate: null,
+        gateEnabled: true,
+      };
+      const resolved = resolveAnnotationBrowserConfig(
+        {
+          analysisPlots: [
+            {
+              ...plot,
+              display: "dots",
+              colorBy: { type: "categorical", key: "tags" },
+            },
+            { ...plot, id: "bad", display: "sparkles", colorBy: { type: "x" } },
+            plot,
+          ],
+        } as any,
+        [],
+      ).analysisPlots!;
+      expect(resolved[0]).toEqual({
+        ...plot,
+        display: "dots",
+        colorBy: { type: "categorical", key: "tags" },
+      });
+      // Cosmetic settings fall back to the defaults, the plot survives.
+      expect(resolved[1]).toEqual({ ...plot, id: "bad" });
+      expect(resolved[2]).toEqual(plot);
+      // And they are saved.
+      const saved = buildAnnotationBrowserConfig([], [], [], resolved, [])
+        .analysisPlots![0];
+      expect(saved.display).toBe("dots");
+      expect(saved.colorBy).toEqual({ type: "categorical", key: "tags" });
+    });
+
     it("returns empty state for a configuration without the key", () => {
       expect(resolveAnnotationBrowserConfig(undefined, ["prop-a"])).toEqual({
         displayedPropertyPaths: [],

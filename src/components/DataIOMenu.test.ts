@@ -6,8 +6,11 @@ import { join } from "path";
 
 vi.mock("@/store", async () => {
   const { reactive } = await import("vue");
-  return { default: reactive({ isLoggedIn: true }) };
+  return { default: reactive({ isLoggedIn: true, dataset: null }) };
 });
+vi.mock("@/store/annotation", () => ({
+  default: { resolvedSelectedAnnotationIds: [], annotationCount: 2 },
+}));
 vi.mock("@/store/properties", () => ({
   default: { computedPropertyPaths: [] },
 }));
@@ -56,6 +59,12 @@ vi.mock("@/components/AnnotationBrowser/AnnotationCSVDialog.vue", () => ({
 vi.mock("@/components/AnnotationBrowser/IndexConversionDialog.vue", () => ({
   default: dialogStub("IndexConversionDialog"),
 }));
+vi.mock("@/components/AnnotationBrowser/GeoJsonImportDialog.vue", () => ({
+  default: dialogStub("GeoJsonImportDialog"),
+}));
+vi.mock("@/components/AnnotationBrowser/SelectionSummaryDialog.vue", () => ({
+  default: dialogStub("SelectionSummaryDialog"),
+}));
 
 import DataIOMenu from "./DataIOMenu.vue";
 import store from "@/store";
@@ -88,8 +97,11 @@ describe("DataIOMenu", () => {
     expect(ids).toEqual(
       expect.arrayContaining([
         "data.import.json",
+        "data.import.geojson",
         "data.export.json",
         "data.export.csv",
+        "data.export.geojson",
+        "data.selectionSummary",
         "data.export.indexConversions",
       ]),
     );
@@ -120,13 +132,20 @@ describe("DataIOMenu", () => {
       "AnnotationExport",
       "AnnotationCSVDialog",
       "IndexConversionDialog",
+      "GeoJsonImportDialog",
+      "SelectionSummaryDialog",
     ];
     for (const name of dialogs) {
       const source = readFileSync(
         join(__dirname, "AnnotationBrowser", `${name}.vue`),
         "utf8",
       );
-      expect(source, name).not.toMatch(/v-slot:activator|#activator/);
+      // The dialog's own activator, or a slot forwarding one. (Tooltips inside
+      // the card have activators of their own; those are fine.)
+      expect(source, name).not.toMatch(
+        /<v-dialog[^>]*>\s*<template (v-slot:activator|#activator)/,
+      );
+      expect(source, name).not.toMatch(/<slot\s+name="activator"/);
     }
     const menu = readFileSync(join(__dirname, "DataIOMenu.vue"), "utf8");
     expect(menu).not.toMatch(/<template #activator \/>/);
@@ -147,8 +166,10 @@ describe("DataIOMenu", () => {
     );
     const command = (id: string) => allCommands.value.find((c) => c.id === id)!;
     expect(command("data.import.json").enabled!()).toBe(false);
+    expect(command("data.import.geojson").enabled!()).toBe(false);
     expect(command("data.export.json").enabled!()).toBe(true);
     (store as any).isLoggedIn = true;
     expect(command("data.import.json").enabled!()).toBe(true);
+    expect(command("data.import.geojson").enabled!()).toBe(true);
   });
 });

@@ -65,10 +65,48 @@
       />
     </div>
 
+    <div v-if="axesChosen" class="ap-display">
+      <v-btn-toggle
+        v-if="overCap"
+        :model-value="display"
+        density="compact"
+        variant="outlined"
+        divided
+        mandatory
+        class="ap-display-toggle"
+        @update:model-value="setDisplay"
+      >
+        <v-btn value="density" size="x-small" title="Binned density heatmap">
+          Density
+        </v-btn>
+        <v-btn
+          value="dots"
+          size="x-small"
+          :title="`A random sample of ${ANALYSIS_SAMPLE_POINTS.toLocaleString()} objects as dots`"
+        >
+          Dots
+        </v-btn>
+      </v-btn-toggle>
+      <v-select
+        v-if="!overCap || dotsMode"
+        :model-value="encodeAxis(plot.colorBy ?? null)"
+        :items="axisItems"
+        item-title="text"
+        item-value="value"
+        label="Color by"
+        clearable
+        density="compact"
+        variant="outlined"
+        hide-details
+        class="ap-color"
+        @update:model-value="setColorBy"
+      />
+    </div>
+
     <div v-if="!axesChosen" class="ap-hint">
       Pick X and Y to plot this population ({{ inputCount.toLocaleString() }}
       objects).
-      <template v-if="overCap">
+      <template v-if="overCap && !dotsMode">
         Then draw a closed shape around the objects to keep.
       </template>
       <template v-else> Then lasso-select points to keep them. </template>
@@ -77,7 +115,23 @@
     <template v-else>
       <div ref="plotEl" class="ap-plot"></div>
       <div class="ap-footer">
-        <span v-if="overCap && histogram">
+        <span v-if="dotsMode && histogram?.sample">
+          <template v-if="histogram.sample.x.length < histogram.sample.total">
+            A random {{ histogram.sample.x.length.toLocaleString() }} of
+            {{ histogram.sample.total.toLocaleString() }} objects
+          </template>
+          <template v-else>
+            {{ histogram.sample.total.toLocaleString() }} objects
+          </template>
+          <template v-if="histogram.inputCount > histogram.sample.total">
+            ({{
+              (histogram.inputCount - histogram.sample.total).toLocaleString()
+            }}
+            without values)
+          </template>
+          — lasso to gate; a gate applies to every object, not only the dots.
+        </span>
+        <span v-else-if="overCap && histogram">
           {{ histogram.plottedCount.toLocaleString() }} of
           {{ histogram.inputCount.toLocaleString() }} objects binned
           <template v-if="histogram.inputCount > histogram.plottedCount">
@@ -119,9 +173,12 @@ import { logError } from "@/utils/log";
 import { encodeAxis, decodeAxis, IAxisItem } from "@/utils/analysisAxes";
 import {
   IAnalysisSeries,
+  isPointInPolygon,
   selectionEventToGate,
   shapeToGate,
 } from "@/utils/analysisGating";
+import { ANALYSIS_SAMPLE_POINTS } from "@/store/constants";
+import { categoricalColor } from "@/utils/categoricalPalette";
 
 const props = withDefaults(
   defineProps<{
@@ -140,11 +197,18 @@ const props = withDefaults(
     // (SERVER_GATING.md, Phase 2), and gates are drawn as closed shapes.
     overCap?: boolean;
     histogram?: IAnalysisHistogramDisplay | null;
+    // Above the cap: |gate ∩ this plot's input|, from the panel. null while
+    // unknown (gate or an upstream gate not resolved yet).
+    chainedGateCount?: number | null;
   }>(),
-  { overCap: false, histogram: null },
+  { overCap: false, histogram: null, chainedGateCount: null },
 );
 
 const theme = useTheme();
+// Most distinct integer values a numeric colorBy may have and still be
+// colored as categories (cluster ids); more is a continuous ramp.
+const MAX_CLUSTER_CATEGORIES = 30;
+const CLUSTER_NAME = /clust|kmeans|leiden|louvain/i;
 const plotEl = ref<HTMLElement>();
 
 // Loaded lazily so plotly.js-dist-min never lands in the main bundle.
@@ -153,21 +217,25 @@ const plotly = shallowRef<any>(null);
 const axesChosen = computed(
   () => props.plot.xAxis !== null && props.plot.yAxis !== null,
 );
+const display = computed(() => props.plot.display ?? "density");
+// Dots: the server's display sample, at any population size (below the cap
+// it is every point). Gates stay polygons in value space.
+const dotsMode = computed(() => display.value === "dots");
+// Dots and the heatmap both come from the histogram response.
+const usesServerDisplay = computed(() => props.overCap || dotsMode.value);
 const plotReady = computed(() =>
-  props.overCap ? props.histogram !== null : props.series !== null,
+  usesServerDisplay.value ? props.histogram !== null : props.series !== null,
 );
 // Above the cap the resolved ids are the PURE polygon membership over the
-// whole dataset; the badge shows the chained count from the histogram
-// instead, matching the below-cap meaning of "objects this gate keeps here".
+// whole dataset; the badge shows the CHAINED count the panel computes from
+// them (gate ∩ the population reaching this plot), matching the below-cap
+// meaning of "objects this gate keeps here".
 const gateBadgeCount = computed(() => {
   if (props.overCap) {
-    // Only the histogram's chained count, never gateIds.length. Falling back
-    // to the pure count while the histogram was in flight was worse than the
-    // "…" it replaced: the pure count over-states (it ignores the upstream
-    // gates), so every panel open showed a plausible wrong number for a few
-    // seconds and then silently changed it. A placeholder during a known
-    // wait is honest; a number that is quietly wrong is not.
-    return props.histogram?.gateCount ?? null;
+    // Never gateIds.length: the pure count over-states (it ignores the
+    // filters and upstream gates), and a plausible wrong number is worse
+    // than the "…" shown while the chained count is unknown.
+    return props.chainedGateCount;
   }
   return props.gateIds === null ? null : props.gateIds.length;
 });
@@ -179,6 +247,23 @@ function setAxis(which: "x" | "y", encoded: string | null) {
       ? { id: props.plot.id, xAxis: axis }
       : { id: props.plot.id, yAxis: axis },
   );
+}
+
+function setDisplay(value: "density" | "dots" | null) {
+  if (value !== null) {
+    filterStore.setAnalysisPlotDisplay({ id: props.plot.id, display: value });
+  }
+}
+
+function setColorBy(encoded: string | null) {
+  const colorBy = decodeAxis(encoded);
+  // Below the cap, coloring is what dots mode is for: picking a color turns
+  // it on and clearing it returns to the plain scatter.
+  filterStore.setAnalysisPlotDisplay({
+    id: props.plot.id,
+    colorBy,
+    ...(props.overCap ? {} : { display: colorBy ? "dots" : "density" }),
+  });
 }
 
 function toggleGateEnabled() {
@@ -275,7 +360,48 @@ async function renderPlot() {
     modeBarButtonsToRemove: ["autoScale2d", "zoomIn2d", "zoomOut2d"],
   };
 
-  if (props.overCap && props.histogram) {
+  let traces: Record<string, unknown>[] | null = null;
+  if (dotsMode.value && props.histogram?.sample) {
+    traces = dotTraces(props.histogram);
+    layout.xaxis = axisLayout(
+      props.plot.xAxis,
+      props.histogram.xCategoryLabels,
+    );
+    layout.yaxis = axisLayout(
+      props.plot.yAxis,
+      props.histogram.yCategoryLabels,
+    );
+    layout.dragmode = "lasso";
+    layout.shapes = gateShapes();
+    // Plotly lays the legend out in two columns at palette width; reserve
+    // the rows below the axis title rather than letting it overlap.
+    const legendRows = Math.ceil(
+      traces.filter((entry) => entry.showlegend === true).length / 2,
+    );
+    if (legendRows > 0) {
+      const rowHeight = 19;
+      const bottom = 60 + legendRows * rowHeight;
+      const height = 300 + legendRows * rowHeight;
+      const plotAreaHeight = height - 10 - bottom;
+      layout.showlegend = true;
+      layout.legend = {
+        orientation: "h",
+        x: 0,
+        // Just below the x-axis title, in plot-area fractions.
+        y: -52 / plotAreaHeight,
+        yanchor: "top",
+        font: { size: 9 },
+        itemsizing: "constant",
+        // The entries are proxies (see dotTraces): clicking one would hide
+        // only the proxy, not the category's dots.
+        itemclick: false,
+        itemdoubleclick: false,
+      };
+      layout.height = height;
+      layout.margin = { l: 52, r: 10, t: 10, b: bottom };
+    }
+    trace = traces[0];
+  } else if (props.overCap && props.histogram) {
     const histogram = props.histogram;
     trace = {
       type: "heatmap",
@@ -300,18 +426,7 @@ async function renderPlot() {
     };
     // The persisted gate, re-rendered so it is visible on the heatmap. Not
     // editable: redrawing replaces it, and "Clear gate" removes it.
-    layout.shapes =
-      props.plot.gate !== null
-        ? [
-            {
-              type: "path",
-              path: gateShapePath(props.plot.gate.vertices),
-              line: { color: "#ffab40", width: 2 },
-              fillcolor: "rgba(255, 171, 64, 0.1)",
-              editable: false,
-            },
-          ]
-        : [];
+    layout.shapes = gateShapes();
     config.modeBarButtonsToAdd = ["drawclosedpath", "drawrect"];
   } else if (props.series) {
     const series = props.series;
@@ -343,7 +458,7 @@ async function renderPlot() {
     return;
   }
 
-  await plotly.value.react(element, [trace], layout, config);
+  await plotly.value.react(element, traces ?? [trace], layout, config);
   if (firstRender) {
     element.on("plotly_selected", (event: any) => {
       // A gate is persisted as its polygon, not as the ids it happens to
@@ -352,6 +467,18 @@ async function renderPlot() {
       // neither a lasso path nor a box range (Plotly emits a bare event during
       // some internal clears), in which case the existing gate is left alone —
       // the explicit clear is plotly_deselect.
+      if (dotsMode.value) {
+        // A lasso over the sample is a polygon in value space, resolved
+        // over every object — pin the server-derived category orders.
+        const gate = selectionEventToGate(event, {
+          xCategories: props.histogram?.xCategories ?? null,
+          yCategories: props.histogram?.yCategories ?? null,
+        });
+        if (gate !== null) {
+          filterStore.setAnalysisPlotGate({ id: props.plot.id, gate });
+        }
+        return;
+      }
       const series = props.series;
       if (props.overCap || !series) {
         return;
@@ -363,7 +490,7 @@ async function renderPlot() {
       filterStore.setAnalysisPlotGate({ id: props.plot.id, gate });
     });
     element.on("plotly_deselect", () => {
-      if (props.overCap) {
+      if (props.overCap && !dotsMode.value) {
         return;
       }
       filterStore.setAnalysisPlotGate({ id: props.plot.id, gate: null });
@@ -372,6 +499,161 @@ async function renderPlot() {
       onShapesRelayout(event);
     });
   }
+}
+
+/** The persisted gate as a non-editable outline (heatmap and dots). */
+function gateShapes(): Record<string, unknown>[] {
+  return props.plot.gate !== null
+    ? [
+        {
+          type: "path",
+          path: gateShapePath(props.plot.gate.vertices),
+          line: { color: "#ffab40", width: 2 },
+          fillcolor: "rgba(255, 171, 64, 0.1)",
+          editable: false,
+        },
+      ]
+    : [];
+}
+
+/**
+ * Scattergl traces for the display sample: every dot in one trace colored
+ * per point, plus legend proxies, for a categorical colorBy; a colorbar trace
+ * plus a grey "no value" trace for a numeric one; one plain trace otherwise.
+ * With a gate, dots outside it are dimmed — computed on the drawn polygon,
+ * as a picture of the gate; the gate itself resolves over every object.
+ */
+function dotTraces(
+  histogram: IAnalysisHistogramDisplay,
+): Record<string, unknown>[] {
+  const sample = histogram.sample!;
+  const gate = props.plot.gate;
+  const inside = (i: number) =>
+    gate === null || isPointInPolygon(sample.x[i], sample.y[i], gate.vertices);
+  const marker = { size: 3, opacity: 0.8 };
+  const base = {
+    type: "scattergl",
+    mode: "markers",
+    selected: { marker: { opacity: 0.9 } },
+    unselected: { marker: { opacity: 0.07 } },
+  };
+  const traceFor = (
+    indices: number[],
+    extra: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const selected =
+      gate === null
+        ? null
+        : indices.reduce<number[]>((acc, index, local) => {
+            if (inside(index)) {
+              acc.push(local);
+            }
+            return acc;
+          }, []);
+    return {
+      ...base,
+      x: indices.map((i) => sample.x[i]),
+      y: indices.map((i) => sample.y[i]),
+      selectedpoints: selected,
+      ...extra,
+    };
+  };
+  const all = sample.x.map((_, i) => i);
+  // A clustering (by its name — counts are integers too, so values alone
+  // cannot tell a cluster id from a gene count) with a few integer values is
+  // colored by category like tags rather than on a continuous ramp.
+  let colorIndex = sample.color;
+  let labels = histogram.colorCategoryLabels;
+  if (
+    colorIndex &&
+    !labels &&
+    CLUSTER_NAME.test(axisTitle(props.plot.colorBy ?? null))
+  ) {
+    const distinct = [
+      ...new Set(colorIndex.filter((v): v is number => v !== null)),
+    ];
+    if (
+      distinct.length > 0 &&
+      distinct.length <= MAX_CLUSTER_CATEGORIES &&
+      distinct.every(Number.isInteger)
+    ) {
+      distinct.sort((a, b) => a - b);
+      const indexOf = new Map(distinct.map((value, i) => [value, i]));
+      colorIndex = colorIndex.map((v) =>
+        v === null ? null : (indexOf.get(v) as number),
+      );
+      labels = distinct.map((value) => String(value));
+    }
+  }
+  if (colorIndex && labels) {
+    const categoryLabels = labels;
+    const present = [...new Set(colorIndex)]
+      .filter((category): category is number => category !== null)
+      .sort((a, b) => a - b);
+    return [
+      traceFor(all, {
+        marker: {
+          ...marker,
+          color: all.map((i) =>
+            colorIndex[i] === null
+              ? "#777777"
+              : categoricalColor(colorIndex[i] as number),
+          ),
+        },
+        hovertext: all.map((i) =>
+          colorIndex[i] === null ? "" : categoryLabels[colorIndex[i] as number],
+        ),
+        hovertemplate: "%{hovertext}<extra></extra>",
+        showlegend: false,
+      }),
+      ...present.map((category) => ({
+        type: "scattergl",
+        mode: "markers",
+        x: [null],
+        y: [null],
+        name: categoryLabels[category],
+        marker: { size: 7, color: categoricalColor(category) },
+        hoverinfo: "skip",
+        showlegend: true,
+      })),
+    ];
+  }
+  if (sample.color) {
+    const values = sample.color;
+    const valued = all.filter((i) => values[i] !== null);
+    const missing = all.filter((i) => values[i] === null);
+    const sorted = valued.map((i) => values[i] as number).sort((a, b) => a - b);
+    // Percentile range, so a few outliers cannot flatten the ramp.
+    const at = (q: number) =>
+      sorted.length ? sorted[Math.floor(q * (sorted.length - 1))] : 0;
+    const colorTitle = axisTitle(props.plot.colorBy ?? null);
+    return [
+      traceFor(missing, {
+        name: "No value",
+        marker: { ...marker, color: "#777777" },
+        hovertemplate: "No value<extra></extra>",
+      }),
+      traceFor(valued, {
+        name: colorTitle,
+        marker: {
+          ...marker,
+          color: valued.map((i) => values[i]),
+          colorscale: "Viridis",
+          cmin: at(0.01),
+          cmax: at(0.99),
+          showscale: true,
+          colorbar: { thickness: 8, len: 0.8, tickfont: { size: 9 } },
+        },
+        hovertemplate: `${colorTitle}: %{marker.color}<extra></extra>`,
+      }),
+    ];
+  }
+  return [
+    traceFor(all, {
+      marker: { ...marker, color: "#4f8ef7" },
+      hoverinfo: "skip",
+    }),
+  ];
 }
 
 function binCenters(edges: number[]): number[] {
@@ -389,7 +671,7 @@ function binCenters(edges: number[]): number[] {
  * new gate; every other relayout (zoom, autorange, keyed edits) is ignored.
  */
 function onShapesRelayout(event: any) {
-  if (!props.overCap) {
+  if (!props.overCap || dotsMode.value) {
     return;
   }
   const shapes = event?.shapes;
@@ -447,6 +729,10 @@ onBeforeUnmount(() => {
 
 defineExpose({
   renderPlot,
+  dotTraces,
+  setDisplay,
+  setColorBy,
+  dotsMode,
   setAxis,
   clearGate,
   removePlot,
@@ -494,6 +780,21 @@ defineExpose({
     flex: 1 1 0;
     min-width: 0;
   }
+}
+
+.ap-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  > .ap-color {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+
+.ap-display-toggle {
+  flex: 0 0 auto;
 }
 
 .ap-hint {

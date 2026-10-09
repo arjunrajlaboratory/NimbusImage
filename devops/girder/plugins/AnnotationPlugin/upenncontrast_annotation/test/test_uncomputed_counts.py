@@ -276,3 +276,68 @@ class TestUncomputedCounts:
         props = [self._prop("p%d" % i) for i in range(3)]
         resp = self._uncomputed(server, admin, str(folder["_id"]), props)
         assertStatus(resp, 400)
+
+    def testPropertiesCountCapFitsInOneCommand(self, admin, server):
+        """The real cap answers a list past it with a clean 400, and a list
+        at it still fits one aggregation command (one accumulator per
+        property: a far larger list would exceed Mongo's 16 MiB command
+        limit and fail with a 500)."""
+        folder = self._makeDataset(admin, "uncomputed_cap")
+        self._addAnnotation(folder)
+        cap = validation.MAX_UNCOMPUTED_PROPERTIES
+        props = [self._prop("p%d" % i) for i in range(cap + 1)]
+        resp = self._uncomputed(server, admin, str(folder["_id"]), props)
+        assertStatus(resp, 400)
+        resp = self._uncomputed(
+            server, admin, str(folder["_id"]), props[:cap]
+        )
+        assertStatusOk(resp)
+        assert len(resp.json) == cap
+
+    def testHasValueCountMatchesKeyArrayPipeline(self, admin, server):
+        """The per-requested-key count agrees with the previous pass that
+        unwound every value doc's key array: null values count as present,
+        docs without `values` (or of another dataset) do not, nested
+        sub-values and repeated ids change nothing."""
+        folder = self._makeDataset(admin, "uncomputed_equivalence")
+        other = self._makeDataset(admin, "uncomputed_equivalence_other")
+        self._addAnnotation(folder, value={"a": 1, "b": 2}, propertyId="gene")
+        self._addAnnotation(folder, value=3, propertyId="area")
+        self._addAnnotation(folder, value=None)
+        self._addAnnotation(other, value=5, propertyId="area")
+        pvModel = AnnotationPropertyValues()
+        created = self._addAnnotation(folder)
+        pvModel.collection.insert_one({
+            "annotationId": created["_id"], "datasetId": folder["_id"],
+            "values": {"area": None, "gene": {}},
+        })
+        empty = self._addAnnotation(folder)
+        pvModel.collection.insert_one({
+            "annotationId": empty["_id"], "datasetId": folder["_id"],
+        })
+        nullValues = self._addAnnotation(folder)
+        pvModel.collection.insert_one({
+            "annotationId": nullValues["_id"], "datasetId": folder["_id"],
+            "values": None,
+        })
+        keyArray = {
+            doc["_id"]: doc["n"]
+            for doc in pvModel.collection.aggregate([
+                {"$match": {"datasetId": folder["_id"]}},
+                {"$project": {"k": {"$objectToArray": {
+                    "$ifNull": ["$values", {}]}}}},
+                {"$unwind": "$k"},
+                {"$group": {"_id": "$k.k", "n": {"$sum": 1}}},
+            ])
+        }
+        ids = ["gene", "area", "area", "missing"]
+        counts = Annotation().uncomputedCounts(
+            folder["_id"], [self._prop(i) for i in ids]
+        )
+        total = Annotation().collection.count_documents(
+            {"datasetId": folder["_id"], "shape": "point"}
+        )
+        assert counts == {
+            i: max(0, total - keyArray.get(i, 0)) for i in ids
+        }
+        assert keyArray == {"gene": 2, "area": 2}

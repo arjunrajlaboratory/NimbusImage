@@ -65,6 +65,17 @@ pytest tests/integration/test_live_workers.py -v -m integration
 | `NI_TEST_USER` | `admin` | Username for test authentication |
 | `NI_TEST_PASS` | `password` | Password for test authentication |
 
+### Xenium ingest: live end-to-end verification
+
+`tests/integration/xenium_live.py` is a standalone script (not collected by pytest) that
+runs the whole `nimbusimage-xenium` pipeline on real 10x bundles against a live backend and
+checks every result against the bundle. See `codebaseDocumentation/XENIUM_INGEST.md`,
+"Live verification":
+
+```bash
+XENIUM_LIVE_BUNDLES=~/Downloads/xenium-tiny python tests/integration/xenium_live.py
+```
+
 ### What Integration Tests Cover
 
 | Test file | What it tests |

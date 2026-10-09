@@ -11,6 +11,7 @@ from ..helpers.access_helpers import (
     requireAnnotationsInDatasets,
     requireDatasetsAccess,
 )
+from ..helpers.serialization import jsonSafe
 from ..helpers.validation import (
     MAX_DISTINCT_SEARCH_LENGTH,
     MAX_DISTINCT_VALUES,
@@ -72,11 +73,11 @@ class PropertyValues(Resource):
             exc=True,
         )
         requireAnnotationsInDatasets([params])
-        return self._annotationPropertyValuesModel.appendValues(
+        return jsonSafe(self._annotationPropertyValuesModel.appendValues(
             self.getBodyJson(),
             params["annotationId"],
             params["datasetId"],
-        )
+        ))
 
     @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
@@ -103,8 +104,10 @@ class PropertyValues(Resource):
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
         requireAnnotationsInDatasets(propertyValuesList)
-        return self._annotationPropertyValuesModel.appendMultipleValues(
-            propertyValuesList
+        return jsonSafe(
+            self._annotationPropertyValuesModel.appendMultipleValues(
+                propertyValuesList
+            )
         )
 
     @describeRoute(
@@ -181,9 +184,13 @@ class PropertyValues(Resource):
             exc=True,
         )
         annotationIds = [requireObjectId(i, "annotationId") for i in rawIds]
-        return self._annotationPropertyValuesModel.findByAnnotationIds(
-            datasetId, annotationIds, propertyPaths
-        )
+        try:
+            return self._annotationPropertyValuesModel.findByAnnotationIds(
+                datasetId, annotationIds, propertyPaths
+            )
+        except ValueError as exc:
+            # A virtual path the provider cannot resolve (unknown key).
+            raise RestException(str(exc), code=400)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -229,12 +236,12 @@ class PropertyValues(Resource):
             offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions
-        return self._annotationPropertyValuesModel.find(
+        return jsonSafe(list(self._annotationPropertyValuesModel.find(
             query,
             sort=sort,
             limit=limit,
             offset=offset,
-        ).hint([("datasetId", 1), ("_id", 1)])
+        ).hint([("datasetId", 1), ("_id", 1)])))
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -284,15 +291,15 @@ class PropertyValues(Resource):
             exc=True,
         )
         if "buckets" in params:
-            return self._annotationPropertyValuesModel.histogram(
+            return jsonSafe(self._annotationPropertyValuesModel.histogram(
                 params["propertyPath"],
                 params["datasetId"],
                 int(params["buckets"]),
-            )
+            ))
         else:
-            return self._annotationPropertyValuesModel.histogram(
+            return jsonSafe(self._annotationPropertyValuesModel.histogram(
                 params["propertyPath"], params["datasetId"]
-            )
+            ))
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(

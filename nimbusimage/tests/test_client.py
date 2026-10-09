@@ -255,3 +255,18 @@ class TestNimbusClientListDatasets:
 
         with pytest.raises(RuntimeError, match="boom"):
             client.list_datasets()
+
+
+class TestJobLookup:
+    def test_job_by_id_wraps_the_girder_job(self):
+        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+            mock_gc = MagicMock()
+            MockGC.return_value = mock_gc
+            mock_gc.get.return_value = {"_id": "user123", "login": "admin"}
+            client = NimbusClient(
+                api_url="http://localhost:8080/api/v1", token="tok",
+            )
+            mock_gc.get.return_value = {"_id": "job1", "status": 3}
+            job = client.job("job1")
+            mock_gc.get.assert_called_with("job/job1")
+            assert job.id == "job1"

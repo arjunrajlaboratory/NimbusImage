@@ -14,6 +14,7 @@ import {
   analysisPropertyPaths,
   categoricalContentSignature,
   buildPlotSeries,
+  colorLegendLabels,
   chainPlotInputs,
   encodeAnalysisCategoryKey,
   isEncodedAnalysisCategoryKey,
@@ -764,5 +765,32 @@ describe("category keys for a document missing the field", () => {
     // "v1:null" while the below-cap scatter read "(none)" — the cross-cap
     // display divergence the key-order change exists to prevent.
     expect(labelForCategoryKey(NULL_KEY, "z", channelName)).toBe("(none)");
+  });
+});
+
+describe("colorLegendLabels", () => {
+  const key = (tags: string[]) => encodeAnalysisCategoryKey(tags);
+
+  it("drops the tags every category shares", () => {
+    expect(
+      colorLegendLabels(
+        [key(["B Cell", "cell"]), key(["T Cell", "cell"]), key(["cell"])],
+        "tags",
+        channelName,
+      ),
+    ).toEqual(["B Cell", "T Cell", "cell"]);
+  });
+
+  it("labels a single category, and other keys, as the axis would", () => {
+    expect(colorLegendLabels([key(["cell"])], "tags", channelName)).toEqual([
+      "cell",
+    ]);
+    expect(
+      colorLegendLabels(
+        [encodeAnalysisCategoryKey(0), encodeAnalysisCategoryKey(2)],
+        "channel",
+        channelName,
+      ),
+    ).toEqual(["Ch0", "Ch2"]);
   });
 });

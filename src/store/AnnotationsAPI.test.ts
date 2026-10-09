@@ -151,3 +151,50 @@ describe("AnnotationsAPI.hydrateAnnotations", () => {
     expect(client.post).not.toHaveBeenCalled();
   });
 });
+
+describe("AnnotationsAPI.fetchAnnotationSummary", () => {
+  it("posts datasetId, filters and propertyPaths and returns the body", async () => {
+    const summary = {
+      total: 2,
+      tags: [{ tag: "A", count: 2 }],
+      properties: [
+        { path: ["p", "Area"], count: 2, mean: 10, std: 7, min: 5, max: 15 },
+      ],
+    };
+    const { api, client } = makeApi(async () => ({ data: summary }));
+    const filters = { tags: { values: ["A"], exclusive: false } };
+    const result = await api.fetchAnnotationSummary("ds", filters, [
+      ["p", "Area"],
+    ]);
+    expect(client.post).toHaveBeenCalledWith("upenn_annotation/summary", {
+      datasetId: "ds",
+      filters,
+      propertyPaths: [["p", "Area"]],
+    });
+    expect(result).toEqual(summary);
+  });
+
+  it("answers an empty id constraint locally with zeroed statistics", async () => {
+    const { api, client } = makeApi(async () => ({ data: {} }));
+    const result = await api.fetchAnnotationSummary(
+      "ds",
+      { idConstraints: [[]] },
+      [["p", "Area"]],
+    );
+    expect(client.post).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      total: 0,
+      tags: [],
+      properties: [
+        {
+          path: ["p", "Area"],
+          count: 0,
+          mean: null,
+          std: null,
+          min: null,
+          max: null,
+        },
+      ],
+    });
+  });
+});

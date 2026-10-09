@@ -160,3 +160,25 @@ describe("createProperty propagates the real failure reason", () => {
     );
   });
 });
+
+describe("adoptServerRegisteredProperty", () => {
+  it("adds a server-registered id locally, once, without a write", async () => {
+    (main as any).setConfigurationImpl({
+      id: "c1",
+      data: {
+        id: "c1",
+        name: "config",
+        layers: [],
+        tools: [],
+        scales: {},
+        propertyIds: ["a"],
+      } as any,
+    });
+    const sync = vi.spyOn(main.api, "updateConfigurationKey");
+    await propertyStore.adoptServerRegisteredProperty("b");
+    await propertyStore.adoptServerRegisteredProperty("b");
+    expect(main.configuration!.propertyIds).toEqual(["a", "b"]);
+    expect(sync).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+});

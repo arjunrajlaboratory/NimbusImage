@@ -113,7 +113,7 @@ Give every object in the dataset a color derived from a computed property — e.
 **Things to know**:
 - Applying replaces every object's existing display color, and any later manual coloring ("Color selected", the context menu, tag-cloud coloring) retires the legend, since the colors no longer come from the property
 - The coloring is a snapshot: objects created afterwards and re-computed property values keep their old colors — re-apply the coloring to refresh
-- **Remove property coloring** (same menu) resets all colors back to the layer colors
+- **Remove coloring** (in the same dialog) resets all colors back to the layer colors
 
 ## Line Scan Intensity Profiles
 Draw a line across the image to see a live plot of raw pixel intensity along it — without creating any stored annotation. Useful for inspecting signal profiles, comparing channels, checking colocalization, or finding edges and peaks.

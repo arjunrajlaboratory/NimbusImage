@@ -9,6 +9,7 @@
 - [ConnectionAccessor](#connectionaccessor-dsconnections)
 - [PropertyAccessor](#propertyaccessor-dsproperties)
 - [ExportAccessor](#exportaccessor-dsexport)
+- [SpatialAccessor](#spatialaccessor-dsspatial)
 - [SharingAccessor](#sharingaccessor-dssharing)
 - [Annotation geometry methods](#annotation-geometry-methods-attached-dynamically)
 - [Filter utilities](#filter-utilities)
@@ -111,6 +112,32 @@ All models have `to_dict()` / `from_dict()` for serialization.
 |--------|-----------|---------|
 | `to_json` | `(include_annotations=True, ...)` | `dict` |
 | `to_csv` | `(property_paths, delimiter=",", path?)` | `bytes` |
+| `to_geojson` | `(annotation_ids=None, path?)` | `dict` (FeatureCollection; `None` = all, `[]` = none) |
+
+## SpatialAccessor (ds.spatial)
+
+Needs the `upenncontrast_spatial` plugin. A registered **table** (AnnData `spatial.zarr.zip`)
+and **transcript store** (10x `transcripts.zarr.zip`) are independent halves.
+
+| Method | Signature | Returns / notes |
+|--------|-----------|---------|
+| `info` | `(verify=False)` | schema (`nObs`, `nVar`, `pixelSize`, `transform`, `label`) or `None`; `verify` adds `liveAnnotations` (~1.5 s at 700K) |
+| `upload_and_register` / `register` / `unregister` | `(path)` / `(item_id)` / `()` | registration refuses duplicate ids/symbols, non-finite X, `.`/`$` in symbols |
+| `features` | `(search="", limit=25)` | `[{symbol, featureType}]` |
+| `column` / `row` | `(symbol)` / `(annotation_id)` | non-zero values |
+| `aggregate` | `(symbols, filters=None)` | mean and fraction expressing over a list-filter object |
+| `materialize` | `(symbols, property_name="Gene Expression", wait=True)` | dense sub-values of a property (server job) |
+| `score` | `(symbols, name, method="mean")` | gene-set score property |
+| `differential` | `(filters_a, filters_b=None, max_features=50, method="welch")` | ranked table (`"wilcoxon"` too) |
+| `virtual_path` | `(symbol)` | `["spatial", symbol]`, usable as any property path |
+| `transcripts` / `transcript_genes` / `transcript_points` | `()` / `(search)` / `(genes, tiles, level=0, min_qv=0)` | molecules in image pixels |
+| `register_transcripts` | `(item_id, pixel_size, transform=None)` | `transform`: 3×3 source-grid px → this image's px (H&E: `M⁻¹`) |
+| `staleness` / `recompute` | `()` / `(label, scope="all"\|"dirty", min_qv=20, tags=None, embeddings=False)` | dirty runs refuse changed settings; the old table stays a version |
+| `versions` / `activate_version` / `forget_version` | `()` / `(item_id)` | |
+| `compute_neighborhood` / `neighborhood` | `(radius_pixels, exclude_tags=None)` / `()` | per-cell neighbor fractions + enrichment matrix |
+| `region_summary` | `(region_tag=None, region_ids=None, features=None, exclude_tags=None)` | cells counted by centroid inside each region |
+
+Polygons tagged `region` are never cells for any of these.
 
 ## SharingAccessor (ds.sharing)
 

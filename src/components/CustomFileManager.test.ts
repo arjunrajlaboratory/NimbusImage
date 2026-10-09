@@ -1,6 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { nextTick } from "vue";
-import { shallowMount, mount, flushPromises } from "@vue/test-utils";
+import {
+  shallowMount,
+  mount,
+  flushPromises,
+  enableAutoUnmount,
+} from "@vue/test-utils";
+
+enableAutoUnmount(afterEach);
 
 const mockGetUserPrivateFolder = vi.fn();
 const mockMapDatasetViews = vi.fn();
