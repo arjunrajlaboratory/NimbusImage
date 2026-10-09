@@ -72,6 +72,23 @@ class MyModel(ProxiedModel):
 
 When adding new query patterns that filter on specific fields, check if an index exists or should be created.
 
+**Adding, dropping, or changing an index on an existing collection is a deploy
+step, not startup code.** Startup runs in every uvicorn worker against
+production-sized collections, and the builds outlive the client timeout. See
+"Index changes on existing collections: not at startup" in `SKILL.md` and
+`codebaseDocumentation/PROPERTY_VALUES_UNIQUE_INDEX.md`.
+
+To check whether a query is indexed **without running it**, ask for the plan
+only. pymongo's `cursor.explain()` executes the query, which on an unindexed
+production collection is a full scan:
+
+```python
+db.command('explain', {'find': 'annotation_property_values',
+                       'filter': {'annotationId': annotationId}},
+           verbosity='queryPlanner')['queryPlanner']['winningPlan']
+# IXSCAN / EXPRESS_IXSCAN = indexed, COLLSCAN = not
+```
+
 ## Batch Query Patterns
 
 When fetching multiple documents by ID, use `$in` queries instead of individual loads. This is the **single most common code review issue** in this project.
