@@ -47,6 +47,9 @@ def encodeRawTiff(image):
     tifffile.imwrite(
         buffer, image, photometric=photometric, metadata=None,
         compression=None,
+        # Without it, tifffile writes an H x W x 2 (or 5+) minisblack array
+        # as H pages of W x bands instead of one page of interleaved bands
+        planarconfig="contig" if image.ndim == 3 else None,
     )
     return buffer.getvalue()
 

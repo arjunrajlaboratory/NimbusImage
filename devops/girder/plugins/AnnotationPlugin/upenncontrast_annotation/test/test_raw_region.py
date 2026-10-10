@@ -204,12 +204,21 @@ class TestRawRegion:
         assertStatus(resp, 403)
 
 
-def testEncodeRawTiffKeepsDtypeAndBands():
+def testEncodeRawTiffWritesOnePageForEveryBandCount():
     rgb = np.arange(4 * 3 * 3, dtype=np.uint16).reshape(4, 3, 3) * 1000
     with tifffile.TiffFile(io.BytesIO(encodeRawTiff(rgb))) as tiff:
         page = tiff.pages[0]
         assert page.photometric == tifffile.PHOTOMETRIC.RGB
         np.testing.assert_array_equal(page.asarray(), rgb)
+
+    for bands in (2, 5):
+        multiband = np.arange(4 * 3 * bands, dtype=np.uint16).reshape(
+            4, 3, bands
+        )
+        with tifffile.TiffFile(io.BytesIO(encodeRawTiff(multiband))) as tiff:
+            assert len(tiff.pages) == 1
+            assert tiff.pages[0].samplesperpixel == bands
+            np.testing.assert_array_equal(tiff.pages[0].asarray(), multiband)
 
     singleBand = np.full((4, 3, 1), 4095, dtype=np.uint16)
     decoded = tifffile.imread(io.BytesIO(encodeRawTiff(singleBand)))
