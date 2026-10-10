@@ -52,6 +52,18 @@ export function rawRegionMaxPixels(tileinfo: {
   return Math.floor(RAW_REGION_MAX_BYTES / bytesPerPixel);
 }
 
+/**
+ * The largest per-side size, at most `maxDim`, of a square raw_region request
+ * that fits the byte budget: what callers that cap both sides (the line scan)
+ * should pass as their maximum dimension.
+ */
+export function rawRegionMaxDim(
+  tileinfo: { dtype?: string; bandCount?: number },
+  maxDim: number,
+): number {
+  return Math.min(maxDim, Math.floor(Math.sqrt(rawRegionMaxPixels(tileinfo))));
+}
+
 export function getDownloadParameters(
   bounds: IGeoJSBounds,
   format: string,

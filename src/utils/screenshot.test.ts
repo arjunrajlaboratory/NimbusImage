@@ -5,6 +5,7 @@ import {
   getChannelsDownloadUrls,
   getDownloadParameters,
   getLayersDownloadUrls,
+  rawRegionMaxDim,
   rawRegionMaxPixels,
 } from "./screenshot";
 import { newLayer, type IDataset, type IFrameInfo } from "@/store/model";
@@ -280,5 +281,15 @@ describe("raw_region byte budget", () => {
     [{}, 2 * 1024 * 1024],
   ])("allows %j at most %i pixels", (tileinfo, pixels) => {
     expect(rawRegionMaxPixels(tileinfo)).toBe(pixels);
+  });
+});
+
+describe("raw_region line-scan dimension", () => {
+  it.each([
+    [{ dtype: "uint16", bandCount: 1 }, 2048],
+    // RGB float64: 2048^2 would be 96 MiB, over the 64 MiB budget
+    [{ dtype: "float64", bandCount: 3 }, 1672],
+  ])("caps %j at %i pixels per side", (tileinfo, maxDim) => {
+    expect(rawRegionMaxDim(tileinfo, 2048)).toBe(maxDim);
   });
 });

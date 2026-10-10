@@ -73,6 +73,32 @@ describe("parseRawTiff", () => {
     expect(Array.from(result.data)).toEqual([10, 20, 30, 40, 50, 60]);
   });
 
+  // Written by the plugin's encodeRawTiff (raw_region), base64-encoded
+  const RAW_REGION_TIFFS = {
+    float16:
+      "SUkqAAgAAAAOAAABBAABAAAAAgAAAAEBBAABAAAAAgAAAAIBAwABAAAAEAAAAAMBAwABAAAAAQAAAAYBAwABAAAAAQAAABEBBAABAAAA4AAAABUBAwABAAAAAQAAABYBBAABAAAAAgAAABcBBAABAAAACAAAABoBBQABAAAAtgAAABsBBQABAAAAvgAAACgBAwABAAAAAQAAADEBAgAMAAAAxgAAAFMBAwABAAAAAwAAAAAAAAABAAAAAQAAAAEAAAABAAAAdGlmZmZpbGUucHkAAAAAAAAAAAAAAAAAAAAAPgDA/3sBAA==",
+    int64:
+      "SUkqAAgAAAAOAAABBAABAAAAAgAAAAEBBAABAAAAAgAAAAIBAwABAAAAQAAAAAMBAwABAAAAAQAAAAYBAwABAAAAAQAAABEBBAABAAAA4AAAABUBAwABAAAAAQAAABYBBAABAAAAAgAAABcBBAABAAAAIAAAABoBBQABAAAAtgAAABsBBQABAAAAvgAAACgBAwABAAAAAQAAADEBAgAMAAAAxgAAAFMBAwABAAAAAgAAAAAAAAABAAAAAQAAAAEAAAABAAAAdGlmZmZpbGUucHkAAAAAAAAAAAAAAAAAAAD7/////////wAAAAAAAQAAAAAAAAAAAAAAAAAAAAD8/w==",
+    uint64:
+      "SUkqAAgAAAANAAABBAABAAAAAgAAAAEBBAABAAAAAgAAAAIBAwABAAAAQAAAAAMBAwABAAAAAQAAAAYBAwABAAAAAQAAABEBBAABAAAA0AAAABUBAwABAAAAAQAAABYBBAABAAAAAgAAABcBBAABAAAAIAAAABoBBQABAAAAqgAAABsBBQABAAAAsgAAACgBAwABAAAAAQAAADEBAgAMAAAAugAAAAAAAAABAAAAAQAAAAEAAAABAAAAdGlmZmZpbGUucHkAAAAAAAAAAAAAAAcAAAAAAAAAAAAAAAAAEAABAAAAAAAAAAAAAAAAAAAA",
+  };
+  const decode = (base64: string) =>
+    Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)).buffer;
+
+  it.each([
+    ["float16", Float32Array, [1.5, -2, 65504, 2 ** -24]],
+    ["int64", Float64Array, [-5, 2 ** 40, 0, -(2 ** 50)]],
+    ["uint64", Float64Array, [7, 2 ** 52, 1, 0]],
+  ] as const)(
+    "decodes %s samples raw_region returns",
+    (dtype, arrayType, values) => {
+      const result = parseRawTiff(decode(RAW_REGION_TIFFS[dtype]));
+      expect([result.width, result.height]).toEqual([2, 2]);
+      expect(result.data).toBeInstanceOf(arrayType);
+      expect(Array.from(result.data)).toEqual(values);
+    },
+  );
+
   it("rejects non-TIFF data", () => {
     expect(() => parseRawTiff(new ArrayBuffer(16))).toThrow(/byte order/);
   });

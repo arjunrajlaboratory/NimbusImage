@@ -170,6 +170,7 @@ import store from "@/store";
 import lineScanStore from "@/store/lineScan";
 import { IDisplayLayer } from "@/store/model";
 import { bilinearSample, resamplePolyline } from "@/utils/lineScan";
+import { rawRegionMaxDim } from "@/utils/screenshot";
 import { formatLength } from "@/utils/conversion";
 import { logError } from "@/utils/log";
 
@@ -395,7 +396,8 @@ async function updateScans() {
             right: Math.min(image.sizeX, bounds.right),
             bottom: Math.min(image.sizeY, bounds.bottom),
           },
-          MAX_REGION_DIM,
+          // Wide samples (e.g. RGB float64) must fit raw_region's byte budget
+          rawRegionMaxDim(image.tileinfo, MAX_REGION_DIM),
         );
         if (!region) {
           return null;
