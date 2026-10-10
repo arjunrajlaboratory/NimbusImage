@@ -28,8 +28,7 @@ export function getDownloadParameters(
   format: string,
   maxPixels: number,
   jpegQuality: number,
-  downloadMode: "layers" | "channels",
-) {
+): IDownloadParameters {
   if (
     ![bounds.left, bounds.top, bounds.right, bounds.bottom].every(
       Number.isFinite,
@@ -39,33 +38,27 @@ export function getDownloadParameters(
   ) {
     throw new Error("Snapshot crop must have a positive width and height.");
   }
+  // Larger crops are downsampled to maxPixels. Raw-channel TIFFs come from
+  // raw_region, which samples nearest-neighbour, so values are unchanged.
+  const regionWidth = bounds.right - bounds.left;
+  const regionHeight = bounds.bottom - bounds.top;
+  const scale = Math.min(
+    1,
+    Math.sqrt(maxPixels / (regionWidth * regionHeight)),
+  );
   const params: IDownloadParameters = {
     encoding: format.toUpperCase(),
     contentDisposition: "attachment",
     ...bounds,
-    width: bounds.right - bounds.left,
-    height: bounds.bottom - bounds.top,
+    width:
+      scale < 1 ? Math.max(1, Math.floor(scale * regionWidth)) : regionWidth,
+    height:
+      scale < 1 ? Math.max(1, Math.floor(scale * regionHeight)) : regionHeight,
   };
   if (format === "jpeg") {
     params.jpegQuality = jpegQuality;
   } else if (format === "tiff") {
     params.tiffCompression = "raw";
-  }
-
-  // Maximum 4M pixels per image
-  if (params.width && params.height) {
-    const nPixels = params.width * params.height;
-    if (nPixels > maxPixels) {
-      if (downloadMode === "layers") {
-        // Scale the image
-        const scale = Math.sqrt(maxPixels / nPixels);
-        params.width = Math.floor(scale * params.width);
-        params.height = Math.floor(scale * params.height);
-      } else if (downloadMode === "channels") {
-        // Don't scale when in "channels" mode
-        return null;
-      }
-    }
   }
   return params;
 }

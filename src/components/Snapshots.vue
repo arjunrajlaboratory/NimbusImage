@@ -1,28 +1,6 @@
 <template>
   <div class="snapshots-panel">
     <v-card v-if="store.configuration" class="snapshots-panel-card">
-      <v-dialog v-model="imageTooBigDialog">
-        <v-alert class="ma-0" type="error">
-          <div class="title">Image can't be downloaded</div>
-          <div class="ma-2">
-            Image size can't exceed {{ maxPixels }} pixels.<br />
-            When downloading raw channels, subsampling is not allowed.<br />
-            Downloading layers allows subsampling image to
-            {{ maxPixels }} pixels if the image is too big.
-          </div>
-          <div class="d-flex">
-            <v-spacer />
-            <v-btn
-              variant="flat"
-              color="primary"
-              size="small"
-              @click="imageTooBigDialog = false"
-              >OK</v-btn
-            >
-          </div>
-        </v-alert>
-      </v-dialog>
-
       <v-card-text>
         <v-row :currentArea="markCurrentArea()">
           <v-col class="title body-1"> Coordinates and size: </v-col>
@@ -815,7 +793,6 @@ const saveSnapshotForm = ref<HTMLFormElement | null>(null);
 const movieDialog = ref(false);
 const jpegQuality = ref<number | string>(95);
 const downloading = ref(false);
-const imageTooBigDialog = ref(false);
 const createDialog = ref(false);
 const newName = ref("");
 const newDescription = ref("");
@@ -887,7 +864,13 @@ const tableHeaders: {
   { title: "Delete", key: "delete", sortable: false },
 ];
 
-const maxPixels = 4_000_000;
+// Crops above this are downsampled. 4096^2 exports a full 2048^2 frame (or
+// four) at full resolution, and fits raw_region's 64 MiB cap for a single
+// channel of up to 32 bits.
+const maxPixels = 4096 * 4096;
+// Movie frames keep the earlier limit: larger frames would go to the movie
+// encoder, which this limit change was not tested against.
+const maxMoviePixels = 4_000_000;
 
 const nameRules = [(name: string) => !!name.trim() || "Name is required"];
 
@@ -901,6 +884,9 @@ function sanitizeSnapshotFilename(name: string | null): string {
 // Download URLs whose filename buildSnapshotFilename had to shorten, so the
 // download that eventually consumes them can tell the user.
 const shortenedFilenameUrls = new WeakSet<URL>();
+// Download URLs whose crop exceeded maxPixels and was downsampled, so the
+// download that consumes them can tell the user.
+const downsampledUrls = new WeakSet<URL>();
 
 function getUniqueZipEntryName(name: string | null, filenames: Set<string>) {
   const sanitizedName = sanitizeSnapshotFilename(name);
@@ -2074,12 +2060,8 @@ async function getUrlsForSnapshot(
     options.format,
     maxPixels,
     options.jpegQuality,
-    options.mode,
   );
-  if (params === null) {
-    imageTooBigDialog.value = true;
-    return;
-  }
+  const downsampled = params.width! < boundingBox.right - boundingBox.left;
   if (
     boundingBox.left >= dataset.width ||
     boundingBox.top >= dataset.height ||
@@ -2131,6 +2113,7 @@ async function getUrlsForSnapshot(
         });
         url.searchParams.set("contentDispositionFilename", fileName);
         if (shortened) shortenedFilenameUrls.add(url);
+        if (downsampled) downsampledUrls.add(url);
         urls.push(url);
       }
     } else {
@@ -2159,6 +2142,7 @@ async function getUrlsForSnapshot(
         });
         url.searchParams.set("contentDispositionFilename", fileName);
         if (shortened) shortenedFilenameUrls.add(url);
+        if (downsampled) downsampledUrls.add(url);
         urls.push(url);
       }
     }
@@ -2209,15 +2193,25 @@ async function downloadUrls(
     return;
   }
   const shortenedNames = urls.some(({ url }) => shortenedFilenameUrls.has(url));
-  const warnShortenedNames = () => {
-    if (!shortenedNames) return;
-    progress.createNotification({
-      type: NotificationType.WARNING,
-      title: "File names shortened",
-      message:
-        'Some file names were too long to save or unzip reliably, so their longest parts (collection and dataset names first) were shortened with "...". XY/T/Z positions are always kept.',
-      timeout: 10,
-    });
+  const downsampled = urls.some(({ url }) => downsampledUrls.has(url));
+  const warnAboutAdjustedFiles = () => {
+    if (shortenedNames) {
+      progress.createNotification({
+        type: NotificationType.WARNING,
+        title: "File names shortened",
+        message:
+          'Some file names were too long to save or unzip reliably, so their longest parts (collection and dataset names first) were shortened with "...". XY/T/Z positions are always kept.',
+        timeout: 10,
+      });
+    }
+    if (downsampled) {
+      progress.createNotification({
+        type: NotificationType.WARNING,
+        title: "Image too large: downsampled",
+        message: `The crop is larger than ${maxPixels.toLocaleString()} pixels, so the image was downsampled to fit. Use a smaller crop to export at full resolution.`,
+        timeout: 10,
+      });
+    }
   };
 
   if (urls.length === 1) {
@@ -2239,7 +2233,7 @@ async function downloadUrls(
     } finally {
       URL.revokeObjectURL(objectUrl);
     }
-    warnShortenedNames();
+    warnAboutAdjustedFiles();
     return;
   }
 
@@ -2313,7 +2307,7 @@ async function downloadUrls(
     };
     downloadToClient(params);
     URL.revokeObjectURL(dataURL);
-    warnShortenedNames();
+    warnAboutAdjustedFiles();
   } finally {
     zip.terminate();
     if (!batchProgressId) progress.complete(progressId);
@@ -2341,17 +2335,7 @@ async function getUrlsForMovie(
   }
   const itemId = anyImage.item._id;
 
-  const params = getDownloadParameters(
-    boundingBox,
-    "png",
-    maxPixels,
-    95,
-    "layers",
-  );
-
-  if (params === null) {
-    throw new Error("Image size exceeds maximum allowed pixels");
-  }
+  const params = getDownloadParameters(boundingBox, "png", maxMoviePixels, 95);
 
   const apiRoot = store.girderRest.apiRoot;
   const baseUrl = getBaseURLFromDownloadParameters(params, itemId, apiRoot);
@@ -3100,7 +3084,6 @@ defineExpose({
   movieDialog,
   jpegQuality,
   downloading,
-  imageTooBigDialog,
   createDialog,
   newName,
   newDescription,

@@ -207,9 +207,9 @@ describe("snapshot crop validation", () => {
     { left: NaN, top: 0, right: 20, bottom: 20 },
   ])("rejects an empty or invalid crop: %j", async (bounds) => {
     const { getDownloadParameters } = await import("./screenshot");
-    expect(() =>
-      getDownloadParameters(bounds, "tiff", 4000000, 95, "channels"),
-    ).toThrow("positive width and height");
+    expect(() => getDownloadParameters(bounds, "tiff", 4000000, 95)).toThrow(
+      "positive width and height",
+    );
   });
 });
 
@@ -220,9 +220,29 @@ describe("snapshot download parameters", () => {
       "jpeg",
       4_000_000,
       80,
-      "layers",
     );
     expect(params?.jpegQuality).toBe(80);
+  });
+
+  it("keeps a full 2048 x 2048 frame at full resolution", () => {
+    const params = getDownloadParameters(
+      { left: 0, top: 0, right: 2048, bottom: 2048 },
+      "tiff",
+      4096 * 4096,
+      95,
+    );
+    expect([params.width, params.height]).toEqual([2048, 2048]);
+  });
+
+  it("downsamples a crop over maxPixels to fit, keeping its aspect ratio", () => {
+    const params = getDownloadParameters(
+      { left: 0, top: 0, right: 8192, bottom: 4096 },
+      "tiff",
+      4096 * 4096,
+      95,
+    );
+    expect([params.width, params.height]).toEqual([5792, 2896]);
+    expect(params.width! * params.height!).toBeLessThanOrEqual(4096 * 4096);
   });
 });
 
