@@ -140,18 +140,25 @@ class TestRawRegion:
         image = tifffile.imread(io.BytesIO(_bodyBytes(resp)))
         np.testing.assert_array_equal(image, _sixteenBitPlane()[:, 0:8])
 
-    def testOutputOverThePixelLimitIsRejected(
-        self, server, admin, sixteenBitItem, monkeypatch
+    def testOutputOverTheByteLimitIsRejected(
+        self, server, admin, sixteenBitItem, sixteenBitRgbItem, monkeypatch
     ):
-        monkeypatch.setattr(rawRegion, "MAX_RAW_REGION_PIXELS", 100)
+        monkeypatch.setattr(rawRegion, "MAX_RAW_REGION_BYTES", 300)
         full = {"left": 0, "top": 0, "right": WIDTH, "bottom": HEIGHT}
         assertStatus(_getRegion(server, sixteenBitItem, admin, **full), 400)
-        # Downsampling to within the limit is allowed
+        # Downsampled to 10x8 single-band uint16: 160 bytes, allowed
         resp = _getRegion(
             server, sixteenBitItem, admin, width=10, height=10, **full
         )
         assertStatusOk(resp)
-        assert tifffile.imread(io.BytesIO(_bodyBytes(resp))).size <= 100
+        assert tifffile.imread(io.BytesIO(_bodyBytes(resp))).nbytes <= 300
+        # The same pixels with three uint16 bands are 480 bytes: refused
+        assertStatus(
+            _getRegion(
+                server, sixteenBitRgbItem, admin, width=10, height=10, **full
+            ),
+            400,
+        )
 
     def testEmptyRegionIsRejected(self, server, admin, sixteenBitItem):
         resp = _getRegion(

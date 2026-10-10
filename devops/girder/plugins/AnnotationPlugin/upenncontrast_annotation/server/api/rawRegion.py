@@ -13,6 +13,7 @@ raw-channel snapshot download and the line scan need.
 import io
 import math
 
+import numpy as np
 import tifffile
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
@@ -26,10 +27,11 @@ from large_image.exceptions import TileGeneralError
 
 from ..helpers.validation import requireFloat
 
-# Output pixels per request. Every sample is held in memory twice (array and
-# TIFF buffer), and this is a public route. 4096^2 is 4x the client's snapshot
-# limit and above the line scan's 2048^2.
-MAX_RAW_REGION_PIXELS = 4096 * 4096
+# Output sample bytes per request. The samples are held in memory more than
+# once (array, TIFF buffer, response bytes), and this is a public route. Fits
+# the client's 4M-pixel snapshot limit at up to 16 bytes per pixel (RGBA
+# float32), and the line scan's 2048^2 single-band reads with room to spare.
+MAX_RAW_REGION_BYTES = 64 * 1024 * 1024
 
 
 def encodeRawTiff(image):
@@ -65,9 +67,10 @@ def _clampRegion(metadata, **bounds):
     return region
 
 
-def _requireOutputWithinLimit(region, width, height):
+def _requireOutputWithinLimit(metadata, region, width, height):
     """Refuse before reading pixels when the (never upsampled) output would
-    exceed MAX_RAW_REGION_PIXELS."""
+    exceed MAX_RAW_REGION_BYTES. Without dtype or band metadata, assume the
+    widest case (four float64 bands) rather than under-count."""
     regionWidth = region["right"] - region["left"]
     regionHeight = region["bottom"] - region["top"]
     scale = min(
@@ -76,11 +79,15 @@ def _requireOutputWithinLimit(region, width, height):
         height / regionHeight if height is not None else 1,
     )
     pixels = math.ceil(regionWidth * scale) * math.ceil(regionHeight * scale)
-    if pixels > MAX_RAW_REGION_PIXELS:
+    bytesPerPixel = (
+        np.dtype(metadata.get("dtype", "float64")).itemsize
+        * metadata.get("bandCount", 4)
+    )
+    if pixels * bytesPerPixel > MAX_RAW_REGION_BYTES:
         raise RestException(
-            "The region would return %d pixels; the maximum is %d. Request a "
-            "smaller region or pass width/height to downsample it."
-            % (pixels, MAX_RAW_REGION_PIXELS)
+            "The region would return %d bytes of samples; the maximum is %d. "
+            "Request a smaller region or pass width/height to downsample it."
+            % (pixels * bytesPerPixel, MAX_RAW_REGION_BYTES)
         )
 
 
@@ -97,8 +104,8 @@ def _requireOutputWithinLimit(region, width, height):
         "image (negative values are not offsets from the far edge, unlike "
         "tiles/region). If width or height is given, the region is "
         "downsampled (nearest neighbour, aspect ratio preserved) to fit; it "
-        "is never upsampled. At most %d output pixels per request."
-        % MAX_RAW_REGION_PIXELS
+        "is never upsampled. At most %d bytes of output samples per request."
+        % MAX_RAW_REGION_BYTES
     )
     .modelParam("itemId", model=Item, level=AccessType.READ)
     .param("left", "Left column (0-based) of the region.", dataType="float")
@@ -141,7 +148,7 @@ def getRawRegion(self, item, left, top, right, bottom, frame, width, height):
         region = _clampRegion(
             metadata, left=left, top=top, right=right, bottom=bottom
         )
-        _requireOutputWithinLimit(region, width, height)
+        _requireOutputWithinLimit(metadata, region, width, height)
         image, _ = ImageItem().getRegion(
             item,
             region={**region, "units": "base_pixels"},
