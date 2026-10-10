@@ -2091,7 +2091,16 @@ async function getUrlsForSnapshot(
     );
   }
   const apiRoot = store.girderRest.apiRoot;
-  const baseUrl = getBaseURLFromDownloadParameters(params, itemId, apiRoot);
+  // Raw channels keep the source bit depth; tiles/region would return a
+  // TIFF divided down to 8 bits.
+  const baseUrl = getBaseURLFromDownloadParameters(
+    params,
+    itemId,
+    apiRoot,
+    options.mode === "channels" && options.format === "tiff"
+      ? "raw_region"
+      : "tiles/region",
+  );
 
   const urls: URL[] = [];
   const across = options.across;

@@ -70,12 +70,16 @@ export function getDownloadParameters(
   return params;
 }
 
+// `tiles/region` renders styled images and converts 16-bit data to 8 bits;
+// `raw_region` returns one frame's samples unscaled as a TIFF (it ignores
+// encoding and style parameters).
 export function getBaseURLFromDownloadParameters(
   params: IDownloadParameters,
   itemId: string,
   apiRoot: string,
+  endpoint: "tiles/region" | "raw_region" = "tiles/region",
 ) {
-  const baseUrl = new URL(`${apiRoot}/item/${itemId}/tiles/region`);
+  const baseUrl = new URL(`${apiRoot}/item/${itemId}/${endpoint}`);
   for (const [key, value] of Object.entries(params)) {
     baseUrl.searchParams.set(key, value);
   }

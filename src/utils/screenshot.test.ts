@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   LayerSelectionError,
+  getBaseURLFromDownloadParameters,
   getChannelsDownloadUrls,
   getDownloadParameters,
   getLayersDownloadUrls,
@@ -222,5 +223,30 @@ describe("snapshot download parameters", () => {
       "layers",
     );
     expect(params?.jpegQuality).toBe(80);
+  });
+});
+
+describe("snapshot download base URL", () => {
+  it("defaults to the styled region endpoint and can target raw_region", () => {
+    const params = {
+      encoding: "TIFF",
+      contentDisposition: "attachment",
+      left: 0,
+      top: 0,
+      right: 10,
+      bottom: 10,
+    };
+    expect(
+      getBaseURLFromDownloadParameters(params, "item1", "http://h/api/v1")
+        .pathname,
+    ).toBe("/api/v1/item/item1/tiles/region");
+    const raw = getBaseURLFromDownloadParameters(
+      params,
+      "item1",
+      "http://h/api/v1",
+      "raw_region",
+    );
+    expect(raw.pathname).toBe("/api/v1/item/item1/raw_region");
+    expect(raw.searchParams.get("left")).toBe("0");
   });
 });

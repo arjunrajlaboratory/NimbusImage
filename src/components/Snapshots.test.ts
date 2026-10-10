@@ -205,6 +205,7 @@ vi.mock("@/utils/log", () => ({
 
 import store from "@/store";
 import {
+  getBaseURLFromDownloadParameters,
   getDownloadParameters,
   getChannelsDownloadUrls,
   getLayersDownloadUrls,
@@ -230,6 +231,9 @@ import {
 } from "./Snapshots.vue";
 
 const mockedGetDownloadParameters = vi.mocked(getDownloadParameters);
+const mockedGetBaseURLFromDownloadParameters = vi.mocked(
+  getBaseURLFromDownloadParameters,
+);
 const mockedGetChannelsDownloadUrls = vi.mocked(getChannelsDownloadUrls);
 const mockedGetLayersDownloadUrls = vi.mocked(getLayersDownloadUrls);
 const mockedDownloadToClient = vi.mocked(downloadToClient);
@@ -1804,6 +1808,34 @@ describe("Snapshots.vue", () => {
       expect(urls).toBeDefined();
       expect(mockedGetChannelsDownloadUrls).toHaveBeenCalled();
     });
+
+    it.each([
+      ["channels", "tiff", "raw_region"],
+      ["channels", "tiled", "tiles/region"],
+      ["layers", "tiff", "tiles/region"],
+    ])(
+      "getUrlsForSnapshot requests %s %s downloads from %s",
+      async (mode, format, endpoint) => {
+        (wrapper.vm as any).downloadMode = mode;
+        await wrapper.vm.$nextTick();
+        (wrapper.vm as any).format = format;
+        mockedGetBaseURLFromDownloadParameters.mockClear();
+        await (wrapper.vm as any).getUrlsForSnapshot(
+          { xy: 0, z: 0, time: 0 },
+          { left: 0, top: 0, right: 100, bottom: 100 },
+          "dataset1",
+          "TestSnap",
+          (store as any).layers,
+          "TestConfig",
+        );
+        expect(mockedGetBaseURLFromDownloadParameters).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.any(String),
+          expect.any(String),
+          endpoint,
+        );
+      },
+    );
 
     it("getUrlsForSnapshot returns undefined when image too big", async () => {
       mockedGetDownloadParameters.mockReturnValueOnce(null);
