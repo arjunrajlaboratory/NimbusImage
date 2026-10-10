@@ -2178,6 +2178,11 @@ export class Main extends VuexModule {
       sync.setLoading(error as Error);
       sync.setDatasetLoading(false);
     }
+    // Persist a location the clamp above corrected. Refreshes outside a view
+    // load (unroll toggles, large-image changes) have no other save; a save
+    // that came due mid-load was dropped by its loading guard. A no-op when
+    // the location equals the saved lastLocation.
+    this.updateLastLocationInDatasetView();
     memDiag.autoSnapshot(`setSelectedDataset:exit id=${id}`);
   }
 

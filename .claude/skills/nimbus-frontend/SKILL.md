@@ -258,7 +258,10 @@ would write one view's location into another (issue #1388). The location
 setters therefore read `locationDataset` (null while `sync.datasetLoading`), and
 the location is clamped where the dataset lands (`clampLocationToDatasetImpl`
 in `setSelectedDataset` and at the end of `setDatasetViewId`). Per-feature
-guards in consumers are not needed. Out-of-range indices also travel in
+guards in consumers are not needed. Each clamp site must also schedule
+`updateLastLocationInDatasetView`, or the view reopens at the old saved
+location. The first cut missed this in `setSelectedDataset`, which unroll
+toggles and large-image refreshes reach without going through a view load. Out-of-range indices also travel in
 URLs: the breadcrumb view switcher keeps the current query when it moves to
 another dataset. See `src/store/__tests__/datasetLocationClamp.test.ts`.
 

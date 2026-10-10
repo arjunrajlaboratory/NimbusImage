@@ -194,6 +194,27 @@ describe("dataset location clamp", () => {
     expect(main.xy).toBe(2);
   });
 
+  it("persists a location clamped by a dataset refresh outside a view load", async () => {
+    datasets.ds = makeDataset("ds", 1, 10, 1);
+    views.v = makeView("v", "ds", { xy: 0, z: 5, time: 0 });
+    await main.setDatasetViewId({ id: "v" });
+    expect(main.z).toBe(5);
+    // Drain the load's own scheduled save so it can't stand in for the
+    // refresh's.
+    await vi.runAllTimersAsync();
+    updateDatasetView.mockClear();
+
+    // Unrolling Z collapses the axis to one entry and reloads the dataset.
+    datasets.ds = makeDataset("ds", 1, 1, 1);
+    await main.refreshDataset();
+    await vi.runAllTimersAsync();
+
+    expect(main.z).toBe(0);
+    expect(savedLocations()).toEqual([
+      { id: "v", lastLocation: { xy: 0, z: 0, time: 0 } },
+    ]);
+  });
+
   it("does not save a location while the dataset is still loading", async () => {
     // In range, so only the loading guard (not the save's clamp) can stop it.
     datasets.small = makeDataset("small", 20, 1, 1);
