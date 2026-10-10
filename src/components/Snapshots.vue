@@ -676,6 +676,7 @@ import { DeflateOptions, Zip, ZipDeflate } from "fflate";
 import girderResources from "@/store/girderResources";
 import {
   getChannelsDownloadUrls,
+  rawRegionMaxPixels,
   getDownloadParameters,
   getLayersDownloadUrls,
   getBaseURLFromDownloadParameters,
@@ -887,6 +888,17 @@ const shortenedFilenameUrls = new WeakSet<URL>();
 // Download URLs whose crop exceeded maxPixels and was downsampled, so the
 // download that consumes them can tell the user.
 const downsampledUrls = new WeakSet<URL>();
+// Width of the in-image part of each URL's crop. Scalebar specs are built from
+// the crop as drawn, which can run off the image edge; the bar must be sized
+// against the region actually returned.
+const cropWidthByUrl = new WeakMap<URL, number>();
+
+function scalebarSpecForUrl(url: URL, spec: IScalebarSpec): IScalebarSpec {
+  const cropWidth = cropWidthByUrl.get(url);
+  return cropWidth === undefined
+    ? spec
+    : { ...spec, datasetPixelWidth: cropWidth };
+}
 
 function getUniqueZipEntryName(name: string | null, filenames: Set<string>) {
   const sanitizedName = sanitizeSnapshotFilename(name);
@@ -2069,10 +2081,13 @@ async function getUrlsForSnapshot(
     right: Math.min(dataset.width, boundingBox.right),
     bottom: Math.min(dataset.height, boundingBox.bottom),
   };
+  const useRawRegion = options.mode === "channels" && options.format === "tiff";
   const params = getDownloadParameters(
     imageCrop,
     options.format,
-    maxPixels,
+    useRawRegion
+      ? Math.min(maxPixels, rawRegionMaxPixels(anyImage.tileinfo))
+      : maxPixels,
     options.jpegQuality,
   );
   const downsampled =
@@ -2085,9 +2100,7 @@ async function getUrlsForSnapshot(
     params,
     itemId,
     apiRoot,
-    options.mode === "channels" && options.format === "tiff"
-      ? "raw_region"
-      : "tiles/region",
+    useRawRegion ? "raw_region" : "tiles/region",
   );
 
   const urls: URL[] = [];
@@ -2120,6 +2133,7 @@ async function getUrlsForSnapshot(
         url.searchParams.set("contentDispositionFilename", fileName);
         if (shortened) shortenedFilenameUrls.add(url);
         if (downsampled) downsampledUrls.add(url);
+        cropWidthByUrl.set(url, imageCrop.right - imageCrop.left);
         urls.push(url);
       }
     } else {
@@ -2149,6 +2163,7 @@ async function getUrlsForSnapshot(
         url.searchParams.set("contentDispositionFilename", fileName);
         if (shortened) shortenedFilenameUrls.add(url);
         if (downsampled) downsampledUrls.add(url);
+        cropWidthByUrl.set(url, imageCrop.right - imageCrop.left);
         urls.push(url);
       }
     }
@@ -2214,7 +2229,8 @@ async function downloadUrls(
       progress.createNotification({
         type: NotificationType.WARNING,
         title: "Image too large: downsampled",
-        message: `The crop is larger than ${maxPixels.toLocaleString()} pixels, so the image was downsampled to fit, and its pixel values may be averaged. Use a smaller crop to export full-resolution raw values.`,
+        message:
+          "The crop is too large to export at full resolution, so the image was downsampled to fit, and its pixel values may be averaged. Use a smaller crop to export full-resolution raw values.",
         timeout: 10,
       });
     }
@@ -2226,7 +2242,10 @@ async function downloadUrls(
     // Use the same authenticated binary fetch for a single image and a ZIP.
     const data = await store.api.getSnapshotImage(url);
     const finalData = scalebarSpec
-      ? await addScalebarToImageBuffer(data, scalebarSpec)
+      ? await addScalebarToImageBuffer(
+          data,
+          scalebarSpecForUrl(url, scalebarSpec),
+        )
       : data;
     const objectUrl = URL.createObjectURL(new Blob([finalData]));
     try {
@@ -2295,7 +2314,10 @@ async function downloadUrls(
       const data = await store.api.getSnapshotImage(url);
 
       const finalData = scalebarSpec
-        ? await addScalebarToImageBuffer(data, scalebarSpec)
+        ? await addScalebarToImageBuffer(
+            data,
+            scalebarSpecForUrl(url, scalebarSpec),
+          )
         : data;
 
       const zipFile = new ZipDeflate(fileName, deflateOptions);
@@ -3206,5 +3228,6 @@ defineExpose({
   downloadMovieAsVideo,
   addTimeStampToCanvas,
   drawScalebarOnCanvas,
+  scalebarSpecForUrl,
 });
 </script>

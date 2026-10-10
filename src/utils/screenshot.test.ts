@@ -5,6 +5,7 @@ import {
   getChannelsDownloadUrls,
   getDownloadParameters,
   getLayersDownloadUrls,
+  rawRegionMaxPixels,
 } from "./screenshot";
 import { newLayer, type IDataset, type IFrameInfo } from "@/store/model";
 import { parseTiles, type ITileMeta } from "@/store/GirderAPI";
@@ -268,5 +269,16 @@ describe("snapshot download base URL", () => {
     );
     expect(raw.pathname).toBe("/api/v1/item/item1/raw_region");
     expect(raw.searchParams.get("left")).toBe("0");
+  });
+});
+
+describe("raw_region byte budget", () => {
+  it.each([
+    [{ dtype: "uint16", bandCount: 1 }, 32 * 1024 * 1024],
+    [{ dtype: "uint16", bandCount: 3 }, Math.floor((64 * 1024 * 1024) / 6)],
+    [{ dtype: "float64", bandCount: 1 }, 8 * 1024 * 1024],
+    [{}, 2 * 1024 * 1024],
+  ])("allows %j at most %i pixels", (tileinfo, pixels) => {
+    expect(rawRegionMaxPixels(tileinfo)).toBe(pixels);
   });
 });

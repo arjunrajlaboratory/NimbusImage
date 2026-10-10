@@ -23,6 +23,35 @@ export class LayerSelectionError extends Error {
   }
 }
 
+// Mirrors MAX_RAW_REGION_BYTES in the plugin's server/api/rawRegion.py: the
+// raw_region endpoint refuses outputs with more sample bytes than this.
+export const RAW_REGION_MAX_BYTES = 64 * 1024 * 1024;
+
+const BYTES_PER_SAMPLE: { [dtype: string]: number } = {
+  uint8: 1,
+  int8: 1,
+  uint16: 2,
+  int16: 2,
+  float16: 2,
+  uint32: 4,
+  int32: 4,
+  float32: 4,
+};
+
+/**
+ * The most pixels a raw_region TIFF of this image can hold, so raw crops are
+ * downsampled to the server's byte budget rather than refused. Unknown dtypes
+ * and band counts get the server's widest assumption (four 8-byte bands).
+ */
+export function rawRegionMaxPixels(tileinfo: {
+  dtype?: string;
+  bandCount?: number;
+}): number {
+  const bytesPerPixel =
+    (BYTES_PER_SAMPLE[tileinfo.dtype ?? ""] ?? 8) * (tileinfo.bandCount || 4);
+  return Math.floor(RAW_REGION_MAX_BYTES / bytesPerPixel);
+}
+
 export function getDownloadParameters(
   bounds: IGeoJSBounds,
   format: string,

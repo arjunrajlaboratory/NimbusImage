@@ -185,6 +185,7 @@ vi.mock("@/utils/screenshot", () => ({
   getBaseURLFromDownloadParameters: vi.fn(
     () => new URL("http://localhost/api/v1/item/item1/tiles/region"),
   ),
+  rawRegionMaxPixels: vi.fn(() => 4096 * 4096),
   getChannelsDownloadUrls: vi.fn(() => [
     {
       url: new URL("http://localhost/api/v1/channel0"),
@@ -209,6 +210,7 @@ import {
   getDownloadParameters,
   getChannelsDownloadUrls,
   getLayersDownloadUrls,
+  rawRegionMaxPixels,
 } from "@/utils/screenshot";
 import { downloadToClient } from "@/utils/download";
 import { ZipDeflate } from "fflate";
@@ -1837,6 +1839,31 @@ describe("Snapshots.vue", () => {
       },
     );
 
+    it.each([
+      ["channels", "tiff", 1000],
+      ["layers", "tiff", 4096 * 4096],
+    ])("limits %s %s exports to %i pixels", async (mode, format, limit) => {
+      vi.mocked(rawRegionMaxPixels).mockReturnValueOnce(1000);
+      mockedGetDownloadParameters.mockClear();
+      (wrapper.vm as any).downloadMode = mode;
+      await wrapper.vm.$nextTick();
+      (wrapper.vm as any).format = format;
+      await (wrapper.vm as any).getUrlsForSnapshot(
+        { xy: 0, z: 0, time: 0 },
+        { left: 0, top: 0, right: 100, bottom: 100 },
+        "dataset1",
+        "TestSnap",
+        (store as any).layers,
+        "TestConfig",
+      );
+      expect(mockedGetDownloadParameters).toHaveBeenCalledWith(
+        expect.anything(),
+        format,
+        limit,
+        expect.any(Number),
+      );
+    });
+
     it("sizes an off-edge crop from its in-image part", async () => {
       mockedGetDownloadParameters.mockClear();
       await (wrapper.vm as any).getUrlsForSnapshot(
@@ -2753,6 +2780,28 @@ describe("Snapshots.vue", () => {
       // A 1000-wide region rendered onto a 500-wide canvas (2x downsample, as
       // happens when the region exceeds maxPixels) → 100 dataset px = 50 px.
       expect(drawnLength(1000, 500)).toBeCloseTo(50);
+    });
+
+    it("sizes the scalebar against the in-image part of an off-edge crop", async () => {
+      const vm = wrapper.vm as any;
+      vm.downloadMode = "layers";
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: 100, unit: TScalebarUnit.PX };
+      // The mocked dataset is 1000 wide; the crop runs 500 px past its edge
+      const crop = { left: 0, top: 0, right: 1500, bottom: 100 };
+      const spec = vm.buildScalebarSpec(crop);
+      const [url] = await vm.getUrlsForSnapshot(
+        { xy: 0, z: 0, time: 0 },
+        crop,
+        "dataset1",
+        "TestSnap",
+        (store as any).layers,
+        "TestConfig",
+      );
+      const { ctx, calls } = makeMockCtx();
+      // The server returns the 1000 px in-image region at full size
+      vm.drawScalebarOnCanvas(ctx, 1000, 100, vm.scalebarSpecForUrl(url, spec));
+      expect(calls.moveTo[0] - calls.lineTo[0]).toBeCloseTo(100);
     });
 
     it("scales scalebar up when the canvas is in zoomed display pixels", () => {
