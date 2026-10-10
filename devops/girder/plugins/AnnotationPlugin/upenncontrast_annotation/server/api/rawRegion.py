@@ -67,7 +67,24 @@ def _clampRegion(metadata, **bounds):
     return region
 
 
-def _requireOutputWithinLimit(metadata, region, width, height):
+def _outputLimits(region, width, height):
+    """large_image output limits, clamped to the region: output is never
+    upsampled, and an unbounded integer (say 10**309) would otherwise
+    overflow float arithmetic into a 500."""
+    output = {}
+    for name, key, size, regionSize in (
+        ("width", "maxWidth", width, region["right"] - region["left"]),
+        ("height", "maxHeight", height, region["bottom"] - region["top"]),
+    ):
+        if size is not None:
+            # A 0 size makes large_image raise a TypeError (a 500)
+            if size < 1:
+                raise RestException("%s must be at least 1." % name)
+            output[key] = min(size, math.ceil(regionSize))
+    return output
+
+
+def _requireOutputWithinLimit(metadata, region, output):
     """Refuse before reading pixels when the (never upsampled) output would
     exceed MAX_RAW_REGION_BYTES. Without dtype or band metadata, assume the
     widest case (four float64 bands) rather than under-count."""
@@ -75,8 +92,8 @@ def _requireOutputWithinLimit(metadata, region, width, height):
     regionHeight = region["bottom"] - region["top"]
     scale = min(
         1,
-        width / regionWidth if width is not None else 1,
-        height / regionHeight if height is not None else 1,
+        output.get("maxWidth", regionWidth) / regionWidth,
+        output.get("maxHeight", regionHeight) / regionHeight,
     )
     pixels = math.ceil(regionWidth * scale) * math.ceil(regionHeight * scale)
     bytesPerPixel = (
@@ -134,21 +151,13 @@ def _requireOutputWithinLimit(metadata, region, width, height):
 )
 @boundHandler()
 def getRawRegion(self, item, left, top, right, bottom, frame, width, height):
-    # A 0 size makes large_image raise a TypeError, which would be a 500
-    output = {}
-    for name, key, size in (
-        ("width", "maxWidth", width), ("height", "maxHeight", height)
-    ):
-        if size is not None:
-            if size < 1:
-                raise RestException("%s must be at least 1." % name)
-            output[key] = size
     try:
         metadata = ImageItem().getMetadata(item)
         region = _clampRegion(
             metadata, left=left, top=top, right=right, bottom=bottom
         )
-        _requireOutputWithinLimit(metadata, region, width, height)
+        output = _outputLimits(region, width, height)
+        _requireOutputWithinLimit(metadata, region, output)
         image, _ = ImageItem().getRegion(
             item,
             region={**region, "units": "base_pixels"},

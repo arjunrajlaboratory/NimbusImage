@@ -129,6 +129,20 @@ class TestRawRegion:
         sourcePixels = {tuple(p) for p in _sixteenBitRgb().reshape(-1, 3)}
         assert all(tuple(p) in sourcePixels for p in image.reshape(-1, 3))
 
+    def testHugeOutputSizesMeanNoDownsampling(
+        self, server, admin, sixteenBitItem
+    ):
+        # Larger than a float: must not overflow into a 500
+        resp = _getRegion(
+            server, sixteenBitItem, admin, left=0, top=0, right=8, bottom=8,
+            width=10 ** 400, height=10 ** 400,
+        )
+        assertStatusOk(resp)
+        np.testing.assert_array_equal(
+            tifffile.imread(io.BytesIO(_bodyBytes(resp))),
+            _sixteenBitPlane()[0:8, 0:8],
+        )
+
     def testCoordinatesAreClampedToTheImage(
         self, server, admin, sixteenBitItem
     ):
@@ -172,6 +186,7 @@ class TestRawRegion:
         {"right": "nan"},
         {"width": 0},
         {"height": 0},
+        {"width": 0, "height": 10 ** 400},
     ])
     def testMalformedRegionIsRejected(
         self, server, admin, sixteenBitItem, params
