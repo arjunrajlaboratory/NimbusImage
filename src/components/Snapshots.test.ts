@@ -1837,6 +1837,60 @@ describe("Snapshots.vue", () => {
       },
     );
 
+    it("sizes an off-edge crop from its in-image part", async () => {
+      mockedGetDownloadParameters.mockClear();
+      await (wrapper.vm as any).getUrlsForSnapshot(
+        { xy: 0, z: 0, time: 0 },
+        { left: -50, top: -20, right: 1500, bottom: 900 },
+        "dataset1",
+        "TestSnap",
+        (store as any).layers,
+        "TestConfig",
+      );
+      // The mocked dataset is 1000 x 800
+      expect(mockedGetDownloadParameters).toHaveBeenCalledWith(
+        { left: 0, top: 0, right: 1000, bottom: 800 },
+        expect.any(String),
+        expect.any(Number),
+        expect.any(Number),
+      );
+    });
+
+    it("warns when only the height of a raw channel export was reduced", async () => {
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:snapshot"),
+        revokeObjectURL: vi.fn(),
+      });
+      (store.api.getSnapshotImage as any).mockResolvedValueOnce(
+        new ArrayBuffer(1),
+      );
+      mockedGetDownloadParameters.mockReturnValueOnce({
+        encoding: "TIFF",
+        contentDisposition: "attachment",
+        left: 0,
+        top: 0,
+        right: 100,
+        bottom: 100,
+        width: 100,
+        height: 60,
+      });
+      (wrapper.vm as any).downloadMode = "channels";
+      const urls = await (wrapper.vm as any).getUrlsForSnapshot(
+        { xy: 0, z: 0, time: 0 },
+        { left: 0, top: 0, right: 100, bottom: 100 },
+        "dataset1",
+        "TestSnap",
+        (store as any).layers,
+        "TestConfig",
+      );
+      await (wrapper.vm as any).downloadUrls(
+        urls.map((url: URL) => ({ url, scalebarSpec: null })),
+      );
+      expect(mockedProgress.createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Image too large: downsampled" }),
+      );
+    });
+
     it.each([
       ["channels", 50, true],
       ["channels", 100, false],

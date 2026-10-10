@@ -1913,9 +1913,6 @@ async function downloadImagesForCurrentState() {
       configuration.name,
       options,
     );
-    if (!urls) {
-      return;
-    }
     await downloadUrls(urls.map((url) => ({ url, scalebarSpec })));
   } catch (error) {
     downloadError.value =
@@ -1998,7 +1995,6 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
         configurationName,
         options,
       );
-      if (!currentUrls) return;
       allUrls.push(
         ...currentUrls.map((url) => ({
           url,
@@ -2055,13 +2051,6 @@ async function getUrlsForSnapshot(
   const dateStr = formatDate(new Date());
   const extension = options.format === "tiled" ? "tiff" : options.format;
 
-  const params = getDownloadParameters(
-    boundingBox,
-    options.format,
-    maxPixels,
-    options.jpegQuality,
-  );
-  const downsampled = params.width! < boundingBox.right - boundingBox.left;
   if (
     boundingBox.left >= dataset.width ||
     boundingBox.top >= dataset.height ||
@@ -2072,6 +2061,23 @@ async function getUrlsForSnapshot(
       "Snapshot crop is outside the image. Set a crop within the dataset.",
     );
   }
+  // The server reads only the part of the crop inside the image, so size the
+  // output (and decide whether it is downsampled) from that part.
+  const imageCrop = {
+    left: Math.max(0, boundingBox.left),
+    top: Math.max(0, boundingBox.top),
+    right: Math.min(dataset.width, boundingBox.right),
+    bottom: Math.min(dataset.height, boundingBox.bottom),
+  };
+  const params = getDownloadParameters(
+    imageCrop,
+    options.format,
+    maxPixels,
+    options.jpegQuality,
+  );
+  const downsampled =
+    params.width! < imageCrop.right - imageCrop.left ||
+    params.height! < imageCrop.bottom - imageCrop.top;
   const apiRoot = store.girderRest.apiRoot;
   // Raw channels keep the source bit depth; tiles/region would return a
   // TIFF divided down to 8 bits.
@@ -2208,7 +2214,7 @@ async function downloadUrls(
       progress.createNotification({
         type: NotificationType.WARNING,
         title: "Image too large: downsampled",
-        message: `The crop is larger than ${maxPixels.toLocaleString()} pixels, so the image was downsampled to fit. Use a smaller crop to export at full resolution.`,
+        message: `The crop is larger than ${maxPixels.toLocaleString()} pixels, so the image was downsampled to fit, and its pixel values may be averaged. Use a smaller crop to export full-resolution raw values.`,
         timeout: 10,
       });
     }

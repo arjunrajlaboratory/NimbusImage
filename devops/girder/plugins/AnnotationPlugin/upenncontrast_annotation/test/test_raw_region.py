@@ -7,6 +7,7 @@ import tifffile
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from girder.constants import AccessType
+from girder.exceptions import RestException
 from girder.models.item import Item
 from girder.models.upload import Upload
 from girder_large_image.models.image_item import ImageItem
@@ -202,6 +203,21 @@ class TestRawRegion:
             server, sixteenBitItem, user, left=0, top=0, right=8, bottom=8,
         )
         assertStatus(resp, 403)
+
+
+@pytest.mark.parametrize("metadata, expected", [
+    ({"dtype": "uint16", "bandCount": 1}, 2),
+    ({"dtype": "uint8", "bandCount": 3}, 3),
+    ({"dtype": "None", "bandCount": None}, 32),
+    ({"dtype": None, "bandCount": 1}, 8),
+])
+def testByteLimitCountsDtypeAndBands(monkeypatch, metadata, expected):
+    monkeypatch.setattr(rawRegion, "MAX_RAW_REGION_BYTES", expected)
+    region = {"left": 0, "top": 0, "right": 1, "bottom": 1}
+    rawRegion._requireOutputWithinLimit(metadata, region, {})
+    monkeypatch.setattr(rawRegion, "MAX_RAW_REGION_BYTES", expected - 1)
+    with pytest.raises(RestException):
+        rawRegion._requireOutputWithinLimit(metadata, region, {})
 
 
 def testEncodeRawTiffWritesOnePageForEveryBandCount():

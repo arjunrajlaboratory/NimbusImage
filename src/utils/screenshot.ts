@@ -38,8 +38,9 @@ export function getDownloadParameters(
   ) {
     throw new Error("Snapshot crop must have a positive width and height.");
   }
-  // Larger crops are downsampled to maxPixels. Raw-channel TIFFs come from
-  // raw_region, which samples nearest-neighbour, so values are unchanged.
+  // Larger crops are downsampled to maxPixels. Raw-channel TIFFs keep their
+  // dtype, but downsampled pixels may come from a lower-resolution level of
+  // the image, where values can be averaged.
   const regionWidth = bounds.right - bounds.left;
   const regionHeight = bounds.bottom - bounds.top;
   const scale = Math.min(
@@ -64,8 +65,9 @@ export function getDownloadParameters(
 }
 
 // `tiles/region` renders styled images and converts 16-bit data to 8 bits;
-// `raw_region` returns one frame's samples unscaled as a TIFF (it ignores
-// encoding and style parameters).
+// `raw_region` returns one frame's samples unscaled as a TIFF. It ignores the
+// encoding, style and contentDisposition parameters (downloads are named
+// client-side from contentDispositionFilename).
 export function getBaseURLFromDownloadParameters(
   params: IDownloadParameters,
   itemId: string,

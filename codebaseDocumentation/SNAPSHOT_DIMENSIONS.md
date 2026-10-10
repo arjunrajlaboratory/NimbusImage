@@ -18,8 +18,11 @@ Raw channels keep the server's TIFF bytes. Raw-channel TIFFs come from
 `item/{id}/raw_region`, which keeps the source dtype (16-bit stays 16-bit);
 `tiles/region?encoding=TIFF` would divide it down to 8 bits. Crops over
 `maxPixels` (4096², so a full 2048² frame is never downsampled) are downsampled
-in both modes, with a warning notification. Raw-channel TIFFs are downsampled
-by nearest neighbour, so their values are unchanged. Movie frames keep the
+in both modes, with a warning notification. Downsampled raw-channel TIFFs keep
+their dtype, but their pixels may come from a lower-resolution level of the
+image, where values can be averaged. Crops are clamped to the image before
+sizing, so a crop running off the edge is not downsampled for its off-image
+area. Movie frames keep the
 earlier 4M-pixel limit. TIFF and tiled TIFF bypass canvas
 scalebars; the panel explains this. Scaled layers retain colors and contrast
 settings, but use individual planes on checked dimensions, overriding fixed,

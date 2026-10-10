@@ -99,10 +99,13 @@ def _requireOutputWithinLimit(metadata, region, output):
         output.get("maxHeight", regionHeight) / regionHeight,
     )
     pixels = math.ceil(regionWidth * scale) * math.ceil(regionHeight * scale)
-    bytesPerPixel = (
-        np.dtype(metadata.get("dtype", "float64")).itemsize
-        * metadata.get("bandCount", 4)
-    )
+    # large_image always sets these keys, but before a tile has been read
+    # dtype can be None or the string "None", and np.dtype("None") raises
+    try:
+        sampleBytes = np.dtype(metadata.get("dtype")).itemsize
+    except TypeError:
+        sampleBytes = np.dtype("float64").itemsize
+    bytesPerPixel = sampleBytes * (metadata.get("bandCount") or 4)
     if pixels * bytesPerPixel > MAX_RAW_REGION_BYTES:
         raise RestException(
             "The region would return %d bytes of samples; the maximum is %d. "
@@ -123,7 +126,8 @@ def _requireOutputWithinLimit(metadata, region, output):
         "dtype. Coordinates are in base pixels and are clamped to the "
         "image (negative values are not offsets from the far edge, unlike "
         "tiles/region). If width or height is given, the region is "
-        "downsampled (nearest neighbour, aspect ratio preserved) to fit; it "
+        "downsampled to fit (aspect ratio preserved; nearest neighbour from "
+        "the level read, which may be a lower, averaged pyramid level); it "
         "is never upsampled. At most %d bytes of output samples per request."
         % MAX_RAW_REGION_BYTES
     )
@@ -172,9 +176,9 @@ def getRawRegion(self, item, left, top, right, bottom, frame, width, height):
             resample=None,
         )
     except TileGeneralError as e:
-        raise RestException(e.args[0])
+        raise RestException(str(e))
     except ValueError as e:
-        raise RestException("Value Error: %s" % e.args[0])
+        raise RestException("Value Error: %s" % e)
     data = encodeRawTiff(image)
     setResponseHeader("Content-Type", "image/tiff")
     setRawResponse()

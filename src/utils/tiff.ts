@@ -1,7 +1,8 @@
 // Minimal reader for the uncompressed (compression=1) striped TIFF files that
 // the plugin's `/item/{id}/raw_region` endpoint returns. This is not a general
 // TIFF reader: it rejects compressed, tiled, planar and BigTIFF files, which
-// that endpoint never produces.
+// that endpoint never produces, and pixel types it has no typed array for
+// (for example 64-bit integers).
 
 export type TRawPixels =
   | Uint8Array
