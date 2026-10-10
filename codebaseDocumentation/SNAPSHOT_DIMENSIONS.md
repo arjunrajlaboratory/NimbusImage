@@ -14,7 +14,9 @@ position and channel/layer, not a multipage TIFF. Names include one-based
 These names describe slider positions. Image lookups translate positions to
 metadata values, including noncontiguous XY/T/Z coordinates and channel IDs.
 
-Raw channels keep the server's TIFF bytes. TIFF and tiled TIFF bypass canvas
+Raw channels keep the server's TIFF bytes. Raw-channel TIFFs come from
+`item/{id}/raw_region`, which keeps the source dtype (16-bit stays 16-bit);
+`tiles/region?encoding=TIFF` would divide it down to 8 bits. TIFF and tiled TIFF bypass canvas
 scalebars; the panel explains this. Scaled layers retain colors and contrast
 settings, but use individual planes on checked dimensions, overriding fixed,
 offset, or projection settings on those dimensions for the export only. Other

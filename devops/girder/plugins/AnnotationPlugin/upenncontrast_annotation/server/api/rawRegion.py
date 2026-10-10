@@ -23,6 +23,8 @@ from girder_large_image.models.image_item import ImageItem
 from large_image.constants import TILE_FORMAT_NUMPY
 from large_image.exceptions import TileGeneralError
 
+from ..helpers.validation import requireFloat
+
 
 def encodeRawTiff(image):
     """Encode a numpy region (height x width [x bands]) as an uncompressed,
@@ -81,18 +83,26 @@ def encodeRawTiff(image):
 )
 @boundHandler()
 def getRawRegion(self, item, left, top, right, bottom, frame, width, height):
+    # autoDescribeRoute accepts nan/inf and a 0 size; large_image then
+    # raises OverflowError/TypeError, which would surface as a 500
+    region = {
+        name: requireFloat(value, name)
+        for name, value in (
+            ("left", left), ("top", top), ("right", right), ("bottom", bottom)
+        )
+    }
     output = {}
-    if width is not None:
-        output["maxWidth"] = width
-    if height is not None:
-        output["maxHeight"] = height
+    for name, key, size in (
+        ("width", "maxWidth", width), ("height", "maxHeight", height)
+    ):
+        if size is not None:
+            if size < 1:
+                raise RestException("%s must be at least 1." % name)
+            output[key] = size
     try:
         image, _ = ImageItem().getRegion(
             item,
-            region={
-                "left": left, "top": top, "right": right, "bottom": bottom,
-                "units": "base_pixels",
-            },
+            region={**region, "units": "base_pixels"},
             output=output,
             frame=frame,
             format=TILE_FORMAT_NUMPY,

@@ -104,6 +104,21 @@ class TestRawRegion:
         )
         assertStatus(resp, 400)
 
+    @pytest.mark.parametrize("params", [
+        {"right": "inf"},
+        {"right": "nan"},
+        {"width": 0},
+        {"height": 0},
+    ])
+    def testMalformedRegionIsRejected(
+        self, server, admin, sixteenBitItem, params
+    ):
+        resp = _getRegion(
+            server, sixteenBitItem, admin,
+            **{"left": 0, "top": 0, "right": 8, "bottom": 8, **params},
+        )
+        assertStatus(resp, 400)
+
     def testRequiresReadAccess(self, server, user, sixteenBitItem):
         resp = _getRegion(
             server, sixteenBitItem, user, left=0, top=0, right=8, bottom=8,
