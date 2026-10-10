@@ -14,7 +14,16 @@ position and channel/layer, not a multipage TIFF. Names include one-based
 These names describe slider positions. Image lookups translate positions to
 metadata values, including noncontiguous XY/T/Z coordinates and channel IDs.
 
-Raw channels keep the server's TIFF bytes. TIFF and tiled TIFF bypass canvas
+Raw channels keep the server's TIFF bytes. Raw-channel TIFFs come from
+`item/{id}/raw_region`, which keeps the source dtype (16-bit stays 16-bit);
+`tiles/region?encoding=TIFF` would divide it down to 8 bits. Crops over
+`maxPixels` (4096², so a full 2048² frame is never downsampled) are downsampled
+in both modes, with a warning notification. Downsampled raw-channel TIFFs keep
+their dtype, but their pixels may come from a lower-resolution level of the
+image, where values can be averaged. Crops are clamped to the image before
+sizing, so a crop running off the edge is not downsampled for its off-image
+area. Movie frames keep the
+earlier 4M-pixel limit. TIFF and tiled TIFF bypass canvas
 scalebars; the panel explains this. Scaled layers retain colors and contrast
 settings, but use individual planes on checked dimensions, overriding fixed,
 offset, or projection settings on those dimensions for the export only. Other
@@ -24,7 +33,10 @@ not changed by export.
 Export settings, nested layer settings, crop geometry, and scalebar specs are
 captured before asynchronous preparation. Missing image planes, empty layer
 selections, and invalid crops produce an error instead of mislabeled images or
-partial archives. Oversized raw crops still use the existing size-limit dialog.
+partial archives. Oversized crops are downsampled with a warning (see above);
+raw-channel TIFFs are also sized to `raw_region`'s byte budget from the image's
+dtype and band count, so a large float64 or RGB 16-bit crop is downsampled
+rather than refused. Scalebars are sized against the in-image part of the crop.
 
 Binary region requests use GirderAPI and run sequentially, with completed-file
 progress and cleanup on failure. Each image requires its own existing region
@@ -52,10 +64,15 @@ bounds transient decoded-image memory, not the final archive size.
 - Missing/offset-out-of-range planes and empty layer selections never default to frame zero: `screenshot.test.ts` — *"rejects missing planes instead of exporting default frame zero"*, *"rejects empty layer selections"*, and *"rejects offset layers outside the dataset"*.
 - Empty/nonfinite/inverted crops are rejected: `screenshot.test.ts` — *"rejects an empty or invalid crop"*.
 - Empty binary responses are rejected: `GirderAPI.snapshot.test.ts` — *"rejects an empty server response instead of archiving a zero-byte image"*.
+- Raw-channel TIFFs keep the source dtype. Only raw-channel TIFF uses `raw_region`; `tiles/region?encoding=TIFF` divides 16-bit data down to 8 bits (#688): `Snapshots.test.ts` — *"getUrlsForSnapshot requests %s %s downloads from %s"*; `test_raw_region.py` — *"testReturnsSixteenBitSamplesUnscaled"*. Every band count is one page of interleaved samples, which is what `parseRawTiff` reads: *"testEncodeRawTiffWritesOnePageForEveryBandCount"*. The line scan reads the same endpoint: `GirderAPI.snapshot.test.ts` — *"reads unscaled samples from raw_region, not the 8-bit tiles/region TIFF"*. It caps its region to the byte budget too (`screenshot.test.ts` — *"caps %j at %i pixels per side"*), and the decoder reads every dtype raw_region writes, widening float16 and 64-bit integers (`tiff.test.ts` — *"decodes %s samples raw_region returns"*).
+- Downsampling is nearest-neighbour for every dtype and band count (`resample=None`; large_image's default sends multiband uint16 through 8-bit PIL): `test_raw_region.py` — *"testDownsamplesToMaximumSize"* and *"testDownsampledMultibandKeepsSourceSamples"*.
+- `raw_region` clamps coordinates to the image rather than reading negative values as offsets from the far edge: `test_raw_region.py` — *"testCoordinatesAreClampedToTheImage"*.
 - A rejected crop prevents a partial saved-snapshot download: `Snapshots.test.ts` — *"does not download a partial saved-snapshot batch when a crop is invalid"*.
 
 ### Cost and cleanup
 
+- Crops over `maxPixels` (4096²) are downsampled in both modes rather than refused, a full 2048² frame is not, and the user is warned: `screenshot.test.ts` — *"keeps a full 2048 x 2048 frame at full resolution"* and *"downsamples a crop over maxPixels to fit, keeping its aspect ratio"*; `Snapshots.test.ts` — *"downloads %s at output width %i and warns of downsampling: %s"*. Movies keep the 4M-pixel limit: *"getUrlsForMovie keeps movie frames at the 4M-pixel limit"*. Raw-channel TIFFs are also sized to `raw_region`'s byte budget from the image's dtype and band count (a client crop the server would refuse is downsampled instead): `screenshot.test.ts` — *"allows %j at most %i pixels"*; `Snapshots.test.ts` — *"limits %s %s exports to %i pixels"*. Off-edge crops are sized, and their scalebars drawn, from the in-image part: *"sizes an off-edge crop from its in-image part"* and *"sizes the scalebar against the in-image part of an off-edge crop"*.
+- `raw_region` refuses output over `MAX_RAW_REGION_BYTES` (counting dtype and bands) before reading any pixels: `test_raw_region.py` — *"testOutputOverTheByteLimitIsRejected"*. Non-finite, zero and huge sizes are 400s or clamped, never 500s: *"testMalformedRegionIsRejected"* and *"testHugeOutputSizesMeanNoDownsampling"*.
 - ZIP requests run serially and preserve deterministic filenames/bytes: `Snapshots.test.ts` — *"downloadUrls assigns sanitized duplicate zip filenames in input order"*.
 - Snapshot filenames stay within 200 UTF-8 bytes. Over 255, macOS Archive Utility extracts nothing and calls the ZIP "empty" (a regression once the XY/T/Z suffix was appended). They are shortened where they are built (`buildSnapshotFilename`), so ZIP entries, single-file downloads and Content-Disposition agree. Collection and dataset names shrink first, and the date and XY/T/Z suffix never shrink, so channel/layer files stay distinguishable. A warning notification reports the shortening: `Snapshots.test.ts` — *"shortens long snapshot filenames but keeps channel names and warns"*; `snapshotFilename.test.ts` — *"shortens collection and dataset names before the snapshot name and label"* and *"keeps every name within the byte limit even when all fields are long"*.
 - Download failures clear progress and produce no archive: `Snapshots.test.ts` — *"cleans up ZIP progress without downloading on a network failure"* and *"reports failed exports and resets the download lock"*.

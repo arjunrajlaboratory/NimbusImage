@@ -185,6 +185,7 @@ vi.mock("@/utils/screenshot", () => ({
   getBaseURLFromDownloadParameters: vi.fn(
     () => new URL("http://localhost/api/v1/item/item1/tiles/region"),
   ),
+  rawRegionMaxPixels: vi.fn(() => 4096 * 4096),
   getChannelsDownloadUrls: vi.fn(() => [
     {
       url: new URL("http://localhost/api/v1/channel0"),
@@ -205,9 +206,11 @@ vi.mock("@/utils/log", () => ({
 
 import store from "@/store";
 import {
+  getBaseURLFromDownloadParameters,
   getDownloadParameters,
   getChannelsDownloadUrls,
   getLayersDownloadUrls,
+  rawRegionMaxPixels,
 } from "@/utils/screenshot";
 import { downloadToClient } from "@/utils/download";
 import { ZipDeflate } from "fflate";
@@ -230,6 +233,9 @@ import {
 } from "./Snapshots.vue";
 
 const mockedGetDownloadParameters = vi.mocked(getDownloadParameters);
+const mockedGetBaseURLFromDownloadParameters = vi.mocked(
+  getBaseURLFromDownloadParameters,
+);
 const mockedGetChannelsDownloadUrls = vi.mocked(getChannelsDownloadUrls);
 const mockedGetLayersDownloadUrls = vi.mocked(getLayersDownloadUrls);
 const mockedDownloadToClient = vi.mocked(downloadToClient);
@@ -290,10 +296,6 @@ describe("Snapshots.vue", () => {
 
     it("has default downloading as false", () => {
       expect((wrapper.vm as any).downloading).toBe(false);
-    });
-
-    it("has default imageTooBigDialog as false", () => {
-      expect((wrapper.vm as any).imageTooBigDialog).toBe(false);
     });
 
     it("has default createDialog as false", () => {
@@ -381,7 +383,8 @@ describe("Snapshots.vue", () => {
     });
 
     it("has correct maxPixels constant", () => {
-      expect((wrapper.vm as any).maxPixels).toBe(4_000_000);
+      // Above 2048^2, so a full 2048 x 2048 frame is not downsampled
+      expect((wrapper.vm as any).maxPixels).toBe(4096 * 4096);
     });
 
     it("has correct tableHeaders", () => {
@@ -1533,9 +1536,8 @@ describe("Snapshots.vue", () => {
         expect(mockedGetDownloadParameters).toHaveBeenCalledWith(
           bbox,
           "tiff",
-          4000000,
+          4096 * 4096,
           95,
-          mode,
         );
         expect(
           urls.map((url: URL) =>
@@ -1701,7 +1703,11 @@ describe("Snapshots.vue", () => {
           encoding: "PNG",
           contentDisposition: "attachment",
         })
-        .mockReturnValueOnce(null);
+        .mockImplementationOnce(() => {
+          throw new Error(
+            "Snapshot crop must have a positive width and height.",
+          );
+        });
       (wrapper.vm as any).addScalebar = false;
       await (wrapper.vm as any).downloadImagesForSetOfSnapshots([
         saved,
@@ -1805,8 +1811,97 @@ describe("Snapshots.vue", () => {
       expect(mockedGetChannelsDownloadUrls).toHaveBeenCalled();
     });
 
-    it("getUrlsForSnapshot returns undefined when image too big", async () => {
-      mockedGetDownloadParameters.mockReturnValueOnce(null);
+    it.each([
+      ["channels", "tiff", "raw_region"],
+      ["channels", "tiled", "tiles/region"],
+      ["layers", "tiff", "tiles/region"],
+    ])(
+      "getUrlsForSnapshot requests %s %s downloads from %s",
+      async (mode, format, endpoint) => {
+        (wrapper.vm as any).downloadMode = mode;
+        await wrapper.vm.$nextTick();
+        (wrapper.vm as any).format = format;
+        mockedGetBaseURLFromDownloadParameters.mockClear();
+        await (wrapper.vm as any).getUrlsForSnapshot(
+          { xy: 0, z: 0, time: 0 },
+          { left: 0, top: 0, right: 100, bottom: 100 },
+          "dataset1",
+          "TestSnap",
+          (store as any).layers,
+          "TestConfig",
+        );
+        expect(mockedGetBaseURLFromDownloadParameters).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.any(String),
+          expect.any(String),
+          endpoint,
+        );
+      },
+    );
+
+    it.each([
+      ["channels", "tiff", 1000],
+      ["layers", "tiff", 4096 * 4096],
+    ])("limits %s %s exports to %i pixels", async (mode, format, limit) => {
+      vi.mocked(rawRegionMaxPixels).mockReturnValueOnce(1000);
+      mockedGetDownloadParameters.mockClear();
+      (wrapper.vm as any).downloadMode = mode;
+      await wrapper.vm.$nextTick();
+      (wrapper.vm as any).format = format;
+      await (wrapper.vm as any).getUrlsForSnapshot(
+        { xy: 0, z: 0, time: 0 },
+        { left: 0, top: 0, right: 100, bottom: 100 },
+        "dataset1",
+        "TestSnap",
+        (store as any).layers,
+        "TestConfig",
+      );
+      expect(mockedGetDownloadParameters).toHaveBeenCalledWith(
+        expect.anything(),
+        format,
+        limit,
+        expect.any(Number),
+      );
+    });
+
+    it("sizes an off-edge crop from its in-image part", async () => {
+      mockedGetDownloadParameters.mockClear();
+      await (wrapper.vm as any).getUrlsForSnapshot(
+        { xy: 0, z: 0, time: 0 },
+        { left: -50, top: -20, right: 1500, bottom: 900 },
+        "dataset1",
+        "TestSnap",
+        (store as any).layers,
+        "TestConfig",
+      );
+      // The mocked dataset is 1000 x 800
+      expect(mockedGetDownloadParameters).toHaveBeenCalledWith(
+        { left: 0, top: 0, right: 1000, bottom: 800 },
+        expect.any(String),
+        expect.any(Number),
+        expect.any(Number),
+      );
+    });
+
+    it("warns when only the height of a raw channel export was reduced", async () => {
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => "blob:snapshot"),
+        revokeObjectURL: vi.fn(),
+      });
+      (store.api.getSnapshotImage as any).mockResolvedValueOnce(
+        new ArrayBuffer(1),
+      );
+      mockedGetDownloadParameters.mockReturnValueOnce({
+        encoding: "TIFF",
+        contentDisposition: "attachment",
+        left: 0,
+        top: 0,
+        right: 100,
+        bottom: 100,
+        width: 100,
+        height: 60,
+      });
+      (wrapper.vm as any).downloadMode = "channels";
       const urls = await (wrapper.vm as any).getUrlsForSnapshot(
         { xy: 0, z: 0, time: 0 },
         { left: 0, top: 0, right: 100, bottom: 100 },
@@ -1815,9 +1910,59 @@ describe("Snapshots.vue", () => {
         (store as any).layers,
         "TestConfig",
       );
-      expect(urls).toBeUndefined();
-      expect((wrapper.vm as any).imageTooBigDialog).toBe(true);
+      await (wrapper.vm as any).downloadUrls(
+        urls.map((url: URL) => ({ url, scalebarSpec: null })),
+      );
+      expect(mockedProgress.createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Image too large: downsampled" }),
+      );
     });
+
+    it.each([
+      ["channels", 50, true],
+      ["channels", 100, false],
+      ["layers", 50, true],
+      ["layers", 100, false],
+    ])(
+      "downloads %s at output width %i and warns of downsampling: %s",
+      async (mode, outputWidth, warns) => {
+        Object.assign(URL, {
+          createObjectURL: vi.fn(() => "blob:snapshot"),
+          revokeObjectURL: vi.fn(),
+        });
+        (store.api.getSnapshotImage as any).mockResolvedValueOnce(
+          new ArrayBuffer(1),
+        );
+        mockedGetDownloadParameters.mockReturnValueOnce({
+          encoding: "TIFF",
+          contentDisposition: "attachment",
+          left: 0,
+          top: 0,
+          right: 100,
+          bottom: 100,
+          width: outputWidth,
+          height: outputWidth,
+        });
+        (wrapper.vm as any).downloadMode = mode;
+        (wrapper.vm as any).addScalebar = false;
+        const urls = await (wrapper.vm as any).getUrlsForSnapshot(
+          { xy: 0, z: 0, time: 0 },
+          { left: 0, top: 0, right: 100, bottom: 100 },
+          "dataset1",
+          "TestSnap",
+          (store as any).layers,
+          "TestConfig",
+        );
+        expect(urls).toHaveLength(1);
+        await (wrapper.vm as any).downloadUrls(
+          urls.map((url: URL) => ({ url, scalebarSpec: null })),
+        );
+        const titles = mockedProgress.createNotification.mock.calls.map(
+          ([notification]) => notification.title,
+        );
+        expect(titles.includes("Image too large: downsampled")).toBe(warns);
+      },
+    );
 
     it("getUrlsForSnapshot sets contentDispositionFilename", async () => {
       (wrapper.vm as any).downloadMode = "layers";
@@ -2494,6 +2639,23 @@ describe("Snapshots.vue", () => {
       expect(urls).toHaveLength(3);
     });
 
+    it("getUrlsForMovie keeps movie frames at the 4M-pixel limit", async () => {
+      mockedGetDownloadParameters.mockClear();
+      await (wrapper.vm as any).getUrlsForMovie(
+        [0],
+        "dataset1",
+        { left: 0, top: 0, right: 100, bottom: 100 },
+        (store as any).layers,
+        { xy: 0, z: 0, time: 0 },
+      );
+      expect(mockedGetDownloadParameters).toHaveBeenCalledWith(
+        expect.anything(),
+        "png",
+        4_000_000,
+        95,
+      );
+    });
+
     it("getUrlsForMovie throws when dataset not found", async () => {
       mockedGirderResources.getDataset.mockResolvedValueOnce(null as any);
 
@@ -2506,20 +2668,6 @@ describe("Snapshots.vue", () => {
           { xy: 0, z: 0, time: 0 },
         ),
       ).rejects.toThrow("Dataset not found");
-    });
-
-    it("getUrlsForMovie throws when image too big", async () => {
-      mockedGetDownloadParameters.mockReturnValueOnce(null);
-
-      await expect(
-        (wrapper.vm as any).getUrlsForMovie(
-          [0],
-          "dataset1",
-          { left: 0, top: 0, right: 100, bottom: 100 },
-          [],
-          { xy: 0, z: 0, time: 0 },
-        ),
-      ).rejects.toThrow("Image size exceeds maximum allowed pixels");
     });
 
     it("module-level intFromString parses valid string", () => {
@@ -2632,6 +2780,28 @@ describe("Snapshots.vue", () => {
       // A 1000-wide region rendered onto a 500-wide canvas (2x downsample, as
       // happens when the region exceeds maxPixels) → 100 dataset px = 50 px.
       expect(drawnLength(1000, 500)).toBeCloseTo(50);
+    });
+
+    it("sizes the scalebar against the in-image part of an off-edge crop", async () => {
+      const vm = wrapper.vm as any;
+      vm.downloadMode = "layers";
+      vm.scalebarMode = "manual";
+      vm.manualScalebarSettings = { length: 100, unit: TScalebarUnit.PX };
+      // The mocked dataset is 1000 wide; the crop runs 500 px past its edge
+      const crop = { left: 0, top: 0, right: 1500, bottom: 100 };
+      const spec = vm.buildScalebarSpec(crop);
+      const [url] = await vm.getUrlsForSnapshot(
+        { xy: 0, z: 0, time: 0 },
+        crop,
+        "dataset1",
+        "TestSnap",
+        (store as any).layers,
+        "TestConfig",
+      );
+      const { ctx, calls } = makeMockCtx();
+      // The server returns the 1000 px in-image region at full size
+      vm.drawScalebarOnCanvas(ctx, 1000, 100, vm.scalebarSpecForUrl(url, spec));
+      expect(calls.moveTo[0] - calls.lineTo[0]).toBeCloseTo(100);
     });
 
     it("scales scalebar up when the canvas is in zoomed display pixels", () => {

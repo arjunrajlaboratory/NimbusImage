@@ -452,18 +452,13 @@ export default class GirderAPI {
       return null;
     }
     const scale = Math.min(1, maxDim / Math.max(regionWidth, regionHeight));
-    const params: { [key: string]: number | string } = {
-      ...region,
-      units: "base_pixels",
-      frame,
-      encoding: "TIFF",
-      tiffCompression: "raw",
-    };
+    const params: { [key: string]: number } = { ...region, frame };
     if (scale < 1) {
       params.width = Math.round(regionWidth * scale);
       params.height = Math.round(regionHeight * scale);
     }
-    const response = await this.client.get(`item/${itemId}/tiles/region`, {
+    // Not tiles/region: its TIFF encoding divides 16-bit samples down to 8
+    const response = await this.client.get(`item/${itemId}/raw_region`, {
       params,
       responseType: "arraybuffer",
     });

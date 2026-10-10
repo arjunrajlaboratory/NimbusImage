@@ -1,8 +1,8 @@
 // Minimal reader for the uncompressed (compression=1) striped TIFF files that
-// large_image returns from `/item/{id}/tiles/region` when called with
-// `encoding=TIFF&tiffCompression=raw`. This is not a general TIFF reader: it
-// rejects compressed, tiled, planar and BigTIFF files, which large_image never
-// produces for that request.
+// the plugin's `/item/{id}/raw_region` endpoint returns. This is not a general
+// TIFF reader: it rejects compressed, tiled, planar and BigTIFF files, which
+// that endpoint never produces. Half floats and 64-bit integers are widened
+// (see createPixelArray); 1-bit (boolean) samples are rejected.
 
 export type TRawPixels =
   | Uint8Array
@@ -88,13 +88,36 @@ function readTagValues(
   return values;
 }
 
+// IEEE 754 half precision; DataView.getFloat16 is not yet in every browser
+function readFloat16(
+  view: DataView,
+  offset: number,
+  littleEndian: boolean,
+): number {
+  const bits = view.getUint16(offset, littleEndian);
+  const sign = bits & 0x8000 ? -1 : 1;
+  const exponent = (bits >> 10) & 0x1f;
+  const fraction = bits & 0x3ff;
+  if (exponent === 0) {
+    return sign * 2 ** -14 * (fraction / 1024);
+  }
+  if (exponent === 0x1f) {
+    return fraction ? NaN : sign * Infinity;
+  }
+  return sign * 2 ** (exponent - 15) * (1 + fraction / 1024);
+}
+
 function createPixelArray(
   sampleFormat: number,
   bitsPerSample: number,
   count: number,
 ): TRawPixels {
+  // raw_region keeps the source dtype. Half floats widen to Float32Array and
+  // 64-bit integers to Float64Array (exact up to 2^53), since there is no
+  // typed array a line scan can sample them from directly.
   if (sampleFormat === TiffSampleFormat.Float) {
     switch (bitsPerSample) {
+      case 16:
       case 32:
         return new Float32Array(count);
       case 64:
@@ -108,6 +131,8 @@ function createPixelArray(
         return new Int16Array(count);
       case 32:
         return new Int32Array(count);
+      case 64:
+        return new Float64Array(count);
     }
   } else if (sampleFormat === TiffSampleFormat.UnsignedInteger) {
     switch (bitsPerSample) {
@@ -117,6 +142,8 @@ function createPixelArray(
         return new Uint16Array(count);
       case 32:
         return new Uint32Array(count);
+      case 64:
+        return new Float64Array(count);
     }
   }
   throw new Error(
@@ -200,9 +227,11 @@ export function parseRawTiff(buffer: ArrayBuffer): IRawImageData {
           break;
         case 2:
           value =
-            sampleFormat === TiffSampleFormat.SignedInteger
-              ? view.getInt16(offset, littleEndian)
-              : view.getUint16(offset, littleEndian);
+            sampleFormat === TiffSampleFormat.Float
+              ? readFloat16(view, offset, littleEndian)
+              : sampleFormat === TiffSampleFormat.SignedInteger
+                ? view.getInt16(offset, littleEndian)
+                : view.getUint16(offset, littleEndian);
           break;
         case 4:
           value =
@@ -213,7 +242,14 @@ export function parseRawTiff(buffer: ArrayBuffer): IRawImageData {
                 : view.getUint32(offset, littleEndian);
           break;
         default:
-          value = view.getFloat64(offset, littleEndian);
+          value =
+            sampleFormat === TiffSampleFormat.Float
+              ? view.getFloat64(offset, littleEndian)
+              : Number(
+                  sampleFormat === TiffSampleFormat.SignedInteger
+                    ? view.getBigInt64(offset, littleEndian)
+                    : view.getBigUint64(offset, littleEndian),
+                );
       }
       data[sampleIndex++] = value;
     }

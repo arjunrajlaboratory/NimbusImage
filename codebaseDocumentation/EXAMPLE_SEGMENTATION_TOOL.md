@@ -81,7 +81,7 @@ listed.
 
 - Whole-dataset / off-screen batch application (naturally a backend
   docker-worker job).
-- Raw 16-bit intensity features (needs a `tiles/region` TIFF/raw fetch path).
+- Raw 16-bit intensity features (needs dense fetches from `item/{id}/raw_region`).
 - Persisting trained models across sessions.
 
 ---
@@ -96,7 +96,9 @@ Investigated conclusions:
   `src/components/AnnotationViewer.vue:1894`). 8-bit styled RGB is exactly what
   ilastik-style features need for a "segment what I see" tool. Raw 16-bit data
   is only available per-pixel (`tiles/pixel`, `GirderAPI.ts:371`) — too slow for
-  dense features — or via a not-yet-used raw `tiles/region` encoding.
+  dense features — or via `item/{id}/raw_region` (`GirderAPI.getRawRegion`,
+  used by the line scan). `tiles/region?encoding=TIFF` is not raw: it divides
+  16-bit samples down to 8 bits.
 - **Compute**: multi-scale Gaussian features + a small random forest train in
   well under a second on a viewport-sized image in plain TypeScript inside a
   web worker. No server round-trip → true live updates.
@@ -528,8 +530,8 @@ re-proposed.
 - **Backend batch apply** (the natural backend piece): serialize the flattened
   forest + feature config to JSON, run over all locations via the existing
   `segmentation` docker-worker route, creating annotations server-side.
-- Raw 16-bit features via `tiles/region` with TIFF/raw encoding (server
-  already supports it; frontend needs a decoder) — makes the model robust to
+- Raw 16-bit features via `item/{id}/raw_region` (server endpoint and the
+  `src/utils/tiff.ts` decoder both exist) — makes the model robust to
   display-contrast changes.
 - Persist trained models in the tool configuration (`values.trainedModel`) so
   a tool "remembers" its training across sessions.

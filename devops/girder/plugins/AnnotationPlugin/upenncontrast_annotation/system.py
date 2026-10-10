@@ -22,6 +22,8 @@ from girder.models.user import User
 from girder_jobs.constants import JobStatus
 from girder_large_image.models.image_item import ImageItem
 
+from .server.api.rawRegion import getRawRegion
+
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,7 @@ def addSystemEndpoints(apiRoot):
     # Added to the item route
     apiRoot.item.route("GET", ("query",), getItemsByQuery)
     apiRoot.item.route("PUT", (":itemId", "cache_maxmerge"), cacheMaxMerge)
+    apiRoot.item.route("GET", (":itemId", "raw_region"), getRawRegion)
     # Added to the folder route
     apiRoot.folder.route("GET", ("query",), getFoldersByQuery)
     # Added to the system route (admin-only usage metrics)

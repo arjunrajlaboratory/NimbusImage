@@ -23,13 +23,53 @@ export class LayerSelectionError extends Error {
   }
 }
 
+// Mirrors MAX_RAW_REGION_BYTES in the plugin's server/api/rawRegion.py: the
+// raw_region endpoint refuses outputs with more sample bytes than this.
+export const RAW_REGION_MAX_BYTES = 64 * 1024 * 1024;
+
+const BYTES_PER_SAMPLE: { [dtype: string]: number } = {
+  uint8: 1,
+  int8: 1,
+  uint16: 2,
+  int16: 2,
+  float16: 2,
+  uint32: 4,
+  int32: 4,
+  float32: 4,
+};
+
+/**
+ * The most pixels a raw_region TIFF of this image can hold, so raw crops are
+ * downsampled to the server's byte budget rather than refused. Unknown dtypes
+ * and band counts get the server's widest assumption (four 8-byte bands).
+ */
+export function rawRegionMaxPixels(tileinfo: {
+  dtype?: string;
+  bandCount?: number;
+}): number {
+  const bytesPerPixel =
+    (BYTES_PER_SAMPLE[tileinfo.dtype ?? ""] ?? 8) * (tileinfo.bandCount || 4);
+  return Math.floor(RAW_REGION_MAX_BYTES / bytesPerPixel);
+}
+
+/**
+ * The largest per-side size, at most `maxDim`, of a square raw_region request
+ * that fits the byte budget: what callers that cap both sides (the line scan)
+ * should pass as their maximum dimension.
+ */
+export function rawRegionMaxDim(
+  tileinfo: { dtype?: string; bandCount?: number },
+  maxDim: number,
+): number {
+  return Math.min(maxDim, Math.floor(Math.sqrt(rawRegionMaxPixels(tileinfo))));
+}
+
 export function getDownloadParameters(
   bounds: IGeoJSBounds,
   format: string,
   maxPixels: number,
   jpegQuality: number,
-  downloadMode: "layers" | "channels",
-) {
+): IDownloadParameters {
   if (
     ![bounds.left, bounds.top, bounds.right, bounds.bottom].every(
       Number.isFinite,
@@ -39,43 +79,43 @@ export function getDownloadParameters(
   ) {
     throw new Error("Snapshot crop must have a positive width and height.");
   }
+  // Larger crops are downsampled to maxPixels. Raw-channel TIFFs keep their
+  // dtype, but downsampled pixels may come from a lower-resolution level of
+  // the image, where values can be averaged.
+  const regionWidth = bounds.right - bounds.left;
+  const regionHeight = bounds.bottom - bounds.top;
+  const scale = Math.min(
+    1,
+    Math.sqrt(maxPixels / (regionWidth * regionHeight)),
+  );
   const params: IDownloadParameters = {
     encoding: format.toUpperCase(),
     contentDisposition: "attachment",
     ...bounds,
-    width: bounds.right - bounds.left,
-    height: bounds.bottom - bounds.top,
+    width:
+      scale < 1 ? Math.max(1, Math.floor(scale * regionWidth)) : regionWidth,
+    height:
+      scale < 1 ? Math.max(1, Math.floor(scale * regionHeight)) : regionHeight,
   };
   if (format === "jpeg") {
     params.jpegQuality = jpegQuality;
   } else if (format === "tiff") {
     params.tiffCompression = "raw";
   }
-
-  // Maximum 4M pixels per image
-  if (params.width && params.height) {
-    const nPixels = params.width * params.height;
-    if (nPixels > maxPixels) {
-      if (downloadMode === "layers") {
-        // Scale the image
-        const scale = Math.sqrt(maxPixels / nPixels);
-        params.width = Math.floor(scale * params.width);
-        params.height = Math.floor(scale * params.height);
-      } else if (downloadMode === "channels") {
-        // Don't scale when in "channels" mode
-        return null;
-      }
-    }
-  }
   return params;
 }
 
+// `tiles/region` renders styled images and converts 16-bit data to 8 bits;
+// `raw_region` returns one frame's samples unscaled as a TIFF. It ignores the
+// encoding, style and contentDisposition parameters (downloads are named
+// client-side from contentDispositionFilename).
 export function getBaseURLFromDownloadParameters(
   params: IDownloadParameters,
   itemId: string,
   apiRoot: string,
+  endpoint: "tiles/region" | "raw_region" = "tiles/region",
 ) {
-  const baseUrl = new URL(`${apiRoot}/item/${itemId}/tiles/region`);
+  const baseUrl = new URL(`${apiRoot}/item/${itemId}/${endpoint}`);
   for (const [key, value] of Object.entries(params)) {
     baseUrl.searchParams.set(key, value);
   }

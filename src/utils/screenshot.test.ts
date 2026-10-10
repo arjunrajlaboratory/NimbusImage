@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   LayerSelectionError,
+  getBaseURLFromDownloadParameters,
   getChannelsDownloadUrls,
   getDownloadParameters,
   getLayersDownloadUrls,
+  rawRegionMaxDim,
+  rawRegionMaxPixels,
 } from "./screenshot";
 import { newLayer, type IDataset, type IFrameInfo } from "@/store/model";
 import { parseTiles, type ITileMeta } from "@/store/GirderAPI";
@@ -206,9 +209,9 @@ describe("snapshot crop validation", () => {
     { left: NaN, top: 0, right: 20, bottom: 20 },
   ])("rejects an empty or invalid crop: %j", async (bounds) => {
     const { getDownloadParameters } = await import("./screenshot");
-    expect(() =>
-      getDownloadParameters(bounds, "tiff", 4000000, 95, "channels"),
-    ).toThrow("positive width and height");
+    expect(() => getDownloadParameters(bounds, "tiff", 4000000, 95)).toThrow(
+      "positive width and height",
+    );
   });
 });
 
@@ -219,8 +222,74 @@ describe("snapshot download parameters", () => {
       "jpeg",
       4_000_000,
       80,
-      "layers",
     );
     expect(params?.jpegQuality).toBe(80);
+  });
+
+  it("keeps a full 2048 x 2048 frame at full resolution", () => {
+    const params = getDownloadParameters(
+      { left: 0, top: 0, right: 2048, bottom: 2048 },
+      "tiff",
+      4096 * 4096,
+      95,
+    );
+    expect([params.width, params.height]).toEqual([2048, 2048]);
+  });
+
+  it("downsamples a crop over maxPixels to fit, keeping its aspect ratio", () => {
+    const params = getDownloadParameters(
+      { left: 0, top: 0, right: 8192, bottom: 4096 },
+      "tiff",
+      4096 * 4096,
+      95,
+    );
+    expect([params.width, params.height]).toEqual([5792, 2896]);
+    expect(params.width! * params.height!).toBeLessThanOrEqual(4096 * 4096);
+  });
+});
+
+describe("snapshot download base URL", () => {
+  it("defaults to the styled region endpoint and can target raw_region", () => {
+    const params = {
+      encoding: "TIFF",
+      contentDisposition: "attachment",
+      left: 0,
+      top: 0,
+      right: 10,
+      bottom: 10,
+    };
+    expect(
+      getBaseURLFromDownloadParameters(params, "item1", "http://h/api/v1")
+        .pathname,
+    ).toBe("/api/v1/item/item1/tiles/region");
+    const raw = getBaseURLFromDownloadParameters(
+      params,
+      "item1",
+      "http://h/api/v1",
+      "raw_region",
+    );
+    expect(raw.pathname).toBe("/api/v1/item/item1/raw_region");
+    expect(raw.searchParams.get("left")).toBe("0");
+  });
+});
+
+describe("raw_region byte budget", () => {
+  it.each([
+    [{ dtype: "uint16", bandCount: 1 }, 32 * 1024 * 1024],
+    [{ dtype: "uint16", bandCount: 3 }, Math.floor((64 * 1024 * 1024) / 6)],
+    [{ dtype: "float64", bandCount: 1 }, 8 * 1024 * 1024],
+    [{}, 2 * 1024 * 1024],
+  ])("allows %j at most %i pixels", (tileinfo, pixels) => {
+    expect(rawRegionMaxPixels(tileinfo)).toBe(pixels);
+  });
+});
+
+describe("raw_region line-scan dimension", () => {
+  it.each([
+    [{ dtype: "uint16", bandCount: 1 }, 2048],
+    // RGB float64: 2048^2 would be 96 MiB, over the 64 MiB budget
+    [{ dtype: "float64", bandCount: 3 }, 1672],
+  ])("caps %j at %i pixels per side", (tileinfo, maxDim) => {
+    expect(rawRegionMaxDim(tileinfo, 2048)).toBe(maxDim);
   });
 });
