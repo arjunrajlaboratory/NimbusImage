@@ -72,7 +72,7 @@ docker exec upenncontrast-mongodb-1 mongosh girder --eval "QUERY" --quiet
   datasetId: ObjectId,
   configurationId: ObjectId,
   creatorId: ObjectId,
-  lastLocation: { x: Number, y: Number, zoom: Number },
+  lastLocation: { xy: Number, z: Number, time: Number },  // slider indices
   // per-user contrast overrides, etc.
 }
 ```
