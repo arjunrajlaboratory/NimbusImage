@@ -98,7 +98,15 @@ def _requireOutputWithinLimit(metadata, region, output):
         output.get("maxWidth", regionWidth) / regionWidth,
         output.get("maxHeight", regionHeight) / regionHeight,
     )
-    pixels = math.ceil(regionWidth * scale) * math.ceil(regionHeight * scale)
+    # Clamp to the requested maxima: float drift can push ceil() one past them
+    # (2217 * (1760 / 2217) is 1760.0000000000002)
+    pixels = min(
+        math.ceil(regionWidth * scale),
+        output.get("maxWidth", math.inf),
+    ) * min(
+        math.ceil(regionHeight * scale),
+        output.get("maxHeight", math.inf),
+    )
     # large_image always sets these keys, but before a tile has been read
     # dtype can be None or the string "None", and np.dtype("None") raises
     try:

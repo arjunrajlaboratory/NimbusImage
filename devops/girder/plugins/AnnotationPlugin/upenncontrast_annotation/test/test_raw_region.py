@@ -220,6 +220,16 @@ def testByteLimitCountsDtypeAndBands(monkeypatch, metadata, expected):
         rawRegion._requireOutputWithinLimit(metadata, region, {})
 
 
+def testByteLimitIgnoresFloatDriftAtTheRequestedSize():
+    # 1588 x 1760 RGB float64 fits 64 MiB, but 2217 * (1760 / 2217) rounds
+    # up to 1761 rows without clamping
+    rawRegion._requireOutputWithinLimit(
+        {"dtype": "float64", "bandCount": 3},
+        {"left": 0, "top": 0, "right": 2000, "bottom": 2217},
+        {"maxWidth": 1588, "maxHeight": 1760},
+    )
+
+
 def testEncodeRawTiffWritesOnePageForEveryBandCount():
     rgb = np.arange(4 * 3 * 3, dtype=np.uint16).reshape(4, 3, 3) * 1000
     with tifffile.TiffFile(io.BytesIO(encodeRawTiff(rgb))) as tiff:
