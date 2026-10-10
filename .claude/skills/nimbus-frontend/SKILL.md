@@ -247,6 +247,24 @@ Not every `{ deep: true }` is this bug — it only applies when the watched sour
 
 Switching dataset views loads the dataset and configuration **concurrently**, so this watcher sees a mismatched pair (new configuration, old dataset) first. Gate per-dataset fetches on both matching `store.datasetView`, and guard the store action with a sequence token so a superseded fetch can't commit (`fetchAnnotations`, `src/store/__tests__/fetchAnnotationsStale.test.ts`).
 
+### `this.dataset` is the OUTGOING dataset while a view loads
+
+`setDatasetViewId` sets the location (from `?xy=&z=&time=` or the view's
+`lastLocation`) before the new dataset arrives, and `this.dataset` still holds
+the previous one until `setSelectedDataset` commits. Anything that validates
+against `this.dataset` in that window checks the wrong dataset. A setter-side
+clamp would cut a deep link that is valid for the incoming dataset, and a save
+would write one view's location into another (issue #1388). The location
+setters therefore read `locationDataset` (null while `sync.datasetLoading`), and
+the location is clamped where the dataset lands (`clampLocationToDatasetImpl`
+in `setSelectedDataset` and at the end of `setDatasetViewId`). Per-feature
+guards in consumers are not needed. Each clamp site must also schedule
+`updateLastLocationInDatasetView`, or the view reopens at the old saved
+location. The first cut missed this in `setSelectedDataset`, which unroll
+toggles and large-image refreshes reach without going through a view load. Out-of-range indices also travel in
+URLs: the breadcrumb view switcher keeps the current query when it moves to
+another dataset. See `src/store/__tests__/datasetLocationClamp.test.ts`.
+
 ### Every `throttle`/`debounce` needs a `cancel()` in `onBeforeUnmount`
 
 A trailing call that fires after teardown runs against a dead view — in

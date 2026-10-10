@@ -42,11 +42,11 @@ main-thread stall) is the most decision-relevant gate — it's what users feel a
    trace, e.g. Chrome DevTools `performance_start_trace`).
 
 2. **Fire store actions, don't await them.** `setTime` / `setZ` / `setXY`
-   (`src/store/index.ts`) await a network PUT to `/dataset_view`
-   (`updateLastLocationInDatasetView`, ~line 1862) that is decoupled from the visible
-   render. Awaiting per step folds backend latency into "render cost" and blows past
-   automation eval timeouts. Scenarios dispatch-and-fire, then sample rAF + long tasks.
-   *(Side finding: every scrub step fires a `dataset_view` PUT — a debounce candidate.)*
+   (`src/store/index.ts`) commit synchronously, and the visible render follows from
+   watchers, not from the action's promise. Awaiting per step measures the wrong thing
+   and can blow past automation eval timeouts. Scenarios dispatch-and-fire, then sample
+   rAF + long tasks. (The `/dataset_view` PUT that saves the location is debounced 5 s
+   by `updateLastLocationInDatasetView`, so a scrub sends one PUT, after it ends.)
 
 3. **Warm up, then take the median.** Single runs are noise — the first run after idle
    is ~2× slower (cold caches + GC). A one-shot A/B comparison gave a **false 4×**

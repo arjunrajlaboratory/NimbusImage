@@ -50,9 +50,9 @@ Multiple real bugs in this repo passed tsc, lint, all unit tests, and code reaso
 
   // Navigation actions dispatch UN-namespaced:
   store.dispatch('setZ', 4);   // also setTime, setXY
-  // Fire, don't await: these actions await a /dataset_view PUT that is
-  // decoupled from the visible render — awaiting conflates backend latency
-  // with render cost and can blow automation timeouts.
+  // Fire, don't await: the render follows from watchers, not the action's
+  // promise. setXY/setZ/setTime clamp to the loaded dataset's dimensions, and
+  // they save the location to /dataset_view on a 5 s debounce.
 
   const layer = map.layers().find(l => l.annotations)      // annotation layer
   return { z: store.state.main.z, n: layer?.annotations().length };
