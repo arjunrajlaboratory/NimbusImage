@@ -11,6 +11,7 @@ from girder.models.folder import Folder
 from girder.models.user import User
 
 from .constants import MAX_IDS_PER_QUERY
+from .folder_access_guard import require_creator_keeps_admin
 from ..models.annotation import Annotation
 from ..models.collection import Collection
 from ..models.datasetView import DatasetView
@@ -73,7 +74,9 @@ def requireCanSetUserAccess(model, document, user, targetUser, level):
     The caller may grant at most their own level, and may change or remove
     only a user whose current entry is no higher than their own. So a WRITE
     collaborator can share READ or WRITE, but can neither make anyone
-    (themselves included) ADMIN nor demote or remove an owner.
+    (themselves included) ADMIN nor demote or remove an owner. On a dataset
+    folder, nobody but a site admin may take its creator below ADMIN, the
+    creator included (folder_access_guard.require_creator_keeps_admin).
 
     :param model: The AccessControlledModel the document belongs to.
     :param document: The document whose ACL is about to change.
@@ -81,6 +84,7 @@ def requireCanSetUserAccess(model, document, user, targetUser, level):
     :param targetUser: The user whose access is changing.
     :param level: The new level, or None to remove access.
     :raises AccessException: If the change exceeds the caller's level.
+    :raises ValidationException: If a dataset's creator would lose ADMIN.
     """
     userLevel = model.getAccessLevel(document, user)
     targetLevel = max(
@@ -95,6 +99,8 @@ def requireCanSetUserAccess(model, document, user, targetUser, level):
     if targetLevel is not None and targetLevel > userLevel:
         raise AccessException(
             'You cannot change access for a user above your own level')
+    if isinstance(model, Folder):
+        require_creator_keeps_admin(document, targetUser, level)
 
 
 def requireDatasetsAccess(datasetIds, user, level=AccessType.WRITE):

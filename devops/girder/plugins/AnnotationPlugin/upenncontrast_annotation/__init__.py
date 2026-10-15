@@ -31,6 +31,7 @@ from .server.models.datasetView import DatasetView as DatasetViewModel
 from .server.models.history import History as HistoryModel
 from .server.models.documentChange import DocumentChange as DocumentChangeModel
 from .server.models.project import Project as ProjectModel
+from .server.helpers import folder_access_guard
 from .server.models.shareLink import ShareLink as ShareLinkModel
 from .server.helpers import shareLinkGuards
 
@@ -187,3 +188,8 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].share_link = ShareLink()
         shareLinkGuards.bind()
         system.addSystemEndpoints(info["apiRoot"])
+
+        # Prevent owners from removing their own ADMIN access on
+        # `contrastDataset` folders (would orphan the dataset). See
+        # `server/helpers/folder_access_guard.py`.
+        folder_access_guard.register()

@@ -275,6 +275,8 @@ class DatasetView(Resource):
             configuration; all views must belong to one dataset. The caller
             cannot grant a level above their own, nor change or remove a
             user whose current level is above their own.
+            Nobody but a site admin can take the dataset's creator below
+            ADMIN (400, nothing changed).
         """)
         .jsonParam(
             "body",

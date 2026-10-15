@@ -290,6 +290,8 @@ class Project(Resource):
             nothing changed) if it would grant more than the
             caller's own level on any of them, or change a
             user whose current level there is above it.
+            It is also refused (400, nothing changed) if it
+            would take a dataset's creator below ADMIN.
         """)
         .modelParam(
             'id', model=ProjectModel,
