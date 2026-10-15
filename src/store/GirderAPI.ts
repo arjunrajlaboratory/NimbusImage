@@ -52,6 +52,7 @@ import { stringify } from "qs";
 import { logError, logWarning } from "@/utils/log";
 import { markRaw } from "vue";
 import { inferZStepFromDimensionLabelsUm } from "@/utils/dimensionLabels";
+import { BATCH_RESOURCES_CHUNK_SIZE } from "@/store/constants";
 import { pixelSizeFromTileInfo } from "@/utils/scales";
 import { IRawImageData, parseRawTiff } from "@/utils/tiff";
 
@@ -89,6 +90,36 @@ function itemsToResourceObject(items: IGirderSelectAble[]) {
     }
   }
   return resourceObj;
+}
+
+const BATCH_RESOURCES_CONCURRENCY = 2;
+
+const BATCH_RESOURCE_KINDS = [
+  "folder",
+  "item",
+  "upenn_collection",
+  "user",
+] as const;
+
+type IBatchResourcesArgs = {
+  [kind in (typeof BATCH_RESOURCE_KINDS)[number]]?: string[];
+};
+
+interface IBatchResourcesResult {
+  folder?: Record<string, IGirderFolder>;
+  item?: Record<string, IGirderItem>;
+  upenn_collection?: Record<string, IGirderItem>;
+  user?: Record<string, IGirderUser>;
+}
+
+function mergeBatchKind<K extends keyof IBatchResourcesResult>(
+  target: IBatchResourcesResult,
+  source: IBatchResourcesResult,
+  kind: K,
+) {
+  if (source[kind]) {
+    target[kind] = Object.assign({}, target[kind], source[kind]);
+  }
 }
 
 // POST dataset_view/set_public. Views and collections owned by other users
@@ -624,21 +655,41 @@ export default class GirderAPI {
     return response.data;
   }
 
-  // Batch resolve multiple resources (folders, items, collections, users)
-  async batchResources(args: {
-    folder?: string[];
-    item?: string[];
-    upenn_collection?: string[];
-    user?: string[];
-  }): Promise<{
-    folder?: Record<string, IGirderFolder>;
-    item?: Record<string, IGirderItem>;
-    upenn_collection?: Record<string, IGirderItem>;
-    user?: Record<string, IGirderUser>;
-  }> {
+  // Batch resolve multiple resources (folders, items, collections, users).
+  // Lookups larger than the server's per-request cap are split across
+  // requests of BATCH_RESOURCES_CHUNK_SIZE ids and merged.
+  async batchResources(
+    args: IBatchResourcesArgs,
+  ): Promise<IBatchResourcesResult> {
+    const pairs = BATCH_RESOURCE_KINDS.flatMap((kind) =>
+      [...new Set(args[kind] ?? [])].map((id) => ({ kind, id })),
+    );
+    const chunks: IBatchResourcesArgs[] = [];
+    for (let i = 0; i < pairs.length; i += BATCH_RESOURCES_CHUNK_SIZE) {
+      const chunk: IBatchResourcesArgs = {};
+      for (const { kind, id } of pairs.slice(
+        i,
+        i + BATCH_RESOURCES_CHUNK_SIZE,
+      )) {
+        (chunk[kind] ??= []).push(id);
+      }
+      chunks.push(chunk);
+    }
     try {
-      const response = await this.client.post("resource/batch", args);
-      return response.data;
+      // Each chunk is a full-size request; keep at most two in flight.
+      const responses = await BluebirdPromise.map(
+        chunks,
+        (chunk) =>
+          this.client.post<IBatchResourcesResult>("resource/batch", chunk),
+        { concurrency: BATCH_RESOURCES_CONCURRENCY },
+      );
+      const result: IBatchResourcesResult = {};
+      for (const { data } of responses) {
+        for (const kind of BATCH_RESOURCE_KINDS) {
+          mergeBatchKind(result, data, kind);
+        }
+      }
+      return result;
     } catch (error) {
       // Handle 401 (Unauthorized) errors gracefully - user may not be logged in
       if (isAxiosError(error) && error.response?.status === 401) {

@@ -5,6 +5,11 @@ export const MAX_NUMBER_OF_RECENT_DATASET_VIEWS = 20;
 // authoritative batch actions enforce the same limit.
 export const BATCH_DATASET_LIMIT = 50;
 
+// Ids sent per POST /resource/batch request. The server rejects a request
+// over MAX_BATCH_RESOURCE_IDS (10,000; server/helpers/validation.py), so
+// GirderAPI.batchResources splits larger lookups into requests of this size.
+export const BATCH_RESOURCES_CHUNK_SIZE = 5000;
+
 // A data table with hundreds or thousands of value columns is not usable and
 // multiplies render/sort/filter work for every visible annotation. Keep this
 // as a store invariant so bulk controls, individual toggles, and persisted
