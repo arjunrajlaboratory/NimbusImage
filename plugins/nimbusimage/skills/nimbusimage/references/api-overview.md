@@ -144,9 +144,9 @@ Polygons tagged `region` are never cells for any of these.
 
 | Method | Signature | Returns |
 |--------|-----------|---------|
-| `share` | `(user_email_or_name, access="read")` | `None` |
-| `set_public` | `(public=True)` | `None` |
-| `get_access` | `()` | `dict` |
+| `share` | `(user_email_or_name, access="read")` | `None` — changes the dataset, all its views and their collections; the server refuses (400) taking the dataset's creator below ADMIN |
+| `set_public` | `(public=True)` | `dict` — `{dataset, public, datasetViewsUpdated, configurationsUpdated}` |
+| `get_access` | `()` | `dict` — `{datasetId, public, users, groups, configurations}`; each user has `login`, `email`, `level` (0 read, 1 write, 2 admin) |
 
 ## Annotation geometry methods (attached dynamically)
 

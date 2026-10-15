@@ -235,15 +235,24 @@ curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
     "configurationId": "CONFIG_ID"
   }' "http://localhost:8080/api/v1/dataset_view"
 
-# Share a view with another user
-curl -s -X PUT -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"userId": "USER_ID", "level": 0}' \
-  "http://localhost:8080/api/v1/dataset_view/$VIEW_ID/access"
+# Share a dataset with another user. Sets the user's level on the dataset
+# folder, the listed views and their collections. datasetViewIds is required;
+# send all views of the dataset (GET dataset_view?datasetId=...&limit=0), as
+# the web app's Share dialog does. accessType: 0 read, 1 write, 2 admin,
+# -1 remove. Needs WRITE on every document. Never PUT folder/{id}/access
+# instead — it replaces the whole ACL and can lock the owner out.
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"datasetViewIds": ["VIEW_ID"], "userMailOrUsername": "colleague", "accessType": 0}' \
+  "http://localhost:8080/api/v1/dataset_view/share"
 
-# Make a view public
-curl -s -X PUT -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"public": true}' \
-  "http://localhost:8080/api/v1/dataset_view/$VIEW_ID/set_public"
+# Make a dataset (plus its views and collections) public; public=false undoes it.
+# Query params, no body. Needs ADMIN (owner) on the dataset.
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Length: 0" \
+  "http://localhost:8080/api/v1/dataset_view/set_public?datasetId=$DATASET_ID&public=true"
+
+# Access list for a dataset: users (login, email, level), public, configurations
+curl -s -H "Girder-Token: $TOKEN" \
+  "http://localhost:8080/api/v1/dataset_view/access/$DATASET_ID"
 ```
 
 ## annotation_property
