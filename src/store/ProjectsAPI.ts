@@ -50,6 +50,7 @@ function toProject(data: any): IProject {
             progress: data.meta.zenodo.progress || null,
             error: data.meta.zenodo.error || null,
             lastPublished: data.meta.zenodo.lastPublished,
+            jobId: data.meta.zenodo.jobId ?? null,
           }
         : undefined,
     },

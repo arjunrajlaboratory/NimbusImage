@@ -307,6 +307,29 @@ URLs: the breadcrumb view switcher keeps the current query when it moves to
 another dataset. See `codebaseDocumentation/DATASET_LOCATION.md` and its
 regression checklist.
 
+### Per-resource component state under a reused route: key it by id
+
+Vue Router reuses a route's component when only a param changes (`/project/A`
+→ `/project/B`), so any local state in it, or in a child, stays alive across
+the switch. That state includes error messages, progress, job subscriptions
+and open dialogs, and late responses for A land in it too. On PR #1414,
+`ZenodoPublish`'s refusal message for project A showed on project B. Don't
+reset the refs one by one in a `watch(() => props.project.id)`: that list is
+hand-maintained and misses the next ref someone adds. Key the component by
+the resource id in the parent (`<zenodo-publish :key="project.id" ...>`), so
+each resource gets a fresh instance. A late `emit` from the old instance is
+dropped (Vue's `emit` returns early once `isUnmounted`). Test it by switching
+the resource under a mounted parent and asserting a new child `vm`
+(`ProjectInfo.test.ts` *"gives each project its own ZenodoPublish
+instance"*).
+
+A related trap: work that "resumes" a server-side operation, such as
+re-subscribing to a running job, must not run only in `onMounted`. Run it
+whenever the resource *reports* the state (`watch(status, …, { immediate:
+true })`), guard it to once per job, and treat "reports running but no job
+exists" as a stale copy to re-read. The store does not refetch cached
+resources on navigation.
+
 ### Every `throttle`/`debounce` needs a `cancel()` in `onBeforeUnmount`
 
 A trailing call that fires after teardown runs against a dead view — in

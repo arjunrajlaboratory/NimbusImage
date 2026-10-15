@@ -69,7 +69,7 @@ Tokens are encrypted at rest using Fernet symmetric encryption. The encryption k
 | `POST` | `/api/v1/zenodo/upload` | Start uploading a project to Zenodo | ADMIN on the project and on every dataset and collection it lists; configurations reached only through views are exported only if the uploader owns them |
 | `GET` | `/api/v1/zenodo/status/:projectId` | Get upload progress (fallback for diagnostics) | READ |
 | `POST` | `/api/v1/zenodo/publish/:projectId` | Publish draft, mint DOI | ADMIN on the project and on every resource the draft recorded at upload (`uploadedResources`) |
-| `POST` | `/api/v1/zenodo/discard/:projectId` | Discard unpublished draft | ADMIN |
+| `POST` | `/api/v1/zenodo/discard/:projectId` | Discard unpublished draft (409 while the project's upload job is live; `force=true` overrides for a job orphaned by a restart) | ADMIN |
 
 Publishing hands out every file in the project, so upload and publish need ADMIN on
 each dataset and collection the project lists, not only on the project
@@ -110,7 +110,9 @@ Progress flows through two channels:
 - **SSE (primary)**: Job log lines contain JSON like `{"progress": 0.5, "current": 3, "total": 7, "message": "Uploading file.tiff..."}`. The frontend parses these in the `eventCallback` passed to `jobs.addJob()`.
 - **Project metadata (persistent)**: `project.meta.zenodo.progress` is updated every 5 files (and always on the first/last file) to reduce MongoDB write load, serving as a recovery source if the user navigates away and returns.
 
-On page mount, if `zenodoStatus === 'uploading'`, the component queries for active `zenodo_upload` jobs matching this project's ID and re-subscribes via `jobs.addJob()`.
+Whenever `zenodoStatus` becomes `'uploading'` (including on mount) and the card isn't already following a job, it asks `GET zenodo/status/:projectId` for the project's `jobId` (its own project copy may be stale), reads that job (`GET job/:id`), and subscribes via `jobs.addJob()` if the job is still live (inactive, queued or running: a local job stays INACTIVE until its thread runs). The upload endpoint records `meta.zenodo.jobId` before scheduling the job because the job's kwargs can't identify it: Girder stores them serialized and exposes them only to site admins, so a kwargs-based lookup found nothing for regular users. If there is no live job this user can read, the project copy is stale (a refresh landed out of order, or the page re-read it a moment ago) or the upload is a co-owner's: Girder lets only a job's owner read it or receive its SSE events. The card then asks `ProjectInfo` to re-read the project and shows indeterminate progress (a failed lookup does the same).
+
+Separately, whenever an upload is running as far as the card knows (the project says `uploading`, or the card follows a job, since its project copy can lag behind a just-started upload or a 409), it polls `GET zenodo/status/:projectId` every 10 s. Once that reports another status, the card releases the job (only the job it asked about: a newer upload started while the request was out is left alone, and a released job's late SSE events are ignored) and re-reads the project. While its project copy still reads `uploading` it keeps polling, in case that re-read fails. This is the one signal that always says when an upload ends: SSE events add live progress and an earlier end, but a co-owner never gets them, and the notification socket gives up after repeated errors. The poll stops on unmount.
 
 **Note on app-wide progress UI:** The `ZenodoPublish` component manages its own progress display locally rather than using the shared `ProgressType.ZENODO_UPLOAD` / progress store used by other long-running jobs (histogram caching, max-merge, etc.). This was an intentional design choice because the Zenodo progress UI is self-contained within the ProjectInfo page. A future update should integrate Zenodo upload progress into the app-wide progress manager so uploads remain visible when navigating away from ProjectInfo. See GitHub issue for tracking.
 
@@ -132,6 +134,7 @@ interface IProjectZenodo {
   } | null;
   error?: string | null;      // Error message if upload failed
   lastPublished?: string;     // ISO date of last publish
+  jobId?: string | null;      // The upload's Girder job (set when an upload starts)
 }
 ```
 
@@ -169,7 +172,7 @@ All paths relative to `devops/girder/plugins/AnnotationPlugin/upenncontrast_anno
 |------|---------|
 | `src/store/ZenodoAPI.ts` | API client (extends existing import API with publish methods) |
 | `src/store/model.ts` | `IProjectZenodo`, `TZenodoStatus`, `ProgressType.ZENODO_UPLOAD` |
-| `src/components/ZenodoPublish.vue` | Main card component in ProjectInfo (SSE-based progress) |
+| `src/components/ZenodoPublish.vue` | Main card component in ProjectInfo (SSE-based progress, server refusal messages) |
 | `src/components/ZenodoTokenDialog.vue` | Token entry/management dialog |
 
 ## Zenodo API Notes
@@ -331,6 +334,33 @@ curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/zenodo/status/PRO
 - **Missing dataset folder**: Job fails, status → `error` with message in `zenodo.error`
 - **Over 50GB / 100 files**: Upload returns 400 with size/count limit message
 - **Publish without draft**: Returns 400 "No draft deposition to publish"
+- **Discard during a live upload**: Returns 409 "An upload is in progress for this project." Discard still accepts `uploading` so a project whose job died can be reset, but not while an upload may be using the deposition: `meta.zenodo.jobId` names a live job, or no job is recorded yet. The upload endpoint's `uploading` write clears the previous `jobId` in the same update and records the new one before scheduling, so the window in between fails closed rather than reading the previous upload's ended job. Without this, a stale card in another tab could delete the deposition the job is using. A job whose thread died stays live-looking only if it never reached ERROR, which is what a Girder restart mid-upload leaves (Girder never sweeps local jobs: the job stays RUNNING, or INACTIVE if the restart came before its thread started). For that, and for a project stuck in `uploading` from before job ids were recorded, `POST zenodo/discard/:projectId?force=true` resets the project anyway.
+- **Not the owner of a dataset or collection in the project**: Upload and publish return
+  403 "Admin access denied for folder <id> ..." or "... for upenn_collection <id> ..." (Girder names
+  the model by its collection name; the ownership check added by PR #1410,
+  `requireProjectContentsAccess`)
+
+In the UI, `ZenodoPublish.vue` shows the server's `response.data.message` for every
+refused request, one error per request so a request never hides or relabels another's:
+upload and discard errors in alerts on the card, and publish errors inside the publish
+confirmation dialog, which stays open. Upload, publish and discard all change the
+same deposition and `meta.zenodo`, so only one may run at a time: every action button
+checks one `requestInFlight` flag (any request pending, or an upload this card is
+following), and the publish dialog can't be dismissed while publishing. A 403 naming a folder or collection on upload/publish also says that
+publishing needs owner access to every dataset and collection in the project; a
+project-level 403, and any discard error, is shown as the server sent it. A 409 also
+refreshes the project. Saving a token or retrying clears the alert.
+
+The card subscribes to an upload's job whenever the project reports `uploading` and it
+is not already following one: on load, after a 409, or when another tab starts an
+upload. It subscribes once per job (`jobs.addJob` adds a listener per call), and drops the subscription when the project leaves `uploading` or the status poll says the upload ended, even if the job's terminal event was lost (see "Progress Tracking" above). On failure
+the job helper writes `status: error` to the project before marking the job ERROR (as
+the success path writes `draft` before SUCCESS), because the card re-reads the project
+when the terminal status arrives. `ProjectInfo.vue` keys the card by project id: the
+route reuses the view across projects, and errors, progress and the job subscription
+belong to one project.
+The tests for each of these are listed in the regression checklist at the end of this
+document.
 
 ### curl Quick Reference
 
@@ -383,4 +413,41 @@ The following scenarios have been verified end-to-end against `sandbox.zenodo.or
 | New version after publish (7 files, ~118MB) | `69ae998ca50fdb5e668f0fc5` | Deposition 468742 created as draft, original DOI preserved |
 | Job progress tracking | all | JSON log lines parsed correctly (0% → 25% → 50% → 100%) |
 | SSE-based frontend tracking | all | `jobs.addJob()` receives progress events in real time |
-| Recovery on page reload | all | `recoverActiveJob()` re-subscribes to active job on mount |
+| Recovery on page reload | all | `recoverActiveJob()` re-subscribes to the active job when the status is `uploading` (on mount, or after a refresh) |
+
+## Regression checklist
+
+Each item was a review finding on the error-display and upload-tracking work (PR #1414),
+and several were **consequences of an earlier round's fix**: making the 409 refresh the
+project exposed mount-only job tracking; tracking a job in the shared in-flight flag
+needed the lost-terminal-event release. Change any of this code and re-check the list.
+
+Run `pnpm test src/components/ZenodoPublish.test.ts src/store/ZenodoAPI.test.ts src/views/project/ProjectInfo.test.ts`, plus `tox -- upenncontrast_annotation/test/test_zenodo.py` from `devops/girder/plugins/AnnotationPlugin`.
+
+### Error display
+
+- [ ] **The server's message reaches the user**, on the card for upload and discard, inside the dialog for publish (which stays open). — *"shows the server's message when the upload is refused"*, *"shows the server's message in the publish dialog"*
+- [ ] **The owner-access hint only follows an upload/publish 403 that names a folder or collection.** A project-level 403 and every discard error are shown as sent. — *"explains owner access when a dataset refuses the upload"*, *"shows the server's message in the publish dialog"* (an `upenn_collection` refusal), *"shows a project-level 403 without the dataset hint"*, *"shows a discard refusal without the publishing hint"*
+- [ ] **One error per request.** A request starting or failing never hides or relabels another's. — *"keeps each request's error in its own place"*
+- [ ] **Stale errors clear** on retry and on saving a token. — *"clears the error on retry and after saving a token"*
+
+### Concurrency
+
+- [ ] **Only one request at a time.** Every action checks the single `requestInFlight` flag; pairwise guards missed a direction three rounds running. — *"does not let publish and discard overlap"*, *"can't upload while a discard is running"*, *"can't discard while an upload is starting"*, *"can't discard an upload that started before the refresh lands"*
+- [ ] **A lost terminal job event can't leave the actions disabled**: leaving `uploading`, or the status poll seeing the upload end, releases the subscription, and the poll runs for tracked uploads too. — *"re-enables the actions when the upload ends without its job event"*, *"polls a tracked upload too, in case its job events stop"*, *"releases the actions when the server says the upload ended"*, *"a slow poll doesn't release a newer upload"*, *"a late event from an ended job doesn't touch a newer upload"*
+
+### Upload tracking
+
+- [ ] **Tracking follows the reported status, not the mount**: on load, after a 409, and after another tab starts an upload; once per job. — *"follows an upload already running when it mounts"*, *"refreshes the project when an upload is already in progress"*, *"tracks an upload once, and again after it ends"*
+- [ ] **The upload's job is found by the id the project records**, not by job kwargs (serialized, and admin-only). A just-started INACTIVE job counts; a job this user can't read (a co-owner's) is treated as invisible. — *"test_upload_records_job_id"*, *"returns the job while it is %s"*, *"returns null for a job this user can't read"*, *"returns null for a job that no longer exists"*, *"returns null once the job has ended"*
+- [ ] **After a 409 the card follows the running job before releasing the in-flight flag**, so a stale `error` card can't discard the other tab's upload in the window before the refresh lands. — *"keeps the actions locked after a 409 until the refresh lands"*
+- [ ] **The server refuses a discard while an upload may be running** (its job is live, or the upload is still starting and has no job recorded), still resets a project whose job ended in error, and `force=true` resets one whose job a restart orphaned at RUNNING. — *"test_discard_refused_while_upload_job_live"*, *"test_discard_refused_while_upload_initializing"*, *"test_upload_clears_previous_job_id_with_status"*, *"test_discard_resets_stuck_upload"*, *"test_discard_force_resets_orphaned_job"*
+- [ ] **`uploading` with no visible job is re-read, and the status poll covers it** (a stale cached project, or a co-owner's upload), and the poll stops on a status change or unmount, including mid-lookup; a failed lookup falls back to the poll. — *"re-reads the project when the reported upload has no job"*, *"keeps re-reading while the upload's job is invisible"*, *"keeps checking when the job lookup fails"*, *"stops polling when unmounted"*, *"schedules nothing if unmounted while looking up the job"*
+- [ ] **Project status is written before the job's terminal status** on failure as on success, because the card re-reads the project on that event. — *"test_fail_writes_project_status_before_job_status"*
+
+- [ ] **An older project read can't overwrite a newer state.** The card triggers overlapping refreshes (409, job end, status poll), and selecting a project re-reads it in the background. `projects.fetchProject` commits only if no newer fetch started and no mutation wrote that project since it began (every project mutation stamps it), so a stale `draft` can't release a later upload, a read can't undo a metadata save, and a deleted or unshared project can't come back. It returns the stored copy, not a response it discarded. — *"keeps the newest snapshot when refreshes resolve out of order"*, *"doesn't let a re-read that started before a save replace it"*, *"doesn't bring back a project deleted while a re-read was out"*, *"doesn't bring back a project a list refresh dropped"*, *"returns the stored project, not a response it discarded"*
+- [ ] **Showing a project re-reads it.** The store keeps a cached copy across navigation and the card is keyed by project, so leaving mid-operation drops its refresh. `ProjectInfo` re-reads the project whenever it starts showing one (on entry from any route, and on an in-place switch), not `setSelectedProject`, which isn't called when the user leaves and returns to the same project. An unchanged re-read keeps the cached object. — *"re-reads the project it shows, on entry and on switch"*, *"keeps the cached object when a re-read finds no change"*
+
+### Project switch
+
+- [ ] **Each project gets its own card instance**, so errors, progress and the job subscription never carry over. — *"gives each project its own ZenodoPublish instance"*

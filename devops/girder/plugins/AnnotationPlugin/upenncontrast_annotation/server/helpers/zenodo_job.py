@@ -52,6 +52,33 @@ from ..models.propertyValues import (
 log = logging.getLogger(__name__)
 
 
+LIVE_JOB_STATUSES = (
+    JobStatus.INACTIVE, JobStatus.QUEUED, JobStatus.RUNNING,
+)
+
+
+def upload_may_be_running(zenodo):
+    """Whether a project in 'uploading' may have an upload job using its
+    deposition: its recorded job is still live (a local job is INACTIVE
+    until its thread marks it RUNNING), or no job is recorded yet.
+
+    No jobId means the upload endpoint is between its 'uploading' write
+    (which clears the previous jobId) and recording the new job, so fail
+    closed. A project stuck from before job ids were recorded also reads
+    this way; discard's force flag resets it.
+
+    The project records the job id because job kwargs can't serve: Girder
+    stores them serialized and exposes them only to site admins.
+    """
+    jobId = zenodo.get('jobId')
+    if not jobId:
+        return True
+    # force: an internal state check, not a read on the caller's behalf
+    # (a project co-owner may not own the job).
+    job = Job().load(jobId, force=True)
+    return job is not None and job['status'] in LIVE_JOB_STATUSES
+
+
 def run(job):
     """Entry point for the local job handler.
 
@@ -124,7 +151,17 @@ def run(job):
 
 def _fail(job, job_model, project_id, project_model,
           error_msg):
-    """Mark both the job and project as failed."""
+    """Mark both the job and project as failed.
+
+    The project is updated first, as on success: the ERROR status reaches
+    the frontend over SSE, which then re-reads the project and must not
+    find it still 'uploading'.
+    """
+    update_zenodo_meta(project_id, {
+        'status': 'error',
+        'error': error_msg,
+        'progress': None,
+    }, project_model=project_model)
     job_model.updateJob(
         job,
         status=JobStatus.ERROR,
@@ -133,11 +170,6 @@ def _fail(job, job_model, project_id, project_model,
             'title': 'Zenodo Upload Error',
         }) + '\n',
     )
-    update_zenodo_meta(project_id, {
-        'status': 'error',
-        'error': error_msg,
-        'progress': None,
-    }, project_model=project_model)
 
 
 # How often to persist progress to MongoDB (every N files)
