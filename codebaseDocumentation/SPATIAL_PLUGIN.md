@@ -414,9 +414,10 @@ The V2 feature list (what users ask for, ranked) is in `SPATIAL_V2_ROADMAP.md`.
   dataset. Kept anonymous on purpose for now (decision 2026-09-06, reaffirmed
   2026-09-26) so public viewers can use them. When this matters, the smallest
   fix is `@access.user` (share-link viewers carry a token, so they keep
-  working). Per-client rate limiting belongs at the proxy, not in Girder,
-  which behind HAProxy sees only the proxy's address:
-  CytoPixel/AWSDeploy#120 covers these endpoints and the raster overview.
+  working). Per-client rate limiting belongs at the proxy, not in Girder
+  (CytoPixel/AWSDeploy#120 covers these endpoints and the raster overview).
+  Until HAProxy set `X-Forwarded-For` to the client (CytoPixel/AWSDeploy#128),
+  Girder saw only the proxy's address.
   Codex flags it every review round; see `SPATIAL_PLUGIN-CODEX-REVIEW.md`.
 
 ## Regression checklist

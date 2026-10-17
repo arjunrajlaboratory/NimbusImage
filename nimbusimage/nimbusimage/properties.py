@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     import girder_client
 
 _BATCH_SIZE = 10000
+# Value documents per request in get_values(). Pages follow the afterId
+# cursor, so an update during the walk never skips or repeats a document;
+# a value first written for an annotation behind the cursor is missed.
+_VALUES_PAGE = 10000
 
 
 class PropertyAccessor:
@@ -27,7 +31,9 @@ class PropertyAccessor:
 
     def list(self) -> list[Property]:
         """List all property definitions accessible to the user."""
-        data = self._gc.get("annotation_property")
+        # limit=0: the endpoint pages (50 by default), and a missing
+        # property makes get_or_create() create a duplicate.
+        data = self._gc.get("annotation_property", parameters={"limit": 0})
         return [Property.from_dict(d) for d in data]
 
     def get(self, property_id: str) -> Property:
@@ -101,8 +107,10 @@ class PropertyAccessor:
             after registration. 0 means the dataset has no
             collections and the property remains invisible.
         """
+        # limit=0: past the first 50 views, configurations would never
+        # get the property.
         views = self._gc.get(
-            f"dataset_view?datasetId={self._dataset_id}"
+            f"dataset_view?datasetId={self._dataset_id}&limit=0"
         )
         seen: dict[str, dict] = {}
         for view in views:
@@ -132,12 +140,31 @@ class PropertyAccessor:
 
         Args:
             annotation_id: If provided, get values for this annotation only.
-                Otherwise, get all values for the dataset.
+                Otherwise, get all values for the dataset, fetched in pages
+                of ``_VALUES_PAGE`` along the server's ``afterId`` cursor
+                (the endpoint returns 50 documents unless asked for more).
+                For summary statistics, prefer
+                ``ds.annotations.summary(property_paths=...)``, which
+                downloads no values.
         """
         url = f"annotation_property_values?datasetId={self._dataset_id}"
         if annotation_id:
-            url += f"&annotationId={annotation_id}"
-        return self._gc.get(url)
+            # One document per annotation; limit=0 all the same, so no
+            # list here relies on the default page.
+            return self._gc.get(
+                url + f"&annotationId={annotation_id}&limit=0"
+            )
+        values: list[dict] = []
+        after_id = None
+        while True:
+            parameters = {"limit": _VALUES_PAGE, "sort": "_id"}
+            if after_id:
+                parameters["afterId"] = after_id
+            page = self._gc.get(url, parameters=parameters)
+            values.extend(page)
+            if len(page) < _VALUES_PAGE:
+                return values
+            after_id = page[-1]["_id"]
 
     def submit_values(
         self, property_id: str, values: dict[str, dict]

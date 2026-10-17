@@ -39,6 +39,11 @@ def _access_level(doc: dict, user: dict) -> int:
     return max(levels, default=-1)
 
 
+# Datasets per POST upenn_annotation/counts (the server's
+# MAX_COUNT_DATASETS).
+_COUNT_BATCH = 100
+
+
 class NimbusClient:
     """Authenticated session to a NimbusImage server.
 
@@ -119,6 +124,9 @@ class NimbusClient:
                 parameters={
                     "q": name, "mode": "prefix",
                     "types": '["folder"]',
+                    # The search returns 10 by default: an exact name
+                    # behind 10 longer prefix matches would be missed.
+                    "limit": 0,
                 },
             )
             # Handle both list response and dict-with-folder-key response
@@ -239,6 +247,51 @@ class NimbusClient:
                 pass
         return folders
 
+    def count_annotations(
+        self,
+        dataset_ids,
+        shape: str | None = None,
+        tags: list[str] | None = None,
+    ) -> list[dict]:
+        """Annotation counts for several datasets, one request per 100
+        (``POST upenn_annotation/counts``)::
+
+            for row in client.count_annotations(ids, shape="point"):
+                print(row["datasetId"], row.get("count", row.get("error")))
+
+        Args:
+            dataset_ids: Dataset ids (any iterable); duplicates are counted
+                once.
+            shape: Only annotations of this shape.
+            tags: Only annotations with ALL of these tags (as
+                ``ds.annotations.count``).
+
+        Returns:
+            One dict per distinct dataset, in order: ``{"datasetId",
+            "count"}``, or ``{"datasetId", "error"}`` for an id that is
+            malformed, does not exist, or that the caller cannot read.
+
+        Raises:
+            girder_client.HttpError: 400 for an id string over 64
+                characters (the server refuses the whole request).
+        """
+        if isinstance(tags, str):
+            raise TypeError("tags must be a list of tag names, not a string")
+        if isinstance(dataset_ids, str):
+            raise TypeError("dataset_ids must be a list of ids, not a string")
+        ids = list(dict.fromkeys(str(i) for i in dataset_ids))
+        rows: list[dict] = []
+        for start in range(0, len(ids), _COUNT_BATCH):
+            body = {"datasetIds": ids[start:start + _COUNT_BATCH]}
+            if shape is not None:
+                body["shape"] = shape
+            if tags:
+                body["tags"] = list(tags)
+            rows.extend(
+                self._gc.post("upenn_annotation/counts", json=body)["counts"]
+            )
+        return rows
+
     # --- Jobs ---
 
     def job(self, job_id: str) -> Job:
@@ -255,7 +308,8 @@ class NimbusClient:
 
     def list_projects(self) -> list[dict]:
         """List all accessible projects."""
-        return self._gc.get("project")
+        # limit=0: the endpoint pages at Girder's default of 50.
+        return self._gc.get("project", parameters={"limit": 0})
 
     def create_project(
         self, name: str, description: str = ""
@@ -306,7 +360,7 @@ class NimbusClient:
                 return []
 
         data = self._gc.get(
-            f"upenn_collection?folderId={folder_id}"
+            f"upenn_collection?folderId={folder_id}&limit=0"
         )
         return [
             Collection(self._gc, d, frontend_url=self._frontend_url)

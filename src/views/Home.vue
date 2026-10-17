@@ -527,6 +527,7 @@ import {
 import { formatDateNumber, formatDate } from "@/utils/date";
 import { logError } from "@/utils/log";
 import Persister from "@/store/Persister";
+import { isReturningAfterLogin } from "@/utils/returnAfterLogin";
 import { useTour } from "@/utils/useTour";
 
 // Suppress unused-variable warnings for auto-registered components
@@ -1146,6 +1147,12 @@ function navigateToDatasetView(datasetViewId: string) {
 async function initializeWelcomeTour() {
   // Only proceed if the user is logged in
   if (!store.isLoggedIn) {
+    return;
+  }
+  // This login is on its way to another page (e.g. the MCP OAuth consent
+  // page): the tour would pull it back here. Not marked as run, so it
+  // still shows on the next visit.
+  if (isReturningAfterLogin()) {
     return;
   }
 

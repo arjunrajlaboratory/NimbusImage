@@ -128,6 +128,18 @@ class TestNimbusClientDataset:
 
         ds = client.dataset(name="My Dataset")
         assert ds.id == "folder_123"
+        # The search returns 10 matches by default; an exact name behind
+        # 10 longer prefix matches must still be found.
+        assert mock_gc.get.call_args.kwargs["parameters"]["limit"] == 0
+
+    def test_list_projects_requests_every_page(self, mock_gc):
+        mock_gc.get.return_value = []
+        client = NimbusClient.__new__(NimbusClient)
+        client._gc = mock_gc
+        client.list_projects()
+        mock_gc.get.assert_called_once_with(
+            "project", parameters={"limit": 0}
+        )
 
     def test_dataset_by_name_not_found(self, mock_gc):
         mock_gc.get.return_value = []
@@ -379,3 +391,52 @@ class TestJobLookup:
             )
             with pytest.raises(PermissionError, match="List and read jobs"):
                 client.job("job1")
+
+
+class TestCountAnnotations:
+    def _client(self, mock_gc):
+        client = NimbusClient.__new__(NimbusClient)
+        client._gc = mock_gc
+        return client
+
+    def test_one_request_with_filters(self, mock_gc):
+        mock_gc.post.return_value = {"counts": [
+            {"datasetId": "a", "count": 3},
+            {"datasetId": "b", "error": "not found or not readable"},
+        ]}
+        rows = self._client(mock_gc).count_annotations(
+            ["a", "b", "a"], shape="point", tags=["spot"]
+        )
+        mock_gc.post.assert_called_once_with(
+            "upenn_annotation/counts",
+            json={"datasetIds": ["a", "b"], "shape": "point",
+                  "tags": ["spot"]},
+        )
+        assert rows[1]["error"]
+
+    def test_batches_past_the_server_cap(self, mock_gc):
+        from nimbusimage import client as client_module
+        ids = [f"d{i}" for i in range(client_module._COUNT_BATCH + 1)]
+        mock_gc.post.side_effect = lambda url, json: {"counts": [
+            {"datasetId": i, "count": 1} for i in json["datasetIds"]
+        ]}
+        rows = self._client(mock_gc).count_annotations(ids)
+        assert [r["datasetId"] for r in rows] == ids
+        assert mock_gc.post.call_count == 2
+
+    def test_tags_must_be_a_list(self, mock_gc):
+        with pytest.raises(TypeError):
+            self._client(mock_gc).count_annotations(["a"], tags="spot")
+
+
+def test_count_annotations_refuses_a_bare_dataset_id():
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from nimbusimage.client import NimbusClient
+    client = NimbusClient.__new__(NimbusClient)
+    client._gc = MagicMock()
+    with pytest.raises(TypeError, match="dataset_ids"):
+        client.count_annotations("6512abcdef0123456789abcd")
+    client._gc.post.assert_not_called()

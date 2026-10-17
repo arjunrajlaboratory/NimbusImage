@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nimbusimage-mcp"
+version = "0.1.0"
+description = "MCP server exposing NimbusImage to Claude, as the calling user"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Arjun Raj", email = "arjunrajlab@gmail.com"},
+]
+dependencies = [
+    # Pinned: the auth and tool APIs moved between SDK releases (see
+    # codebaseDocumentation/NIMBUSIMAGE_MCP_SERVER.md §12).
+    "mcp==2.3.0",
+    "nimbusimage>=0.7.0",  # count_annotations; full-page lists
+    "httpx>=0.27",
+    "numpy",
+    "pillow",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "flake8"]
+
+[project.scripts]
+nimbusimage-mcp = "nimbusimage_mcp.server:main"
+
+[tool.setuptools.packages.find]
+include = ["nimbusimage_mcp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: tests requiring a live Girder backend (docker compose)",
+]

@@ -41,3 +41,5 @@ jobs:
           path: devops/girder/
       - name: Test AnnotationPlugin
         run: pip install tox && cd devops/girder/plugins/AnnotationPlugin && tox
+      - name: Test McpOAuthPlugin
+        run: cd devops/girder/plugins/McpOAuthPlugin && tox

@@ -45,7 +45,8 @@ ds.properties.delete(prop.id)
 ### Property values
 
 ```python
-# Get all property values for the dataset
+# Get all property values for the dataset (downloads every value document;
+# for statistics use ds.annotations.summary(property_paths=...) instead)
 values = ds.properties.get_values()
 
 # Get values for a specific annotation

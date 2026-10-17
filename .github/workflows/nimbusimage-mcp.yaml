@@ -1,0 +1,33 @@
+name: Lint and test nimbusimage-mcp
+
+on:
+  push:
+    paths:
+      - nimbusimage-mcp/**
+      # The server is built on the package; a package change can break it.
+      - nimbusimage/**
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  all:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: flake8 Lint
+        uses: py-actions/flake8@v2
+        with:
+          path: nimbusimage-mcp/
+      - name: Install and test nimbusimage-mcp
+        run: |
+          pip install -e nimbusimage -e "nimbusimage-mcp[dev]"
+          cd nimbusimage-mcp
+          pytest -m "not integration"

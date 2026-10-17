@@ -108,6 +108,11 @@ vi.mock("@/girder/components", () => ({
 import { routeProvider, routerProvider } from "@/test/helpers";
 import Home from "./Home.vue";
 import store from "@/store";
+import {
+  finishReturn,
+  saveReturnTo,
+  takeReturnTo,
+} from "@/utils/returnAfterLogin";
 import girderResources from "@/store/girderResources";
 import { isDatasetFolder, isConfigurationItem } from "@/utils/girderSelectable";
 
@@ -797,6 +802,29 @@ describe("Home", () => {
       await vm.initializeWelcomeTour();
 
       expect(mockStartTour).not.toHaveBeenCalled();
+    });
+
+    it("holds back while a login returns to another page", async () => {
+      mockPersisterGet.mockReturnValue("notYetRun");
+      (store as any).isLoggedIn = true;
+      const wrapper = mountComponent();
+      mockStartTour.mockClear();
+      mockPersisterSet.mockClear();
+      saveReturnTo("/oauth/consent?request=abc");
+      await (wrapper.vm as any).initializeWelcomeTour();
+      expect(mockStartTour).not.toHaveBeenCalled();
+      // Not marked as run: the next visit home still shows it.
+      expect(mockPersisterSet).not.toHaveBeenCalledWith(
+        "WelcomeTourType.home",
+        expect.anything(),
+      );
+      // Taken but not yet arrived counts too.
+      expect(takeReturnTo()).toBe("/oauth/consent?request=abc");
+      await (wrapper.vm as any).initializeWelcomeTour();
+      expect(mockStartTour).not.toHaveBeenCalled();
+      finishReturn();
+      await (wrapper.vm as any).initializeWelcomeTour();
+      expect(mockStartTour).toHaveBeenCalledWith("WelcomeTourHome");
     });
 
     it("skips when tour already run", async () => {
