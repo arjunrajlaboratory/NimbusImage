@@ -216,7 +216,7 @@ import store from "@/store";
 import jobs from "@/store/jobs";
 import { logError } from "@/utils/log";
 import { IProject, IJobEventData } from "@/store/model";
-import { jobStates } from "@/store/jobConstants";
+import { isTerminalJobStatus } from "@/store/jobConstants";
 import ZenodoTokenDialog from "./ZenodoTokenDialog.vue";
 
 void ZenodoTokenDialog;
@@ -338,12 +338,7 @@ function trackJob(jobId: string) {
 
       // Handle terminal states
       const status = jobData.status;
-      if (
-        status !== undefined &&
-        [jobStates.success, jobStates.error, jobStates.cancelled].includes(
-          status,
-        )
-      ) {
+      if (isTerminalJobStatus(status)) {
         localProgress.value = null;
         emit("updated");
       }
