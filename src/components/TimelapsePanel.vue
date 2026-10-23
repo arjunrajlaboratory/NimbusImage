@@ -122,6 +122,8 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import connectionListStore from "@/store/connectionList";
 import timelapseStore from "@/store/timelapse";
+import { useCommand } from "@/commands/registry";
+import { toggleCommands } from "@/commands/toggles";
 import { TIMELAPSE_CONNECTION_TAG } from "@/store/constants";
 import { TOUR_ANCHORS } from "@/tours/anchors";
 
@@ -141,6 +143,21 @@ const showLabels = computed({
   get: () => timelapseStore.showLabels,
   set: (value: boolean) => timelapseStore.setShowLabels(value),
 });
+
+useCommand(() =>
+  toggleCommands([
+    {
+      id: "timelapse.labels",
+      setting: showLabels,
+      turnOn: "Show track labels",
+      turnOff: "Hide track labels",
+      keywords: ["timelapse", "tracks", "tracking", "time lapse"],
+      icon: "mdi-label-outline",
+      // The panel (and its checkbox) exists only in time lapse mode.
+      enabled: () => timelapseStore.showMode,
+    },
+  ]),
+);
 
 const trackColoring = computed(() => timelapseStore.trackColoring);
 

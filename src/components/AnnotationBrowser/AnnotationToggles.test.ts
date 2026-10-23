@@ -1,8 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
 
-vi.mock("@/store", () => ({
-  default: {
+vi.mock("vue-router", () => ({
+  useRoute: () => ({ name: "datasetview" }),
+}));
+
+const mockStore = vi.hoisted(() => ({ value: null as any }));
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  mockStore.value = reactive({
+    dataset: { id: "ds1" },
     annotationSelectionType: "ADD",
     setAnnotationSelectionType: vi.fn(),
     drawAnnotations: true,
@@ -15,10 +22,12 @@ vi.mock("@/store", () => ({
     setFilteredDraw: vi.fn(),
     drawAnnotationConnections: true,
     setDrawAnnotationConnections: vi.fn(),
-  },
-}));
+  });
+  return { default: mockStore.value };
+});
 
 import AnnotationToggles from "./AnnotationToggles.vue";
+import { enabledCommands } from "@/commands/registry";
 import store from "@/store";
 
 function mountComponent() {
@@ -95,5 +104,51 @@ describe("AnnotationToggles", () => {
   it("annotationsSelectionTypeItems has 3 items", () => {
     const wrapper = mountComponent();
     expect(wrapper.vm.annotationsSelectionTypeItems).toHaveLength(3);
+  });
+
+  it("registers the filtered-tooltips switch, gated like the switch", () => {
+    const wrapper = mountComponent();
+    const ids = () => enabledCommands.value.map((command) => command.id);
+    // Tooltips are off: the switch is disabled, so is the command.
+    mockStore.value.showTooltips = false;
+    expect(ids()).not.toContain("objects.toggleFilteredTooltips");
+    mockStore.value.showTooltips = true;
+    expect(ids()).toContain("objects.toggleFilteredTooltips");
+    mockStore.value.drawAnnotations = false;
+    expect(ids()).not.toContain("objects.toggleFilteredTooltips");
+    mockStore.value.drawAnnotations = true;
+    mockStore.value.showTooltips = false;
+    // Selection modes: the two that aren't current.
+    expect(ids()).toEqual(
+      expect.arrayContaining([
+        "objects.selectionMode.TOGGLE",
+        "objects.selectionMode.REMOVE",
+      ]),
+    );
+    expect(ids()).not.toContain("objects.selectionMode.ADD");
+    wrapper.unmount();
+  });
+
+  it("keeps 'filter' queries off the commands that turn filtering off", async () => {
+    const { rankCommands } = await import("@/commands/scorer");
+    const wrapper = mountComponent();
+    const found = (query: string) =>
+      rankCommands(enabledCommands.value, query).map((command) => command.id);
+    mockStore.value.filteredDraw = true;
+    mockStore.value.showTooltips = true;
+    mockStore.value.filteredAnnotationTooltips = true;
+    expect(found("filter objects")).not.toContain("objects.toggleFilteredDraw");
+    expect(found("filter tooltips")).not.toContain(
+      "objects.toggleFilteredTooltips",
+    );
+    // While off, the same queries find the commands that turn it on.
+    mockStore.value.filteredDraw = false;
+    mockStore.value.filteredAnnotationTooltips = false;
+    expect(found("filter objects")).toContain("objects.toggleFilteredDraw");
+    expect(found("filter tooltips")).toContain(
+      "objects.toggleFilteredTooltips",
+    );
+    mockStore.value.showTooltips = false;
+    wrapper.unmount();
   });
 });

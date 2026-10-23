@@ -247,6 +247,38 @@ Existing in-codebase idioms for writing once:
 
 Writes to genuinely *different* resources can't be merged (the configuration vs the dataset view are separate endpoints); say so at the call site rather than leaving it looking like an oversight.
 
+### A run must submit what the editor shows
+
+A pipeline step is shown through one path (`displayedSteps`, plus the step
+editor's displayed defaults) and run through another (`stepsAsRun`, then
+`buildTransientTool`). Any filling the display does must happen on the run
+path too: a linked tool saved without values was shown with interface
+defaults and run with none (`withInterfaceDefaults`). When the run path gains
+an await before a submit (fetching that interface), it needs the same
+re-checks as the top of the step: configuration switch and cancel, since
+`cancel()` can only cancel a job it already knows. Fetch an interface only
+when `getWorkerInterface` is `undefined`; `null` means the worker has none,
+and re-asking runs a worker job.
+
+### Live-resolved display: everything derived from the source must follow it
+
+When a view shows values resolved live from a store (a linked pipeline step
+showing its tool's current settings), the display is not the only thing
+derived from that source. A working copy captured at open time, or a resource
+loaded on mount (a worker interface for the step's image), goes stale the
+moment the source changes while the view is open. Nothing complains until a
+later edit or Save reads the stale copy: removing a step then restored its old
+wiring, and a tool's new image left the step with no parameter controls (PR
+#1430). Rules:
+
+- Load per-value resources in a `watch` on the value, not only `onMounted` or
+  the in-view change handler. Guard an async mount seed against the value
+  having changed during its await.
+- Before applying an edit to a working copy, carry over the fields the live
+  derivation owns, and only those (wiring owns tags and shape, never the
+  step's own exclusive-match flag). Carrying the whole object silently
+  reverts the edit being applied.
+
 ### Watching Getters That Rebuild Their Return Object
 
 `watch(() => someGetter, cb, { deep: true })` on a getter that returns a **new object on every read** fires on every dependency touch — including dependencies the getter reads but that don't change the output (`deep: true` skips the value comparison entirely). This shipped a real bug: a deep watch on `currentFilters` cleared the selection on every Z-scrub because the getter read `z` unconditionally. tsc/lint/reasoning all passed; only the live app caught it.
@@ -306,6 +338,125 @@ datasets with the old view still loaded). Out-of-range indices also travel in
 URLs: the breadcrumb view switcher keeps the current query when it moves to
 another dataset. See `codebaseDocumentation/DATASET_LOCATION.md` and its
 regression checklist.
+
+### A long-running action must pin the configuration it started on
+
+`main.configuration`, `main.tools` and `properties.properties` are the LOADED
+configuration's, and opening a dataset of another configuration replaces all
+of them while an action that spans worker jobs (a pipeline run, a batch) keeps
+going. Each later read then sees the other configuration. Lookups fail, the
+fallback creates properties there, and ids are recorded there, while the jobs
+still target the original dataset. Guarding one lookup (resolving it once at
+the start, or the reload guard in `loadMissingLinkedProperties`) leaves every
+other read exposed. Capture `main.configuration.id` before the first await,
+then check it before each unit of work, including any reload or cache write
+that reads "the loaded configuration" itself, and stop if it changed
+(`runPipeline`/`runPipelineBatch`, `CONFIGURATION_CHANGED_DURING_RUN`). Write
+anything the action already produced to the captured configuration object, not
+through `syncConfiguration`, which writes whichever configuration is loaded.
+Never write a store list back after a switch either: `setConfiguration` starts
+the new configuration's `fetchProperties` without awaiting it, so for a while
+`properties.properties` is still the previous configuration's list, and
+`setProperties`/`deleteProperty` would save it as the new one's `propertyIds`
+(every reader must check `propertiesConfigurationId` too, not only writers:
+the runner and the pipeline editor read the list through `propertiesOf` /
+`configurationProperties`; `setProperties` refuses a list whose `propertiesConfigurationId`
+is not the loaded configuration, including `null`: a list no fetch has loaded
+is no configuration's, and treating "unknown" as safe let a stale list through
+after a failed first fetch; and `createProperty` registers nothing if a
+switch lands during its request). Keep a run-local record of what the action produced and merge it in
+just before the final write: a switch away and back reloads the configuration
+from the server, without anything merged into the old object.
+
+### A failed optimistic write restores what the server holds, not its snapshot
+
+An optimistic write (set the value, await the save, restore `previous` on
+failure) breaks once writes can overlap. A later write may sit on top of the
+failed one, an earlier write it built on may have failed too, or a fetch may
+have replaced the value during the await. Restoring the snapshot then puts a
+value back that the server never held, or overwrites a newer one. After a
+configuration switch it is worse: the old configuration's property list went
+back in under the new one's ownership, and the next save wrote it into the new
+configuration. Checking "is the value still the one I wrote?" is not enough
+either: a nested rollback (from a copying mutation, or a fetch) gives it a new
+identity, so the outer rollback is skipped and the list and its ids disagree.
+
+What works here (`writeConfigurationKey` in `index.ts`): per configuration key,
+count pending writes and record the last value the server confirmed. Restore
+nothing while any write of the key is pending. When the last one settles, if
+any of them failed, set the key to the confirmed value. Don't restore at the
+latest write's failure: a write can fail before it reaches the API's per-key
+queue (a session that expired), while an earlier one is still in flight and
+then succeeds. Restore onto the loaded configuration object when it has the
+same id, since a switch away and back loads a new object. Rebuild derived state
+from the restored value at the same point rather than restoring it separately:
+`setProperties` rebuilds the list from the restored `propertyIds`, keeping the
+objects that in-flight saves started from so a property an earlier failed save
+removed can come back. Key that bookkeeping exactly as the write it shadows
+(per configuration here): process-wide counters let a save pending on one
+configuration hold back another configuration's rebuild, then clear its
+failure flag. Tests: *"restores what the server holds when
+overlapping saves both fail (earlier first)"*, *"(out of order)"*, *"ends on an
+earlier save's value when a later save fails before it is sent"*.
+
+Every change the server already holds must reach that bookkeeping, not just
+the client's own writes. A value set behind its back (a server job registered
+a property, and the client appends the id in memory) is missing from the
+confirmed value, so a pending write that fails restores it away, and the next
+save deletes it on the server. Route such changes through a helper that adds
+them to the confirmed value while writes are pending
+(`adoptServerConfirmedPropertyId`). Adopt it as soon as the server made
+the change, not when a later job reports done: the gene-panel and
+neighborhood requests register their property when the request is made, so
+adopting at job end left the whole job's runtime for a property save to
+unregister it. Don't add a client-side "save it again" repair for the
+remaining window (a save sent while that request was in flight); it bypassed
+the list-rebuild bookkeeping and could resurrect deletions, and only a
+server-side merge of propertyIds writes closes it. And check every path that
+builds the next write: `setProperties` builds ids from the loaded list, not
+the configuration, so an adopted id no fetch has loaded yet must be carried
+over. Tests: *"keeps a property adopted during a pending save when that save
+fails"*, *"carries over an adopted property no fetch has loaded yet when
+saving"*, *"polls a scheduled job until it succeeds, adopting its property at
+once"*.
+
+**Don't fix the estimate's ordering problem by queueing writes; read back.**
+A rollback that replays successful patches in response order can be wrong
+when overlapping saves were applied by the server in another order, or a
+failed bulk save was partly written. PR #1433 first sent each annotation's
+saves one at a time. Every review round then found something new the queue
+changed: a color-by-property job overtook a held edit, a held edit crossed a
+session switch, undo didn't wait for it, and its cancellation looked like a
+possible write. A held write is a mechanism every other write path must
+coordinate with. Instead, after restoring the estimate, read the affected
+records back (`reconcileRestoredAnnotations`, via `hydrateAnnotations`), and
+apply each server copy only if the store still holds the restored object, in
+the same session and dataset. A read can't overwrite the server, so
+overlapping writes can't corrupt anything; the worst case is a briefly stale
+display.
+
+### Per-resource component state under a reused route: key it by id
+
+Vue Router reuses a route's component when only a param changes (`/project/A`
+→ `/project/B`), so any local state in it, or in a child, stays alive across
+the switch. That state includes error messages, progress, job subscriptions
+and open dialogs, and late responses for A land in it too. On PR #1414,
+`ZenodoPublish`'s refusal message for project A showed on project B. Don't
+reset the refs one by one in a `watch(() => props.project.id)`: that list is
+hand-maintained and misses the next ref someone adds. Key the component by
+the resource id in the parent (`<zenodo-publish :key="project.id" ...>`), so
+each resource gets a fresh instance. A late `emit` from the old instance is
+dropped (Vue's `emit` returns early once `isUnmounted`). Test it by switching
+the resource under a mounted parent and asserting a new child `vm`
+(`ProjectInfo.test.ts` *"gives each project its own ZenodoPublish
+instance"*).
+
+A related trap: work that "resumes" a server-side operation, such as
+re-subscribing to a running job, must not run only in `onMounted`. Run it
+whenever the resource *reports* the state (`watch(status, …, { immediate:
+true })`), guard it to once per job, and treat "reports running but no job
+exists" as a stale copy to re-read. The store does not refetch cached
+resources on navigation.
 
 ### Every `throttle`/`debounce` needs a `cancel()` in `onBeforeUnmount`
 
@@ -404,6 +555,56 @@ Vuetify 4 changed the default theme from `"light"` to `"system"`. Our config set
   background: rgb(var(--v-theme-surface));
 }
 ```
+
+### The viewer's app bar is already full — measure before widening a control
+
+On the dataset view the app bar holds about 20 controls and already overflows
+by ~50px at 1024px wide. Anything wider than an icon pushes the right-hand
+buttons (help, account, Nimbus AI) off screen with no scrollbar and no error;
+a 264px search-field trigger hid all three anywhere from 960px to ~1300px.
+Before widening an app-bar control, measure on the **viewer** route (not the
+home page, which has half the controls) at 1024 and 1280px:
+
+```js
+const ai = document.querySelector('[aria-label="Nimbus AI panel"]');
+[innerWidth, Math.round(ai.getBoundingClientRect().right)]  // right must be <= innerWidth
+```
+
+Collapse to an icon below `lg` (1280px) rather than `md`.
+
+### Palette commands registered in a right-hand palette are global unless gated
+
+`useCommand` registers for the component's lifetime, and the right-hand
+FloatingPalettes (Settings, Object Browser, Snapshots) keep their content
+mounted on **every** route via `v-show`. So a command registered in, say,
+`ViewerSettings.vue` shows on the dataset list too. Gate it with
+`useInViewer()` from `src/commands/context.ts`, and set each command's
+`enabled` to match its control's `:disabled`. The left palettes (Navigator,
+Layers, Tools) and `ImageViewer.vue` mount only in the viewer.
+
+### A state-flipping palette command names only what it will do
+
+A command whose title flips with state ("Hide minimap" / "Show minimap") must
+never match a query asking for the state it already has, or Enter does the
+opposite of what was typed. Seven Codex rounds on PR #1429 each found one
+more way in:
+
+- synonyms that equate opposites (show = hide);
+- loose matching: substring ("lock" in "Unlock", "roll" in "Unroll") or
+  subsequence ("open" in "Close…"); the scorer now matches the words in
+  `src/commands/stateWords.ts` only as whole title words or keywords;
+- keywords naming both directions (`["dark", "light"]`, `["add", "remove"]`);
+  `oppositeKeywords.test.ts` scans every array literal for these;
+- a description stating the current state ("Visible" made "visible dapi"
+  hide the layer);
+- a turn-off title that shares a word with the state it ends
+  ("Draw every object, ignoring **filters**" matched "filter objects").
+
+The rule: title, keywords, aliases and description describe only the
+result of running it, and a turn-off title shares no word with the on state
+except the neutral subject ("minimap", "scale bar"). Use `toggleCommands`
+with `turnOnKeywords` / `turnOffKeywords`, and test both states with the
+query a user would type for each.
 
 ### Select/Combobox Slot Items (No `.raw` Wrapper)
 
@@ -565,6 +766,8 @@ defaults: {
   VCheckboxBtn: { density: "comfortable" },
 }
 ```
+
+**An explicit prop beats a `v-defaults-provider` default.** A wrapper that forwards `:disabled="disabled"` with a `false` default passes `false` explicitly, which overrides a surrounding `<v-defaults-provider :defaults="{ global: { disabled: true } }">`. A locked pipeline step's Tags field rendered editable-looking this way while every other field dimmed. Forward `:disabled="disabled || undefined"` so an unset prop falls through to the provider. Test it by mounting under `VDefaultsProvider` and asserting the `v-input--disabled` class: `findComponent().props("disabled")` reads the raw prop and returns `null` either way.
 
 ## @girder/components Compatibility
 

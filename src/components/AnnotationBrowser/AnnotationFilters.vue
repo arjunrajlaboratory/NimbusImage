@@ -123,7 +123,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
+import { useCommand } from "@/commands/registry";
+import { toggleCommands } from "@/commands/toggles";
+import { useInViewer } from "@/commands/context";
 import filterStore from "@/store/filters";
 import store from "@/store";
 import { ITagAnnotationFilter } from "@/store/model";
@@ -144,6 +147,18 @@ const props = withDefaults(
 
 const advancedOpen = ref(false);
 const propertyValuesOpen = ref(filterStore.filterPaths.length > 0);
+
+// Expand Property values when a filter is added from anywhere else (the
+// command palette's "Add filter: …", the AI agent): otherwise the new filter
+// sits inside a collapsed section. Closing it again stays the user's choice.
+watch(
+  () => filterStore.filterPaths.length,
+  (count, previous) => {
+    if (count > previous) {
+      propertyValuesOpen.value = true;
+    }
+  },
+);
 
 const selectionFilterEnabled = computed(
   () => filterStore.selectionFilter.enabled,
@@ -185,6 +200,36 @@ const showAnnotationsFromHiddenLayers = computed({
     store.setShowAnnotationsFromHiddenLayers(value);
   },
 });
+
+// The Filters palette stays mounted on every route, so gate to the viewer.
+const inViewer = useInViewer();
+useCommand(() =>
+  toggleCommands(
+    [
+      {
+        id: "filters.onlyCurrentFrame",
+        setting: onlyCurrentFrame,
+        // The off title and keywords name no part of the on state ("filter",
+        // "current"): "filter current frame" must not find the turn-off.
+        turnOn: "Filter to objects in the current frame only",
+        turnOff: "Include objects from every frame",
+        keywords: ["frames", "annotations"],
+        turnOnKeywords: ["filter", "only"],
+        turnOffKeywords: ["all"],
+        icon: "mdi-image-filter-center-focus",
+      },
+      {
+        id: "filters.showFromHiddenLayers",
+        setting: showAnnotationsFromHiddenLayers,
+        turnOn: "Show objects from hidden layers",
+        turnOff: "Hide objects from hidden layers",
+        keywords: ["layers", "annotations", "invisible"],
+        icon: "mdi-layers-off-outline",
+      },
+    ],
+    { when: inViewer },
+  ),
+);
 
 defineExpose({
   advancedOpen,

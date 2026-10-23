@@ -50,6 +50,8 @@ import store from "@/store";
 import propertyStore from "@/store/properties";
 import spatialStore from "@/store/spatial";
 import MeasurementsTab from "./MeasurementsTab.vue";
+import MaterializeGenesDialog from "./MaterializeGenesDialog.vue";
+import { genesDialogOpen } from "@/utils/genesDialog";
 
 function mountComponent(props: { isActive: boolean } = { isActive: true }) {
   return mount(MeasurementsTab, { props });
@@ -229,6 +231,19 @@ describe("MeasurementsTab spatial table", () => {
     (spatialStore as any).hasTable = true;
     await wrapper.vm.$nextTick();
     expect(wrapper.text()).toContain("Add genes");
+  });
+
+  it("opens the app-level genes dialog instead of hosting one that tab switches unmount", async () => {
+    (spatialStore as any).hasTable = true;
+    genesDialogOpen.value = false;
+    const wrapper = mountComponent();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.findComponent(MaterializeGenesDialog).exists()).toBe(false);
+    const button = wrapper
+      .findAll("button")
+      .find((b) => b.text().includes("Add genes"));
+    await button!.trigger("click");
+    expect(genesDialogOpen.value).toBe(true);
   });
 });
 

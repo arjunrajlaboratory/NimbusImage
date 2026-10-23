@@ -509,6 +509,17 @@ Rules:
    were applied — otherwise "stripped" and "applied but harmless" look the
    same.
 
+## Write the state, then notify
+
+When a job or event tells the frontend "re-read X now" (a job reaching
+SUCCESS/ERROR over SSE, a notification), update X **before** sending it. The
+Zenodo upload job's success path wrote project meta `draft` before marking
+the job SUCCESS, but `_fail` marked the job ERROR first. The card, refreshing
+on the terminal event, could read `uploading` and stay stuck (PR #1414). Check
+every terminal path of a job, not only the success path, and test the order
+by recording the stored state inside a mocked `updateJob`
+(`test_fail_writes_project_status_before_job_status`).
+
 ## Concurrent writers: no read-merge-write, no delete-then-insert
 
 Property workers run in bursts (4–5 jobs within a second, several over the

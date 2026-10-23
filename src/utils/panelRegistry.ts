@@ -42,6 +42,8 @@ export interface IPanelDefinition {
   hosts?: PanelId[];
   // Opened on every entry to the dataset view.
   defaultOpen: boolean;
+  // What users call the panel; the "Open X" command's aliases.
+  aliases: string[];
 }
 
 export const PANELS: readonly IPanelDefinition[] = [
@@ -53,6 +55,7 @@ export const PANELS: readonly IPanelDefinition[] = [
     zone: "left",
     role: "primary",
     defaultOpen: true,
+    aliases: ["navigation", "position", "dimensions"],
   },
   {
     id: "layersPanel",
@@ -61,6 +64,7 @@ export const PANELS: readonly IPanelDefinition[] = [
     zone: "left",
     role: "primary",
     defaultOpen: true,
+    aliases: ["channels", "contrast"],
   },
   {
     id: "toolsPanel",
@@ -69,6 +73,7 @@ export const PANELS: readonly IPanelDefinition[] = [
     zone: "left",
     role: "primary",
     defaultOpen: true,
+    aliases: ["toolset"],
   },
   // Right column, in app-bar order.
   {
@@ -78,6 +83,14 @@ export const PANELS: readonly IPanelDefinition[] = [
     zone: "right",
     role: "primary",
     defaultOpen: false,
+    aliases: [
+      "objects",
+      "object list",
+      "annotations",
+      "annotation list",
+      "list",
+      "table",
+    ],
   },
   // Filters hosts alongside both the Object Browser and the Analysis panel:
   // the Analysis panel's own guidance above the cap is "narrow the filters",
@@ -90,6 +103,7 @@ export const PANELS: readonly IPanelDefinition[] = [
     role: "companion",
     hosts: ["annotationPanel", "analysisPanel"],
     defaultOpen: false,
+    aliases: ["filter"],
   },
   {
     id: "analysisPanel",
@@ -98,6 +112,7 @@ export const PANELS: readonly IPanelDefinition[] = [
     zone: "right",
     role: "primary",
     defaultOpen: false,
+    aliases: ["measurements", "properties", "plots", "charts"],
   },
   // Only offered for a dataset with a registered transcript store (App.vue
   // gates the button and the command).
@@ -108,6 +123,7 @@ export const PANELS: readonly IPanelDefinition[] = [
     zone: "right",
     role: "primary",
     defaultOpen: false,
+    aliases: ["genes", "spatial"],
   },
   {
     id: "snapshotPanel",
@@ -116,6 +132,7 @@ export const PANELS: readonly IPanelDefinition[] = [
     zone: "right",
     role: "primary",
     defaultOpen: false,
+    aliases: ["bookmarks", "views"],
   },
   {
     id: "settingsPanel",
@@ -124,6 +141,7 @@ export const PANELS: readonly IPanelDefinition[] = [
     zone: "right",
     role: "primary",
     defaultOpen: false,
+    aliases: ["preferences", "options", "display settings"],
   },
 ];
 

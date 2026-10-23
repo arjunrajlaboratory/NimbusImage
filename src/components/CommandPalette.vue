@@ -11,7 +11,7 @@
         ref="inputRef"
         v-model="query"
         class="command-palette-input"
-        placeholder="Search commands, tools, panels, layers…"
+        :placeholder="placeholder"
         prepend-inner-icon="mdi-magnify"
         variant="solo"
         flat
@@ -19,7 +19,29 @@
         autocomplete="off"
         aria-label="Search commands"
         @keydown="onKeydown"
-      />
+      >
+        <!-- Hands the query to the Nimbus AI panel. mousedown.prevent keeps
+             focus in the field (see onKeydown on why focus must stay). -->
+        <template #append-inner v-if="canAskAi">
+          <v-tooltip :text="`Ask Nimbus AI (${askAiHotkey})`">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                variant="text"
+                icon
+                size="small"
+                aria-label="Ask Nimbus AI"
+                data-ask-ai
+                :disabled="!query.trim()"
+                @mousedown.prevent
+                @click="askAi"
+              >
+                <v-icon>mdi-robot-outline</v-icon>
+              </v-btn>
+            </template>
+          </v-tooltip>
+        </template>
+      </v-text-field>
       <v-divider />
       <v-list
         ref="listRef"
@@ -59,7 +81,9 @@
           </v-list-item>
         </template>
         <div v-if="commandRows.length === 0" class="command-palette-empty">
-          No matching commands
+          No matching commands<template v-if="canAskAi && query.trim()"
+            >. Press {{ askAiHotkey }} to ask Nimbus AI.</template
+          >
         </div>
       </v-list>
     </v-card>
@@ -67,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import store from "@/store";
 import propertyStore from "@/store/properties";
@@ -79,12 +103,26 @@ import {
   addToolCommands,
   layerCommands,
   propertyCommands,
+  propertyFilterCommands,
+  propertyListCommands,
   snapshotCommands,
   toolCommands,
 } from "@/commands/providers";
 import { COMMAND_GROUP_ORDER, ICommand } from "@/commands/types";
-import { formatHotkey, isPaletteToggleKey } from "@/commands/hotkeys";
+import {
+  formatHotkey,
+  isAskAiKey,
+  isPaletteToggleKey,
+} from "@/commands/hotkeys";
 import { useViewerContext } from "@/commands/context";
+import { paramCommandsForQuery } from "@/actions/parse";
+import { aiPromptRequest } from "@/commands/requests";
+import {
+  EXAMPLES_SHOWN,
+  examplePlaceholder,
+  examplesThatRun,
+  paletteExamples,
+} from "@/commands/examples";
 
 // Results are capped so a broad query stays a short, scannable list.
 const MAX_ROWS = 50;
@@ -116,23 +154,108 @@ useCommandProvider(addToolCommands(providerContext));
 useCommandProvider(layerCommands(providerContext));
 useCommandProvider(snapshotCommands(providerContext));
 useCommandProvider(propertyCommands(providerContext));
+useCommandProvider(propertyListCommands(providerContext));
+useCommandProvider(propertyFilterCommands(providerContext));
+
+// Rotating example queries in the field's placeholder, built from the open
+// dataset so each one works here, and advanced on a timer that runs only
+// while the palette is open.
+const EXAMPLE_ROTATE_MS = 4000;
+const exampleOffset = ref(0);
+let exampleTimer: ReturnType<typeof setInterval> | null = null;
+
+// Only examples whose top result is the command they demonstrate ("show
+// objects" while objects are visible would run "Only show objects passing
+// filters"). Gated on `open`: the dialog keeps
+// its content mounted after the first open, so without the gate this would
+// re-score ~10 queries against every command on each Z/time scrub (the
+// Navigator commands' enabled() reads the current position).
+const examples = computed(() =>
+  !open.value
+    ? []
+    : examplesThatRun(
+        paletteExamples({
+          inViewer: providerContext.inViewer(),
+          isLoggedIn: store.isLoggedIn,
+          zCount: store.dataset?.z.length ?? 0,
+          timeCount: store.dataset?.time.length ?? 0,
+          layerNames: store.layers.map((layer) => layer.name),
+          // A nested value's own name ("Area"); a top-level value's path is just
+          // the property id, so use the property's name.
+          propertyNames: propertyStore.computedPropertyPaths.map((path) =>
+            path.length > 1
+              ? path[path.length - 1]
+              : propertyStore.getPropertyById(path[0])?.name ?? path[0],
+          ),
+        }),
+        // What Enter would run: a typed command first, else the top match.
+        (query) =>
+          (
+            paramCommandsForQuery(query, providerContext)[0] ??
+            rankCommands(enabledCommands.value, query, 1)[0]
+          )?.id,
+      ),
+);
+
+const placeholder = computed(() =>
+  examplePlaceholder(examples.value, exampleOffset.value),
+);
+
+function stopExampleRotation() {
+  if (exampleTimer !== null) {
+    clearInterval(exampleTimer);
+    exampleTimer = null;
+  }
+}
+
+// A fresh set each time it opens, then the next set every few seconds.
+// Immediate, so a palette mounted open rotates too.
+watch(
+  open,
+  (isOpen) => {
+    stopExampleRotation();
+    if (!isOpen) {
+      return;
+    }
+    exampleOffset.value += EXAMPLES_SHOWN;
+    exampleTimer = setInterval(() => {
+      exampleOffset.value += EXAMPLES_SHOWN;
+    }, EXAMPLE_ROTATE_MS);
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(stopExampleRotation);
+
+// App.vue's "Open/Close Nimbus AI panel" command; enabled only where the
+// panel may open, so it also gates the Ask Nimbus AI button.
+const AI_PANEL_ID = "ai.togglePanel";
 
 // Grouped results, flattened into header and command rows. Command rows carry
 // their position among commands only, which is what the arrow keys move over.
 const rows = computed((): TRow[] => {
   const commands = enabledCommands.value;
-  const sections: { label: string; commands: ICommand[] }[] = [];
+  const sections: { key: string; label: string; commands: ICommand[] }[] = [];
 
   if (query.value.trim()) {
-    // Groups ordered by their best match, so the top row is the top result.
+    // "z 12" / "show only dapi": commands instantiated from the query come
+    // first, so Enter runs what was typed. They seed their group, so the
+    // ranked matches of the same group follow under the same header.
     const byGroup = new Map<string, ICommand[]>();
+    for (const command of paramCommandsForQuery(query.value, providerContext)) {
+      const group = byGroup.get(command.group) ?? [];
+      group.push(command);
+      byGroup.set(command.group, group);
+    }
+    // Then groups ordered by their best match, so the top row is the top
+    // result.
     for (const command of rankCommands(commands, query.value, MAX_ROWS)) {
       const group = byGroup.get(command.group) ?? [];
       group.push(command);
       byGroup.set(command.group, group);
     }
     for (const [label, groupCommands] of byGroup) {
-      sections.push({ label, commands: groupCommands });
+      sections.push({ key: label, label, commands: groupCommands });
     }
   } else {
     const byId = new Map(commands.map((command) => [command.id, command]));
@@ -140,7 +263,7 @@ const rows = computed((): TRow[] => {
       .map((id) => byId.get(id))
       .filter((command): command is ICommand => !!command);
     if (recent.length) {
-      sections.push({ label: "Recent", commands: recent });
+      sections.push({ key: "Recent", label: "Recent", commands: recent });
     }
     const recentIds = new Set(recent.map((command) => command.id));
     for (const group of COMMAND_GROUP_ORDER) {
@@ -150,7 +273,7 @@ const rows = computed((): TRow[] => {
         )
         .slice(0, OVERVIEW_PER_GROUP);
       if (groupCommands.length) {
-        sections.push({ label: group, commands: groupCommands });
+        sections.push({ key: group, label: group, commands: groupCommands });
       }
     }
   }
@@ -163,13 +286,13 @@ const rows = computed((): TRow[] => {
     }
     result.push({
       kind: "header",
-      key: `header:${section.label}`,
+      key: `header:${section.key}`,
       label: section.label,
     });
     for (const command of section.commands.slice(0, MAX_ROWS - index)) {
       result.push({
         kind: "command",
-        key: `${section.label}:${command.id}`,
+        key: `${section.key}:${command.id}`,
         command,
         index: index++,
       });
@@ -177,6 +300,30 @@ const rows = computed((): TRow[] => {
   }
   return result;
 });
+
+const canAskAi = computed(() =>
+  enabledCommands.value.some((command) => command.id === AI_PANEL_ID),
+);
+const askAiHotkey = formatHotkey("mod+enter");
+
+// Hand the query to the Nimbus AI panel (the field's robot button, or ⌘↵).
+// Goes through choose(), so it runs after the dialog leaves like any command;
+// `generated` keeps it out of the recent list.
+function askAi() {
+  const prompt = query.value.trim();
+  if (!prompt || !canAskAi.value) {
+    return;
+  }
+  choose({
+    id: "ai.ask",
+    title: `Ask Nimbus AI: "${prompt}"`,
+    group: "Actions",
+    generated: true,
+    run: () => {
+      aiPromptRequest.value = prompt;
+    },
+  });
+}
 
 const commandRows = computed(() =>
   rows.value.filter(
@@ -255,6 +402,11 @@ function onKeydown(event: KeyboardEvent) {
     open.value = false;
     return;
   }
+  if (isAskAiKey(event)) {
+    event.preventDefault();
+    askAi();
+    return;
+  }
   switch (event.key) {
     // Focus stays in the field: app hotkeys (layer digits, tool keys,
     // ⌘⌫ delete) are muted only while a text field has focus, and they would
@@ -310,7 +462,11 @@ async function runPendingCommand() {
   if (!command) {
     return;
   }
-  recordRecentCommand(command.id);
+  // Commands generated from the query have ids that never resolve in the
+  // registry; recording them would only waste recent slots.
+  if (!command.generated) {
+    recordRecentCommand(command.id);
+  }
   try {
     await command.run();
   } catch (error) {

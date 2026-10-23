@@ -1,4 +1,3 @@
-from bson import ObjectId
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.v1.resource import Resource
@@ -6,6 +5,9 @@ from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.utility.model_importer import ModelImporter
 from girder.utility.progress import ProgressContext
+
+from ..helpers import validation
+from ..helpers.validation import requireList, requireObjectId
 
 
 class CustomResource(Resource):
@@ -104,30 +106,43 @@ class CustomResource(Resource):
     )
     def batchResources(self, body):
         user = self.getCurrentUser()
-        result = {}
 
         # Only allow known types
         allowed = ('folder', 'item', 'upenn_collection', 'user')
-        for kind in allowed:
-            ids = body.get(kind)
-            if not ids:
-                continue
+        # A missing or null kind is not requested; any other value must be
+        # a list (validated before an empty list is skipped).
+        idsByKind = {
+            kind: requireList(body[kind], kind)
+            for kind in allowed if body.get(kind) is not None
+        }
+        idsByKind = {kind: ids for kind, ids in idsByKind.items() if ids}
+        validation.requireCountWithin(
+            sum(len(ids) for ids in idsByKind.values()),
+            validation.MAX_BATCH_RESOURCE_IDS, 'Resource ids')
+        objectIdsByKind = {
+            kind: [requireObjectId(x, kind) for x in ids]
+            for kind, ids in idsByKind.items()
+        }
+
+        result = {}
+        for kind, objectIds in objectIdsByKind.items():
             model = self._getResourceModel(kind)
 
             # Use bulk aggregation query instead of individual loads
             # This is much more efficient than loading each document
             # individually
             docs = model.findWithPermissions(
-                query={"_id": {"$in": [ObjectId(x) for x in ids]}},
+                query={"_id": {"$in": objectIds}},
                 user=user,
                 level=AccessType.READ
             )
 
-            # Build the mapping from the bulk query results
-            mapping = {}
-            for doc in docs:
-                mapping[str(doc['_id'])] = doc
-
-            result[kind] = mapping
+            # Filter each document to the fields the caller's access level
+            # exposes, as GET <kind>/{id} does. Raw documents carry the ACL
+            # (other users' and groups' ids) and, for users, the password
+            # hash, email and OTP secret.
+            result[kind] = {
+                str(doc['_id']): model.filter(doc, user) for doc in docs
+            }
 
         return result

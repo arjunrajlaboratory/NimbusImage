@@ -339,6 +339,7 @@ import ColorSelectionDialog from "@/components/ColorSelectionDialog.vue";
 import DeleteConnections from "@/components/AnnotationBrowser/DeleteConnections.vue";
 import PropertyChipStrip from "@/components/AnnotationBrowser/PropertyChipStrip.vue";
 import AnnotationListRow from "@/components/AnnotationBrowser/AnnotationListRow.vue";
+import { deleteSelectedObjects } from "@/utils/deleteSelectedObjects";
 import PropertyColumnHeader from "@/components/AnnotationBrowser/PropertyColumnHeader.vue";
 
 import {
@@ -1139,20 +1140,8 @@ async function handleColorSubmit({
   await refreshServerListIfNeeded();
 }
 
-async function deleteSelected() {
-  if (isServerMode.value) {
-    // In server mode the client annotation set is empty, so the store action
-    // would delete nothing. Delete the currently-selected ids directly, clear
-    // the selection, and refresh the server page so the deleted rows drop out.
-    await annotationStore.deleteAnnotations([
-      ...annotationStore.selectedAnnotationIds,
-    ]);
-    annotationStore.setSelected([]);
-    await annotationListServer.fetchPage();
-    return;
-  }
-  annotationStore.deleteSelectedAnnotations();
-}
+// Shared with the mod+backspace hotkey and the palette command.
+const deleteSelected = deleteSelectedObjects;
 
 async function deleteUnselected() {
   if (isServerMode.value) {

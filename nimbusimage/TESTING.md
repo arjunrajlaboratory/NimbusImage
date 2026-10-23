@@ -86,6 +86,8 @@ XENIUM_LIVE_BUNDLES=~/Downloads/xenium-tiny python tests/integration/xenium_live
 | `test_live_properties.py` | Create property definitions, submit/retrieve values, get_or_create |
 | `test_live_config_images.py` | Collection fetches via /upenn_collection, layer structure, get_composite |
 | `test_live_workers.py` | Worker discovery, interface fetch, annotation worker execution (random_squares) |
+| `test_live_projects.py` | Project add/remove dataset and collection, set_status, update_metadata, update round trip |
+| `test_live_sharing.py` | Share a private dataset with a temporary non-admin user (read/write/admin), verify they can read it, remove access; set_public round trip; sharing through a data-only API key; a WRITE collaborator sharing a dataset that has a view and collection they can only read (only the writable view is sent; the old client got a 403); a creator removing themselves is refused by the server (xfail until PR #1165) |
 
 ### Test Cleanup
 
@@ -117,7 +119,7 @@ All major features have been e2e tested against the live backend:
 | Export JSON | PASS | Includes annotations, connections, properties, values |
 | Export CSV | PASS | To bytes and to file |
 | History (undo/redo) | PASS | Create → undo → redo cycle verified |
-| Sharing (set_public) | PASS | Toggle public on/off |
+| Sharing (share, set_public, get_access) | PASS | Share/remove with a second user verified by that user's reads; toggle public on/off |
 | Connections (CRUD) | PASS | Create, get, list, delete, bulk create/delete |
 | connect_to_nearest | PASS | |
 | Connection update | FAIL | Backend bug [#1087](https://github.com/arjunrajlaboratory/NimbusImage/issues/1087) |

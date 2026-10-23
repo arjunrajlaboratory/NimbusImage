@@ -17,7 +17,14 @@ concurrency:
 
 jobs:
   all:
-    runs-on: ubuntu-latest
+    # MongoDB 8.x refuses to start on Linux kernels 6.19 through 7.0.13
+    # (vendored TCMalloc vs the kernel's rseq change, SERVER-121912), and
+    # ubuntu-latest's image 20261018 has a kernel in that range. Every test
+    # then waited out its connection timeout for ~4h45m. Move back to
+    # ubuntu-latest once its kernel is 7.0.14 or later.
+    runs-on: ubuntu-22.04
+    # A healthy run takes 5-8 minutes.
+    timeout-minutes: 30
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
 
     services:
@@ -28,6 +35,15 @@ jobs:
         image: mongo:8.0
         ports:
           - 27017:27017
+        # The job waits until mongod answers a ping, and fails at "Initialize
+        # containers" if it never does. Without this, a mongod that exits at
+        # startup isn't a job failure: the tests run anyway and each one
+        # waits out its connection timeout.
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping: 1})'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
 
     steps:
       - uses: actions/checkout@v4
@@ -35,9 +51,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          # tox's pip shares this download and wheel cache.
+          cache: pip
+          cache-dependency-path: |
+            devops/girder/plugins/AnnotationPlugin/tox.ini
+            devops/girder/plugins/AnnotationPlugin/setup.py
       - name: flake8 Lint
         uses: py-actions/flake8@v2
         with:
           path: devops/girder/
+      # Only the interpreter set up above. tox.ini's envlist also names
+      # py310 with skip_missing_interpreters, so tox runs the whole suite a
+      # second time on any runner that happens to have Python 3.10
+      # (ubuntu-22.04 does).
       - name: Test AnnotationPlugin
-        run: pip install tox && cd devops/girder/plugins/AnnotationPlugin && tox
+        run: pip install tox && cd devops/girder/plugins/AnnotationPlugin && tox -e py311

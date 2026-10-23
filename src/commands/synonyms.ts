@@ -3,6 +3,10 @@
 // others. Keep this short; worker `description` Docker labels are the main
 // source of "semantic" matches, and improving those improves search for free.
 // Words are written already normalized (lowercase, no diacritics).
+// Never group opposite state verbs (show/hide, open/close, on/off): a command
+// whose title flips with state ("Hide minimap") would then match a query
+// asking for the state it already has ("show minimap") and do the opposite.
+// State-flipping commands carry the verb of what they will do instead.
 const SYNONYM_GROUPS: readonly string[][] = [
   ["spot", "spots", "puncta", "punctum", "dots", "dot", "foci"],
   ["cell", "cells", "nuclei", "nucleus", "segment", "segmentation"],
@@ -13,6 +17,7 @@ const SYNONYM_GROUPS: readonly string[][] = [
   ["download", "export"],
   ["upload", "import"],
   ["plot", "plots", "graph", "chart", "analysis"],
+  ["merge", "merged", "projection", "mip"],
 ];
 
 const SYNONYMS = new Map<string, string[]>();

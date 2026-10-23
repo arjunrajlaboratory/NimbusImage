@@ -6,6 +6,7 @@ const mockUpdateProject = vi.fn();
 const mockUpdateProjectStatus = vi.fn();
 const mockUpdateProjectMetadata = vi.fn();
 const mockDeleteProject = vi.fn();
+const mockFetchProject = vi.fn();
 const mockRemoveDatasetFromProject = vi.fn();
 const mockRemoveCollectionFromProject = vi.fn();
 const mockWatchFolder = vi.fn();
@@ -20,42 +21,48 @@ vi.mock("@/store", () => ({
   },
 }));
 
-vi.mock("@/store/projects", () => ({
-  default: {
-    currentProject: {
-      id: "proj-1",
-      name: "Test Project",
-      description: "A test project",
-      meta: {
-        status: "draft",
-        datasets: [
-          { datasetId: "ds-1", addedDate: "2024-01-01" },
-          { datasetId: "ds-2", addedDate: "2024-01-02" },
-        ],
-        collections: [{ collectionId: "coll-1", addedDate: "2024-01-01" }],
-        metadata: {
-          title: "Project Title",
-          description: "Project Description",
-          license: "CC-BY-4.0",
-          keywords: ["test"],
-          authors: "Author 1",
-          doi: "",
-          publicationDate: "",
-          funding: "",
+// reactive() so a test can switch projects under a mounted ProjectInfo, as
+// the router does when it reuses the component.
+vi.mock("@/store/projects", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      currentProject: {
+        id: "proj-1",
+        name: "Test Project",
+        description: "A test project",
+        meta: {
+          status: "draft",
+          datasets: [
+            { datasetId: "ds-1", addedDate: "2024-01-01" },
+            { datasetId: "ds-2", addedDate: "2024-01-02" },
+          ],
+          collections: [{ collectionId: "coll-1", addedDate: "2024-01-01" }],
+          metadata: {
+            title: "Project Title",
+            description: "Project Description",
+            license: "CC-BY-4.0",
+            keywords: ["test"],
+            authors: "Author 1",
+            doi: "",
+            publicationDate: "",
+            funding: "",
+          },
         },
       },
-    },
-    updateProject: (...args: any[]) => mockUpdateProject(...args),
-    updateProjectStatus: (...args: any[]) => mockUpdateProjectStatus(...args),
-    updateProjectMetadata: (...args: any[]) =>
-      mockUpdateProjectMetadata(...args),
-    deleteProject: (...args: any[]) => mockDeleteProject(...args),
-    removeDatasetFromProject: (...args: any[]) =>
-      mockRemoveDatasetFromProject(...args),
-    removeCollectionFromProject: (...args: any[]) =>
-      mockRemoveCollectionFromProject(...args),
-  },
-}));
+      updateProject: (...args: any[]) => mockUpdateProject(...args),
+      updateProjectStatus: (...args: any[]) => mockUpdateProjectStatus(...args),
+      updateProjectMetadata: (...args: any[]) =>
+        mockUpdateProjectMetadata(...args),
+      deleteProject: (...args: any[]) => mockDeleteProject(...args),
+      fetchProject: (...args: any[]) => mockFetchProject(...args),
+      removeDatasetFromProject: (...args: any[]) =>
+        mockRemoveDatasetFromProject(...args),
+      removeCollectionFromProject: (...args: any[]) =>
+        mockRemoveCollectionFromProject(...args),
+    }),
+  };
+});
 
 vi.mock("@/store/girderResources", () => ({
   default: {
@@ -75,13 +82,14 @@ import ProjectInfo from "./ProjectInfo.vue";
 
 const mockRouter = { push: vi.fn() };
 
-function mountComponent() {
+function mountComponent({ renderStubDefaultSlot = false } = {}) {
   const app = document.createElement("div");
   app.setAttribute("data-app", "true");
   document.body.appendChild(app);
   return shallowMount(ProjectInfo, {
     attachTo: app,
     global: {
+      renderStubDefaultSlot,
       provide: {
         ...routeProvider({ params: { projectId: "proj-1" } }),
         ...routerProvider(mockRouter),
@@ -129,6 +137,50 @@ describe("ProjectInfo", () => {
     mockFindDatasetViews.mockResolvedValue([]);
     mockWatchFolder.mockReturnValue(null);
     mockWatchCollection.mockReturnValue(null);
+  });
+
+  it("gives each project its own ZenodoPublish instance", async () => {
+    const wrapper = mountComponent({ renderStubDefaultSlot: true });
+    await flushPromises();
+    const first = wrapper.findComponent({ name: "ZenodoPublish" });
+    expect(first.exists()).toBe(true);
+
+    (projects as any).currentProject = {
+      ...(projects as any).currentProject,
+      id: "proj-2",
+    };
+    await flushPromises();
+
+    const second = wrapper.findComponent({ name: "ZenodoPublish" });
+    expect(second.props("project").id).toBe("proj-2");
+    // Errors, upload progress and job tracking are per project: a reused
+    // instance would show project 1's state on project 2.
+    expect(second.vm).not.toBe(first.vm);
+  });
+
+  it("re-reads the project it shows, on entry and on switch", async () => {
+    // The store keeps a cached copy across navigation; an operation that
+    // finished while the user was elsewhere (its card unmounted, so its
+    // refresh was dropped) must not leave this page showing the old state.
+    mountComponent();
+    await flushPromises();
+    expect(mockFetchProject).toHaveBeenCalledWith("proj-1");
+
+    (projects as any).currentProject = {
+      ...(projects as any).currentProject,
+      id: "proj-2",
+    };
+    await flushPromises();
+    expect(mockFetchProject).toHaveBeenLastCalledWith("proj-2");
+
+    // A refreshed copy of the same project is not another entry.
+    mockFetchProject.mockClear();
+    (projects as any).currentProject = {
+      ...(projects as any).currentProject,
+      name: "Renamed",
+    };
+    await flushPromises();
+    expect(mockFetchProject).not.toHaveBeenCalled();
   });
 
   it("project returns from projects store", () => {

@@ -46,11 +46,10 @@ On datasets with registered transcripts, a **Transcripts** button (hexagon-of-do
 The previous table is kept: use the drop-down in the **Cell table** card to switch between table versions. The refresh button checks for new edits.
 
 ## Genes as Measurements
-Every gene in the spatial table can be used like any other measurement.
+Every gene in the spatial table can be used like any other measurement. Gene counts are **not** computed like other measurements, and they are **not listed** in the Filters panel, plots or Color by Property until you add them, because a panel can have thousands of genes. Add the ones you need first:
 
-1. Open the **Object Browser** and go to the **Measurements** tab
-2. Click **Add genes** (DNA icon; only shown when the dataset has a spatial table)
-3. Search and pick genes, then choose:
+1. Click the ruler icon (**Measure objects**) in the top bar and use the **Gene expression** card's **Add genes…** button. Alternatively, open the **Object Browser**, go to the **Measurements** tab and click **Add genes** (DNA icon). Both are only shown when the dataset has a spatial table.
+2. Search and pick genes, then choose:
    - **Add as live columns** — read straight from the table, instantly; works in filters, plots, color-by, the object list and CSV export, but is not sortable
    - **Copy into a measurement** — stores each gene's count per cell under a **Measurement name**; sortable and exportable (a server job on large datasets)
    - **Gene-set score** — one value per cell, the **mean** or **sum** of the picked genes, with a **Score name**
@@ -125,6 +124,7 @@ Anyone with the link can view, without signing in, but cannot edit, download fil
 - **Distances or areas off by a constant factor**: check the pixel size. Click the scale bar in the viewer to open **Scale settings**; a pixel size typed by hand is never overwritten automatically
 - **Region summary counts look wrong**: cells are counted by their center; make sure every region carries the region tag and no cell does; "No polygon carries that tag" means the tag is misspelled or missing
 - **"unknown feature"**: that gene isn't in this dataset's spatial table (check the spelling, the `(protein)` suffix, or whether you switched datasets)
-- **No Transcripts button or Add genes button**: this dataset has no registered transcripts or spatial table; ask your admin to run the ingest step
+- **Gene expression doesn't appear in Filters, plots or Color by Property**: genes are listed only after you add them. Use **Measure objects** → **Gene expression** → **Add genes…** (or Measurements tab → **Add genes**), then look under **Spatial table**
+- **No Transcripts button, Add genes button or Gene expression card**: this dataset has no registered transcripts or spatial table; ask your admin to run the ingest step
 
 For scripted analysis, the `nimbusimage` Python package exposes the same features through `ds.spatial` (expression table, transcripts, neighborhoods, region summaries).

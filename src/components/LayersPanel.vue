@@ -18,6 +18,7 @@
         variant="outlined"
         color="primary"
         size="x-small"
+        data-command-id="layers.add"
         @click="store.addLayer"
       >
         Add layer
@@ -74,9 +75,39 @@ import { computed } from "vue";
 import DisplayLayers from "@/components/DisplayLayers.vue";
 import store from "@/store";
 import { TLayerMode } from "@/store/model";
+import { useCommand } from "@/commands/registry";
+import { ICommand } from "@/commands/types";
 
 const layerMode = computed({
   get: () => store.layerMode,
   set: (value: TLayerMode) => store.setLayerMode(value),
 });
+
+const LAYER_MODES: { mode: TLayerMode; label: string; keywords: string[] }[] = [
+  { mode: "single", label: "Single", keywords: ["one", "solo"] },
+  { mode: "multiple", label: "Multiple", keywords: ["composite", "overlay"] },
+  { mode: "unroll", label: "Unroll", keywords: ["grid", "side by side"] },
+];
+
+useCommand(() => [
+  ...LAYER_MODES.filter(({ mode }) => mode !== store.layerMode).map(
+    ({ mode, label, keywords }): ICommand => ({
+      id: `layers.mode.${mode}`,
+      title: `Layer mode: ${label}`,
+      group: "Layers",
+      keywords: [...keywords, "channels", "display"],
+      icon: "mdi-layers-outline",
+      run: () => store.setLayerMode(mode),
+    }),
+  ),
+  {
+    id: "layers.add",
+    title: "Add layer",
+    group: "Layers",
+    keywords: ["new", "channel", "create"],
+    icon: "mdi-layers-plus",
+    enabled: () => store.isLoggedIn,
+    run: store.addLayer,
+  },
+]);
 </script>

@@ -143,7 +143,7 @@ client._gc.put(
 )
 ```
 
-`ds.sharing` calls `dataset_view/share`, which is **incremental** — it modifies one user's access at a time and can never remove the caller by accident. Use it:
+`ds.sharing` calls `dataset_view/share`, which is **incremental** — it modifies one user's access at a time instead of replacing the whole ACL. Use it:
 
 ```python
 # RIGHT
@@ -152,7 +152,7 @@ ds.sharing.share("former_member@example.com", access="remove")
 ds.sharing.set_public(True)
 ```
 
-The backend now enforces this invariant (a `model.folder.save` listener rejects `contrastDataset` saves that omit the creator at ADMIN). **Don't go around `ds.sharing`.** If you think you need to, ask the user — there's almost always a safer path.
+`ds.sharing.share()` does not stop you from removing or demoting **yourself**: if you are the dataset's only ADMIN, that locks you out (403) and only a site admin can restore access. Never target yourself. **Don't go around `ds.sharing`.** If you think you need to, ask the user — there's almost always a safer path.
 
 ## Generally: avoid dropping to `client._gc` (raw girder-client)
 

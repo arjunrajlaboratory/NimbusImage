@@ -118,6 +118,7 @@
 import { computed, ref, watch } from "vue";
 import Papa from "papaparse";
 import store from "@/store";
+import propertyStore from "@/store/properties";
 import { ISpatialNeighborhood } from "@/store/model";
 import { jobStates } from "@/store/jobConstants";
 import { convertLength } from "@/utils/conversion";
@@ -234,12 +235,18 @@ async function run() {
   running.value = true;
   error.value = null;
   try {
-    const { jobId } = await store.spatialAPI.computeNeighborhood(
+    const { jobId, propertyId } = await store.spatialAPI.computeNeighborhood(
       datasetId,
       radiusPixels.value,
       excludeTags(),
       "Neighborhood",
     );
+    // The server registered the property in the configuration when the
+    // request was made: adopt it now, not when the job finishes, or a
+    // property created or removed meanwhile would save a list without it.
+    if (propertyId && polling.isLive(request)) {
+      void propertyStore.adoptServerRegisteredProperty(propertyId);
+    }
     poll(jobId, request);
   } catch (caught) {
     if (!polling.isCurrent(request)) return;

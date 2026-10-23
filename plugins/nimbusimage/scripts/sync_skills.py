@@ -29,6 +29,7 @@ SKILLS = {
     "workers": "nimbusimage-workers",
     "analyze": "nimbusimage-analyze",
     "xenium-ingest": "nimbusimage-xenium-ingest",
+    "sg-ingest": "nimbusimage-sg-ingest",
 }
 
 

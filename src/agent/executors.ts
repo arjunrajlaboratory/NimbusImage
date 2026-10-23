@@ -1,4 +1,9 @@
 import main from "@/store";
+import {
+  goToLocation,
+  selectTool,
+  setVisibleLayers,
+} from "@/actions/operations";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
@@ -1028,10 +1033,6 @@ async function rectangularGate(
   };
 }
 
-function clamp(value: number, max: number) {
-  return Math.max(0, Math.min(value, Math.max(0, max - 1)));
-}
-
 // --- Background jobs -------------------------------------------------------
 //
 // run_worker and compute_property start jobs that take minutes. The model
@@ -1744,19 +1745,8 @@ const registry: { [name: string]: IAgentToolEntry } = {
 
   set_location: {
     execute: async (input: { xy?: number; z?: number; time?: number }) => {
-      const dataset = requireDataset();
-      if (input.xy != null) {
-        await main.setXY(clamp(input.xy, dataset.xy.length));
-      }
-      if (input.z != null) {
-        await main.setZ(clamp(input.z, dataset.z.length));
-      }
-      if (input.time != null) {
-        await main.setTime(clamp(input.time, dataset.time.length));
-      }
-      return {
-        result: { location: { xy: main.xy, z: main.z, time: main.time } },
-      };
+      requireDataset();
+      return { result: { location: await goToLocation(input) } };
     },
   },
 
@@ -2072,16 +2062,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
             "set_layer_mode before making several layers visible",
         );
       }
-      for (const layer of main.layers) {
-        const visible = visibleIds.has(layer.id);
-        if (layer.visible !== visible) {
-          await main.changeLayer({
-            layerId: layer.id,
-            delta: { visible },
-            sync: false,
-          });
-        }
-      }
+      await setVisibleLayers([...visibleIds]);
       await persistOrThrow("layer visibility", () =>
         main.syncConfiguration({ key: "layers", throwOnError: true }),
       );
@@ -2373,7 +2354,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
           `No tool with id "${input.toolId}"; use list_tools to see the toolset`,
         );
       }
-      await main.setSelectedToolId(input.toolId);
+      await selectTool(input.toolId);
       return {
         result: {
           selectedToolId: main.selectedTool?.configuration.id ?? null,

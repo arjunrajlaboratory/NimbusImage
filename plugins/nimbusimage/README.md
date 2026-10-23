@@ -46,6 +46,7 @@ When working from a clone of this repository, the skills are also available dire
 | Workers | `/nimbus-skills:workers` | `$nimbusimage:workers` | Docker worker discovery, execution, job tracking |
 | Analyze | `/nimbus-skills:analyze` | `$nimbusimage:analyze` | Properties, export, connections, sharing |
 | Xenium ingest | `/nimbus-skills:xenium-ingest` | `$nimbusimage:xenium-ingest` | Load a 10x Xenium bundle: images, cell polygons, gene panel, clustering, UMAP, cell-type tags, and the full matrix as a spatial table |
+| Spatial Genomics ingest | `/nimbus-skills:sg-ingest` | `$nimbusimage:sg-ingest` | Load a Spatial Genomics (GenePS) export, one dataset per ROI: images, cell polygons, Leiden clusters, UMAP, the full matrix as a spatial table, and the transcript list as an overlay |
 
 ## Progressive disclosure
 

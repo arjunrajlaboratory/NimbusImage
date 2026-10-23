@@ -15,24 +15,24 @@
       </v-btn>
       <!-- Only datasets with a registered spatial table (upenncontrast_spatial
            plugin) can pull genes from it. -->
-      <materialize-genes-dialog v-if="spatialStore.hasTable">
-        <template v-slot:activator="{ props: activatorProps }">
-          <v-tooltip :text="tableTooltip">
-            <template v-slot:activator="{ props: tooltipProps }">
-              <v-btn
-                v-bind="{ ...activatorProps, ...tooltipProps }"
-                variant="outlined"
-                color="primary"
-                size="small"
-                class="ml-2"
-                prepend-icon="mdi-dna"
-              >
-                Add genes
-              </v-btn>
-            </template>
-          </v-tooltip>
+      <!-- Opens the app-level dialog (App.vue): this tab's content unmounts
+           when another tab is shown, which would stop a running job's
+           polling. -->
+      <v-tooltip v-if="spatialStore.hasTable" :text="tableTooltip">
+        <template v-slot:activator="{ props: tooltipProps }">
+          <v-btn
+            v-bind="tooltipProps"
+            variant="outlined"
+            color="primary"
+            size="small"
+            class="ml-2"
+            prepend-icon="mdi-dna"
+            @click="openGenesDialog"
+          >
+            Add genes
+          </v-btn>
         </template>
-      </materialize-genes-dialog>
+      </v-tooltip>
       <v-spacer />
       <compute-all-status v-if="properties.length > 0" />
     </div>
@@ -186,7 +186,7 @@ import store from "@/store";
 import propertyStore from "@/store/properties";
 import spatialStore from "@/store/spatial";
 import ComputeAllStatus from "@/components/AnnotationBrowser/AnnotationProperties/ComputeAllStatus.vue";
-import MaterializeGenesDialog from "@/components/AnnotationBrowser/MaterializeGenesDialog.vue";
+import { openGenesDialog } from "@/utils/genesDialog";
 import { IAnnotationProperty, MessageType } from "@/store/model";
 import {
   usePropertyEntries,

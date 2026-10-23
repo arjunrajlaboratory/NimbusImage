@@ -62,6 +62,11 @@ MAX_HISTOGRAM_BINS = 512
 # clamped down rather than served.
 MAX_LIST_LIMIT = 10_000
 
+# Ids one POST /resource/batch request may resolve, across all kinds. An abuse
+# guard: the frontend splits larger lookups into requests of
+# BATCH_RESOURCES_CHUNK_SIZE (src/store/constants.ts), so keep that below this.
+MAX_BATCH_RESOURCE_IDS = 10_000
+
 # Property paths one selection-summary request may aggregate. Each path adds
 # five accumulators to a single $group over the dataset's property values, so
 # the cap bounds the pipeline's per-document work; comfortably above the

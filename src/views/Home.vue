@@ -528,6 +528,7 @@ import { formatDateNumber, formatDate } from "@/utils/date";
 import { logError } from "@/utils/log";
 import Persister from "@/store/Persister";
 import { useTour } from "@/utils/useTour";
+import { userDisplayInfo, type IUserDisplayInfo } from "@/utils/userDisplay";
 
 // Suppress unused-variable warnings for auto-registered components
 void GirderLocationChooser;
@@ -589,10 +590,6 @@ const nameConflicts = ref<number[]>([]);
 const validatingNames = ref(false);
 let validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-interface IUserDisplayInfo {
-  full: string; // "Name (email)" — used in tooltips and project list
-  short: string; // "Name" only — used in dense recents row
-}
 const userDisplayNames = ref<Record<string, IUserDisplayInfo>>({});
 
 const selectedZenodoDataset = ref<any>(null);
@@ -827,18 +824,13 @@ function getNameError(idx: number): string {
   return "Dataset already exists in this location";
 }
 
-async function getUsernameFromId(
+async function fetchUserDisplayInfo(
   creatorId: string,
-): Promise<{ fullname: string; username: string }> {
+): Promise<IUserDisplayInfo> {
   const user = await girderResources.getUser(creatorId);
-  if (!user) {
-    return { fullname: "Unknown User", username: "unknown" };
-  }
-  const fullname = `${user.firstName} ${user.lastName}`.trim();
-  return {
-    fullname: fullname || user.email, // fallback to email if no name set
-    username: user.email,
-  };
+  return user
+    ? userDisplayInfo(user)
+    : { full: "Unknown User (unknown)", short: "Unknown User" };
 }
 
 function ensureUserDisplayInfo(creatorId: string) {
@@ -847,13 +839,10 @@ function ensureUserDisplayInfo(creatorId: string) {
       ...userDisplayNames.value,
       [creatorId]: { full: "Loading...", short: "Loading..." },
     };
-    getUsernameFromId(creatorId).then((user) => {
+    fetchUserDisplayInfo(creatorId).then((info) => {
       userDisplayNames.value = {
         ...userDisplayNames.value,
-        [creatorId]: {
-          full: `${user.fullname} (${user.username})`,
-          short: user.fullname,
-        },
+        [creatorId]: info,
       };
     });
   }
@@ -887,12 +876,7 @@ async function fetchUsersForDatasets() {
     for (const userId of userIds) {
       const user = girderResources.watchUser(userId);
       if (user) {
-        const fullname =
-          `${user.firstName} ${user.lastName}`.trim() || user.email;
-        updates[userId] = {
-          full: `${fullname} (${user.email})`,
-          short: fullname,
-        };
+        updates[userId] = userDisplayInfo(user);
       }
     }
     if (Object.keys(updates).length > 0) {

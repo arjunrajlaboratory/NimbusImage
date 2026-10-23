@@ -64,7 +64,7 @@ class Project:
     def add_dataset(self, dataset_id: str) -> None:
         self._gc.post(
             f"project/{self.id}/dataset",
-            json={"datasetId": dataset_id},
+            parameters={"datasetId": dataset_id},
         )
 
     def remove_dataset(self, dataset_id: str) -> None:
@@ -73,7 +73,7 @@ class Project:
     def add_configuration(self, config_id: str) -> None:
         self._gc.post(
             f"project/{self.id}/collection",
-            json={"collectionId": config_id},
+            parameters={"collectionId": config_id},
         )
 
     def remove_configuration(self, config_id: str) -> None:
@@ -94,7 +94,7 @@ class Project:
     def set_status(self, status: str) -> None:
         self._gc.put(
             f"project/{self.id}/status",
-            json={"status": status},
+            parameters={"status": status},
         )
 
     def update_metadata(self, metadata: dict) -> None:
@@ -105,18 +105,39 @@ class Project:
     def share(
         self, user_email_or_name: str, access: str = "read"
     ) -> None:
+        """Share this project, and every resource in it, with a user.
+
+        Requires ADMIN (owner) access on the project.
+
+        Args:
+            user_email_or_name: User's email or username.
+            access: 'read', 'write', 'admin', or 'remove'.
+        """
+        access_type = _resolve_access(access)
         self._gc.post(
             f"project/{self.id}/share",
-            json={
+            parameters={
                 "userMailOrUsername": user_email_or_name,
-                "accessType": _resolve_access(access),
+                "accessType": access_type,
             },
         )
 
-    def set_public(self, public: bool = True) -> None:
-        self._gc.post(
+    def set_public(self, public: bool = True) -> dict:
+        """Set whether this project and all its resources are public.
+
+        Requires ADMIN (owner) access on the project.
+
+        Resources in the project that the caller doesn't own are left
+        unchanged.
+
+        Returns:
+            The server's summary: ``projectId``, ``public`` and
+            ``skipped`` (how many resources were left unchanged because
+            the caller doesn't own them).
+        """
+        return self._gc.post(
             f"project/{self.id}/set_public",
-            json={"public": public},
+            parameters={"public": "true" if public else "false"},
         )
 
     def get_access(self) -> dict:

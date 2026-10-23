@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { nextTick } from "vue";
+import { h, nextTick } from "vue";
 import { mount } from "@vue/test-utils";
 
 vi.mock("@/store", () => ({
@@ -15,6 +15,7 @@ vi.mock("@/store/annotation", () => ({
   },
 }));
 
+import { VDefaultsProvider } from "vuetify/components";
 import TagPicker from "./TagPicker.vue";
 
 function mountComponent(props = {}) {
@@ -57,5 +58,28 @@ describe("TagPicker", () => {
     // No throw means onTagChange fired correctly
     // The main check is that the event is wired — if @change is used,
     // the update:modelValue emission won't trigger onTagChange
+  });
+  // A linked pipeline step locks its sections with a global disabled default;
+  // an explicit :disabled="false" here would override it and leave the tags
+  // looking editable.
+  it("inherits a disabled default from a v-defaults-provider", () => {
+    const wrapper = mount({
+      render: () =>
+        h(VDefaultsProvider, { defaults: { global: { disabled: true } } }, () =>
+          h(TagPicker, { modelValue: ["tag1"] }),
+        ),
+    });
+    expect(wrapper.find(".v-combobox").classes()).toContain(
+      "v-input--disabled",
+    );
+  });
+
+  it("is enabled by default and disabled by its prop", () => {
+    expect(mountComponent().find(".v-combobox").classes()).not.toContain(
+      "v-input--disabled",
+    );
+    expect(
+      mountComponent({ disabled: true }).find(".v-combobox").classes(),
+    ).toContain("v-input--disabled");
   });
 });

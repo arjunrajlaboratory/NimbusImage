@@ -1,11 +1,13 @@
 <template>
   <div class="analyze-panel">
     <div class="property-container">
-      <property-creation
-        class="property-creation"
-        :applyToAllDatasets="applyToAllDatasets"
-        @compute-property-batch="$emit('compute-property-batch', $event)"
-      />
+      <div class="property-creation-column">
+        <property-creation
+          :applyToAllDatasets="applyToAllDatasets"
+          @compute-property-batch="$emit('compute-property-batch', $event)"
+        />
+        <gene-expression-card :visible="visible" class="mt-4" />
+      </div>
       <v-card class="property-list-container">
         <div class="property-list-scroll">
           <property-list
@@ -24,13 +26,18 @@
 <script setup lang="ts">
 import PropertyList from "@/components/AnnotationBrowser/AnnotationProperties/PropertyList.vue";
 import PropertyCreation from "@/components/AnnotationBrowser/AnnotationProperties/PropertyCreation.vue";
+import GeneExpressionCard from "@/components/AnnotationBrowser/AnnotationProperties/GeneExpressionCard.vue";
 
 withDefaults(
   defineProps<{
     applyToAllDatasets?: boolean;
+    // False while this panel's palette is closed (its content stays
+    // mounted): the gene card defers its spatial-table lookup until shown.
+    visible?: boolean;
   }>(),
   {
     applyToAllDatasets: false,
+    visible: true,
   },
 );
 </script>
@@ -48,8 +55,9 @@ withDefaults(
   min-height: 500px; /* Ensures consistent height */
 }
 
-.property-creation {
+.property-creation-column {
   flex: 1 1 0; /* Equal width with property list */
+  min-width: 0;
 }
 
 .property-list-container {

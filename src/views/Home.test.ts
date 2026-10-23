@@ -184,6 +184,7 @@ describe("Home", () => {
     // Reset girderResources mocks
     vi.mocked(girderResources.watchFolder).mockReturnValue(null as any);
     vi.mocked(girderResources.watchCollection).mockReturnValue(null as any);
+    vi.mocked(girderResources.watchUser).mockReturnValue(null as any);
     (girderResources as any).resourcesLocks = {};
   });
 
@@ -769,6 +770,82 @@ describe("Home", () => {
       expect(vm.userDisplayNames["user1"]).toEqual({
         full: "John Doe (jdoe@test.com)",
         short: "John Doe",
+      });
+    });
+
+    // Girder exposes another user's email only to site admins, so the
+    // display must fall back to the login rather than show "(undefined)".
+    it("falls back to login when the user has no email", async () => {
+      mockGetUser.mockResolvedValue({
+        firstName: "John",
+        lastName: "Doe",
+        login: "jdoe",
+      });
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+
+      vm.getUserDisplayName("user1");
+      await new Promise((r) => setTimeout(r, 0));
+      await nextTick();
+
+      expect(vm.userDisplayNames["user1"]).toEqual({
+        full: "John Doe (jdoe)",
+        short: "John Doe",
+      });
+    });
+
+    it("uses the login as the name when there is no name or email", async () => {
+      mockGetUser.mockResolvedValue({
+        firstName: "",
+        lastName: "",
+        login: "jdoe",
+      });
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+
+      vm.getUserDisplayName("user1");
+      await new Promise((r) => setTimeout(r, 0));
+      await nextTick();
+
+      expect(vm.userDisplayNames["user1"]).toEqual({
+        full: "jdoe (jdoe)",
+        short: "jdoe",
+      });
+    });
+  });
+
+  describe("fetchUsersForDatasets", () => {
+    it("labels batch-fetched creators by login when email is hidden", async () => {
+      (store as any).recentDatasetViews = [
+        { id: "dv1", datasetId: "d1", configurationId: "c1" },
+      ];
+      vi.mocked(girderResources.watchFolder).mockReturnValue({
+        _id: "d1",
+        name: "Dataset",
+        creatorId: "u1",
+      } as any);
+      vi.mocked(girderResources.watchCollection).mockReturnValue({
+        _id: "c1",
+        name: "Config",
+      } as any);
+      vi.mocked(girderResources.watchUser).mockReturnValue({
+        _id: "u1",
+        firstName: "Ann",
+        lastName: "Lee",
+        login: "alee",
+      } as any);
+      mockBatchFetchResources.mockResolvedValue(undefined);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+
+      await vm.fetchUsersForDatasets();
+
+      expect(mockBatchFetchResources).toHaveBeenCalledWith({
+        userIds: ["u1"],
+      });
+      expect(vm.userDisplayNames["u1"]).toEqual({
+        full: "Ann Lee (alee)",
+        short: "Ann Lee",
       });
     });
   });

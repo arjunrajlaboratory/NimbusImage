@@ -146,6 +146,7 @@ import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
 
 import { IDatasetConfiguration, IDatasetView } from "@/store/model";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
+import { userDisplayInfo } from "@/utils/userDisplay";
 
 // Suppress unused import warnings for template-only components
 void AlertDialog;
@@ -347,7 +348,7 @@ async function refreshItems(force = false) {
       .getUser(folder.creatorId)
       .then((user) => {
         if (user) {
-          ownerDisplayName.value = `${user.firstName} ${user.lastName} (${user.email})`;
+          ownerDisplayName.value = userDisplayInfo(user).full;
         }
       })
       .catch(() => {});

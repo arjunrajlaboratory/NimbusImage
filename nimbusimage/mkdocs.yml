@@ -62,3 +62,4 @@ nav:
     - Filters: api/filters.md
     - URLs: api/urls.md
     - Xenium Ingest: api/xenium.md
+    - Spatial Genomics Ingest: api/sg.md

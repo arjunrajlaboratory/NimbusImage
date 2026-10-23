@@ -1,24 +1,34 @@
 import { describe, it, expect, vi } from "vitest";
+import { nextTick } from "vue";
 import { shallowMount } from "@vue/test-utils";
 
-vi.mock("@/store/filters", () => ({
-  default: {
-    tagFilter: {
-      id: "tagFilter",
-      exclusive: false,
-      enabled: false,
-      tags: [],
-    },
-    onlyCurrentFrame: false,
-    filterPaths: [["prop", "area"]],
-    propertyFilters: [],
-    setTagFilter: vi.fn(),
-    setOnlyCurrentFrame: vi.fn(),
-  },
+// Reactive, so the component's filterPaths watcher can be driven.
+vi.mock("@/store/filters", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      tagFilter: {
+        id: "tagFilter",
+        exclusive: false,
+        enabled: false,
+        tags: [],
+      },
+      onlyCurrentFrame: false,
+      filterPaths: [["prop", "area"]],
+      propertyFilters: [],
+      setTagFilter: vi.fn(),
+      setOnlyCurrentFrame: vi.fn(),
+    }),
+  };
+});
+
+vi.mock("vue-router", () => ({
+  useRoute: () => ({ name: "datasetview" }),
 }));
 
 vi.mock("@/store", () => ({
   default: {
+    dataset: { id: "ds1" },
     showAnnotationsFromHiddenLayers: false,
     setShowAnnotationsFromHiddenLayers: vi.fn(),
   },
@@ -87,5 +97,38 @@ describe("AnnotationFilters", () => {
   it("propertyPaths reads from filterStore.filterPaths", () => {
     const wrapper = mountComponent();
     expect(wrapper.vm.propertyPaths).toEqual([["prop", "area"]]);
+  });
+
+  it("expands Property values when a filter is added from elsewhere", async () => {
+    // The palette's "Add filter: …" or the agent adds a path while the
+    // section is collapsed; the new filter must not stay out of sight.
+    (filterStore as any).filterPaths = [];
+    const wrapper = mountComponent();
+    expect(wrapper.vm.propertyValuesOpen).toBe(false);
+    (filterStore as any).filterPaths = [["prop", "area"]];
+    await nextTick();
+    expect(wrapper.vm.propertyValuesOpen).toBe(true);
+    // Closing it again stays the user's choice: a removal doesn't reopen.
+    wrapper.vm.propertyValuesOpen = false;
+    (filterStore as any).filterPaths = [];
+    await nextTick();
+    expect(wrapper.vm.propertyValuesOpen).toBe(false);
+    (filterStore as any).filterPaths = [["prop", "area"]];
+  });
+
+  it("keeps 'filter current frame' off the command that turns it off", async () => {
+    const { rankCommands } = await import("@/commands/scorer");
+    const { enabledCommands } = await import("@/commands/registry");
+    const wrapper = mountComponent();
+    const found = (query: string) =>
+      rankCommands(enabledCommands.value, query).map((command) => command.id);
+    (filterStore as any).onlyCurrentFrame = true;
+    expect(found("filter current frame")).not.toContain(
+      "filters.onlyCurrentFrame",
+    );
+    expect(found("filter frame")).not.toContain("filters.onlyCurrentFrame");
+    (filterStore as any).onlyCurrentFrame = false;
+    expect(found("filter current frame")).toContain("filters.onlyCurrentFrame");
+    wrapper.unmount();
   });
 });

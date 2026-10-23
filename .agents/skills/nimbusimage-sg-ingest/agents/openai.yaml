@@ -1,0 +1,4 @@
+interface:
+  display_name: "NimbusImage Spatial Genomics Ingest"
+  short_description: "Load a Spatial Genomics (GenePS) export into NimbusImage"
+  default_prompt: "Use the NimbusImage sg-ingest skill to load a Spatial Genomics export's images, cell polygons, Leiden clusters, UMAP, gene matrix, and transcripts into NimbusImage datasets, one per ROI."

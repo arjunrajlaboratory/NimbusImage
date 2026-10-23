@@ -34,15 +34,33 @@ import { computed, ref, watch } from "vue";
 import { useTheme } from "vuetify";
 import Persister from "@/store/Persister";
 import VisibilitySettings from "@/components/VisibilitySettings.vue";
+import { useCommand } from "@/commands/registry";
 
 const theme = useTheme();
 
 const darkMode = computed({
   get: () => theme.global.name.value === "dark",
   set: (value: boolean) => {
-    theme.global.name.value = value ? "dark" : "light";
+    // theme.change(), not assigning theme.global.name: Vuetify 4 deprecates
+    // the assignment (a [Vuetify UPGRADE] warning on every toggle).
+    theme.change(value ? "dark" : "light");
   },
 });
+
+// The theme applies on every route, so this command needs no viewer gate.
+useCommand(() => ({
+  id: "settings.darkMode",
+  title: darkMode.value ? "Switch to light mode" : "Switch to dark mode",
+  group: "Actions",
+  // Only the theme it switches to.
+  keywords: darkMode.value
+    ? ["light", "theme", "appearance"]
+    : ["dark", "theme", "appearance", "night"],
+  icon: "mdi-theme-light-dark",
+  run: () => {
+    darkMode.value = !darkMode.value;
+  },
+}));
 
 // Disclosure open state, persisted so a power user who opens it keeps it open.
 const PERSIST_KEY = "uiSettingsAdvancedOpen";

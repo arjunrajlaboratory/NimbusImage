@@ -293,10 +293,12 @@ ds.history.redo()
 ### SharingAccessor — `ds.sharing`
 
 ```python
-ds.sharing.share(user_email_or_name, access='read')    # 'read', 'write', 'remove'
-ds.sharing.set_public(True)
+ds.sharing.share(user_email_or_name, access='read')    # 'read', 'write', 'admin', 'remove'
+ds.sharing.set_public(True)                             # → dict (counts updated)
 ds.sharing.get_access()                                 # → dict
 ```
+
+`share()` covers the dataset folder and each of its dataset views the caller can write, with that view's collection, as the web Share dialog does: `dataset_view/share` refuses a whole request (403) that names a view or collection the caller can't write, so the others are left unchanged. It raises `ValueError` without posting if the caller lacks WRITE on the dataset or can write none of its views. It sends any target as-is, the caller included: nothing on the server yet stops a dataset's only ADMIN from removing themselves (PR #1165 adds that guard), so never target yourself. Neither `share()` looks up the caller, so data-only API keys can share.
 
 ### URLs — `ds` methods
 
@@ -669,5 +671,12 @@ Rendering, query, and listing invariants established on PR #1390 across four rev
 **Listing shape and access**
 - Batched folders keep only what `GET folder/{id}` exposes (no ACL) — *"test_list_datasets_keeps_only_the_public_folder_fields"*; with the caller's `_accessLevel` computed as Girder does — *"test_access_level_follows_girder_rules"*; a server-provided level wins — *"test_server_provided_level_wins"*.
 - Unreadable folders are left out — *"test_list_datasets_skips_unreadable_folders"*; anonymous clients use per-folder GETs — *"test_anonymous_list_datasets_fetches_public_folders"*.
+
+**Sharing and project requests** (every one of these 400'd on the live server while mock tests that only asserted "post was called" passed; unit tests must pin the exact request)
+- Dataset `share()` sends `datasetViewIds`, the user, and the access code — *"test_share_sends_schema_body"*; a dataset without views is an error before any POST — *"test_share_without_views_raises_before_posting"*.
+- Dataset `share()` sends only views the caller can write whose collection they can also write, as the Share dialog does (the server 403s a whole request naming anything else) — *"test_share_skips_views_the_caller_cannot_write"*, *"test_share_skips_views_whose_configuration_is_read_only"*, *"test_share_skips_views_whose_configuration_is_unreadable"*; with none, or without WRITE on the dataset, it raises before posting — *"test_share_with_nothing_writable_raises_before_posting"*, *"test_share_without_write_on_the_dataset_raises_before_posting"*; live, a WRITE collaborator shares a dataset with a view and collection they can only read (the old client got a 403) — *"test_collaborator_shares_through_writable_views_only"*.
+- Self-targeting is the server's call, not the client's: `share()` makes no `user/me` lookup and posts any target unchanged — *"test_share_leaves_self_targeting_to_the_server"*; so a data-only API key (whose `user/me` is null) can share — live *"test_share_with_data_only_api_key"*; a non-admin creator removing themselves is not refused by the server until PR #1165 — live *"test_creator_cannot_remove_themselves"* (strict xfail until then).
+- Project `share`/`set_public`/`add_dataset`/`add_configuration`/`set_status` send query params, not JSON bodies — *"test_share_sends_query_params"*, *"test_set_public_sends_query_params"*, *"test_add_dataset"*.
+- Live: a second non-admin user can read only after sharing and loses access on remove — *"test_share_read_then_remove"*; project mutators land — *"test_project_mutators_round_trip"*.
 
 Process rules this feature proved: check composites live against an independent server rendering of the app's own style (the oracle in the PR description), not only against mocks; and verify on real datasets that actually have the property under test (uncalibrated files, view overrides, z-stacks).

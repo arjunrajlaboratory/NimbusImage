@@ -20,6 +20,12 @@ For loading 10x Xenium bundles (`nimbusimage.xenium`; `xenium-umap` adds the UMA
 pip install 'nimbusimage[xenium]'
 ```
 
+For loading Spatial Genomics (GenePS) exports (`nimbusimage.sg`):
+
+```bash
+pip install 'nimbusimage[sg]'
+```
+
 ## Authentication
 
 The recommended setup uses a **Girder API key**, which is persistent and doesn't expire.
@@ -277,3 +283,35 @@ dataset, of nuclei or of another bundle before writing anything.
 
 The `xenium-ingest` agent skill is the full runbook (coordinate frames, H&E alignment,
 orientation checks, and the traps hit on 709K-cell datasets).
+
+## Spatial Genomics ingest (`nimbusimage.sg`)
+
+Loads one ROI of a Spatial Genomics (GenePS / sganalysis) export as a dataset: the DAPI and
+GFP images, cell polygons, Leiden clusters (tags and a `Clustering / leiden` property),
+UMAP, cell area, the full cell x gene matrix as the spatial table, and the transcript list
+converted into the transcript overlay's store. Each step is a function and a
+`nimbusimage-sg` subcommand; `check` validates the export locally first (cell centroids on
+their own mask label, and a molecule recount against `CellxGene.csv`).
+
+```python
+import nimbusimage as ni
+from nimbusimage import sg
+
+roi = sg.SGRoi("extracted/", "roi_3")
+print(sg.check_frame(roi), sg.recount(roi))
+ds = sg.upload_images(ni.connect(), roi, "Pav_PTR roi_3")
+cells = sg.upload_polygons(ds, roi)               # an SGCellMap: label -> id, dataset, ROI
+cells.save("cells.npz")                           # later: sg.SGCellMap.read("cells.npz")
+sg.upload_cell_data(ds, roi, cells)
+sg.upload_spatial_table(ds, sg.build_spatial_table(roi, cells, "spatial.zarr.zip"))
+sg.register_transcripts(ds, cells, sg.build_transcript_store(roi, "transcripts.zarr.zip"))
+```
+
+```bash
+nimbusimage-sg inventory --export-dir extracted --count-spots
+nimbusimage-sg check --export-dir extracted --roi roi_3 --recount
+nimbusimage-sg ingest --export-dir extracted --roi roi_3 --work-dir state/
+```
+
+The `sg-ingest` agent skill is the runbook (export anatomy, the transcript conversion,
+the verification checklist, and the traps).

@@ -389,18 +389,23 @@
         <data-io-menu class="ml-1" />
       </template>
       <div class="mx-4 d-flex align-center">
+        <!-- A compact pill (magnifier + hotkey hint) so the palette is
+             discoverable without crowding the viewer's app bar; the palette
+             itself opens centered, so the trigger needn't look like a field.
+             Below the `lg` breakpoint it collapses to the icon. -->
         <v-tooltip :text="`Search commands (${commandPaletteHotkey})`">
           <template v-slot:activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
               :data-tour="TOUR_ANCHORS.commandPaletteButton"
+              class="palette-search"
               variant="text"
-              icon
               size="small"
               aria-label="Search commands"
               @click="commandPaletteOpen = true"
             >
               <v-icon>mdi-magnify</v-icon>
+              <kbd class="palette-search-kbd">{{ commandPaletteHotkey }}</kbd>
             </v-btn>
           </template>
         </v-tooltip>
@@ -522,7 +527,7 @@
       :width="RIGHT_PALETTE_WIDTHS.analyze"
       :mobile="false"
     >
-      <analyze-annotations />
+      <analyze-annotations :visible="analyzePanel" />
     </v-navigation-drawer>
 
     <floating-palette
@@ -633,6 +638,13 @@
     </template>
 
     <analyze-dialog v-model="analyzeDialogOpen" @show-in-list="onShowInList" />
+    <!-- The app's one genes dialog, opened by every "Add genes" button
+         (utils/genesDialog.ts); mounted here so a job keeps polling after
+         the dialog or tab that opened it closes. -->
+    <materialize-genes-dialog
+      v-model:open="genesDialogOpen"
+      :show-activator="false"
+    />
     <pipeline-dialog v-model="pipelineDialogOpen" />
     <color-by-property-dialog v-model:show="colorByPropertyDialogOpen" />
   </v-app>
@@ -663,6 +675,8 @@ import AnalysisPanel from "@/components/AnalysisPanel.vue";
 import TranscriptsPanel from "@/components/TranscriptsPanel.vue";
 import transcriptsStore from "@/store/transcripts";
 import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
+import MaterializeGenesDialog from "@/components/AnnotationBrowser/MaterializeGenesDialog.vue";
+import { genesDialogOpen } from "@/utils/genesDialog";
 import PipelineDialog from "@/components/PipelineDialog.vue";
 import ColorByPropertyDialog from "@/components/AnnotationBrowser/ColorByPropertyDialog.vue";
 import UndoRedoButtons from "@/components/UndoRedoButtons.vue";
@@ -712,6 +726,7 @@ import {
 } from "@/utils/panelRegistry";
 import { useCommand, useCommandProvider } from "@/commands/registry";
 import { panelCommands, tourCommands } from "@/commands/providers";
+import { aiPromptRequest } from "@/commands/requests";
 import { isTourAvailableOnRoute, useViewerContext } from "@/commands/context";
 import { boundHotkey, formatHotkey } from "@/commands/hotkeys";
 
@@ -875,6 +890,20 @@ watch(
   (userId) => aiPanelStore.handleAuthenticatedUserChange(userId),
   { immediate: true },
 );
+
+// "Ask Nimbus AI: …" from the command palette: open the panel; AiPanel.vue
+// puts the text in its input and clears the request.
+watch(aiPromptRequest, (prompt) => {
+  if (prompt == null) {
+    return;
+  }
+  if (canUseAiPanel.value) {
+    aiPanelOpen.value = true;
+  } else {
+    // Drop it rather than leave it for the next time the panel mounts.
+    aiPromptRequest.value = null;
+  }
+});
 
 // Close the panel if the gate closes under it (e.g. the user logs out).
 watch(canUseAiPanel, (usable) => {
@@ -1386,7 +1415,8 @@ useCommand(() => [
     id: "view.toggle3d",
     title: is3DView.value ? "Switch to 2D view" : "Switch to 3D view",
     group: "Actions",
-    keywords: ["volume", "3d", "2d", "render"],
+    // Only the mode it switches to: "3d" must not find "Switch to 2D view".
+    keywords: is3DView.value ? ["2d", "flat"] : ["volume", "3d", "render"],
     icon: "mdi-cube-scan",
     enabled: inViewer,
     run: toggle3DView,
@@ -1415,6 +1445,7 @@ useCommand(() => [
     group: "Actions",
     description: "Configure and run property computations",
     keywords: ["compute", "property", "area", "intensity"],
+    aliases: ["measure", "measurements", "compute properties"],
     icon: "mdi-ruler-square",
     enabled: inViewer,
     run: () => {
@@ -1644,6 +1675,56 @@ $palette-cluster-tone: #0f1217;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
+}
+
+/* Compact pill that opens the command palette: the magnifier and the hotkey
+   hint. Below `lg` only the icon shows (a 36px circle), since the viewer's
+   app bar is already full at those widths. */
+.palette-search.v-btn {
+  min-width: 0;
+  padding: 0 6px 0 8px;
+  border-radius: 100px;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  background: rgba(var(--v-theme-on-surface), 0.06);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+
+  &:hover {
+    background: rgba(var(--v-theme-on-surface), 0.1);
+    color: rgba(var(--v-theme-on-surface), 0.8);
+  }
+}
+
+.palette-search.v-btn :deep(.v-btn__content) {
+  gap: 6px;
+}
+
+.palette-search-kbd {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.2);
+  background: rgba(var(--v-theme-on-surface), 0.05);
+  color: rgba(var(--v-theme-on-surface), 0.7);
+  font-family: inherit;
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 1279px) {
+  .palette-search.v-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .palette-search-kbd {
+    display: none;
+  }
 }
 
 .palette-ibtn {

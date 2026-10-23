@@ -812,6 +812,8 @@ export interface IProjectZenodo {
   progress?: IZenodoProgress | null;
   error?: string | null;
   lastPublished?: string;
+  // The upload job, once an upload has been started.
+  jobId?: string | null;
 }
 
 export interface IProject {
@@ -2427,6 +2429,14 @@ export interface IAnnotationPipelineStep extends IPipelineStepBase {
   };
   // Mirrors tool.values.jobDateTag.
   jobDateTag?: boolean;
+  // Set when the step was added from an existing worker tool. The step is then
+  // LINKED: the runner uses the tool's current image, parameters, annotation
+  // setup, connectTo and jobDateTag, and the pipeline editor shows them
+  // read-only (the tool is edited in the Tools panel). The fields above are a
+  // saved copy, refreshed from the tool on every save of the pipeline, and
+  // used as a fallback when the tool no longer exists. Cleared by "Unlink".
+  // See "Linked steps" in WORKER_PIPELINES.md.
+  sourceToolId?: string;
 }
 
 export interface IPropertyPipelineStep extends IPipelineStepBase {
@@ -2441,8 +2451,17 @@ export interface IPropertyPipelineStep extends IPipelineStepBase {
   autoWired?: boolean;
   // Set lazily by the runner on first successful run: the id of the persisted
   // IAnnotationProperty this step created. Reused on later runs. Cleared if the
-  // referenced property no longer exists (runner re-creates).
+  // referenced property no longer exists (runner re-creates). On a step linked
+  // to an existing property (sourcePropertyId), set only by the fallback run
+  // after that property was deleted; never set to the linked property's id.
   materializedPropertyId?: string;
+  // Set when the step was added from an existing property. The step is then
+  // LINKED: the runner computes that property itself (its image, shape, tags
+  // and parameters) instead of materializing one of its own. Properties are
+  // immutable, so the step's fields above are a read-only saved copy, used as a
+  // fallback when the property no longer exists. Cleared by "Unlink".
+  // See "Linked steps" in WORKER_PIPELINES.md.
+  sourcePropertyId?: string;
 }
 
 export type TPipelineStep = IAnnotationPipelineStep | IPropertyPipelineStep;

@@ -1,3 +1,4 @@
+import { useRoute } from "vue-router";
 import store from "@/store";
 import { ITourMetadata } from "@/store/model";
 
@@ -16,6 +17,17 @@ export function isViewerRoute(routeName: unknown): boolean {
 
 export function useViewerContext(routeName: () => unknown): IProviderContext {
   return { inViewer: () => isViewerRoute(routeName()) && !!store.dataset };
+}
+
+/**
+ * `inViewer` for a component that registers commands. Needed by anything
+ * inside a right-hand FloatingPalette (Settings, Object Browser, Snapshots):
+ * those palettes stay mounted on every route, so "registered by a viewer
+ * component" does not imply "only in the viewer".
+ */
+export function useInViewer(): () => boolean {
+  const route = useRoute();
+  return useViewerContext(() => route?.name).inViewer;
 }
 
 /**
