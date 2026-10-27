@@ -83,8 +83,8 @@ async def _with_retries(send) -> httpx.Response:
         await asyncio.sleep(0.25 * 2 ** attempt)
 
 
-def _key_hash(key: str) -> str:
-    return hashlib.sha256(key.encode()).hexdigest()
+def _sha256(secret: str) -> str:
+    return hashlib.sha256(secret.encode()).hexdigest()
 
 
 def _plausible_key(key: str) -> bool:
@@ -95,7 +95,7 @@ def _plausible_key(key: str) -> bool:
 class GirderApiKeyVerifier:
     """Resolve a Girder API key to the caller's Girder session.
 
-    ``verify_token`` returns None (the SDK answers 401) for a key Girder
+    ``verify_api_key`` returns None (the SDK answers 401) for a key Girder
     refuses. A Girder outage or 5xx raises instead, so it surfaces as a
     server error rather than as "your key is wrong".
     """
@@ -114,10 +114,10 @@ class GirderApiKeyVerifier:
         # share it, and different keys never wait on each other.
         self._inflight: dict[str, asyncio.Future] = {}
 
-    async def verify_token(self, token: str) -> AccessToken | None:
-        if not _plausible_key(token):
+    async def verify_api_key(self, api_key: str) -> AccessToken | None:
+        if not _plausible_key(api_key):
             return None
-        key_hash = _key_hash(token)
+        key_hash = _sha256(api_key)
         session = self._fresh(key_hash)
         if session is not None:
             if await self._still_valid(session):
@@ -125,7 +125,7 @@ class GirderApiKeyVerifier:
             # Only if no other request replaced it during the check.
             if self._cache.get(key_hash) is session:
                 del self._cache[key_hash]
-        session = await self._exchange_once(key_hash, token)
+        session = await self._exchange_once(key_hash, api_key)
         if session is None:
             return None
         return self._access_token(key_hash, session)
@@ -254,11 +254,13 @@ class GirderOAuthVerifier:
         self._secret = secret
         self._http = http or httpx.AsyncClient(timeout=30)
 
-    async def verify_token(self, token: str) -> AccessToken | None:
-        if not OAUTH_TOKEN_RE.fullmatch(token):
+    async def verify_access_token(
+        self, access_token: str
+    ) -> AccessToken | None:
+        if not OAUTH_TOKEN_RE.fullmatch(access_token):
             return None
         response = await _with_retries(lambda: self._http.post(
-            self._url, data={"token": token},
+            self._url, data={"token": access_token},
             headers={INTROSPECTION_HEADER: self._secret},
         ))
         if response.status_code == 404:
@@ -273,7 +275,7 @@ class GirderOAuthVerifier:
         if not info.get("active"):
             return None
         return AccessToken(
-            token=_key_hash(token),
+            token=_sha256(access_token),
             client_id=str(info["client_id"]),
             scopes=str(info.get("scope", "")).split(),
             expires_at=int(info["exp"]),
@@ -289,7 +291,12 @@ class GirderOAuthVerifier:
 
 
 class NimbusVerifier:
-    """Route a bearer credential to the verifier for its kind."""
+    """Route a bearer credential to the verifier for its kind.
+
+    This is the SDK's ``TokenVerifier``: the SDK calls ``verify_token``
+    with whatever followed "Bearer", which here is either an OAuth access
+    token or a Girder API key.
+    """
 
     def __init__(
         self,
@@ -299,10 +306,10 @@ class NimbusVerifier:
         self._api_keys = api_keys
         self._oauth = oauth
 
-    async def verify_token(self, token: str) -> AccessToken | None:
-        if token.startswith(OAUTH_PREFIX):
+    async def verify_token(self, bearer: str) -> AccessToken | None:
+        if bearer.startswith(OAUTH_PREFIX):
             # Without a secret configured, OAuth is off here.
             if self._oauth is None:
                 return None
-            return await self._oauth.verify_token(token)
-        return await self._api_keys.verify_token(token)
+            return await self._oauth.verify_access_token(bearer)
+        return await self._api_keys.verify_api_key(bearer)

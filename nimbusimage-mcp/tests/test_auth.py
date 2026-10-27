@@ -34,7 +34,7 @@ def run(coro):
 
 
 def test_valid_key_resolves_to_the_users_session(girder):
-    access = run(verifier(girder).verify_token(KEY))
+    access = run(verifier(girder).verify_api_key(KEY))
     assert access.subject == "user0001"
     assert access.claims["login"] == "alice"
     assert access.claims["girder_token"] in girder.tokens
@@ -47,7 +47,7 @@ def test_exchange_is_cached_and_rechecked(girder):
     v = verifier(girder)
 
     async def three_calls():
-        return [await v.verify_token(KEY) for _ in range(3)]
+        return [await v.verify_api_key(KEY) for _ in range(3)]
 
     first, second, third = run(three_calls())
     assert girder.exchanges == 1
@@ -60,7 +60,7 @@ def test_concurrent_first_use_exchanges_once(girder):
     v = verifier(girder)
 
     async def burst():
-        return await asyncio.gather(*(v.verify_token(KEY) for _ in range(8)))
+        return await asyncio.gather(*(v.verify_api_key(KEY) for _ in range(8)))
 
     results = run(burst())
     assert all(r is not None for r in results)
@@ -71,7 +71,7 @@ def test_unknown_key_is_refused_and_not_cached(girder):
     v = verifier(girder)
 
     async def twice():
-        return [await v.verify_token("b" * 40) for _ in range(2)]
+        return [await v.verify_api_key("b" * 40) for _ in range(2)]
 
     assert run(twice()) == [None, None]
     assert girder.exchanges == 2
@@ -81,9 +81,9 @@ def test_deleted_key_stops_working_at_once(girder):
     v = verifier(girder)
 
     async def scenario():
-        assert await v.verify_token(KEY) is not None
+        assert await v.verify_api_key(KEY) is not None
         girder.delete_key(KEY)
-        return await v.verify_token(KEY)
+        return await v.verify_api_key(KEY)
 
     assert run(scenario()) is None
 
@@ -91,7 +91,7 @@ def test_deleted_key_stops_working_at_once(girder):
 def test_implausible_tokens_never_reach_girder(girder):
     v = verifier(girder)
     for token in ("", "x" * 300, "has space", "ünïcode", "a.b.c"):
-        assert run(v.verify_token(token)) is None
+        assert run(v.verify_api_key(token)) is None
     assert girder.exchanges == 0
 
 
@@ -100,11 +100,11 @@ def test_token_near_expiry_is_exchanged_again(girder, monkeypatch):
     v = verifier(girder)
 
     async def twice():
-        first = await v.verify_token(KEY)
+        first = await v.verify_api_key(KEY)
         # Jump to a minute before expiry: inside any refresh margin.
         now = time.time() + auth.REFRESH_MARGIN_SECONDS
         monkeypatch.setattr(auth.time, "time", lambda: now)
-        return first, await v.verify_token(KEY)
+        return first, await v.verify_api_key(KEY)
 
     first, second = run(twice())
     assert girder.exchanges == 2
@@ -118,7 +118,7 @@ def test_short_lived_tokens_are_still_cached(girder):
     v = verifier(girder)
 
     async def twice():
-        return [await v.verify_token(KEY) for _ in range(2)]
+        return [await v.verify_api_key(KEY) for _ in range(2)]
 
     run(twice())
     assert girder.exchanges == 1
@@ -127,7 +127,7 @@ def test_short_lived_tokens_are_still_cached(girder):
 def test_transient_check_failures_are_retried(girder, monkeypatch):
     monkeypatch.setattr(auth.asyncio, "sleep", _no_sleep)
     v = verifier(girder)
-    run(v.verify_token(KEY))
+    run(v.verify_api_key(KEY))
     original = girder.handler
     failures = iter([503, 502])
 
@@ -138,7 +138,7 @@ def test_transient_check_failures_are_retried(girder, monkeypatch):
         return original(request)
 
     v._http = httpx.AsyncClient(transport=httpx.MockTransport(flaky))
-    assert run(v.verify_token(KEY)) is not None
+    assert run(v.verify_api_key(KEY)) is not None
     assert girder.exchanges == 1
 
 
@@ -152,8 +152,8 @@ def test_concurrent_different_keys_do_not_wait_on_each_other(girder):
     v = verifier(girder)
 
     async def both():
-        return await asyncio.gather(v.verify_token(KEY),
-                                    v.verify_token(other))
+        return await asyncio.gather(v.verify_api_key(KEY),
+                                    v.verify_api_key(other))
 
     alice, bob = run(both())
     assert alice.subject != bob.subject
@@ -174,9 +174,9 @@ def test_waiters_survive_a_cancelled_exchange(girder):
     v._exchange = slow_exchange
 
     async def scenario():
-        first = asyncio.create_task(v.verify_token(KEY))
+        first = asyncio.create_task(v.verify_api_key(KEY))
         await asyncio.sleep(0)
-        second = asyncio.create_task(v.verify_token(KEY))
+        second = asyncio.create_task(v.verify_api_key(KEY))
         await asyncio.sleep(0)
         first.cancel()
         await asyncio.sleep(0)
@@ -189,7 +189,7 @@ def test_waiters_survive_a_cancelled_exchange(girder):
 def test_girder_outage_is_an_error_not_a_bad_key(girder):
     girder.fail_with = 502
     with pytest.raises(httpx.HTTPStatusError):
-        run(verifier(girder).verify_token(KEY))
+        run(verifier(girder).verify_api_key(KEY))
 
 
 def test_cache_is_bounded(girder, monkeypatch):
@@ -201,7 +201,7 @@ def test_cache_is_bounded(girder, monkeypatch):
 
     async def all_keys():
         for key in keys:
-            await v.verify_token(key)
+            await v.verify_api_key(key)
 
     run(all_keys())
     assert len(v._cache) == 3

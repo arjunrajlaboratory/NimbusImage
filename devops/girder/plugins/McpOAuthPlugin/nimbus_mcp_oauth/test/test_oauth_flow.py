@@ -77,6 +77,21 @@ def testUnknownClientOrRedirectIsNeverRedirected(enabled):
         assert 'Location' not in dict(resp.headers)
 
 
+@pytest.mark.parametrize('clientId', [None, ''])
+def testAuthorizeWithoutAClientStoresNothing(enabled, clientId):
+    """Every stored request, code and grant carries the clientId that
+    authorize resolved; a missing or empty one is refused here, so no
+    document with a null clientId can exist for another client to match.
+    """
+    _, challenge = pkcePair()
+    params = authorizeParams(challenge, client_id=clientId)
+    resp = enabled.request('/mcp_oauth/authorize', params=params)
+    assert _status(resp) == 400
+    assert resp.json['message'] == 'client_id is required.'
+    assert 'Location' not in dict(resp.headers)
+    assert AuthorizationRequest().find().count() == 0
+
+
 @pytest.mark.parametrize('overrides,error', [
     ({'code_challenge_method': 'plain'}, 'invalid_request'),
     ({'code_challenge_method': None}, 'invalid_request'),

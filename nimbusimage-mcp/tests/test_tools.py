@@ -365,49 +365,74 @@ def test_check_crop_clips_and_rejects_empty():
 # --- annotations --------------------------------------------------------
 
 
+A = "a" * 24
+B = "b" * 24
+
+
 def test_count_across_datasets_reports_each(nc):
-    # Rows as the server returns them: a malformed id and an unreadable
-    # one each fail only their own entry.
+    # Rows as the server returns them: an unreadable id fails only its
+    # own entry.
     nc.count_annotations.return_value = [
-        {"datasetId": "aa", "count": 2},
-        {"datasetId": "bad", "error": "not a valid id"},
-        {"datasetId": "aaa", "count": 3},
+        {"datasetId": A, "count": 2},
+        {"datasetId": B, "error": "not found or not readable"},
     ]
     result = loads(annotations.ni_annotations_count(
-        dataset_ids=["aa", "bad", "aaa", "aa"], shape="point"
+        dataset_ids=[A, B, A.upper()], shape="point"
     ))
-    # One batch request, not one per dataset, without duplicates.
+    # One batch request, not one per dataset, without duplicates (in
+    # either case: hex ids are case-blind).
     nc.count_annotations.assert_called_once_with(
-        ["aa", "bad", "aaa"], shape="point", tags=None
+        [A, B], shape="point", tags=None
     )
     nc.dataset.assert_not_called()
-    assert result["total"] == 5 and result["incomplete"] is True
-    assert [c["dataset_id"] for c in result["counts"]] == ["aa", "bad", "aaa"]
-    assert result["counts"][1]["error"] == "not a valid id"
+    assert result["total"] == 2 and result["incomplete"] is True
+    assert result["counts"] == [
+        {"dataset_id": A, "count": 2},
+        {"dataset_id": B, "error": "not found or not readable"},
+    ]
     with pytest.raises(ToolError, match="between 1 and 50"):
         annotations.ni_annotations_count(
-            dataset_ids=[f"d{i}" for i in range(51)])
+            dataset_ids=[f"{i:024x}" for i in range(51)])
     # The limit counts distinct ids.
-    nc.count_annotations.return_value = [{"datasetId": "x", "count": 1}]
+    nc.count_annotations.return_value = [{"datasetId": A, "count": 1}]
     assert loads(annotations.ni_annotations_count(
-        dataset_ids=["x"] * 51))["total"] == 1
+        dataset_ids=[A] * 51))["total"] == 1
 
 
-def test_count_keeps_an_overlong_id_to_its_own_entry(nc):
-    """The server refuses a whole request with an id over its length cap;
-    the tool keeps that a per-entry error and counts the rest."""
-    nc.count_annotations.return_value = [{"datasetId": "aa", "count": 2}]
-    long_id = "x" * 65
-    result = loads(annotations.ni_annotations_count(
-        dataset_ids=["aa", long_id]
-    ))
-    nc.count_annotations.assert_called_once_with(
-        ["aa"], shape=None, tags=None)
+@pytest.mark.parametrize("bad", ["typo", "x" * 65, "g" * 24, "a" * 23])
+def test_count_keeps_a_malformed_id_to_its_own_entry(nc, bad):
+    """The server refuses a whole request over one malformed id; the tool
+    never sends one, so the rest are still counted."""
+    nc.count_annotations.return_value = [{"datasetId": A, "count": 2}]
+    result = loads(annotations.ni_annotations_count(dataset_ids=[A, bad]))
+    nc.count_annotations.assert_called_once_with([A], shape=None, tags=None)
     assert result["counts"] == [
-        {"dataset_id": "aa", "count": 2},
-        {"dataset_id": long_id, "error": "not a valid id"},
+        {"dataset_id": A, "count": 2},
+        {"dataset_id": bad, "error": "not a valid id"},
     ]
     assert result["total"] == 2 and result["incomplete"] is True
+
+
+def test_count_keeps_the_callers_spelling(nc):
+    """Case-blind duplicates count once, under the first spelling given,
+    so the model can match rows to the ids it passed."""
+    nc.count_annotations.return_value = [
+        {"datasetId": A.upper(), "count": 2}]
+    result = loads(annotations.ni_annotations_count(
+        dataset_ids=[A.upper(), A, "TYPO"]))
+    nc.count_annotations.assert_called_once_with(
+        [A.upper()], shape=None, tags=None)
+    assert result["counts"] == [
+        {"dataset_id": A.upper(), "count": 2},
+        {"dataset_id": "TYPO", "error": "not a valid id"},
+    ]
+
+
+def test_count_with_only_malformed_ids_sends_nothing(nc):
+    result = loads(annotations.ni_annotations_count(dataset_ids=["typo"]))
+    nc.count_annotations.assert_not_called()
+    assert result["counts"] == [
+        {"dataset_id": "typo", "error": "not a valid id"}]
 
 
 @pytest.mark.parametrize("mode, expected", [

@@ -37,9 +37,6 @@ MAX_COUNT_DATASETS = 100
 # Tag filters on the public counts endpoint: each tag is part of a $all
 # clause, so cap how many and how long (real filters are a few tags).
 MAX_FILTER_TAGS = 100
-# Longest datasetIds entry kept and echoed back as "not a valid id"; an
-# ObjectId is 24 characters, so anything far longer is refused (400).
-MAX_DATASET_ID_LENGTH = 64
 MAX_TAG_LENGTH = 1000
 
 # Analysis-gating request ceilings (SERVER_GATING.md "Limits"): abuse guards
@@ -165,27 +162,28 @@ def requireObjectId(value, field="id"):
 
 def validateCountsRequest(body, shapes):
     """Parse a batch-count body {datasetIds, shape?, tags?} into
-    (datasetIds, shape, tags). datasetIds keeps request order without
-    duplicates, as (requested string, ObjectId or None when the string is
-    not an id): one mistyped id is that entry's error, not the request's.
-    A malformed request (not an object, ids not a list of strings of at
-    most MAX_DATASET_ID_LENGTH characters, over the cap, a shape not in
-    `shapes`, bad tags) raises RestException(400)."""
+    (datasetIds, shape, tags). datasetIds keeps request order, one entry
+    per distinct id (two spellings of one id, e.g. upper and lower case,
+    count once), as (requested string, ObjectId) pairs: the reply echoes
+    the first string the caller sent for it. A malformed request (not an
+    object, ids not a list of valid id strings, over the cap, a shape not
+    in `shapes`, bad tags) raises RestException(400)."""
     body = requireObjectBody(body)
     rawIds = requireList(body.get("datasetIds"), "datasetIds")
     requireCountWithin(len(rawIds), MAX_COUNT_DATASETS, "datasetIds")
-    if not all(isinstance(value, str) and len(value) <= MAX_DATASET_ID_LENGTH
-               for value in rawIds):
-        raise RestException(
-            "datasetIds must be a list of strings of at most %d characters"
-            % MAX_DATASET_ID_LENGTH, code=400,
-        )
-    datasetIds = []
-    for value in dict.fromkeys(rawIds):
+    # Strings only: ObjectId(None) would make a new id, not refuse it.
+    if not all(isinstance(value, str) for value in rawIds):
+        raise RestException("datasetIds must be a list of strings",
+                            code=400)
+    byId = {}
+    for value in rawIds:
         try:
-            datasetIds.append((value, ObjectId(value)))
+            byId.setdefault(ObjectId(value), value)
         except InvalidId:
-            datasetIds.append((value, None))
+            raise RestException(
+                "datasetIds: %r is not a valid id" % value[:64], code=400
+            )
+    datasetIds = [(value, objectId) for objectId, value in byId.items()]
     shape = body.get("shape")
     if shape not in (None, "", *shapes):
         raise RestException(

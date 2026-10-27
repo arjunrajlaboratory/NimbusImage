@@ -48,6 +48,26 @@ def check_location(ds, xy: int, z: int, time: int) -> None:
             )
 
 
+def open_view(
+    dataset_id: str,
+    xy: int,
+    z: int,
+    time: int,
+    max_size: int,
+    crop: tuple[int, int, int, int] | None,
+):
+    """What both image tools start with: the dataset, with the location
+    checked, max_size clamped and crop clipped to the image. Returns
+    (ds, max_size, crop)."""
+    max_size = clamp(max_size, 64, MAX_IMAGE_SIZE)
+    ds = client().dataset(dataset_id)
+    check_location(ds, xy, z, time)
+    if crop is not None:
+        height, width = ds.shape
+        crop = check_crop(crop, width, height)
+    return ds, max_size, crop
+
+
 def encode_jpeg(pixels: np.ndarray) -> bytes:
     # JPEG, not PNG: noisy microscopy compresses badly losslessly (a 1024 px
     # PNG measured 1.1-1.2 MB in the spike; JPEG q85 is ~5x smaller).
@@ -85,12 +105,7 @@ def ni_image_get_composite(
     width/height from ni_dataset_info). To see one channel on its own,
     use ni_image_get_channel.
     """
-    max_size = clamp(max_size, 64, MAX_IMAGE_SIZE)
-    ds = client().dataset(dataset_id)
-    check_location(ds, xy, z, time)
-    if crop is not None:
-        height, width = ds.shape
-        crop = check_crop(crop, width, height)
+    ds, max_size, crop = open_view(dataset_id, xy, z, time, max_size, crop)
     if not any(layer.get("visible", True) for layer in ds.collections.layers):
         raise ValueError(
             "This dataset has no visible layers to show; use "
@@ -126,16 +141,11 @@ def ni_image_get_channel(
     longer side is at most max_size (default 1024, max 2048); crop=(left,
     top, right, bottom) in full-resolution pixels zooms in.
     """
-    max_size = clamp(max_size, 64, MAX_IMAGE_SIZE)
-    ds = client().dataset(dataset_id)
-    check_location(ds, xy, z, time)
+    ds, max_size, crop = open_view(dataset_id, xy, z, time, max_size, crop)
     if not 0 <= channel < ds.num_channels:
         raise ValueError(
             f"channel={channel} is out of range (0..{ds.num_channels - 1})"
         )
-    if crop is not None:
-        height, width = ds.shape
-        crop = check_crop(crop, width, height)
     frame = ds.images.get(
         xy=xy, z=z, time=time, channel=channel, crop=crop, max_size=max_size
     )

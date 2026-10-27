@@ -69,6 +69,15 @@ def testDocumentClientCanSignIn(enabled, fetches):
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize('clientId', [None, '', 123, ['x']])
+def testMissingOrNonStringClientIdIsRefused(enabled, fetches, clientId):
+    calls, _ = fetches
+    with pytest.raises(OAuthError) as err:
+        clients.resolve(clientId)
+    assert err.value.error == 'invalid_client'
+    assert calls == []
+
+
 @pytest.mark.parametrize('clientId', [
     'https://evil.example/client',          # host not allowed
     'http://claude.ai/oauth/client',        # not https

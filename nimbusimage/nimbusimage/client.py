@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import girder_client
 
@@ -39,6 +40,8 @@ def _access_level(doc: dict, user: dict) -> int:
     return max(levels, default=-1)
 
 
+# A Girder id: 24 hex digits, either case.
+_OBJECT_ID = re.compile(r"[0-9a-fA-F]{24}")
 # Datasets per POST upenn_annotation/counts (the server's
 # MAX_COUNT_DATASETS).
 _COUNT_BATCH = 100
@@ -260,26 +263,34 @@ class NimbusClient:
                 print(row["datasetId"], row.get("count", row.get("error")))
 
         Args:
-            dataset_ids: Dataset ids (any iterable); duplicates are counted
-                once.
+            dataset_ids: Dataset ids (any iterable); duplicates, in either
+                case, are counted once, under the first spelling given.
             shape: Only annotations of this shape.
             tags: Only annotations with ALL of these tags (as
                 ``ds.annotations.count``).
 
         Returns:
             One dict per distinct dataset, in order: ``{"datasetId",
-            "count"}``, or ``{"datasetId", "error"}`` for an id that is
-            malformed, does not exist, or that the caller cannot read.
+            "count"}``, or ``{"datasetId", "error"}`` for an id that does
+            not exist or that the caller cannot read.
 
         Raises:
-            girder_client.HttpError: 400 for an id string over 64
-                characters (the server refuses the whole request).
+            ValueError: an id is not a valid ObjectId, before any request
+                (the server would refuse its whole batch).
         """
         if isinstance(tags, str):
             raise TypeError("tags must be a list of tag names, not a string")
         if isinstance(dataset_ids, str):
             raise TypeError("dataset_ids must be a list of ids, not a string")
-        ids = list(dict.fromkeys(str(i) for i in dataset_ids))
+        # Case-blind: hex ids, so "AB12..." and "ab12..." are one dataset,
+        # even when they would fall in different batches.
+        first: dict[str, str] = {}
+        for i in map(str, dataset_ids):
+            first.setdefault(i.lower(), i)
+        ids = list(first.values())
+        for i in ids:
+            if not _OBJECT_ID.fullmatch(i):
+                raise ValueError(f"not a valid dataset id: {i[:64]!r}")
         rows: list[dict] = []
         for start in range(0, len(ids), _COUNT_BATCH):
             body = {"datasetIds": ids[start:start + _COUNT_BATCH]}

@@ -87,6 +87,13 @@ def test_live_annotation_tools(live, user_dataset):
     counts = call_tool(url, key, "ni_annotations_count",
                        {"dataset_ids": [ds.id]})
     assert counts["total"] == 8
+    # A mistyped id (the server would refuse it) and a missing one each
+    # fail only their own entry.
+    mixed = call_tool(url, key, "ni_annotations_count",
+                      {"dataset_ids": [ds.id, "typo", "0" * 24]})
+    assert mixed["total"] == 8 and mixed["incomplete"] is True
+    assert [c.get("error") for c in mixed["counts"]] == [
+        None, "not a valid id", "not found or not readable"]
     assert call_tool(url, key, "ni_annotations_count", {
         "dataset_ids": [ds.id], "shape": "point"})["total"] == 3
     summary = call_tool(url, key, "ni_annotations_summary",

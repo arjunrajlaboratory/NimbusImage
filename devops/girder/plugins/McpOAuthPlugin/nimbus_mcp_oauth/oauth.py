@@ -84,6 +84,8 @@ def startAuthorization(params):
     and redirect URI are trusted are plain ``OAuthError``s (shown to the
     user, never redirected); later ones are ``RedirectableError``s.
     """
+    # Refuses a missing or empty client_id, so every request, code and
+    # grant stored below carries a real clientId (never None).
     client = clients.resolve(params.get('client_id'))
     redirectUri = params.get('redirect_uri')
     if not clients.redirectAllowed(client, redirectUri):

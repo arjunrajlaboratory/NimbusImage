@@ -380,8 +380,7 @@ class TestBatchAnnotationCounts:
         addAnnotations(private["_id"], "point", [], 7)
         missing = "000000000000000000000000"
         resp = postCounts(server, user, {"datasetIds": [
-            str(private["_id"]), str(readable["_id"]), missing, "typo",
-            "y" * 64,
+            str(private["_id"]), str(readable["_id"]), missing,
         ]})
         assertStatusOk(resp)
         assert resp.json["counts"] == [
@@ -390,10 +389,6 @@ class TestBatchAnnotationCounts:
              "error": "not found or not readable"},
             {"datasetId": str(readable["_id"]), "count": 2},
             {"datasetId": missing, "error": "not found or not readable"},
-            # A mistyped id fails only its own entry, up to the length
-            # cap (64 characters; longer is a 400).
-            {"datasetId": "typo", "error": "not a valid id"},
-            {"datasetId": "y" * 64, "error": "not a valid id"},
         ]
         # Anonymous callers see public datasets only.
         resp = postCounts(server, None, {"datasetIds": [
@@ -409,8 +404,11 @@ class TestBatchAnnotationCounts:
         {"datasetIds": "abc"},
         {"datasetIds": [123]},
         {"datasetIds": [None]},
-        # Long junk is refused, not echoed back as an error entry.
-        {"datasetIds": ["x" * 65]},
+        # A malformed id refuses the whole request, even beside valid
+        # ones; only a well-formed id gets a per-entry error.
+        {"datasetIds": ["typo"]},
+        {"datasetIds": ["000000000000000000000000", "typo"]},
+        {"datasetIds": ["x" * 10_000]},
         {"datasetIds": ["000000000000000000000000"] * 101},
         {"datasetIds": [], "shape": 3},
         {"datasetIds": [], "shape": "hexagon"},
@@ -426,6 +424,24 @@ class TestBatchAnnotationCounts:
     ])
     def testMalformedBodiesAre400(self, admin, server, body):
         assertStatus(postCounts(server, admin, body), 400)
+
+    def testIdsEchoTheRequestedString(self, admin, server):
+        # Uppercase hex is the same ObjectId; the reply keys rows by the
+        # string the caller sent, so a client can match them up.
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata)
+        addAnnotations(folder["_id"], "point", [], 1)
+        upper = str(folder["_id"]).upper()
+        # Two spellings of one id count once, under the first one sent.
+        resp = postCounts(server, admin, {
+            "datasetIds": [upper, str(folder["_id"])]})
+        assertStatusOk(resp)
+        assert resp.json["counts"] == [{"datasetId": upper, "count": 1}]
+
+    def testMalformedIdIsNamedInTheError(self, admin, server):
+        resp = postCounts(server, admin, {"datasetIds": ["typo"]})
+        assertStatus(resp, 400)
+        assert "'typo' is not a valid id" in resp.json["message"]
 
     @pytest.mark.parametrize("shape", [None, ""])
     def testEmptyShapeMeansNoFilter(self, admin, server, shape):

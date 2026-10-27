@@ -1101,8 +1101,16 @@ the local stack. Add an item whenever a review finds something this list missed.
       only the opt-in call log does. An unexpected crash is still logged with its
       traceback, for diagnosis. *"test_no_credentials_in_logs"*
 - [x] The batch count endpoint, which is public, accepts only the schema's shapes, a
-      bounded tag filter, and dataset ids of bounded length. An empty shape means no filter, as in GET count.
-      *"testMalformedBodiesAre400"*, *"testEmptyShapeMeansNoFilter"*
+      bounded tag filter, and well-formed dataset ids: one malformed id refuses the request
+      (400, naming it). Two spellings of one id (upper and lower case) count once, under the
+      first string sent; the MCP tool and the `nimbusimage` client dedupe ids case-blind
+      (keeping the caller's spelling), so a total never counts a dataset twice, and the
+      client refuses a malformed id before sending any batch, so no batch's rows are lost.
+      An empty shape means no filter, as in GET count.
+      *"testMalformedBodiesAre400"*, *"testMalformedIdIsNamedInTheError"*,
+      *"testIdsEchoTheRequestedString"*, *"testEmptyShapeMeansNoFilter"*,
+      *"test_a_malformed_id_is_refused_before_any_request"*,
+      *"test_case_variants_count_once_across_batches"*
 
 ### Cost and context
 
@@ -1156,12 +1164,15 @@ the local stack. Add an item whenever a review finds something this list missed.
 - [x] Channels are counted from `num_channels`; an image without channel names (a single
       frame) still has channel 0 for workers and the channel view.
       *"test_worker_tools_count_unnamed_channels"*
-- [x] A multi-dataset count is one request, keeps every bad id (including one too long
-      for the server) to its own entry, and says when a dataset could not be read
-      instead of counting it as 0; the server counts with the single-dataset endpoint's
-      filters and reports a missing dataset like an unreadable one.
+- [x] A multi-dataset count is one request, keeps every bad id to its own entry (the
+      tool checks id shape first and never sends a malformed one, which the server would
+      refuse for the whole request), and says when a dataset could not be read instead of
+      counting it as 0; the server counts with the single-dataset endpoint's filters and
+      reports a missing dataset like an unreadable one.
       *"test_count_across_datasets_reports_each"*,
-      *"test_count_keeps_an_overlong_id_to_its_own_entry"*, *"testCountsMatchSingleDatasetCount"*,
+      *"test_count_keeps_a_malformed_id_to_its_own_entry"*,
+      *"test_count_with_only_malformed_ids_sends_nothing"*, *"test_count_keeps_the_callers_spelling"*,
+      *"testCountsMatchSingleDatasetCount"*,
       *"testUnreadableDatasetsGetAnErrorEntry"*
 - [x] No values in the path sample is reported as "not found in a sample", never as
       "not computed". *"test_values_summary_says_when_nothing_is_computed"*
@@ -1227,6 +1238,10 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
 - [x] An unknown client or unregistered redirect URI gets a 400, never a redirect; the
       only redirect leeway is the loopback port. *"testUnknownClientOrRedirectIsNeverRedirected"*,
       *"testLoopbackPortWildcardIsTheOnlyLeeway"*
+- [x] No stored request, code or grant has a null `clientId`: authorize refuses a missing,
+      empty or non-string `client_id` before storing anything, so a null id can never match
+      another caller's. *"testAuthorizeWithoutAClientStoresNothing"*,
+      *"testMissingOrNonStringClientIdIsRefused"*
 - [x] PKCE S256 is required (plain and missing are refused), and the verifier is checked.
       *"testBadRequestsRedirectBackWithError"*, *"testCodeExchangeChecks"*
 - [x] Codes work once and expire; a replayed code revokes what it issued.

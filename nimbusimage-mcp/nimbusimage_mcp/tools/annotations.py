@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from mcp.server.mcpserver.exceptions import ToolError
@@ -19,8 +20,9 @@ Shape = Literal["point", "polygon", "line", "rectangle"]
 # Matches the AI panel's MAX_LIST_ANNOTATIONS.
 MAX_LIST = 200
 MAX_COUNT_DATASETS = 50
-# The batch count endpoint's MAX_DATASET_ID_LENGTH (an ObjectId is 24).
-MAX_DATASET_ID_LENGTH = 64
+# A Girder id: 24 hex digits. The batch count endpoint refuses a whole
+# request over one malformed id, so the tool checks them first.
+OBJECT_ID = re.compile(r"[0-9a-fA-F]{24}")
 MAX_SUMMARY_TAGS = 200
 # One tagging call loads every matching annotation (with coordinates)
 # into this process and sends one bulk update; past this, narrow the
@@ -44,26 +46,30 @@ def ni_annotations_count(
     of a count, and then total covers only the readable ones and
     incomplete is true. Use this before listing annotations.
     """
-    ids = list(dict.fromkeys(dataset_ids))
+    # Drops duplicates and keeps the caller's order and spelling. Ids are
+    # hex, so "AB12..." and "ab12..." are one dataset, counted once.
+    first: dict[str, str] = {}
+    for dataset_id in dataset_ids:
+        first.setdefault(dataset_id.lower(), dataset_id)
+    ids = list(first.values())
     if not 1 <= len(ids) <= MAX_COUNT_DATASETS:
         raise ValueError(
             f"Pass between 1 and {MAX_COUNT_DATASETS} dataset_ids."
         )
-    # The server refuses the whole request for an id longer than it
-    # accepts; keep that one entry's error instead, like any bad id.
-    sendable = [i for i in ids if len(i) <= MAX_DATASET_ID_LENGTH]
+    # One mistyped id is that entry's error; the rest are still counted.
+    valid = [i for i in ids if OBJECT_ID.fullmatch(i)]
     # One request: the server counts every dataset in one aggregation
     # and reports unreadable ones as errors instead of failing.
     rows = {
         row["datasetId"]: row for row in client().count_annotations(
-            sendable, shape=shape, tags=tags
+            valid, shape=shape, tags=tags
         )
-    } if sendable else {}
+    } if valid else {}
     counts = []
     for dataset_id in ids:
         row = rows.get(dataset_id) or {
-            "error": "not a valid id"
-            if len(dataset_id) > MAX_DATASET_ID_LENGTH else "no result"
+            "error": "no result" if OBJECT_ID.fullmatch(dataset_id)
+            else "not a valid id"
         }
         counts.append(
             {"dataset_id": dataset_id, "count": row["count"]}

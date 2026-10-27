@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nimbusimage_mcp import _common
-from nimbusimage_mcp.auth import GirderApiKeyVerifier
+from nimbusimage_mcp.auth import GirderApiKeyVerifier, NimbusVerifier
 from nimbusimage_mcp.config import Settings
 from nimbusimage_mcp.server import build_app
 
@@ -28,9 +28,9 @@ def test_stateless_requests_any_instance(monkeypatch):
     settings = make_settings()
 
     def instance():
-        return build_app(settings, GirderApiKeyVerifier(
+        return build_app(settings, NimbusVerifier(GirderApiKeyVerifier(
             API, settings.public_url, http=girder.http()
-        ))
+        )))
 
     with serve(instance()) as first, serve(instance()) as second:
         init = rpc(first, "initialize", {

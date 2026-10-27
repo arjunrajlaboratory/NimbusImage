@@ -7,7 +7,7 @@ import logging
 from unittest.mock import MagicMock
 
 from nimbusimage_mcp import _common
-from nimbusimage_mcp.auth import GirderApiKeyVerifier
+from nimbusimage_mcp.auth import GirderApiKeyVerifier, NimbusVerifier
 from nimbusimage_mcp.server import build_app
 
 from conftest import make_settings, serve
@@ -29,9 +29,9 @@ def test_no_credentials_in_logs(tmp_path, caplog, monkeypatch):
 
     caplog.set_level(logging.DEBUG)
     secret_tag = "patient-1234"
-    app = build_app(settings, GirderApiKeyVerifier(
+    app = build_app(settings, NimbusVerifier(GirderApiKeyVerifier(
         API, settings.public_url, http=girder.http()
-    ))
+    )))
     with serve(app) as url:
         call_tool(url, KEY, "ni_datasets_list",
                   {"name_contains": secret_tag})
@@ -63,7 +63,7 @@ def test_no_credentials_in_logs(tmp_path, caplog, monkeypatch):
 def test_no_oauth_credentials_in_logs(caplog, monkeypatch):
     # The OAuth twin: neither the access token, the Girder session the
     # introspection hands back, nor the shared secret is logged.
-    from nimbusimage_mcp.auth import GirderOAuthVerifier, NimbusVerifier
+    from nimbusimage_mcp.auth import GirderOAuthVerifier
     girder = FakeGirder()
     oauth_token = "nio_" + "Z" * 43
     girder.add_oauth(oauth_token, "carol")

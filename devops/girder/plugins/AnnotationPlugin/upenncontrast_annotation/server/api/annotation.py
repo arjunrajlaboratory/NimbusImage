@@ -517,10 +517,9 @@ class Annotation(Resource):
             "stricter about input: shape must be a known annotation shape, "
             "and tags are capped in number and length. Returns {counts: "
             "[{datasetId, count} | {datasetId, error}]} in request order, "
-            "without duplicates; an id that is "
-            "malformed, does not exist, or names a dataset the caller cannot "
-            "read gets an error entry rather than failing the request (an "
-            "id string over 64 characters is refused with 400)."
+            "without duplicates. A malformed id refuses the request (400); "
+            "an id that does not exist or names a dataset the caller cannot "
+            "read gets an error entry rather than failing the request."
             % MAX_COUNT_DATASETS
         )
         .jsonParam(
@@ -533,7 +532,7 @@ class Annotation(Resource):
         datasetIds, shape, tags = validateCountsRequest(
             body, AnnotationSchema.shapeSchema["enum"]
         )
-        ids = [objectId for _, objectId in datasetIds if objectId]
+        ids = [objectId for _, objectId in datasetIds]
         # One permission-filtered query for every folder, ids only.
         readable = {
             folder["_id"] for folder in Folder().findWithPermissions(
@@ -546,8 +545,6 @@ class Annotation(Resource):
         )
 
         def row(requested, objectId):
-            if objectId is None:
-                return {"datasetId": requested, "error": "not a valid id"}
             if objectId not in readable:
                 # One message for both: whether an unreadable id exists
                 # is not the caller's business.

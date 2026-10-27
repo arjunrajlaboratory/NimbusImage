@@ -393,6 +393,9 @@ class TestJobLookup:
                 client.job("job1")
 
 
+_A, _B = "a" * 24, "b" * 24
+
+
 class TestCountAnnotations:
     def _client(self, mock_gc):
         client = NimbusClient.__new__(NimbusClient)
@@ -401,22 +404,22 @@ class TestCountAnnotations:
 
     def test_one_request_with_filters(self, mock_gc):
         mock_gc.post.return_value = {"counts": [
-            {"datasetId": "a", "count": 3},
-            {"datasetId": "b", "error": "not found or not readable"},
+            {"datasetId": _A, "count": 3},
+            {"datasetId": _B, "error": "not found or not readable"},
         ]}
         rows = self._client(mock_gc).count_annotations(
-            ["a", "b", "a"], shape="point", tags=["spot"]
+            [_A, _B, _A.upper()], shape="point", tags=["spot"]
         )
         mock_gc.post.assert_called_once_with(
             "upenn_annotation/counts",
-            json={"datasetIds": ["a", "b"], "shape": "point",
+            json={"datasetIds": [_A, _B], "shape": "point",
                   "tags": ["spot"]},
         )
         assert rows[1]["error"]
 
     def test_batches_past_the_server_cap(self, mock_gc):
         from nimbusimage import client as client_module
-        ids = [f"d{i}" for i in range(client_module._COUNT_BATCH + 1)]
+        ids = [f"{i:024x}" for i in range(client_module._COUNT_BATCH + 1)]
         mock_gc.post.side_effect = lambda url, json: {"counts": [
             {"datasetId": i, "count": 1} for i in json["datasetIds"]
         ]}
@@ -426,7 +429,27 @@ class TestCountAnnotations:
 
     def test_tags_must_be_a_list(self, mock_gc):
         with pytest.raises(TypeError):
-            self._client(mock_gc).count_annotations(["a"], tags="spot")
+            self._client(mock_gc).count_annotations([_A], tags="spot")
+
+    def test_a_malformed_id_is_refused_before_any_request(self, mock_gc):
+        """The server refuses a whole batch over one malformed id; checking
+        first means no earlier batch's rows are thrown away."""
+        from nimbusimage import client as client_module
+        ids = [f"{i:024x}" for i in range(client_module._COUNT_BATCH)]
+        with pytest.raises(ValueError, match="'typo'"):
+            self._client(mock_gc).count_annotations(ids + ["typo"])
+        mock_gc.post.assert_not_called()
+
+    def test_case_variants_count_once_across_batches(self, mock_gc):
+        from nimbusimage import client as client_module
+        ids = [f"{i:024x}" for i in range(client_module._COUNT_BATCH)]
+        mock_gc.post.side_effect = lambda url, json: {"counts": [
+            {"datasetId": i, "count": 1} for i in json["datasetIds"]
+        ]}
+        rows = self._client(mock_gc).count_annotations(
+            ids + [ids[10].upper()])  # "...0A": has a letter
+        assert [r["datasetId"] for r in rows] == ids
+        assert mock_gc.post.call_count == 1
 
 
 def test_count_annotations_refuses_a_bare_dataset_id():
