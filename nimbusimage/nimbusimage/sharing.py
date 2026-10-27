@@ -2,9 +2,10 @@
 
 All access changes go through the `dataset_view/share` endpoint, which is
 **incremental** (modifies one user's access at a time). This is the only
-safe way to change a dataset's ACL from Python. It does not stop you from
-removing or demoting yourself: as the dataset's only ADMIN, that locks you
-out, so never target yourself.
+safe way to change a dataset's ACL from Python. It sends any target, you
+included; the server refuses (400) any change that would leave the dataset
+with no user at ADMIN. To hand a dataset over, give the new owner "admin"
+first, then remove yourself.
 
 DO NOT bypass this accessor by calling the raw Girder endpoint:
 
@@ -12,10 +13,9 @@ DO NOT bypass this accessor by calling the raw Girder endpoint:
     client._gc.put(f"folder/{ds.id}/access", parameters={"access": ...})
 
 The raw `PUT /folder/{id}/access` replaces the access list with whatever
-you send. If the new list omits the dataset creator, the owner is
-silently locked out (``_accessLevel`` becomes ``-1`` and only a site
-admin can recover). The backend now rejects such saves on
-``contrastDataset`` folders, but the right answer is to never reach for
+you send, so everyone the new list omits silently loses access. The
+backend refuses a list that leaves no user at ADMIN on a
+``contrastDataset`` folder, but the right answer is to never reach for
 the raw endpoint in the first place. See
 ``plugins/nimbusimage/references/gotchas.md``.
 """

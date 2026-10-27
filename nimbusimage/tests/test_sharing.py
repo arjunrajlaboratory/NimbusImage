@@ -133,8 +133,8 @@ class TestShare:
         """No client-side identity check: any target, the caller
         included, goes straight to dataset_view/share. So share() never
         needs user/me, and works with a data-only API key that can't
-        read it. (As a dataset's only ADMIN, removing yourself locks you
-        out; the server, not this client, is where that is refused.)"""
+        read it. (Removing a dataset's last ADMIN is refused by the
+        server, not by this client.)"""
         _serve(mock_gc)
         SharingAccessor(mock_gc, "ds_001").share("owner", access="remove")
 

@@ -13,7 +13,8 @@ from girder.constants import AccessType, TokenScope
 from girder.models.folder import Folder
 
 from upenncontrast_annotation.server.helpers.access_helpers import (
-    findShareTarget, formatAccessList, parseShareAccessType
+    findShareTarget, formatAccessList, parseShareAccessType,
+    requireCanSetUserAccess,
 )
 from upenncontrast_annotation.server.models.project import (
     Project as ProjectModel
@@ -290,6 +291,9 @@ class Project(Resource):
             nothing changed) if it would grant more than the
             caller's own level on any of them, or change a
             user whose current level there is above it.
+            It is also refused (400, nothing changed) if it
+            would leave the project, or a dataset it reaches,
+            with no user at ADMIN.
         """)
         .modelParam(
             'id', model=ProjectModel,
@@ -316,9 +320,14 @@ class Project(Resource):
         targetUser = findShareTarget(userMailOrUsername)
         user = self.getCurrentUser()
 
-        # Propagation checks every reached resource first and
+        # The project itself must keep a user at ADMIN.
+        # Propagation then checks every reached resource and
         # raises before writing anything, so the project's own
         # ACL changes only once the whole share is allowed.
+        requireCanSetUserAccess(
+            self._projectModel, project, user, targetUser,
+            accessType
+        )
         self._projectModel.propagateUserAccess(
             project, targetUser, accessType, user
         )

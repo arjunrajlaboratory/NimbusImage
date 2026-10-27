@@ -144,7 +144,7 @@ Polygons tagged `region` are never cells for any of these.
 
 | Method | Signature | Returns |
 |--------|-----------|---------|
-| `share` | `(user_email_or_name, access="read")` | `None` — changes the dataset and each of its views you can write, with that view's collection (others are left unchanged, as in the web Share dialog); raises `ValueError` without WRITE on the dataset or with no writable view; never target yourself (as the only ADMIN, removing or demoting yourself locks you out) |
+| `share` | `(user_email_or_name, access="read")` | `None` — changes the dataset and each of its views you can write, with that view's collection (others are left unchanged, as in the web Share dialog); raises `ValueError` without WRITE on the dataset or with no writable view; removing or demoting a dataset's last ADMIN is refused (400), so give a new owner `admin` before stepping down |
 | `set_public` | `(public=True)` | `dict` — `{dataset, public, datasetViewsUpdated, configurationsUpdated, datasetViewsSkipped, configurationsSkipped}`; only views and collections you own change, the Skipped counts are other users' items left as they were |
 | `get_access` | `()` | `dict` — `{datasetId, public, users, groups, configurations, writableViewIds, currentUserLevel}`; each user has `login`, `email`, `level` (0 read, 1 write, 2 admin); each configuration has your `currentUserLevel` on it |
 
