@@ -16,7 +16,23 @@ vi.mock("@/utils/log", () => ({
 }));
 
 import GirderAPI from "./GirderAPI";
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
+
+function axiosError(status: number) {
+  return new AxiosError(
+    `Request failed with status code ${status}`,
+    "ERR_BAD_REQUEST",
+    undefined,
+    undefined,
+    {
+      status,
+      statusText: "",
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: {},
+    },
+  );
+}
 
 // These methods turn a failed request into an empty result for their
 // callers. The failure must still reach the log with its cause attached.
@@ -64,22 +80,6 @@ describe("GirderAPI failure logging", () => {
 });
 
 describe("getAssetstores", () => {
-  function axiosError(status: number) {
-    return new AxiosError(
-      `Request failed with status code ${status}`,
-      "ERR_BAD_REQUEST",
-      undefined,
-      undefined,
-      {
-        status,
-        statusText: "",
-        headers: {},
-        config: { headers: new AxiosHeaders() },
-        data: {},
-      },
-    );
-  }
-
   it("returns an empty list for the admin-only 403 a regular user gets", async () => {
     const get = vi.fn().mockRejectedValue(axiosError(403));
     const api = new GirderAPI({ get } as unknown as RestClientInstance);
@@ -91,5 +91,24 @@ describe("getAssetstores", () => {
     const get = vi.fn().mockRejectedValue(failure);
     const api = new GirderAPI({ get } as unknown as RestClientInstance);
     await expect(api.getAssetstores()).rejects.toBe(failure);
+  });
+});
+
+describe("getResource", () => {
+  it("returns null without logging for a 403 on a resource the user cannot read", async () => {
+    vi.mocked(logError).mockClear();
+    vi.mocked(logWarning).mockClear();
+    const get = vi.fn().mockRejectedValue(axiosError(403));
+    const api = new GirderAPI({ get } as unknown as RestClientInstance);
+    await expect(api.getResource("folder1", "folder")).resolves.toBeNull();
+    expect(logError).not.toHaveBeenCalled();
+    expect(logWarning).not.toHaveBeenCalled();
+  });
+
+  it("rethrows unexpected failures so the caller can log them", async () => {
+    const failure = axiosError(500);
+    const get = vi.fn().mockRejectedValue(failure);
+    const api = new GirderAPI({ get } as unknown as RestClientInstance);
+    await expect(api.getResource("folder1", "folder")).rejects.toBe(failure);
   });
 });

@@ -200,6 +200,12 @@ export default class GirderAPI {
         );
         return null;
       }
+      // 403: the user can reach something inside this resource but not the
+      // resource itself, e.g. a dataset shared from another user's private
+      // folder whose parent folder they cannot read. That is ordinary use.
+      if (isAxiosError(error) && error.response?.status === 403) {
+        return null;
+      }
       // Re-throw other errors
       throw error;
     }
