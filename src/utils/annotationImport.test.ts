@@ -30,19 +30,40 @@ vi.mock("@/store/annotation", () => ({
 vi.mock("@/store/properties", () => ({
   default: {
     properties: [],
+    get getPropertyById() {
+      return (id: string) =>
+        this.properties.find((property: any) => property.id === id);
+    },
     createProperty: vi.fn(),
     deleteProperty: vi.fn(),
+    deleteProperties: vi.fn(),
     fetchPropertyValues: vi.fn(),
     fetchProperties: vi.fn(),
   },
 }));
 
+vi.mock("@/store/pipelines", () => ({
+  default: {
+    pipelineStepsLinkedToProperty: vi.fn(),
+    runningPipelineComputingProperty: vi.fn(),
+  },
+}));
+
+vi.mock("@/store/progress", () => ({
+  default: {
+    createNotification: vi.fn(),
+  },
+}));
+
 import store from "@/store";
+import pipelinesStore from "@/store/pipelines";
+import progress from "@/store/progress";
 import annotationStore from "@/store/annotation";
 import propertyStore from "@/store/properties";
 import {
   importAnnotationsFromData,
   importGeoJsonAnnotations,
+  pipelineStepsUsingOverwrittenProperties,
   ImportOptions,
   defaultImportOptions,
 } from "@/utils/annotationImport";
@@ -55,6 +76,7 @@ import {
 const mockedStore = store as any;
 const mockedAnnotationStore = annotationStore as any;
 const mockedPropertyStore = propertyStore as any;
+const mockedPipelinesStore = pipelinesStore as any;
 
 function makeSerializedData(
   overrides: Partial<ISerializedData> = {},
@@ -107,6 +129,8 @@ describe("importAnnotationsFromData", () => {
     mockedStore.dataset = { id: "ds1" };
     mockedAnnotationStore.annotations = [];
     mockedPropertyStore.properties = [];
+    mockedPipelinesStore.pipelineStepsLinkedToProperty.mockReturnValue([]);
+    mockedPipelinesStore.runningPipelineComputingProperty.mockReturnValue(null);
     mockedPropertyStore.createProperty.mockImplementation(
       async (property: any) => ({
         id: "new-p1",
@@ -228,6 +252,7 @@ describe("importAnnotationsFromData", () => {
     expect(mockedPropertyStore.deleteProperty).not.toHaveBeenCalledWith(
       "existing-p1",
     );
+    expect(mockedPropertyStore.deleteProperties).not.toHaveBeenCalled();
     expect(
       mockedStore.annotationsAPI.deleteMultipleAnnotations,
     ).not.toHaveBeenCalled();
@@ -268,9 +293,9 @@ describe("importAnnotationsFromData", () => {
     expect(
       mockedStore.annotationsAPI.deleteMultipleAnnotations,
     ).toHaveBeenCalledWith(["existing-a1", "existing-a2"]);
-    expect(mockedPropertyStore.deleteProperty).toHaveBeenCalledWith(
+    expect(mockedPropertyStore.deleteProperties).toHaveBeenCalledWith([
       "existing-p1",
-    );
+    ]);
   });
 
   it("does not delete pre-existing annotations/properties when overwrite options are false", async () => {
@@ -282,8 +307,101 @@ describe("importAnnotationsFromData", () => {
     expect(
       mockedStore.annotationsAPI.deleteMultipleAnnotations,
     ).not.toHaveBeenCalled();
-    expect(mockedPropertyStore.deleteProperty).not.toHaveBeenCalledWith(
-      "existing-p1",
+    expect(mockedPropertyStore.deleteProperties).not.toHaveBeenCalled();
+  });
+
+  it("lists the pipeline steps that use a property an overwrite would remove", () => {
+    mockedPropertyStore.properties = [
+      { id: "p1", name: "Area" },
+      { id: "p2", name: "Intensity" },
+    ];
+    const link = {
+      pipelineId: "pl1",
+      pipelineName: "Segment",
+      stepId: "s1",
+      stepName: "Measure",
+      enabled: true,
+      use: "linked",
+    };
+    mockedPipelinesStore.pipelineStepsLinkedToProperty.mockImplementation(
+      (propertyId: string) => (propertyId === "p2" ? [link] : []),
+    );
+
+    expect(pipelineStepsUsingOverwrittenProperties()).toEqual([
+      { ...link, propertyId: "p2", propertyName: "Intensity" },
+    ]);
+  });
+
+  it("refuses to overwrite properties while a pipeline that computes one is running", async () => {
+    mockedPropertyStore.properties = [{ id: "existing-p1", name: "Area" }];
+    mockedPipelinesStore.runningPipelineComputingProperty.mockImplementation(
+      (propertyId: string) =>
+        propertyId === "existing-p1" ? { id: "pl1", name: "Segment" } : null,
+    );
+
+    await expect(
+      importAnnotationsFromData(makeSerializedData(), {
+        ...defaultImportOptions,
+        overwriteProperties: true,
+      }),
+    ).rejects.toThrow(
+      'The pipeline "Segment" is running and computes the property "Area"',
+    );
+    // Refused before anything was created or removed.
+    expect(mockedPropertyStore.createProperty).not.toHaveBeenCalled();
+    expect(
+      mockedStore.annotationsAPI.importAnnotationData,
+    ).not.toHaveBeenCalled();
+    expect(mockedPropertyStore.deleteProperties).not.toHaveBeenCalled();
+  });
+
+  it("still imports while a pipeline runs when properties are not overwritten", async () => {
+    mockedPropertyStore.properties = [{ id: "existing-p1", name: "Area" }];
+    mockedPipelinesStore.runningPipelineComputingProperty.mockReturnValue({
+      id: "pl1",
+      name: "Segment",
+    });
+
+    await importAnnotationsFromData(makeSerializedData(), defaultImportOptions);
+
+    expect(
+      mockedStore.annotationsAPI.importAnnotationData,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a property a pipeline started computing during the import", async () => {
+    mockedPropertyStore.properties = [
+      { id: "existing-p1", name: "Area" },
+      { id: "existing-p2", name: "Intensity" },
+    ];
+    // The run starts while the backend import is in flight.
+    mockedStore.annotationsAPI.importAnnotationData.mockImplementation(
+      async () => {
+        mockedPipelinesStore.runningPipelineComputingProperty.mockImplementation(
+          (propertyId: string) =>
+            propertyId === "existing-p1"
+              ? { id: "pl1", name: "Segment" }
+              : null,
+        );
+        return {};
+      },
+    );
+
+    await importAnnotationsFromData(makeSerializedData(), {
+      ...defaultImportOptions,
+      overwriteProperties: true,
+    });
+
+    // Only the other property is removed, in one batch.
+    expect(mockedPropertyStore.deleteProperties).toHaveBeenCalledTimes(1);
+    expect(mockedPropertyStore.deleteProperties).toHaveBeenCalledWith([
+      "existing-p2",
+    ]);
+    expect(progress.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Property not overwritten",
+        message: expect.stringContaining('"Area" was kept'),
+      }),
     );
   });
 });

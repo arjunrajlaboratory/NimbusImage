@@ -51,6 +51,42 @@
                 overwritePropertiesDialog = overwriteProperties
               "
             />
+            <v-alert
+              v-if="overwriteProperties && overwriteBlockedBy"
+              type="error"
+              variant="tonal"
+              density="compact"
+              class="overwrite-blocked"
+            >
+              The pipeline "{{ overwriteBlockedBy.pipeline.name }}" is running
+              and computes the property "{{ overwriteBlockedBy.propertyName }}".
+              Wait for it to finish, or cancel it, before overwriting
+              properties: removing the property now would make the rest of the
+              run compute into a new property instead.
+            </v-alert>
+            <v-alert
+              v-else-if="overwriteProperties && overwrittenPropertyLinks.length"
+              type="warning"
+              variant="tonal"
+              density="compact"
+              class="overwrite-linked-steps"
+            >
+              These pipeline steps use properties this would remove:
+              <ul class="linked-steps">
+                <li
+                  v-for="link in overwrittenPropertyLinks"
+                  :key="`${link.pipelineId}:${link.stepId}:${link.propertyId}`"
+                >
+                  {{ link.pipelineName }}: {{ link.stepName }} ("{{
+                    link.propertyName
+                  }}")
+                  <span v-if="link.use === 'created'">(created it)</span>
+                  <span v-if="!link.enabled">(disabled)</span>
+                </li>
+              </ul>
+              If you overwrite them, each creates a new pipeline-owned property
+              on its next run instead.
+            </v-alert>
             <v-dialog v-model="overwriteAnnotationsDialog" persistent>
               <v-card class="pa-2">
                 <v-card-title> Overwrite annotations? </v-card-title>
@@ -90,7 +126,18 @@
                 <v-card-title> Overwrite properties? </v-card-title>
                 <v-card-text>
                   This will remove
-                  {{ propertyStore.properties.length }} properties forever
+                  {{ propertyStore.properties.length }} properties forever.
+                  <p v-if="overwriteBlockedBy" class="mt-2">
+                    The pipeline "{{ overwriteBlockedBy.pipeline.name }}" is
+                    running and computes one of them, so the import stays
+                    disabled until the run ends.
+                  </p>
+                  <p v-else-if="overwrittenStepCount" class="mt-2">
+                    {{ overwrittenStepCount }} pipeline
+                    {{ overwrittenStepCount === 1 ? "step uses" : "steps use" }}
+                    them and will create new properties on their next run; the
+                    import dialog lists them.
+                  </p>
                 </v-card-text>
                 <v-card-actions>
                   <v-spacer />
@@ -124,7 +171,13 @@
       <v-card-actions v-if="isJsonLoaded">
         <v-spacer />
         <v-progress-circular v-if="isImporting" indeterminate />
-        <v-btn variant="flat" color="primary" size="small" @click="submit">
+        <v-btn
+          variant="flat"
+          color="primary"
+          size="small"
+          :disabled="isOverwriteBlocked"
+          @click="submit"
+        >
           Import selection
         </v-btn>
       </v-card-actions>
@@ -140,6 +193,8 @@ import propertyStore from "@/store/properties";
 import {
   importAnnotationsFromData,
   ImportOptions,
+  pipelineStepsUsingOverwrittenProperties,
+  runningPipelineComputingOverwrittenProperty,
 } from "@/utils/annotationImport";
 import {
   IAnnotationPropertyValues,
@@ -177,6 +232,32 @@ const overwritePropertiesDialog = ref(false);
 
 const canImport = computed(() => !!store.dataset);
 
+// Pipeline steps that use a property "Overwrite properties" would remove:
+// each creates a new pipeline-owned property on its next run.
+const overwrittenPropertyLinks = computed(() =>
+  pipelineStepsUsingOverwrittenProperties(),
+);
+
+// Distinct steps: one step can use two of the properties (linked to one,
+// created the other).
+const overwrittenStepCount = computed(
+  () =>
+    new Set(
+      overwrittenPropertyLinks.value.map(
+        ({ pipelineId, stepId }) => `${pipelineId}:${stepId}`,
+      ),
+    ).size,
+);
+
+// A running pipeline that computes one of those properties: overwriting is
+// refused until the run ends (importAnnotationsFromData refuses it too).
+const overwriteBlockedBy = computed(() =>
+  runningPipelineComputingOverwrittenProperty(),
+);
+const isOverwriteBlocked = computed(
+  () => overwriteProperties.value && !!overwriteBlockedBy.value,
+);
+
 watch(jsonFile, () => {
   isJsonLoaded.value = false;
   annotations.value = [];
@@ -206,6 +287,7 @@ watch(jsonFile, () => {
 function reset() {
   importDialog.value = false;
   overwriteAnnotationsDialog.value = false;
+  overwritePropertiesDialog.value = false;
 
   jsonFile.value = null;
   isLoadingFile.value = false;
@@ -222,10 +304,11 @@ function reset() {
   importProperties.value = true;
   importValues.value = true;
   overwriteAnnotations.value = false;
+  overwriteProperties.value = false;
 }
 
 async function submit() {
-  if (!isJsonLoaded.value || !store.dataset) {
+  if (!isJsonLoaded.value || !store.dataset || isOverwriteBlocked.value) {
     return;
   }
 
@@ -265,6 +348,10 @@ defineExpose({
   importValues,
   overwriteAnnotations,
   overwriteProperties,
+  overwrittenPropertyLinks,
+  overwrittenStepCount,
+  overwriteBlockedBy,
+  isOverwriteBlocked,
   importDialog,
   isJsonLoaded,
   reset,
@@ -275,3 +362,9 @@ defineExpose({
   submit,
 });
 </script>
+
+<style scoped>
+.linked-steps {
+  margin: 4px 0 4px 20px;
+}
+</style>

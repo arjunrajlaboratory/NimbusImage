@@ -501,9 +501,24 @@ longer in the configuration, where the user can't see the values. The guard is
 in the component, not in `propertiesStore.deleteProperties`, because the
 running pipeline itself removes a drifted-away property through that action.
 
-Not covered: an annotation import with "overwrite properties"
-(`src/utils/annotationImport.ts`) unregisters every property of the
-configuration with no linked-step warning and no running-pipeline block.
+**Overwriting properties on import.** An annotation import with "Overwrite
+properties" (`AnnotationImport.vue`, `src/utils/annotationImport.ts`)
+unregisters every property of the configuration once the import succeeds, so
+it applies the same two rules over all of them:
+
+- **Warns**: with the option checked, the import dialog lists the steps that
+  use any of those properties (`pipelineStepsUsingOverwrittenProperties`, each
+  link with the property's name), and the overwrite confirmation counts the distinct steps.
+- **Blocks** while a running pipeline computes one of them
+  (`runningPipelineComputingOverwrittenProperty`): the Import button is
+  disabled with the reason, and `importAnnotationsFromData` refuses the
+  overwrite itself before creating anything, so no caller can bypass it. The
+  import awaits the backend before it removes anything, and a run can start in
+  that window, so the removal re-checks each property: one a run started
+  computing is kept, with a warning notification naming it, rather than failing
+  an import that already succeeded; the rest go in one `deleteProperties` call.
+  The project-creation import (`NewDataset.vue`) never overwrites, and the
+  GeoJSON import creates no properties.
 
 **Not linked (by design).** The step *name* and *enabled* flag stay per-step.
 A locked section disables every control in it, so parameter help tooltips are
@@ -1077,6 +1092,15 @@ Linked steps (§3.4):
   *"finds the running pipeline that computes a property"*,
   *"names the pipeline steps linked to the property and offers Remove anyway"*,
   *"blocks removing a property while a pipeline that computes it is running"*.
+- An import with "Overwrite properties" lists the steps that use the
+  properties it would remove, is refused while a running pipeline computes one
+  (the button and `importAnnotationsFromData` both), and keeps a property a run
+  started computing during the import —
+  *"lists the pipeline steps that use a property an overwrite would remove"*,
+  *"lists the pipeline steps that use the properties an overwrite would remove"*,
+  *"refuses to overwrite properties while a pipeline that computes one is running"*,
+  *"disables the import while a pipeline that computes an overwritten property runs"*,
+  *"keeps a property a pipeline started computing during the import"*.
 - Drift replacement never deletes a property another step links to —
   *"does not delete a drifted-away property that another step links to"*.
 - Deleting a pipeline never deletes a linked property, nor a property it
