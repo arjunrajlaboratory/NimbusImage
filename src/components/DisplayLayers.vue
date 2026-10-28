@@ -246,7 +246,7 @@ function spacerUpdate(combinedLayers: ICombinedLayer[], spacerId: string) {
   }
 
   // Find position of insertion
-  let insertPosition = groupId
+  const insertPosition = groupId
     ? configurationLayers.findIndex(
         (layer) => groupIdFromLayer(layer) === groupId,
       )

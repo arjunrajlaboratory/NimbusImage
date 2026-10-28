@@ -249,7 +249,7 @@ function addBulkChipPromise(bulkCollections: IUPennCollection[]) {
     .finally()
     .then(() => bulkCollectionsToChips(bulkCollections))
     .then((allChipAttrs) => {
-      let updated = { ...chipsPerItemId.value };
+      const updated = { ...chipsPerItemId.value };
       for (const [collectionId, chipAttrs] of Object.entries(allChipAttrs)) {
         updated[collectionId] = chipAttrs;
       }
