@@ -27,10 +27,9 @@ export default defineConfigWithVueTs(
   },
   pluginVue.configs["flat/essential"],
   // `base` only registers the parser and plugin, and `eslintRecommended`
-  // adds the TS-file overrides (`no-var`, `prefer-const`, ...). Together
-  // with the `no-unused-vars` rule below this matches what
-  // @vue/eslint-config-typescript 12's `@vue/typescript` enabled; the v14
-  // default, `vueTsConfigs.recommended`, is stricter.
+  // adds `no-var`, `prefer-const`, `prefer-rest-params` and `prefer-spread`
+  // (defineConfigWithVueTs applies them to `.vue` files as well as `.ts`).
+  // The v14 default, `vueTsConfigs.recommended`, is much stricter.
   vueTsConfigs.base,
   vueTsConfigs.eslintRecommended,
   {

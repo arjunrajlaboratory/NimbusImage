@@ -50,25 +50,30 @@ lint script became `eslint src`; `.gitignore` is honored through
 |---------|--------|-------|-------|
 | eslint (dev) | 8.56.0 | 10.13.0 | Flat config. Unused `eslint-disable` comments in script code are reported in production mode (template `<!-- eslint-disable -->` comments are not). |
 | eslint-plugin-vue (dev) | 9.20.1 | 10.12.0 | `flat/essential`. |
-| @vue/eslint-config-typescript (dev) | 12.0.0 | 14.9.0 | `defineConfigWithVueTs` with `vueTsConfigs.base` + `eslintRecommended`, which matches the rules v12 enabled. |
+| @vue/eslint-config-typescript (dev) | 12.0.0 | 14.9.0 | `defineConfigWithVueTs` with `vueTsConfigs.base` + `eslintRecommended` (not the much stricter `recommended`). |
 | @vue/eslint-config-prettier (dev) | 9.0.0 | 10.2.0 | Flat config; `prettier/prettier` stays a warning. |
 | @eslint/compat (dev) | — | 2.1.1 | New: `includeIgnoreFile`. |
 | @typescript-eslint/eslint-plugin, @typescript-eslint/parser (dev) | 6.19.0 | removed | Now typescript-eslint 8, pulled in by @vue/eslint-config-typescript. |
 | eslint-plugin-prettier (dev) | 5.1.3 | removed | Now a dependency of @vue/eslint-config-prettier. |
 
-The migration kept the enabled rules and their options equivalent to the
-ESLint 8 set. Overrides in `eslint.config.mjs` turn off what the new
-versions would otherwise add (rules new to `flat/essential`,
-`vue/block-lang`, the TS-file rules widened to `.vue`, and typescript-eslint
-8's `caughtErrors: "all"` default). Turning any of those on is a separate
-change. Two differences remain:
+The rule set is the ESLint 8 one plus these additions, each of which
+`src/` was brought into line with:
 
-- **Unused directives fail CI** (deliberate). ESLint 9+ reports them by
-  default, and `lint:ci` runs with `--max-warnings=0` under
-  `NODE_ENV=production`.
-- **Values used only as types** (`const x = {...}; type T = typeof x`) are
-  now reported by `@typescript-eslint/no-unused-vars`. typescript-eslint 8
-  has no option to restore the old behavior; no code in `src/` hits it.
+- eslint-plugin-vue 10's new `flat/essential` rules
+  (`vue/no-deprecated-delete-set`, `vue/no-deprecated-model-definition`,
+  `vue/valid-define-options`) and `vue/block-lang` (added by
+  `defineConfigWithVueTs`; every `<script>` must be `lang="ts"`).
+- `no-var`, `prefer-const`, `prefer-rest-params` and `prefer-spread` now
+  apply to `.vue` files, not only `.ts`.
+- `@typescript-eslint/no-unused-vars` uses typescript-eslint 8's default
+  `caughtErrors: "all"`: write `catch {}` when the error is unused. It also
+  reports values used only as types (`const x = {...}; type T = typeof x`),
+  which has no option to turn off.
+- **Unused directives fail CI.** ESLint 9+ reports them by default, and
+  `lint:ci` runs with `--max-warnings=0` under `NODE_ENV=production`.
+
+Not adopted: `vueTsConfigs.recommended` (about 6,000 problems, nearly all
+`no-explicit-any`) is a separate follow-up.
 
 ## Do NOT Update Yet
 
