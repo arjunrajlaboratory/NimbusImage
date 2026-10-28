@@ -5,7 +5,7 @@ Snapshot taken 2026-02-26 on branch `claude/vue3-migration-planning-tS4Hx` after
 ## Update Command (Safe Packages)
 
 ```bash
-pnpm update vue axios lodash js-yaml sortablejs papaparse qs p-limit p-retry patch-package pug prettier tslib eslint-plugin-prettier @types/d3-array @types/sortablejs @types/lodash @types/papaparse @types/qs
+pnpm update vue axios lodash js-yaml sortablejs papaparse qs p-limit p-retry patch-package pug prettier tslib @types/d3-array @types/sortablejs @types/lodash @types/papaparse @types/qs
 ```
 
 After running, verify with:
@@ -32,12 +32,35 @@ Minor/patch bumps within semver range. Low risk of breakage.
 | pug (dev) | 3.0.2 | 3.0.3 | Patch bump |
 | prettier (dev) | 3.2.2 | 3.8.1 | Minor bump, formatting only |
 | tslib (dev) | 2.6.2 | 2.8.1 | Minor bump, TS runtime helpers |
-| eslint-plugin-prettier (dev) | 5.1.3 | 5.5.5 | Minor bump |
 | @types/d3-array | 3.2.1 | 3.2.2 | Patch bump |
 | @types/sortablejs | 1.15.7 | 1.15.9 | Patch bump |
 | @types/lodash | 4.14.202 | 4.17.24 | Minor bump |
 | @types/papaparse (dev) | 5.3.14 | 5.5.2 | Minor bump |
 | @types/qs | 6.9.11 | 6.14.0 | Minor bump |
+
+## Completed Major Updates
+
+### ESLint Toolchain (migrated to ESLint 10 flat config, 2026-10)
+
+`.eslintrc.cjs` was replaced by `eslint.config.mjs` (flat config) and the
+lint script became `eslint src`; `.gitignore` is honored through
+`includeIgnoreFile` from `@eslint/compat`, replacing `--ignore-path`.
+
+| Package | Before | After | Notes |
+|---------|--------|-------|-------|
+| eslint (dev) | 8.56.0 | 10.13.0 | Flat config. Unused `eslint-disable` directives are reported in production mode. |
+| eslint-plugin-vue (dev) | 9.20.1 | 10.12.0 | `flat/essential`. |
+| @vue/eslint-config-typescript (dev) | 12.0.0 | 14.9.0 | `defineConfigWithVueTs` with `vueTsConfigs.base` + `eslintRecommended`, which matches what v12 enforced. |
+| @vue/eslint-config-prettier (dev) | 9.0.0 | 10.2.0 | Flat config; `prettier/prettier` stays a warning. |
+| @eslint/compat (dev) | — | 2.1.1 | New: `includeIgnoreFile`. |
+| @typescript-eslint/eslint-plugin, @typescript-eslint/parser (dev) | 6.19.0 | removed | Now typescript-eslint 8, pulled in by @vue/eslint-config-typescript. |
+| eslint-plugin-prettier (dev) | 5.1.3 | removed | Now a dependency of @vue/eslint-config-prettier. |
+
+The migration kept the enforced rule set equivalent to the ESLint 8 one.
+Overrides in `eslint.config.mjs` turn off what the new versions would
+otherwise add (rules new to `flat/essential`, `vue/block-lang`, the TS-file
+rules widened to `.vue`, and typescript-eslint 8's `caughtErrors: "all"`
+default). Turning any of those on is a separate change.
 
 ## Do NOT Update Yet
 
@@ -70,19 +93,6 @@ Major version bumps or packages with known breaking changes. Each needs its own 
 | @types/d3-zoom | 1.8.7 | 3.0.8 | Must match d3-zoom version. |
 
 Note: d3 packages are tightly coupled with geojs. Update them together only if geojs requires it.
-
-### ESLint Toolchain (requires config migration)
-
-| Package | Current | Latest | Reason to Wait |
-|---------|---------|--------|----------------|
-| eslint (dev) | 8.56.0 | 10.0.2 | ESLint 9+ uses flat config format. Requires rewriting `.eslintrc`. |
-| eslint-plugin-vue (dev) | 9.20.1 | 10.8.0 | Tied to ESLint version. |
-| @typescript-eslint/eslint-plugin (dev) | 6.19.0 | 8.56.1 | Tied to ESLint version. |
-| @typescript-eslint/parser (dev) | 6.19.0 | 8.56.1 | Tied to ESLint version. |
-| @vue/eslint-config-prettier (dev) | 9.0.0 | 10.2.0 | Tied to ESLint version. |
-| @vue/eslint-config-typescript (dev) | 12.0.0 | 14.7.0 | Tied to ESLint version. |
-
-Note: ESLint 9+ dropped `.eslintrc` in favor of `eslint.config.js` (flat config). All ESLint-related packages should be updated together.
 
 ### ML / Image Processing (pinned for compatibility)
 
