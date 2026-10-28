@@ -1554,13 +1554,6 @@ export class Main extends VuexModule {
             this.setFolderLocation(user);
           }
         }),
-        this.api
-          .getAssetstores()
-          .then((assetstores) => this.setAssetstores(assetstores))
-          .catch((error) => {
-            logError("Failed to fetch assetstores during login:", error);
-            this.setAssetstores([]);
-          }),
         this.loadUserColors().catch((error) => {
           logError("Failed to load user colors during login:", error);
         }),
@@ -1570,6 +1563,21 @@ export class Main extends VuexModule {
       // (which its read-only token cannot open).
       if (!user.shareLink) {
         promises.push(this.fetchUserStorageInfo());
+      }
+      // Listing assetstores is admin-only (403 for other users, 401 for a
+      // share link's token), so only admins ask.
+      if (user.admin) {
+        promises.push(
+          this.api
+            .getAssetstores()
+            .then((assetstores) => this.setAssetstores(assetstores))
+            .catch((error) => {
+              logError("Failed to fetch assetstores during login:", error);
+              this.setAssetstores([]);
+            }),
+        );
+      } else {
+        this.setAssetstores([]);
       }
     } else {
       this.setAssetstores([]);

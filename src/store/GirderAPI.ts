@@ -249,16 +249,8 @@ export default class GirderAPI {
   }
 
   async getAssetstores(): Promise<IGirderAssetstore[]> {
-    try {
-      const response = await this.client.get("user_assetstore");
-      return response.data;
-    } catch (error) {
-      // Listing assetstores is admin-only; every other user gets a 403.
-      if (isAxiosError(error) && error.response?.status === 403) {
-        return [];
-      }
-      throw error;
-    }
+    const response = await this.client.get("user_assetstore");
+    return response.data;
   }
 
   async moveFolderToAssetstore(folderId: string, assetstoreId: string) {

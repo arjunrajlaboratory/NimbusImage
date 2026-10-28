@@ -108,6 +108,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import store from "@/store";
 import { logError } from "@/utils/log";
+import { isAxiosError } from "axios";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -141,7 +142,10 @@ async function checkExistingToken() {
     hasExistingToken.value = status.hasToken;
     sandbox.value = status.sandbox;
   } catch (error) {
-    logError("Failed to check for a Zenodo token:", error);
+    // Anonymous viewers of a public project get a 401: they have no token.
+    if (!(isAxiosError(error) && error.response?.status === 401)) {
+      logError("Failed to check for a Zenodo token:", error);
+    }
     hasExistingToken.value = false;
   }
 }

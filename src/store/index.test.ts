@@ -92,6 +92,21 @@ describe("share-link bootstrap identity", () => {
     },
   );
 
+  it.each([
+    [true, 1],
+    [false, 0],
+  ])(
+    "requests the admin-only assetstore list only for admins (admin: %s)",
+    async (admin, expectedCalls) => {
+      const client = main.girderRest;
+      const user = { _id: "u1", login: "u1", admin };
+      Object.assign(client, { user, token: "u1-token" });
+      await (main as any).loggedIn(client);
+      expect(main.api.getAssetstores).toHaveBeenCalledTimes(expectedCalls);
+      expect(main.assetstores).toEqual([]);
+    },
+  );
+
   it("commits only the latest validated link and does not persist its bearer", async () => {
     const storedLogin = localStorage.getItem("nimbus.girderToken");
     vi.spyOn(RestClient.prototype, "fetchUser").mockImplementation(
