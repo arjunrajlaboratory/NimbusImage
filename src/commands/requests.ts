@@ -22,3 +22,9 @@ export const snapshotLoadRequest = shallowRef<ISnapshot | null>(null);
  * the Color-by-property dialog (honoured by ColorByPropertyDialog.vue).
  */
 export const colorByPropertyRequest = shallowRef<string | null>(null);
+
+/**
+ * Put a prompt in the Nimbus AI panel's input. App.vue opens the panel when it
+ * sees one; AiPanel.vue fills its input (it does not send) and clears this.
+ */
+export const aiPromptRequest = shallowRef<string | null>(null);

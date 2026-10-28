@@ -2,6 +2,7 @@ import { RestClientInstance, IGirderSelectAble } from "@/girder";
 import { logError } from "@/utils/log";
 import store from "@/store";
 import { jobStates } from "@/store/jobConstants";
+import { isAxiosError } from "axios";
 
 // --- Zenodo Publish/Credential types ---
 
@@ -29,6 +30,8 @@ export interface IZenodoStatusResponse {
     total: number;
     message: string;
   } | null;
+  // The upload job, while one has been started (null on older uploads).
+  jobId?: string | null;
   error?: string | null;
   lastPublished?: string;
 }
@@ -37,15 +40,6 @@ export interface IZenodoPublishResponse {
   message: string;
   doi: string;
   url: string;
-}
-
-/**
- * Minimal shape of a `zenodo_upload` Girder job, as returned by the
- * /job listing endpoint. Only the fields the frontend reads are typed.
- */
-export interface IZenodoUploadJob {
-  _id: string;
-  kwargs?: { projectId?: string };
 }
 
 /**
@@ -527,26 +521,32 @@ export default class ZenodoAPI {
   }
 
   /**
-   * Find an in-flight (queued or running) `zenodo_upload` job for the
-   * given project. Used by the frontend to re-subscribe to job progress
-   * after a page reload mid-upload. Returns null if none is found.
+   * The id of a project's upload job (`meta.zenodo.jobId`, also returned by
+   * `getUploadStatus`) if that job is still live, else null. Used to
+   * subscribe to an upload this card didn't start.
    *
-   * The Girder /job endpoint cannot filter by `kwargs.projectId`, so we
-   * fetch the recent active zenodo_upload jobs and match client-side.
+   * Looked up by id because a job's kwargs (its projectId) are visible only
+   * to site admins. Returns null when this user can't read the job (403:
+   * Girder lets only the job's owner do so, so a co-owner's upload is
+   * invisible) or it no longer exists (Girder answers 400 "Invalid job id").
    */
-  async findActiveUploadJob(
-    projectId: string,
-  ): Promise<IZenodoUploadJob | null> {
-    const response = await this.client.get("job", {
-      params: {
-        types: JSON.stringify(["zenodo_upload"]),
-        statuses: JSON.stringify([jobStates.queued, jobStates.running]),
-        limit: 5,
-        sort: "created",
-        sortdir: -1,
-      },
-    });
-    const jobs: IZenodoUploadJob[] = response.data;
-    return jobs.find((j) => j.kwargs?.projectId === projectId) ?? null;
+  async getLiveUploadJobId(jobId: string): Promise<string | null> {
+    try {
+      const response = await this.client.get(`job/${jobId}`);
+      // A local job stays INACTIVE until its thread marks it RUNNING.
+      return [jobStates.inactive, jobStates.queued, jobStates.running].includes(
+        response.data.status,
+      )
+        ? jobId
+        : null;
+    } catch (error) {
+      if (
+        isAxiosError(error) &&
+        (error.response?.status === 400 || error.response?.status === 403)
+      ) {
+        return null;
+      }
+      throw error;
+    }
   }
 }

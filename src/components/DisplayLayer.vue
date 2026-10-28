@@ -134,6 +134,8 @@ import ContrastHistogram from "./ContrastHistogram.vue";
 import ColorPickerMenu from "./ColorPickerMenu.vue";
 import store from "../store";
 import { IHotkey } from "@/utils/v-mousetrap";
+import { useCommand } from "@/commands/registry";
+import { boundHotkey } from "@/commands/hotkeys";
 
 const props = defineProps<{
   modelValue: IDisplayLayer;
@@ -217,6 +219,38 @@ const zMaxMergeHotkey = computed<IHotkey>(() => ({
     description: `Toggle Z max-merge for layer: ${props.modelValue.name}`,
   },
 }));
+
+// Registered here rather than derived in a provider: turning max-merge off
+// restores this layer's previous slice, which only this component remembers.
+useCommand(() => {
+  const name = props.modelValue.name;
+  const channel = store.dataset?.channelNames.get(props.modelValue.channel);
+  return {
+    id: `layer.zMaxMerge.${props.modelValue.id}`,
+    // While merged, nothing about it says "merge": "merge dapi" must not
+    // find the command that un-merges.
+    title: isZMaxMerge.value
+      ? `Show the current Z slice: ${name}`
+      : `Z max-merge layer: ${name}`,
+    group: "Layers",
+    keywords: [
+      ...(channel ? [channel] : []),
+      ...(isZMaxMerge.value
+        ? ["single", "slice"]
+        : ["merge", "projection", "mip"]),
+      "channel",
+    ],
+    icon: "mdi-layers-triple-outline",
+    hotkey: boundHotkey(
+      zMaxMergeBinding.value,
+      `Toggle Z max-merge for layer: ${name}`,
+    ),
+    enabled: () => (store.dataset?.z.length ?? 0) > 1,
+    run: () => {
+      isZMaxMerge.value = !isZMaxMerge.value;
+    },
+  };
+});
 
 const visibilityHotkey = computed<IHotkey>(() => ({
   bind: `${index.value + 1}`,

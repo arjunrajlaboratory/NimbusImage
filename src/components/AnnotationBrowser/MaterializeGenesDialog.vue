@@ -1,6 +1,6 @@
 <template>
   <v-dialog v-model="dialog" max-width="600px">
-    <template v-slot:activator="activatorBinding">
+    <template v-if="showActivator" v-slot:activator="activatorBinding">
       <slot name="activator" v-bind="activatorBinding">
         <v-btn
           variant="outlined"
@@ -144,7 +144,13 @@ const DEFAULT_SCORE_PROPERTY_NAME = "Gene set scores";
 const SCORE_METHODS = ["mean", "sum"] as const;
 const JOB_POLL_MS = 2000;
 
-const dialog = ref(false);
+// Uncontrolled by default (its own activator). App.vue binds v-model:open
+// to host the app's single instance (see utils/genesDialog.ts).
+const dialog = defineModel<boolean>("open", { default: false });
+
+withDefaults(defineProps<{ showActivator?: boolean }>(), {
+  showActivator: true,
+});
 const symbols = ref<string[]>([]);
 const mode = ref<TMode>("live");
 const propertyName = ref(DEFAULT_PROPERTY_NAME);
@@ -204,6 +210,27 @@ watch(mode, (next, previous) => {
     propertyName.value = defaults[next];
   }
 });
+
+// The app's one instance (App.vue) outlives dataset switches, and its
+// closed dialog unmounts the picker that would otherwise drop genes picked
+// for the previous dataset's table. Start every dataset with a fresh form so
+// a copy or score can never post another table's genes. (useJobPolling
+// separately retires a running job's polling on the same change.)
+watch(
+  () => store.dataset?.id,
+  (datasetId, previousDatasetId) => {
+    if (datasetId === previousDatasetId) {
+      return;
+    }
+    symbols.value = [];
+    mode.value = "live";
+    propertyName.value = DEFAULT_PROPERTY_NAME;
+    scoreName.value = "";
+    scoreMethod.value = "mean";
+    done.value = "";
+    error.value = "";
+  },
+);
 
 const polling = useJobPolling(
   dialog,
@@ -324,6 +351,12 @@ async function submit() {
           )
         : await store.spatialAPI.materialize(datasetId, symbols.value, name);
     if (!polling.isLive(request)) return;
+    // The server registered the property in the configuration when the
+    // request was made: adopt it now, not when the job finishes, or a
+    // property created or removed meanwhile would save a list without it.
+    if (result.propertyId) {
+      void propertyStore.adoptServerRegisteredProperty(result.propertyId);
+    }
     const target = { propertyId: result.propertyId, name };
     if (result.jobId) {
       if (polling.isCurrent(request)) {

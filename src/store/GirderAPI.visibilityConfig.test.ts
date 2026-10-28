@@ -139,4 +139,42 @@ describe("configuration visibility metadata", () => {
     expect(earlierMetadata.visibilityConfig.maxVisible).toBe(51000);
     expect(latestMetadata.visibilityConfig.maxVisible).toBe(52000);
   });
+
+  it("sends a save queued behind a failed one", async () => {
+    // The configuration stores rely on this order (see writeConfigurationKey
+    // in index.ts): an older save always settles first, and a failure does
+    // not stop the next one.
+    let failFirstSave!: (error: Error) => void;
+    const firstSave = new Promise<{ data: object }>((_resolve, reject) => {
+      failFirstSave = reject;
+    });
+    const client = {
+      put: vi
+        .fn()
+        .mockReturnValueOnce(firstSave)
+        .mockResolvedValueOnce({ data: {} }),
+    } as any;
+    const api = new GirderAPI(client);
+    const configuration = makeConfiguration();
+
+    const earlierSave = api.updateConfigurationKey(
+      configuration,
+      "visibilityConfig",
+    );
+    const latestSave = api.updateConfigurationKey(
+      configuration,
+      "visibilityConfig",
+    );
+    const settled: string[] = [];
+    earlierSave.catch(() => settled.push("earlier"));
+    latestSave.then(() => settled.push("latest"));
+
+    await vi.waitFor(() => expect(client.put).toHaveBeenCalledTimes(1));
+    failFirstSave(new Error("Read-only collection"));
+    await expect(earlierSave).rejects.toThrow("Read-only collection");
+    await latestSave;
+
+    expect(client.put).toHaveBeenCalledTimes(2);
+    expect(settled).toEqual(["earlier", "latest"]);
+  });
 });

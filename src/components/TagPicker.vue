@@ -10,7 +10,7 @@
     chips
     density="compact"
     label="Tags"
-    :disabled="disabled"
+    :disabled="disabled || undefined"
     @update:model-value="onTagChange"
     ref="combobox"
   >

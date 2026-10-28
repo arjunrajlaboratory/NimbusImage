@@ -303,8 +303,10 @@ filters, analysis gates and axes, color-by, the object list and the summary
 objects (a server job; `method="welch"` t-test or `"wilcoxon"` Mann-Whitney):
 `ds.spatial.differential(filters_a, filters_b=None)`.
 
-In the app: Measurements tab → **Genes from spatial table** (live columns, copy into a
-measurement, or a gene-set score), and the Selection summary's **Expression** section
+In the app, genes are **not listed** in filters, plots or color-by until added. Add them
+from **Measure objects** → **Gene expression** card → **Add genes…**, or Measurements tab →
+**Add genes** (live columns, copy into a measurement, or a gene-set score). Also see the
+Selection summary's **Expression** section
 with **Compare expression…** (mean and % expressing for picked genes over the current
 selection, filter, or gate). `--no-upload` builds the file only. Requires `anndata`.
 

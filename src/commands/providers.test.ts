@@ -9,12 +9,14 @@ import { computed } from "vue";
 const mocks = vi.hoisted(() => ({
   store: null as any,
   properties: null as any,
+  filters: null as any,
 }));
 
 vi.mock("@/store", async () => {
   const { reactive } = await import("vue");
   mocks.store = reactive({
     isLoggedIn: true,
+    layerMode: "multiple",
     dataset: { channelNames: new Map([[0, "DAPI"]]) },
     tools: [] as any[],
     layers: [] as any[],
@@ -25,6 +27,7 @@ vi.mock("@/store", async () => {
       { text: "Blob", value: "polygon" },
     ],
     requestPaletteOpen: vi.fn(),
+    openAnnotationBrowserTab: vi.fn(),
     setSelectedToolId: vi.fn(),
     toggleLayerVisibility: vi.fn(),
     setIsColorByPropertyDialogOpen: vi.fn(),
@@ -37,9 +40,20 @@ vi.mock("@/store/properties", async () => {
   mocks.properties = reactive({
     workerImageList: {} as Record<string, any>,
     computedPropertyPaths: [] as string[][],
+    displayedPropertyPaths: [] as string[][],
     getFullNameFromPath: (path: string[]) => `Name of ${path.join("/")}`,
+    togglePropertyPathVisibility: vi.fn(),
   });
   return { default: mocks.properties };
+});
+
+vi.mock("@/store/filters", async () => {
+  const { reactive } = await import("vue");
+  mocks.filters = reactive({
+    filterPaths: [] as string[][],
+    togglePropertyPathFiltering: vi.fn(),
+  });
+  return { default: mocks.filters };
 });
 
 vi.mock("@/utils/v-mousetrap", async () => {
@@ -58,10 +72,13 @@ import {
   layerCommands,
   panelCommands,
   propertyCommands,
+  propertyFilterCommands,
+  propertyListCommands,
   snapshotCommands,
   toolCommands,
   tourCommands,
 } from "./providers";
+import { rankCommands } from "./scorer";
 import {
   colorByPropertyRequest,
   snapshotLoadRequest,
@@ -188,8 +205,32 @@ describe("layerCommands", () => {
     expect(commands[1].hotkey).toBeUndefined();
     expect(commands[0].keywords).toContain("DAPI");
     expect(commands[1].icon).toBe("mdi-eye-off");
+    // Titled for what it will do; no searchable current-state description.
+    expect(commands.map((c) => c.title)).toEqual([
+      "Hide layer: DAPI",
+      "Show layer: GFP",
+    ]);
+    expect(commands.every((c) => c.description === undefined)).toBe(true);
+    expect(ids(rankCommands(commands, "visible dapi"))).toEqual([]);
     commands[1].run();
     expect(mocks.store.toggleLayerVisibility).toHaveBeenCalledWith("l2");
+  });
+});
+
+describe("layerCommands in single mode", () => {
+  it("offers no 'Hide layer' for the one visible layer, which can't be hidden", () => {
+    mocks.store.layerMode = "single";
+    mocks.store.layers = [
+      { id: "l1", name: "DAPI", channel: 0, visible: true },
+      { id: "l2", name: "GFP", channel: 1, visible: false },
+    ];
+    const [dapi, gfp] = layerCommands(ctx)();
+    expect(dapi.title).toBe("Hide layer: DAPI");
+    expect(dapi.enabled!()).toBe(false);
+    expect(gfp.enabled!()).toBe(true);
+    mocks.store.layerMode = "multiple";
+    expect(layerCommands(ctx)()[0].enabled!()).toBe(true);
+    mocks.store.layers = [];
   });
 });
 
@@ -235,6 +276,153 @@ describe("propertyCommands", () => {
     expect(mocks.store.setIsColorByPropertyDialogOpen).toHaveBeenCalledWith(
       true,
     );
+  });
+});
+
+describe("propertyListCommands", () => {
+  it("offers each property as an object-list column, found by 'list area'", () => {
+    mocks.properties.computedPropertyPaths = [
+      ["p1", "Area"],
+      ["p2", "Intensity"],
+    ];
+    mocks.properties.displayedPropertyPaths = [["p2", "Intensity"]];
+    const commands = propertyListCommands(ctx)();
+    expect(commands.map((c) => c.title)).toEqual([
+      "Show in object list: Name of p1/Area",
+      "Hide from object list: Name of p2/Intensity",
+    ]);
+    expect(ids(rankCommands(commands, "list area"))).toEqual([
+      "property.list.p1.Area",
+    ]);
+    commands[0].run();
+    // The Objects tab, not just the panel: the column must be in sight.
+    expect(mocks.store.openAnnotationBrowserTab).toHaveBeenCalledWith(
+      "objects",
+    );
+    expect(mocks.properties.togglePropertyPathVisibility).toHaveBeenCalledWith([
+      "p1",
+      "Area",
+    ]);
+  });
+
+  it("does not reopen the Object Browser when hiding a column", () => {
+    mocks.properties.computedPropertyPaths = [["p1", "Area"]];
+    mocks.properties.displayedPropertyPaths = [["p1", "Area"]];
+    mocks.store.openAnnotationBrowserTab.mockClear();
+    propertyListCommands(ctx)()[0].run();
+    expect(mocks.store.openAnnotationBrowserTab).not.toHaveBeenCalled();
+    expect(mocks.properties.togglePropertyPathVisibility).toHaveBeenCalledWith([
+      "p1",
+      "Area",
+    ]);
+  });
+});
+
+describe("toggleCommands per-state keywords", () => {
+  it("offers 'filtered' only while the command turns filtering on", async () => {
+    const { ref } = await import("vue");
+    const { toggleCommands } = await import("./toggles");
+    const filtered = ref(true);
+    const build = () =>
+      toggleCommands([
+        {
+          id: "f",
+          setting: filtered,
+          turnOn: "Only show objects passing filters",
+          turnOff: "Draw every object",
+          keywords: ["annotations", "draw"],
+          turnOnKeywords: ["filtered", "passing"],
+          turnOffKeywords: ["unfiltered", "every", "all"],
+        },
+      ]);
+    expect(ids(rankCommands(build(), "filtered objects"))).toEqual([]);
+    filtered.value = false;
+    expect(ids(rankCommands(build(), "filtered objects"))).toEqual(["f"]);
+  });
+});
+
+describe("propertyListCommands direction", () => {
+  it("lets 'add' find only a hidden column and 'remove' only a shown one", () => {
+    mocks.properties.computedPropertyPaths = [
+      ["p1", "Area"],
+      ["p2", "Perimeter"],
+    ];
+    mocks.properties.displayedPropertyPaths = [["p1", "Area"]];
+    const commands = propertyListCommands(ctx)();
+    expect(ids(rankCommands(commands, "add column area"))).toEqual([]);
+    expect(ids(rankCommands(commands, "remove column area"))).toEqual([
+      "property.list.p1.Area",
+    ]);
+    expect(ids(rankCommands(commands, "add column perimeter"))).toEqual([
+      "property.list.p2.Perimeter",
+    ]);
+    expect(ids(rankCommands(commands, "remove column perimeter"))).toEqual([]);
+  });
+});
+
+describe("propertyListCommands at the column cap", () => {
+  it("withholds 'Show in' once the list is full, but still offers 'Hide from'", () => {
+    const full = Array.from({ length: 100 }, (_, i) => [`p${i}`, "v"]);
+    mocks.properties.computedPropertyPaths = [
+      ["p0", "v"],
+      ["new", "Area"],
+    ];
+    mocks.properties.displayedPropertyPaths = full;
+    const [hide, show] = propertyListCommands(ctx)();
+    expect(hide.title).toBe("Hide from object list: Name of p0/v");
+    expect(hide.enabled!()).toBe(true);
+    expect(show.title).toBe("Show in object list: Name of new/Area");
+    expect(show.enabled!()).toBe(false);
+  });
+});
+
+describe("propertyFilterCommands", () => {
+  it("adds a property's filter, or removes one already there", () => {
+    mocks.properties.computedPropertyPaths = [
+      ["p1", "Area"],
+      ["p2", "Intensity"],
+    ];
+    mocks.filters.filterPaths = [["p2", "Intensity"]];
+    mocks.store.requestPaletteOpen.mockClear();
+    const [area, intensity] = propertyFilterCommands(ctx)();
+    expect(area.title).toBe("Add filter: Name of p1/Area");
+    expect(intensity.title).toBe("Stop filtering by: Name of p2/Intensity");
+    // "filter <name>" finds only the add, never the removal.
+    expect(ids(rankCommands([area, intensity], "filter intensity"))).toEqual(
+      [],
+    );
+    expect(ids(rankCommands([area, intensity], "filter area"))).toEqual([
+      area.id,
+    ]);
+    area.run();
+    expect(mocks.store.requestPaletteOpen).toHaveBeenCalledWith([
+      "filtersPanel",
+    ]);
+    expect(mocks.filters.togglePropertyPathFiltering).toHaveBeenCalledWith([
+      "p1",
+      "Area",
+    ]);
+  });
+});
+
+describe("state verbs", () => {
+  it("lets a query's show/hide find only the command that does it", () => {
+    mocks.store.layers = [
+      { id: "l1", name: "DAPI", channel: 0, visible: true },
+      { id: "l2", name: "GFP", channel: 1, visible: false },
+    ];
+    const layers = layerCommands(ctx)();
+    expect(ids(rankCommands(layers, "hide"))).toEqual(["layer.toggle.l1"]);
+    expect(ids(rankCommands(layers, "show"))).toEqual(["layer.toggle.l2"]);
+    const panels = panelCommands(ctx, {
+      isOpen: (id) => id === "filtersPanel",
+      toggle: vi.fn(),
+    })();
+    expect(ids(rankCommands(panels, "show filters"))).toEqual([]);
+    expect(ids(rankCommands(panels, "hide filters"))).toEqual([
+      "panel.toggle.filtersPanel",
+    ]);
+    mocks.store.layers = [];
   });
 });
 

@@ -330,6 +330,22 @@ describe("BreadCrumbs", () => {
     expect(vm.ownerDisplayName).toBe("John Doe (john@example.com)");
   });
 
+  it("refreshItems shows the owner's login when their email is hidden", async () => {
+    mockWatchFolder.mockReturnValue({ name: "My Dataset" });
+    mockGetFolder.mockResolvedValue({ name: "My Dataset", creatorId: "u1" });
+    // GET user/{id} omits another user's email unless the caller is an admin.
+    mockGetUser.mockResolvedValue({
+      firstName: "John",
+      lastName: "Doe",
+      login: "jdoe",
+    });
+    const wrapper = mountComponent({ datasetId: "ds1" }, {}, "dataset");
+    const vm = wrapper.vm as any;
+    await vm.refreshItems(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(vm.ownerDisplayName).toBe("John Doe (jdoe)");
+  });
+
   it("refreshItems deduplicates when called with same params and not forced", async () => {
     mockWatchFolder.mockReturnValue({ name: "My Dataset" });
     mockGetFolder.mockResolvedValue({ name: "My Dataset" });

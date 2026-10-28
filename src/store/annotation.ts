@@ -1538,12 +1538,14 @@ export class Annotations extends VuexModule {
    * would corrupt the stored annotation, defeat patch diffing in
    * getAnnotationUpdatePatch, and prevent rollback on error.
    */
-  // rawError: true because both paths below rethrow after rolling back, so the
+  // rawError: true because both paths below rethrow, so the
   // real reason reaches the caller (and the console/Sentry) instead of
   // vuex-module-decorators' generic ERR_ACTION_ACCESS_UNDEFINED text. The
   // sync indicator is unaffected either way: setSaving receives the error
   // caught inside this action, before any wrapping. See index.ts
-  // syncConfiguration.
+  // syncConfiguration. (Only the full path is optimistic: a failed edit is
+  // put back to what the server holds once no edit of that annotation is
+  // pending, see pendingAnnotationEdits; the promise can reject before that.)
   @Action({ rawError: true })
   public async updateAnnotationsPerId({
     annotationIds,
@@ -1589,11 +1591,14 @@ export class Annotations extends VuexModule {
       }
     }
     sync.setSaving(true);
-    const originalAnnotations: IndexedAnnotationUpdate[] = [];
     const localUpdates: IndexedAnnotationUpdate[] = [];
     const annotationUpdates: AnnotationUpdatePatch[] = [];
+    const claims: IPendingAnnotationEdits[] = [];
+    let succeeded = false;
     try {
-      for (const annotationId of annotationIds) {
+      // Deduplicated: a second claim of the same id in one call would start
+      // a new chain on top of the first claim's unconfirmed write.
+      for (const annotationId of new Set(annotationIds)) {
         const annotationIndex = this.annotationIdToIdx[annotationId];
         if (annotationIndex === undefined) {
           continue;
@@ -1603,33 +1608,121 @@ export class Annotations extends VuexModule {
         editFunction(newAnnotation);
         const update = getAnnotationUpdatePatch(oldAnnotation, newAnnotation);
         if (update) {
-          const coordinatesChanged = update.coordinates !== undefined;
-          originalAnnotations.push({
-            annotation: oldAnnotation,
-            index: annotationIndex,
-            updateCentroid: coordinatesChanged,
-          });
           localUpdates.push({
             annotation: newAnnotation,
             index: annotationIndex,
-            updateCentroid: coordinatesChanged,
+            updateCentroid: update.coordinates !== undefined,
           });
           annotationUpdates.push(update);
         }
+      }
+      // Claim only once every edit is built: a claim joins (and repoints) the
+      // annotation's pending chain, so a throwing editFunction must not leave
+      // a claim for an object that was never stored.
+      for (const { annotation, index } of localUpdates) {
+        claims.push(claimAnnotationEdit(this.annotations[index], annotation));
       }
       this.setAnnotationsAtIndices(localUpdates);
       if (annotationUpdates.length) {
         await this.annotationsAPI.updateAnnotations(annotationUpdates);
         this.bumpMutationCounter();
       }
+      succeeded = true;
       sync.setSaving(false);
       return annotationUpdates.length;
     } catch (error) {
-      this.setAnnotationsAtIndices(originalAnnotations);
       logError(`Failed to update annotations: ${(error as Error).message}`);
       sync.setSaving(error as Error);
       throw error;
+    } finally {
+      // Restore after a failure only once no edit of the annotation is
+      // pending, and only where the store still holds that chain's latest
+      // write: a fetch, a dataset switch or a deletion during the await
+      // replaced or removed it, and its indices may have moved.
+      const restores: IndexedAnnotationUpdate[] = [];
+      claims.forEach((edits, i) => {
+        if (!settleAnnotationEdit(edits, annotationUpdates[i], succeeded)) {
+          return;
+        }
+        const index = this.annotationIdToIdx[edits.written.id];
+        const stored =
+          index === undefined ? undefined : this.annotations[index];
+        if (stored === edits.written) {
+          restores.push({
+            annotation: edits.confirmed,
+            index,
+            updateCentroid: stored.coordinates !== edits.confirmed.coordinates,
+          });
+        }
+      });
+      this.setAnnotationsAtIndices(restores);
+      if (restores.length > 0) {
+        void this.reconcileRestoredAnnotations(
+          restores.map(({ annotation }) => annotation),
+        );
+      }
     }
+  }
+
+  // After a failed edit is put back, read the annotations back: the restored
+  // value is an estimate of what the server holds (overlapping saves may have
+  // been applied in another order than their responses arrived, a bulk save
+  // that failed may be partly written). Only a read: it can't overwrite the
+  // server, so overlapping writes, undo or a session switch can't make it
+  // corrupt anything. Each server copy replaces an annotation only while the
+  // store still holds the restored object, in the same session and dataset;
+  // otherwise something newer replaced it. On a failed read the estimate stays.
+  @Action
+  private async reconcileRestoredAnnotations(restored: IAnnotation[]) {
+    const session = toRaw(main.girderRest);
+    const datasetId = main.dataset?.id;
+    // Only the latest read-back of an annotation may apply: two rollbacks
+    // can restore the same object, so identity alone can't tell them apart.
+    const generations = new Map(
+      restored.map(({ id }) => {
+        const generation = ++lastReadBackToken;
+        readBackGenerations.set(id, generation);
+        return [id, generation];
+      }),
+    );
+    let serverCopies: IAnnotation[];
+    try {
+      serverCopies = await this.annotationsAPI.hydrateAnnotations(
+        restored.map(({ id }) => id),
+      );
+    } catch (error) {
+      logError(
+        `Failed to read back annotations after a failed edit: ${
+          (error as Error).message
+        }`,
+      );
+      forgetReadBacks(generations);
+      return;
+    }
+    if (toRaw(main.girderRest) !== session || main.dataset?.id !== datasetId) {
+      forgetReadBacks(generations);
+      return;
+    }
+    const restoredById = new Map(restored.map((a) => [a.id, a]));
+    const updates: IndexedAnnotationUpdate[] = [];
+    for (const serverCopy of serverCopies) {
+      const index = this.annotationIdToIdx[serverCopy.id];
+      const stored = index === undefined ? undefined : this.annotations[index];
+      if (
+        stored &&
+        stored === restoredById.get(serverCopy.id) &&
+        readBackGenerations.get(serverCopy.id) ===
+          generations.get(serverCopy.id)
+      ) {
+        updates.push({
+          annotation: serverCopy,
+          index,
+          updateCentroid: true,
+        });
+      }
+    }
+    forgetReadBacks(generations);
+    this.setAnnotationsAtIndices(updates);
   }
 
   @Action
@@ -2838,11 +2931,19 @@ export class Annotations extends VuexModule {
     if (this.annotations.length > 0) {
       this.annotations = this.annotations.map((annotation) => {
         const color = colorById.get(annotation.id) ?? null;
+        // The server wrote this color, whether or not it is already shown: a
+        // pending edit that matched it optimistically must count it as
+        // confirmed, or a failed edit's rollback would undo it.
+        confirmServerAnnotationFields(annotation, { color });
+        // Also newer than a pending read-back, even if nothing changes here.
+        supersedeReadBack(annotation.id);
         if (annotation.color === color) {
           return annotation;
         }
         changed = true;
-        return markRaw({ ...annotation, color });
+        return markRaw(
+          followServerAnnotationWrite(annotation, { ...annotation, color }),
+        );
       });
     }
     // Only when a color actually moved: an assignment that changes nothing
@@ -3108,6 +3209,131 @@ export class Annotations extends VuexModule {
 const annotationFetchGuard = createSequenceGuard();
 // Settles when the most recently started fetchAnnotations call finishes.
 let latestAnnotationFetch: Promise<void> = Promise.resolve();
+
+// Optimistic edits of one annotation that updateAnnotationsPerId has not yet
+// settled, so a failure restores what the server holds instead of the
+// snapshot its own call took. Edits overlap (a recolor while a rename is in
+// flight); restoring per call would either overwrite a newer edit or bring
+// back an earlier edit that also failed. Per annotation id:
+// - confirmed: the annotation as the server holds it, advanced by each
+//   patch that succeeds;
+// - written: the object the latest edit stored, so a settle can tell whether
+//   the store still holds this chain's work or a fetch replaced it. A
+//   mutation that copies a pending annotation forward with fields the server
+//   wrote (applyColorAssignment) must go through followServerAnnotationWrite,
+//   or the chain loses track of it and a failed edit stays on screen.
+interface IPendingAnnotationEdits {
+  pending: number;
+  failed: boolean;
+  confirmed: IAnnotation;
+  written: IAnnotation;
+}
+const pendingAnnotationEdits = new Map<string, IPendingAnnotationEdits>();
+
+// Join the annotation's pending chain, or start one from `stored` (what the
+// store held before this edit) when there is none or a fetch replaced the
+// chain's last write.
+function claimAnnotationEdit(stored: IAnnotation, written: IAnnotation) {
+  const chain = pendingAnnotationEdits.get(written.id);
+  if (chain && chain.written === stored) {
+    chain.pending++;
+    chain.written = written;
+    return chain;
+  }
+  const edits: IPendingAnnotationEdits = {
+    pending: 1,
+    failed: false,
+    confirmed: stored,
+    written,
+  };
+  pendingAnnotationEdits.set(written.id, edits);
+  return edits;
+}
+
+// Fields of `stored` the server has written (an authoritative assignment).
+// If `stored` is a pending chain's latest write, they count as confirmed,
+// including when they equal what the chain already shows.
+function confirmServerAnnotationFields(
+  stored: IAnnotation,
+  fields: Partial<IAnnotation>,
+) {
+  if (pendingAnnotationEdits.size === 0) {
+    return;
+  }
+  const chain = pendingAnnotationEdits.get(stored.id);
+  if (chain?.written === stored) {
+    chain.confirmed = { ...chain.confirmed, ...fields };
+  }
+}
+
+// `replacement` is `stored` copied forward with fields the server has
+// written (confirm them with confirmServerAnnotationFields first). If
+// `stored` is a pending chain's latest write, the chain follows the copy.
+// Returns `replacement`.
+function followServerAnnotationWrite(
+  stored: IAnnotation,
+  replacement: IAnnotation,
+) {
+  const chain = pendingAnnotationEdits.get(stored.id);
+  if (chain?.written === stored) {
+    chain.written = replacement;
+  }
+  return replacement;
+}
+
+// The latest read-back started for each annotation (see
+// reconcileRestoredAnnotations); an entry is removed once that read-back has
+// finished, or when a newer server write supersedes it. Tokens come from one counter that never resets, so an older
+// read-back still pending can't match a newer one after an entry was removed.
+const readBackGenerations = new Map<string, number>();
+let lastReadBackToken = 0;
+
+// Read-backs whose bookkeeping is still held (tests assert it drains).
+export function pendingReadBackCount() {
+  return readBackGenerations.size;
+}
+
+// A server write newer than any pending read-back of these annotations (an
+// authoritative color assignment): those read-backs must not apply. Removing
+// the entry is enough, since a token never matches a missing entry; replacing
+// it with a fresh token would leave an entry no read-back owns or removes.
+function supersedeReadBack(annotationId: string) {
+  readBackGenerations.delete(annotationId);
+}
+
+function forgetReadBacks(generations: Map<string, number>) {
+  for (const [id, generation] of generations) {
+    if (readBackGenerations.get(id) === generation) {
+      readBackGenerations.delete(id);
+    }
+  }
+}
+
+// Record one edit's outcome. Returns true when it was the chain's last
+// pending edit and some edit in the chain failed, so the caller should put
+// `confirmed` back. A patch carries whole field values, so applying the ones
+// that succeeded to `confirmed` estimates what the server holds; overlapping
+// saves can be applied in another order than their responses arrive, and a
+// non-400 failure of the bulk save can leave part of it written, so the
+// caller then reads the annotation back (reconcileRestoredAnnotations).
+function settleAnnotationEdit(
+  edits: IPendingAnnotationEdits,
+  patch: AnnotationUpdatePatch,
+  succeeded: boolean,
+) {
+  if (succeeded) {
+    edits.confirmed = { ...edits.confirmed, ...patch };
+  } else {
+    edits.failed = true;
+  }
+  if (--edits.pending > 0) {
+    return false;
+  }
+  if (pendingAnnotationEdits.get(edits.written.id) === edits) {
+    pendingAnnotationEdits.delete(edits.written.id);
+  }
+  return edits.failed;
+}
 
 // Wait until no fetchAnnotations call is in flight (a newer one may start
 // while we wait), then report whether the store holds `datasetId`.

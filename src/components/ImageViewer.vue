@@ -287,6 +287,9 @@ import LayerInfoGrid from "./LayerInfoGrid.vue";
 import { ITileHistogram } from "@/store/images";
 import { convertLength } from "@/utils/conversion";
 import { IHotkey } from "@/utils/v-mousetrap";
+import { useCommand } from "@/commands/registry";
+import { deleteSelectedObjects } from "@/utils/deleteSelectedObjects";
+import { boundHotkey } from "@/commands/hotkeys";
 import { NoOutput } from "@/pipelines/computePipeline";
 import { logWarning } from "@/utils/log";
 import { getUnrollCells, IUnrollCell, unrollGridSize } from "@/utils/unroll";
@@ -900,14 +903,104 @@ const unrollCellsByMap = computed<IUnrollCell[][]>(() => {
   });
 });
 
+// ---- Command palette ----
+// The same actions as the hotkeys below (they share these handlers), so the
+// palette can find them by name.
+function toggleDrawAnnotations() {
+  store.setDrawAnnotations(!store.drawAnnotations);
+}
+
+function toggleShowTooltips() {
+  store.setShowTooltips(!store.showTooltips);
+}
+
+useCommand(() => {
+  const selectedCount = annotationStore.selectedAnnotationIds.size;
+  return [
+    {
+      id: "objects.toggleDraw",
+      title: store.drawAnnotations ? "Hide objects" : "Show objects",
+      group: "Actions",
+      keywords: ["annotations", "overlay", "draw", "visibility", "toggle"],
+      icon: store.drawAnnotations ? "mdi-eye-off-outline" : "mdi-eye-outline",
+      hotkey: boundHotkey("a", "Show/hide objects"),
+      run: toggleDrawAnnotations,
+    },
+    {
+      id: "objects.toggleTooltips",
+      title: store.showTooltips
+        ? "Hide object tooltips"
+        : "Show object tooltips",
+      group: "Actions",
+      keywords: ["annotations", "labels", "hover", "toggle"],
+      icon: "mdi-tooltip-text-outline",
+      hotkey: boundHotkey("t", "Show/hide object tooltips"),
+      // Same gate as the Settings checkbox, which is disabled while objects
+      // are hidden.
+      enabled: () => store.drawAnnotations,
+      run: toggleShowTooltips,
+    },
+    {
+      id: "view.toggleLock",
+      title: isViewLocked.value ? "Unlock pan and zoom" : "Lock pan and zoom",
+      group: "Actions",
+      // Only what it will do: "freeze" must not find the unlock.
+      keywords: isViewLocked.value
+        ? ["unfreeze", "view", "navigation", "toggle"]
+        : ["freeze", "view", "navigation", "toggle"],
+      icon: isViewLocked.value ? "mdi-lock-open-outline" : "mdi-lock-outline",
+      hotkey: boundHotkey("l", "Lock/unlock view pan and zoom"),
+      run: toggleViewLock,
+    },
+    {
+      id: "objects.copySelected",
+      title: `Copy selected objects (${selectedCount})`,
+      group: "Actions",
+      keywords: ["annotations", "clipboard", "duplicate"],
+      icon: "mdi-content-copy",
+      hotkey: boundHotkey("mod+c", "Copy selected objects"),
+      enabled: () => selectedCount > 0,
+      run: () => annotationStore.copySelectedAnnotations(),
+    },
+    {
+      id: "objects.paste",
+      title: `Paste copied objects (${annotationStore.copiedAnnotations.length})`,
+      group: "Actions",
+      keywords: ["annotations", "clipboard", "duplicate"],
+      icon: "mdi-content-paste",
+      hotkey: boundHotkey("mod+v", "Paste objects"),
+      enabled: () =>
+        store.isLoggedIn && annotationStore.copiedAnnotations.length > 0,
+      run: () => annotationStore.pasteAnnotations(),
+    },
+    {
+      id: "objects.deleteSelected",
+      title: `Delete selected objects (${selectedCount})`,
+      group: "Actions",
+      keywords: ["annotations", "remove", "erase"],
+      icon: "mdi-delete-outline",
+      hotkey: boundHotkey("mod+backspace", "Delete selected objects"),
+      enabled: () => store.isLoggedIn && selectedCount > 0,
+      run: deleteSelectedObjects,
+    },
+    {
+      id: "objects.clearSelection",
+      title: `Clear selection (${selectedCount})`,
+      group: "Actions",
+      keywords: ["deselect", "unselect", "objects", "annotations"],
+      icon: "mdi-selection-off",
+      enabled: () => selectedCount > 0,
+      run: () => annotationStore.clearSelectedAnnotations(),
+    },
+  ];
+});
+
 // ---- Mousetrap Bindings ----
 
 const mousetrapAnnotations: IHotkey[] = [
   {
     bind: "a",
-    handler: () => {
-      store.setDrawAnnotations(!store.drawAnnotations);
-    },
+    handler: toggleDrawAnnotations,
     data: {
       section: "Objects",
       description: "Show/hide objects",
@@ -915,9 +1008,7 @@ const mousetrapAnnotations: IHotkey[] = [
   },
   {
     bind: "t",
-    handler: () => {
-      store.setShowTooltips(!store.showTooltips);
-    },
+    handler: toggleShowTooltips,
     data: {
       section: "Objects",
       description: "Show/hide object tooltips",
@@ -925,9 +1016,7 @@ const mousetrapAnnotations: IHotkey[] = [
   },
   {
     bind: "mod+backspace",
-    handler: () => {
-      annotationStore.deleteSelectedAnnotations();
-    },
+    handler: deleteSelectedObjects,
     data: {
       section: "Objects",
       description: "Delete selected objects",

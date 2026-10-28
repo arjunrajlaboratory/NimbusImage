@@ -117,8 +117,10 @@ Access and interact with your measurements:
 - Lists every property — including not-yet-computed ones — with value counts, "N shown" badges, per-value show/hide checkboxes, and per-property Run buttons with uncomputed-count badges
 - Compute errors and warnings appear as alerts here
 - A "Compute all" header runs everything that still needs computing
+- On datasets with a spatial expression table, **Add genes** (here, or the **Gene expression** card in **Measure objects**) adds genes as measurements. Genes are not listed anywhere until added (see the spatial-transcriptomics topic)
 
 **Filtering by Properties**:
+To filter by gene expression, first add the genes (see above); they then appear under **Spatial table**.
 1. In the Filters panel, expand "Property values" and click "Add property filter"
 2. Adjust histogram sliders to set range
 3. Only objects within range will be displayed

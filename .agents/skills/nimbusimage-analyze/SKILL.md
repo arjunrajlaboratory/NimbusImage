@@ -69,6 +69,22 @@ ds.properties.delete_values(prop.id)
 hist = ds.properties.histogram("propertyId.Area", buckets=50)
 ```
 
+### Gene expression from a spatial table
+
+On datasets with a registered spatial table (Xenium or Spatial Genomics ingest), gene
+counts are **not** stored property values. Each gene is a virtual property path
+`["spatial", "<gene>"]` read live from the table. In the app a gene appears in pickers
+only after it's added (**Measure objects** → **Gene expression** → **Add genes…**). From
+Python no adding is needed:
+
+```python
+path = ds.spatial.virtual_path("KRT7")            # ["spatial", "KRT7"]
+f = {"propertyFilters": [{"path": path, "mode": "range", "min": 100}]}
+ds.annotations.summary(filters=f)                  # server-side count
+ds.spatial.aggregate(["KRT7"], {"tags": {"values": ["Leiden 0"], "exclusive": False}})
+ds.spatial.materialize(["KRT7"])                   # copy into a real property
+```
+
 ### Running property workers
 
 For server-side computation using Docker workers, use the workers skill.
@@ -167,9 +183,13 @@ access = ds.sharing.get_access()
 
 Access levels: `read`, `write`, `admin`, `remove`. `admin` makes the user a co-owner (they can share, publish and delete).
 
-`write` access is enough to share, but never above your own level: a collaborator with `write` can share `read` or `write`, and the server refuses (403, nothing changed) any request that would grant more than your level on the dataset, any of its views or configurations, or that would change a user above your level (such as the owner). `project.share()` follows the same rules for everything in the project you can edit -- datasets with their views, and collections -- and is refused as a whole if any of them would exceed your level.
+A share applies to the dataset folder and to each of its dataset views that you can write, together with that view's collection (what the web app's Share dialog does by default), so the user can open the dataset with its configuration. Views and collections you can't write are left unchanged; if there are none you can write, `share()` raises `ValueError`. `write` access is enough to share, but never above your own level: a collaborator with `write` can share `read` or `write`, and the server refuses (403, nothing changed) any request that would grant more than your level on the dataset, any of its views or configurations, or that would change a user above your level (such as the owner). `project.share()` follows the same rules for everything in the project you can edit -- datasets with their views, and collections -- and is refused as a whole if any of them would exceed your level.
 
-> **⚠️ Never call the raw Girder access endpoint.** `ds.sharing` is the **only** safe way to change access. Specifically: **do not** call `client._gc.put(f"folder/{id}/access", ...)`. The raw endpoint replaces the entire ACL, and if the new list omits the dataset creator, the owner is silently locked out (`_accessLevel` becomes `-1`, only a site admin can recover). `ds.sharing.share()` is incremental — it can't make that mistake. If you find yourself wanting to bulk-replace an ACL, stop and ask the user; the accessor methods cover every legitimate sharing operation. See also `references/gotchas.md`.
+`set_public` needs owner (ADMIN) access.
+
+A dataset or project always keeps at least one user at `admin`: removing or demoting the last one is refused (400, nothing changed), whether it's you or someone else. To hand a dataset over, share it with the new owner at `admin` first, then remove yourself.
+
+> **⚠️ Never call the raw Girder access endpoint.** `ds.sharing` is the **only** safe way to change access. Specifically: **do not** call `client._gc.put(f"folder/{id}/access", ...)`. The raw endpoint replaces the entire ACL, so everyone the new list omits silently loses access. `ds.sharing.share()` is incremental — it can't make that mistake. If you find yourself wanting to bulk-replace an ACL, stop and ask the user; the accessor methods cover every legitimate sharing operation. See also `references/gotchas.md`.
 
 ## History
 

@@ -173,6 +173,9 @@ import {
 import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import PixelScaleBarSetting from "@/components/PixelScaleBarSetting.vue";
 import UserColorSettings from "@/components/UserColorSettings.vue";
+import { useCommand } from "@/commands/registry";
+import { toggleCommands } from "@/commands/toggles";
+import { useInViewer } from "@/commands/context";
 
 const showColorDialog = ref(false);
 
@@ -280,6 +283,93 @@ const showTimeLabels = computed({
     store.setShowTimeLabels(value);
   },
 });
+
+// The Settings palette stays mounted on every route; these act on the viewer.
+const inViewer = useInViewer();
+
+useCommand(() => [
+  ...toggleCommands(
+    [
+      {
+        id: "settings.scalebar",
+        setting: showScalebar,
+        turnOn: "Show scale bar",
+        turnOff: "Hide scale bar",
+        keywords: ["scalebar", "microns", "ruler"],
+        icon: "mdi-ruler",
+      },
+      {
+        id: "settings.minimap",
+        setting: overview,
+        turnOn: "Show minimap",
+        turnOff: "Hide minimap",
+        keywords: ["overview", "thumbnail", "navigation"],
+        icon: "mdi-map-outline",
+      },
+      {
+        id: "settings.valueOnHover",
+        setting: valueOnHover,
+        turnOn: "Show channel values on hover",
+        turnOff: "Hide channel values on hover",
+        keywords: ["pixel", "intensity", "readout", "mouse"],
+        icon: "mdi-cursor-default-outline",
+      },
+      {
+        id: "settings.scalePointsWithZoom",
+        setting: scaleAnnotationsWithZoom,
+        turnOn: "Scale points with zoom",
+        turnOff: "Keep points a fixed size",
+        keywords: ["annotations", "radius", "dots", "size"],
+        icon: "mdi-resize",
+      },
+      {
+        id: "settings.xyLabels",
+        setting: showXYLabels,
+        turnOn: "Show XY position labels",
+        turnOff: "Hide XY position labels",
+        keywords: ["dimension", "names"],
+        icon: "mdi-label-outline",
+      },
+      {
+        id: "settings.zLabels",
+        setting: showZLabels,
+        turnOn: "Show Z position labels",
+        turnOff: "Hide Z position labels",
+        keywords: ["dimension", "names", "slice"],
+        icon: "mdi-label-outline",
+      },
+      {
+        id: "settings.timeLabels",
+        setting: showTimeLabels,
+        turnOn: "Show time labels",
+        turnOff: "Hide time labels",
+        keywords: ["dimension", "names", "timepoint"],
+        icon: "mdi-label-outline",
+      },
+    ],
+    { when: inViewer },
+  ),
+  {
+    id: "settings.backgroundColor",
+    title:
+      backgroundColor.value === "white"
+        ? "Use a black background"
+        : "Use a white background",
+    group: "Actions",
+    // Only the color it applies: "light background" must not find the
+    // command that turns a white background black.
+    keywords:
+      backgroundColor.value === "white"
+        ? ["background", "color", "dark", "setting"]
+        : ["background", "color", "light", "setting"],
+    icon: "mdi-invert-colors",
+    enabled: inViewer,
+    run: () => {
+      backgroundColor.value =
+        backgroundColor.value === "white" ? "black" : "white";
+    },
+  },
+]);
 
 defineExpose({
   showColorDialog,

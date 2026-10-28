@@ -17,6 +17,7 @@ const MAC_KEY_NAMES: Record<string, string> = {
   alt: "⌥",
   option: "⌥",
   shift: "⇧",
+  enter: "↵",
 };
 
 const OTHER_KEY_NAMES: Record<string, string> = {
@@ -73,6 +74,24 @@ export function isPaletteToggleKey(
     !event.shiftKey &&
     (mac ? !event.ctrlKey : !event.metaKey) &&
     event.key.toLowerCase() === "k"
+  );
+}
+
+/**
+ * The palette's "Ask Nimbus AI" key ("mod+enter"): ⌘↵ on a Mac, Ctrl+Enter
+ * elsewhere, with no other modifier.
+ */
+export function isAskAiKey(
+  event: KeyboardEvent,
+  mac = isMacPlatform(),
+): boolean {
+  const mod = mac ? event.metaKey : event.ctrlKey;
+  return (
+    mod &&
+    !event.altKey &&
+    !event.shiftKey &&
+    (mac ? !event.ctrlKey : !event.metaKey) &&
+    event.key === "Enter"
   );
 }
 

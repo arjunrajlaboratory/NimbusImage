@@ -37,18 +37,18 @@
             variant="text"
             color="error"
             size="small"
-            @click.stop="deleteComputedValues = true"
+            @click.stop="openDeleteDialog"
           >
-            Delete property
+            Remove property
           </v-btn>
         </template>
         <v-card>
-          <v-card-title> Delete property </v-card-title>
+          <v-card-title> Remove property </v-card-title>
           <v-card-text>
             <v-container>
               <v-row>
                 <v-col class="body-2">
-                  You are about to delete this property:
+                  You are about to remove this property:
                 </v-col>
               </v-row>
               <v-row>
@@ -56,7 +56,36 @@
                   {{ property.name }}
                 </v-col>
               </v-row>
-              <v-row>
+              <v-row v-if="runningPipeline">
+                <v-col>
+                  <v-alert type="error" variant="tonal" density="compact">
+                    The pipeline "{{ runningPipeline.name }}" is running and
+                    computes this property. Wait for it to finish, or cancel it,
+                    before removing the property: removing it now would make the
+                    rest of the run compute into a new property instead.
+                  </v-alert>
+                </v-col>
+              </v-row>
+              <v-row v-else-if="linkedSteps.length > 0">
+                <v-col>
+                  <v-alert type="warning" variant="tonal" density="compact">
+                    These pipeline steps use this property:
+                    <ul class="linked-steps">
+                      <li
+                        v-for="link in linkedSteps"
+                        :key="`${link.pipelineId}:${link.stepId}`"
+                      >
+                        {{ link.pipelineName }}: {{ link.stepName }}
+                        <span v-if="link.use === 'created'">(created it)</span>
+                        <span v-if="!link.enabled">(disabled)</span>
+                      </li>
+                    </ul>
+                    If you remove it, each creates a new pipeline-owned property
+                    on its next run instead.
+                  </v-alert>
+                </v-col>
+              </v-row>
+              <v-row v-if="!runningPipeline">
                 <v-col>
                   <v-checkbox
                     hide-details
@@ -64,6 +93,13 @@
                     label="Also delete the computed values for this property"
                     v-model="deleteComputedValues"
                   />
+                </v-col>
+              </v-row>
+              <v-row v-if="deleteError">
+                <v-col>
+                  <v-alert type="error" variant="tonal" density="compact">
+                    {{ deleteError }}
+                  </v-alert>
                 </v-col>
               </v-row>
             </v-container>
@@ -74,16 +110,13 @@
               >Cancel</v-btn
             >
             <v-btn
+              v-if="!runningPipeline"
               variant="flat"
               color="error"
               size="small"
-              @click="
-                () => {
-                  deleteProperty();
-                  deleteDialog = false;
-                }
-              "
-              >Delete</v-btn
+              :loading="deleting"
+              @click="confirmDelete"
+              >{{ linkedSteps.length > 0 ? "Remove anyway" : "Remove" }}</v-btn
             >
           </v-card-actions>
         </v-card>
@@ -142,7 +175,14 @@
 import { ref, computed, watch } from "vue";
 import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
-import { IAnnotationProperty, AnnotationNames } from "@/store/model";
+import pipelinesStore from "@/store/pipelines";
+import progress from "@/store/progress";
+import store from "@/store";
+import {
+  IAnnotationProperty,
+  AnnotationNames,
+  NotificationType,
+} from "@/store/model";
 import { logError } from "@/utils/log";
 
 const props = defineProps<{
@@ -185,10 +225,81 @@ watch(
   },
 );
 
-function deleteProperty() {
-  propertyStore.deleteProperty(props.property.id);
-  if (deleteComputedValues.value) {
-    propertyStore.deletePropertyValues(props.property.id);
+// Enabled pipeline steps linked to this property: removing it makes them fall
+// back to their saved copy, so the confirmation names them.
+const linkedSteps = computed(() =>
+  pipelinesStore.pipelineStepsLinkedToProperty(props.property.id),
+);
+
+// A running pipeline (or batch) that computes this property. Its removal is
+// blocked until the run ends: the remaining steps or datasets would compute
+// into a fallback property instead.
+const runningPipeline = computed(() =>
+  pipelinesStore.runningPipelineComputingProperty(props.property.id),
+);
+
+const deleting = ref(false);
+const deleteError = ref<string | null>(null);
+
+function openDeleteDialog() {
+  deleteComputedValues.value = true;
+  deleteError.value = null;
+}
+
+// Removes the property; resolves to whether it was removed. The removal can
+// be refused (this configuration's properties have not loaded) or fail to
+// save, and then the property stays.
+async function deleteProperty(): Promise<boolean> {
+  // Also checked here: a run can start while the dialog is open.
+  if (runningPipeline.value) {
+    return false;
+  }
+  // Captured first: another dataset may be open once the removal has saved.
+  const datasetId = store.dataset?.id;
+  const deleteValues = deleteComputedValues.value;
+  const propertyName = props.property.name;
+  try {
+    await propertyStore.deleteProperty(props.property.id);
+  } catch (error) {
+    logError("Failed to remove property:", error);
+    const message = `"${propertyName}" was not removed: ${
+      (error as Error).message
+    }`;
+    deleteError.value = message;
+    // The removal takes the property out of the list before it saves, which
+    // unmounts this row and its dialog: say so where it is seen either way.
+    progress.createNotification({
+      type: NotificationType.ERROR,
+      title: "Property not removed",
+      message,
+    });
+    return false;
+  }
+  if (deleteValues && datasetId) {
+    // The property is removed either way; a failure here only leaves its
+    // computed values in place.
+    try {
+      await propertyStore.deletePropertyValues({
+        propertyId: props.property.id,
+        datasetId,
+      });
+    } catch (error) {
+      logError("Failed to delete the property's computed values:", error);
+    }
+  }
+  return true;
+}
+
+// The dialog closes only once the property is actually removed.
+async function confirmDelete() {
+  deleting.value = true;
+  deleteError.value = null;
+  try {
+    if (await deleteProperty()) {
+      deleteDialog.value = false;
+    }
+  } finally {
+    deleting.value = false;
   }
 }
 
@@ -237,7 +348,11 @@ defineExpose({
   showCopySnackbar,
   currentJobId,
   jobLog,
+  linkedSteps,
+  runningPipeline,
   deleteProperty,
+  confirmDelete,
+  deleteError,
   copyLogToClipboard,
   copyToClipboardFallback,
   annotationNames,
@@ -245,6 +360,10 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
+.linked-steps {
+  margin: 4px 0 4px 20px;
+}
+
 .job-log {
   max-height: 400px;
   min-height: 200px;

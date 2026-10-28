@@ -26,6 +26,13 @@ they aren't re-litigated.)
   progress widget. Steps can be built from an annotation worker, a property
   worker, or an **existing worker-backed tool**. Tag auto-wiring joins property
   steps to the nearest upstream annotation step.
+- **Linked steps** (§3.4): a step added from an existing tool or an existing
+  property is *linked* to it, so the pipeline runs with the same parameters as
+  the individual tool or property instead of a diverging copy. A linked step's
+  settings are read-only in the pipeline editor (edit the tool in the Tools
+  panel); a property-linked step computes the user's own property and never
+  replaces or deletes it. Each linked step keeps a saved copy used only when its source is
+  deleted, and **Unlink** turns it into an independent step.
 
 ### Removed / superseded
 
@@ -206,8 +213,11 @@ it.
 ## 2. Design overview
 
 A **Pipeline** is a new, self-contained, ordered list of steps stored on the
-dataset configuration. It does **not** reference existing `tools[]` / `propertyIds[]`
-entries; each step embeds its own worker configuration. Rationale:
+dataset configuration. Each step embeds its own worker configuration rather than
+depending on existing `tools[]` / `propertyIds[]` entries. (A step added from an
+existing tool or property *also* records a link to it and runs with the source's
+current values — see §3.4. The embedded configuration remains as the fallback,
+so the properties below still hold.) Rationale:
 
 - **Portability.** A pipeline can be copied between configurations, shipped as a
   built-in preset, or generated wholesale by the LLM without first creating N
@@ -281,6 +291,9 @@ export interface IAnnotationPipelineStep extends IPipelineStepBase {
   };
   // Mirrors tool.values.jobDateTag.
   jobDateTag?: boolean;
+  // Linked to this configuration tool (§3.4). The fields above are then a
+  // saved copy of the tool's values.
+  sourceToolId?: string;
 }
 
 export interface IPropertyPipelineStep extends IPipelineStepBase {
@@ -294,6 +307,10 @@ export interface IPropertyPipelineStep extends IPipelineStepBase {
   // IAnnotationProperty this step created. Reused on subsequent runs. May be
   // cleared if the referenced property no longer exists (runner re-creates).
   materializedPropertyId?: string;
+  // Linked to this existing property (§3.4): the runner computes it directly
+  // instead of materializing one. Never set together with a live
+  // materializedPropertyId.
+  sourcePropertyId?: string;
 }
 
 export type TPipelineStep = IAnnotationPipelineStep | IPropertyPipelineStep;
@@ -356,6 +373,156 @@ real property document. Options:
 materialized property too (it will otherwise linger in the Annotation Browser).
 Reuse `deleteProperty` (`PropertiesAPI.ts:115`). Make this a confirm, not
 automatic — the user may want to keep the computed values.
+
+### 3.4 Linked steps
+
+**Why.** Users expected a pipeline step built from a tool they had already tuned
+to *be* that tool: change the tool's threshold and the pipeline should use it.
+The original design (§2) only copied the tool's values into the step once, at
+"Add step" time, and property steps always materialized a property of their own
+— so a dataset ended up with two "Blob metrics" properties with independent
+parameters. Options considered:
+
+- **Keep copies, flag drift** (record the source, show "out of sync", offer
+  update-from / push-to buttons). Cheapest, but values still diverge silently
+  until someone clicks.
+- **Reference only** (a step holds just `toolId` / `propertyId`). Matches user
+  expectation exactly, but breaks the portability and no-dangling-reference
+  properties of §2: deleting a tool would break the pipeline.
+- **(chosen) Linked, with a saved copy as fallback, read-only in the
+  pipeline.** Described below.
+
+An earlier iteration of the chosen option also let the user edit a
+tool-linked step's settings in the pipeline editor and wrote them back to the
+tool on Save. It was removed: nearly every review finding on this feature came
+from that write-back (pending edits going stale while the tool changed
+elsewhere, merging onto the tool's current values, save ordering and partial
+failure, rollback, a race with the tool menu's own debounced save, child
+editors that change their props in place). The user asked for the pipeline
+and the tool to use the same values, which linking alone delivers; the tool is
+edited where it lives.
+
+**Model.** `IAnnotationPipelineStep.sourceToolId` and
+`IPropertyPipelineStep.sourcePropertyId` mark a linked step. The step's ordinary
+fields (image, parameters, annotation setup / tags, shape) are kept as a
+*saved copy* of the source. Steps built from a raw worker image are unlinked and
+behave exactly as before. Pure helpers live in `src/utils/pipelineLinks.ts`
+(`resolveLinkedStep`, `stepLinkState`, `toolLinkedFields`,
+`propertyLinkedFields`, `samePersistedValue`).
+
+| | Linked to a live tool | Linked to a live property | Source deleted |
+|---|---|---|---|
+| What runs | The tool's current image, parameters, annotation setup, `connectTo`, `jobDateTag` (transient tool built from `resolveLinkedStep`) | The property itself (`submitPropertyJob` on its id); no materialization | The step's saved copy (a property step materializes from it as before). Before treating a linked property as deleted, the runner reloads the configuration's properties once (`loadMissingLinkedProperties`, after taking the run lock — it never rejects, so it cannot leave the lock held; once per batch; the editor does the same on open), so one that simply had not loaded yet is computed, not duplicated. If that reload fails, the step fails rather than materializing a possible duplicate. A step already running its fallback, or whose property a reload already confirmed missing in this configuration, is not rechecked (the record is per configuration, since one property can be registered in several; and while the loaded property list is not this configuration's, every linked step is checked); a reload overlapped by a configuration switch confirms nothing and counts as failed. A batch resolves linked steps once, so every dataset runs the settings in effect when it started |
+| Editor: worker image | Locked | Locked | Locked |
+| Editor: parameters / tags | Locked: "edit them in the Tools panel, or Unlink to customize this step" | Locked: "Unlink to customize this step" (properties are immutable in the UI) | Locked |
+| Header chip | link icon + tool name | link icon + property name | "source deleted" for a tool, "source unavailable" for a property (it may only not be loaded yet; the runner reloads before deciding), or "tool has no worker" for a tool that still exists without a worker image (also unusable, so the saved copy runs) |
+| Auto-wiring (§5) | Its output tags feed downstream steps as usual — **also at run time**: the runner re-applies auto-wiring (`computeAutoWiredSteps`, `src/utils/pipelineWiring.ts`) to the resolved steps, so a tool whose output tags changed since the last save still feeds the property steps after it. Only steps flagged `autoWired: true` are rewired. If the tool's output tags change, a wired step's pipeline-created property no longer matches, so the next run replaces it (`ensureMaterializedProperty` drift, as when tags are edited in the pipeline) | Skipped: computes on the property's own tags/shape | Same as when live |
+
+**Editor behaviour** (`PipelineEditor.vue`, `PipelineStepEditor.vue`):
+
+- **Shown live, read-only.** `localPipeline` holds the step list and every
+  unlinked value. What is shown (`displayedPipeline`) is each linked step
+  resolved against its **live** source, then auto-wired, so a tool edited
+  elsewhere shows through at once. A linked step's settings are locked
+  (`v-defaults-provider` with a global `disabled` default plus `inert`), and
+  `PipelineStepEditor` emits nothing for it but a new name, enabled flag or
+  Unlink (its locked child editors still re-emit).
+- **Viewing writes nothing.** A linked step's unset parameters *show* the
+  worker's defaults (as the tool's own menu does) without writing them; an
+  unlinked step is still seeded on mount. An emit that changes nothing changes
+  no state: child editors re-emit whenever their value's identity changes, and
+  a linked step's shown values are rebuilt when its copy differs from its
+  source.
+- **Unsaved changes** are computed, not snapshotted: the displayed pipeline is
+  compared with the stored pipeline shown the same way (same live sources,
+  ignoring the runner's `materializedPropertyId` write-backs), so a source
+  changed elsewhere is not an unsaved change. Equality ignores `undefined` keys
+  (`samePersistedValue`): `AnnotationConfiguration` always emits `color`, while
+  values loaded from Girder JSON have no such key.
+- **Save** stores each linked step with its source's current values, so the
+  deleted-source fallback runs its last settings as of the last save. It
+  captures what it saves before its first await, so an edit made during the
+  save stays unsaved.
+- **Unlink** removes `sourceToolId` / `sourcePropertyId` and keeps the shown
+  values (including displayed defaults and any saved parameter the worker no
+  longer declares) as an independent, editable step. Unlinking a step from a
+  live property means the pipeline computes its own copy of that property
+  from then on (the banner says so): reusing the user's property would let a
+  later settings change replace and delete it. The step is renamed
+  "<name> (pipeline copy)" so that property is told apart from the original. An unlinked property step gets
+  `autoWired: false` (it keeps the property's tags). It never takes the user's
+  property as its `materializedPropertyId`, so its next run materializes a new
+  property and the user's property is never touched; a property the fallback
+  already materialized for it (after the linked property was deleted) is the
+  pipeline's own and is reused.
+- "Add step" offers **Existing tool** (links via `sourceToolId`) and **Existing
+  property** (links via `sourcePropertyId`, listing the configuration's
+  properties except those a pipeline materialized: the pipeline that owns one
+  may replace or delete it).
+
+**Never delete a user's property.** A linked property is never assigned to
+`materializedPropertyId`, so drift replacement in `ensureMaterializedProperty`,
+pipeline deletion and property-step removal cannot reach it.
+`isPropertyReferencedByPipelineStep` (renamed from
+`isMaterializedPropertyReferenced`) also counts `sourcePropertyId`, so a
+pipeline-materialized property that another step links to is not deleted when
+its own pipeline replaces or drops it.
+
+**Removing a linked property in the Properties panel.** Removing a property
+only unregisters it from the configuration's `propertyIds`; the document stays
+on the server. A step linked to it then treats its source as deleted and, on
+its next run, materializes a pipeline-owned property from its saved copy. The
+delete dialog (`PropertyBody.vue`) therefore:
+
+- **Warns** when pipeline steps use the property
+  (`pipelinesStore.pipelineStepsLinkedToProperty`): steps linked to it
+  (`sourcePropertyId`) and steps that created it (`materializedPropertyId`),
+  disabled ones included and marked, since they use it again once re-enabled.
+  Each would create a new pipeline-owned property on its next run. The dialog
+  names each pipeline and step, and the confirm button reads "Remove anyway".
+- **Reports a refused removal.** `deleteProperty` can be refused (this
+  configuration's properties have not loaded) or fail to save. The removal
+  takes the property out of the list before it saves, which unmounts this row
+  and its dialog, so the reason goes to a global notification as well as the
+  dialog. "Also delete the computed values" targets the dataset the removal
+  started on (captured before the await, passed to `deletePropertyValues`),
+  not whichever is open when the save completes.
+- **Blocks** the removal while a run or batch computes the property
+  (`pipelinesStore.runningPipelineComputingProperty`): the pipeline in
+  `runningPipelineId` has an enabled property step whose `sourcePropertyId` or
+  `materializedPropertyId` is the property. Removing either mid-run would make
+  the remaining steps or datasets compute into a new property, splitting the
+  results. Read from the stored pipeline, which both run entry points submit;
+  the handler re-checks, since a run can start while the dialog is open.
+
+Freezing the linked property for the duration of a batch (suggested on #1430)
+would not prevent the split: a frozen batch keeps computing into a property no
+longer in the configuration, where the user can't see the values. The guard is
+in the component, not in `propertiesStore.deleteProperties`, because the
+running pipeline itself removes a drifted-away property through that action.
+
+**Overwriting properties on import.** An annotation import with "Overwrite
+properties" (`AnnotationImport.vue`, `src/utils/annotationImport.ts`)
+unregisters every property of the configuration once the import succeeds, so
+it applies the same two rules over all of them:
+
+- **Warns**: with the option checked, the import dialog lists the steps that
+  use any of those properties (`pipelineStepsUsingOverwrittenProperties`, each
+  link with the property's name), and the overwrite confirmation counts the distinct steps.
+- **Blocks** while a running pipeline computes one of them
+  (`runningPipelineComputingOverwrittenProperty`): the Import button is
+  disabled with the reason, and `importAnnotationsFromData` refuses the
+  overwrite itself before creating anything, so no caller can bypass it. The
+  import awaits the backend before it removes anything, and a run can start in
+  that window, so the removal re-checks each property: one a run started
+  computing is kept, with a warning notification naming it, rather than failing
+  an import that already succeeded; the rest go in one `deleteProperties` call.
+  The project-creation import (`NewDataset.vue`) never overwrites, and the
+  GeoJSON import creates no properties.
+
+**Not linked (by design).** The step *name* and *enabled* flag stay per-step.
+A locked section disables every control in it, so parameter help tooltips are
+unavailable on linked steps.
 
 ---
 
@@ -446,6 +613,54 @@ Behavior (mirror `computeAnnotationsWithWorkerBatch`):
    - Feed `onStepProgress` / `onStepError` from the job's event callbacks (reuse
      `createProgressEventCallback` / `createErrorEventCallback`).
    - On failure: if `!continueOnError`, stop; record which step failed.
+   - **As implemented:** before submitting, if the loaded configuration is no
+     longer the run's (another configuration was opened mid-run), the step
+     fails with `CONFIGURATION_CHANGED_DURING_RUN` and the run stops, even
+     with `continueOnError`. The steps read the loaded configuration's tools
+     and properties and record materialized property ids on it, so after a
+     switch they would look up, create or record properties in the wrong
+     configuration while their jobs target this run's dataset. Ids
+     materialized before the switch are saved to the run's own configuration
+     (`api.updateConfigurationKey` on the captured object), not to the one
+     now loaded; losing them would make its next run create the properties
+     again. The run keeps its own list of the steps it materialized and
+     merges their ids into the stored pipeline just before that save, since a
+     switch away and back reloads the configuration from the server without
+     the ids merged so far. A switch while `ensureMaterializedProperty` is
+     creating a property: if it lands during the create request,
+     `createProperty` registers the property nowhere and throws, so that step
+     fails and the run stops. A property it does return is registered in the
+     run's configuration and its id is recorded. After a switch the stale
+     (drifted) property is not removed, because removal rewrites the loaded
+     configuration's `propertyIds` from the loaded property list, which may
+     still be the previous configuration's until the new one's fetch lands.
+     The properties store enforces this for every caller: `setProperties`
+     saves only a list that a fetch loaded for the loaded configuration
+     (`propertiesConfigurationId`; it refuses one loaded for another
+     configuration, and one no fetch has loaded yet), and skips the plot and
+     track-label reconcile when a switch lands during its save. A failed save
+     restores what the server holds, not its own snapshot (which a later save
+     or a fetch may have superseded): `updateConfigurationProperties` and
+     `updateConfigurationPipelines` go through `writeConfigurationKey`, which
+     restores nothing until the last pending write of a key settles; then, if
+     any of them failed, the key gets the last value the server confirmed (on
+     the loaded object if it has the same id, since a switch away and back
+     loads a new one). `setProperties` rebuilds the list from those ids at the
+     same point, unless the list is now another configuration's. Its
+     pending-save bookkeeping is per configuration, like
+     `writeConfigurationKey`'s: a save still pending on one configuration must
+     not hold back the rebuild after another configuration's save fails.
+     A property the server registered itself (the gene-panel and
+     neighborhood requests register it when they are made, not when their
+     job finishes) is adopted as soon as the request returns, through
+     `adoptServerConfirmedPropertyId`, which adds it to the confirmed value
+     as well as the live list, so a failed pending save keeps it; a save
+     sent before the adoption that succeeds also keeps it confirmed. Until a
+     fetch loads the adopted property into the list, `setProperties` carries
+     its id over, so a save in between does not unregister it. Not covered:
+     a property save sent while such a request is in flight replaces the
+     server's list without the id; only a server-side merge of propertyIds
+     writes could prevent that.
    - `progress.complete(perStepProgressId)`; bump the top-level progress.
 5. After the loop (once, not per step): `annotationStore.fetchAnnotations()`,
    `propertiesStore.fetchPropertyValues()`, `filters.updateHistograms()`, and
@@ -497,6 +712,15 @@ before the next dataset. Add `ProgressType.BATCH_PIPELINE_COMPUTE`. Reuse the
 `BATCH_DATASET_LIMIT` guard. Implement after v1 lands; the `runPipeline` action
 already takes a `datasetId`, so the outer loop is thin.
 
+**As implemented:** the batch captures the loaded configuration's id when it
+starts and hands it to each dataset's run (`runPipeline`'s `configurationId`),
+so a run that starts after a switch fails on its first step. The datasets left
+after a switch are not run and count as failed. The batch reloads linked
+properties (`loadMissingLinkedProperties`) only if its configuration is still
+loaded when the reload starts: it awaits the dataset list first, and a reload
+after a switch would check the other configuration's properties and record
+this pipeline's sources as missing for the rest of the session.
+
 ---
 
 ## 5. Tag wiring (the data contract, made usable)
@@ -513,6 +737,18 @@ make this correct-by-default so users don't have to reason about it:
 - If the user edits an upstream step's output tags, prompt to update downstream
   input filters that were auto-wired (track an `autoWired` flag per property step
   to know which to offer updating; don't clobber manual edits).
+- **As implemented:** auto-wired steps (`autoWired: true`) are re-wired
+  automatically rather than prompted, by `computeAutoWiredSteps`
+  (`src/utils/pipelineWiring.ts`) — in the editor whenever it shows the
+  pipeline, and by the runner on the steps as they run (so a linked tool's
+  changed output tags reach the property steps after it even when the
+  pipeline is run from the list without being reopened). Only steps flagged
+  `autoWired: true` are wired, in the editor and the runner alike: the editor
+  sets the flag on every property step it adds (the flag shipped with
+  pipelines), so an unflagged step was made elsewhere and its tags may be
+  deliberate. A manual tag or shape edit sets `autoWired: false`. The editor
+  keeps wired tags on its working copy, so a step keeps them if its upstream
+  step is later removed or disabled.
 - **Validation (warn, don't block):** before running, flag property steps whose
   `inputTags` match no upstream output tags and no pre-existing annotations —
   they'll compute on nothing. Show as a non-blocking warning in the editor.
@@ -724,11 +960,12 @@ Delete) sit at the right. "New pipeline" at the top. No Edit-vs-Run fork.
 - Name/description, an ordered step list (up/down reorder), Add step,
   enable/disable, remove. Editing works on a local clone; auto-wiring (§5) runs
   on load and after every edit.
-- "Add step" → annotation worker / property worker (via `DockerImageSelect.vue`)
-  or **Existing tool**, which imports a worker-backed tool (`type:
-  "segmentation"`) from the configuration — copying its image,
-  `workerInterfaceValues`, annotation setup, `connectTo`, `jobDateTag` into a new
-  annotation step (the inverse of the runner's `buildTransientTool`).
+- "Add step" → annotation worker / property worker (via `DockerImageSelect.vue`),
+  **Existing tool**, which adds an annotation step *linked* to a worker-backed
+  tool (`type: "segmentation"`) — its image, `workerInterfaceValues`, annotation
+  setup, `connectTo`, `jobDateTag` start as a copy of the tool's (the inverse of
+  the runner's `buildTransientTool`) — or **Existing property**, which adds a
+  property step linked to a configuration property. See §3.4.
 - Per-step editor reuses `WorkerInterfaceValues.vue` and (for annotation steps)
   `AnnotationConfiguration.vue`. **Do not build new parameter widgets.**
 - **Run status is inline on the same step rows**: a spinner while running, then
@@ -819,3 +1056,177 @@ Each of 1–3 is independently reviewable and testable before any UI exists.
    plumbing.)
 4. **Whether v1 ships batch-across-datasets** or defers to v2. (Recommend defer;
    the runner already takes `datasetId` so it's additive.)
+
+## Regression checklist
+
+Linked steps (§3.4):
+
+- A tool-linked step runs with the tool's current values, not its saved copy —
+  *"runs a linked annotation step with its tool's current values"*.
+- With the tool deleted, it runs its saved copy —
+  *"runs a linked annotation step from its saved copy when the tool is gone"*.
+- A tool without a worker image is reported as such, not as deleted —
+  *"stepLinkState distinguishes linked, missing and unlinked steps"*.
+- A property-linked step computes the user's property directly: no
+  materialization, no deletion, no configuration write —
+  *"computes a linked property step on the existing property without materializing"*.
+- With the property deleted, it materializes from its saved copy —
+  *"materializes a linked property step from its saved copy when the property is gone"*;
+  but a property that had not loaded yet is reloaded and computed, not
+  duplicated (also in the editor), a failed reload fails the step without
+  holding the run lock, and a step on its fallback is not rechecked —
+  *"reloads properties once before treating a linked property as deleted"*,
+  *"does not reload properties when every linked property is loaded"*,
+  *"reloads properties on open when a linked property is missing"*,
+  *"fails a missing linked property step when the reload fails, without materializing or holding the run lock"*,
+  *"holds the run lock while it reloads linked properties"*,
+  *"does not reload a linked property already running its fallback"*,
+  *"runs a step already on its fallback when another step's reload fails"*.
+- Removing a property in the Properties panel names the steps that use it
+  (linked or created it, disabled ones included) and asks to "Remove anyway",
+  is blocked while a running pipeline computes it (also in the handler), and
+  reports a refused removal instead of closing —
+  *"lists the pipeline steps that use a property"*,
+  *"keeps the dialog open and says why when the removal is refused"*,
+  *"deletes the computed values of the dataset the removal started on"*,
+  *"finds the running pipeline that computes a property"*,
+  *"names the pipeline steps linked to the property and offers Remove anyway"*,
+  *"blocks removing a property while a pipeline that computes it is running"*.
+- An import with "Overwrite properties" lists the steps that use the
+  properties it would remove, is refused while a running pipeline computes one
+  (the button and `importAnnotationsFromData` both), and keeps a property a run
+  started computing during the import —
+  *"lists the pipeline steps that use a property an overwrite would remove"*,
+  *"lists the pipeline steps that use the properties an overwrite would remove"*,
+  *"refuses to overwrite properties while a pipeline that computes one is running"*,
+  *"disables the import while a pipeline that computes an overwritten property runs"*,
+  *"keeps a property a pipeline started computing during the import"*.
+- Drift replacement never deletes a property another step links to —
+  *"does not delete a drifted-away property that another step links to"*.
+- Deleting a pipeline never deletes a linked property, nor a property it
+  materialized that another pipeline links to —
+  *"never deletes a linked property when its pipeline is deleted"*,
+  *"keeps a materialized property another pipeline links to when its own pipeline is deleted"*.
+- A new materialized id reaches the stored step at once (the store's current
+  copy), so a property every step drifted away from in one run is deleted, not
+  orphaned —
+  *"deletes a property both of whose steps drifted away from it in one run"*,
+  *"records a new materialized id on the store's current copy of the pipeline"*.
+- A batch runs every dataset with the linked settings resolved at its start,
+  and a run whose steps can't be prepared fails without holding the lock —
+  *"runs every dataset with the linked settings resolved when the batch started"*,
+  *"fails the run without holding the lock when its steps can't be prepared"*.
+- A property confirmed missing in a configuration is not refetched on every
+  open or run there (but is in any other configuration, and while the loaded
+  list is another configuration's), and a reload overlapped by a
+  configuration switch confirms nothing —
+  *"does not recheck a linked property a reload confirmed missing"*,
+  *"does not carry a property found missing in one configuration to another"*,
+  *"reloads linked properties while the loaded list is another configuration's"*,
+  *"does not confirm a linked property missing when the configuration changes during the reload"*.
+- A configuration switch mid-run stops the run: the next step fails (even with
+  continue-on-error), a batch runs no further datasets, ids materialized
+  before the switch (or a switch away and back) are saved to the run's own
+  configuration, and nothing is written through the property list after a
+  switch —
+  *"fails the next step and stops when the configuration changes during a run"*,
+  *"does not run a batch's remaining datasets after a configuration switch"*,
+  *"fails a batch child that starts after the configuration switched"*,
+  *"saves a materialized property id to the run's configuration after a switch"*,
+  *"stops when the property creation sees a configuration switch"*,
+  *"keeps a property created just before a switch and leaves the stale one"*,
+  *"keeps ids materialized before a switch away and back"*,
+  *"registers nothing when another configuration opens during the create request"*,
+  *"refuses to save a property list loaded for another configuration"*,
+  *"refuses to save a property list no fetch has loaded"*,
+  *"keeps a list another configuration's fetch loaded during a failed save"*,
+  *"keeps a later save's propertyIds when an earlier overlapping save fails"*,
+  *"keeps a later save's pipelines when an earlier overlapping save fails"*,
+  *"restores the configuration's propertyIds when the save fails"*,
+  *"restores what the server holds when overlapping saves both fail (earlier first)"*,
+  *"restores what the server holds when overlapping saves both fail (out of order)"*,
+  *"restores the saved pipelines when overlapping saves both fail"*,
+  *"rebuilds the list from the restored ids when a fetch landed during a failed save"*,
+  *"ends on an earlier save's value when a later save fails before it is sent"*,
+  *"restores onto the reloaded configuration after a switch away and back"*,
+  *"rebuilds another configuration's list when its save fails while one on the first is pending"*,
+  *"keeps a property adopted during a pending save when that save fails"*,
+  *"keeps a property adopted during a save that succeeds when a later overlapping save fails"*,
+  *"polls a scheduled job until it succeeds, adopting its property at once"*,
+  *"schedules the job in pixels, polls it, and reloads the properties"*,
+  *"carries over an adopted property no fetch has loaded yet when saving"*,
+  *"sends a save queued behind a failed one"*,
+  *"does not reconcile another configuration's plots after a switch during the save"*,
+  *"does not reload linked properties for a batch whose configuration switched before the reload"*.
+- The runner re-wires property steps to what a linked tool produces now, but
+  never an unflagged step —
+  *"re-wires a property step to the output tags its linked tool produces now"*,
+  *"does not rewire a property step without an autoWired flag at run time"*.
+- An unchanged re-emit changes no editor state (no render loop) —
+  *"changes no editor state on an unchanged re-emit"*.
+- The editor shows linked steps live, never reads that as unsaved —
+  *"shows a linked step with its tool's live values on open, without marking it dirty"*,
+  *"shows a tool change made elsewhere while the editor is open"*.
+- What the editor derives from a live source follows it, not just the display.
+  An auto-wired step keeps the wiring last shown when its upstream step is
+  removed or disabled (only tags and shape: its exclusive-match setting stays
+  its own), and a step editor loads the worker interface of an image that
+  changed outside it, without writing a linked step's values —
+  *"keeps the wiring last shown when the upstream step is removed"*,
+  *"keeps the wiring last shown when the upstream step is disabled"*,
+  *"keeps an exclusive-match change on an auto-wired step"*,
+  *"loads the worker interface when a linked step's image changes"*,
+  *"does not seed a step with the first image's defaults after another image was picked"*.
+- A run submits what the editor shows. An annotation step's worker values get
+  the interface default for any parameter they lack (as the tool's own menu
+  does; an accepted AI tool suggestion is saved without values), loading the
+  interface only if it was never fetched. A cancel during that load, or during
+  the submit request, stops the job. Property steps are not filled: their
+  values are the materialized property's parameters, compared for drift —
+  *"submits a linked tool's interface defaults for parameters it has no value for"*,
+  *"loads an uncached worker interface before filling defaults"*,
+  *"does not refetch a worker interface the worker does not have"*,
+  *"does not submit a step cancelled while its worker interface loads"*,
+  *"cancels a job whose run was cancelled while it was being submitted"*.
+- Nothing is read from another configuration's property list (right after a
+  switch, before this one's fetch lands): the runner neither computes a
+  linked property found there nor materializes from a miss there, and the
+  editor neither shows nor offers its properties —
+  *"does not compute a linked property from another configuration's list after a failed reload"*,
+  *"does not materialize a property from another configuration's list"*,
+  *"does not offer or show another configuration's properties while this one's are loading"*.
+- A linked step is read-only: its settings are locked with a pointer to the
+  Tools panel, and only its name and enabled flag change —
+  *"locks a linked step's settings and says where to edit them"*,
+  *"emits only name and enabled changes for a linked step"*,
+  *"keeps a linked step's saved copy when a settings edit comes in"*,
+  *"leaves an unlinked step's settings editable"*,
+  *"keeps only the name and enabled flag from an edit to a linked step"*.
+- Every control in a locked section renders disabled, not just inert. A child
+  that forwards an explicit `disabled: false` overrides the provider's global
+  default (TagPicker did, leaving the Tags field looking editable), so pass
+  `undefined` when not disabled —
+  *"inherits a disabled default from a v-defaults-provider"*.
+- Viewing writes nothing, and re-emits change nothing —
+  *"shows a linked step's defaults without writing them on mount"*,
+  *"does not treat a child re-emitting a linked step with undefined keys as an edit"*,
+  *"changes no editor state on an unchanged re-emit"*.
+- Save refreshes linked steps' stored copies, and edits made during a save stay
+  unsaved —
+  *"refreshes a linked step's stored copy to its tool's settings on save"*,
+  *"stays unsaved for edits made during a save"*.
+- Unlink keeps the shown values, including parameters the worker no longer
+  declares, and renames a property step —
+  *"keeps the shown values when a linked step is unlinked"*,
+  *"keeps saved parameters the worker no longer declares on unlink"*,
+  *"renames a property step on unlink so its own property is told apart"*.
+- Removing a step offers to remove the property the runner materialized even
+  if the editor's copy predates it; pipeline-materialized properties are not
+  offered for linking —
+  *"offers to remove the property the runner materialized on the stored pipeline"*,
+  *"does not offer a pipeline-materialized property to link to"*.
+- Auto-wiring leaves property-linked and unflagged steps alone, and wired tags
+  survive removing the upstream step —
+  *"does not auto-wire a step linked to an existing property"*,
+  *"does not auto-wire a property step without the autoWired flag"*,
+  *"keeps a wired property step's tags when its upstream step is removed before saving"*.

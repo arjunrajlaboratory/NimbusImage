@@ -16,6 +16,9 @@ import { createProgressEventCallback, createErrorEventCallback } from "./jobs";
 import progress from "./progress";
 import { BATCH_DATASET_LIMIT } from "./constants";
 import { logError } from "@/utils/log";
+import { findSourceProperty, resolveLinkedStep } from "@/utils/pipelineLinks";
+import { computeAutoWiredSteps } from "@/utils/pipelineWiring";
+import { getDefault } from "@/utils/workerInterface";
 
 import {
   AnnotationShape,
@@ -32,6 +35,7 @@ import {
   IProgressInfo,
   IToolConfiguration,
   IToolTemplate,
+  IWorkerInterfaceValues,
   MessageType,
   ProgressType,
   TPipelineStep,
@@ -79,6 +83,29 @@ export function mergeMaterializedPropertyIds(
   }
 }
 
+// A pipeline step that uses a property, named for the user.
+export interface IPipelineStepLink {
+  pipelineId: string;
+  pipelineName: string;
+  stepId: string;
+  stepName: string;
+  // Off now, but it uses the property again once re-enabled.
+  enabled: boolean;
+  // How the step uses it: linked to it (sourcePropertyId), or it is the
+  // property the step created (materializedPropertyId).
+  use: "linked" | "created";
+}
+
+// Linked properties a reload found missing, as `${configurationId}:${id}`
+// (see loadMissingLinkedProperties). Per configuration: one property can be
+// registered in several (a duplicated configuration shares them), and
+// removing it from one only unregisters it there.
+const confirmedMissingProperties = new Set<string>();
+
+export const CONFIGURATION_CHANGED_DURING_RUN =
+  "Another configuration was opened during the run. Open a dataset of this " +
+  "pipeline's configuration and run it again.";
+
 function buildTransientTool(step: IAnnotationPipelineStep): IToolConfiguration {
   return {
     id: step.id,
@@ -94,6 +121,58 @@ function buildTransientTool(step: IAnnotationPipelineStep): IToolConfiguration {
     },
     template: SEGMENTATION_TEMPLATE,
   };
+}
+
+// An annotation step's worker values as submitted: its parameters, with the
+// worker interface's default for any it has no value for. Running a tool from
+// its own menu does the same (AnnotationWorkerMenu.populateInterfaceValues),
+// and a tool saved without values (an accepted AI suggestion) is shown with
+// those defaults on a linked step, so the run must use them too. The step and
+// its source are not modified. Without an interface (one that cannot be
+// loaded) the step's values go as they are, as from the tool's menu.
+async function withInterfaceDefaults(
+  step: IAnnotationPipelineStep,
+): Promise<IAnnotationPipelineStep> {
+  if (!step.image) {
+    return step;
+  }
+  // Only when never fetched: null means the worker has none, and asking again
+  // would run a worker job for every step (the tool menu also fetches only
+  // an undefined interface).
+  if (properties.getWorkerInterface(step.image) === undefined) {
+    try {
+      await properties.fetchWorkerInterface({ image: step.image });
+    } catch (error) {
+      logError(`Failed to fetch worker interface for ${step.image}:`, error);
+    }
+  }
+  const workerInterface = properties.getWorkerInterface(step.image);
+  const missing = Object.keys(workerInterface ?? {}).filter(
+    (id) => !(id in step.workerInterfaceValues),
+  );
+  if (!workerInterface || missing.length === 0) {
+    return step;
+  }
+  const defaults: IWorkerInterfaceValues = {};
+  for (const id of missing) {
+    defaults[id] = getDefault(
+      workerInterface[id].type,
+      workerInterface[id].default,
+    );
+  }
+  return {
+    ...step,
+    workerInterfaceValues: { ...defaults, ...step.workerInterfaceValues },
+  };
+}
+
+// The loaded property list, if it is the given configuration's. After a
+// switch it is the previous configuration's until the new one's fetch lands,
+// and a property found there may not be registered in this configuration.
+function propertiesOf(configurationId: string | undefined) {
+  return properties.propertiesConfigurationId === configurationId
+    ? properties.properties
+    : [];
 }
 
 @Module({ dynamic: true, store, name: "pipelines" })
@@ -147,9 +226,10 @@ export class Pipelines extends VuexModule {
   }
 
   // True when some OTHER step (optionally excluding one pipeline / one step)
-  // still points its materializedPropertyId at `propertyId`. Used to avoid
+  // still uses `propertyId`, either as its materialized property or as the
+  // existing property it is linked to (sourcePropertyId). Used to avoid
   // deleting a property that another pipeline (or another step) relies on.
-  get isMaterializedPropertyReferenced() {
+  get isPropertyReferencedByPipelineStep() {
     return (
       propertyId: string,
       exclude: { pipelineId?: string; stepId?: string } = {},
@@ -160,10 +240,67 @@ export class Pipelines extends VuexModule {
           p.steps.some(
             (s) =>
               s.kind === "property" &&
-              s.materializedPropertyId === propertyId &&
+              (s.materializedPropertyId === propertyId ||
+                s.sourcePropertyId === propertyId) &&
               s.id !== exclude.stepId,
           ),
       );
+  }
+
+  // The property steps that use `propertyId`, by pipeline: linked to it
+  // (sourcePropertyId) or created it (materializedPropertyId), disabled ones
+  // included (they use it again once re-enabled). Removing the property from
+  // the configuration makes each of them create a new pipeline-owned
+  // property on its next run, so the Properties panel names them first.
+  get pipelineStepsLinkedToProperty() {
+    return (propertyId: string): IPipelineStepLink[] =>
+      this.pipelines.flatMap((pipeline) =>
+        pipeline.steps.flatMap((step): IPipelineStepLink[] => {
+          if (step.kind !== "property") {
+            return [];
+          }
+          const use =
+            step.sourcePropertyId === propertyId
+              ? "linked"
+              : step.materializedPropertyId === propertyId
+                ? "created"
+                : null;
+          return use
+            ? [
+                {
+                  pipelineId: pipeline.id,
+                  pipelineName: pipeline.name,
+                  stepId: step.id,
+                  stepName: step.name,
+                  enabled: step.enabled,
+                  use,
+                },
+              ]
+            : [];
+        }),
+      );
+  }
+
+  // The running pipeline (single run or batch), if one of its enabled
+  // property steps computes `propertyId`: the property it is linked to, or
+  // the one it materialized. Removing that property mid-run would split the
+  // run's results between it and a fallback property the remaining steps or
+  // datasets create. Read from the stored pipeline, which is what both run
+  // entry points submit.
+  get runningPipelineComputingProperty() {
+    return (propertyId: string): IPipeline | null => {
+      const running = this.runningPipelineId
+        ? this.getPipelineById(this.runningPipelineId)
+        : null;
+      const computesProperty = running?.steps.some(
+        (step) =>
+          step.enabled &&
+          step.kind === "property" &&
+          (step.sourcePropertyId === propertyId ||
+            step.materializedPropertyId === propertyId),
+      );
+      return computesProperty ? running : null;
+    };
   }
 
   // Delete a pipeline. By default also deletes the persisted properties its
@@ -197,7 +334,9 @@ export class Pipelines extends VuexModule {
       removableIds.push(
         ...[...materializedPropertyIds].filter(
           (propertyId) =>
-            !this.isMaterializedPropertyReferenced(propertyId, { pipelineId }),
+            !this.isPropertyReferencedByPipelineStep(propertyId, {
+              pipelineId,
+            }),
         ),
       );
     }
@@ -218,7 +357,7 @@ export class Pipelines extends VuexModule {
   @Action
   async deleteUnreferencedMaterializedProperties(propertyIds: string[]) {
     const removableIds = [...new Set(propertyIds)].filter(
-      (propertyId) => !this.isMaterializedPropertyReferenced(propertyId),
+      (propertyId) => !this.isPropertyReferencedByPipelineStep(propertyId),
     );
     if (removableIds.length > 0) {
       await properties.deleteProperties(removableIds);
@@ -258,6 +397,14 @@ export class Pipelines extends VuexModule {
   async ensureMaterializedProperty(
     step: IPropertyPipelineStep,
   ): Promise<IAnnotationProperty | null> {
+    // Not from another configuration's list (right after a switch, before
+    // this one's properties load): a miss there would create a property
+    // that setProperties then refuses to register, leaving it orphaned.
+    if (properties.propertiesConfigurationId !== main.configuration?.id) {
+      throw new Error(
+        "The properties of this configuration have not loaded; try again.",
+      );
+    }
     const existing = step.materializedPropertyId
       ? properties.properties.find((p) => p.id === step.materializedPropertyId)
       : undefined;
@@ -275,6 +422,10 @@ export class Pipelines extends VuexModule {
     // remove it below once the replacement is created. Only ever set for a
     // property that actually existed - never for a stale/dangling id.
     const staleId = existing?.id;
+    const configurationId = main.configuration?.id;
+    // A property it returns is registered in the configuration loaded when
+    // the request went out (createProperty throws, registering nothing, if a
+    // switch landed during the request), so its id is always recorded here.
     const created = await properties.createProperty({
       name: step.name,
       image: step.image,
@@ -287,10 +438,14 @@ export class Pipelines extends VuexModule {
     });
     if (created) {
       step.materializedPropertyId = created.id;
+      // Removing the stale property rewrites the loaded configuration's
+      // propertyIds from the loaded list, which after a switch may be the
+      // previous configuration's: leave it then.
       if (
         staleId &&
         staleId !== created.id &&
-        !this.isMaterializedPropertyReferenced(staleId, { stepId: step.id })
+        main.configuration?.id === configurationId &&
+        !this.isPropertyReferencedByPipelineStep(staleId, { stepId: step.id })
       ) {
         await properties.deleteProperty(staleId);
       }
@@ -314,6 +469,9 @@ export class Pipelines extends VuexModule {
     onComplete,
     skipRefresh = false,
     skipRunningState = false,
+    linkedPropertiesChecked,
+    resolvedSteps,
+    configurationId,
   }: {
     pipeline: IPipeline;
     datasetId?: string;
@@ -332,6 +490,15 @@ export class Pipelines extends VuexModule {
     // skip both to avoid flicker and N redundant heavy refreshes.
     skipRunningState?: boolean;
     skipRefresh?: boolean;
+    // Set by runPipelineBatch, which checks linked properties once for all
+    // datasets (see loadMissingLinkedProperties).
+    linkedPropertiesChecked?: boolean;
+    // Set by runPipelineBatch, which resolves the steps once, so every
+    // dataset runs the same settings even if a linked tool changes mid-batch.
+    resolvedSteps?: TPipelineStep[];
+    // Set by runPipelineBatch: the configuration the batch started on, so a
+    // child that starts after a switch fails instead of running against it.
+    configurationId?: string;
   }): Promise<IPipelineRunResult> {
     const emptyResult: IPipelineRunResult = {
       succeeded: 0,
@@ -345,6 +512,23 @@ export class Pipelines extends VuexModule {
       return emptyResult;
     }
     const targetDatasetId = datasetId ?? main.dataset.id;
+    // The steps read the loaded configuration's tools and properties and
+    // write materialized property ids back to it. A switch mid-run (opening a
+    // dataset of another configuration) replaces all of that, so later steps
+    // would look up, create or record properties in the wrong configuration
+    // while their jobs target this run's dataset. Captured before any await.
+    const runConfigurationId = configurationId ?? main.configuration.id;
+    const configurationChanged = () =>
+      main.configuration?.id !== runConfigurationId;
+    // The run's configuration object: the loaded one while it is still the
+    // run's (a reload may replace the object), else the last one seen.
+    let runConfiguration = main.configuration;
+    const currentRunConfiguration = () => {
+      if (!configurationChanged()) {
+        runConfiguration = main.configuration!;
+      }
+      return runConfiguration;
+    };
 
     // Indices into pipeline.steps of the steps we will actually run.
     const enabledIndices = pipeline.steps
@@ -357,6 +541,8 @@ export class Pipelines extends VuexModule {
       return emptyResult;
     }
 
+    // Take the run lock before any await, so a second run can't start in the
+    // meantime.
     if (!skipRunningState) {
       this.setRunningPipelineId(pipeline.id);
     }
@@ -373,6 +559,32 @@ export class Pipelines extends VuexModule {
     // cancel button is wired up without waiting for the run to finish.
     onCancel?.(cancel);
 
+    // A linked property missing from the loaded list may be gone, or may not
+    // have loaded yet (properties load with the configuration). This check
+    // never rejects, so it cannot leave the lock held.
+    const linkedPropertiesKnown =
+      linkedPropertiesChecked ??
+      (await this.loadMissingLinkedProperties(pipeline));
+
+    // The steps as they run (see stepsAsRun). A batch resolves them once for
+    // all its datasets. Stored data this can't make sense of fails the run
+    // here rather than leaving the lock held.
+    let runSteps: TPipelineStep[];
+    try {
+      runSteps = resolvedSteps ?? this.stepsAsRun(pipeline);
+    } catch (error) {
+      logError(`Pipeline "${pipeline.name}" could not be prepared:`, error);
+      if (!skipRunningState) {
+        this.setRunningPipelineId(null);
+      }
+      const failedResult = {
+        ...emptyResult,
+        failed: enabledIndices.length,
+      };
+      onComplete?.(failedResult);
+      return failedResult;
+    }
+
     const topProgressId = await progress.create({
       type: ProgressType.PIPELINE_COMPUTE,
       title: `Pipeline: ${pipeline.name}`,
@@ -388,14 +600,22 @@ export class Pipelines extends VuexModule {
     let cancelled = 0;
     let failedStepIndex: number | null = null;
     let done = 0;
-    // Set when ensureMaterializedProperty actually assigns/changes a step's
-    // materializedPropertyId during this run. Only then is it worth PUTting
-    // the config back - a run with no property steps (or only reused,
-    // already-matching properties) shouldn't write the config at all.
-    let materializedPropertyChanged = false;
+    // The steps whose materializedPropertyId ensureMaterializedProperty
+    // assigned or changed during this run. Only then is it worth PUTting the
+    // config back - a run with no property steps (or only reused,
+    // already-matching properties) shouldn't write the config at all. Kept
+    // here as well as merged onto the stored pipeline at once, because a
+    // switch away and back reloads the configuration from the server without
+    // the ids merged so far.
+    const materializedSteps: TPipelineStep[] = [];
+    // Set when a step fails because the configuration switched: the run
+    // stops, continueOnError or not, since every later step would fail the
+    // same way.
+    let configurationSwitched = false;
 
     for (const stepIndex of enabledIndices) {
       const step = pipeline.steps[stepIndex];
+      const runStep = runSteps[stepIndex];
 
       if (isCancelled) {
         cancelled++;
@@ -438,37 +658,95 @@ export class Pipelines extends VuexModule {
 
       let success = false;
       try {
+        if (configurationChanged()) {
+          throw new Error(CONFIGURATION_CHANGED_DURING_RUN);
+        }
         let submitted: {
           job: IAnnotationComputeJob | IPropertyComputeJob;
           completionPromise: Promise<boolean>;
         } | null = null;
 
-        if (step.kind === "annotation") {
-          const tool = buildTransientTool(step);
-          submitted = await annotations.submitAnnotationWorkerJob({
-            tool,
-            datasetId: targetDatasetId,
-            eventCallback,
-            errorCallback,
-          });
-        } else {
-          const previousMaterializedPropertyId = step.materializedPropertyId;
-          const property = await this.ensureMaterializedProperty(step);
-          if (step.materializedPropertyId !== previousMaterializedPropertyId) {
-            materializedPropertyChanged = true;
+        if (runStep.kind === "annotation") {
+          const runValues = await withInterfaceDefaults(runStep);
+          // The interface fetch is an await (it may wait for a worker job):
+          // check again before submitting.
+          if (configurationChanged()) {
+            throw new Error(CONFIGURATION_CHANGED_DURING_RUN);
           }
-          if (property) {
-            submitted = await properties.submitPropertyJob({
-              property,
+          if (!isCancelled) {
+            submitted = await annotations.submitAnnotationWorkerJob({
+              tool: buildTransientTool(runValues),
               datasetId: targetDatasetId,
               eventCallback,
               errorCallback,
             });
           }
+        } else {
+          // Only from the run configuration's own list: with another's
+          // loaded (a failed reload after a switch), the property is
+          // unknown, not present.
+          const linkedProperty = findSourceProperty(
+            runStep,
+            propertiesOf(runConfigurationId),
+          );
+          if (linkedProperty) {
+            // Compute the user's own property directly: no materialized
+            // copy, and nothing here may replace or delete it.
+            submitted = await properties.submitPropertyJob({
+              property: linkedProperty,
+              datasetId: targetDatasetId,
+              eventCallback,
+              errorCallback,
+            });
+          } else if (
+            runStep.sourcePropertyId &&
+            !runStep.materializedPropertyId &&
+            !linkedPropertiesKnown
+          ) {
+            // Unknown whether the linked property still exists: don't
+            // materialize what may be a duplicate of it. (A step already on
+            // its fallback was not part of the check and runs it.)
+            throw new Error(
+              "Could not check whether the linked property still exists; try again.",
+            );
+          } else {
+            const previousMaterializedPropertyId =
+              runStep.materializedPropertyId;
+            const property = await this.ensureMaterializedProperty(runStep);
+            if (
+              runStep.materializedPropertyId !== previousMaterializedPropertyId
+            ) {
+              materializedSteps.push(runStep);
+              // Onto the stored step now (runStep is a copy wherever resolving
+              // or wiring changed it), so later steps' reference checks see it.
+              // The run configuration's current copy: a config write (e.g. by
+              // an earlier dataset of a batch) replaces the object the caller
+              // passed, and after a switch only the captured one is left.
+              mergeMaterializedPropertyIds(
+                currentRunConfiguration().pipelines?.find(
+                  (candidate) => candidate.id === pipeline.id,
+                ) ?? pipeline,
+                { ...pipeline, steps: [runStep] },
+              );
+            }
+            if (property) {
+              submitted = await properties.submitPropertyJob({
+                property,
+                datasetId: targetDatasetId,
+                eventCallback,
+                errorCallback,
+              });
+            }
+          }
         }
 
         if (submitted) {
           currentJob = submitted.job;
+          // cancel() only reaches a job it knows of: one cancelled while its
+          // submission was in flight is cancelled now.
+          if (isCancelled) {
+            main.api.cancelJob(submitted.job.jobId);
+          }
           onStepJob?.(stepIndex, submitted.job.jobId);
           success = await submitted.completionPromise;
           currentJob = null;
@@ -476,6 +754,8 @@ export class Pipelines extends VuexModule {
           success = false;
         }
       } catch (error) {
+        // Found here or while materializing the step's property.
+        configurationSwitched = configurationChanged();
         // The errorCallback only surfaces errors the worker prints to its job
         // log; a failed submission (HTTP error, property materialization
         // failure) never reaches it, so surface it here.
@@ -513,7 +793,10 @@ export class Pipelines extends VuexModule {
       });
 
       // Stop early on failure unless the caller opted into continuing.
-      if (!success && !isCancelled && !continueOnError) {
+      if (
+        configurationSwitched ||
+        (!success && !isCancelled && !continueOnError)
+      ) {
         break;
       }
     }
@@ -523,8 +806,27 @@ export class Pipelines extends VuexModule {
       // only when something actually changed - an annotation-only run (or one
       // whose property steps all reused an already-matching property) has
       // nothing new to write back to the configuration.
-      if (materializedPropertyChanged) {
-        await main.updateConfigurationPipelines(cloneDeep(this.pipelines));
+      if (materializedSteps.length > 0) {
+        const storedPipeline = currentRunConfiguration().pipelines?.find(
+          (candidate) => candidate.id === pipeline.id,
+        );
+        if (storedPipeline) {
+          mergeMaterializedPropertyIds(storedPipeline, {
+            ...pipeline,
+            steps: materializedSteps,
+          });
+        }
+        if (!configurationChanged()) {
+          await main.updateConfigurationPipelines(cloneDeep(this.pipelines));
+        } else {
+          // To the run's own configuration, not the one now loaded: losing
+          // the ids would make its next run create the properties again.
+          await main.api.updateConfigurationKey(
+            currentRunConfiguration(),
+            "pipelines",
+          );
+          store.dispatch("ressourceChanged", runConfigurationId);
+        }
       }
 
       // Refresh derived state once for the whole run. Skipped for batch
@@ -550,6 +852,76 @@ export class Pipelines extends VuexModule {
     };
     onComplete?.(result);
     return result;
+  }
+
+  // The steps as they run: linked steps take their source's current values,
+  // then auto-wiring is re-applied so a property step reads the tags its
+  // upstream step produces now (a linked tool's output tags may have changed
+  // since the pipeline was saved). The runner writes materializedPropertyId to
+  // these and copies it to the stored step as soon as it changes.
+  get stepsAsRun() {
+    return (pipeline: IPipeline): TPipelineStep[] =>
+      computeAutoWiredSteps(
+        pipeline.steps.map((step) =>
+          resolveLinkedStep(
+            step,
+            main.tools,
+            propertiesOf(main.configuration?.id),
+          ),
+        ),
+      );
+  }
+
+  // Reload the configuration's properties when an enabled step is linked to a
+  // property that is not in the loaded list, so one that simply had not loaded
+  // yet is not treated as deleted (whose fallback would materialize a
+  // duplicate of it). A step already running its fallback (it has a
+  // materialized property) was found gone before and is not rechecked, so a
+  // deleted source does not cost a fetch on every run. Returns false when the
+  // reload failed or the configuration changed during it: whether the missing
+  // ones exist is then unknown. A property a reload confirmed missing is not
+  // rechecked in that configuration (opening the editor or running would
+  // otherwise refetch every property each time). While the loaded list is
+  // not this configuration's (its fetch has not landed), every linked step is
+  // checked. Never rejects (the editor calls it without awaiting).
+  @Action
+  async loadMissingLinkedProperties(pipeline: IPipeline): Promise<boolean> {
+    const configurationId = main.configuration?.id;
+    const missingKey = (propertyId: string) =>
+      `${configurationId}:${propertyId}`;
+    // A list no fetch has loaded for this configuration yet (still loading,
+    // or still the previous configuration's) says nothing about which of
+    // its properties exist: check every linked step then.
+    const listIsLoaded = () =>
+      properties.propertiesConfigurationId === configurationId;
+    const needsCheck = (step: TPipelineStep) =>
+      step.enabled &&
+      step.kind === "property" &&
+      !!step.sourcePropertyId &&
+      !step.materializedPropertyId &&
+      !confirmedMissingProperties.has(missingKey(step.sourcePropertyId)) &&
+      (!listIsLoaded() || !findSourceProperty(step, properties.properties));
+    if (!pipeline.steps.some(needsCheck)) {
+      return true;
+    }
+    try {
+      await properties.fetchProperties();
+      // A configuration switch during the reload means its result (if any)
+      // says nothing about this pipeline's configuration: neither confirm
+      // the property missing nor let the run treat it as deleted.
+      if (main.configuration?.id !== configurationId) {
+        return false;
+      }
+      for (const step of pipeline.steps.filter(needsCheck)) {
+        if (step.kind === "property" && step.sourcePropertyId) {
+          confirmedMissingProperties.add(missingKey(step.sourcePropertyId));
+        }
+      }
+      return true;
+    } catch (error) {
+      logError("Failed to reload properties for linked pipeline steps:", error);
+      return false;
+    }
   }
 
   // Refresh derived state for the currently-viewed dataset. Shared by the
@@ -628,6 +1000,9 @@ export class Pipelines extends VuexModule {
     };
     // Wire the cancel handle up immediately, before any await.
     onCancel?.(cancel);
+    // The configuration whose tools and properties the steps resolve against
+    // (see runPipeline). Captured before any await.
+    const batchConfigurationId = main.configuration?.id;
 
     const datasetViews: IDatasetView[] = await main.api.findDatasetViews({
       configurationId,
@@ -662,6 +1037,14 @@ export class Pipelines extends VuexModule {
     }
 
     this.setRunningPipelineId(pipeline.id);
+    // Never rejects, so it cannot leave the lock held. Only on the batch's
+    // own configuration: after a switch during the awaits above, the reload
+    // would check the other configuration's properties and record this
+    // pipeline's sources as missing for the session. (The loop below then
+    // runs no dataset.)
+    const linkedPropertiesChecked =
+      main.configuration?.id === batchConfigurationId &&
+      (await this.loadMissingLinkedProperties(pipeline));
     const batchProgressId = await progress.create({
       type: ProgressType.BATCH_PIPELINE_COMPUTE,
       title: `Batch pipeline: ${pipeline.name}`,
@@ -671,11 +1054,42 @@ export class Pipelines extends VuexModule {
     let completed = 0;
     let failed = 0;
     let cancelled = 0;
+    let configurationSwitched = false;
 
     try {
+      // Resolved once, so every dataset runs the same settings even if a
+      // linked tool changes mid-batch (and auto-wired property steps don't
+      // drift from their materialized property part-way through).
+      const resolvedSteps = this.stepsAsRun(pipeline);
       for (const datasetId of datasetIds) {
         if (isCancelled) {
           cancelled++;
+          onBatchProgress?.({
+            total,
+            completed,
+            failed,
+            cancelled,
+            currentDatasetName: datasetNames[datasetId],
+          });
+          continue;
+        }
+
+        // After a switch to another configuration, the remaining datasets
+        // are not run: each would fail on its first step anyway.
+        if (main.configuration?.id !== batchConfigurationId) {
+          if (!configurationSwitched) {
+            configurationSwitched = true;
+            logError(
+              `Batch pipeline "${pipeline.name}" stopped:`,
+              CONFIGURATION_CHANGED_DURING_RUN,
+            );
+          }
+          failed++;
+          progress.update({
+            id: batchProgressId,
+            progress: completed + failed + cancelled,
+            total,
+          });
           onBatchProgress?.({
             total,
             completed,
@@ -700,6 +1114,9 @@ export class Pipelines extends VuexModule {
           continueOnError,
           skipRunningState: true,
           skipRefresh: true,
+          linkedPropertiesChecked,
+          resolvedSteps,
+          configurationId: batchConfigurationId,
           onCancel: (c) => {
             innerCancel = c;
           },

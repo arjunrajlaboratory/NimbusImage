@@ -19,7 +19,8 @@ export interface IGirderUser extends IGirderBase {
   _modelType: "user";
   _id: string;
   login: string;
-  email: string;
+  // Exposed only on the caller's own document and to site admins.
+  email?: string;
   firstName: string;
   lastName: string;
   admin?: boolean;

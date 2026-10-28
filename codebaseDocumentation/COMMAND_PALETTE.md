@@ -1,9 +1,11 @@
 # Command Palette (⌘K)
 
-> **Status: Phase 1 implemented** (branch `feature/command-palette`). See
-> _Implementation notes_ below for where the code ended up and where it
-> departs from this spec, and the _Regression checklist_ at the end. Phase 2
-> ("Ask AI") is not started. Part of the "adaptive interface" effort alongside
+> **Status: Phases 1 and 2 implemented** (Phase 1 on branch
+> `feature/command-palette`; Phase 2, "Ask Nimbus AI", with typed commands and
+> viewer-control coverage on `feature/palette-actions`). See _Implementation
+> notes_ below for where the code ended up and where it departs from this
+> spec, _Viewer controls, aliases and property columns_ for Ask Nimbus AI as
+> built, and the _Regression checklist_ at the end. Part of the "adaptive interface" effort alongside
 > `PANEL_LAYOUT_PERSISTENCE.md`, whose panel registry (Part 1, shipped with
 > this feature) it reads.
 
@@ -52,7 +54,7 @@ export type TCommandProvider = () => ICommand[];
 | `addToolCommands`  | `buildCatalog()` in `src/tools/creation/toolFromCatalog.ts`, which reads worker-image Docker labels (`interfaceName`, `description`) from `properties.workerImageList` plus `MANUAL_CATALOG` | "Add Cellpose-SAM tool…"             | ✅ registering a worker image adds it |
 | `templateCommands` | `store.toolTemplateList` (`public/config/templates.json`)                                                                                                                                    | "Add tool: Snap to circle…"          | ✅                                    |
 | `panelCommands`    | The panel registry from `PANEL_LAYOUT_PERSISTENCE.md` Part 1                                                                                                                                 | "Open Filters", "Close Layers"       | ✅ once the registry exists           |
-| `layerCommands`    | `store.layers`                                                                                                                                                                               | "Toggle layer: DAPI"                 | ✅                                    |
+| `layerCommands`    | `store.layers`                                                                                                                                                                               | "Hide layer: DAPI"                   | ✅                                    |
 | `snapshotCommands` | `configuration.snapshots`                                                                                                                                                                    | "Go to snapshot: Fig 2"              | ✅                                    |
 | `tourCommands`     | The tour list App.vue's Help menu already builds                                                                                                                                             | "Tour: Calculate blob metrics"       | ✅                                    |
 | `propertyCommands` | Properties store                                                                                                                                                                             | "Color by: Area"                     | ✅                                    |
@@ -123,10 +125,13 @@ dots`, `cells ↔ nuclei ↔ segment`, `measure ↔ property ↔ metric`). Keep 
 - Results are grouped under group headers, capped at about 50 rows, with the
   hotkey hint on the right.
 
-Phase 2 (separate PR, optional): when nothing scores well, a final row
-**"Ask AI: <query>"** opens the AI panel (`src/store/aiPanel.ts`) with the
-query pre-filled. Gate it the same way the AI panel itself is gated (env flag
-and login). Never send keystrokes to the network while the user types.
+Phase 2 (implemented; see _Ask Nimbus AI_ under _Viewer controls, aliases
+and property columns_): the query can be handed to the AI panel
+(`src/store/aiPanel.ts`), pre-filled and not sent. As built it is a button at
+the end of the search field plus ⌘↵, not a final row: a row at the bottom of
+the results was out of sight below the scroll. It is gated the same way the
+AI panel is (env flag and login), and nothing is sent to the network while
+the user types.
 
 ## UI
 
@@ -136,7 +141,10 @@ and login). Never send keystrokes to the network while the user types.
   buttons.
 - **Discoverability:**
   - a visible search button in the app bar with the tooltip "Search commands
-    (⌘K)";
+    (⌘K)": a compact pill (magnifier + hotkey hint) at `lg` and up, the bare
+    icon below. Keep it compact — the viewer's app bar is already full at
+    1024px, and a field-width trigger pushed the account and AI buttons off
+    screen;
   - a line in the Tab help overlay (`HelpPanel.vue`);
   - an anchor so a tour can point at it (`src/tours/anchors.ts`).
 - Bind ⌘K/Ctrl+K with `v-mousetrap` (not a raw `keydown` listener), with
@@ -282,12 +290,132 @@ Not exercised live: "Go to snapshot" (the test collection has no snapshots,
 and creating one would write to a shared configuration). It is covered by
 *"loads a snapshot requested from the command palette, then clears it"*.
 
+## Parameterized commands and shared operations
+
+Some actions take an argument typed in the query. `src/actions/catalog.ts`
+lists them declaratively (id, group, icon, trigger `phrases`, a `param`, the
+`agentTool` that performs the same operation, `enabled`, `run`), and
+`paramCommandsForQuery` in `src/actions/parse.ts` instantiates ready-to-run
+`ICommand`s per keystroke: `z 12`, `t40`, `xy 3` ("Go to Z 12" in the
+Navigate group) and `show only dapi` ("Show only layer: DAPI"; the bare phrase
+lists up to 8 layers, matched with the ordinary scorer, synonyms and channel
+names included).
+
+- **1-based rule.** The Navigator sliders show 1-based numbers
+  (`NavigatorPanel.vue` uses `:offset="1"`), so the typed N is index N - 1.
+  Only 1 <= N <= length is offered, and only for a dimension with more than one
+  entry. The title shows the typed number; the description shows "of 20".
+- **Generated commands** carry `generated: true`. Their ids never resolve in
+  `enabledCommands`, so the palette doesn't record them as recent. They are
+  listed first, in their own sections, so Enter runs what was typed.
+- **One implementation, two dispatchers.** The store-mutating cores live in
+  `src/actions/operations.ts` (`goToLocation`, `setVisibleLayers`,
+  `selectTool`); the agent executors (`set_location`, `set_layer_visibility`,
+  `select_tool`) and the palette both call them. `setVisibleLayers` does not
+  persist: the executor persists with a throwing sync, the palette with
+  `syncConfiguration("layers")` only when logged in. Validation, errors and
+  result payloads stay in `executors.ts`.
+- **`agentTool` link.** Every catalog action names the agent tool doing the
+  same thing; `catalog.test.ts` checks it against `AGENT_TOOL_NAMES`. Adding
+  an action both sides can do means a catalog entry plus a shared operation,
+  not a second implementation.
+
+## Viewer controls, aliases and property columns
+
+Every viewer control with a hotkey or a switch now has a command, registered
+with `useCommand` in the component that owns the control:
+
+| Component | Commands |
+| --- | --- |
+| `ImageViewer.vue` | Show/Hide objects (A), object tooltips (T), Lock/Unlock pan and zoom (L), Copy/Paste/Delete selected objects, Clear selection |
+| `DisplayLayers.vue` | Z max-merge all layers (Z), Show/Hide all layers (0) |
+| `DisplayLayer.vue` | Z max-merge layer: X (⇧N). Here rather than in a provider: turning it off restores the layer's previous slice, which only the component remembers |
+| `LayersPanel.vue` | Layer mode: Single / Multiple / Unroll, Add layer |
+| `NavigatorPanel.vue` | Next/Previous XY, Z, time point (w/r, d/e, s/f), Unroll XY/Z/T, time lapse mode. The Navigator's unroll watch is what refreshes the dataset, so the unroll commands go through it |
+| `LargeImageDropdown.vue` | Switch image: X |
+| `ViewerSettings.vue`, `AnnotationToggles.vue`, `PixelScaleBarSetting.vue` | Scale bar, pixel scale bar, minimap, values on hover, point scaling, dimension labels, background color, connections, only show objects passing filters, tooltips only for filtered objects, object selection mode |
+| `AnnotationFilters.vue` | Current frame only, objects from hidden layers |
+| `UISettings.vue` | Dark/light mode (no viewer gate: the theme applies everywhere) |
+| `TimelapsePanel.vue` | Track labels (time lapse mode only) |
+
+Boolean settings use `toggleCommands` (`src/commands/toggles.ts`): the title
+names what running the command will do, so it flips with the setting.
+
+**Gate commands registered inside a right-hand palette.** The Settings,
+Object Browser and Snapshots palettes stay mounted on every route
+(FloatingPalette uses `v-show`), so "registered by a viewer component" does
+not mean "only in the viewer". Give such commands `useInViewer()` from
+`src/commands/context.ts` (`toggleCommands` takes it as `when`). Without it,
+"Hide scale bar" and nine other Settings commands appeared on the dataset
+list. Match each command's `enabled` to its control's `:disabled` too
+(connections, filtered draw and tooltips are off while objects are hidden).
+
+Hotkeys and their commands share one handler (`toggleDrawAnnotations`,
+`stepDimension`, `deleteSelectedObjects`), so a fix to one reaches the other.
+`deleteSelectedObjects` (`src/utils/`) is also the Object Browser's Delete:
+in server-list mode it deletes the selected ids and refreshes the page, which
+the mod+backspace hotkey previously skipped (it deleted nothing there).
+
+**Property columns and filters.** `propertyListCommands` and
+`propertyFilterCommands` (in `providers.ts`) offer "Show in object list: X" /
+"Hide from object list: X" and "Add filter: X" / "Stop filtering by: X" for every
+property value path, so "list area" finds the Area columns. Adding a column
+opens the Object Browser; adding a filter opens Filters.
+
+**Aliases.** `ICommand.aliases` are other names for the command itself. A
+query equal to an alias scores 950 (below only an exact title, above another
+command's title prefix, so "filter" finds the Filters panel before the
+"Add filter: …" rows) and a prefix of one (3+ characters) 800, above any
+per-word match. Panels take theirs from
+`IPanelDefinition.aliases`, so "objects" opens the Object Browser and
+"measurements" the Analysis panel before the many commands whose titles only
+mention the word. The scorer also tries a plural query word's singular
+("tools" → "Tool") at a small discount.
+
+**Ask Nimbus AI.** A robot button at the end of the search field, and
+⌘↵ / Ctrl+Enter, hand the query to the AI panel. Both are offered wherever
+the "Open Nimbus AI panel" command is enabled, and the empty state names the
+shortcut. (A first version put an "Ask Nimbus AI" row at the bottom of the
+results; it was out of sight below the scroll.) Running it sets
+`aiPromptRequest` (`src/commands/requests.ts`); App.vue opens the panel, and
+`AiPanel.vue` puts the text in its input and focuses it without sending, so
+the user can edit it first.
+
+**Example queries.** The search field's placeholder shows three example
+queries ("Try: z 3 · show only DAPI · add column Area") and moves to the next three
+each time the palette opens and every 4 s while it is open. They come from
+`paletteExamples` (`src/commands/examples.ts`), which builds them from the
+open dataset (a slice that exists, the first layer, an Area-like property),
+and each example names the command it demonstrates. The palette keeps only
+those whose top result, what Enter would run, is that command
+(`examplesThatRun`). "Finds something" was not enough: with objects visible,
+"show objects" still found "Only show objects passing filters" and would
+have turned filtering on. A target that flips with state has one id for both directions, so its
+example must carry a direction word ("add column Area", "hide minimap"):
+"list Area" topped out at "Hide from object list: Area" while the column was
+shown, and the id check passed. A first query that finds nothing, or the
+wrong thing, loses the user.
+The timer runs only while the palette is open.
+
+Every switch and checkbox in the viewer's panels has a command, and each
+command's `enabled` matches its control's disabled state. Layer visibility
+commands respect single layer mode, which keeps exactly one layer visible:
+the visible layer offers no "Hide layer", and "Show/Hide all layers" is not
+offered at all.
+
+**Still missing:** controls that need a value rather than a toggle (sliders
+for opacity and point radius, the compositing-mode list, colors), the
+advanced Visibility settings (overview raster, reveal-more, thresholds; they
+save to the configuration), tag and color selected objects (need an input),
+select all matching objects (server-list mode logic lives in
+`AnnotationList.vue`), and switching the Object Browser's tabs directly.
+
 ## Regression checklist
 
 Each line names an invariant and the test that holds it, so a change here means
 re-checking the list rather than rediscovering it.
 
-Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components/DataIOMenu.test.ts src/utils/v-mousetrap.test.ts src/App.commands.test.ts src/App.test.ts src/utils/panelRegistry.test.ts src/tools/creation/toolTypeCatalog.test.ts src/tools/toolsets/Toolset.test.ts src/components/Snapshots.test.ts src/components/AnnotationBrowser/ColorByPropertyDialog.test.ts`.
+Run `pnpm test src/commands src/actions src/components/CommandPalette.test.ts src/components/AiPanel.test.ts src/components/ViewerSettings.test.ts src/utils/deleteSelectedObjects.test.ts src/components/DataIOMenu.test.ts src/utils/v-mousetrap.test.ts src/App.commands.test.ts src/App.test.ts src/utils/panelRegistry.test.ts src/tools/creation/toolTypeCatalog.test.ts src/tools/toolsets/Toolset.test.ts src/components/Snapshots.test.ts src/components/AnnotationBrowser/ColorByPropertyDialog.test.ts`.
 
 ### Self-updating
 
@@ -300,6 +428,13 @@ Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components
 
 - [ ] **Letters of any script stay searchable** ("α-tubulin", µ ↔ μ); an ASCII-only normalizer erased them. — _"keeps non-Latin letters searchable (α-tubulin, µ)"_
 - [ ] **Name, initials, description, synonym and diacritics matches.** — _"ranks the worker first for its name"_, _"matches a run of the title's word initials ('cs' → Cellpose-SAM)"_, _"matches a description word ('segment nuclei' finds Cellpose)"_, _"matches through a synonym (spots → puncta)"_, _"matches ignoring diacritics in either direction"_
+- [ ] **A query naming a panel finds the panel first** ("objects", "obj", "measurements"), through its aliases. — _"ranks a panel by its alias above titles that only mention the word"_
+- [ ] **An exact alias outranks another command's title prefix**, so "filter" finds the Filters panel above 50+ "Add filter: …" rows. — _"ranks an exact alias above another command's title prefix"_
+- [ ] **A state verb never matches its opposite.** Show/hide are not synonyms; a whole state verb (show, hide, open, close, lock, unlock, on, off, start, stop, unroll…) must match a whole title word or keyword, never a substring ("lock" in "Unlock") or subsequence ("open" in "Close…"); and a state-flipping command's title, keywords and aliases name only what it will do ("Roll up Z", "Show the current Z slice", "Draw every object"; a turn-off title shares no word with the state it ends, so not "…, ignoring filters"), so "show minimap", "lock pan", "unroll z", "merge z", "filter objects" and "filter area" can't run the opposite. — _"never matches a state verb to its opposite"_, _"matches a whole state verb only to a whole title word or keyword"_, _"lets a query's show/hide find only the command that does it"_, _"names only the background color it will apply"_, _"lets 'add' find only a hidden column and 'remove' only a shown one"_, _"keeps 'filter' queries off the commands that turn filtering off"_, _"keeps 'filter current frame' off the command that turns it off"_
+- [ ] **No array literal in `src/` holds both words of an opposite pair.** The pairs live in one list, `src/commands/stateWords.ts`, which also drives the scorer's strict state words, so a new pair (roll/unroll, filtered/unfiltered) guards both at once. Three review rounds each found one such keyword list; this scan finds them all. A `cond ? "a" : "b"` choice is the fix and is not flagged. — _"never hold both words of an opposite pair"_
+- [ ] **No state-flipping command carries a word asserting the current state**, in its keywords *or* its description: settings toggles take `turnOnKeywords`/`turnOffKeywords`, and layer commands are titled "Hide/Show layer: X" with no "Visible"/"Hidden" description ("visible dapi" used to hide a visible layer). — _"offers 'filtered' only while the command turns filtering on"_, _"toggles each layer, annotated with its bound hotkey and channel"_
+- [ ] **A subsequence matches within one title word only**, never letters scattered across the title ("area" in "dapi blob metrics elongation" made "filter area" add an Elongation filter). — _"matches a subsequence within one title word, not across words"_
+- [ ] **A plural query word matches a singular title word.** — _"matches a plural query word against a singular title word"_
 - [ ] **Every query word must match**, and results are capped. — _"requires every query word to match"_, _"returns nothing for an empty query and caps results"_
 
 ### Running commands
@@ -325,6 +460,33 @@ Run `pnpm test src/commands src/components/CommandPalette.test.ts src/components
 - [ ] **Selecting a shape card doesn't write into the shared template list.** — _"selecting a shape card does not write into the shared template"_
 - [ ] **Requests are cleared once honored, and a logged-out request is dropped.** — _"drops the request without opening when logged out"_, _"loads a snapshot requested from the command palette, then clears it"_, _"selects it when the dialog is already open"_
 - [ ] **Panel commands go through the owner's toggle**, so the companion rules apply. — _"flips Open/Close with the palette's state and toggles through the owner"_
+
+### Viewer controls and property columns
+
+- [ ] **"list area" finds the Area column; adding opens the Object Browser, hiding doesn't.** — _"offers each property as an object-list column, found by 'list area'"_, _"does not reopen the Object Browser when hiding a column"_
+- [ ] **Commands registered in an always-mounted palette are viewer-only.** — _"offers its palette commands only on the viewer route"_
+- [ ] **"Show in object list" is withheld at the column cap; "Hide from" stays.** — _"withholds 'Show in' once the list is full, but still offers 'Hide from'"_
+- [ ] **Delete selected works in server-list mode from every entry point.** — _"deletes the selected ids, clears them and refreshes the page in server mode"_, _"uses the store action in local list mode"_
+- [ ] **A typed command shares its group's header with ranked matches.** — _"lists a typed command and ranked matches of its group under one header"_
+- [ ] **A command that opens a panel to show its result leaves the result in sight**: "Show in object list" switches the Object Browser to its Objects tab, and a newly added filter expands the Filters panel's Property values section (from any path, not only the palette). — _"offers each property as an object-list column, found by 'list area'"_, _"expands Property values when a filter is added from elsewhere"_
+- [ ] **Layer visibility commands respect single layer mode**: no "Hide layer" for the one visible layer, no "Show/Hide all layers". — _"offers no 'Hide layer' for the one visible layer, which can't be hidden"_
+- [ ] **Every viewer switch has a command gated like the switch** (filtered tooltips need tooltips and objects shown; selection modes offer the two that aren't current). — _"registers the filtered-tooltips switch, gated like the switch"_
+- [ ] **Property filters toggle through the Filters store.** — _"adds a property's filter, or removes one already there"_
+- [ ] **A setting's command is titled by what it will do, and flips it.** — _"titles each command by what running it will do, and flips the setting"_
+- [ ] **Ask Nimbus AI (field button and mod+Enter) works with no match, hands over the trimmed query, beats the highlighted row on mod+Enter, and only appears where the AI panel can open.** — _"asks Nimbus AI from the field's button or mod+Enter, even with no match"_, _"shows no Ask Nimbus AI button where the AI panel can't open"_, _"is mod+Enter with no other modifier, per platform"_, _"opens the AI panel for a palette prompt, only when it may open"_
+- [ ] **The AI panel fills, focuses and does not send a palette prompt**, whether it arrives before or after the panel mounts, and keeps an unsent draft. A prompt the gate refuses is dropped, not left pending. — _"fills its input from a palette request made before it mounted, without sending"_, _"takes a request that arrives while it is open"_, _"keeps an unsent draft, adding the prompt on a new line"_
+- [ ] **Placeholder examples come from the dataset, run the command they demonstrate in the current state (their top result, not merely any match), rotate while open, and stop when closed.** No fixed state verb ("hide objects" while hidden). `examples` is gated on `open`, since the dialog keeps its content mounted and would otherwise re-score on every Z/time scrub. — _"builds viewer examples from the dataset: a real slice, layer and property"_, _"omits examples the dataset can't satisfy"_, _"keeps an example only while its top result is the command it shows"_, _"carry a direction word, so they can't run the opposite"_, _"rotates dataset-based example queries in the placeholder while open, and stops when closed"_
+- [ ] **The app-bar search trigger stays compact** (magnifier + hotkey hint, icon only below `lg`), so the viewer's account and AI buttons stay on screen. — _"shows a compact search pill that opens the command palette"_
+
+### Parameterized commands
+
+- [ ] **The typed number is 1-based; the index run is N - 1.** — _"converts the typed 1-based number to a 0-based index"_
+- [ ] **Out-of-range, 0, non-integer, single-entry dimensions and non-viewer routes offer nothing.** — _"offers nothing for 0 or a number past the dimension's length"_, _"offers nothing for a dimension with a single entry"_, _"offers nothing outside the viewer"_
+- [ ] **Every phrase form parses**, glued included. — _"reads every phrase form, the glued one included"_, _"lists every layer for the bare phrase"_, _"ranks the best layer first for a partial name"_
+- [ ] **Show-only persists only when logged in, through the shared operation.** — _"runs the show-only command through the shared operation, then persists"_, _"does not persist show-only when logged out"_
+- [ ] **Shared operations clamp, touch only differing layers, and don't sync.** — _"clamps each index into the dataset's range"_, _"changes only layers whose visibility differs, without syncing"_
+- [ ] **Every catalog action names an existing agent tool.** — _"names an agent tool that exists for every action"_
+- [ ] **Typed commands come first, run after the dialog leaves, and are never recorded as recent.** — _"puts a typed parameterized command first and runs it after the dialog leaves"_, _"does not record a generated command as recent"_, _"keeps highlighting a generated command by id"_
 
 ### Cost
 

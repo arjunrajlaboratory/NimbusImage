@@ -124,16 +124,16 @@ In the codebase and API, "collections" and "configurations" refer to the same co
 
 ## NEVER call raw `PUT /folder/{id}/access` — use `ds.sharing`
 
-The raw Girder access endpoint replaces the entire ACL with whatever you send. If you send a list that doesn't include the dataset creator, you lock the owner out of their own dataset (the folder's `_accessLevel` drops to `-1` and only a site admin can recover it):
+The raw Girder access endpoint replaces the entire ACL with whatever you send. Every user you leave out loses access, and a list with nobody at ADMIN would leave the dataset with no owner, recoverable only by a site admin. The server now refuses that last case, but it still silently drops everyone you omitted:
 
 ```python
-# WRONG — silently locks the owner out
+# WRONG — no ADMIN left (refused by the server)
 client._gc.put(
     f"folder/{ds.id}/access",
     parameters={"access": json.dumps({"users": [], "groups": []})},
 )
 
-# WRONG — same problem, the list omits the owner
+# WRONG — removes the owner and everyone else not listed
 client._gc.put(
     f"folder/{ds.id}/access",
     parameters={"access": json.dumps({
@@ -143,7 +143,7 @@ client._gc.put(
 )
 ```
 
-`ds.sharing` calls `dataset_view/share`, which is **incremental** — it modifies one user's access at a time and can never remove the caller by accident. Use it:
+`ds.sharing` calls `dataset_view/share`, which is **incremental**: it changes one user's access at a time and leaves everyone else alone. Use it:
 
 ```python
 # RIGHT
@@ -152,7 +152,7 @@ ds.sharing.share("former_member@example.com", access="remove")
 ds.sharing.set_public(True)
 ```
 
-The backend now enforces this invariant (a `model.folder.save` listener rejects `contrastDataset` saves that omit the creator at ADMIN). **Don't go around `ds.sharing`.** If you think you need to, ask the user — there's almost always a safer path.
+A dataset or project must always keep at least one user at ADMIN. The server refuses (400) removing or demoting the last one, through `ds.sharing`, `project.share()` or the raw endpoint. To hand a dataset over, give the new owner `admin` first; then you can remove yourself. **Don't go around `ds.sharing`.** If you think you need to, ask the user — there's almost always a safer path.
 
 ## Generally: avoid dropping to `client._gc` (raw girder-client)
 

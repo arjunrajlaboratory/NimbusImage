@@ -248,6 +248,106 @@ function createGirderRestClient(options: {
   return client;
 }
 
+// Optimistic writes of one configuration key can overlap. A failed write must
+// not restore its own snapshot: a later write may have been made on top of
+// it, an earlier write it built on may have failed too, or an earlier one may
+// still succeed after it (a write can fail before reaching the API's
+// per-key queue, e.g. when the session expired). So nothing is restored
+// until the last pending write of the key settles; then, if any of them
+// failed, the key gets the last value the server confirmed.
+// `adopted` lists property ids the server registered itself while writes
+// were pending (see adoptServerConfirmedPropertyId), in the order they
+// arrived: they count as confirmed, so a failed write does not restore them
+// away, including after a write sent before their adoption succeeds.
+const configurationKeyWrites = new Map<
+  string,
+  {
+    pending: number;
+    failed: boolean;
+    confirmed: unknown;
+    adopted: string[];
+  }
+>();
+
+async function writeConfigurationKey<K extends "propertyIds" | "pipelines">(
+  configuration: IDatasetConfiguration,
+  key: K,
+  value: IDatasetConfiguration[K],
+  sync: () => Promise<unknown>,
+  // The configuration object loaded now: a switch away and back loads a new
+  // object for the same id, and the restore belongs on that one.
+  loaded: () => IDatasetConfiguration | null,
+) {
+  const writesKey = `${configuration.id}:${key}`;
+  let writes = configurationKeyWrites.get(writesKey);
+  if (!writes) {
+    writes = {
+      pending: 0,
+      failed: false,
+      confirmed: configuration[key],
+      adopted: [],
+    };
+    configurationKeyWrites.set(writesKey, writes);
+  }
+  const adoptedBefore = writes.adopted.length;
+  writes.pending++;
+  configuration[key] = value;
+  try {
+    await sync();
+    // Only propertyIds writes have adoptions. A write sent before an id was
+    // adopted could not include it, so it stays confirmed; a write sent
+    // after decided on it (a property the user removed stays removed).
+    if (key === "propertyIds" && writes.adopted.length > adoptedBefore) {
+      const ids = value as string[];
+      const missing = writes.adopted
+        .slice(adoptedBefore)
+        .filter((id) => !ids.includes(id));
+      writes.confirmed = missing.length > 0 ? [...ids, ...missing] : value;
+    } else {
+      writes.confirmed = value;
+    }
+  } catch (error) {
+    writes.failed = true;
+    throw error;
+  } finally {
+    if (--writes.pending === 0) {
+      configurationKeyWrites.delete(writesKey);
+      if (writes.failed) {
+        const current = loaded();
+        const target =
+          current?.id === configuration.id ? current : configuration;
+        target[key] = writes.confirmed as IDatasetConfiguration[K];
+      }
+    }
+  }
+}
+
+// The server registered `propertyId` in this configuration itself (a
+// materialize or neighborhood request does when it is made). Add it to the
+// live list and, while propertyIds writes are pending, to what a failed write
+// restores; otherwise that restore would drop it and the next save would
+// unregister it on the server. Idempotent. Not covered: a write sent while
+// that request was in flight replaces the server's list without the id; only
+// a server-side merge of propertyIds writes could prevent that.
+export function adoptServerConfirmedPropertyId(
+  configuration: IDatasetConfiguration,
+  propertyId: string,
+) {
+  const writes = configurationKeyWrites.get(`${configuration.id}:propertyIds`);
+  if (writes) {
+    const confirmed = writes.confirmed as string[];
+    if (!confirmed.includes(propertyId)) {
+      writes.confirmed = [...confirmed, propertyId];
+    }
+    if (!writes.adopted.includes(propertyId)) {
+      writes.adopted.push(propertyId);
+    }
+  }
+  if (!configuration.propertyIds.includes(propertyId)) {
+    configuration.propertyIds = [...configuration.propertyIds, propertyId];
+  }
+}
+
 // Tracks the most recently issued fetchRecentDatasetViews call so older
 // in-flight requests can detect they are stale and skip the state write.
 // Without this, a slower request with a different filter can land last and
@@ -2884,14 +2984,13 @@ export class Main extends VuexModule {
     if (!configuration) {
       throw new Error("Cannot update properties without a configuration");
     }
-    const previous = configuration.propertyIds;
-    configuration.propertyIds = propertyIds;
-    try {
-      await this.syncConfiguration({ key: "propertyIds", throwOnError: true });
-    } catch (error) {
-      configuration.propertyIds = previous;
-      throw error;
-    }
+    await writeConfigurationKey(
+      configuration,
+      "propertyIds",
+      propertyIds,
+      () => this.syncConfiguration({ key: "propertyIds", throwOnError: true }),
+      () => this.configuration,
+    );
   }
 
   // rawError: true because this rolls back and rethrows so the caller can
@@ -2904,14 +3003,13 @@ export class Main extends VuexModule {
     if (!configuration) {
       throw new Error("Cannot update pipelines without a configuration");
     }
-    const previous = configuration.pipelines;
-    configuration.pipelines = pipelines;
-    try {
-      await this.syncConfiguration({ key: "pipelines", throwOnError: true });
-    } catch (error) {
-      configuration.pipelines = previous;
-      throw error;
-    }
+    await writeConfigurationKey(
+      configuration,
+      "pipelines",
+      pipelines,
+      () => this.syncConfiguration({ key: "pipelines", throwOnError: true }),
+      () => this.configuration,
+    );
   }
 
   // rawError: true is required because the throwOnError path rethrows the

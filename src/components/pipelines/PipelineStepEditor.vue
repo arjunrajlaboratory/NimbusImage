@@ -19,11 +19,32 @@
       </v-col>
     </v-row>
 
-    <v-row class="my-0" density="comfortable">
-      <v-col class="py-1">
-        <docker-image-select v-model="image" :imageFilter="imageFilter" />
-      </v-col>
-    </v-row>
+    <v-alert
+      v-if="linkMessage"
+      :type="linkState?.state === 'missing' ? 'warning' : 'info'"
+      variant="tonal"
+      density="compact"
+      class="my-1 link-alert"
+    >
+      <div class="d-flex align-center ga-2">
+        <span class="flex-grow-1 text-body-2">{{ linkMessage }}</span>
+        <v-btn variant="text" size="small" @click="unlink">
+          <v-icon start>mdi-link-variant-off</v-icon>
+          Unlink
+        </v-btn>
+      </div>
+    </v-alert>
+
+    <!-- A linked step's worker is its source's; changing it means unlinking. -->
+    <v-defaults-provider :defaults="lockedDefaults(isLinked)">
+      <div :inert="isLinked || undefined">
+        <v-row class="my-0" density="comfortable">
+          <v-col class="py-1">
+            <docker-image-select v-model="image" :imageFilter="imageFilter" />
+          </v-col>
+        </v-row>
+      </div>
+    </v-defaults-provider>
 
     <v-row v-if="fetchingInterface" class="my-0">
       <v-col class="py-2 d-flex align-center">
@@ -32,63 +53,69 @@
       </v-col>
     </v-row>
 
-    <template v-if="isAnnotation">
-      <v-row class="my-0">
-        <v-col class="py-1">
-          <annotation-configuration
-            :model-value="annotationSetup"
-            @update:model-value="onAnnotationSetupChange"
-          />
-        </v-col>
-      </v-row>
-    </template>
-    <template v-else>
-      <v-row class="my-0" density="comfortable">
-        <v-col cols="6" class="py-1">
-          <v-select
-            label="Shape"
-            :items="shapeItems"
-            item-title="text"
-            item-value="value"
-            v-model="propertyShape"
-            density="compact"
-          />
-        </v-col>
-        <v-col cols="6" class="py-1 d-flex align-center">
-          <v-checkbox
-            v-model="inputExclusive"
-            label="Exclusive tag match"
-            density="compact"
-            hide-details
-          />
-        </v-col>
-      </v-row>
-      <v-row class="my-0">
-        <v-col class="py-1">
-          <div
-            v-if="autoWiredCaption"
-            class="text-caption text-medium-emphasis mb-1"
-          >
-            {{ autoWiredCaption }}
-          </div>
-          <tag-picker v-model="inputTags" />
-        </v-col>
-      </v-row>
-    </template>
+    <!-- A linked step's settings are its source's: read-only here. -->
+    <v-defaults-provider :defaults="lockedDefaults(isLinked)">
+      <div :inert="isLinked || undefined">
+        <template v-if="isAnnotation">
+          <v-row class="my-0">
+            <v-col class="py-1">
+              <annotation-configuration
+                :model-value="annotationSetup"
+                @update:model-value="onAnnotationSetupChange"
+              />
+            </v-col>
+          </v-row>
+        </template>
+        <template v-else>
+          <v-row class="my-0" density="comfortable">
+            <v-col cols="6" class="py-1">
+              <v-select
+                label="Shape"
+                :items="shapeItems"
+                item-title="text"
+                item-value="value"
+                v-model="propertyShape"
+                density="compact"
+              />
+            </v-col>
+            <v-col cols="6" class="py-1 d-flex align-center">
+              <v-checkbox
+                v-model="inputExclusive"
+                label="Exclusive tag match"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+          </v-row>
+          <v-row class="my-0">
+            <v-col class="py-1">
+              <div
+                v-if="autoWiredCaption"
+                class="text-caption text-medium-emphasis mb-1"
+              >
+                {{ autoWiredCaption }}
+              </div>
+              <tag-picker v-model="inputTags" />
+            </v-col>
+          </v-row>
+        </template>
 
-    <v-row v-if="workerInterface" class="my-0">
-      <v-col class="py-1">
-        <worker-interface-values
-          :workerInterface="workerInterface"
-          v-model="workerInterfaceValuesModel"
-        />
-      </v-col>
-    </v-row>
+        <v-row v-if="workerInterface" class="my-0">
+          <v-col class="py-1">
+            <worker-interface-values
+              :workerInterface="workerInterface"
+              v-model="workerInterfaceValuesModel"
+            />
+          </v-col>
+        </v-row>
+      </div>
+    </v-defaults-provider>
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { cloneDeep, omit } from "lodash";
 import propertiesStore from "@/store/properties";
 import DockerImageSelect from "@/components/DockerImageSelect.vue";
 import WorkerInterfaceValues from "@/components/WorkerInterfaceValues.vue";
@@ -96,6 +123,7 @@ import TagPicker from "@/components/TagPicker.vue";
 import AnnotationConfiguration from "@/tools/creation/templates/AnnotationConfiguration.vue";
 import { getDefault } from "@/utils/workerInterface";
 import { logError } from "@/utils/log";
+import { TStepLinkState } from "@/utils/pipelineLinks";
 import {
   AnnotationNames,
   AnnotationShape,
@@ -116,6 +144,9 @@ const props = defineProps<{
   // "Reads tags from step 1 (Cellpose SAM)". Computed by the parent builder,
   // which has visibility into step ordering.
   autoWiredCaption?: string | null;
+  // Whether the step is linked to an existing tool/property (computed by the
+  // parent, which knows the configuration's tools and properties).
+  linkState?: TStepLinkState;
 }>();
 
 const emit = defineEmits<{
@@ -145,7 +176,20 @@ const propertyStepValue = computed<IPropertyPipelineStep | null>(() =>
 // keeps the patch from re-widening the discriminant when spread.
 type TStepPatch = Partial<Omit<IPipelineStepBase, "kind">>;
 
+// A linked step's settings are its source's: only its own name and enabled
+// flag may change, so its locked sections (whose child editors still re-emit,
+// e.g. AnnotationConfiguration on mount) emit nothing.
+function isLockedPatch(patch: object): boolean {
+  return (
+    isLinked.value &&
+    Object.keys(patch).some((key) => key !== "name" && key !== "enabled")
+  );
+}
+
 function patchStep(patch: TStepPatch) {
+  if (isLockedPatch(patch)) {
+    return;
+  }
   // Branch so each spread is over a concrete member of the discriminated
   // union (a spread over the union widens `kind` and breaks assignability).
   if (step.value.kind === "annotation") {
@@ -156,20 +200,73 @@ function patchStep(patch: TStepPatch) {
 }
 
 function patchAnnotationStep(patch: Partial<IAnnotationPipelineStep>) {
-  if (step.value.kind !== "annotation") {
+  if (step.value.kind !== "annotation" || isLockedPatch(patch)) {
     return;
   }
   emit("update:modelValue", { ...step.value, ...patch });
 }
 
 function patchPropertyStep(patch: Partial<IPropertyPipelineStep>) {
-  if (step.value.kind !== "property") {
+  if (step.value.kind !== "property" || isLockedPatch(patch)) {
     return;
   }
   emit("update:modelValue", { ...step.value, ...patch });
 }
 
 const isAnnotation = computed(() => step.value.kind === "annotation");
+
+const isLinked = computed(
+  () => !!props.linkState && props.linkState.state !== "unlinked",
+);
+
+const linkMessage = computed<string | null>(() => {
+  const linkState = props.linkState;
+  if (!linkState || linkState.state === "unlinked") {
+    return null;
+  }
+  if (linkState.state === "missing") {
+    if (linkState.reason === "noWorker") {
+      return `The tool "${linkState.sourceName}" this step is linked to no longer has a worker image. It runs with the last saved copy of the tool's settings. Unlink to edit them.`;
+    }
+    return linkState.sourceKind === "tool"
+      ? "The tool this step was linked to was deleted. It runs with the last saved copy of the tool's settings. Unlink to edit them."
+      : "The property this step is linked to is not available (deleted, or not loaded yet). A run checks again: if it was deleted, the step computes a new property from the last saved copy of its settings.";
+  }
+  return linkState.sourceKind === "tool"
+    ? `Linked to tool "${linkState.sourceName}": runs with the tool's current settings. Edit them in the Tools panel, or Unlink to customize this step.`
+    : `Linked to property "${linkState.sourceName}": computes that property as it is defined. Unlink to customize this step (the pipeline then computes its own copy of the property).`;
+});
+
+// Locked sections render every Vuetify control disabled (a global default, so
+// it reaches the inputs inside child components and their own v-forms); the
+// wrapper's `inert` also blocks focus and clicks on anything else. Parameter
+// help tooltips are therefore unavailable on a locked step.
+function lockedDefaults(locked: boolean) {
+  return locked ? { global: { disabled: true } } : {};
+}
+
+// Turn a linked step into an independent copy of its current settings. An
+// unlinked property step keeps its tags rather than auto-wiring over them, and
+// is renamed: the pipeline now computes its own copy of the property, named
+// after the step, which would otherwise share the original's name.
+function unlink() {
+  const current = step.value;
+  // Keep the values the step was showing (including displayed defaults).
+  const workerInterfaceValues = cloneDeep(displayedWorkerInterfaceValues.value);
+  if (current.kind === "annotation") {
+    emit("update:modelValue", {
+      ...omit(current, "sourceToolId"),
+      workerInterfaceValues,
+    });
+  } else {
+    emit("update:modelValue", {
+      ...omit(current, "sourcePropertyId"),
+      name: `${current.name} (pipeline copy)`,
+      workerInterfaceValues,
+      autoWired: false,
+    });
+  }
+}
 
 const name = computed({
   get: () => step.value.name,
@@ -191,8 +288,25 @@ const workerInterface = computed<IWorkerInterface | null>(() => {
   return propertiesStore.getWorkerInterface(step.value.image) ?? null;
 });
 
+// The parameter values shown. A linked step's unset parameters show the
+// worker's defaults, as the tool's own menu does, without writing them (its
+// settings are read-only here). (An unlinked step is seeded on mount instead;
+// see onMounted.) Saved values the interface no longer declares are kept, so
+// Unlink does not drop them.
+const displayedWorkerInterfaceValues = computed<IWorkerInterfaceValues>(() =>
+  isLinked.value && workerInterface.value
+    ? {
+        ...seedWorkerInterfaceValues(
+          step.value.image,
+          step.value.workerInterfaceValues,
+        ),
+        ...step.value.workerInterfaceValues,
+      }
+    : step.value.workerInterfaceValues,
+);
+
 const workerInterfaceValuesModel = computed({
-  get: () => step.value.workerInterfaceValues,
+  get: () => displayedWorkerInterfaceValues.value,
   set: (value: IWorkerInterfaceValues) =>
     patchStep({ workerInterfaceValues: value }),
 });
@@ -208,8 +322,8 @@ function onAnnotationSetupChange(value: IAnnotationSetup) {
 const propertyShape = computed({
   get: () => propertyStepValue.value?.shape ?? AnnotationShape.Polygon,
   // Like a manual tag edit, a manual shape edit detaches auto-wiring —
-  // otherwise PipelineEditor's computeAutoWiredSteps would immediately
-  // overwrite the shape from the upstream annotation step again.
+  // otherwise auto-wiring (computeAutoWiredSteps, in the editor and the
+  // runner) would overwrite the shape from the upstream annotation step again.
   set: (value: AnnotationShape) =>
     patchPropertyStep({ shape: value, autoWired: false }),
 });
@@ -320,6 +434,19 @@ async function onImageChange(newImage: string | null) {
   patchStep(patch);
 }
 
+// The image can change from outside the editor too: a linked step follows its
+// tool's image live. Load the new image's interface then, or its parameters
+// would not show (onImageChange covers only a pick made here; the mount
+// covers the first image).
+watch(
+  () => step.value.image,
+  (newImage, oldImage) => {
+    if (newImage && newImage !== oldImage) {
+      void ensureWorkerInterface(newImage);
+    }
+  },
+);
+
 onMounted(async () => {
   if (Object.keys(propertiesStore.workerImageList).length === 0) {
     await propertiesStore.fetchWorkerImageList();
@@ -329,7 +456,17 @@ onMounted(async () => {
     return;
   }
   await ensureWorkerInterface(current.image);
-  if (Object.keys(current.workerInterfaceValues).length === 0) {
+  // A different image picked while this fetch ran has been seeded by
+  // onImageChange; this image's defaults would overwrite it.
+  if (step.value.image !== current.image) {
+    return;
+  }
+  // Linked steps show defaults without writing them
+  // (displayedWorkerInterfaceValues).
+  if (
+    !isLinked.value &&
+    Object.keys(current.workerInterfaceValues).length === 0
+  ) {
     const workerInterfaceValues = seedWorkerInterfaceValues(
       current.image,
       current.workerInterfaceValues,
@@ -342,6 +479,8 @@ onMounted(async () => {
 
 defineExpose({
   step,
+  isLinked,
+  unlink,
   isAnnotation,
   workerInterface,
   image,
@@ -349,3 +488,9 @@ defineExpose({
   enabled,
 });
 </script>
+
+<style scoped>
+.link-alert :deep(.v-alert__content) {
+  width: 100%;
+}
+</style>

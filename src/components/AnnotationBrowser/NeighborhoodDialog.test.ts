@@ -142,6 +142,8 @@ describe("NeighborhoodDialog", () => {
       ["cell"],
       "Neighborhood",
     );
+    // Registered when the request was made: adopted before the job finishes.
+    expect(mocks.adoptServerRegisteredProperty).toHaveBeenCalledWith("p1");
     await vi.advanceTimersByTimeAsync(2000);
     expect(vm.running).toBe(true);
     await vi.advanceTimersByTimeAsync(2000);

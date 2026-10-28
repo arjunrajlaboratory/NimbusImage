@@ -141,15 +141,25 @@ def setDatasetPublic(self, dataset, public):
         Collection().setPublic(config, public, save=True)
 ```
 
-### Access Check: Owner Protection
+### Access Check: Keep an Owner (last ADMIN)
 
-Document owners (users with `AccessType.ADMIN` on the document, typically the creator) cannot be removed from the access list:
+A dataset (`contrastDataset` folder) or project must always keep at least one **user** at
+ADMIN. Who holds it doesn't matter: the creator can hand ADMIN to someone else and step
+down. Don't special-case `creatorId`. The rule lives in `server/helpers/last_admin_guard.py`:
 
-```python
-# Check before removing access
-if targetUser['_id'] == doc.get('creatorId'):
-    raise RestException("Cannot remove owner's access")
-```
+- `require_keeps_an_admin(model, doc, targetUser, level)` runs inside
+  `access_helpers.requireCanSetUserAccess`, so any share path that calls that helper on
+  every touched document before writing gets it, and the request stays all-or-nothing.
+  A new path that changes a dataset's or project's ACL must call `requireCanSetUserAccess`
+  on the document itself, not only on what it propagates to. `project/:id/share` once
+  checked only the contained resources, so an owner could leave an empty project with
+  no ADMIN.
+- A `model.folder.save` listener covers Girder's raw `PUT folder/{id}/access` and
+  model-layer saves. Bulk `Model.update()` fires no save event, so the pre-write check
+  is the only guard on those paths.
+- Group ADMIN grants don't count (a group can be emptied). Site admins and code running
+  outside a request are exempt. A resource that already has no ADMIN isn't frozen: the
+  listener compares against the stored document.
 
 ## Reference
 

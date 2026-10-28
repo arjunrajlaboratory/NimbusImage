@@ -529,7 +529,12 @@ class Project(ProxiedModel):
         checked before any is written: the request is refused
         (AccessException) if it would grant more than the
         actor's level on one of them, or change a user whose
-        entry there is above the actor's level.
+        entry there is above the actor's level. The same
+        check refuses leaving a dataset with no user at
+        ADMIN (ValidationException); the bulk writes below
+        fire no folder save event, so the save listener
+        can't. (The project's own ACL is the caller's to
+        check.)
 
         :param project: The project document.
         :param targetUser: The Girder user document.
@@ -538,6 +543,8 @@ class Project(ProxiedModel):
         :param actor: The user sharing the project.
         :raises AccessException: If any reached document
             would exceed the actor's level.
+        :raises ValidationException: If a dataset would be
+            left with no user at ADMIN.
         """
         resources = limitToShareable(
             actor, self._gatherAllResources(project)

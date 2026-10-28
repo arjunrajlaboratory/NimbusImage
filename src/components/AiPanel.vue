@@ -168,7 +168,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import {
+  ref,
+  computed,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+  watch,
+} from "vue";
+import { aiPromptRequest } from "@/commands/requests";
 import AiPanelPlot from "./AiPanelPlot.vue";
 import { renderAssistantMarkdown } from "@/utils/renderMarkdown";
 import aiPanelStore, {
@@ -240,6 +248,28 @@ async function send() {
   textInput.value = "";
   await aiPanelStore.sendUserMessage(text);
 }
+
+// A prompt from the command palette ("Ask Nimbus AI: …"): put it in the input
+// and focus it, without sending, so it can be edited first. An unsent draft
+// is kept, with the prompt on a new line after it. Immediate, because the
+// request usually arrives before this panel mounts.
+watch(
+  aiPromptRequest,
+  (prompt) => {
+    if (prompt == null) {
+      return;
+    }
+    const draft = textInput.value.trimEnd();
+    textInput.value = draft ? `${draft}\n${prompt}` : prompt;
+    aiPromptRequest.value = null;
+    nextTick(() => {
+      rootEl.value
+        ?.querySelector<HTMLTextAreaElement>(".ai-input textarea")
+        ?.focus();
+    });
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
   setAgentPanelElement(rootEl.value ?? null);

@@ -95,6 +95,7 @@ import store from "@/store";
 import { IGirderLargeImage } from "@/girder";
 import { DEFAULT_LARGE_IMAGE_SOURCE } from "@/girder/index";
 import { logError } from "@/utils/log";
+import { useCommand } from "@/commands/registry";
 
 const deletingImageId = ref<string | null>(null);
 const previousNumberOfImages = ref(0);
@@ -213,6 +214,24 @@ const currentLargeImage = computed({
 });
 
 const shouldShow = computed(() => largeImages.value.length > 1);
+
+// "Switch image: …" for every image the dropdown offers except the current
+// one (worker outputs such as illumination-corrected or stitched images).
+useCommand(() =>
+  formattedLargeImages.value
+    .filter((image) => image._id !== currentLargeImage.value)
+    .map((image) => ({
+      id: `image.switch.${image._id}`,
+      title: `Switch image: ${image.displayName}`,
+      group: "Navigate" as const,
+      keywords: ["select", "source", "large image", "corrected", "original"],
+      description: image.metaText || undefined,
+      icon: "mdi-image-multiple-outline",
+      run: () => {
+        currentLargeImage.value = image._id;
+      },
+    })),
+);
 
 defineExpose({
   shouldShow,

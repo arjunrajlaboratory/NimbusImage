@@ -1,8 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shallowMount } from "@vue/test-utils";
 
+const route = vi.hoisted(() => ({ value: null as any }));
+vi.mock("vue-router", async () => {
+  const { reactive } = await import("vue");
+  route.value = reactive({ name: "root" });
+  return { useRoute: () => route.value };
+});
+
+// context.ts (useInViewer) reads "@/store", which resolves to the same module.
+vi.mock("@/store", async () => await import("@/store/index"));
+
 vi.mock("@/store/index", () => ({
   default: {
+    dataset: { id: "ds1" },
     valueOnHover: true,
     setValueOnHover: vi.fn(),
     overview: true,
@@ -46,6 +57,7 @@ vi.mock("@/utils/compositionModes", () => ({
 }));
 
 import ViewerSettings from "./ViewerSettings.vue";
+import { enabledCommands } from "@/commands/registry";
 import store from "@/store/index";
 
 function mountComponent() {
@@ -237,5 +249,35 @@ describe("ViewerSettings", () => {
     const vm = wrapper.vm as any;
     vm.showTimeLabels = false;
     expect(store.setShowTimeLabels).toHaveBeenCalledWith(false);
+  });
+
+  it("offers its palette commands only on the viewer route", async () => {
+    // The Settings palette stays mounted on every route (FloatingPalette uses
+    // v-show), so registering here must not make these global.
+    const wrapper = mountComponent();
+    const settingsIds = () =>
+      enabledCommands.value
+        .map((command) => command.id)
+        .filter((id) => id.startsWith("settings."));
+    route.value.name = "root";
+    expect(settingsIds()).toEqual([]);
+    route.value.name = "datasetview";
+    expect(settingsIds()).toContain("settings.scalebar");
+    expect(settingsIds()).toContain("settings.backgroundColor");
+    wrapper.unmount();
+    route.value.name = "root";
+  });
+
+  it("names only the background color it will apply", async () => {
+    const { rankCommands } = await import("@/commands/scorer");
+    const wrapper = mountComponent();
+    route.value.name = "datasetview";
+    // The mocked background is black, so the command turns it white.
+    const ids = (query: string) =>
+      rankCommands(enabledCommands.value, query).map((command) => command.id);
+    expect(ids("light background")).toContain("settings.backgroundColor");
+    expect(ids("dark background")).not.toContain("settings.backgroundColor");
+    wrapper.unmount();
+    route.value.name = "root";
   });
 });

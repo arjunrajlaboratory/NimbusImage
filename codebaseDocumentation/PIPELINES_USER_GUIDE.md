@@ -106,19 +106,51 @@ one you watch run.
 
 ### Adding a step
 
-The **Add step** dialog offers three sources:
+The **Add step** dialog offers four sources:
 
 1. **Annotation worker** — pick an annotation-producing Docker image from the
    catalog. Creates an annotation step.
 2. **Property worker** — pick a property-computing Docker image. Creates a
    property step.
 3. **Existing tool** — pick a worker-backed tool that already exists in the
-   configuration (the tools a user set up in the Tools panel). This copies that
-   tool's worker image, its parameter values, its annotation setup (tags,
-   shape, coordinate assignment), and any connection settings into a new
-   annotation step — so a user who already tuned a segmentation tool can reuse
-   it in a pipeline without re-entering everything. This option is disabled if
-   the configuration has no worker-backed tools.
+   configuration (the tools a user set up in the Tools panel). The new
+   annotation step is **linked** to that tool: it runs with the tool's current
+   worker, parameter values, annotation setup (tags, shape, coordinate
+   assignment) and connection settings. The step's settings are read-only in
+   the pipeline: to change them, edit the tool in the Tools panel, and the
+   pipeline follows. This option is disabled if the configuration has no
+   worker-backed tools.
+4. **Existing property** — pick a property already defined in the
+   configuration. The new property step is **linked** to it: the pipeline
+   computes that same property (same values in the Annotation Browser column)
+   instead of creating a second copy. Its settings can't be changed from the
+   pipeline, because properties can't be edited after they are created. This
+   option is disabled if the configuration has no properties.
+
+A linked step shows a link chip with its source's name, and its editor says
+where its settings come from. Only its name and Enabled toggle can be changed
+in the pipeline. **Unlink** (in the step's editor) turns it into an independent
+step that keeps the current values and can be edited on its own; unlinking a
+property step means the pipeline will create its own property on the next run,
+leaving the original untouched. If the source tool is deleted, the step shows
+"source deleted" and keeps running with the last saved copy of its settings. A
+linked property that can't be found shows "source unavailable": the next run
+reloads the properties, and if it really was deleted, computes a new property
+from the last saved copy of its settings. A tool that still exists but no longer has a worker image shows "tool
+has no worker" and is treated the same way.
+
+Removing a property in the Properties panel that pipeline steps use (linked to
+it, or created by them, including disabled steps) first lists those steps.
+Choose **Remove anyway** to remove it; each of those steps then creates a new
+property on its next run. While a pipeline that computes the property is
+running, it can't be removed: wait for the run to finish, or cancel it. If the
+removal is refused (for example the collection's properties have not loaded
+yet), the dialog stays open and says why.
+
+The same applies when you import annotations with **Overwrite properties**,
+which removes every property in the collection: the import dialog lists the
+pipeline steps that use them, and while a pipeline that computes one of them is
+running, the import is disabled until the run finishes or you cancel it.
 
 ### Configuring a step
 
@@ -183,6 +215,12 @@ Run options (in the editor):
 Because the run state is shared across the dialog, closing and reopening mid-run
 returns straight to the running pipeline's editor.
 
+Opening a dataset that uses a different configuration while a pipeline runs
+stops the run: a worker job already running finishes, and the next step fails
+with a message asking you to rerun the pipeline from one of its own datasets.
+A collection run skips the datasets it had not reached yet and counts them as
+failed.
+
 ### Materialized properties
 
 The first time a **property step** runs, it creates a persisted property
@@ -244,6 +282,7 @@ shared by every dataset in the collection.
 | **Auto-wiring** | The editor copying an upstream annotation step's tags/shape into a downstream property step automatically. |
 | **Materializable shapes** | The shapes a property can be computed on: point, line, polygon. |
 | **Materialized property** | The persisted property definition a property step creates on first run and reuses. |
+| **Linked step** | A step added from an existing tool or property; it runs with that source's current settings, which are read-only in the pipeline. |
 | **Origin** | Where a pipeline came from: `user` or `preset`. |
 | **Batch run** | Running one pipeline across every dataset in the collection (≤ 50). |
 
@@ -274,7 +313,14 @@ shapes for annotation steps that feed a property step (the editor clamps
 non-materializable shapes to polygon automatically).
 
 **"Can I reuse a tool I already set up?"** Yes — in Add step, choose "Existing
-tool" to import a configured worker tool as a pipeline step.
+tool". The step is linked to the tool, so the pipeline and the tool always use
+the same parameters: edit the tool in the Tools panel and the pipeline follows.
+Choose "Existing property" to reuse a property the same way. Use **Unlink** on
+the step if you want the pipeline to use different settings from the tool.
+
+**"Why don't my pipeline's parameters match my tool?"** The step was probably
+added from a raw worker image, or was unlinked, so it has its own settings.
+Remove it and add the tool again with "Existing tool" to link them.
 
 **"Where are my pipelines saved?"** On the dataset's configuration, so they're
 shared by every dataset in the collection and persist across sessions.

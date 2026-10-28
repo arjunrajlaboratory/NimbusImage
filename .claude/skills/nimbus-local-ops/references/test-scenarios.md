@@ -111,23 +111,25 @@ curl -s -X DELETE -H "Girder-Token: $TOKEN" "http://localhost:8080/api/v1/upenn_
 Tests user creation and dataset sharing.
 
 ```bash
-# 1. Create a test user
-USER_RESULT=$(curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{
-    "login": "testuser",
-    "email": "test@example.com",
-    "firstName": "Test",
-    "lastName": "User",
-    "password": "testpass123"
-  }' "http://localhost:8080/api/v1/user")
+# 1. Create a test user (POST /user takes form/query params, not a JSON body)
+USER_RESULT=$(curl -s -X POST -H "Girder-Token: $TOKEN" \
+  --data-urlencode "login=testuser" --data-urlencode "email=test@example.com" \
+  --data-urlencode "firstName=Test" --data-urlencode "lastName=User" \
+  --data-urlencode "password=testpass123" \
+  "http://localhost:8080/api/v1/user")
 
 echo "User: $USER_RESULT"
 USER_ID=$(echo "$USER_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['_id'])")
 
-# 2. Share a dataset with the test user (READ access)
-curl -s -X PUT -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d "{\"access\": {\"users\": [{\"id\": \"$USER_ID\", \"level\": 0}]}, \"public\": false}" \
-  "http://localhost:8080/api/v1/folder/$DATASET_ID/access"
+# 2. Share a dataset with the test user (READ access) through all of its views.
+# Never PUT folder/$DATASET_ID/access for this: it replaces the whole ACL, and
+# a list without the owner locks them out.
+VIEW_IDS=$(curl -s -H "Girder-Token: $TOKEN" \
+  "http://localhost:8080/api/v1/dataset_view?datasetId=$DATASET_ID&limit=0" \
+  | python3 -c "import sys,json; print(json.dumps([v['_id'] for v in json.load(sys.stdin)]))")
+curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"datasetViewIds\": $VIEW_IDS, \"userMailOrUsername\": \"testuser\", \"accessType\": 0}" \
+  "http://localhost:8080/api/v1/dataset_view/share"
 
 # 3. Authenticate as the test user
 TEST_TOKEN=$(curl -s -u testuser:testpass123 http://localhost:8080/api/v1/user/authentication | python3 -c "import sys,json; print(json.load(sys.stdin)['authToken']['token'])")

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatHotkey } from "./hotkeys";
+import { formatHotkey, isAskAiKey } from "./hotkeys";
 
 describe("formatHotkey", () => {
   it("renders Mac modifiers as symbols", () => {
@@ -24,5 +24,25 @@ describe("formatHotkey", () => {
 
   it("keeps the steps of a sequence apart", () => {
     expect(formatHotkey("g i", false)).toBe("G then I");
+  });
+});
+
+describe("isAskAiKey", () => {
+  const key = (init: KeyboardEventInit) =>
+    new KeyboardEvent("keydown", { key: "Enter", ...init });
+
+  it("is mod+Enter with no other modifier, per platform", () => {
+    expect(isAskAiKey(key({ metaKey: true }), true)).toBe(true);
+    expect(isAskAiKey(key({ ctrlKey: true }), false)).toBe(true);
+    expect(isAskAiKey(key({ ctrlKey: true }), true)).toBe(false);
+    expect(isAskAiKey(key({}), true)).toBe(false);
+    expect(isAskAiKey(key({ metaKey: true, shiftKey: true }), true)).toBe(
+      false,
+    );
+  });
+
+  it("shows as ⌘↵ on a Mac and Ctrl+Enter elsewhere", () => {
+    expect(formatHotkey("mod+enter", true)).toBe("⌘↵");
+    expect(formatHotkey("mod+enter", false)).toBe("Ctrl+Enter");
   });
 });

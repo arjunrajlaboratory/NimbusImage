@@ -98,6 +98,9 @@ import ValueSlider from "./ValueSlider.vue";
 import LargeImageDropdown from "./LargeImageDropdown.vue";
 import store from "@/store";
 import timelapseStore from "@/store/timelapse";
+import { useCommand } from "@/commands/registry";
+import { boundHotkey } from "@/commands/hotkeys";
+import { ICommand } from "@/commands/types";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { logError } from "@/utils/log";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
@@ -198,68 +201,148 @@ const timelapseMode = computed({
   set: (value: boolean) => timelapseStore.setShowMode(value),
 });
 
-const mousetrapSliders: IHotkey[] = [
+// Palette commands for the Navigator's controls: stepping (the same as the
+// w/r, d/e, s/f hotkeys), the unroll checkboxes and time lapse mode. They
+// live here because the unroll watch above is what refreshes the dataset.
+interface INavigatorDimension {
+  key: "xy" | "z" | "time";
+  label: string;
+  value: typeof xy;
+  max: typeof maxXY;
+  unroll: typeof unrollXY;
+  keys: [string, string];
+  hotkeyLabel: string;
+  icon: string;
+}
+
+const NAVIGATOR_DIMENSIONS: INavigatorDimension[] = [
   {
-    bind: "w",
-    handler: () => {
-      xy.value = Math.max(xy.value - 1, 0);
-    },
-    data: {
-      section: "Image Navigation",
-      description: "Decrease XY position",
-    },
+    key: "xy",
+    label: "XY position",
+    value: xy,
+    max: maxXY,
+    unroll: unrollXY,
+    keys: ["w", "r"],
+    hotkeyLabel: "XY",
+    icon: "mdi-crosshairs-gps",
   },
   {
-    bind: "r",
-    handler: () => {
-      xy.value = Math.min(xy.value + 1, maxXY.value);
-    },
-    data: {
-      section: "Image Navigation",
-      description: "Increase XY position",
-    },
+    key: "z",
+    label: "Z slice",
+    value: z,
+    max: maxZ,
+    unroll: unrollZ,
+    keys: ["d", "e"],
+    hotkeyLabel: "Z",
+    icon: "mdi-layers-outline",
   },
   {
-    bind: "d",
-    handler: () => {
-      z.value = Math.max(z.value - 1, 0);
-    },
-    data: {
-      section: "Image Navigation",
-      description: "Decrease Z position",
-    },
-  },
-  {
-    bind: "e",
-    handler: () => {
-      z.value = Math.min(z.value + 1, maxZ.value);
-    },
-    data: {
-      section: "Image Navigation",
-      description: "Increase Z position",
-    },
-  },
-  {
-    bind: "s",
-    handler: () => {
-      time.value = Math.max(time.value - 1, 0);
-    },
-    data: {
-      section: "Image Navigation",
-      description: "Decrease T position",
-    },
-  },
-  {
-    bind: "f",
-    handler: () => {
-      time.value = Math.min(time.value + 1, maxTime.value);
-    },
-    data: {
-      section: "Image Navigation",
-      description: "Increase T position",
-    },
+    key: "time",
+    label: "time point",
+    value: time,
+    max: maxTime,
+    unroll: unrollT,
+    keys: ["s", "f"],
+    hotkeyLabel: "T",
+    icon: "mdi-clock-outline",
   },
 ];
+
+function stepDimension(dim: INavigatorDimension, delta: 1 | -1) {
+  // Clamp to the top first so an empty dimension (max -1) still yields 0.
+  dim.value.value = Math.max(
+    Math.min(dim.value.value + delta, dim.max.value),
+    0,
+  );
+}
+
+useCommand(() => [
+  ...NAVIGATOR_DIMENSIONS.flatMap((dim): ICommand[] => {
+    const hasSteps = dim.max.value > 0;
+    return [
+      {
+        id: `navigate.${dim.key}.previous`,
+        title: `Previous ${dim.label}`,
+        group: "Navigate",
+        keywords: ["back", "decrease", "step", dim.key],
+        icon: dim.icon,
+        hotkey: boundHotkey(
+          dim.keys[0],
+          `Decrease ${dim.hotkeyLabel} position`,
+        ),
+        enabled: () => hasSteps && dim.value.value > 0,
+        run: () => stepDimension(dim, -1),
+      },
+      {
+        id: `navigate.${dim.key}.next`,
+        title: `Next ${dim.label}`,
+        group: "Navigate",
+        keywords: ["forward", "increase", "step", dim.key],
+        icon: dim.icon,
+        hotkey: boundHotkey(
+          dim.keys[1],
+          `Increase ${dim.hotkeyLabel} position`,
+        ),
+        enabled: () => hasSteps && dim.value.value < dim.max.value,
+        run: () => stepDimension(dim, 1),
+      },
+      {
+        id: `navigate.${dim.key}.unroll`,
+        // While unrolled, nothing about it says "unroll": "unroll z" must
+        // not find the command that rolls it back up.
+        title: dim.unroll.value
+          ? `Roll up ${dim.hotkeyLabel}`
+          : `Unroll ${dim.hotkeyLabel}`,
+        group: "Navigate",
+        keywords: dim.unroll.value
+          ? ["stack", "single", "collapse", dim.key]
+          : ["grid", "tile", "side by side", "montage", dim.key],
+        icon: "mdi-view-grid-outline",
+        enabled: () => hasSteps || dim.unroll.value,
+        run: () => {
+          dim.unroll.value = !dim.unroll.value;
+        },
+      },
+    ];
+  }),
+  {
+    id: "navigate.timelapseMode",
+    title: timelapseMode.value
+      ? "Turn off time lapse mode"
+      : "Turn on time lapse mode",
+    group: "Navigate",
+    keywords: ["tracks", "tracking", "timelapse", "movie", "time"],
+    icon: "mdi-timer-outline",
+    // Same condition as the checkbox's v-if.
+    enabled: () => maxTime.value > 0 && !unrollT.value,
+    run: () => {
+      timelapseMode.value = !timelapseMode.value;
+    },
+  },
+]);
+
+// The w/r, d/e, s/f hotkeys; the palette's Next/Previous commands above run
+// the same stepDimension.
+const mousetrapSliders: IHotkey[] = NAVIGATOR_DIMENSIONS.flatMap(
+  (dim): IHotkey[] => [
+    {
+      bind: dim.keys[0],
+      handler: () => stepDimension(dim, -1),
+      data: {
+        section: "Image Navigation",
+        description: `Decrease ${dim.hotkeyLabel} position`,
+      },
+    },
+    {
+      bind: dim.keys[1],
+      handler: () => stepDimension(dim, 1),
+      data: {
+        section: "Image Navigation",
+        description: `Increase ${dim.hotkeyLabel} position`,
+      },
+    },
+  ],
+);
 
 watch(
   () => store.selectedDatasetId,

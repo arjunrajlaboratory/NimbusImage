@@ -1,5 +1,6 @@
 """Fixtures for integration tests against a live Girder backend."""
 
+import contextlib
 import json
 import os
 import uuid
@@ -22,9 +23,12 @@ def client(api_url):
     return ni.connect(api_url, username=username, password=password)
 
 
-@pytest.fixture
-def test_dataset(client):
+@contextlib.contextmanager
+def _temporary_dataset(client, parent_folder_name):
     """Create a temporary test dataset folder and clean up after.
+
+    The folder is created in the current user's ``parent_folder_name``
+    folder ("Public" or "Private") and inherits that folder's access.
 
     The dataset gets a collection (configuration) and a dataset_view
     linking them, like every real dataset has. Properties are only
@@ -35,14 +39,13 @@ def test_dataset(client):
     image data. Tests that need images should upload a test image.
     """
     gc = client.girder
-    # Create a folder in the admin's public folder
     user = gc.get("user/me")
-    public_folder = gc.get(
+    parent_folder = gc.get(
         "folder",
         parameters={
             "parentType": "user",
             "parentId": user["_id"],
-            "name": "Public",
+            "name": parent_folder_name,
         },
     )[0]
 
@@ -50,7 +53,7 @@ def test_dataset(client):
         "folder",
         parameters={
             "parentType": "folder",
-            "parentId": public_folder["_id"],
+            "parentId": parent_folder["_id"],
             # Unique per fixture: a fixed name collides ("A folder with
             # that name already exists here") whenever an earlier test's
             # folder is still present, e.g. another run on the same server.
@@ -94,9 +97,27 @@ def test_dataset(client):
         gc.delete(f"folder/{folder['_id']}")
         raise
 
-    yield client.dataset(folder["_id"])
+    try:
+        yield client.dataset(folder["_id"])
+    finally:
+        gc.delete(f"dataset_view/{view['_id']}")
+        gc.delete(f"upenn_collection/{collection['_id']}")
+        gc.delete(f"folder/{folder['_id']}")
 
-    # Cleanup
-    gc.delete(f"dataset_view/{view['_id']}")
-    gc.delete(f"upenn_collection/{collection['_id']}")
-    gc.delete(f"folder/{folder['_id']}")
+
+@pytest.fixture
+def test_dataset(client):
+    """A temporary dataset in the admin's Public folder."""
+    with _temporary_dataset(client, "Public") as ds:
+        yield ds
+
+
+@pytest.fixture
+def private_test_dataset(client):
+    """A temporary dataset in the admin's Private folder.
+
+    Unlike ``test_dataset`` it is not inherited-public, so other users
+    can only read it once it is shared with them.
+    """
+    with _temporary_dataset(client, "Private") as ds:
+        yield ds

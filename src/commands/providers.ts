@@ -1,8 +1,11 @@
 import store from "@/store";
+import { selectTool } from "@/actions/operations";
 import propertyStore from "@/store/properties";
+import filterStore from "@/store/filters";
+import { MAX_DISPLAYED_PROPERTY_PATHS } from "@/store/constants";
 import { ITourMetadata } from "@/store/model";
 import { boundHotkey } from "./hotkeys";
-import { createPathStringFromPathArray } from "@/utils/paths";
+import { createPathStringFromPathArray, findIndexOfPath } from "@/utils/paths";
 import { snapshotKey } from "@/utils/snapshotKey";
 import { PANELS, PanelId } from "@/utils/panelRegistry";
 import {
@@ -39,7 +42,7 @@ export function toolCommands(ctx: IProviderContext): TCommandProvider {
         enabled: () => ctx.inViewer() && store.isLoggedIn,
         run: () => {
           store.requestPaletteOpen(["toolsPanel"]);
-          store.setSelectedToolId(tool.id);
+          selectTool(tool.id);
         },
       }),
     );
@@ -91,17 +94,22 @@ export function layerCommands(ctx: IProviderContext): TCommandProvider {
       const channelName = dataset?.channelNames.get(layer.channel);
       return {
         id: `layer.toggle.${layer.id}`,
-        title: `Toggle layer: ${layer.name}`,
+        // Named for what it will do, like every state-flipping command; the
+        // eye icon shows the current state. A "Visible"/"Hidden" description
+        // was searchable, so "visible dapi" found (and hid) a visible layer.
+        title: `${layer.visible ? "Hide" : "Show"} layer: ${layer.name}`,
         group: "Layers",
-        keywords: channelName ? [channelName, "channel"] : ["channel"],
-        description: layer.visible ? "Visible" : "Hidden",
+        keywords: [...(channelName ? [channelName] : []), "channel", "toggle"],
         icon: layer.visible ? "mdi-eye" : "mdi-eye-off",
         // DisplayLayer binds each layer's position (1-based) as its toggle;
         // checking the description too keeps a stale binding from showing.
         // Looking the key up by description alone would give every layer
         // sharing a name the first one's key.
         hotkey: boundHotkey(`${index + 1}`, `Show/hide layer: ${layer.name}`),
-        enabled: ctx.inViewer,
+        // Single mode keeps exactly one layer visible: toggling the visible
+        // one leaves it visible, so "Hide layer" would do nothing there.
+        enabled: () =>
+          ctx.inViewer() && !(store.layerMode === "single" && layer.visible),
         run: () => store.toggleLayerVisibility(layer.id),
       };
     });
@@ -133,9 +141,7 @@ export function propertyCommands(ctx: IProviderContext): TCommandProvider {
       const pathKey = createPathStringFromPathArray(path);
       return {
         id: `property.colorBy.${pathKey}`,
-        title: `Color by: ${
-          propertyStore.getFullNameFromPath(path) ?? path.join(" / ")
-        }`,
+        title: `Color by: ${propertyLabel(path)}`,
         group: "Properties",
         keywords: ["color", "colour", "colormap", "property"],
         icon: "mdi-palette",
@@ -149,6 +155,94 @@ export function propertyCommands(ctx: IProviderContext): TCommandProvider {
         },
       };
     });
+}
+
+function propertyLabel(path: string[]) {
+  return propertyStore.getFullNameFromPath(path) ?? path.join(" / ");
+}
+
+/**
+ * "Show in object list: …" / "Hide from object list: …" for every property
+ * value path, so "list area" finds the Area columns. Same toggle as the
+ * Object Browser's column picker; the save it schedules is skipped for
+ * anonymous viewers, so no login gate. "Show in" is withheld once the list
+ * holds MAX_DISPLAYED_PROPERTY_PATHS columns, where the toggle adds nothing.
+ */
+export function propertyListCommands(ctx: IProviderContext): TCommandProvider {
+  return () => {
+    const displayed = propertyStore.displayedPropertyPaths;
+    const isFull = displayed.length >= MAX_DISPLAYED_PROPERTY_PATHS;
+    return propertyStore.computedPropertyPaths.map((path): ICommand => {
+      const isShown = findIndexOfPath(path, displayed) >= 0;
+      return {
+        id: `property.list.${createPathStringFromPathArray(path)}`,
+        title: `${isShown ? "Hide from" : "Show in"} object list: ${propertyLabel(path)}`,
+        group: "Properties",
+        // Only the direction it will go: "add column area" must not find
+        // the command that removes it.
+        keywords: [
+          "column",
+          "table",
+          "browser",
+          "property",
+          isShown ? "remove" : "add",
+        ],
+        icon: isShown
+          ? "mdi-table-column-remove"
+          : "mdi-table-column-plus-after",
+        enabled: () => ctx.inViewer() && (isShown || !isFull),
+        run: () => {
+          if (!isShown) {
+            // The Objects tab, not just the panel: on the Measurements or
+            // Connections tab the new column would stay out of sight.
+            store.openAnnotationBrowserTab("objects");
+          }
+          propertyStore.togglePropertyPathVisibility(path);
+        },
+      };
+    });
+  };
+}
+
+/**
+ * "Add filter: …" / "Stop filtering by: …" for every property value path: adds or
+ * removes that property's histogram filter, as the Filters panel's picker does.
+ */
+export function propertyFilterCommands(
+  ctx: IProviderContext,
+): TCommandProvider {
+  return () => {
+    const filtered = filterStore.filterPaths;
+    return propertyStore.computedPropertyPaths.map((path): ICommand => {
+      const isFiltered = findIndexOfPath(path, filtered) >= 0;
+      return {
+        id: `property.filter.${createPathStringFromPathArray(path)}`,
+        // Removing never says "filter": "filter area" must not find (and run)
+        // the command that removes Area's filter.
+        title: isFiltered
+          ? `Stop filtering by: ${propertyLabel(path)}`
+          : `Add filter: ${propertyLabel(path)}`,
+        group: "Properties",
+        keywords: [
+          "range",
+          "histogram",
+          "threshold",
+          "property",
+          isFiltered ? "unfilter" : "filter",
+        ],
+        icon: isFiltered
+          ? "mdi-filter-remove-outline"
+          : "mdi-filter-plus-outline",
+        enabled: ctx.inViewer,
+        run: () => {
+          if (!isFiltered) {
+            store.requestPaletteOpen(["filtersPanel"]);
+          }
+          filterStore.togglePropertyPathFiltering(path);
+        },
+      };
+    });
+  };
 }
 
 export interface IPanelController {
@@ -174,7 +268,10 @@ export function panelCommands(
         id: `panel.toggle.${panel.id}`,
         title: `${isOpen ? "Close" : "Open"} ${panel.title}`,
         group: "Panels",
-        keywords: ["panel", "palette", "show", "hide"],
+        // The verb of what running it will do: "show filters" must not find
+        // "Close Filters".
+        keywords: ["panel", "palette", isOpen ? "hide" : "show"],
+        aliases: [panel.title, ...panel.aliases],
         icon: panel.icon,
         enabled: () =>
           ctx.inViewer() && (controller.isAvailable?.(panel.id) ?? true),

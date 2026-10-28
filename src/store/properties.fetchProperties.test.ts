@@ -20,11 +20,11 @@ const property = (id: string) =>
     workerInterface: {},
   }) as any;
 
-function setConfiguration(propertyIds: string[]) {
+function setConfiguration(propertyIds: string[], id = "c1") {
   (main as any).setConfigurationImpl({
-    id: "c1",
+    id,
     data: {
-      id: "c1",
+      id,
       name: "config",
       layers: [],
       tools: [],
@@ -124,5 +124,22 @@ describe("fetchProperties", () => {
     await propertyStore.fetchProperties();
 
     expect(propertyStore.properties.map((p) => p.name)).toEqual(["fresh"]);
+  });
+
+  it("ignores a response that arrives after the configuration changed", async () => {
+    setConfiguration(["old"]);
+    let respond: (properties: any[]) => void = () => {};
+    vi.spyOn(propertyStore.propertiesAPI, "getProperties").mockImplementation(
+      () => new Promise<any>((resolve) => (respond = resolve)),
+    );
+
+    const fetching = propertyStore.fetchProperties();
+    // A dataset switch replaces the configuration mid-fetch.
+    setConfiguration(["new"], "c2");
+    (propertyStore as any).setPropertiesImpl([property("new")]);
+    respond([property("old")]);
+    await fetching;
+
+    expect(propertyStore.properties.map((p) => p.id)).toEqual(["new"]);
   });
 });

@@ -147,7 +147,19 @@ Frontend: `spatial` is a pseudo-property (`getPropertyById("spatial")` → "Spat
 axes, color-by, filters, displayed columns — offers them unchanged, and displayed virtual
 columns survive a reload through the persisted displayed paths. Below the stub threshold
 the wholesale value map is filled from the batch endpoint for the virtual paths. The
-Measurements tab lists them under one "Spatial table" group without a Run button. The
+Measurements tab lists them under one "Spatial table" group without a Run button. Genes
+are offered nowhere until added, which users did not expect, so the **Measure objects**
+dialog (and the Analyze palette, which shares `AnalyzePanel.vue`) shows a **Gene
+expression** card (`GeneExpressionCard.vue`). It explains that counts come from the
+table, lists the genes already added, and opens the genes dialog. It asks for the
+registration only while visible: the palette's content stays mounted.
+
+**There is one genes dialog, in `App.vue`.** Every "Add genes" button opens it through
+`utils/genesDialog.ts` (`openGenesDialog`, bound with `v-model:open`). A dialog hosted
+inside "Measure objects" or the Measurements tab is unmounted when that host closes:
+Vuetify drops a closed `v-dialog`'s content, and the tab hides behind `v-if`. Unmounting
+retires `useJobPolling`, so a copy or score job would never refresh the values it
+writes. The
 genes dialog has three modes: **live columns** (default), **copy into a measurement**
 (Phase 1 materialize), **gene-set score**.
 
@@ -352,8 +364,9 @@ cells); a cell's **type** is its first tag not in `excludeTags` (default `["cell
 - Frontend: `src/store/SpatialAPI.ts`, `src/store/spatial.ts` (registration per dataset;
   `hasTable` is false for a stale answer from another dataset; "no table" and "could not
   ask" are distinct), `SpatialFeaturePicker.vue` (server-side search, debounced),
-  `MaterializeGenesDialog.vue` (Measurements tab → **Add genes**, only when a table is
-  registered; polls the job), and an **Expression** section in the selection summary
+  `MaterializeGenesDialog.vue` (Measurements tab → **Add genes**, and **Measure
+  objects** → **Gene expression** → **Add genes…**, only when a table is registered;
+  polls the job), and an **Expression** section in the selection summary
   (mean count and % expressing for picked genes over the same scope, in the CSV too).
 - The plugin is optional, and the annotation plugin never imports it (the only coupling is
   the `registerValueProvider` hook it calls at load). Without it the server runs normally;
@@ -589,9 +602,21 @@ Each line names the test that holds it.
 - 404 → null, other errors rethrown; request bodies — *"fetchInfo returns null for 404 and rethrows anything else"*, *"searchFeatures passes search and limit as query params"*, *"aggregate and materialize post the documented bodies"*.
 - Measurements tab asks for the registration only when shown, and offers Add genes only
   with a table — *"asks for the table registration when shown, not when hidden"*, *"offers Add genes only when the dataset has a spatial table"*.
+- Measure objects' Gene expression card appears only with a table, says genes must be
+  added, lists added genes (capped), and asks only while visible —
+  *"renders nothing without a spatial table"*, *"explains where gene counts come from and offers Add genes"*,
+  *"lists the genes already added, capped with a count of the rest"*,
+  *"asks for the table only while visible, and again per dataset"*.
+- The genes dialog outlives whatever opened it. It is hosted once in App.vue, and its
+  buttons only request it — *"hosts the one genes dialog, bound to the shared open flag"*,
+  *"opens the app-level genes dialog instead of hosting its own"*,
+  *"opens the app-level genes dialog instead of hosting one that tab switches unmount"*,
+  *"follows v-model:open and shows no activator of its own"*. Because it is never unmounted,
+  it resets its form when the dataset changes; otherwise another table's genes could be
+  posted — *"clears the form when the dataset changes, so no other table's genes are posted"*.
 - Materialize dialog: inline write reloads properties; job polling until success; failed
   job and rejected request reported; a job keeps polling after the dialog closes and still
-  refreshes the values, and a dataset change stops it — *"writes inline results and reloads the property list"*, *"polls a scheduled job until it succeeds"*, *"reports a failed job and a rejected request"*, *"keeps polling after the dialog closes and still refreshes the values"*, *"stops polling when the dataset changes"*.
+  refreshes the values, and a dataset change stops it — *"writes inline results and reloads the property list"*, *"polls a scheduled job until it succeeds, adopting its property at once"*, *"reports a failed job and a rejected request"*, *"keeps polling after the dialog closes and still refreshes the values"*, *"stops polling when the dataset changes"*.
 - Picker debounces typing, keeps picked symbols listed, caps at max — *"lists picked symbols alongside search results and debounces typing"*, *"caps the selection at max"*.
 - Summary expression: only with a table and picked genes, same scope, in the CSV —
   *"aggregates expression over the same scope only when a table exists and genes are picked"*.
