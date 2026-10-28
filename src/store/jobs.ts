@@ -199,7 +199,7 @@ export class Jobs extends VuexModule {
     try {
       const response = await main.girderRest.get(`job/${jobId}`);
       return response.data.status;
-    } catch (error) {
+    } catch {
       logError(`Failed to get status for job ${jobId}`);
       return null;
     }
@@ -302,7 +302,7 @@ export class Jobs extends VuexModule {
     let data: any;
     try {
       data = window.JSON.parse(event.data);
-    } catch (error) {
+    } catch {
       logError("Invalid event JSON");
       return;
     }

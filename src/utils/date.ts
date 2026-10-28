@@ -26,7 +26,7 @@ export function formatDateString(dateString: string) {
     const date = new Date(dateString);
     return format(date, "MMM d, yyyy h:mm a");
     // This would output something like: "Dec 31, 2024 1:07 PM"
-  } catch (e) {
+  } catch {
     return dateString;
   }
 }

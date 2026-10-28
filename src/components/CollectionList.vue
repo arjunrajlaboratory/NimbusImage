@@ -192,7 +192,7 @@ async function fetchCollections() {
           sortdir: -1,
         },
       });
-    } catch (folderError) {
+    } catch {
       try {
         response = await store.api.client.get("upenn_collection", {
           params: {
