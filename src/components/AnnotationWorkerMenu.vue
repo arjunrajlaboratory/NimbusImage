@@ -399,7 +399,7 @@ watch(
 watch(
   interfaceValues,
   () => {
-    let tool = props.tool;
+    const tool = props.tool;
     tool.values.workerInterfaceValues = interfaceValues.value;
     debouncedEditTool(tool);
   },

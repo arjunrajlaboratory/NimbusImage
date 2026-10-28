@@ -1020,7 +1020,7 @@ cut 708,983 to 72,925.
 
 ## Logging
 
-**Never use `console.log`, `console.warn`, or `console.error`** — eslint will reject them.
+**Never use `console.log`, `console.warn`, or `console.error`** — eslint will reject them. `no-console` is an error only when `NODE_ENV=production`, which is how CI lints, so a plain local `pnpm lint:ci` won't flag them.
 
 ```typescript
 import { logWarning, logError } from "@/utils/log";
@@ -1149,7 +1149,7 @@ Folder upload (picker button + drag-and-drop) is centralized in `src/utils/fileU
 Before claiming a frontend change done:
 
 1. `pnpm tsc` — type check
-2. `pnpm lint:ci` — zero warnings
+2. `NODE_ENV=production pnpm lint:ci` — zero warnings. The env var makes it match CI: `eslint.config.mjs` turns on `no-console`/`no-debugger` and reports unused `eslint-disable` directives only in production mode, so a plain `pnpm lint:ci` can pass locally and fail in CI.
 3. `pnpm test` — vitest. **Known artifact:** after a backend `tox` run, ~10 test FILES under `.tox/**` fail ("Failed to resolve import @playwright/test") — vitest's glob picks up girder's bundled specs. These are spurious; only failures outside `.tox/` paths are real. CI is unaffected (clean checkout).
 4. **In-browser verification for anything user-facing** — tsc/lint/vitest green does not mean the UI works (pointer-events, layering, watcher-firing, and store-corruption bugs all passed every static gate). See the in-browser-testing skill; remember to hard-reload after store edits.
 

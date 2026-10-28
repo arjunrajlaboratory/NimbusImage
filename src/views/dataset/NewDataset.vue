@@ -480,7 +480,7 @@ function findCommonPrefix(strings: string[]): string {
     Infinity,
   );
 
-  let result = [];
+  const result = [];
   for (let i = 0; i < minLength; i++) {
     const ch = matches[0].charAt(i);
     if (!matches.map((s) => s.charAt(i)).every((c) => c === ch)) {

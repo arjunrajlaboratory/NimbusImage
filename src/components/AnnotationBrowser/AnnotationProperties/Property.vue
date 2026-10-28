@@ -1,4 +1,3 @@
-<!-- eslint-disable vue/multi-word-component-names -->
 <template>
   <v-container class="ma-0 pa-0">
     <v-row class="mr-4">

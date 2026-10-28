@@ -179,7 +179,7 @@ const configurationRef = ref<InstanceType<
 onMounted(async () => {
   try {
     uploadLocation.value = await store.api.getUserPrivateFolder();
-  } catch (error) {
+  } catch {
     uploadLocation.value = store.girderUser as IGirderLocation | null;
   }
 });

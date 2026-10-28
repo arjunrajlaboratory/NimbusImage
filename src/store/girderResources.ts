@@ -86,7 +86,7 @@ export class GirderResources extends VuexModule {
     try {
       const resource = await this.requestResource({ id, type });
       this.setResource({ id, resource });
-    } catch (e) {
+    } catch {
       this.setResource({ id, resource: null });
     }
   }
