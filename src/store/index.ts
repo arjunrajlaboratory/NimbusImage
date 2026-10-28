@@ -25,6 +25,7 @@ import { v4 as uuidv4 } from "uuid";
 import AnnotationsAPI from "./AnnotationsAPI";
 import SpatialAPI from "./SpatialAPI";
 import ShareLinkAPI from "./ShareLinkAPI";
+import McpOAuthAPI from "./McpOAuthAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ToolSuggestionsAPI from "./ToolSuggestionsAPI";
 import AgentAPI from "./AgentAPI";
@@ -719,6 +720,7 @@ export class Main extends VuexModule {
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
   spatialAPI = new SpatialAPI(this.girderRestProxy);
   shareLinkAPI = new ShareLinkAPI(this.girderRestProxy);
+  mcpOAuthAPI = new McpOAuthAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
   toolSuggestionsAPI = new ToolSuggestionsAPI(this.girderRestProxy);
   agentAPI = new AgentAPI(this.girderRestProxy);
@@ -732,6 +734,10 @@ export class Main extends VuexModule {
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
   hasUserLoggedOut: boolean = false;
+  // True once startup has finished restoring the stored login (or found
+  // none). Until then isLoggedIn is false even for a logged-in user, so a
+  // page that sends logged-out users to login must wait for this.
+  authRestored: boolean = false;
   userStorageInfo: IUserStorageQuota | null = null;
 
   history: IHistoryEntry[] = [];
@@ -1620,6 +1626,11 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  protected setAuthRestored() {
+    this.authRestored = true;
+  }
+
+  @Mutation
   protected loggedOut() {
     this.girderUser = null;
     this.userStorageInfo = null;
@@ -2068,30 +2079,72 @@ export class Main extends VuexModule {
   async leaveShareLink() {
     const session = shareLinkSession;
     shareLinkSession = null;
-    if (!session || toRaw(this.girderRest) !== session.linkClient) {
+    if (!session) {
+      // No link took over (it was invalid or cancelled), so this client is
+      // the saved login. A tab that started on a shared URL skipped
+      // initialize(): settle that login now, or a page waiting on
+      // authRestored (the consent page) spins forever.
+      if (!this.authRestored) {
+        await this.restoreSavedLogin();
+      }
       return;
     }
-    // A shared URL opened directly skips initialize(), so the saved login's
-    // client holds a token but has never fetched its user; restoring it
-    // as-is would show the owner as logged out until a reload.
-    const previous = session.previousClient;
-    if (previous.token && !previous.user) {
-      try {
-        await previous.fetchUser();
-      } catch (error) {
-        logError("Could not restore the saved login:", error);
-      }
-      // A login or another link may have taken over during the fetch.
+    try {
+      // A login or another link replaced this link's session: leave it
+      // alone. (Logout clears the link client's token but keeps it, so
+      // leaving still restores the saved login, as a reload would.)
       if (toRaw(this.girderRest) !== session.linkClient) {
         return;
       }
+      // A shared URL opened directly skips initialize(), so the saved
+      // login's client holds a token but has never fetched its user;
+      // restoring it as-is would show the owner as logged out until a
+      // reload.
+      const previous = session.previousClient;
+      if (previous.token && !previous.user) {
+        try {
+          await previous.fetchUser();
+        } catch (error) {
+          logError("Could not restore the saved login:", error);
+        }
+        // A login or another link may have taken over during the fetch.
+        if (toRaw(this.girderRest) !== session.linkClient) {
+          return;
+        }
+      }
+      await this.loggedIn(previous);
+    } finally {
+      // A tab that started on a shared URL never ran initialize(); its
+      // login is settled now, whether it was restored, failed, or was
+      // replaced by a login or logout (a page waiting on authRestored
+      // would spin forever).
+      this.setAuthRestored();
     }
-    await this.loggedIn(previous);
+  }
+
+  // The login half of initialize(), for a tab that skipped it.
+  @Action
+  async restoreSavedLogin() {
+    const client = toRaw(this.girderRest);
+    try {
+      if (client.token && !client.user) {
+        // A login or another link may take over during the fetch; leave
+        // it alone then (as leaveShareLink's session path does).
+        if ((await client.fetchUser()) && toRaw(this.girderRest) === client) {
+          await this.loggedIn(client);
+        }
+      }
+    } catch (error) {
+      logError("Could not restore the saved login:", error);
+    } finally {
+      this.setAuthRestored();
+    }
   }
 
   @Action
   async initialize() {
     if (!this.girderRest.token) {
+      this.setAuthRestored();
       return;
     }
     try {
@@ -2100,9 +2153,12 @@ export class Main extends VuexModule {
       if (user) {
         await this.loggedIn(this.girderRest);
       }
+      // The login is settled here; dataset loading below can take long.
+      this.setAuthRestored();
       await this.initFromUrl();
       sync.setLoading(false);
     } catch (error) {
+      this.setAuthRestored();
       sync.setLoading(error as Error);
     }
   }

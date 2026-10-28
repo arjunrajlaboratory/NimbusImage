@@ -78,13 +78,17 @@ import store, { girderUrlFromApiRoot } from "@/store";
 import { storageSeverityColor } from "@/utils/storage";
 import UserProfileSettings from "@/layout/UserProfileSettings.vue";
 import UserMenuLoginForm from "@/layout/UserMenuLoginForm.vue";
+import {
+  finishReturn,
+  hasReturnTo,
+  takeReturnTo,
+} from "@/utils/returnAfterLogin";
 
-useRouter()
-  .isReady()
-  .then(() => {
-    // Only auto-open the login dialog, not the profile menu
-    userMenu.value = route.name === "root" && !store.isLoggedIn;
-  });
+const router = useRouter();
+router.isReady().then(() => {
+  // Only auto-open the login dialog, not the profile menu
+  userMenu.value = route.name === "root" && !store.isLoggedIn;
+});
 
 const route = useRoute();
 
@@ -105,6 +109,26 @@ function loggedInOrOut() {
 
 watch(() => store.isLoggedIn, loggedInOrOut);
 watch(() => store.hasUserLoggedOut, loggedInOrOut);
+
+// A page that needs a login (the MCP OAuth consent page) saved its route
+// and sent the user here: open the login, then go back after it.
+watch(
+  () => route.name,
+  (name) => {
+    if (name === "root" && !store.isLoggedIn && hasReturnTo()) {
+      userMenu.value = true;
+    }
+  },
+);
+watch(
+  () => store.isLoggedIn,
+  (loggedIn) => {
+    // A share link's hidden user is not the login a page asked for.
+    if (!loggedIn || store.girderUser?.shareLink) return;
+    const path = takeReturnTo();
+    if (path) Promise.resolve(router.replace(path)).finally(finishReturn);
+  },
+);
 
 // Refresh storage usage each time the profile menu opens
 watch(userMenu, (isOpen) => {

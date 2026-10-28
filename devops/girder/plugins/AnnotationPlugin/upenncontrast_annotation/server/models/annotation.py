@@ -1483,6 +1483,23 @@ class Annotation(AccessControlMixin, ProxiedModel):
             match["tags"] = {"$size": 0}
         return match
 
+    def countByDataset(self, datasetIds, shape=None, tags=None):
+        """Annotation counts for several datasets in one aggregation, as
+        {datasetId: count}; a dataset with no matching annotation is absent.
+        `tags` must all be present (like the single-dataset count)."""
+        if not datasetIds:
+            return {}
+        match = {"datasetId": {"$in": list(datasetIds)}}
+        if shape:
+            match["shape"] = shape
+        if tags:
+            match["tags"] = {"$all": list(tags)}
+        rows = self._aggregate(self.collection, [
+            {"$match": match},
+            {"$group": {"_id": "$datasetId", "count": {"$sum": 1}}},
+        ])
+        return {row["_id"]: row["count"] for row in rows}
+
     def uncomputedCounts(self, datasetId, propertyFilters):
         """Per property, the count of annotations awaiting its computation.
 

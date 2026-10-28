@@ -59,5 +59,33 @@ services:
     env_file:
     - "./worker.env"
 
+  # The MCP server (nimbusimage-mcp/), off by default: start it with
+  #   docker compose --profile mcp up -d mcp
+  # Clients send their own API key or OAuth token as a bearer token; the
+  # server holds no credential of its own beyond the introspection secret.
+  # See nimbusimage-mcp/README.md.
+  mcp:
+    profiles: ["mcp"]
+    build:
+      context: ./nimbusimage-mcp
+      additional_contexts:
+        nimbusimage: ./nimbusimage
+    environment:
+      NI_API_URL: "http://girder:8080/api/v1"
+      # Override both when serving through a public URL (e.g. a tunnel)
+      NI_MCP_PUBLIC_URL: "${NI_MCP_PUBLIC_URL:-http://localhost:${MCP_PORT-8001}/mcp}"
+      NI_MCP_ISSUER_URL: "${NI_MCP_ISSUER_URL:-http://localhost:${GIRDER_PORT-8080}}"
+      # Keep under every proxy timeout in front: a Cloudflare tunnel cuts
+      # at 100 s (use 85 there); production uses 120 behind HAProxy's 300 s.
+      NI_MCP_MAX_JOB_WAIT: "${NI_MCP_MAX_JOB_WAIT:-240}"
+      # Shared with the nimbus_mcp_oauth plugin's
+      # mcp_oauth.introspection_secret; unset means API keys only.
+      NI_MCP_INTROSPECTION_SECRET: "${NI_MCP_INTROSPECTION_SECRET-}"
+    ports:
+      - "${MCP_PORT-8001}:8000"
+    depends_on:
+      - "girder"
+    mem_limit: 1g
+
 volumes:
   redis_data:

@@ -66,3 +66,5 @@ jobs:
       # (ubuntu-22.04 does).
       - name: Test AnnotationPlugin
         run: pip install tox && cd devops/girder/plugins/AnnotationPlugin && tox -e py311
+      - name: Test McpOAuthPlugin
+        run: cd devops/girder/plugins/McpOAuthPlugin && tox -e py311

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import girder_client
 
@@ -37,6 +38,16 @@ def _access_level(doc: dict, user: dict) -> int:
     levels += [u["level"] for u in access.get("users", [])
                if u["id"] == user["_id"]]
     return max(levels, default=-1)
+
+
+# Folder ids per POST resource/batch: the frontend's
+# BATCH_RESOURCES_CHUNK_SIZE, under the server's MAX_BATCH_RESOURCE_IDS.
+_BATCH_RESOURCE_IDS = 5000
+# A Girder id: 24 hex digits, either case.
+_OBJECT_ID = re.compile(r"[0-9a-fA-F]{24}")
+# Datasets per POST upenn_annotation/counts (the server's
+# MAX_COUNT_DATASETS).
+_COUNT_BATCH = 100
 
 
 class NimbusClient:
@@ -119,6 +130,9 @@ class NimbusClient:
                 parameters={
                     "q": name, "mode": "prefix",
                     "types": '["folder"]',
+                    # The search returns 10 by default: an exact name
+                    # behind 10 longer prefix matches would be missed.
+                    "limit": 0,
                 },
             )
             # Handle both list response and dict-with-folder-key response
@@ -208,22 +222,37 @@ class NimbusClient:
             # Anonymous: resource/batch requires a user, so fetch each
             # public folder (public datasets are few).
             return self._readable_folders_one_by_one(dataset_ids)
-        # One access-checked lookup for every folder, not a GET per
-        # dataset; the server omits folders the caller cannot read.
-        folders = self._gc.post(
-            "resource/batch", json={"folder": dataset_ids}
-        ).get("folder", {})
-        me = self._gc.get("user/me")
-        # resource/batch returns raw documents, including the ACL (other
-        # users' ids and levels); keep what GET folder/{id} exposes,
-        # including the caller's _accessLevel, computed from that ACL.
+        # Access-checked lookups of every folder, not a GET per dataset;
+        # the server omits folders the caller cannot read, and refuses
+        # more than its MAX_BATCH_RESOURCE_IDS ids in one request.
+        folders: dict = {}
+        for start in range(0, len(dataset_ids), _BATCH_RESOURCE_IDS):
+            folders.update(self._gc.post("resource/batch", json={
+                "folder": dataset_ids[start:start + _BATCH_RESOURCE_IDS],
+            }).get("folder", {}))
+        me = None
+
+        def access_level(folder: dict) -> int:
+            # Current servers filter each document as GET folder/{id}
+            # does, _accessLevel included; an older one returns the raw
+            # document, whose ACL gives the level.
+            nonlocal me
+            if "_accessLevel" in folder:
+                return folder["_accessLevel"]
+            if me is None:
+                # A data-only key reads user/me as null: no user, so no
+                # grants of its own ({} rather than another request per
+                # folder).
+                me = self._gc.get("user/me") or {"_id": None}
+            return _access_level(folder, me)
+
+        # Keep what GET folder/{id} exposes: an older server's raw
+        # documents carry the ACL (other users' ids and levels).
         return [
             {
                 **{k: v for k, v in folders[did].items()
                    if k in _FOLDER_READ_FIELDS},
-                "_accessLevel": folders[did].get(
-                    "_accessLevel", _access_level(folders[did], me)
-                ),
+                "_accessLevel": access_level(folders[did]),
                 "_modelType": "folder",
             }
             for did in dataset_ids if did in folders
@@ -238,6 +267,59 @@ class NimbusClient:
                 # Not readable; anything else propagates.
                 pass
         return folders
+
+    def count_annotations(
+        self,
+        dataset_ids,
+        shape: str | None = None,
+        tags: list[str] | None = None,
+    ) -> list[dict]:
+        """Annotation counts for several datasets, one request per 100
+        (``POST upenn_annotation/counts``)::
+
+            for row in client.count_annotations(ids, shape="point"):
+                print(row["datasetId"], row.get("count", row.get("error")))
+
+        Args:
+            dataset_ids: Dataset ids (any iterable); duplicates, in either
+                case, are counted once, under the first spelling given.
+            shape: Only annotations of this shape.
+            tags: Only annotations with ALL of these tags (as
+                ``ds.annotations.count``).
+
+        Returns:
+            One dict per distinct dataset, in order: ``{"datasetId",
+            "count"}``, or ``{"datasetId", "error"}`` for an id that does
+            not exist or that the caller cannot read.
+
+        Raises:
+            ValueError: an id is not a valid ObjectId, before any request
+                (the server would refuse its whole batch).
+        """
+        if isinstance(tags, str):
+            raise TypeError("tags must be a list of tag names, not a string")
+        if isinstance(dataset_ids, str):
+            raise TypeError("dataset_ids must be a list of ids, not a string")
+        # Case-blind: hex ids, so "AB12..." and "ab12..." are one dataset,
+        # even when they would fall in different batches.
+        first: dict[str, str] = {}
+        for i in map(str, dataset_ids):
+            first.setdefault(i.lower(), i)
+        ids = list(first.values())
+        for i in ids:
+            if not _OBJECT_ID.fullmatch(i):
+                raise ValueError(f"not a valid dataset id: {i[:64]!r}")
+        rows: list[dict] = []
+        for start in range(0, len(ids), _COUNT_BATCH):
+            body = {"datasetIds": ids[start:start + _COUNT_BATCH]}
+            if shape is not None:
+                body["shape"] = shape
+            if tags:
+                body["tags"] = list(tags)
+            rows.extend(
+                self._gc.post("upenn_annotation/counts", json=body)["counts"]
+            )
+        return rows
 
     # --- Jobs ---
 
@@ -255,7 +337,8 @@ class NimbusClient:
 
     def list_projects(self) -> list[dict]:
         """List all accessible projects."""
-        return self._gc.get("project")
+        # limit=0: the endpoint pages at Girder's default of 50.
+        return self._gc.get("project", parameters={"limit": 0})
 
     def create_project(
         self, name: str, description: str = ""
@@ -306,7 +389,7 @@ class NimbusClient:
                 return []
 
         data = self._gc.get(
-            f"upenn_collection?folderId={folder_id}"
+            f"upenn_collection?folderId={folder_id}&limit=0"
         )
         return [
             Collection(self._gc, d, frontend_url=self._frontend_url)
