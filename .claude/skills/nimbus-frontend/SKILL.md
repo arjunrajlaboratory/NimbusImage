@@ -1033,7 +1033,7 @@ logError("An error occurred", error);
 
 Lint won't catch every unused catch binding. In an SFC with both a plain `<script>` block and a `<script setup>` block (`Home.vue`, for one), `@typescript-eslint/no-unused-vars` does not report an unused `catch (error)` in the setup block, although it still reports unused `const`s there. Read the catch body; don't rely on the warning.
 
-An expected failure is not a silent catch's excuse, either: classify it where the request is made (`getResource` returns null on 400/404, `getAssetstores` returns `[]` on the admin-only 403) and rethrow the rest, so the caller's catch can log every failure that reaches it without flooding the console on ordinary use.
+An expected failure is not a silent catch's excuse, either. Don't make a request the user can't succeed at (`loggedIn` asks for the admin-only assetstore list only when `user.admin`), or classify the expected status where the request is made (`getResource` returns null on 400/401/403/404) and rethrow the rest, so the caller's catch can log every failure that reaches it without flooding the console on ordinary use. Check who gets which status: an `@access.user` endpoint answers anonymous viewers *and share-link tokens* (which lack the `USER_AUTH` scope) with 401, not 403.
 
 ## Error Reporting (Sentry)
 
