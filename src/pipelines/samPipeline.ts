@@ -559,7 +559,6 @@ function createSamPipelineDecoderNodes(
 
   // SAM1 masks are already in display coordinates (via orig_im_size),
   // SAM2 masks need rescaling from fixed mask space to display space.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let simplificationNode: ComputeNode<any, any>;
   if (isSam2Model(model)) {
     const rescaleNode = createComputeNode(rescaleMaskToDisplayCoords, [
