@@ -46,7 +46,7 @@
           Couldn't load collections
         </div>
         <div class="text-body-2 text-medium-emphasis">
-          Check your connection and reload the page to try again.
+          Reload the page to try again.
         </div>
       </div>
 

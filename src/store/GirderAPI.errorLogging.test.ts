@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AxiosError, AxiosHeaders } from "axios";
 import type { RestClientInstance } from "@/girder";
 
 vi.mock("@/utils/fetch", () => ({
@@ -60,4 +61,35 @@ describe("GirderAPI failure logging", () => {
       expect(vi.mocked(logError).mock.calls[0]).toContain(failure);
     },
   );
+});
+
+describe("getAssetstores", () => {
+  function axiosError(status: number) {
+    return new AxiosError(
+      `Request failed with status code ${status}`,
+      "ERR_BAD_REQUEST",
+      undefined,
+      undefined,
+      {
+        status,
+        statusText: "",
+        headers: {},
+        config: { headers: new AxiosHeaders() },
+        data: {},
+      },
+    );
+  }
+
+  it("returns an empty list for the admin-only 403 a regular user gets", async () => {
+    const get = vi.fn().mockRejectedValue(axiosError(403));
+    const api = new GirderAPI({ get } as unknown as RestClientInstance);
+    await expect(api.getAssetstores()).resolves.toEqual([]);
+  });
+
+  it("rethrows any other failure so the caller can log it", async () => {
+    const failure = axiosError(500);
+    const get = vi.fn().mockRejectedValue(failure);
+    const api = new GirderAPI({ get } as unknown as RestClientInstance);
+    await expect(api.getAssetstores()).rejects.toBe(failure);
+  });
 });
