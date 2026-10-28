@@ -47,14 +47,6 @@ export default defineConfigWithVueTs(
       // v8 also reports a value used only as a type (`typeof x`), which has
       // no option to turn off; nothing in src/ hits it.
       "@typescript-eslint/no-unused-vars": ["warn", { caughtErrors: "none" }],
-      // The rules below were not in the ESLint 8 rule set; they stay off so
-      // that the ESLint 10 migration does not change what is enforced.
-      // Added by defineConfigWithVueTs to require `<script lang="ts">`.
-      "vue/block-lang": "off",
-      // Joined `flat/essential` in eslint-plugin-vue 10.
-      "vue/no-deprecated-delete-set": "off",
-      "vue/no-deprecated-model-definition": "off",
-      "vue/valid-define-options": "off",
     },
   },
   {
