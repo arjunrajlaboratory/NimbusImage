@@ -407,7 +407,8 @@ async function checkToken() {
     const status = await store.zenodoAPI.getCredentials();
     hasToken.value = status.hasToken;
     isSandbox.value = status.sandbox;
-  } catch {
+  } catch (error) {
+    logError("Failed to check for a Zenodo token:", error);
     hasToken.value = false;
   }
 }

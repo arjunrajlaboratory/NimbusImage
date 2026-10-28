@@ -20,6 +20,7 @@ import {
   uncomputedCountRequest,
   coerceUncomputedCounts,
 } from "@/utils/propertyValues";
+import { logError } from "@/utils/log";
 
 export type TAnnotationPropertyValuesAggregation = {
   datasetId: string;
@@ -235,7 +236,10 @@ export default class PropertiesAPI {
     return this.client
       .get("annotation_property/count", { params: { configurationId } })
       .then((res) => res.data.count)
-      .catch(() => 0);
+      .catch((error) => {
+        logError("Failed to count properties:", error);
+        return 0;
+      });
   }
 
   fromPropertyConfiguration(item: IAnnotationPropertyConfiguration) {

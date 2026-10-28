@@ -1557,7 +1557,8 @@ export class Main extends VuexModule {
         this.api
           .getAssetstores()
           .then((assetstores) => this.setAssetstores(assetstores))
-          .catch(() => {
+          .catch((error) => {
+            logError("Failed to fetch assetstores during login:", error);
             this.setAssetstores([]);
           }),
         this.loadUserColors().catch((error) => {
@@ -2002,10 +2003,11 @@ export class Main extends VuexModule {
         return;
       }
       this.setRecentDatasetViewsImpl(recentDatasetViews);
-    } catch {
+    } catch (error) {
       if (requestId !== recentDatasetViewsRequestId) {
         return;
       }
+      logError("Failed to fetch recent dataset views:", error);
       this.setRecentDatasetViewsImpl([]);
     }
   }

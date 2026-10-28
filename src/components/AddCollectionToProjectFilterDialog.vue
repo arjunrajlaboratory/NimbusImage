@@ -159,6 +159,7 @@ import store from "@/store";
 import projects from "@/store/projects";
 import { Breadcrumb as GirderBreadcrumb } from "@/girder/components";
 import GirderLocationChooser from "@/components/GirderLocationChooser.vue";
+import { logError, logWarning } from "@/utils/log";
 
 // Suppress unused import warning
 void GirderBreadcrumb;
@@ -247,8 +248,9 @@ async function fetchCollections() {
       ...item,
       _modelType: "upenn_collection" as const,
     }));
-  } catch {
+  } catch (error) {
     if (generation !== fetchGeneration) return;
+    logError("Failed to fetch collections:", error);
     allCollections.value = [];
   } finally {
     if (generation === fetchGeneration) {
@@ -303,7 +305,8 @@ onMounted(async () => {
   try {
     const privateFolder = await store.api.getUserPrivateFolder();
     currentFolder.value = privateFolder || store.girderUser;
-  } catch {
+  } catch (error) {
+    logWarning("Failed to fetch the private folder:", error);
     currentFolder.value = store.girderUser;
   }
 });

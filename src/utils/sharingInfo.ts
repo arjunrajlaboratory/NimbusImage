@@ -1,4 +1,5 @@
 import { IDatasetAccessUser } from "@/store/model";
+import { logError } from "@/utils/log";
 
 interface SharingAccessList {
   public: boolean;
@@ -26,7 +27,8 @@ export async function fetchSharingInfo<T extends SharingAccessList>(
 ): Promise<T | null> {
   try {
     return await apiFn();
-  } catch {
+  } catch (error) {
+    logError("Failed to fetch sharing info:", error);
     return null;
   }
 }

@@ -276,8 +276,9 @@ async function loadFeaturedTools() {
       featuredToolNames.value = config.featuredTools || [];
       validateFeaturedTools();
     }
-  } catch {
+  } catch (error) {
     // If config doesn't exist or fails to load, use empty array
+    logWarning("Failed to load the featured tools config:", error);
     featuredToolNames.value = [];
   }
 }

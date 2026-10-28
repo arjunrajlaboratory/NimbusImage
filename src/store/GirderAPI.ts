@@ -306,7 +306,8 @@ export default class GirderAPI {
       const params = { datasetId };
       const response = await this.client.get("history", { params });
       return response.data.map(toHistoryEntry);
-    } catch {
+    } catch (error) {
+      logError("Failed to fetch history entries:", error);
       return [];
     }
   }
@@ -328,8 +329,8 @@ export default class GirderAPI {
         },
       });
       return response.data;
-    } catch {
-      logError("Failed to fetch user jobs");
+    } catch (error) {
+      logError("Failed to fetch user jobs:", error);
       return [];
     }
   }
@@ -338,8 +339,8 @@ export default class GirderAPI {
     try {
       const response = await this.client.get(`job/${jobId}`);
       return response.data;
-    } catch {
-      logError(`Failed to fetch job info for job ${jobId}`);
+    } catch (error) {
+      logError(`Failed to fetch job info for job ${jobId}:`, error);
       return null;
     }
   }
@@ -1126,7 +1127,8 @@ export default class GirderAPI {
         }
       }
       return responses;
-    } catch {
+    } catch (error) {
+      logError("Failed to schedule max-merge caching:", error);
       return null;
     }
   }
@@ -1153,7 +1155,8 @@ export default class GirderAPI {
         );
         responses.push(response);
       }
-    } catch {
+    } catch (error) {
+      logError("Failed to schedule histogram caching:", error);
       return null;
     }
 
@@ -1223,8 +1226,8 @@ export default class GirderAPI {
         },
       });
       return response.data;
-    } catch {
-      logError("Failed to fetch user API keys");
+    } catch (error) {
+      logError("Failed to fetch user API keys:", error);
       return [];
     }
   }
@@ -1240,8 +1243,8 @@ export default class GirderAPI {
         used: response.data.size ?? 0,
         quota: response.data.quota?._currentFileSizeQuota ?? null,
       };
-    } catch {
-      logError("Failed to fetch user storage quota");
+    } catch (error) {
+      logError("Failed to fetch user storage quota:", error);
       return null;
     }
   }

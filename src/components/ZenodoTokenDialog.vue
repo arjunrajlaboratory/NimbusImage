@@ -140,7 +140,8 @@ async function checkExistingToken() {
     const status = await store.zenodoAPI.getCredentials();
     hasExistingToken.value = status.hasToken;
     sandbox.value = status.sandbox;
-  } catch {
+  } catch (error) {
+    logError("Failed to check for a Zenodo token:", error);
     hasExistingToken.value = false;
   }
 }

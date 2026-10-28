@@ -278,7 +278,8 @@ watch(jsonFile, () => {
       values.value = parsed.annotationPropertyValues;
       isJsonLoaded.value = true;
     })
-    .catch(() => {
+    .catch((error) => {
+      logError("Failed to read the annotation JSON file:", error);
       jsonFile.value = null;
     })
     .finally(() => (isLoadingFile.value = false));
