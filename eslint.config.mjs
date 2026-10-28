@@ -49,17 +49,5 @@ export default defineConfigWithVueTs(
       "@typescript-eslint/no-unused-vars": ["warn", { caughtErrors: "none" }],
     },
   },
-  {
-    // `eslintRecommended` targets `*.ts`, and defineConfigWithVueTs widens it
-    // to `*.vue`. Before, these rules applied to `.ts` files only.
-    name: "app/ts-only-rules-off-for-vue",
-    files: ["**/*.vue"],
-    rules: {
-      "no-var": "off",
-      "prefer-const": "off",
-      "prefer-rest-params": "off",
-      "prefer-spread": "off",
-    },
-  },
   prettierConfig,
 );
