@@ -44,6 +44,8 @@ export default defineConfigWithVueTs(
       "vue/multi-word-component-names": "off",
       // typescript-eslint 8 changed the `caughtErrors` default from "none"
       // to "all"; keep unused `catch (error)` bindings allowed as before.
+      // v8 also reports a value used only as a type (`typeof x`), which has
+      // no option to turn off; nothing in src/ hits it.
       "@typescript-eslint/no-unused-vars": ["warn", { caughtErrors: "none" }],
       // The rules below were not in the ESLint 8 rule set; they stay off so
       // that the ESLint 10 migration does not change what is enforced.
