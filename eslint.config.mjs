@@ -42,11 +42,7 @@ export default defineConfigWithVueTs(
       "vue/valid-v-slot": ["error", { allowModifiers: true }],
       // Single-word component names are fine for route views (Home, Configuration, Project, etc.)
       "vue/multi-word-component-names": "off",
-      // typescript-eslint 8 changed the `caughtErrors` default from "none"
-      // to "all"; keep unused `catch (error)` bindings allowed as before.
-      // v8 also reports a value used only as a type (`typeof x`), which has
-      // no option to turn off; nothing in src/ hits it.
-      "@typescript-eslint/no-unused-vars": ["warn", { caughtErrors: "none" }],
+      "@typescript-eslint/no-unused-vars": "warn",
     },
   },
   prettierConfig,
