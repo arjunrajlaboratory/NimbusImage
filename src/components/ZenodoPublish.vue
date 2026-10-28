@@ -407,7 +407,11 @@ async function checkToken() {
     const status = await store.zenodoAPI.getCredentials();
     hasToken.value = status.hasToken;
     isSandbox.value = status.sandbox;
-  } catch {
+  } catch (error) {
+    // Anonymous viewers of a public project get a 401: they have no token.
+    if (!(isAxiosError(error) && error.response?.status === 401)) {
+      logError("Failed to check for a Zenodo token:", error);
+    }
     hasToken.value = false;
   }
 }

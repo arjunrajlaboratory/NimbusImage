@@ -557,7 +557,10 @@ async function fetchCounts() {
   const [ac, cc, pvc] = await Promise.all([
     // getAnnotationCount now rejects on failure (a silent 0 would mislead and,
     // in the loader, trigger the OOM full-fetch path); show "unknown" here.
-    store.annotationsAPI.getAnnotationCount(dsId).catch(() => null),
+    store.annotationsAPI.getAnnotationCount(dsId).catch((error) => {
+      logError("Failed to count annotations:", error);
+      return null;
+    }),
     store.annotationsAPI.getConnectionCount(dsId),
     store.annotationsAPI.getPropertyValueCount(dsId),
   ]);

@@ -525,7 +525,7 @@ import {
   selectFilesFromFolder,
 } from "@/utils/fileUpload";
 import { formatDateNumber, formatDate } from "@/utils/date";
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
 import Persister from "@/store/Persister";
 import { useTour } from "@/utils/useTour";
 import { userDisplayInfo, type IUserDisplayInfo } from "@/utils/userDisplay";
@@ -1242,6 +1242,7 @@ watch(datasetName, async (newName) => {
     }
   } catch (error) {
     // If check fails, don't block submission - let the server handle it
+    logWarning("Failed to check whether the dataset name is taken:", error);
     nameError.value = "";
   } finally {
     checkingName.value = false;

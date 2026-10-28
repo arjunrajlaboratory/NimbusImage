@@ -52,6 +52,7 @@ vi.mock("@/utils/girderSelectable", () => ({
 
 vi.mock("@/utils/log", () => ({
   logError: vi.fn(),
+  logWarning: vi.fn(),
 }));
 
 vi.mock("@/components/CustomFileManager.vue", () => ({
@@ -89,6 +90,7 @@ vi.mock("@/views/dataset/NewDataset.vue", () => ({
 }));
 
 import AddDatasetToCollection from "./AddDatasetToCollection.vue";
+import { logWarning } from "@/utils/log";
 
 const sampleCollection = {
   id: "c1",
@@ -186,7 +188,8 @@ describe("AddDatasetToCollection", () => {
   });
 
   it("falls back to girderUser if getUserPrivateFolder fails", async () => {
-    mockGetUserPrivateFolder.mockRejectedValue(new Error("fail"));
+    const failure = new Error("fail");
+    mockGetUserPrivateFolder.mockRejectedValue(failure);
     const wrapper = mountComponent();
     await flushPromises();
     const vm = wrapper.vm as any;
@@ -194,6 +197,10 @@ describe("AddDatasetToCollection", () => {
       _id: "user1",
       _modelType: "user",
     });
+    expect(logWarning).toHaveBeenCalledWith(
+      "Failed to fetch the private folder:",
+      failure,
+    );
   });
 
   it("resets option when collection prop changes", async () => {
