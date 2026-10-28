@@ -9,7 +9,7 @@ from nimbus_mcp_oauth import oauth, settings
 from nimbus_mcp_oauth.models import AuthorizationCode, AuthorizationRequest
 
 from .conftest import (
-    CLAUDE_CALLBACK, ISSUER, RESOURCE, approveFlow, authorizeParams,
+    CLAUDE_CALLBACK, ISSUER, RESOURCE, SECRET, approveFlow, authorizeParams,
     connect, exchange, introspect, location, pkcePair, query, refresh,
     startFlow)
 
@@ -563,6 +563,12 @@ def testTokenRateLimitAnswersInOAuthShape(enabled, monkeypatch):
     assert _status(resp) == 429
     assert resp.json['error'] == 'temporarily_unavailable'
     assert dict(resp.headers)['Retry-After'] == '60'
+    # Revocation shares the budget and answers the same way.
+    resp = enabled.request('/mcp_oauth/revoke', method='POST',
+                           params={'token': 'x'})
+    assert _status(resp) == 429
+    assert resp.json['error'] == 'temporarily_unavailable'
+    assert dict(resp.headers)['Retry-After'] == '60'
 
 
 def testSecretsStayOutOfTheAuditLog(enabled, user, caplog):
@@ -574,10 +580,24 @@ def testSecretsStayOutOfTheAuditLog(enabled, user, caplog):
         introspect(enabled, tokens['access_token'])
         enabled.request('/mcp_oauth/revoke', method='POST',
                         params={'token': tokens['refresh_token']})
+        # Girder refuses a repeated parameter before the handler (and its
+        # @disableAuditLog) runs, and audit-logs the request it refused.
+        enabled.request('/mcp_oauth/introspect', method='POST',
+                        body=_repeated({'token': tokens['access_token']},
+                                       'token'),
+                        type='application/x-www-form-urlencoded',
+                        additionalHeaders=[
+                            ('X-Mcp-Introspection-Secret', SECRET)])
+        enabled.request('/mcp_oauth/token', method='POST',
+                        body=_repeated({
+                            'grant_type': 'refresh_token',
+                            'refresh_token': tokens['refresh_token'],
+                            'client_id': params['client_id']}, 'grant_type'),
+                        type='application/x-www-form-urlencoded')
     logged = repr([(r.getMessage(), getattr(r, 'details', None))
                    for r in caplog.records])
     for secret in (code, verifier, tokens['refresh_token'],
-                   tokens['access_token']):
+                   tokens['access_token'], SECRET):
         assert secret not in logged
 
 

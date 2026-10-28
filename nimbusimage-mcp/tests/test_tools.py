@@ -88,6 +88,31 @@ def test_girder_errors_become_tool_errors(nc, status, fragment):
         datasets.ni_dataset_info(dataset_id="x")
 
 
+def test_a_rate_limit_says_which_limit_and_when_to_retry(nc):
+    """Production HAProxy answers worker jobs over its per-session limit
+    with 429, a message and Retry-After; the model needs both, not
+    "server error"."""
+    import requests
+    response = requests.Response()
+    response.status_code = 429
+    response.headers["Retry-After"] = "42"
+    nc.dataset.side_effect = girder_client.HttpError(
+        429, json.dumps({"message": "GPU worker rate limit: 1 GPU job(s) "
+                         "per 60s per session."}),
+        "http://g", "POST", response=response)
+    with pytest.raises(ToolError) as raised:
+        datasets.ni_dataset_info(dataset_id="x")
+    text = str(raised.value)
+    assert "GPU worker rate limit" in text
+    assert "Retry after 42 seconds" in text
+    assert "server error" not in text
+    # Without a body or header it still says it was rate limited.
+    nc.dataset.side_effect = girder_client.HttpError(
+        429, "", "http://g", "POST")
+    with pytest.raises(ToolError, match="Rate limited"):
+        datasets.ni_dataset_info(dataset_id="x")
+
+
 def test_a_401_for_an_oauth_caller_says_reconnect(nc, monkeypatch):
     # An OAuth session is full-access: a 401 means the connection ended,
     # not a missing API-key scope.
@@ -620,6 +645,51 @@ def test_property_compute_needs_a_configured_property(nc):
     ))["job_id"] == "j1"
 
 
+def test_property_compute_lists_the_workers_outside_the_submission(nc):
+    """The role check's worker listing is not the submission: its failure
+    is a plain error, never "the job may have started"."""
+    import requests
+    ds = nc.dataset.return_value
+    ds.collections.property_ids = ["p1"]
+    ds.properties.get.return_value = SimpleNamespace(image="props/area")
+    nc.list_workers.return_value = {"props/area": {"isPropertyWorker": ""}}
+    ds.properties.compute.return_value = SimpleNamespace(
+        id="j1", status_name="queued", title="Area")
+    properties.ni_property_compute(dataset_id="d", property_id="p1")
+    assert ds.properties.compute.call_args.kwargs["worker_labels"] == {
+        "isPropertyWorker": ""}
+    nc.list_workers.side_effect = requests.ReadTimeout("slow listing")
+    with pytest.raises(ToolError) as raised:
+        properties.ni_property_compute(dataset_id="d", property_id="p1")
+    assert "may have started" not in str(raised.value)
+    assert ds.properties.compute.call_count == 1
+
+
+def _lost_answer():
+    """A read timeout: the request reached Girder, its answer did not."""
+    import requests
+    return requests.ReadTimeout("read timed out")
+
+
+@pytest.mark.parametrize("error, expected", [
+    # The answer was lost: the job may exist, so no "try again".
+    (lambda: http_error(504), "may have started"),
+    (lambda: http_error(502), "may have started"),
+    (_lost_answer, "may have started"),
+    # Refused, or never sent: reported as usual.
+    (lambda: http_error(400, "bad scales"), "Invalid request: bad scales"),
+    (lambda: _refused_connection(), "Could not reach"),
+])
+def test_a_lost_compute_answer_is_not_retried_blindly(nc, error, expected):
+    ds = nc.dataset.return_value
+    ds.collections.property_ids = ["p1"]
+    ds.properties.compute.side_effect = error()
+    with pytest.raises(ToolError, match=expected) as raised:
+        properties.ni_property_compute(dataset_id="d", property_id="p1")
+    if expected == "may have started":
+        assert "try again" not in str(raised.value)
+
+
 # --- workers ------------------------------------------------------------
 
 
@@ -721,6 +791,18 @@ def test_worker_run_fills_defaults_and_rejects_property_workers(nc):
     with pytest.raises(ToolError, match="Unknown worker parameters"):
         run_tool(workers.ni_worker_run, dataset_id="d", image=SEG,
                  parameters={"Nope": 1})
+
+
+def test_a_lost_worker_run_answer_says_the_job_may_have_started(nc):
+    nc.list_workers.return_value = WORKERS
+    nc.get_worker_interface.return_value = INTERFACE
+    ds = nc.dataset.return_value
+    ds.channels, ds.num_channels = ["DAPI", "GFP"], 2
+    ds.num_xy, ds.num_z, ds.num_time = 1, 1, 1
+    ds.annotations.compute.side_effect = http_error(504)
+    with pytest.raises(ToolError, match="may have started") as raised:
+        run_tool(workers.ni_worker_run, dataset_id="d", image=SEG)
+    assert "took too long" not in str(raised.value)
 
 
 def test_worker_tools_count_unnamed_channels(nc):
@@ -1129,6 +1211,11 @@ def test_worker_run_lists_the_workers_once(nc):
     run_tool(workers.ni_worker_run, dataset_id="d", image=SEG)
     # Listing workers is a slow Docker listing on the server.
     assert nc.list_workers.call_count == 1
+    # compute is mocked here, so also hand it the labels: its own role
+    # check then skips its listing (test_known_labels_skip_the_worker_
+    # listing, in nimbusimage, holds that half).
+    assert ds.annotations.compute.call_args.kwargs["worker_labels"] == \
+        WORKERS[SEG]
 
 
 def test_an_unreadable_job_keeps_the_registration_pending(nc):

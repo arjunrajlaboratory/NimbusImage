@@ -20,6 +20,7 @@ from nimbusimage_mcp._common import (
     client,
     instrumented,
     round_sig,
+    submitting_job,
 )
 
 Shape = Literal["point", "polygon", "line", "rectangle"]
@@ -241,14 +242,24 @@ def ni_property_compute(dataset_id: str, property_id: str) -> dict:
     once; wait with ni_job_wait, then read values with
     ni_property_values_summary.
     """
-    ds = client().dataset(dataset_id)
+    nc = client()
+    ds = nc.dataset(dataset_id)
     if property_id not in ds.collections.property_ids:
         raise ToolError(
             f"No property {property_id!r} is set up for this dataset; "
             "use ni_properties_list to find its id."
         )
     prop = ds.properties.get(property_id)
-    job = ds.properties.compute(prop, scales=ds.collections.scales)
+    scales = ds.collections.scales
+    # Listed here, outside submitting_job, so a failed listing is not
+    # mistaken for a lost job; compute's role check then skips its own.
+    # An image missing from the listing has no known role: {} lets it
+    # through, as compute's own check would.
+    labels = nc.list_workers().get(prop.image) or {}
+    with submitting_job():
+        job = ds.properties.compute(
+            prop, scales=scales, worker_labels=labels
+        )
     return {"job_id": job.id, "status": job.status_name, "title": job.title}
 
 

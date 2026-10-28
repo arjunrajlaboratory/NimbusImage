@@ -217,6 +217,8 @@ class PropertyAccessor:
         property: Property,
         worker_interface: dict | None = None,
         scales: dict | None = None,
+        *,
+        worker_labels: dict | None = None,
     ) -> Job:
         """Run a property worker to compute values.
 
@@ -235,6 +237,10 @@ class PropertyAccessor:
                 ``workerInterface``.
             scales: Scale metadata (pixel size, etc.). Passed through
                 to the worker for unit-aware computations.
+            worker_labels: The image's labels from
+                ``client.list_workers()``, if you already have them; the
+                role check then uses them instead of listing every worker
+                again.
 
         Returns:
             A Job object. Call ``job.wait()`` to block until completion.
@@ -257,7 +263,8 @@ class PropertyAccessor:
 
         # Reject annotation workers before submitting: they cannot
         # handle the property-compute payload (dict-valued tags filter).
-        check_worker_role(self._gc, property.image, PROPERTY_ROLE_LABEL)
+        check_worker_role(self._gc, property.image, PROPERTY_ROLE_LABEL,
+                          labels=worker_labels)
 
         body = property.to_dict()
         # The worker reads params.get("id") to identify which property

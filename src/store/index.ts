@@ -2089,30 +2089,35 @@ export class Main extends VuexModule {
       }
       return;
     }
-    if (toRaw(this.girderRest) !== session.linkClient) {
-      return;
-    }
-    // A shared URL opened directly skips initialize(), so the saved login's
-    // client holds a token but has never fetched its user; restoring it
-    // as-is would show the owner as logged out until a reload.
-    const previous = session.previousClient;
-    if (previous.token && !previous.user) {
-      try {
-        await previous.fetchUser();
-      } catch (error) {
-        logError("Could not restore the saved login:", error);
-      }
-      // A login or another link may have taken over during the fetch.
+    try {
+      // A login or another link replaced this link's session: leave it
+      // alone. (Logout clears the link client's token but keeps it, so
+      // leaving still restores the saved login, as a reload would.)
       if (toRaw(this.girderRest) !== session.linkClient) {
         return;
       }
-    }
-    try {
+      // A shared URL opened directly skips initialize(), so the saved
+      // login's client holds a token but has never fetched its user;
+      // restoring it as-is would show the owner as logged out until a
+      // reload.
+      const previous = session.previousClient;
+      if (previous.token && !previous.user) {
+        try {
+          await previous.fetchUser();
+        } catch (error) {
+          logError("Could not restore the saved login:", error);
+        }
+        // A login or another link may have taken over during the fetch.
+        if (toRaw(this.girderRest) !== session.linkClient) {
+          return;
+        }
+      }
       await this.loggedIn(previous);
     } finally {
       // A tab that started on a shared URL never ran initialize(); its
-      // login is settled now (a page waiting on authRestored would spin
-      // forever), even if restoring it failed.
+      // login is settled now, whether it was restored, failed, or was
+      // replaced by a login or logout (a page waiting on authRestored
+      // would spin forever).
       this.setAuthRestored();
     }
   }

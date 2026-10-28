@@ -251,6 +251,27 @@ class TestAccessLevel:
         }}}
         [dataset] = _bare_client(mock_gc).list_datasets()
         assert dataset["_accessLevel"] == 2
+        # Current servers send the level, so no extra user/me request.
+        assert all(c.args[0] != "user/me" for c in mock_gc.get.call_args_list)
+
+    def test_an_old_server_with_a_data_only_key_reads_no_grants(
+        self, mock_gc,
+    ):
+        """An older server returns raw folders (no _accessLevel), and a
+        data-only key reads user/me as null: no grants, one request."""
+        mock_gc.get.side_effect = lambda path, parameters=None, **kw: (
+            [{"_id": "v1", "datasetId": "f1"},
+             {"_id": "v2", "datasetId": "f2"}]
+            if path == "dataset_view" else None)
+        mock_gc.post.return_value = {"folder": {
+            "f1": {"_id": "f1", "name": "A", "access": {"users": [
+                {"id": "someone", "level": 2}]}},
+            "f2": {"_id": "f2", "name": "B", "access": {}},
+        }}
+        datasets = _bare_client(mock_gc).list_datasets()
+        assert [d["_accessLevel"] for d in datasets] == [-1, -1]
+        assert [c.args[0] for c in mock_gc.get.call_args_list].count(
+            "user/me") == 1
 
 
 class TestNimbusClientListDatasets:
@@ -278,6 +299,21 @@ class TestNimbusClientListDatasets:
         mock_gc.post.assert_called_once_with(
             "resource/batch", json={"folder": ["f2", "f1"]}
         )
+
+    def test_list_datasets_chunks_under_the_servers_id_cap(self, mock_gc):
+        """resource/batch refuses more than MAX_BATCH_RESOURCE_IDS ids
+        (10,000); a user with more datasets (a site admin) still lists."""
+        from nimbusimage import client as client_module
+        n = client_module._BATCH_RESOURCE_IDS + 1
+        _serve(mock_gc, [{"_id": f"v{i}", "datasetId": f"f{i}"}
+                         for i in range(n)])
+        mock_gc.post.side_effect = lambda path, json: {"folder": {
+            did: {"_id": did, "name": did, "_accessLevel": 0}
+            for did in json["folder"]}}
+        datasets = _bare_client(mock_gc).list_datasets()
+        assert len(datasets) == n
+        assert [len(c.kwargs["json"]["folder"])
+                for c in mock_gc.post.call_args_list] == [n - 1, 1]
 
     def test_list_datasets_keeps_only_the_public_folder_fields(
         self, mock_gc,

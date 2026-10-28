@@ -236,6 +236,33 @@ describe("share-link bootstrap identity", () => {
     expect(main.authRestored).toBe(true);
   });
 
+  it("settles authRestored when a login replaced the link before leaving", async () => {
+    // A tab started on a shared URL (no initialize()); the share user
+    // logged out and in as themselves, then left the shared route. The
+    // login is settled: a consent page waiting on authRestored must not
+    // spin after a later logout.
+    const client = main.girderRest;
+    Object.assign(client, { user: null, token: "owner-token" });
+    vi.spyOn(RestClient.prototype, "fetchUser").mockImplementation(
+      async function (this: any) {
+        this.user = { _id: this.token, shareLink: { datasetId: "d" } };
+        return this.user;
+      },
+    );
+    vi.spyOn(ShareLinkAPI.prototype, "me").mockResolvedValue({
+      datasetViewId: "v",
+    } as any);
+    (rootStore.state as any).main.authRestored = false;
+    await main.openShareLink({ token: "link-a" });
+    const login = { token: "new-login" };
+    (rootStore.state as any).main.girderRest = login;
+    const loggedIn = vi.spyOn(main as any, "loggedIn");
+    await main.leaveShareLink();
+    expect(loggedIn).not.toHaveBeenCalled();
+    expect(toRaw(main.girderRest)).toBe(login);
+    expect(main.authRestored).toBe(true);
+  });
+
   it("settles authRestored even if restoring the login throws", async () => {
     const client = main.girderRest;
     Object.assign(client, { user: null, token: "owner-token" });

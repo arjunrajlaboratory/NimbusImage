@@ -424,12 +424,14 @@ or mixed-case hosts in an environment override).
 | `GET request/:id` | User | Client name, redirect host, whether it is a local redirect |
 | `POST request/:id/approve`, `/deny` | User (Girder token header), 30/min per user | Single use; approve issues a 60 s one-time code and returns the redirect URL (`code`, `state`, `iss`) |
 | `POST token` | Public, form-encoded, flood cap per address | `authorization_code` (PKCE verifier, same client, same redirect URI, `resource` if sent) and `refresh_token` (rotation; reuse or another client revokes the connection). OAuth-shaped errors, including 429. |
-| `POST revoke` | Public, same cap as `token` | RFC 7009; either token ends the connection |
+| `POST revoke` | Public, same cap as `token` | RFC 7009; either token ends the connection. OAuth-shaped errors, including 429. |
 | `POST introspect` | Shared secret header (`X-Mcp-Introspection-Secret`), else 404; hidden from the API docs | For the MCP service: active, user, client, scope, resource, expiry, and the Girder session token to act with |
 | `GET grant`, `DELETE grant/:id` | User | Your connected clients; disconnect (UI later) |
 
 `token`, `revoke` and `introspect` are kept out of Girder's audit log, which records every
-parameter, and refuse parameters in the query string (`invalid_request`), which the access
+parameter: `@disableAuditLog` on each handler, plus a filter on the audit logger (installed in
+the plugin's `load`) for requests Girder refuses before the handler runs, such as a repeated
+parameter. They also refuse parameters in the query string (`invalid_request`), which the access
 log records whatever the audit setting. A new connection does **not** replace earlier ones
 from the same client: the client id is shared by every device (Claude Code on two machines)
 and every claude.ai org, so it cannot tell a reconnect from a second device (replacing was
@@ -1220,8 +1222,19 @@ the local stack. Add an item whenever a review finds something this list missed.
 - [x] A worker with both role labels is listed under both roles and accepted by
       `ni_worker_run`. *"test_workers_list_keeps_real_workers"*,
       *"test_worker_run_fills_defaults_and_rejects_property_workers"*
-- [x] A worker run lists the workers (a slow Docker listing) once.
-      *"test_worker_run_lists_the_workers_once"*
+- [x] A worker run lists the workers (a slow Docker listing) once: the tool passes the
+      labels it listed to `ds.annotations.compute`, whose role check then skips its own
+      listing. *"test_worker_run_lists_the_workers_once"*,
+      *"test_known_labels_skip_the_worker_listing"*
+- [x] A lost answer to a job submission (read timeout, dropped connection, 502/504) says
+      the job may have started and to check before running it again, never "try again";
+      a refusal or a request that never left is reported as usual. Only the submission is
+      wrapped: the worker listing for the role check happens before it, so its failure is
+      a plain error. *"test_a_lost_compute_answer_is_not_retried_blindly"*,
+      *"test_a_lost_worker_run_answer_says_the_job_may_have_started"*,
+      *"test_property_compute_lists_the_workers_outside_the_submission"*
+- [x] A 429 (production HAProxy's per-session worker limit) passes on which limit and
+      Retry-After, not "server error". *"test_a_rate_limit_says_which_limit_and_when_to_retry"*
 - [x] A worker run checks channel and location before starting a job.
       *"test_worker_run_checks_the_location_before_submitting"*
 - [x] Worker parameters are normalized like the app's (channel names, checkbox maps,
@@ -1270,7 +1283,10 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
       connections are inactive at once. *"testIntrospectionNeedsTheSecret"*,
       *"testUnverifiedEmailCannotUseTokens"*, *"testDisabledUserCannotRefresh"*,
       *"testRevokeEndsTheConnectionAndItsGirderSessions"*
-- [x] Secrets are stored hashed and never reach the audit log.
+- [x] The token and revoke endpoints share one rate limit and answer it in OAuth shape
+      (`temporarily_unavailable`, 429, `Retry-After`). *"testTokenRateLimitAnswersInOAuthShape"*
+- [x] Secrets are stored hashed and never reach the audit log, including a request Girder
+      refuses before the handler runs (a repeated parameter).
       *"testSecretsAreStoredHashed"*, *"testSecretsStayOutOfTheAuditLog"*
 - [x] Users see and disconnect only their own connections.
       *"testUsersSeeAndRevokeOnlyTheirOwnConnections"*

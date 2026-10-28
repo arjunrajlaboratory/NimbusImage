@@ -6,6 +6,7 @@ on:
       - nimbusimage-mcp/**
       # The server is built on the package; a package change can break it.
       - nimbusimage/**
+      - .github/workflows/nimbusimage-mcp.yaml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,7 +15,6 @@ concurrency:
 jobs:
   all:
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
 
     steps:
       - uses: actions/checkout@v4

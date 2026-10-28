@@ -48,6 +48,13 @@ def _limit(limiter, key):
                             code=429)
 
 
+def _tokenRateLimited():
+    setResponseHeader('Retry-After', '60')
+    return _oauthErrorBody(OAuthError(
+        'temporarily_unavailable', 'Too many requests; retry shortly.',
+        status=429))
+
+
 def _oauthErrorBody(err):
     cherrypy.response.status = err.status
     return {'error': err.error, 'error_description': err.description}
@@ -164,10 +171,7 @@ class McpOAuthResource(Resource):
         _requireEnabled()
         _noStore()
         if not _tokenLimit.check(_clientAddress()):
-            setResponseHeader('Retry-After', '60')
-            return _oauthErrorBody(OAuthError(
-                'temporarily_unavailable', 'Too many requests; retry '
-                'shortly.', status=429))
+            return _tokenRateLimited()
         try:
             _refuseQueryCredentials()
             return oauth.token(params)
@@ -182,7 +186,10 @@ class McpOAuthResource(Resource):
     )
     def revoke(self, params):
         _requireEnabled()
-        _limit(_tokenLimit, _clientAddress())
+        # Shares the token endpoint's budget, and its OAuth-shaped 429
+        # (RFC 7009 errors follow RFC 6749 section 5.2).
+        if not _tokenLimit.check(_clientAddress()):
+            return _tokenRateLimited()
         try:
             _refuseQueryCredentials()
         except OAuthError as err:

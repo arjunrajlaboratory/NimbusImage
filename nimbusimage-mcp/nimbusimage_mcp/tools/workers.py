@@ -11,7 +11,6 @@ from typing import Literal
 import anyio
 import girder_client
 import requests
-from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
 
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -25,7 +24,9 @@ from nimbusimage_mcp._common import (
     WRITES,
     client,
     instrumented,
+    never_sent,
     settings,
+    submitting_job,
 )
 from nimbusimage_mcp.tools.datasets import channel_list, channel_names
 from nimbusimage_mcp.tools.images import check_location
@@ -197,7 +198,7 @@ async def _run_registration(nc: ni.NimbusClient, image: str) -> None:
         await _watch_for_interface(nc, image, deadline)
         return
     except requests.RequestException as e:
-        if _never_sent(e):
+        if never_sent(e):
             raise  # nothing reached Girder: the next call may register
         # The request may have reached Girder (only its answer was
         # lost): treat it as running rather than letting a retry send
@@ -231,15 +232,6 @@ def _did_not_finish(image: str) -> ToolError:
         f"{image}'s parameter registration did not finish; try again "
         "later."
     )
-
-
-def _never_sent(error: requests.RequestException) -> bool:
-    """Whether a failed request certainly never reached the server: the
-    connection was never opened."""
-    if isinstance(error, requests.ConnectTimeout):
-        return True
-    reason = getattr(error.args[0], "reason", None) if error.args else None
-    return isinstance(reason, (NewConnectionError, ConnectTimeoutError))
 
 
 async def _watch_for_interface(nc: ni.NimbusClient, image: str,
@@ -408,7 +400,9 @@ async def ni_worker_run(
     """Run an annotation worker (e.g. Cellpose-SAM segmentation or spot
     detection, from ni_workers_list) on a dataset. It creates annotations
     tagged with `tags` (e.g. ["nucleus"]) and can take minutes. Returns a
-    job_id at once; wait with ni_job_wait. `parameters` overrides the
+    job_id once the job starts (the first run of a worker can first wait
+    up to a minute while its parameters register); wait for the job with
+    ni_job_wait. `parameters` overrides the
     worker's parameters by name (see ni_worker_interface); the rest use
     their defaults. channel, xy, z, and time choose the image location;
     workers with "Batch XY/Z/Time" parameters process the ranges given
@@ -445,16 +439,20 @@ async def ni_worker_run(
         await fetch_interface(nc, image, labels), parameters or {},
         channels
     )
-    job = await in_thread(
-        ds.annotations.compute,
-        image=image,
-        channel=channel,
-        tags=tags or [],
-        location=ni.Location(xy=xy, z=z, time=time),
-        worker_interface=values,
-        scales=scales,
-        name=labels.get("interfaceName") or image,
-    )
+    with submitting_job():
+        job = await in_thread(
+            ds.annotations.compute,
+            image=image,
+            channel=channel,
+            tags=tags or [],
+            location=ni.Location(xy=xy, z=z, time=time),
+            worker_interface=values,
+            scales=scales,
+            name=labels.get("interfaceName") or image,
+            # Already listed above: no second slow listing for the
+            # role check.
+            worker_labels=labels,
+        )
     return {"job_id": job.id, "status": job.status_name, "title": job.title}
 
 

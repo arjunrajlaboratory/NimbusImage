@@ -40,6 +40,9 @@ def _access_level(doc: dict, user: dict) -> int:
     return max(levels, default=-1)
 
 
+# Folder ids per POST resource/batch: the frontend's
+# BATCH_RESOURCES_CHUNK_SIZE, under the server's MAX_BATCH_RESOURCE_IDS.
+_BATCH_RESOURCE_IDS = 5000
 # A Girder id: 24 hex digits, either case.
 _OBJECT_ID = re.compile(r"[0-9a-fA-F]{24}")
 # Datasets per POST upenn_annotation/counts (the server's
@@ -219,22 +222,37 @@ class NimbusClient:
             # Anonymous: resource/batch requires a user, so fetch each
             # public folder (public datasets are few).
             return self._readable_folders_one_by_one(dataset_ids)
-        # One access-checked lookup for every folder, not a GET per
-        # dataset; the server omits folders the caller cannot read.
-        folders = self._gc.post(
-            "resource/batch", json={"folder": dataset_ids}
-        ).get("folder", {})
-        me = self._gc.get("user/me")
-        # resource/batch returns raw documents, including the ACL (other
-        # users' ids and levels); keep what GET folder/{id} exposes,
-        # including the caller's _accessLevel, computed from that ACL.
+        # Access-checked lookups of every folder, not a GET per dataset;
+        # the server omits folders the caller cannot read, and refuses
+        # more than its MAX_BATCH_RESOURCE_IDS ids in one request.
+        folders: dict = {}
+        for start in range(0, len(dataset_ids), _BATCH_RESOURCE_IDS):
+            folders.update(self._gc.post("resource/batch", json={
+                "folder": dataset_ids[start:start + _BATCH_RESOURCE_IDS],
+            }).get("folder", {}))
+        me = None
+
+        def access_level(folder: dict) -> int:
+            # Current servers filter each document as GET folder/{id}
+            # does, _accessLevel included; an older one returns the raw
+            # document, whose ACL gives the level.
+            nonlocal me
+            if "_accessLevel" in folder:
+                return folder["_accessLevel"]
+            if me is None:
+                # A data-only key reads user/me as null: no user, so no
+                # grants of its own ({} rather than another request per
+                # folder).
+                me = self._gc.get("user/me") or {"_id": None}
+            return _access_level(folder, me)
+
+        # Keep what GET folder/{id} exposes: an older server's raw
+        # documents carry the ACL (other users' ids and levels).
         return [
             {
                 **{k: v for k, v in folders[did].items()
                    if k in _FOLDER_READ_FIELDS},
-                "_accessLevel": folders[did].get(
-                    "_accessLevel", _access_level(folders[did], me)
-                ),
+                "_accessLevel": access_level(folders[did]),
                 "_modelType": "folder",
             }
             for did in dataset_ids if did in folders

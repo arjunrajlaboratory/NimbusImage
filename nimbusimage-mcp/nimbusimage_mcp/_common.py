@@ -14,7 +14,11 @@ import time
 
 import girder_client
 import requests
-from urllib3.exceptions import ReadTimeoutError
+from urllib3.exceptions import (
+    ConnectTimeoutError,
+    NewConnectionError,
+    ReadTimeoutError,
+)
 from urllib3.util.retry import Retry
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver import Image
@@ -185,6 +189,15 @@ def tool_error(e: girder_client.HttpError) -> ToolError:
         return ToolError(f"Invalid request: {girder_message(e)}")
     if e.status == 404:
         return ToolError(f"Not found. {girder_message(e)}".strip())
+    if e.status == 429:
+        # Production HAProxy limits worker jobs from this client per
+        # session; its message says which limit and to batch work.
+        retry = e.response.headers.get("Retry-After") \
+            if e.response is not None else None
+        wait = f" Retry after {retry} seconds." \
+            if retry and retry.isdigit() else ""
+        message = girder_message(e) or "Too many requests."
+        return ToolError(f"Rate limited (HTTP 429): {message}{wait}")
     if e.status == 504:
         # A proxy's timeout: the same advice as a read timeout.
         return ToolError(TOO_SLOW)
@@ -288,6 +301,42 @@ _log_lock = threading.Lock()
 TOO_SLOW = (
     "NimbusImage took too long to answer; narrow the request or try again."
 )
+
+JOB_MAY_HAVE_STARTED = (
+    "NimbusImage did not confirm the job, but it may have started anyway. "
+    "Before running it again, check whether its results are appearing "
+    "(e.g. ni_annotations_count or ni_property_values_summary) or look "
+    "at the job list in NimbusImage, so the work is not done twice."
+)
+
+
+def never_sent(error: requests.RequestException) -> bool:
+    """Whether a failed request certainly never reached the server: the
+    connection was never opened."""
+    if isinstance(error, requests.ConnectTimeout):
+        return True
+    reason = getattr(error.args[0], "reason", None) if error.args else None
+    return isinstance(reason, (NewConnectionError, ConnectTimeoutError))
+
+
+@contextlib.contextmanager
+def submitting_job():
+    """Around a call that starts a worker job. A lost answer (a read
+    timeout, a dropped connection, a proxy's 502/504) does not mean the
+    job was refused: Girder may have created it. "Try again" would start
+    it twice (GPU time, duplicate annotations), so say so instead. A
+    refusal, or a request that never left, is reported as usual."""
+    try:
+        yield
+    except girder_client.HttpError as e:
+        # First: girder_client.HttpError is also a RequestException.
+        if e.status in (502, 504):
+            raise ToolError(JOB_MAY_HAVE_STARTED) from None
+        raise
+    except requests.RequestException as e:
+        if never_sent(e):
+            raise
+        raise ToolError(JOB_MAY_HAVE_STARTED) from None
 
 
 def instrumented(fn):
