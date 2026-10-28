@@ -1031,7 +1031,9 @@ logError("An error occurred", error);
 
 **A catch that handles a failure must pass the caught error to the log.** `logError("Failed to fetch user jobs")` with no second argument throws away the status, message and stack, and a `catch { return []; }` around a request leaves no trace at all. Both make a network failure indistinguishable from an empty result. Bind the error and pass it: `logError("Failed to fetch user jobs:", error)` for unexpected failures, `logWarning(...)` when a reasonable fallback follows. Use `catch {}` only for best-effort code that says in a comment why silence is right (clipboard or Cache API feature detection, a JSON parse fallback). Never retry a failed scoped request unscoped to hide the error: `CollectionList` once retried without `folderId`, and the backend's `ObjectId(None)` is a fresh random id, so the retry could only ever return nothing.
 
-Lint won't catch every unused binding. In a `<script setup>` SFC, eslint-plugin-vue marks a script variable as used when the template contains an identifier with the same name, so a `catch (error)` that is never read passes `no-unused-vars` if the template mentions `error` anywhere. Read the catch body; don't rely on the warning.
+Lint won't catch every unused catch binding. In an SFC with both a plain `<script>` block and a `<script setup>` block (`Home.vue`, for one), `@typescript-eslint/no-unused-vars` does not report an unused `catch (error)` in the setup block, although it still reports unused `const`s there. Read the catch body; don't rely on the warning.
+
+An expected failure is not a silent catch's excuse, either: classify it where the request is made (`getResource` returns null on 400/404, `getAssetstores` returns `[]` on the admin-only 403) and rethrow the rest, so the caller's catch can log every failure that reaches it without flooding the console on ordinary use.
 
 ## Error Reporting (Sentry)
 
