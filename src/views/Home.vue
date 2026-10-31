@@ -467,7 +467,7 @@ function findCommonPrefix(strings: string[]): string {
   // Sweep through the first string, and compare the letter found in each
   // position with the letter at that position for all the strings. Stop when an
   // inequality occurs.
-  let result = [];
+  const result = [];
   for (let i = 0; i < minLength; i++) {
     const ch = matches[0].charAt(i);
 

@@ -195,7 +195,7 @@ const deduplicatedName = computed(() => {
 });
 
 const generatedName = computed(() => {
-  let nameList = [];
+  const nameList = [];
   if (filteringTags.value.length) {
     nameList.push(filteringTags.value.join(" "));
   } else {

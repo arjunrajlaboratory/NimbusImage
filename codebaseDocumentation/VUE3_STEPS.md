@@ -933,7 +933,7 @@ Upgraded vue-tsc and cleaned up all lint/prettier/unused-var issues to reach 0 e
 - [x] `vue-tsc` upgraded from 2.2.12 → 3.2.5 (0 errors)
 - [x] `pnpm tsc` now runs vue-tsc 3 under the hood, catching template-level type errors
 
-**ESLint config (`.eslintrc.cjs`):**
+**ESLint config (`.eslintrc.cjs`):** _(historical: `.eslintrc.cjs` has since been replaced by the ESLint 10 flat config `eslint.config.mjs`, which uses `pluginVue.configs["flat/essential"]` and keeps these choices; see `PACKAGE_UPDATES.md`)_
 - [x] `plugin:vue/essential` → `plugin:vue/vue3-essential` — removes Vue 2-only rules (`vue/no-v-model-argument`, `vue/no-v-for-template-key`, `vue/no-multiple-template-root`)
 - [x] Disabled `vue/multi-word-component-names` — view components like Home, Configuration, Project, Toolset, Snapshots use single-word names intentionally
 

@@ -247,7 +247,7 @@ async function fetchCollections() {
       ...item,
       _modelType: "upenn_collection" as const,
     }));
-  } catch (error) {
+  } catch {
     if (generation !== fetchGeneration) return;
     allCollections.value = [];
   } finally {

@@ -183,7 +183,7 @@ export async function importAnnotationsFromData(
           propertyStore.deleteProperty(propertyId),
         ),
       );
-    } catch (e) {
+    } catch {
       // Ignore cleanup errors so the original import error is re-thrown
     }
     throw error;

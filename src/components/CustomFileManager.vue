@@ -188,12 +188,12 @@ const selectedItemsOptionsMenu = ref(false);
 const rowOptionsMenu = ref<Record<string, boolean>>({});
 
 // Non-reactive internal state
-let chipsPerItemId: Record<string, IChipsPerItemId> = {};
+const chipsPerItemId: Record<string, IChipsPerItemId> = {};
 let pendingChips = 0;
 let lastPendingChip: Promise<any> = Promise.resolve();
-let computedChipsIds = new Set<string>();
-let batchQueueDatasetIds = new Set<string>();
-let batchQueueConfigurationIds = new Set<string>();
+const computedChipsIds = new Set<string>();
+const batchQueueDatasetIds = new Set<string>();
+const batchQueueConfigurationIds = new Set<string>();
 let batchTimer: number | null = null;
 
 // Computed

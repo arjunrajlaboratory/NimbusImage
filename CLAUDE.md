@@ -41,7 +41,7 @@ pnpm tsc
 # Linting
 pnpm lint
 pnpm lint:fix
-pnpm lint:ci  # CI mode with zero warnings
+pnpm lint:ci  # CI mode with zero warnings (CI also sets NODE_ENV=production, which enables no-console)
 
 # Testing
 pnpm test

@@ -328,7 +328,7 @@ export default class GirderAPI {
         },
       });
       return response.data;
-    } catch (error) {
+    } catch {
       logError("Failed to fetch user jobs");
       return [];
     }
@@ -338,7 +338,7 @@ export default class GirderAPI {
     try {
       const response = await this.client.get(`job/${jobId}`);
       return response.data;
-    } catch (error) {
+    } catch {
       logError(`Failed to fetch job info for job ${jobId}`);
       return null;
     }
@@ -1126,7 +1126,7 @@ export default class GirderAPI {
         }
       }
       return responses;
-    } catch (error) {
+    } catch {
       return null;
     }
   }
@@ -1153,7 +1153,7 @@ export default class GirderAPI {
         );
         responses.push(response);
       }
-    } catch (error) {
+    } catch {
       return null;
     }
 
@@ -1223,7 +1223,7 @@ export default class GirderAPI {
         },
       });
       return response.data;
-    } catch (error) {
+    } catch {
       logError("Failed to fetch user API keys");
       return [];
     }
@@ -1240,7 +1240,7 @@ export default class GirderAPI {
         used: response.data.size ?? 0,
         quota: response.data.quota?._currentFileSizeQuota ?? null,
       };
-    } catch (error) {
+    } catch {
       logError("Failed to fetch user storage quota");
       return null;
     }

@@ -1500,9 +1500,9 @@ function _setupMap(
   if (!mapElement) {
     return;
   }
-  let mapWidth = unrollW.value * someImage.sizeX;
-  let mapHeight = unrollH.value * someImage.sizeY;
-  let params = geojs.util.pixelCoordinateParams(
+  const mapWidth = unrollW.value * someImage.sizeX;
+  const mapHeight = unrollH.value * someImage.sizeY;
+  const params = geojs.util.pixelCoordinateParams(
     mapElement,
     someImage.sizeX,
     someImage.sizeY,
@@ -1529,7 +1529,8 @@ function _setupMap(
   params.layer.url = blankUrl;
   params.map.max! += 5;
 
-  let needReset = forceReset || (maps.value[mllidx] && !mapElement.firstChild);
+  const needReset =
+    forceReset || (maps.value[mllidx] && !mapElement.firstChild);
   if (needReset) {
     maps.value[mllidx]?.map.exit();
   }
@@ -1831,7 +1832,7 @@ function _setupTileLayers(
     const newMap = markRaw(map.createLayer("osm", mapentry.params.layer));
     newMap.node().css({ "mix-blend-mode": compositionMode.value });
     mapentry.imageLayers.push(newMap);
-    let layer = mapentry.imageLayers[mapentry.imageLayers.length - 1];
+    const layer = mapentry.imageLayers[mapentry.imageLayers.length - 1];
     if (mapentry.imageLayers.length & 1) {
       const index = (mapentry.imageLayers.length - 1) / 2;
       layer.node().css("filter", `url(#recolor-${index + baseLayerIndex})`);
