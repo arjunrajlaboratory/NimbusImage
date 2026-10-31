@@ -1,8 +1,12 @@
 """Settings for the MCP OAuth server, all under ``mcp_oauth.``.
 
 Set them as a site admin with ``PUT /system/setting``. While ``enabled`` is
-false every endpoint of this plugin answers 404.
+false every endpoint of this plugin answers 404. The plugin reads them from
+the database on every use (see ``_read``), so a change takes effect at once in
+every Girder process, without a restart.
 """
+import json
+import os
 import re
 from urllib.parse import urlsplit
 
@@ -145,15 +149,45 @@ def _validateEnabled(doc):
             % ' and '.join(problems), 'value')
 
 
+def _read(keys):
+    """The values in effect for ``keys``, in one query, never cached.
+
+    Not ``Setting().get``: production turns on Girder's settings cache, which
+    keeps a copy in each process with no expiry, so a change made in one
+    worker never reaches the others, and turning the plugin off would take a
+    restart of every Girder process. Environment overrides and defaults
+    apply as in ``Setting._get``.
+    """
+    stored = {doc['key']: doc['value'] for doc in Setting().find(
+        {'key': {'$in': list(keys)}}, fields=['key', 'value'])}
+    values = {}
+    for key in keys:
+        envKey = 'GIRDER_SETTING_' + key.replace('.', '_').upper()
+        if envKey in os.environ:
+            value = os.environ[envKey]
+            try:
+                value = json.loads(value)
+            except ValueError:
+                pass
+            values[key] = value
+        elif key in stored:
+            values[key] = stored[key]
+        else:
+            values[key] = Setting().getDefault(key)
+    return values
+
+
 def get(key):
-    return Setting().get(key)
+    return _read((key,))[key]
 
 
-def _problems():
+def _problems(values=None):
     """The settings whose values in effect are unusable or missing."""
+    if values is None:
+        values = _read(tuple(NORMALIZE))
     problems = []
     for key, normalize in NORMALIZE.items():
-        value = get(key)
+        value = values[key]
         try:
             usable = normalize(value) == value
         except ValidationException:
@@ -163,8 +197,16 @@ def _problems():
     return problems
 
 
-def enabled():
-    return get(ENABLED) is True and not _problems()
+def current():
+    """Every setting's value in effect, in one query: a request reads this
+    once and uses it throughout."""
+    return _read((ENABLED, *NORMALIZE))
+
+
+def enabled(values=None):
+    if values is None:
+        values = current()
+    return values[ENABLED] is True and not _problems(values)
 
 
 def cimdHosts():

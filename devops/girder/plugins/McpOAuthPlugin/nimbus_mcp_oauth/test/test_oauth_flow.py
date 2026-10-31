@@ -44,6 +44,43 @@ def testEverythingIs404WhileDisabled(server, user):
     assert _status(resp) == 404
 
 
+@pytest.mark.parametrize('turnOn', [False, True])
+def testSwitchTakesEffectThroughAWarmSettingsCache(enabled, monkeypatch,
+                                                   turnOn):
+    # Production caches settings in each Girder process with no expiry
+    # (core.cache.enabled), and a change invalidates only the process that
+    # made it. Another process's change is a database write this process's
+    # cache never hears about; on and off must both take effect at once.
+    from dogpile.cache.backends.memory import MemoryBackend
+    from girder.utility._cache import cache
+    monkeypatch.setattr(cache, 'backend', MemoryBackend({}))
+    _, challenge = pkcePair()
+
+    def authorizeStatus():
+        return _status(enabled.request(
+            '/mcp_oauth/authorize', params=authorizeParams(challenge),
+            isJson=False))
+
+    if turnOn:
+        Setting().set(settings.ENABLED, False)
+    for key in (settings.ENABLED, *settings.NORMALIZE):
+        Setting().get(key)  # warm this process's cache
+    assert authorizeStatus() == (404 if turnOn else 302)
+    Setting().update({'key': settings.ENABLED},
+                     {'$set': {'value': turnOn}})
+    assert Setting().get(settings.ENABLED) is not turnOn  # still stale
+    assert settings.enabled() is turnOn
+    assert authorizeStatus() == (302 if turnOn else 404)
+    if turnOn:
+        # Values other than the switch are read fresh too: a rotated
+        # secret retires the old one at once.
+        Setting().get(settings.INTROSPECTION_SECRET)
+        Setting().update({'key': settings.INTROSPECTION_SECRET},
+                         {'$set': {'value': 'r' * 40}})
+        assert _status(introspect(enabled, 'nio_x')) == 404
+        assert _status(introspect(enabled, 'nio_x', 'r' * 40)) == 200
+
+
 def testMetadataAtServerRoot(enabled):
     resp = enabled.request(
         '/oauth-authorization-server', prefix='/.well-known',
@@ -779,7 +816,6 @@ def testUnvalidatedBadSettingsActDisabled(
     import json
     envKey = 'GIRDER_SETTING_' + key.replace('.', '_').upper()
     monkeypatch.setenv(envKey, json.dumps(value))
-    Setting()._get.invalidate(Setting(), key)
     try:
         assert settings.get(key) == value
         assert settings.enabled() is False
@@ -789,7 +825,6 @@ def testUnvalidatedBadSettingsActDisabled(
         assert _status(resp) == 404
     finally:
         monkeypatch.undo()
-        Setting()._get.invalidate(Setting(), key)
 
 
 def testEquivalentResourceSpellingsAreAccepted(server):

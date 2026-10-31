@@ -150,15 +150,9 @@ def testEnvironmentCimdHostsNeverMatchASubstring(server, monkeypatch,
                                                  envValue):
     # An environment override skips the validator, and a bare string would
     # make "e.ai" or "ai" match by substring; it trusts no host instead.
-    from girder.models.setting import Setting
-    from nimbus_mcp_oauth import settings
     monkeypatch.setenv('GIRDER_SETTING_MCP_OAUTH_CIMD_HOSTS', envValue)
-    Setting()._get.invalidate(Setting(), settings.CIMD_HOSTS)
-    try:
-        assert not clients._isAllowedDocumentUrl('https://e.ai/client.json')
-        assert not clients._isAllowedDocumentUrl('https://ai/client.json')
-    finally:
-        monkeypatch.undo()
-        Setting()._get.invalidate(Setting(), settings.CIMD_HOSTS)
+    assert not clients._isAllowedDocumentUrl('https://e.ai/client.json')
+    assert not clients._isAllowedDocumentUrl('https://ai/client.json')
+    monkeypatch.undo()
     assert clients._isAllowedDocumentUrl(
         'https://claude.ai/oauth/mcp-oauth-client-metadata')
