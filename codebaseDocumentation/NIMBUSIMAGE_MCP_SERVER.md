@@ -399,7 +399,18 @@ when disabled.
 | Login on the consent page | Save the in-app return path in `sessionStorage`, send the user to the root page's login, return after login | Verified live on app.nimbusimage.com: Outseta returns to the root with `?access_token`, `sessionStorage` survives the round trip, and the session survives a reload. No OutsetaComponents change. |
 
 **Setting:** `mcp_oauth.enabled`, default **false**. When false, every endpoint (and the
-metadata document) returns 404. This matters because merging into NimbusImage master
+metadata document) returns 404, except that the `@access.user` endpoints (`request/:id`,
+`grant`) refuse an anonymous caller with 401 before the plugin's on/off check runs. So an
+anonymous `GET grant` cannot tell on from off; probe `GET authorize` (404 off, 400 on).
+
+**Production caches settings per process (2026-10-31).** Prod sets
+`GIRDER_SETTING_CORE_CACHE_ENABLED=true` with an empty `core.cache.config`. Each Girder
+uvicorn worker (9 per instance) then caches every setting it reads in memory, with no
+expiry. A settings change, whether by `PUT system/setting` or `Setting().set()`, reaches
+only the process that made it. Right after enabling, 60 of 60 local `authorize` requests
+still returned 404. **Every `mcp_oauth.*` change in prod needs `docker restart girder` on
+every serving instance.** That is about 20 s of API downtime with one instance, or a
+rolling restart with two or more. Warm spares read the database fresh when they start. This matters because merging into NimbusImage master
 deploys to production on the next autoscaling churn (see
 [Phase 6](#phase-6-production-rollout)). Other settings: `mcp_oauth.issuer` (the bare
 origin, equal to the MCP server's `NI_MCP_ISSUER_URL`), `mcp_oauth.api_url` (public Girder
@@ -498,7 +509,10 @@ another host.
   workers and instances). Authorize, token and revoke are keyed on `remote.ip`, which
   Girder's CherryPy proxy tool takes from the first `X-Forwarded-For` entry; HAProxy
   overwrites that header with the real client address (CytoPixel/AWSDeploy#128).
-  Consent is keyed per user.
+  Consent is keyed per user. **Before #128's HAProxy is live, nothing sets
+  `X-Forwarded-For`**, so Girder sees every external client as the HAProxy address
+  (`172.16.0.4`) and the per-address limits are shared by all users (observed in prod,
+  2026-10-31). Do not enable the plugin for real users until #128's HAProxy is deployed.
 
 ---
 
@@ -1009,7 +1023,37 @@ Order matters, because Girder changes deploy themselves and HAProxy changes do n
    `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`, which avoids the
    line breaks of a long `openssl rand -base64` and the `$` compose would interpolate)
    first, then `mcp_oauth.enabled` (it refuses to turn on
-   without an issuer, resources and introspection secret, or with any setting invalid). Team and Enterprise connectors start working.
+   without an issuer, resources and introspection secret, or with any setting invalid).
+   Then restart Girder on every serving instance (settings are cached per process; see
+   [6.3](#63-girder-oauth-plugin)), and check `GET authorize` returns 400, not 404, on each.
+   Team and Enterprise connectors start working.
+
+**Production log (2026-10-31).**
+
+- **Step 1:** NimbusImage master `f06db96f` was rolled onto Girder (spares included) and
+  the HAProxy was replaced from AWSDeploy master, **without** #128. The plugin is loaded
+  and off, the consent route ships in the frontend, and the share-link and login checks
+  passed.
+- **Pre-test of step 4 ("phase 2"):** the prod settings were set to their final values:
+  issuer `https://app.nimbusimage.com`, `api_url` `…/girder/api/v1`, `frontend_url` the
+  app, resources `["https://app.nimbusimage.com/mcp"]`, and the secret, which is also
+  stored as `TF_VAR_MCP_INTROSPECTION_SECRET` in the AWSDeploy credentials. With no admin
+  login, they were written in-container with `Setting().set()`; a standalone process must
+  first `import nimbus_mcp_oauth.settings`, or every key is rejected as invalid. Girder
+  was restarted after enabling.
+  - A loopback test client (built-in client, PKCE, `127.0.0.1` callback) passed every check:
+    approve, code exchange, introspect, Girder session, grant listed, refresh rotation,
+    and revoke ending both tokens and the session.
+  - Deny returned `access_denied` with `state` and `iss`.
+  - Afterward the plugin goes back off, with a restart, and the other settings stay in
+    place. Introspection was reachable from outside only because #128's VPC-only deny
+    was not yet deployed. After #128, run the test without the secret, or from inside
+    the VPC.
+- **Steps 2 to 4 still need:** #128's HAProxy (routes, `X-Forwarded-For`, and the
+  introspection deny) **before** `enabled` is set for real. The metadata is served at
+  Girder's **server root** (`/.well-known/oauth-authorization-server`, which #128 routes
+  to the Girder backend), not under `/api/v1`. A 404 at `/api/v1/.well-known/...` is
+  expected.
 
 Getting API-key MCP live before the OAuth plugin and consent page exist would cost a second
 HAProxy replace, the riskiest operation in this plan.
@@ -1018,7 +1062,7 @@ HAProxy replace, the riskiest operation in this plan.
 
 | What | How | Speed |
 |---|---|---|
-| OAuth | Turn the setting off, revoke grants | Immediate |
+| OAuth | Turn the setting off and restart Girder on every serving instance (settings are cached per process), then revoke grants | About 20 s of API downtime per instance, or a rolling restart |
 | MCP service | Stop the instance, or pull the HAProxy route | Fast (instance); slow (route) |
 | HAProxy rules or consent page | Another replace from the previous commit | Slow, same build risk |
 
