@@ -128,6 +128,18 @@ class TestNimbusClientDataset:
 
         ds = client.dataset(name="My Dataset")
         assert ds.id == "folder_123"
+        # The search returns 10 matches by default; an exact name behind
+        # 10 longer prefix matches must still be found.
+        assert mock_gc.get.call_args.kwargs["parameters"]["limit"] == 0
+
+    def test_list_projects_requests_every_page(self, mock_gc):
+        mock_gc.get.return_value = []
+        client = NimbusClient.__new__(NimbusClient)
+        client._gc = mock_gc
+        client.list_projects()
+        mock_gc.get.assert_called_once_with(
+            "project", parameters={"limit": 0}
+        )
 
     def test_dataset_by_name_not_found(self, mock_gc):
         mock_gc.get.return_value = []
@@ -239,6 +251,27 @@ class TestAccessLevel:
         }}}
         [dataset] = _bare_client(mock_gc).list_datasets()
         assert dataset["_accessLevel"] == 2
+        # Current servers send the level, so no extra user/me request.
+        assert all(c.args[0] != "user/me" for c in mock_gc.get.call_args_list)
+
+    def test_an_old_server_with_a_data_only_key_reads_no_grants(
+        self, mock_gc,
+    ):
+        """An older server returns raw folders (no _accessLevel), and a
+        data-only key reads user/me as null: no grants, one request."""
+        mock_gc.get.side_effect = lambda path, parameters=None, **kw: (
+            [{"_id": "v1", "datasetId": "f1"},
+             {"_id": "v2", "datasetId": "f2"}]
+            if path == "dataset_view" else None)
+        mock_gc.post.return_value = {"folder": {
+            "f1": {"_id": "f1", "name": "A", "access": {"users": [
+                {"id": "someone", "level": 2}]}},
+            "f2": {"_id": "f2", "name": "B", "access": {}},
+        }}
+        datasets = _bare_client(mock_gc).list_datasets()
+        assert [d["_accessLevel"] for d in datasets] == [-1, -1]
+        assert [c.args[0] for c in mock_gc.get.call_args_list].count(
+            "user/me") == 1
 
 
 class TestNimbusClientListDatasets:
@@ -266,6 +299,21 @@ class TestNimbusClientListDatasets:
         mock_gc.post.assert_called_once_with(
             "resource/batch", json={"folder": ["f2", "f1"]}
         )
+
+    def test_list_datasets_chunks_under_the_servers_id_cap(self, mock_gc):
+        """resource/batch refuses more than MAX_BATCH_RESOURCE_IDS ids
+        (10,000); a user with more datasets (a site admin) still lists."""
+        from nimbusimage import client as client_module
+        n = client_module._BATCH_RESOURCE_IDS + 1
+        _serve(mock_gc, [{"_id": f"v{i}", "datasetId": f"f{i}"}
+                         for i in range(n)])
+        mock_gc.post.side_effect = lambda path, json: {"folder": {
+            did: {"_id": did, "name": did, "_accessLevel": 0}
+            for did in json["folder"]}}
+        datasets = _bare_client(mock_gc).list_datasets()
+        assert len(datasets) == n
+        assert [len(c.kwargs["json"]["folder"])
+                for c in mock_gc.post.call_args_list] == [n - 1, 1]
 
     def test_list_datasets_keeps_only_the_public_folder_fields(
         self, mock_gc,
@@ -379,3 +427,75 @@ class TestJobLookup:
             )
             with pytest.raises(PermissionError, match="List and read jobs"):
                 client.job("job1")
+
+
+_A, _B = "a" * 24, "b" * 24
+
+
+class TestCountAnnotations:
+    def _client(self, mock_gc):
+        client = NimbusClient.__new__(NimbusClient)
+        client._gc = mock_gc
+        return client
+
+    def test_one_request_with_filters(self, mock_gc):
+        mock_gc.post.return_value = {"counts": [
+            {"datasetId": _A, "count": 3},
+            {"datasetId": _B, "error": "not found or not readable"},
+        ]}
+        rows = self._client(mock_gc).count_annotations(
+            [_A, _B, _A.upper()], shape="point", tags=["spot"]
+        )
+        mock_gc.post.assert_called_once_with(
+            "upenn_annotation/counts",
+            json={"datasetIds": [_A, _B], "shape": "point",
+                  "tags": ["spot"]},
+        )
+        assert rows[1]["error"]
+
+    def test_batches_past_the_server_cap(self, mock_gc):
+        from nimbusimage import client as client_module
+        ids = [f"{i:024x}" for i in range(client_module._COUNT_BATCH + 1)]
+        mock_gc.post.side_effect = lambda url, json: {"counts": [
+            {"datasetId": i, "count": 1} for i in json["datasetIds"]
+        ]}
+        rows = self._client(mock_gc).count_annotations(ids)
+        assert [r["datasetId"] for r in rows] == ids
+        assert mock_gc.post.call_count == 2
+
+    def test_tags_must_be_a_list(self, mock_gc):
+        with pytest.raises(TypeError):
+            self._client(mock_gc).count_annotations([_A], tags="spot")
+
+    def test_a_malformed_id_is_refused_before_any_request(self, mock_gc):
+        """The server refuses a whole batch over one malformed id; checking
+        first means no earlier batch's rows are thrown away."""
+        from nimbusimage import client as client_module
+        ids = [f"{i:024x}" for i in range(client_module._COUNT_BATCH)]
+        with pytest.raises(ValueError, match="'typo'"):
+            self._client(mock_gc).count_annotations(ids + ["typo"])
+        mock_gc.post.assert_not_called()
+
+    def test_case_variants_count_once_across_batches(self, mock_gc):
+        from nimbusimage import client as client_module
+        ids = [f"{i:024x}" for i in range(client_module._COUNT_BATCH)]
+        mock_gc.post.side_effect = lambda url, json: {"counts": [
+            {"datasetId": i, "count": 1} for i in json["datasetIds"]
+        ]}
+        rows = self._client(mock_gc).count_annotations(
+            ids + [ids[10].upper()])  # "...0A": has a letter
+        assert [r["datasetId"] for r in rows] == ids
+        assert mock_gc.post.call_count == 1
+
+
+def test_count_annotations_refuses_a_bare_dataset_id():
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from nimbusimage.client import NimbusClient
+    client = NimbusClient.__new__(NimbusClient)
+    client._gc = MagicMock()
+    with pytest.raises(TypeError, match="dataset_ids"):
+        client.count_annotations("6512abcdef0123456789abcd")
+    client._gc.post.assert_not_called()

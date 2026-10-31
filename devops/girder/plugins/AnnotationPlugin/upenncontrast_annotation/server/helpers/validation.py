@@ -30,6 +30,14 @@ from . import analysis
 # few dozen properties at most.
 MAX_UNCOMPUTED_PROPERTIES = 10_000
 MAX_ANNOTATION_IDS = 100_000_000
+# Datasets per batch-count request (POST upenn_annotation/counts): one
+# indexed aggregation over all of them, so this bounds a public request's
+# work. Comparing a project's or a search's datasets is tens, not hundreds.
+MAX_COUNT_DATASETS = 100
+# Tag filters on the public counts endpoint: each tag is part of a $all
+# clause, so cap how many and how long (real filters are a few tags).
+MAX_FILTER_TAGS = 100
+MAX_TAG_LENGTH = 1000
 
 # Analysis-gating request ceilings (SERVER_GATING.md "Limits"): abuse guards
 # on the public gate-resolution endpoint, far above real use (a panel holds a
@@ -155,6 +163,49 @@ def requireObjectId(value, field="id"):
         return ObjectId(value)
     except (InvalidId, TypeError):
         raise RestException("%s is not a valid id" % field, code=400)
+
+
+def validateCountsRequest(body, shapes):
+    """Parse a batch-count body {datasetIds, shape?, tags?} into
+    (datasetIds, shape, tags). datasetIds keeps request order, one entry
+    per distinct id (two spellings of one id, e.g. upper and lower case,
+    count once), as (requested string, ObjectId) pairs: the reply echoes
+    the first string the caller sent for it. A malformed request (not an
+    object, ids not a list of valid id strings, over the cap, a shape not
+    in `shapes`, bad tags) raises RestException(400)."""
+    body = requireObjectBody(body)
+    rawIds = requireList(body.get("datasetIds"), "datasetIds")
+    requireCountWithin(len(rawIds), MAX_COUNT_DATASETS, "datasetIds")
+    # Strings only: ObjectId(None) would make a new id, not refuse it.
+    if not all(isinstance(value, str) for value in rawIds):
+        raise RestException("datasetIds must be a list of strings",
+                            code=400)
+    byId = {}
+    for value in rawIds:
+        try:
+            byId.setdefault(ObjectId(value), value)
+        except InvalidId:
+            raise RestException(
+                "datasetIds: %r is not a valid id" % value[:64], code=400
+            )
+    datasetIds = [(value, objectId) for objectId, value in byId.items()]
+    shape = body.get("shape")
+    if shape not in (None, "", *shapes):
+        raise RestException(
+            "shape must be one of: %s" % ", ".join(shapes), code=400
+        )
+    # Like GET count's tags: absent means no filter, anything but a list
+    # of strings is refused (not read as "no filter").
+    tags = body.get("tags")
+    tags = [] if tags is None else requireList(tags, "tags")
+    requireCountWithin(len(tags), MAX_FILTER_TAGS, "tags")
+    if not all(isinstance(tag, str) and len(tag) <= MAX_TAG_LENGTH
+               for tag in tags):
+        raise RestException(
+            "tags must be a list of strings of at most %d characters"
+            % MAX_TAG_LENGTH, code=400,
+        )
+    return datasetIds, shape or None, tags
 
 
 def requireInt(value, field):

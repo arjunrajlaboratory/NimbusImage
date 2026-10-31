@@ -45,7 +45,10 @@ _MISMATCH_MESSAGES = {
 
 
 def check_worker_role(
-    gc: girder_client.GirderClient, image: str, required_label: str
+    gc: girder_client.GirderClient,
+    image: str,
+    required_label: str,
+    labels: dict | None = None,
 ) -> None:
     """Raise ``ValueError`` if ``image`` is known to have the wrong role.
 
@@ -68,19 +71,23 @@ def check_worker_role(
         required_label: ``ANNOTATION_ROLE_LABEL`` or
             ``PROPERTY_ROLE_LABEL`` — the role the calling accessor
             requires.
+        labels: The image's labels, when the caller already has them
+            from the listing; skips listing the workers again (a slow
+            Docker listing on the server).
 
     Raises:
         ValueError: If the image carries the opposite role label and
             not the required one. The message names the correct
             accessor to use.
     """
-    try:
-        workers = gc.get("worker_interface/available")
-    except girder_client.HttpError:
-        return
-    if not isinstance(workers, dict):
-        return
-    labels = workers.get(image)
+    if labels is None:
+        try:
+            workers = gc.get("worker_interface/available")
+        except girder_client.HttpError:
+            return
+        if not isinstance(workers, dict):
+            return
+        labels = workers.get(image)
     if not isinstance(labels, dict) or required_label in labels:
         return
     wrong_label = (
