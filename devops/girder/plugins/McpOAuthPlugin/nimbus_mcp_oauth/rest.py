@@ -30,8 +30,11 @@ _consentLimit = SlidingWindowRateLimiter(30, 60)
 
 
 def _requireEnabled():
-    if not settings.enabled():
+    """The settings in effect, or a 404 while the plugin is off."""
+    values = settings.current()
+    if not settings.enabled(values):
         raise RestException('Not found.', code=404)
+    return values
 
 
 def _clientAddress():
@@ -102,7 +105,7 @@ class McpOAuthResource(Resource):
         .param('scope', 'Requested scope.', required=False)
     )
     def authorize(self, params):
-        _requireEnabled()
+        values = _requireEnabled()
         _limit(_authorizeLimit, _clientAddress())
         try:
             _, _, requestId = oauth.startAuthorization(params)
@@ -113,8 +116,7 @@ class McpOAuthResource(Resource):
         except OAuthError as err:
             # The client or redirect URI is not trusted: never redirect.
             raise RestException(err.description, code=400)
-        frontend = settings.get(settings.FRONTEND_URL) or \
-            settings.get(settings.ISSUER)
+        frontend = values[settings.FRONTEND_URL] or values[settings.ISSUER]
         raise cherrypy.HTTPRedirect(
             f'{frontend}/#/oauth/consent?request={requestId}', 302)
 
@@ -203,8 +205,7 @@ class McpOAuthResource(Resource):
     @access.public
     @describeRoute(None)
     def introspect(self, params):
-        _requireEnabled()
-        expected = settings.get(settings.INTROSPECTION_SECRET)
+        expected = _requireEnabled()[settings.INTROSPECTION_SECRET]
         given = cherrypy.request.headers.get(INTROSPECTION_HEADER, '')
         if not expected or not secrets.compare_digest(
                 given.encode(), expected.encode()):
