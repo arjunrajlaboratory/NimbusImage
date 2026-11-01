@@ -86,6 +86,7 @@ vi.mock("@/utils/date", () => ({
 
 vi.mock("@/utils/log", () => ({
   logError: vi.fn(),
+  logWarning: vi.fn(),
 }));
 
 vi.mock("@/utils/parsing", () => ({

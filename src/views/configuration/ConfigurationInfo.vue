@@ -243,6 +243,7 @@ import SharingStatusDisplay from "@/components/SharingStatusDisplay.vue";
 import SharingStatusIcon from "@/components/SharingStatusIcon.vue";
 import CopyLinkButton from "@/components/CopyLinkButton.vue";
 import { fetchSharingInfo } from "@/utils/sharingInfo";
+import { logWarning } from "@/utils/log";
 
 // Suppress unused import warnings — auto-registered in <script setup>
 void ScaleSettings;
@@ -446,8 +447,12 @@ async function checkDatasetsCompatibility() {
           };
         }
       }
-    } catch {
-      // Silently skip datasets that fail to load
+    } catch (error) {
+      // Skip a dataset that fails to load so the rest are still checked.
+      logWarning(
+        `Failed to check compatibility of dataset ${datasetView.datasetId}:`,
+        error,
+      );
     }
   }
 }

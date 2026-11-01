@@ -49,6 +49,7 @@ vi.mock("@/utils/date", () => ({
 import { routeProvider, routerProvider } from "@/test/helpers";
 import CollectionList from "./CollectionList.vue";
 import store from "@/store";
+import { logError } from "@/utils/log";
 
 const mockRouter = { push: vi.fn() };
 
@@ -405,7 +406,7 @@ describe("CollectionList", () => {
     expect(vm.computedChipsIds.has("c1")).toBe(true);
   });
 
-  it("fetchCollections retries without folderId on folder error", async () => {
+  it("fetchCollections reports a failed folder query instead of retrying unscoped", async () => {
     (store as any).folderLocation = { _id: "folder1", name: "F" };
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
@@ -413,14 +414,38 @@ describe("CollectionList", () => {
     await nextTick();
     await nextTick();
     mockClientGet.mockReset();
-    mockClientGet
-      .mockRejectedValueOnce(new Error("Folder not accessible"))
-      .mockResolvedValueOnce({
-        data: [{ _id: "c1", name: "Fallback Collection" }],
-      });
+    vi.mocked(logError).mockClear();
+    const failure = new Error("Folder not accessible");
+    mockClientGet.mockRejectedValueOnce(failure);
     await vm.fetchCollections();
-    expect(mockClientGet).toHaveBeenCalledTimes(2);
-    expect(vm.collections).toHaveLength(1);
-    expect(vm.collections[0].name).toBe("Fallback Collection");
+    await nextTick();
+
+    expect(mockClientGet).toHaveBeenCalledTimes(1);
+    expect(logError).toHaveBeenCalledWith(
+      "Failed to fetch collections:",
+      failure,
+    );
+    expect(vm.collections).toEqual([]);
+    expect(vm.loadFailed).toBe(true);
+    expect(wrapper.text()).toContain("Couldn't load collections");
+    expect(wrapper.text()).not.toContain("No collections found");
+  });
+
+  it("fetchCollections clears the failure state after a successful reload", async () => {
+    (store as any).folderLocation = { _id: "folder1", name: "F" };
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    await nextTick();
+    await nextTick();
+    mockClientGet.mockRejectedValueOnce(new Error("Network error"));
+    await vm.fetchCollections();
+    expect(vm.loadFailed).toBe(true);
+
+    mockClientGet.mockResolvedValueOnce({ data: [] });
+    await vm.fetchCollections();
+    await nextTick();
+    expect(vm.loadFailed).toBe(false);
+    expect(wrapper.text()).toContain("No collections found");
+    expect(wrapper.text()).not.toContain("Couldn't load collections");
   });
 });

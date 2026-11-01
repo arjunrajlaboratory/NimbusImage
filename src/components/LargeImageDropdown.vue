@@ -169,8 +169,8 @@ let copyResetTimeout: ReturnType<typeof setTimeout> | null = null;
 async function copyMetaText(image: { _id: string; metaText: string }) {
   try {
     await navigator.clipboard.writeText(image.metaText);
-  } catch {
-    logError("LargeImageDropdown", "Failed to copy metadata to clipboard");
+  } catch (error) {
+    logError("Failed to copy metadata to clipboard:", error);
     return;
   }
   copiedImageId.value = image._id;

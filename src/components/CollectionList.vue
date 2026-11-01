@@ -38,7 +38,20 @@
       <v-progress-linear v-if="loading" indeterminate />
 
       <div
-        v-if="!loading && filteredCollections.length === 0"
+        v-if="!loading && loadFailed"
+        class="text-center pa-4 collection-list-error"
+      >
+        <v-icon size="64" color="error">mdi-alert-circle-outline</v-icon>
+        <div class="text-body-1 font-weight-medium text-medium-emphasis mt-2">
+          Couldn't load collections
+        </div>
+        <div class="text-body-2 text-medium-emphasis">
+          Reload the page to try again.
+        </div>
+      </div>
+
+      <div
+        v-else-if="!loading && filteredCollections.length === 0"
         class="text-center pa-4"
       >
         <v-icon size="64" color="secondary">mdi-file-tree</v-icon>
@@ -114,6 +127,9 @@ const router = useRouter();
 
 const collections = ref<IUPennCollection[]>([]);
 const loading = ref(true);
+// Set when the last fetch failed, so the list can say so instead of
+// presenting the failure as an empty folder.
+const loadFailed = ref(false);
 const searchQuery = ref("");
 
 const chipsPerItemId = ref<{ [itemId: string]: IChipsPerItemId }>({});
@@ -165,6 +181,7 @@ const filteredCollections = computed(() => {
 
 async function fetchCollections() {
   loading.value = true;
+  loadFailed.value = false;
   try {
     const currentFolder = store.folderLocation;
     let folderId = null;
@@ -182,29 +199,14 @@ async function fetchCollections() {
       return;
     }
 
-    let response;
-    try {
-      response = await store.api.client.get("upenn_collection", {
-        params: {
-          folderId: folderId,
-          limit: 0,
-          sort: "updated",
-          sortdir: -1,
-        },
-      });
-    } catch {
-      try {
-        response = await store.api.client.get("upenn_collection", {
-          params: {
-            limit: 0,
-            sort: "updated",
-            sortdir: -1,
-          },
-        });
-      } catch (noFolderError) {
-        throw noFolderError;
-      }
-    }
+    const response = await store.api.client.get("upenn_collection", {
+      params: {
+        folderId: folderId,
+        limit: 0,
+        sort: "updated",
+        sortdir: -1,
+      },
+    });
 
     collections.value = response.data.map((item: any) => ({
       ...item,
@@ -213,6 +215,7 @@ async function fetchCollections() {
   } catch (error) {
     logError("Failed to fetch collections:", error);
     collections.value = [];
+    loadFailed.value = true;
   } finally {
     loading.value = false;
   }
@@ -461,6 +464,7 @@ onMounted(async () => {
 defineExpose({
   collections,
   loading,
+  loadFailed,
   searchQuery,
   chipsPerItemId,
   debouncedChipsPerItemId,
