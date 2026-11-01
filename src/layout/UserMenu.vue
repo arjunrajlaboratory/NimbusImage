@@ -65,7 +65,7 @@
         </v-btn>
       </template>
       <v-card>
-        <user-profile-settings />
+        <user-profile-settings :visible="userMenu" />
       </v-card>
     </v-menu>
   </div>

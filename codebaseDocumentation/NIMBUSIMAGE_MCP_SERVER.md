@@ -444,7 +444,7 @@ or mixed-case hosts in an environment override).
 | `POST token` | Public, form-encoded, flood cap per address | `authorization_code` (PKCE verifier, same client, same redirect URI, `resource` if sent) and `refresh_token` (rotation; reuse or another client revokes the connection). OAuth-shaped errors, including 429. |
 | `POST revoke` | Public, same cap as `token` | RFC 7009; either token ends the connection. OAuth-shaped errors, including 429. |
 | `POST introspect` | Shared secret header (`X-Mcp-Introspection-Secret`), else 404; hidden from the API docs | For the MCP service: active, user, client, scope, resource, expiry, and the Girder session token to act with |
-| `GET grant`, `DELETE grant/:id` | User | Your connected clients; disconnect (UI later) |
+| `GET grant`, `DELETE grant/:id` | User | Your connected clients; disconnect. Shown in the profile menu's **Connected apps** section (`ConnectedAppsSection.vue`), which is hidden while the plugin is off (404) and in share-link sessions. `lastUsed` moves only on sign-in and refresh, so it can lag by up to one access-token lifetime (8 h) |
 
 `token`, `revoke` and `introspect` are kept out of Girder's audit log, which records every
 parameter: `@disableAuditLog` on each handler, plus a filter on the audit logger (installed in
@@ -1347,6 +1347,19 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
       *"testSecretsAreStoredHashed"*, *"testSecretsStayOutOfTheAuditLog"*
 - [x] Users see and disconnect only their own connections.
       *"testUsersSeeAndRevokeOnlyTheirOwnConnections"*
+- [x] The profile menu's Connected apps section loads on each open (not on mount), hides
+      while the plugin is off (404), shows a failed load as an error rather than "No
+      connected apps", treats a disconnect that answers 404 as done, and drops a stale load.
+      *"hides the section when the OAuth plugin is switched off (404)"*,
+      *"shows a failed load as an error, not as an empty list"*,
+      *"drops a grant already gone (404) instead of reporting a failure"*,
+      *"ignores a stale load that settles after a newer one"*,
+      *"does not load while the menu is closed, and reloads on each open"*
+- [x] A share-link session (the hidden read-only user, which the menu stays mounted
+      through) shows no Connected apps section and never shows the previous user's
+      connections. *"shows nothing and loads nothing in a share-link session"*,
+      *"drops the previous user's apps when the session switches to a share link"*,
+      *"reloads for the new user when the session switches with the menu open"*
 - [x] Codes, verifiers and tokens are refused in the query string (the access log keeps
       it), without spending them. *"testCredentialsInTheQueryStringAreRefused"*
 - [x] A second device's sign-in (same client id) does not end the first device's

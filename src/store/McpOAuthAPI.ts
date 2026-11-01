@@ -11,9 +11,20 @@ export interface IMcpOAuthRequest {
   scope: string;
 }
 
-/** The consent half of the MCP OAuth flow (nimbus_mcp_oauth plugin, see
- * NIMBUSIMAGE_MCP_SERVER.md §6.3). Approve and deny return the URL the
- * browser goes to next: the client's callback with a code or an error. */
+/** A client the user has connected (a grant), as the profile lists it. */
+export interface IMcpOAuthGrant {
+  id: string;
+  clientName: string;
+  clientId: string;
+  redirectHost: string;
+  created: string;
+  lastUsed: string;
+}
+
+/** The user's side of the MCP OAuth flow (nimbus_mcp_oauth plugin, see
+ * NIMBUSIMAGE_MCP_SERVER.md §6.3): consent, and the connected clients.
+ * Approve and deny return the URL the browser goes to next: the client's
+ * callback with a code or an error. */
 export default class McpOAuthAPI {
   private readonly client: RestClientInstance;
 
@@ -40,5 +51,17 @@ export default class McpOAuthAPI {
       `mcp_oauth/request/${encodeURIComponent(requestId)}/deny`,
     );
     return response.data.redirect as string;
+  }
+
+  /** The user's connected clients. Rejects with a 404 while the plugin is
+   * switched off. */
+  async listGrants(): Promise<IMcpOAuthGrant[]> {
+    const response = await this.client.get("mcp_oauth/grant");
+    return response.data as IMcpOAuthGrant[];
+  }
+
+  /** Disconnects a client: its tokens stop working at once. */
+  async deleteGrant(grantId: string): Promise<void> {
+    await this.client.delete(`mcp_oauth/grant/${encodeURIComponent(grantId)}`);
   }
 }
