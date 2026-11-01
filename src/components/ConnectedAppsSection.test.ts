@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { flushPromises, mount } from "@vue/test-utils";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
+import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { AxiosError, AxiosHeaders } from "axios";
 import ConnectedAppsSection from "./ConnectedAppsSection.vue";
 
@@ -22,6 +22,10 @@ vi.mock("@/store", async () => {
   return mockStore;
 });
 vi.mock("@/utils/log", () => ({ logError: vi.fn() }));
+
+// Every wrapper watches the shared reactive user; one left mounted would
+// load on a later test's user switch and use up that test's mock responses.
+enableAutoUnmount(afterEach);
 
 function httpError(status: number) {
   return new AxiosError("failed", "ERR", undefined, undefined, {
@@ -194,5 +198,16 @@ describe("ConnectedAppsSection", () => {
     await flushPromises();
     expect(wrapper.text()).toBe("");
     expect(api.listGrants).toHaveBeenCalledTimes(1);
+  });
+
+  it("reloads for the new user when the session switches with the menu open", async () => {
+    api.listGrants
+      .mockResolvedValueOnce([grant("g1", "First user's app")])
+      .mockResolvedValueOnce([grant("g2", "Second user's app")]);
+    const wrapper = await mountSection();
+    mockStore.default.girderUser = { _id: "u2" };
+    await flushPromises();
+    expect(wrapper.text()).toContain("Second user's app");
+    expect(wrapper.text()).not.toContain("First user's app");
   });
 });

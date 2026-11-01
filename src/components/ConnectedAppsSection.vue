@@ -9,7 +9,7 @@
       Disconnecting one stops it at once.
     </p>
     <p v-if="status === 'error'" class="text-caption text-error">
-      {{ errorMessage }}
+      Could not load your connected apps.
     </p>
     <template v-else>
       <p v-if="grants.length === 0" class="text-caption">No connected apps.</p>
@@ -62,7 +62,6 @@ const props = defineProps<{ visible: boolean }>();
 // section does not blink each time the menu opens.
 const status = ref<"idle" | "off" | "ready" | "error">("idle");
 const grants = ref<IMcpOAuthGrant[]>([]);
-const errorMessage = "Could not load your connected apps.";
 const disconnectError = ref("");
 const disconnecting = reactive(new Set<string>());
 let loadToken = 0;
@@ -78,6 +77,7 @@ watch(userId, () => {
   status.value = "idle";
   grants.value = [];
   disconnectError.value = "";
+  if (props.visible) load();
 });
 
 async function load() {

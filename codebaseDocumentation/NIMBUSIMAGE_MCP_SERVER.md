@@ -1358,7 +1358,8 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
 - [x] A share-link session (the hidden read-only user, which the menu stays mounted
       through) shows no Connected apps section and never shows the previous user's
       connections. *"shows nothing and loads nothing in a share-link session"*,
-      *"drops the previous user's apps when the session switches to a share link"*
+      *"drops the previous user's apps when the session switches to a share link"*,
+      *"reloads for the new user when the session switches with the menu open"*
 - [x] Codes, verifiers and tokens are refused in the query string (the access log keeps
       it), without spending them. *"testCredentialsInTheQueryStringAreRefused"*
 - [x] A second device's sign-in (same client id) does not end the first device's
