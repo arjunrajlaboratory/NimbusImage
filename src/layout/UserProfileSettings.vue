@@ -14,6 +14,7 @@
           <p>{{ girderUrlFromApiRoot(store.girderRest.apiRoot) }}</p>
         </div>
         <storage-usage-section />
+        <connected-apps-section :visible="visible" />
         <v-btn variant="flat" color="error" size="small" @click="logout">
           Logout
         </v-btn>
@@ -26,6 +27,10 @@
 import { useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 import StorageUsageSection from "@/components/StorageUsageSection.vue";
+import ConnectedAppsSection from "@/components/ConnectedAppsSection.vue";
+
+// Whether the menu holding these settings is open.
+defineProps<{ visible: boolean }>();
 
 const router = useRouter();
 

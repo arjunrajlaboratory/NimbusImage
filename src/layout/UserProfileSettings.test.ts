@@ -11,6 +11,7 @@ vi.mock("@/store", () => ({
     userStorageInfo: { used: 10 * 1024 ** 3, quota: null },
     storageUsagePercentage: null,
     storageSeverity: "ok",
+    mcpOAuthAPI: { listGrants: vi.fn().mockResolvedValue([]) },
   },
   girderUrlFromApiRoot: (apiRoot: string) => apiRoot.replace("/api/v1", ""),
 }));
@@ -22,6 +23,7 @@ const mockRouter = { push: vi.fn() };
 
 function mountComponent() {
   return mount(UserProfileSettings, {
+    props: { visible: false },
     global: {
       provide: {
         ...routerProvider(mockRouter),
