@@ -8,7 +8,8 @@ description: >
   `import nimbusimage` in code or the user references dataset IDs, channels,
   z-slices, or time points in an imaging context. This is the entry point —
   it routes to more specific skills (annotations, images, workers, analyze)
-  for deeper operations.
+  for deeper operations. If NimbusImage MCP tools (ni_*) are also connected,
+  prefer this API for anything beyond a quick lookup.
 ---
 
 # NimbusImage — Core
@@ -16,6 +17,13 @@ description: >
 The `nimbusimage` Python API lets you programmatically access NimbusImage scientific imaging datasets. This skill teaches you the API patterns so you can write correct code for the user.
 
 The package follows an accessor pattern: connect → get dataset → use sub-accessors (`ds.images`, `ds.annotations`, `ds.connections`, `ds.properties`, `ds.collections`, `ds.export`, `ds.history`, `ds.sharing`).
+
+## This API or the MCP tools?
+
+NimbusImage also has an MCP server whose tools are named `ni_*` (`ni_datasets_list`, `ni_annotations_count`, ...). It exists for clients that cannot run code, such as claude.ai and Claude Desktop. When both are available, as in Claude Code or Codex with the connector added:
+
+- A quick read-only lookup (list datasets, count annotations, look at one image) may use the `ni_*` tools.
+- Everything else uses this Python API: bulk creation or deletion, image arrays, measurements and analysis, exports, workers beyond a single run, and anything worth saving as a script.
 
 ## Setup
 

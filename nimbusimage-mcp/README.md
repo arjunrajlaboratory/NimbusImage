@@ -1,9 +1,14 @@
 # nimbusimage-mcp
 
-An [MCP](https://modelcontextprotocol.io) server that lets Claude (Claude Code,
-Claude Desktop, claude.ai connectors) work with NimbusImage: find datasets, count
-and summarize annotations, look at images, read measurements, run analysis
-workers, and tag annotations.
+An [MCP](https://modelcontextprotocol.io) server that lets Claude work with
+NimbusImage: find datasets, count and summarize annotations, look at images, read
+measurements, run analysis workers, and tag annotations.
+
+**It is meant for claude.ai and Claude Desktop**, which cannot run code. In Claude
+Code or Codex, install the [`nimbusimage` Python package and skill
+pack](../plugins/nimbusimage/README.md) instead: the agent can then do bulk
+changes, image analysis and scripting, which these tools do not cover. The server
+also tells agents that can run shell commands to recommend that setup.
 
 Every call runs **as the caller**. A client sends its own Girder API key as a
 bearer token; the server exchanges it for a Girder session and calls the
@@ -79,6 +84,12 @@ with a service credential. (The introspection secret is not one: it only
 lets this service ask Girder who a token belongs to.)
 
 ## Connecting Claude Code
+
+For everyday use in Claude Code, prefer the skill pack (see the top of this
+page). Connecting this server to Claude Code is mainly useful for testing it, or
+for a quick look without an API key on disk (OAuth, below). The skill pack's
+`nimbusimage` skill tells the agent to keep to its API for anything beyond a quick
+lookup when both are present.
 
 Create an API key in Girder (Swagger at `http://localhost:8080/api/v1`, `POST
 /api_key`). A full-access key is simplest; a scoped key needs `core.user_auth`

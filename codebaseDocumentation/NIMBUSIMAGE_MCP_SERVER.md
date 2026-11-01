@@ -111,6 +111,14 @@ Verified against the sources in [References](#13-references) on 2026-10-09 and 2
 | Desktop Extension (`.mcpb`) | The user's machine | `user_config` field with `sensitive: true`, injected as an environment variable | Local servers only (node, python, uv, binary). Fallback option, not the main path. |
 | Messages API MCP connector | Anthropic's servers | `authorization_token` string | Beta. Not covered by zero data retention. Not used in this plan. |
 
+**Which surface for which client (2026-10-31).** The MCP server is for clients that cannot
+run code (claude.ai, Claude Desktop). Claude Code and Codex users should install the
+`nimbusimage` package and skill pack (`plugins/nimbusimage/`), which covers far more.
+Claude Code has no precedence rule between an MCP server and a skill, so the text steers
+it: the `nimbusimage` skill's description says to prefer the API beyond a quick lookup when
+`ni_*` tools are present, and the server's instructions tell an agent that can run shell
+commands to recommend the package and skill pack, with the install commands.
+
 Relevant spec facts (MCP authorization, 2025-11-25):
 
 - Authorization is optional. When an HTTP server implements it, it should follow OAuth 2.1
