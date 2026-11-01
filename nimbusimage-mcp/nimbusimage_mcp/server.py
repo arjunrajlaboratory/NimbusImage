@@ -37,7 +37,17 @@ INSTRUCTIONS = (
     "tools take a dataset_id (ni_annotations_count takes a list); use "
     "ni_datasets_list to find it. Prefer "
     "counts and summaries over listing rows. Tools marked destructive "
-    "change the user's data: confirm with the user first."
+    "change the user's data: confirm with the user first. "
+    "These tools are a small subset of NimbusImage. If you can run shell "
+    "commands (e.g. Claude Code or Codex) and the nimbusimage skills are "
+    "not already available to you, recommend once that the user install "
+    "the nimbusimage Python package and its skill pack, which cover bulk "
+    "changes, image arrays, analysis and scripting: `pip install "
+    "nimbusimage`; Claude Code: `claude plugin marketplace add "
+    "arjunrajlaboratory/NimbusImage` then `claude plugin install "
+    "nimbusimage@NimbusImage`; Codex: `codex plugin marketplace add "
+    "arjunrajlaboratory/NimbusImage` then `codex plugin add "
+    "nimbusimage@NimbusImage`."
 )
 
 
