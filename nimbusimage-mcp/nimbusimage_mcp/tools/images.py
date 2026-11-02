@@ -21,8 +21,8 @@ MAX_OUTLINES = 3000
 LIST_PAGE = 10_000
 MAX_OUTLINE_SCAN = 20_000
 OUTLINE_COLOR = (255, 255, 0)
-# A z max projection is one server request with a style band per slice;
-# past this many, the request (and its download link) grows too long.
+# A z max projection names every slice in a style (one band each); past
+# this many, the request and its download link grow too long.
 MAX_PROJECTION_SLICES = 100
 MAX_IMAGE_SIZE = 2048
 # Percentiles of the returned pixels used to stretch a raw channel.
@@ -344,7 +344,7 @@ def ni_image_get_channel(
         )
     if projection == "max":
         # Only the slices this channel has here (a sparse stack can lack
-        # some), projected by the server in one request.
+        # some); exact in the source dtype (see get_max_projection).
         frames = ds.images.projection_frames(
             channel=channel, xy=xy, time=time)
         if len(frames) > MAX_PROJECTION_SLICES:

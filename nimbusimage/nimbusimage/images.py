@@ -184,35 +184,45 @@ class ImageAccessor:
         crop: tuple[float, float, float, float] | None = None,
         max_size: int | None = None,
     ) -> np.ndarray:
-        """The maximum intensity over a channel's z-slices, in the source
-        dtype, computed by the server in one request (a "lighten" band per
-        slice, unscaled), not by fetching every slice.
+        """The maximum intensity over a channel's z-slices, exact and in
+        the source dtype. Returns a 2D array (the first band of a
+        multi-band source).
 
-        Returns a 2D array (the first band of a multi-band source).
+        At full resolution, for 8- and 16-bit unsigned sources, the server
+        projects in one request (a "lighten" band per slice, unscaled).
+        Otherwise the slices are read one at a time and folded into a
+        running maximum, holding at most two planes: large_image styles a
+        downsampled result through 8 bits (a faint signal would round to
+        0), and its "source" dtype does not cover other types.
         """
         frames = self.projection_frames(channel, xy, time)
         if not frames:
             raise ValueError(
                 f"No z-slices of channel {channel} at xy={xy}, time={time}"
             )
+        region = self._region_params(crop, max_size)
         dtype = np.dtype(self._dataset.dtype)
-        if not np.issubdtype(dtype, np.integer):
-            # Unscaled styling needs integer bounds; read slices instead.
-            planes = [self._get_region(frame, **self._region_params(
-                crop, max_size)) for frame in frames]
-            return _drop_single_band(np.max(planes, axis=0))
-        top = int(np.iinfo(dtype).max)
-        style = {"dtype": "source", "bands": [
-            {"frame": frame, "band": 1, "min": 0, "max": top}
-            for frame in frames
-        ]}
-        projected = self._get_region(
-            frames[0], style=json.dumps(style, separators=(",", ":")),
-            **self._region_params(crop, max_size),
-        )
-        # The styled result has color (and alpha) bands; the first holds
-        # the value.
-        return projected[..., 0] if projected.ndim == 3 else projected
+        if "width" not in region and dtype in (np.uint8, np.uint16):
+            top = int(np.iinfo(dtype).max)
+            style = {"dtype": "source", "bands": [
+                {"frame": frame, "band": 1, "min": 0, "max": top}
+                for frame in frames
+            ]}
+            projected = self._get_region(
+                frames[0], style=json.dumps(style, separators=(",", ":")),
+                **region,
+            )
+            # The styled result has color (and alpha) bands; the first
+            # holds the value.
+            return projected[..., 0] if projected.ndim == 3 else projected
+        projected = None
+        for frame in frames:
+            plane = _drop_single_band(self._get_region(frame, **region))
+            if plane.ndim == 3:
+                plane = plane[..., 0]
+            projected = plane if projected is None \
+                else np.maximum(projected, plane, out=projected)
+        return projected
 
     def get_composite(
         self,

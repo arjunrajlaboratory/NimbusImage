@@ -498,6 +498,31 @@ class TestMaxProjection:
         assert result.dtype == np.uint16
         assert result.max() == 10 * len(frames)
 
+    def test_downsampled_or_other_dtypes_fold_raw_slices(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        """A downsampled styled result passes through 8 bits on the
+        server, so a size cap reads raw slices and keeps a running max."""
+        ds, regions = _composite_dataset(
+            mock_gc, sample_tiles_metadata, [_layer()], {},
+        )
+        frames = ds.images.projection_frames(channel=0)
+        values = {f: 100 + i for i, f in enumerate(frames)}
+
+        def get(path, parameters=None, jsonResp=True):
+            regions.append(parameters)
+            assert "style" not in parameters
+            response = MagicMock()
+            response.content = pickle.dumps(
+                np.full((4, 4), values[parameters["frame"]], np.uint16))
+            return response
+
+        mock_gc.get.side_effect = get
+        result = ds.images.get_max_projection(channel=0, max_size=2)
+        assert len(regions) == len(frames)
+        assert result.dtype == np.uint16
+        assert int(result.max()) == 100 + len(frames) - 1
+
     def test_only_existing_slices_are_projected(
         self, mock_gc, sample_tiles_metadata,
     ):
