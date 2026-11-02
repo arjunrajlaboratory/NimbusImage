@@ -123,6 +123,45 @@ class AnnotationSchema:
         ],
     }
 
+    # The same schema with no rule on the coordinates' contents (still
+    # required), for documents whose coordinates already passed
+    # coordinatesMatchSchema.
+    annotationSchemaWithoutCoordinates = {
+        **annotationSchema,
+        "properties": {**annotationSchema["properties"], "coordinates": {}},
+    }
+
+
+_NUMBER_TYPES = frozenset((int, float))
+
+
+def coordinatesMatchSchema(coordinates):
+    """Whether `coordinates` certainly satisfies AnnotationSchema.coordsSchema.
+
+    The compiled schema spends ~1 µs per vertex building key sets, which
+    was most of the validation time for a 100K-polygon create. This checks
+    the common case, plain dicts of int/float from a JSON body, in a fraction
+    of that. It is conservative: True implies the schema accepts, while
+    False only means "run the full validator", which also accepts tuples,
+    Decimals, and dict or int subclasses, and words the error otherwise.
+    `bool` fails the exact type test, as the schema rejects it as a number.
+    """
+    if type(coordinates) is not list or not coordinates:
+        return False
+    for coordinate in coordinates:
+        if (
+            type(coordinate) is not dict
+            or type(coordinate.get("x")) not in _NUMBER_TYPES
+            or type(coordinate.get("y")) not in _NUMBER_TYPES
+            # Beyond x and y, only z has a rule.
+            or (
+                len(coordinate) > 2
+                and type(coordinate.get("z", 0.0)) not in _NUMBER_TYPES
+            )
+        ):
+            return False
+    return True
+
 
 # AccessControlMixin must precede ProxiedModel so its permission-aware
 # find/load methods (e.g. findWithPermissions) take MRO precedence over
@@ -189,6 +228,26 @@ class Annotation(AccessControlMixin, ProxiedModel):
     jsonValidate = staticmethod(
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)
     )
+    _jsonValidateWithoutCoordinates = staticmethod(
+        customJsonSchemaCompile(
+            AnnotationSchema.annotationSchemaWithoutCoordinates
+        )
+    )
+
+    @classmethod
+    def validateSchema(cls, annotation):
+        """Validate against AnnotationSchema, raising an error with the same
+        message, path and rule as jsonValidate (only `.definition` may name
+        the reduced schema), but with a fast path for
+        the per-vertex coordinates rule. The two agree on every document:
+        when the coordinates certainly pass, the rest of the schema decides
+        (properties are checked independently, so its first error is the
+        full validator's); otherwise the full validator runs."""
+        if type(annotation) is dict and coordinatesMatchSchema(
+            annotation.get("coordinates")
+        ):
+            return cls._jsonValidateWithoutCoordinates(annotation)
+        return cls.jsonValidate(annotation)
 
     def _aggregate(self, collection, pipeline, hint=DEFAULT_AGGREGATE_HINT):
         """Run an aggregation with the standard index hint, allowDiskUse, and a
@@ -357,7 +416,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # Validate using the schema
         try:
             for annotation in annotations:
-                self.jsonValidate(annotation)
+                self.validateSchema(annotation)
         except fastjsonschema.JsonSchemaValueException as exp:
             raise ValidationException(exp)
 

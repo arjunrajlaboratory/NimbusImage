@@ -54,7 +54,11 @@ from ..models.rasterFilter import (
     RasterFilter as RasterFilterModel,
     UnknownRasterFilter,
 )
-from ..helpers.serialization import orJsonDefaults, streamJsonArray
+from ..helpers.serialization import (
+    createdDocumentsResponse,
+    orJsonDefaults,
+    streamJsonArray,
+)
 from ..helpers.annotationRaster import (
     COLOR_PATTERN,
     RasterBuildBusy,
@@ -280,7 +284,9 @@ class Annotation(Resource):
             if "datasetId" in ann
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
-        return self._annotationModel.createMultiple(annotations)
+        return createdDocumentsResponse(
+            self._annotationModel.createMultiple(annotations)
+        )
 
     @describeRoute(
         Description("Delete an existing annotation")

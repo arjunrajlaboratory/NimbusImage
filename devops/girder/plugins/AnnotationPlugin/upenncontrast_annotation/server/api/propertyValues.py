@@ -11,7 +11,7 @@ from ..helpers.access_helpers import (
     requireAnnotationsInDatasets,
     requireDatasetsAccess,
 )
-from ..helpers.serialization import jsonSafe
+from ..helpers.serialization import createdDocumentsResponse, jsonSafe
 from ..helpers.validation import (
     MAX_DISTINCT_SEARCH_LENGTH,
     MAX_DISTINCT_VALUES,
@@ -105,7 +105,7 @@ class PropertyValues(Resource):
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
         requireAnnotationsInDatasets(propertyValuesList)
-        return jsonSafe(
+        return createdDocumentsResponse(
             self._annotationPropertyValuesModel.appendMultipleValues(
                 propertyValuesList
             )

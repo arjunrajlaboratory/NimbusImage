@@ -7,6 +7,7 @@ from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
+from ..helpers.serialization import createdDocumentsResponse
 from ..helpers.validation import requireBulkCreateBody
 from ..models.annotation import Annotation as AnnotationModel
 from ..models.connections import AnnotationConnection as ConnectionModel
@@ -139,7 +140,9 @@ class AnnotationConnection(Resource):
             if "datasetId" in conn
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
-        return self._connectionModel.createMultiple(connections)
+        return createdDocumentsResponse(
+            self._connectionModel.createMultiple(connections)
+        )
 
     @describeRoute(
         Description("Delete an existing connection")
