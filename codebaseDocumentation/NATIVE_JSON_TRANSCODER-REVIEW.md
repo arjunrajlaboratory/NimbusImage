@@ -52,6 +52,14 @@ Status values: `fixed <commit>`, `not real` (with the evidence), `declined` (rea
 | — | /code-review | — | No findings. Checked: `wideDocument` builds valid BSON (lengths, element slice, last-value decode), the test cases hit the intended branches, runtime import shadowing, Docker stage consistency, ImportError-only fallback, edge-case types | — |
 | — | Codex | — | Ran on `3edeaf28`: "No actionable regressions were found" | — |
 
+## Round 4 (head `60347b2e`)
+
+| # | Pass | Severity | Finding | Status |
+|---|---|---|---|---|
+| R4-B1 | branch-review | Nit | The `nimbus-backend` skill's first raw-streaming snippet still used `prefetchedBatches(cursor)` (default depth 4), the docs twin round 1's B2 fix missed. The skill's two sections disagreed | fixed; a sweep of every `prefetchedBatches(` example in docs and skills found no other |
+| — | /code-review | — | No findings: round 3's new cases hit the scan path as claimed, and the docstring is true for both endpoints | — |
+| — | Codex | — | Ran on `60347b2e`: "No actionable regressions were identified" | — |
+
 ## Not in this PR's lines
 
 No finding fell in #1458's commit `15bcc1c8`.

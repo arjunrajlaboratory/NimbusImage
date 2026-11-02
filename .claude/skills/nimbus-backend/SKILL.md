@@ -129,8 +129,10 @@ building Python dicts it only serializes again. For 100K cell polygons that's
 `self._model.findRawBatches(...)` (`helpers/customModel.py`: `Model.find`'s
 arguments, timeout and projection, on `find_raw_batches`) or
 `collection.aggregate_raw_batches(...)`, then
-`streamRawJsonArray(prefetchedBatches(cursor), collection.codec_options)`
-(`helpers/serialization.py`). The bytes are identical to
+`streamRawJsonArray(prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
+collection.codec_options)` (`helpers/serialization.py`; the default depth,
+`PREFETCH_BATCHES`, is for aggregations like stubs, where Mongo is the slow
+half). The bytes are identical to
 `streamJsonArray(docs, default=orJsonDefaults)`, through the Rust transcoder
 `bson_json_native` when it is installed and decode + orjson when it isn't.
 `findRawBatches` is the one sanctioned exception to "never
