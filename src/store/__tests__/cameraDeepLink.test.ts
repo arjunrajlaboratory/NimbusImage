@@ -177,6 +177,33 @@ describe("camera deep link", () => {
     expect(sync.datasetLoading).toBe(false);
   });
 
+  it("a navigation overtaken while its dataset loads leaves loading to the newer one", async () => {
+    views.a = makeView("a", "dsA");
+    views.b = makeView("b", "dsB");
+    const datasetLoads: Record<string, () => void> = {};
+    stubAction(
+      "getDataset",
+      ({ id }) =>
+        new Promise((resolve) => {
+          datasetLoads[id] = () =>
+            resolve({ id, xy: [0], z: [0], time: [0] } as IDataset);
+        }),
+    );
+
+    const first = main.setDatasetViewId({ id: "a" });
+    await vi.waitFor(() => expect(datasetLoads.dsA).toBeDefined());
+    const second = main.setDatasetViewId({ id: "b" });
+    await vi.waitFor(() => expect(datasetLoads.dsB).toBeDefined());
+    datasetLoads.dsA();
+    await first;
+    // A's tail must not end B's loading (nor clamp or save B's location).
+    expect(sync.datasetLoading).toBe(true);
+    datasetLoads.dsB();
+    await second;
+    expect(sync.datasetLoading).toBe(false);
+    expect(main.datasetView?.id).toBe("b");
+  });
+
   it("an overtaken load that fails leaves loading to the newer navigation", async () => {
     views.b = makeView("b", "ds1");
     let rejectA: (e: Error) => void = () => {};
@@ -218,19 +245,18 @@ describe("camera deep link", () => {
     expect(sync.datasetLoading).toBe(false);
   });
 
-  it("consuming a target clears it and counts the apply", async () => {
+  it("consuming a target clears it and records which link was applied", async () => {
     views.v = makeView("v", "ds1");
     await main.setDatasetViewId({ id: "v", routeQuery: { x: "1", y: "2" } });
-    const applied = main.appliedCameraDeepLinks;
-
     main.consumeCameraDeepLink();
 
     expect(main.pendingCameraDeepLink).toBeNull();
-    expect(main.appliedCameraDeepLinks).toBe(applied + 1);
+    const applied = main.appliedCameraDeepLink;
+    expect(applied).toEqual({ x: 1, y: 2, zoom: null, datasetId: "ds1" });
     // A navigation's reset is not an apply: the routes keep its keys.
     await main.setDatasetViewId({ id: "v", routeQuery: { x: "3", y: "4" } });
     await main.setDatasetViewId({ id: "v" });
-    expect(main.appliedCameraDeepLinks).toBe(applied + 1);
+    expect(main.appliedCameraDeepLink).toBe(applied);
   });
 
   it("requestCameraDeepLink re-targets the loaded view", async () => {

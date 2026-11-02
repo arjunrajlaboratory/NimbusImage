@@ -412,6 +412,8 @@ class Dataset:
         self._folder_data = None
         self.collections.refresh()
         self.images._frame_map = None
+        # Frame numbers are reused by a replacement source.
+        self.images._histograms.clear()
 
     # --- URLs ---
 

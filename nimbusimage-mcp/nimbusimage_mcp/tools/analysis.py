@@ -89,7 +89,9 @@ def ranks(values: np.ndarray) -> np.ndarray:
 
 def pearson(x: np.ndarray, y: np.ndarray) -> float | None:
     """Pearson's r; None with fewer than 2 pairs or a constant axis."""
-    if len(x) < 2:
+    # A constant axis is checked directly: rounding in the mean can leave
+    # nonzero residuals (three 0.1s), and their "correlation" is noise.
+    if len(x) < 2 or np.ptp(x) == 0 or np.ptp(y) == 0:
         return None
     dx, dy = x - x.mean(), y - y.mean()
     denominator = math.sqrt(float(dx @ dx) * float(dy @ dy))

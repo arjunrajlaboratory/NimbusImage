@@ -198,8 +198,8 @@ def outline_note(tags, drawn: int, matched: int,
         )
     if not scan_complete:
         details.append(
-            f"only the first {MAX_OUTLINE_SCAN} annotations at this location "
-            "were read, so there may be more in view"
+            f"only the first {MAX_OUTLINE_SCAN} annotations with these tags "
+            "at this location were read, so there may be more in view"
         )
     if details:
         note += f" ({'; '.join(details)}; crop to a smaller region to see " \

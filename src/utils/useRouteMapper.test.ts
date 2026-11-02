@@ -363,4 +363,58 @@ describe("useRouteMapper", () => {
     expect(route.params.id).toBe("b");
     expect(route.query).toEqual({ z: "1" });
   });
+
+  it("keeps a URL-driven navigation's clearsQuery keys", async () => {
+    // Following a link to view b with ?x&y: the store follows the URL, so
+    // the camera keys the link carries must stay for the view to apply.
+    const view = reactive({ value: "a" });
+    const route = reactive({
+      name: "datasetview",
+      params: { id: "a" } as Record<string, string>,
+      query: {} as Record<string, string>,
+      path: "/a",
+      hash: "",
+      fullPath: "/a",
+      matched: [],
+      meta: {},
+      redirectedFrom: undefined,
+    });
+    const TestComponent = defineComponent({
+      template: "<div />",
+      setup() {
+        useRouteMapper(
+          {
+            id: {
+              parse: String,
+              get: () => view.value,
+              set: async (value: string) => {
+                view.value = value;
+              },
+              clearsQuery: ["x", "y"],
+            },
+          },
+          {},
+        );
+      },
+    });
+    shallowMount(TestComponent, {
+      global: {
+        provide: {
+          [routeLocationKey as symbol]: route,
+          ...routerProvider(mockRouter),
+        },
+      },
+    });
+    await nextTick();
+    await nextTick();
+
+    route.params = { id: "b" };
+    route.query = { x: "5", y: "6" };
+    route.fullPath = "/b?x=5&y=6";
+    for (let i = 0; i < 6; i++) await nextTick();
+
+    expect(view.value).toBe("b");
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+    expect(route.query).toEqual({ x: "5", y: "6" });
+  });
 });

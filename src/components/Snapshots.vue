@@ -1684,6 +1684,11 @@ async function applySnapshot(snapshot: ISnapshot) {
     snapshot.datasetViewId !== store.datasetView?.id
   ) {
     await store.setDatasetViewId({ id: snapshot.datasetViewId });
+    // Another navigation overtook this one (or the view failed to load):
+    // the snapshot's layers and location belong to its own view only.
+    if (store.datasetView?.id !== snapshot.datasetViewId) {
+      return;
+    }
   }
   if (areCurrentLayersCompatible(snapshot)) {
     await store.loadSnapshotLayers(snapshot);

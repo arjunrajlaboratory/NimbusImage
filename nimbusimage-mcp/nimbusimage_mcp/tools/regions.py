@@ -6,8 +6,10 @@ from __future__ import annotations
 from collections import Counter
 from typing import Literal
 
+import girder_client
 import nimbusimage as ni
 
+from nimbusimage_mcp import _common
 from nimbusimage_mcp._common import (
     READ_ONLY,
     WRITES,
@@ -47,6 +49,43 @@ def _tag_filter(tags: list[str] | None) -> dict | None:
     # Deduplicated, as the server compares against the list.
     return {"values": list(dict.fromkeys(tags)), "exclusive": False,
             "all": True}
+
+
+# Girder servers known to honor tags.all, by REST root.
+_ALL_TAGS_SERVERS: set[str] = set()
+OLD_SERVER = (
+    "This NimbusImage server is too old to match annotations that have "
+    "ALL of several tags (it would match ANY of them instead). Use one tag, "
+    "or ask the administrator to update NimbusImage."
+)
+
+
+def _require_all_tags_support(nc, dataset_id: str, tags) -> None:
+    """Refuse an ALL-tags filter on a server that would read it as ANY.
+
+    A server that knows tags.all refuses unknown tag-filter keys (400); an
+    older one ignores every key it does not know, `all` included, and
+    would silently match ANY. One probe with a made-up key tells them apart.
+    With one tag, ANY and ALL agree, so there is nothing to check.
+    """
+    if not tags or len(set(tags)) < 2:
+        return
+    server = _common.settings().api_url
+    if server in _ALL_TAGS_SERVERS:
+        return
+    try:
+        nc.girder.post("upenn_annotation/list", json={
+            "datasetId": dataset_id, "limit": 1, "offset": 0,
+            "filters": {"tags": {
+                "values": list(tags), "all": True, "capabilityProbe": True,
+            }},
+        })
+    except girder_client.HttpError as e:
+        if e.status == 400:
+            _ALL_TAGS_SERVERS.add(server)
+            return
+        raise
+    raise ValueError(OLD_SERVER)
 
 
 def _list_filters(tags=None, shape=None, xy=None, z=None,
@@ -159,6 +198,7 @@ def ni_annotations_in_region(
     nc = client()
     ds = nc.dataset(dataset_id)
     _check_location(ds, xy, z, time)
+    _require_all_tags_support(nc, dataset_id, tags)
 
     def inside(row) -> bool:
         center = row.get("centroid") or {}
@@ -348,6 +388,7 @@ def ni_annotations_delete(
             "tool does not delete every annotation in a dataset."
         )
     nc = client()
+    _require_all_tags_support(nc, dataset_id, tags)
     total = _list_page(nc, dataset_id, filters, 0, 1)["total"]
     too_many = (
         f"{total} annotations match, more than the {MAX_DELETE} one call "

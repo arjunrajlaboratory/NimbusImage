@@ -499,6 +499,17 @@ class TestCompositeStyle:
         ds.images.composite_style()
         assert mock_gc.get.call_count == calls
 
+    def test_source_change_drops_cached_histograms(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        ds, _ = _composite_dataset(
+            mock_gc, sample_tiles_metadata, [_layer()], {0: _skewed()},
+        )
+        ds.images.composite_style()
+        assert ds.images._histograms
+        ds._invalidate_cache()
+        assert not ds.images._histograms
+
     def test_hidden_layers_and_nothing_drawn(
         self, mock_gc, sample_tiles_metadata,
     ):

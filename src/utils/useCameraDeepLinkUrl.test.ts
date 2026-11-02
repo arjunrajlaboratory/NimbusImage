@@ -7,7 +7,12 @@ vi.mock("@/utils/log", () => ({ logError: vi.fn() }));
 
 vi.mock("@/store", async () => {
   const { reactive } = await import("vue");
-  return { default: reactive({ appliedCameraDeepLinks: 0 }) };
+  return {
+    default: reactive({
+      appliedCameraDeepLink: null,
+      datasetView: { datasetId: "ds" },
+    }),
+  };
 });
 
 import store from "@/store";
@@ -36,7 +41,8 @@ describe("useCameraDeepLinkUrlCleanup", () => {
   let router: { replace: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
-    (store as any).appliedCameraDeepLinks = 0;
+    (store as any).appliedCameraDeepLink = null;
+    (store as any).datasetView = { datasetId: "ds" };
     const current = makeRoute("/datasetView/a/view", {
       z: "2",
       x: "5",
@@ -69,17 +75,36 @@ describe("useCameraDeepLinkUrlCleanup", () => {
     );
   }
 
+  function applyLink(x: number, y: number) {
+    (store as any).appliedCameraDeepLink = {
+      x,
+      y,
+      zoom: null,
+      datasetId: "ds",
+    };
+  }
+
   async function settle() {
     for (let i = 0; i < 5; i++) await nextTick();
   }
 
   it("drops the applied link's keys from the URL, keeping the rest", async () => {
     mount();
-    (store as any).appliedCameraDeepLinks++;
+    applyLink(5, 6);
     await settle();
 
     expect(router.replace).toHaveBeenCalledTimes(1);
     expect(route.query).toEqual({ z: "2" });
+  });
+
+  it("leaves another link alone even on the same view", async () => {
+    // The applied link was (5, 6); the URL now carries a newer one.
+    route.query = { z: "2", x: "7", y: "8" };
+    mount();
+    applyLink(5, 6);
+    await settle();
+
+    expect(router.replace).not.toHaveBeenCalled();
   });
 
   it("leaves the URL alone until a link is applied", async () => {
@@ -102,7 +127,7 @@ describe("useCameraDeepLinkUrlCleanup", () => {
     const inFlight = removeQueryKeys(["z"], router as any, route as any);
     await nextTick();
 
-    (store as any).appliedCameraDeepLinks++;
+    applyLink(5, 6);
     await nextTick();
     // Meanwhile the user opens view B's link.
     route.path = "/datasetView/b/view";

@@ -62,8 +62,9 @@ Tools that write are marked with the MCP `destructiveHint`, so clients ask
 before running them.
 
 Some tools need the Girder plugin from the same release (the list filter's
-`tags.all`, the GET exports): deploy Girder first. An older Girder refuses the
-unknown filter key with a 400 instead of misreading it.
+`tags.all`, the GET exports): deploy Girder first. An older Girder ignores
+`tags.all` and would match ANY tag, so the region and delete tools check the
+server first and refuse a multi-tag query on one that would.
 
 The server also offers three prompts (workflow starters a client lists for the
 user to pick): `explore_dataset`, `segment_and_count`, and `spots_per_cell`.

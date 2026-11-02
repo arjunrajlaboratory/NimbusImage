@@ -179,6 +179,15 @@ def test_pairs_refuse_a_malformed_path(nc, path):
     nc.girder.post.assert_not_called()
 
 
+def test_constant_axes_have_no_correlation():
+    """Three 0.1s against three 0.2s: rounding in the mean leaves tiny
+    residuals that once gave r = 1.0."""
+    x = np.array([0.1, 0.1, 0.1])
+    y = np.array([0.2, 0.2, 0.2])
+    assert analysis.pearson(x, y) is None
+    assert analysis.pearson(np.array([1.0, 2.0, 3.0]), y) is None
+
+
 def test_pairs_accept_a_scalar_property_path(nc):
     """A scalar measurement's path is just [property_id]."""
     nc.girder.post.return_value = histogram2d_answer(

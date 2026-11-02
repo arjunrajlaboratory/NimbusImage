@@ -4,6 +4,8 @@ in-memory stand-in for the plugin's annotation and connection endpoints."""
 from __future__ import annotations
 
 import itertools
+
+import girder_client
 import json
 from unittest.mock import MagicMock
 
@@ -33,6 +35,8 @@ class FakeAnnotationGirder:
         self.annotations: dict[str, dict] = {}
         self.connections: list[dict] = []
         self.calls: list[tuple[str, str]] = []
+        # An older server ignores unknown keys: set tag_keys to everything.
+        self.tag_keys = {"values", "exclusive", "all"}
         self._ids = itertools.count(1)
 
     def new_id(self) -> str:
@@ -94,6 +98,12 @@ class FakeAnnotationGirder:
 
     def post(self, path, json=None):
         self.calls.append(("POST", path))
+        body = json if isinstance(json, dict) else {}
+        tag_filter = (body.get("filters") or {}).get("tags") or {}
+        if set(tag_filter) - self.tag_keys:
+            # The current server refuses tag-filter keys it does not know.
+            raise girder_client.HttpError(
+                400, '{"message": "unknown keys"}', path, "POST")
         if path == "upenn_annotation/list":
             assert json["datasetId"] == DATASET
             matched = list(self._matching(json["filters"]))
@@ -204,6 +214,32 @@ def test_region_tags_match_all_and_shape_filters(girder):
         dataset_id=DATASET, region=(0, 0, 50, 50),
         tags=["nucleus", "dim"], shape="point"))
     assert {r["id"] for r in result["annotations"]} == {b}
+
+
+class _AnyKeys(set):
+    """Every key is known: an older server that ignores unknown ones."""
+
+    def __rsub__(self, other):
+        return set()
+
+
+def test_several_tags_refused_on_a_server_that_ignores_all(
+        girder, monkeypatch):
+    monkeypatch.setattr(regions, "_ALL_TAGS_SERVERS", set())
+    girder.tag_keys = _AnyKeys()
+    girder.add(1, 1, tags=["dapi"])
+    girder.add(2, 2, tags=["dapi", "reject"])
+    with pytest.raises(ToolError, match="too old"):
+        regions.ni_annotations_delete(
+            dataset_id=DATASET, tags=["dapi", "reject"], expected_count=-1)
+    with pytest.raises(ToolError, match="too old"):
+        regions.ni_annotations_in_region(
+            dataset_id=DATASET, tags=["dapi", "reject"])
+    # One tag means the same under ANY and ALL, so it still works.
+    result = loads(regions.ni_annotations_delete(
+        dataset_id=DATASET, tags=["dapi"], expected_count=-1))
+    assert result["matching"] == 2
+    assert len(girder.annotations) == 2
 
 
 def test_delete_matches_all_tags_like_count(girder):

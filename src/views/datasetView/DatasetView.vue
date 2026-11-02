@@ -12,11 +12,13 @@ import { CAMERA_DEEP_LINK_QUERY_KEYS } from "@/utils/cameraDeepLink";
 
 const route = useRoute();
 
-// A `?x=&y=&zoom=` change on the view that is already loaded (an external tool
-// re-targeting an open tab). A view change carries its target through
-// setDatasetViewId instead, and is skipped here: until it loads,
-// store.datasetView is still the previous view. Only these keys are watched,
-// so the z/time/xy writes that keep x and y in the URL never re-center.
+// A camera target for the view that is already loaded: the keys changed on an
+// open view (an external tool re-targeting a tab), or this route opened
+// (immediate) on the view the store still holds, e.g. a link followed back
+// from Home, where the route mapper skips setDatasetViewId. A view change
+// carries its target through setDatasetViewId instead, and is skipped here:
+// until it loads, store.datasetView is still the previous view. Only these
+// keys are watched, so the z/time/xy writes never re-center.
 watch(
   CAMERA_DEEP_LINK_QUERY_KEYS.map((key) => () => route.query[key]),
   () => {
@@ -24,6 +26,7 @@ watch(
       store.requestCameraDeepLink(route.query);
     }
   },
+  { immediate: true },
 );
 
 useCameraDeepLinkUrlCleanup();

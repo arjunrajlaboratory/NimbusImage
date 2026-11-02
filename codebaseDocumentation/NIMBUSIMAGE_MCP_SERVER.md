@@ -395,8 +395,11 @@ results carry links, and the server instructions tell the model to pass them on.
 Three prompts (`prompts.py`) start common workflows. `ni_annotations_count`, `_list`,
 `_in_region`, and `_delete` match ALL the given tags (the list endpoint gained `tags.all`
 for the last two), so a count from `ni_annotations_count` is what a delete acts on.
-The list endpoint refuses tag-filter keys it does not know, so an older Girder answers
-400 rather than reading `all` as ANY: **deploy Girder before the MCP server.**
+**Deploy Girder before the MCP server.** A Girder from before this release ignores tag
+filter keys it does not know, `all` included, and would match ANY. So with two or more
+tags, `_in_region` and `_delete` first probe the server once (a made-up key, which this
+release refuses with a 400) and refuse to run on a server that accepts it. With one tag,
+ANY and ALL agree. *"test_several_tags_refused_on_a_server_that_ignores_all"*
 `ni_annotations_summary`, `ni_property_values_summary`, and `ni_property_pairs` match ANY
 (or exactly, with `exclusive`), and `outline_tags` matches ANY, for display; each
 docstring says which. Not built: an MCP Apps viewer, Xenium tools, share links, snapshots.
