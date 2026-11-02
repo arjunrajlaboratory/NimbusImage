@@ -90,8 +90,9 @@ def createdDocumentsResponse(documents):
     body held `1e999` stored its documents and then answered 500 (the
     property-value create already wrote null through jsonSafe). orjson
     writes null, as GET /upenn_annotation and POST /upenn_annotation/hydrate
-    do for a stored annotation. Reads still answered by Girder's encoder
-    (an annotation by id, every connection read) answer 500 for it.
+    do for a stored annotation. GET /upenn_annotation/{id} and both
+    /annotation_connection reads (GET and GET by id), still answered by
+    Girder's encoder, answer 500 for it.
     """
     setResponseHeader("Content-Type", "application/json")
     return streamJsonArray(
