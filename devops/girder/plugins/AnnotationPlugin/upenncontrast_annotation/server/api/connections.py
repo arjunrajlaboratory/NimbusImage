@@ -1,12 +1,13 @@
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute, describeRoute
-from girder.api.rest import Resource, loadmodel
+from girder.api.rest import Resource, loadmodel, setResponseHeader
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import AccessException, RestException
 from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
+from ..helpers.serialization import orJsonDefaults, streamJsonArray
 from ..helpers.validation import requireBulkCreateBody
 from ..models.annotation import Annotation as AnnotationModel
 from ..models.connections import AnnotationConnection as ConnectionModel
@@ -271,12 +272,18 @@ class AnnotationConnection(Resource):
             offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions
-        return self._connectionModel.find(
+        cursor = self._connectionModel.find(
             query,
             sort=sort,
             limit=limit,
             offset=offset,
         ).hint([("datasetId", 1), ("_id", 1)])
+
+        # Stream: Girder would otherwise list() the cursor and JSON-encode
+        # it in one string, so limit=0 on a large dataset grows Girder's
+        # memory with the dataset.
+        setResponseHeader("Content-Type", "application/json")
+        return streamJsonArray(cursor, default=orJsonDefaults)
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
