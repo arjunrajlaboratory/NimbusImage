@@ -20,6 +20,7 @@ from collections import OrderedDict
 from decimal import Decimal
 
 import fastjsonschema
+import orjson
 import pytest
 
 from bson import Binary, Decimal128
@@ -234,7 +235,8 @@ class TestAnnotationSchemaFastPath:
 
     def testRealPolygonsTakeTheFastPath(self, monkeypatch):
         """Without this the equivalence tests would pass trivially if the
-        fast path never ran, and the speedup could be reverted unnoticed."""
+        fast path never ran, and the speedup could be reverted unnoticed,
+        in validateSchema or at validateMultiple, where saveMany calls it."""
         document = copy.deepcopy(VALID_ANNOTATION)
         document["coordinates"] = [
             {"x": 13799.0009765625, "y": 1913.0001220703125},
@@ -249,7 +251,12 @@ class TestAnnotationSchemaFastPath:
         monkeypatch.setattr(
             Annotation, "jsonValidate", staticmethod(fullValidatorMustNotRun)
         )
-        assert Annotation.validateSchema(document) is document
+        monkeypatch.setattr(
+            Annotation, "isDatasetId", lambda self, datasetId: True
+        )
+        # __new__ skips the model's __init__, so no database is needed.
+        model = Annotation.__new__(Annotation)
+        assert model.validateMultiple([document]) == [document]
 
 
 def girderEncoding(documents):
@@ -271,13 +278,12 @@ def parseCreatedResponse(resp):
     # isJson=False keeps the raw body: the test client would otherwise
     # consume the stream to parse it.
     body = getResponseBody(resp, text=False)
-    # Girder's encoder separates with ", " and ": "; orjson writes neither,
-    # so this fails if an endpoint goes back to Girder's encoder. (No test
-    # string value contains those separators.)
-    assert b", " not in body and b": " not in body
-    # Girder sorted keys; the orjson response keeps them sorted.
-    json.loads(body, object_pairs_hook=keysInOrder)
-    return json.loads(body)
+    # Byte-identical to orjson's sorted encoding of its own value: fails if
+    # an endpoint goes back to Girder's encoder (its ", " separators and
+    # \\u escapes) or stops sorting keys, whatever the strings contain.
+    created = json.loads(body)
+    assert body == orjson.dumps(created, option=orjson.OPT_SORT_KEYS)
+    return created
 
 
 def storedInOrder(model, ids):

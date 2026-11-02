@@ -68,7 +68,7 @@ def girderJsonDefaults(obj):
     type orjson cannot write (an ObjectId, or a stored BSON value such as
     Decimal128 or Binary) becomes what Girder wrote instead of failing
     partway through a streamed response."""
-    if isinstance(obj, (set, frozenset)):
+    if isinstance(obj, set):
         return list(obj)
     return str(obj)
 
