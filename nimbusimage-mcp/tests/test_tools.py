@@ -69,7 +69,8 @@ def test_every_tool_is_registered_with_its_annotations():
     writers = {name for name, t in listed.items()
                if t.annotations and t.annotations.destructive_hint}
     assert writers == {"ni_annotations_tag", "ni_worker_run",
-                       "ni_property_compute"}
+                       "ni_property_compute", "ni_annotations_create",
+                       "ni_annotations_delete", "ni_history_undo"}
     for name, tool in listed.items():
         assert tool.output_schema is None, name
         if name not in writers | {"ni_worker_interface"}:
@@ -347,21 +348,25 @@ def test_composite_downsampled(nc):
     ds.num_xy, ds.num_z, ds.num_time = 1, 1, 1
     ds.shape = (4000, 3000)
     ds.collections.layers = [{"visible": True}]
+    ds.collections.default_view.return_value = None
+    ds.id = "d"
     ds.images.get_composite.return_value = np.full((8, 8, 3), 9, np.uint8)
-    result = images.ni_image_get_composite(
+    image, footer = images.ni_image_get_composite(
         dataset_id="d", max_size=99_999, crop=(-10, 0, 5000, 100)
     )
     kwargs = ds.images.get_composite.call_args.kwargs
     assert kwargs["max_size"] == images.MAX_IMAGE_SIZE
     assert kwargs["crop"] == (0, 0, 3000, 100)
-    assert isinstance(result, Image)
+    assert isinstance(image, Image)
+    assert "Open in NimbusImage: http://girder.test/#/dataset/d" in footer
     # An all-black composite is still shown, with a note saying why it
     # may be black.
     ds.images.get_composite.return_value = np.zeros((8, 8, 3), np.uint8)
-    image, note = images.ni_image_get_composite(dataset_id="d")
+    result = images.ni_image_get_composite(dataset_id="d")
+    image, note = result[:2]
     assert isinstance(image, Image) and note == images.BLACK_NOTE
-    assert _common.result_size([image, note]) == (
-        _common.result_size(image) + len(note))
+    assert _common.result_size(result) == (
+        _common.result_size(image) + sum(map(len, result[1:])))
 
 
 def test_channel_view_is_one_stretched_channel(nc):
@@ -369,6 +374,8 @@ def test_channel_view_is_one_stretched_channel(nc):
     ds.num_xy, ds.num_z, ds.num_time, ds.num_channels = 1, 3, 1, 2
     frame = np.arange(10_000, dtype=np.uint16).reshape(100, 100)
     ds.images.get.return_value = frame
+    ds.collections.default_view.return_value = None
+    ds.id = "d"
     images.ni_image_get_channel(dataset_id="d", channel=1, z=2, max_size=5)
     kwargs = ds.images.get.call_args.kwargs
     assert kwargs["channel"] == 1 and kwargs["z"] == 2

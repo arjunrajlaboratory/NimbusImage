@@ -37,6 +37,9 @@ class ImageAccessor:
     def __init__(self, dataset: Dataset):
         self._dataset = dataset
         self._frame_map: dict | None = None
+        # Histograms by frame: get_composite and composite_style both
+        # need them.
+        self._histograms: dict[int, list] = {}
 
     def _ensure_frame_map(self):
         """Build channel→time→z→xy→frame_index map lazily."""
@@ -59,11 +62,15 @@ class ImageAccessor:
             ).setdefault(xy, idx)
         self._frame_map = m
 
-    def _frame_index(
+    def frame_index(
         self, channel: int = 0, time: int = 0, z: int = 0, xy: int = 0
     ) -> int:
+        """The large-image frame number of one channel at one location
+        (the ``frame`` parameter of tiles endpoints and styles)."""
         self._ensure_frame_map()
         return self._frame_map[channel][time][z][xy]
+
+    _frame_index = frame_index
 
     def _get_region(self, frame: int, **kwargs) -> np.ndarray:
         """Fetch a region as a numpy array via pickle protocol."""
@@ -200,37 +207,10 @@ class ImageAccessor:
         self._ensure_frame_map()
         source_dtype = self._dataset.dtype
         target_dtype = dtype or source_dtype
-        collections = self._dataset.collections
-        overrides = collections.layer_contrasts
-        sizes = {
-            "xy": self._dataset.num_xy,
-            "z": self._dataset.num_z,
-            "time": self._dataset.num_time,
-        }
-        current = {"xy": xy, "z": z, "time": time}
         region = self._region_params(crop, max_size)
 
         composite = None
-        for layer in collections.layers:
-            if not layer.get("visible", True):
-                continue
-            frames = self._layer_frames(layer, current, sizes)
-            if not frames:
-                continue
-            # The app's histogram is of the layer's image at the current
-            # location (resolveSlice maps max-merge to the current index),
-            # even when the drawn tile is a projection over many frames.
-            histogram_frames = self._layer_frames(
-                layer, current, sizes, project=False
-            )
-            if not histogram_frames:
-                # No image of this channel at the current location: the
-                # app draws nothing for the layer (getLayerImages is empty).
-                continue
-            contrast = (
-                overrides.get(layer.get("id")) or layer.get("contrast", {})
-            )
-            contrast_range = self._contrast_range(contrast, histogram_frames)
+        for layer, frames, contrast_range in self._drawn_layers(xy, z, time):
             if len(frames) > 1 or "width" in region:
                 # Drawn by the server's band styling, as the app's tiles
                 # are: a max-merge projection in one request (not one fetch
@@ -280,6 +260,65 @@ class ImageAccessor:
             max_val = np.iinfo(dt).max
             return (composite * max_val).astype(dt)
 
+    def _drawn_layers(self, xy: int, z: int, time: int):
+        """(layer, frames, contrast_range) for each layer the app draws at
+        this location, in drawing order."""
+        self._dataset._ensure_metadata()
+        self._ensure_frame_map()
+        collections = self._dataset.collections
+        overrides = collections.layer_contrasts
+        sizes = {
+            "xy": self._dataset.num_xy,
+            "z": self._dataset.num_z,
+            "time": self._dataset.num_time,
+        }
+        current = {"xy": xy, "z": z, "time": time}
+        for layer in collections.layers:
+            if not layer.get("visible", True):
+                continue
+            frames = self._layer_frames(layer, current, sizes)
+            if not frames:
+                continue
+            # The app's histogram is of the layer's image at the current
+            # location (resolveSlice maps max-merge to the current index),
+            # even when the drawn tile is a projection over many frames.
+            histogram_frames = self._layer_frames(
+                layer, current, sizes, project=False
+            )
+            if not histogram_frames:
+                # No image of this channel at the current location: the
+                # app draws nothing for the layer (getLayerImages is empty).
+                continue
+            contrast = (
+                overrides.get(layer.get("id")) or layer.get("contrast", {})
+            )
+            yield layer, frames, self._contrast_range(
+                contrast, histogram_frames
+            )
+
+    def composite_style(
+        self, xy: int = 0, z: int = 0, time: int = 0
+    ) -> dict | None:
+        """The composite as one large_image ``style``: a band per drawn
+        frame, windowed to its layer's contrast and colored with its
+        layer's color, combined with "lighten" (get_composite's default
+        mode). Pass it to tiles/region to have the server render the
+        composite, e.g. for a download link; None when nothing draws.
+        """
+        bands = []
+        for layer, frames, contrast_range in self._drawn_layers(xy, z, time):
+            low, high = contrast_range or ("min", "max")
+            r, g, b = _parse_color(layer.get("color", "white"))
+            color = "#{:02x}{:02x}{:02x}".format(
+                *(round(c * 255) for c in (r, g, b))
+            )
+            bands += [
+                {"frame": frame, "min": low, "max": high,
+                 "palette": ["#000000", color]}
+                for frame in frames
+            ]
+        return {"bands": bands} if bands else None
+
     def _layer_frames(
         self, layer: dict, current: dict, sizes: dict, project: bool = True
     ) -> list[int]:
@@ -305,6 +344,15 @@ class ImageAccessor:
             if xyi in by_time.get(t, {}).get(zi, {})
         ]
 
+    def _histogram(self, frame: int):
+        """A frame's histogram, fetched once per accessor."""
+        if frame not in self._histograms:
+            self._histograms[frame] = self._dataset._gc.get(
+                f"item/{self._dataset._item_id}/tiles/histogram",
+                parameters={**_HISTOGRAM_PARAMS, "frame": frame},
+            )
+        return self._histograms[frame]
+
     def _contrast_range(
         self, contrast: dict, frames: list[int]
     ) -> tuple[float, float] | None:
@@ -316,13 +364,7 @@ class ImageAccessor:
             return float(black), float(white)
         # Percentile mode: a linear percent of the histogram's range,
         # rounded like the app's scaleLinear().rangeRound().
-        histograms = [
-            self._dataset._gc.get(
-                f"item/{self._dataset._item_id}/tiles/histogram",
-                parameters={**_HISTOGRAM_PARAMS, "frame": frame},
-            )
-            for frame in frames
-        ]
+        histograms = [self._histogram(frame) for frame in frames]
         if not all(histograms):
             return None
         lo = min(h[0]["min"] for h in histograms)

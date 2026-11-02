@@ -469,6 +469,46 @@ class TestGetComposite:
         assert result.shape == (192, 256, 3)  # 1024x768 scaled to fit
 
 
+class TestCompositeStyle:
+    def test_matches_get_composite(self, mock_gc, sample_tiles_metadata):
+        """The style get_composite's server path would send, one band per
+        drawn frame, colored by layer, windowed to the same contrast."""
+        ds, _ = _composite_dataset(
+            mock_gc, sample_tiles_metadata,
+            [_layer(contrast={
+                "mode": "percentile", "blackPoint": 0, "whitePoint": 50,
+            }), _layer(channel=1, color="rgb(0, 255, 0)")],
+            {0: _skewed(), 1: _skewed()},
+        )
+        style = ds.images.composite_style()
+        assert style == {"bands": [
+            {"frame": 0, "min": 0.0, "max": 500.0,
+             "palette": ["#000000", "#ff0000"]},
+            {"frame": 1, "min": 0.0, "max": 1000.0,
+             "palette": ["#000000", "#00ff00"]},
+        ]}
+
+    def test_reuses_get_composites_histograms(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        ds, _ = _composite_dataset(
+            mock_gc, sample_tiles_metadata, [_layer()], {0: _skewed()},
+        )
+        ds.images.get_composite()
+        calls = mock_gc.get.call_count
+        ds.images.composite_style()
+        assert mock_gc.get.call_count == calls
+
+    def test_hidden_layers_and_nothing_drawn(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        ds, _ = _composite_dataset(
+            mock_gc, sample_tiles_metadata,
+            [_layer(visible=False)], {0: _skewed()},
+        )
+        assert ds.images.composite_style() is None
+
+
 class TestSliceIndexes:
     """Mirrors resolveSlice / getLayerSliceIndexes in src/store/images.ts."""
 

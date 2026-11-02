@@ -487,7 +487,8 @@ class Annotation(AccessControlMixin, ProxiedModel):
         only in `values`, and `exclusive` is a mode flag — so a tag
         literally named "exclusive" is handled like any other tag.
         Semantics mirror the client tagCloudFilterFunction:
-        inclusive -> $in (has any); exclusive -> exactly that set.
+        inclusive -> $in (has any); all -> $all (has every one, others
+        allowed); exclusive -> exactly that set.
         """
         match = {"datasetId": datasetId}
         if filters.get("shape"):
@@ -498,6 +499,9 @@ class Annotation(AccessControlMixin, ProxiedModel):
         if tagValues:
             if tags.get("exclusive"):
                 match["tags"] = {"$all": tagValues, "$size": len(tagValues)}
+            elif tags.get("all"):
+                # Every given tag, others allowed: the count endpoint's rule.
+                match["tags"] = {"$all": tagValues}
             else:
                 match["tags"] = {"$in": tagValues}
 

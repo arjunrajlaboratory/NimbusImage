@@ -252,11 +252,15 @@ sequenceDiagram
   S->>G: introspect, then REST as that user
 ```
 
-**Why consent must be a frontend page.** The frontend stores the Girder session token in
-`localStorage` under `nimbus.girderToken` (see `src/store/index.ts`), not in a cookie. A
-top-level browser redirect to a Girder endpoint carries no credential, so the server cannot
-tell who is logged in. The consent page reads the token in the browser and sends it with
-the approve call.
+**Why consent must be a frontend page.** The frontend sends the Girder session token
+from `localStorage` (`nimbus.girderToken`, see `src/store/index.ts`) as a header. Girder 5
+also sets an HttpOnly `girderToken` cookie at login, but only routes marked
+`cookie=True` accept it (a CSRF measure), and the browser keeps it only when the app and
+Girder share an origin, as in production (`/girder`), not in cross-origin local dev. The
+OAuth routes do not accept it, so a top-level redirect to them carries no usable
+credential: the consent page reads the token in the browser and sends it with the
+approve call. (The MCP download links of 5.5 use the cookie on read-only routes that
+accept it.)
 
 ---
 
@@ -344,6 +348,56 @@ JSON with no structured copy (the SDK's default indents dicts and duplicates the
 | `ni_help_topic` | `GET claude_agent/help` | See 5.2 |
 
 ---
+
+### 5.5 Links, outlines, undo, and analysis (built)
+
+Added after production use showed three dead ends: Claude could not give the user a link
+to the app, the user did not see the image (clients fold tool-result images into the
+call), and there was no way to download anything. MCP tool results can be text, images,
+resource links, or embedded resources; claude.ai shows text and links to the user. So
+results carry links, and the server instructions tell the model to pass them on.
+
+- **App links** go to the caller's own view at `?xy=&z=&time=`, plus `x`, `y`
+  (full-resolution pixels) and optional `width` (image pixels across the viewer; image
+  results pass their crop's) or `zoom` to center the viewer
+  (`src/utils/cameraDeepLink.ts`; `DATASET_LOCATION.md` "Camera deep links"). Without a
+  view, the dataset page. Base: `NI_MCP_FRONTEND_URL`, else the issuer.
+- **Download links** point at Girder as the browser reaches it
+  (`NI_MCP_BROWSER_API_URL`; unset means none, the compose default, since cross-origin
+  local dev never gets the cookie) on routes that accept Girder's HttpOnly auth cookie,
+  which the browser keeps after a same-origin login. Verify in production after deploy,
+  in a fresh password session and an Outseta session, before relying on it: large_image's `tiles/region` (PNG, `contentDisposition=attachment`, the
+  composite as one `lighten` band style from `ds.images.composite_style()`, a channel as
+  gray bands sharing the preview's numeric bounds, so a projection's dim slice cannot
+  outshine a bright one) and new `GET export/{csv,geojson}` twins of the POST exports
+  (plus the existing `GET export/json`, now cookie-enabled). The twins are in the
+  share-link download guard with the POST forms. A link longer than ~7.5 KB (a style
+  over many frames) is left out with a note rather than handed out to be refused. The link carries no credential:
+  it works only where the user is signed in. We rejected a short-lived token in the URL,
+  which anyone who sees the link could use.
+- **Indices** are 0-based in every tool; image results and `ni_view_link` say "Z 2 of 7
+  (tool indices ... z=1)" so the user's numbering never drifts by one.
+
+| Tool | Wraps | Notes |
+|---|---|---|
+| `ni_view_link` | `default_view` + `dataset_view_url` | Location, point, or `annotation_id` (centered on its vertex mean) |
+| `ni_export_links` | `GET export/*` | CSV columns: the registered measurements' sampled value paths (max 100, the encoded link kept under 7,500 characters; file names capped at 100) |
+| `ni_image_get_composite` / `_channel` | + `upenn_annotation/list` and `hydrate` | `outline_tags` (any of the tags, at that location, centers near the crop; max 3,000 drawn, says when capped); `projection="max"` on the channel |
+| `ni_annotations_in_region` | `upenn_annotation/list` with a location filter | Center inside a region; scans at most 20,000 at the location (client-side region test, so on a 700K-object frame a small region can be missed: a server-side region filter is follow-up work) |
+| `ni_annotations_create` | `create_many` | **Destructive hint.** Max 1,000; validates shapes and bounds first, creates nothing on any error |
+| `ni_annotations_delete` | `list/ids` + `DELETE multiple` | **Destructive hint.** Requires a filter and the confirmed `expected_count`; max 50,000; one request, so one undo |
+| `ni_connections_summary` | `annotation_connection` (cursor paging) | Union-find over connections: objects linked across z or time |
+| `ni_history_list` / `ni_history_undo` | `history`, `history/undo` | Undo is per user, one recorded action per call; worker results are not recorded |
+| `ni_image_line_scan` | `ds.images.line_scan` | Source bit depth |
+| `ni_property_pairs` | `analysis/histogram2d` with `sample` | Pearson and Spearman over up to 100,000 pairs, a 1,000-point sample |
+| `ni_projects_list`, `ni_dataset_access` | `list_projects`, `sharing.get_access` | Access drops emails |
+
+Three prompts (`prompts.py`) start common workflows. `ni_annotations_count`, `_list`,
+`_in_region`, and `_delete` match ALL the given tags (the list endpoint gained `tags.all`
+for the last two), so a count from `ni_annotations_count` is what a delete acts on.
+`ni_annotations_summary`, `ni_property_values_summary`, and `ni_property_pairs` match ANY
+(or exactly, with `exclusive`), and `outline_tags` matches ANY, for display; each
+docstring says which. Not built: an MCP Apps viewer, Xenium tools, share links, snapshots.
 
 ## 6. Authentication design
 
@@ -1435,6 +1489,41 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
       *"holds back while a login returns to another page"*
 - [x] A site administrator is warned that the connection carries administrator powers.
       *"warns a site administrator"*
+
+### Links and new tools
+
+- [x] App links use the caller's view with 0-based indices and the hash-route query; no
+      view means the dataset page. *"test_view_link_falls_back_to_the_issuer_and_dataset_page"*,
+      *"test_slice_label_is_one_based_and_names_the_indices"*,
+      *"test_ni_view_link_centers_on_an_annotation"*
+- [x] Download links carry no credential, exist only when `NI_MCP_BROWSER_API_URL` is
+      set, and cap the output size. *"test_composite_links_the_app_and_a_styled_download"*,
+      *"test_no_download_link_without_a_browser_api_url"*, *"test_large_downloads_are_capped"*,
+      *"test_settings_read_link_urls"*
+- [x] The download routes accept the auth cookie and refuse anonymous and unauthorized
+      callers; the CSV link matches the POST export. *"testCookieAuthenticatesDownloadLink"*,
+      *"testCsvLinkMatchesPost"*, *"testCsvLinkRejectsMalformedPaths"*,
+      *"testGeoJsonLinkRequiresReadAccess"*; a share-link bearer cannot use them, as with the
+      POST exports. *"testBearerReadsOnlyTheSharedDataset"*, *"testNonAdminOwnerCanStillDownload"*
+- [x] A projection is of raw values with one set of bounds, preview and download alike.
+      *"test_projection_matches_the_raw_maximum"*; a link too long for a proxy is left out.
+      *"test_too_long_a_download_link_is_left_out"*
+- [x] The composite download style is the composite's (colors, contrast, hidden layers).
+      *"test_matches_get_composite"*, *"test_hidden_layers_and_nothing_drawn"*
+- [x] Outlines cost at most three batch requests (two list pages, one hydrate), only fetch
+      geometry near the shown region, and draw an even sample when capped.
+      *"test_outlines_are_drawn_from_two_batch_requests"*,
+      *"test_draw_outlines_scales_to_the_shown_region"*, *"test_capped_outlines_are_an_even_sample"*
+- [x] Region and delete tools match ALL tags, as the count does. *"test_delete_matches_all_tags_like_count"*,
+      *"test_region_tags_match_all_and_shape_filters"*, *"testListIdsFilterByAllTags"*
+- [x] A long dataset name never decides whether a link exists or loops the budget.
+      *"test_export_links_with_a_very_long_name_end"*
+- [x] A delete needs a filter and the confirmed count, and is one request.
+      *"test_delete_counts_first_and_then_deletes_in_one_request"*,
+      *"test_delete_refuses_a_wrong_count_and_names_the_real_one"*, *"test_delete_needs_a_filter"*
+- [x] Undo names what it undid and refuses when nothing is left.
+      *"test_undo_reports_the_entry_it_undoes"*
+- [x] Pairs come from one server aggregate. *"test_pairs_use_one_server_aggregate"*
 
 ### Planned (no test yet)
 

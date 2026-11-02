@@ -149,6 +149,9 @@ vi.mock("@/store", () => {
       popMap: vi.fn(),
       clearMaps: vi.fn(),
       setCameraInfo: vi.fn(),
+      pendingCameraDeepLink: null as any,
+      setPendingCameraDeepLink: vi.fn(),
+      consumeCameraDeepLink: vi.fn(),
       setDrawAnnotations: vi.fn(),
       setShowTooltips: vi.fn(),
       setXY: vi.fn(),
@@ -261,6 +264,7 @@ vi.mock("@/pipelines/computePipeline", () => ({
 }));
 
 import store from "@/store";
+import sync from "@/store/sync";
 import annotationStore from "@/store/annotation";
 import annotationListServer from "@/store/annotationListServer";
 import progressStore from "@/store/progress";
@@ -406,6 +410,15 @@ describe("ImageViewer", () => {
     });
     (mockedStore.setCameraInfo as any).mockImplementation((v: any) => {
       mockedStore.cameraInfo = v;
+    });
+    mockedStore.pendingCameraDeepLink = null;
+    (mockedStore.setPendingCameraDeepLink as any).mockImplementation(
+      (v: any) => {
+        mockedStore.pendingCameraDeepLink = v;
+      },
+    );
+    (mockedStore.consumeCameraDeepLink as any).mockImplementation(() => {
+      mockedStore.pendingCameraDeepLink = null;
     });
   });
 
@@ -902,6 +915,115 @@ describe("ImageViewer", () => {
       (wrapper.vm as any).synchronisationEnabled = false;
       // When disabled, the sync callback won't update cameraInfo
       expect((wrapper.vm as any).synchronisationEnabled).toBe(false);
+    });
+  });
+
+  describe("camera deep link", () => {
+    let map1: ReturnType<typeof mockMap>;
+    const link = { x: 100, y: 200, zoom: 7, datasetId: "dataset1" };
+
+    function deepLinkCenterCalls() {
+      return map1.center.mock.calls.filter(
+        ([center]: any[]) => center?.x === 100 && center?.y === 200,
+      );
+    }
+
+    async function fitDataset(datasetId: string) {
+      (wrapper.vm as any).lastFittedDatasetId = datasetId;
+      (wrapper.vm as any).fitOnDatasetChange++;
+      await nextTick();
+    }
+
+    beforeEach(() => {
+      map1 = mockMap();
+      map1.unitsPerPixel = vi.fn().mockReturnValue(4096);
+      map1.zoomRange = vi.fn().mockReturnValue({ min: 0, max: 20 });
+      mockedStore.maps = [{ map: map1, imageLayers: [], params: {} } as any];
+      sync.setDatasetLoading(false);
+    });
+
+    afterEach(() => {
+      sync.setDatasetLoading(false);
+    });
+
+    it("centers on the link after the dataset's fit, not before", async () => {
+      wrapper = mountComponent();
+      mockedStore.pendingCameraDeepLink = { ...link };
+      await nextTick();
+      // No fit for this dataset yet: centering now would be undone by it.
+      expect(deepLinkCenterCalls()).toHaveLength(0);
+
+      await fitDataset("dataset1");
+
+      expect(map1.bounds).toHaveBeenCalled();
+      expect(map1.zoom).toHaveBeenCalledWith(7);
+      expect(deepLinkCenterCalls()).toHaveLength(1);
+      expect(
+        map1.bounds.mock.invocationCallOrder[0] <
+          map1.center.mock.invocationCallOrder.at(-1)!,
+      ).toBe(true);
+      expect(mockedStore.pendingCameraDeepLink).toBeNull();
+    });
+
+    it("applies once: a later fit or frame change does not re-center", async () => {
+      wrapper = mountComponent();
+      mockedStore.pendingCameraDeepLink = { ...link };
+      await fitDataset("dataset1");
+      expect(deepLinkCenterCalls()).toHaveLength(1);
+
+      mockedStore.z = 3 as any;
+      await fitDataset("dataset1");
+      sync.setDatasetLoading(true);
+      sync.setDatasetLoading(false);
+      await nextTick();
+
+      expect(deepLinkCenterCalls()).toHaveLength(1);
+    });
+
+    it("does not center the outgoing dataset on a link for the incoming one", async () => {
+      wrapper = mountComponent();
+      await fitDataset("dataset1");
+      mockedStore.pendingCameraDeepLink = { ...link, datasetId: "dataset2" };
+      await nextTick();
+
+      expect(deepLinkCenterCalls()).toHaveLength(0);
+      expect(mockedStore.pendingCameraDeepLink).not.toBeNull();
+    });
+
+    it("waits for loading to end when the dataset is unchanged", async () => {
+      wrapper = mountComponent();
+      await fitDataset("dataset1");
+      sync.setDatasetLoading(true);
+      mockedStore.pendingCameraDeepLink = { ...link };
+      await nextTick();
+      expect(deepLinkCenterCalls()).toHaveLength(0);
+
+      sync.setDatasetLoading(false);
+      await nextTick();
+
+      expect(deepLinkCenterCalls()).toHaveLength(1);
+      expect(mockedStore.pendingCameraDeepLink).toBeNull();
+    });
+
+    it("defaults the zoom to show about 512 image pixels across", async () => {
+      wrapper = mountComponent();
+      mockedStore.pendingCameraDeepLink = { ...link, zoom: null };
+      await fitDataset("dataset1");
+
+      // 4096 units per screen pixel at zoom 0, 800 px wide viewport.
+      const zoom = map1.zoom.mock.calls.find(
+        ([value]: any[]) => typeof value === "number",
+      )?.[0];
+      expect((4096 / 2 ** zoom) * 800).toBeCloseTo(512);
+    });
+
+    it("does nothing without a link", async () => {
+      wrapper = mountComponent();
+      await fitDataset("dataset1");
+
+      expect(map1.bounds).toHaveBeenCalled();
+      expect(map1.zoom).not.toHaveBeenCalledWith(7);
+      expect(mockedStore.consumeCameraDeepLink).not.toHaveBeenCalled();
     });
   });
 

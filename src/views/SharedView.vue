@@ -19,8 +19,10 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import store from "@/store";
+import { removeQueryKeys } from "@/utils/useRouteMapper";
+import { CAMERA_DEEP_LINK_QUERY_KEYS } from "@/utils/cameraDeepLink";
 import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
 import Viewer from "./datasetView/Viewer.vue";
@@ -33,6 +35,14 @@ import Viewer from "./datasetView/Viewer.vue";
  */
 
 const route = useRoute();
+const router = useRouter();
+
+// As on the dataset view route: once ImageViewer applies a `?x=&y=` target,
+// drop it from the URL, so a reload keeps where the viewer moved to.
+watch(
+  () => store.appliedCameraDeepLinks,
+  () => removeQueryKeys(CAMERA_DEEP_LINK_QUERY_KEYS, router, route),
+);
 const error = ref<string | null>(null);
 const ready = ref(false);
 let sequence = 0;

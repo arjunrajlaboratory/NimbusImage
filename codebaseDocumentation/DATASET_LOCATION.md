@@ -42,9 +42,57 @@ export then failed with "Image not found for channel …" (issue #1388, PR #1389
   (`setDatasetViewId`) or the dataset (`setSelectedDataset`) flushes the pending
   save first, while the two still match. Every clamp site schedules a save.
 
+## Camera deep links (`?x=&y=&zoom=&width=`)
+
+`#/datasetView/<viewId>/view?xy=0&z=3&time=0&x=1520&y=860&zoom=6` opens the
+view on frame (0, 3, 0) centered on image pixel (1520, 860). External tools
+(the MCP server) use it to link straight to an object.
+
+- **`x`, `y`**: full-resolution image pixel coordinates, origin top-left, y
+  down: the coordinates annotations are stored in, so an annotation centroid
+  can be used as is. Both are required; fractional values are fine. On an
+  unrolled view the point is taken within the cell of the current
+  `xy`/`z`/`time`, as annotation navigation does.
+- **`zoom`**: optional GeoJS zoom level, the same number `store.cameraInfo.zoom`
+  holds. At `zoom = maxLevel` of the image's tile pyramid one image pixel is one
+  screen pixel; each step up or down doubles or halves the magnification.
+  Without it the viewer zooms so `width` image pixels (a positive number, for
+  callers such as the MCP server that know a region but not the map's
+  pyramid), else about 512 (`DEFAULT_DEEP_LINK_VIEW_WIDTH`), span the
+  viewport's width. Either way the zoom is clamped to the map's zoom range.
+- **Invalid values are ignored.** A missing, empty, non-numeric or non-finite
+  `x` or `y` opens the view as if neither were given (fitted to the image as
+  usual); an invalid `zoom` or `width` falls back to the default.
+
+How it flows (`src/utils/cameraDeepLink.ts` parses; the store and ImageViewer
+apply):
+
+1. `setDatasetViewId` parses `routeQuery` before its first `await`, clears any
+   target an earlier navigation left unapplied, claims a navigation number,
+   and once the view is fetched stores `pendingCameraDeepLink` tagged with the
+   view's `datasetId`, unless a later navigation has started meanwhile.
+2. ImageViewer applies it only when it is not loading, `store.dataset` is the
+   tagged dataset (while a view loads, `store.dataset` is the outgoing one) and
+   the fit-to-image for that dataset has run. On a new dataset the fit watcher
+   applies it right after its fit; on an unchanged dataset a watcher applies it
+   when loading ends. It zooms, centers map 0, and syncs `cameraInfo`, so
+   every map in a multi-map layout follows.
+3. Applying consumes the target (`consumeCameraDeepLink`), so it runs once per
+   navigation, and `DatasetView.vue` (and `SharedView.vue`) then removes the
+   camera keys from the URL with `removeQueryKeys`, under the route mapper's
+   one write lock,
+   so a reload or a copied URL keeps where the user moved to instead of jumping
+   back to the linked point.
+4. Changing only the camera keys on the open view (`DatasetView.vue` watches
+   them) re-targets it through `requestCameraDeepLink`.
+5. The breadcrumb view switcher keeps `xy`/`z`/`time` but drops the camera
+   keys, since the point belongs to the view being left.
+
+Without these keys nothing changes: the view opens fitted to the image.
+
 ## Regression checklist
 
-Run `pnpm test src/utils/datasetLocation.test.ts src/store/__tests__/datasetLocationClamp.test.ts`.
+Run `pnpm test src/utils/datasetLocation.test.ts src/store/__tests__/datasetLocationClamp.test.ts src/utils/cameraDeepLink.test.ts src/store/__tests__/cameraDeepLink.test.ts src/components/ImageViewer.test.ts`.
 
 ### Clamping
 
@@ -64,6 +112,19 @@ Run `pnpm test src/utils/datasetLocation.test.ts src/store/__tests__/datasetLoca
 - [ ] **Replacing the view flushes the pending save into the view being left.** — *"saves a pending location into the view being left, not the next one"*
 - [ ] **Replacing the dataset flushes too.** `Dataset.vue` switches datasets with the old view still loaded, and the save was then rejected as a mismatch (Codex round 2). — *"saves a pending location before a direct dataset switch replaces the dataset"*
 - [ ] **Nothing is saved mid-load**, when the location may still be an unchecked query value. — *"does not save a location while the dataset is still loading"*
+
+### Camera deep links
+
+- [ ] **Invalid coordinates are ignored, an invalid zoom falls back.** — *"returns null unless both x and y are finite numbers"*, *"ignores an invalid zoom but keeps the point"*
+- [ ] **The target is tied to the incoming view's dataset**, never the outgoing one still loaded. — *"ties the target to the incoming dataset while the outgoing one is still loaded"*, *"does not center the outgoing dataset on a link for the incoming one"*
+- [ ] **A navigation without a target clears an unapplied one.** — *"clears an unapplied target when a new navigation has none"*
+- [ ] **It centers after the dataset's fit, never before** (the fit would undo it). — *"centers on the link after the dataset's fit, not before"*
+- [ ] **It applies once per navigation.** — *"applies once: a later fit or frame change does not re-center"*
+- [ ] **A same-dataset view switch still applies it**, when loading ends. — *"waits for loading to end when the dataset is unchanged"*
+- [ ] **The view switcher drops the camera keys.** — *"goToView keeps the location but drops a camera deep link"*
+- [ ] **A link can size the view by image width**; an explicit zoom wins. — *"shows a link's width, and its zoom wins over it"*
+- [ ] **Applied keys leave the URL**, so a reload keeps where the user moved: only on apply (a navigation's reset would strip a loading view's own target), through the route mapper's one write lock (on the dataset view and share routes alike). — *"consuming a target clears it and counts the apply"*, *"removes query keys after a mapper write in flight, keeping its value"*
+- [ ] **A superseded navigation never commits its target**, even when its view fetch resolves last. — *"a superseded navigation does not commit its target when its fetch resolves last"*
 
 ### Known limitation
 
