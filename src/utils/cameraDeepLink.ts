@@ -30,6 +30,11 @@ export interface IPendingCameraDeepLink extends ICameraDeepLink {
   datasetId: string;
 }
 
+/** A link ImageViewer applied, and the dataset view it was applied in. */
+export interface IAppliedCameraDeepLink extends IPendingCameraDeepLink {
+  datasetViewId: string | null;
+}
+
 export const CAMERA_DEEP_LINK_QUERY_KEYS = ["x", "y", "zoom", "width"] as const;
 
 /** Image pixels across the viewport when a link gives no `zoom`. */

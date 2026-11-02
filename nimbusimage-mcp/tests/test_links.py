@@ -332,3 +332,36 @@ def test_undo_reports_the_entry_it_undoes(ds, nc):
     nc.girder.get.return_value = []
     with pytest.raises(ToolError, match="nothing to undo"):
         history.ni_history_undo(dataset_id="d1")
+
+
+def test_writes_are_never_resent_once_sent():
+    """An undo or delete whose answer is lost must not be repeated: the
+    session's read and status retries are off inside sending_once, and
+    put back after."""
+    import girder_client
+    import requests
+    from types import SimpleNamespace
+    from urllib3.util.retry import Retry
+
+    session = requests.Session()
+    adapter = session.get_adapter("https://x")
+    adapter.max_retries = Retry(total=5, read=5, status=5,
+                                status_forcelist=[502])
+    nc = SimpleNamespace(girder=SimpleNamespace(_session=session))
+    with _common.sending_once(nc, "undo", "Check ni_history_list"):
+        inside = adapter.max_retries
+        assert (inside.read, inside.status, inside.other) == (0, 0, 0)
+        assert inside.connect == adapter.max_retries.connect
+    assert adapter.max_retries.read == 5
+
+    # A lost answer is "may have happened", never "try again".
+    with pytest.raises(ToolError, match="may have happened. Check"):
+        with _common.sending_once(nc, "undo", "Check ni_history_list"):
+            raise requests.ConnectionError("connection reset")
+    with pytest.raises(ToolError, match="may have happened"):
+        with _common.sending_once(nc, "undo", "Check ni_history_list"):
+            raise girder_client.HttpError(502, "", "u", "PUT")
+    # A refusal is reported as usual.
+    with pytest.raises(girder_client.HttpError):
+        with _common.sending_once(nc, "undo", "Check ni_history_list"):
+            raise girder_client.HttpError(403, "", "u", "PUT")

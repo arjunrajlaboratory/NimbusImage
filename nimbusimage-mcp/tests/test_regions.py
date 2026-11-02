@@ -6,6 +6,7 @@ from __future__ import annotations
 import itertools
 
 import girder_client
+import requests
 import json
 from unittest.mock import MagicMock
 
@@ -35,6 +36,8 @@ class FakeAnnotationGirder:
         self.annotations: dict[str, dict] = {}
         self.connections: list[dict] = []
         self.calls: list[tuple[str, str]] = []
+        # A real session, so writes can switch its retries off.
+        self._session = requests.Session()
         # An older server ignores unknown keys: set tag_keys to everything.
         self.tag_keys = {"values", "exclusive", "all"}
         self._ids = itertools.count(1)
@@ -103,7 +106,9 @@ class FakeAnnotationGirder:
         if set(tag_filter) - self.tag_keys:
             # The current server refuses tag-filter keys it does not know.
             raise girder_client.HttpError(
-                400, '{"message": "unknown keys"}', path, "POST")
+                400, '{"message": "filters.tags has unknown keys: %s"}'
+                % ", ".join(sorted(set(tag_filter) - self.tag_keys)),
+                path, "POST")
         if path == "upenn_annotation/list":
             assert json["datasetId"] == DATASET
             matched = list(self._matching(json["filters"]))
@@ -240,6 +245,26 @@ def test_several_tags_refused_on_a_server_that_ignores_all(
         dataset_id=DATASET, tags=["dapi"], expected_count=-1))
     assert result["matching"] == 2
     assert len(girder.annotations) == 2
+
+
+def test_an_unrelated_400_is_not_taken_as_support(girder, monkeypatch):
+    """An old server's 400 for a bad dataset id must not mark it as one
+    that honors tags.all for every later call."""
+    monkeypatch.setattr(regions, "_ALL_TAGS_SERVERS", set())
+    girder.tag_keys = _AnyKeys()
+    original = girder.post
+
+    def post(path, json=None):
+        if isinstance(json, dict) and json.get("datasetId") == "bad":
+            raise girder_client.HttpError(
+                400, '{"message": "Invalid ObjectId: bad"}', path, "POST")
+        return original(path, json)
+
+    monkeypatch.setattr(girder, "post", post)
+    with pytest.raises(ToolError):
+        regions.ni_annotations_delete(
+            dataset_id="bad", tags=["a", "b"], expected_count=-1)
+    assert regions._ALL_TAGS_SERVERS == set()
 
 
 def test_delete_matches_all_tags_like_count(girder):

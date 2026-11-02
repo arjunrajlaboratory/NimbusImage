@@ -16,6 +16,7 @@ from nimbusimage_mcp._common import (
     clamp,
     client,
     instrumented,
+    sending_once,
 )
 
 Shape = Literal["point", "polygon", "line", "rectangle"]
@@ -51,7 +52,9 @@ def _tag_filter(tags: list[str] | None) -> dict | None:
             "all": True}
 
 
-# Girder servers known to honor tags.all, by REST root.
+# Girder servers known to honor tags.all, by REST root, and the made-up
+# tag-filter key that such a server refuses by name.
+PROBE_KEY = "capabilityProbe"
 _ALL_TAGS_SERVERS: set[str] = set()
 OLD_SERVER = (
     "This NimbusImage server is too old to match annotations that have "
@@ -77,11 +80,14 @@ def _require_all_tags_support(nc, dataset_id: str, tags) -> None:
         nc.girder.post("upenn_annotation/list", json={
             "datasetId": dataset_id, "limit": 1, "offset": 0,
             "filters": {"tags": {
-                "values": list(tags), "all": True, "capabilityProbe": True,
+                "values": list(tags), "all": True, PROBE_KEY: True,
             }},
         })
     except girder_client.HttpError as e:
-        if e.status == 400:
+        # Only a refusal of the made-up key itself shows support: an old
+        # server also answers 400 for other reasons (a malformed dataset
+        # id), and caching that would let every later call match ANY.
+        if e.status == 400 and PROBE_KEY in (e.responseText or ""):
             _ALL_TAGS_SERVERS.add(server)
             return
         raise
@@ -334,7 +340,8 @@ def ni_annotations_create(
             location=location, dataset_id=dataset_id,
             coordinates=[{"x": x, "y": y} for x, y in points],
         ))
-    created = ds.annotations.create_many(to_create)
+    with sending_once(nc, "create", "Count the annotations"):
+        created = ds.annotations.create_many(to_create)
     ids = [a.id for a in created]
     return {
         "created": len(created),
@@ -427,7 +434,10 @@ def ni_annotations_delete(
         )
     # One request (no per-request id cap on this endpoint), so the delete
     # is a single history entry that one undo restores.
-    nc.dataset(dataset_id).annotations.delete_many(ids)
+    # Never resent: a repeat would record a second (empty) history entry,
+    # and one undo would then restore nothing.
+    with sending_once(nc, "delete", "Count the annotations again"):
+        nc.dataset(dataset_id).annotations.delete_many(ids)
     return {"deleted": len(ids), "matching": total}
 
 

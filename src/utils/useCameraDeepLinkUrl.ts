@@ -4,23 +4,32 @@ import type { RouteLocationNormalized } from "vue-router";
 import store from "@/store";
 import {
   CAMERA_DEEP_LINK_QUERY_KEYS,
-  IPendingCameraDeepLink,
+  IAppliedCameraDeepLink,
   parseCameraDeepLink,
 } from "@/utils/cameraDeepLink";
 import { removeQueryKeys } from "@/utils/useRouteMapper";
 
-/** Whether the route still carries the link that was applied. */
+/**
+ * Whether the route still carries the link that was applied: the same point
+ * and size, for the same view (the route's own view id where it has one; on
+ * a share route, the view the store holds, which the share's token picks).
+ * Another view's link with the same numbers is not this one.
+ */
 export function routeCarriesCameraDeepLink(
   route: RouteLocationNormalized,
-  applied: IPendingCameraDeepLink,
+  applied: IAppliedCameraDeepLink,
 ): boolean {
   const link = parseCameraDeepLink(route.query);
+  const routeViewId = route.params.datasetViewId;
+  const viewId =
+    typeof routeViewId === "string" ? routeViewId : store.datasetView?.id;
   return (
     !!link &&
     link.x === applied.x &&
     link.y === applied.y &&
     link.zoom === applied.zoom &&
     link.width === applied.width &&
+    viewId === applied.datasetViewId &&
     store.datasetView?.datasetId === applied.datasetId
   );
 }

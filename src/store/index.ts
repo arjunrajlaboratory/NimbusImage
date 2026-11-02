@@ -110,6 +110,7 @@ import {
 } from "@/utils/datasetLocation";
 import { quotaExceededMessage } from "@/utils/quota";
 import {
+  IAppliedCameraDeepLink,
   IPendingCameraDeepLink,
   parseCameraDeepLink,
 } from "@/utils/cameraDeepLink";
@@ -360,10 +361,6 @@ let recentDatasetViewsRequestId = 0;
 // setDatasetViewId calls, counted so only the latest one applies its view:
 // an earlier view's fetch can resolve after a later one's.
 let datasetViewNavigation = 0;
-// setSelectedDataset calls, counted the same way: a dataset load that a later
-// one overtook must not set its dataset, clamp the location to it, or end
-// the newer load's datasetLoading.
-let selectedDatasetRequest = 0;
 
 // Annotation-browser persistence bookkeeping. Module-level rather than Vuex
 // state because the debounce timer is never read by the UI.
@@ -853,7 +850,7 @@ export class Main extends VuexModule {
   // routes can drop exactly its keys from the URL then (and only then: a
   // navigation also clears pendingCameraDeepLink, while its own target is
   // still loading).
-  appliedCameraDeepLink: IPendingCameraDeepLink | null = null;
+  appliedCameraDeepLink: IAppliedCameraDeepLink | null = null;
 
   drawAnnotations: boolean = true;
   filteredDraw: boolean = true;
@@ -1904,7 +1901,10 @@ export class Main extends VuexModule {
   @Mutation
   public consumeCameraDeepLink() {
     this.appliedCameraDeepLink = this.pendingCameraDeepLink
-      ? { ...this.pendingCameraDeepLink }
+      ? {
+          ...this.pendingCameraDeepLink,
+          datasetViewId: this.datasetView?.id ?? null,
+        }
       : null;
     this.pendingCameraDeepLink = null;
   }
@@ -2382,14 +2382,8 @@ export class Main extends VuexModule {
       // deliberately leaves them alone.
       this.context.dispatch("resetConnectionTrackFilters");
     }
-    // Claimed after the await above: until then a later call could not
-    // have overtaken this one anywhere that matters.
-    const request = ++selectedDatasetRequest;
     if (!id) {
       this.setDataset({ id, data: null });
-      // An overtaken load returns without ending the loading state.
-      sync.setLoading(false);
-      sync.setDatasetLoading(false);
       memDiag.autoSnapshot("setSelectedDataset:exit (null)");
       return;
     }
@@ -2402,11 +2396,6 @@ export class Main extends VuexModule {
         unrollT: this.unrollT,
       };
       const r = await this.context.dispatch("getDataset", { id, ...unroll });
-      if (request !== selectedDatasetRequest) {
-        // Overtaken: the newer load sets the dataset and owns the loading
-        // state, the clamp, and the location save.
-        return;
-      }
       this.setDataset({ id, data: r, unroll });
       // Before datasetLoading clears: location setters skip their own clamp
       // while it is set (see locationDataset), so this is where a location
@@ -2418,15 +2407,9 @@ export class Main extends VuexModule {
       // configuration, re-hydrate here to restore the browser state the
       // resets above wiped.
       this.hydrateAnnotationBrowserState();
-      if (request !== selectedDatasetRequest) {
-        return;
-      }
       sync.setLoading(false);
       sync.setDatasetLoading(false);
     } catch (error) {
-      if (request !== selectedDatasetRequest) {
-        return;
-      }
       sync.setLoading(error as Error);
       sync.setDatasetLoading(false);
     }

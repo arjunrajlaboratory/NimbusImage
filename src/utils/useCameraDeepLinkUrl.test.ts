@@ -10,7 +10,7 @@ vi.mock("@/store", async () => {
   return {
     default: reactive({
       appliedCameraDeepLink: null,
-      datasetView: { datasetId: "ds" },
+      datasetView: { id: "a", datasetId: "ds" },
     }),
   };
 });
@@ -23,7 +23,7 @@ import { removeQueryKeys } from "./useRouteMapper";
 function makeRoute(path: string, query: Record<string, string>) {
   return reactive({
     name: "datasetview",
-    params: {},
+    params: { datasetViewId: path.split("/")[2] } as Record<string, string>,
     query,
     path,
     hash: "",
@@ -42,7 +42,7 @@ describe("useCameraDeepLinkUrlCleanup", () => {
 
   beforeEach(() => {
     (store as any).appliedCameraDeepLink = null;
-    (store as any).datasetView = { datasetId: "ds" };
+    (store as any).datasetView = { id: "a", datasetId: "ds" };
     const current = makeRoute("/datasetView/a/view", {
       z: "2",
       x: "5",
@@ -81,6 +81,7 @@ describe("useCameraDeepLinkUrlCleanup", () => {
       y,
       zoom: null,
       datasetId: "ds",
+      datasetViewId: "a",
     };
   }
 
@@ -102,6 +103,17 @@ describe("useCameraDeepLinkUrlCleanup", () => {
     route.query = { z: "2", x: "7", y: "8" };
     mount();
     applyLink(5, 6);
+    await settle();
+
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("leaves another view's link with the same numbers alone", async () => {
+    // The removal waited; the URL is now view b's link to the same point.
+    mount();
+    applyLink(5, 6);
+    route.path = "/datasetView/b/view";
+    route.params = { datasetViewId: "b" };
     await settle();
 
     expect(router.replace).not.toHaveBeenCalled();
@@ -131,6 +143,7 @@ describe("useCameraDeepLinkUrlCleanup", () => {
     await nextTick();
     // Meanwhile the user opens view B's link.
     route.path = "/datasetView/b/view";
+    route.params = { datasetViewId: "b" };
     route.query = { x: "50", y: "60", z: "2" };
     release();
     await inFlight;

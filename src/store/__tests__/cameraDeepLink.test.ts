@@ -177,31 +177,26 @@ describe("camera deep link", () => {
     expect(sync.datasetLoading).toBe(false);
   });
 
-  it("a navigation overtaken while its dataset loads leaves loading to the newer one", async () => {
-    views.a = makeView("a", "dsA");
-    views.b = makeView("b", "dsB");
-    const datasetLoads: Record<string, () => void> = {};
+  it("a stale refresh during a view's dataset load does not leave it without a dataset", async () => {
+    // At page load, loggedIn() re-requests selectedDatasetId (still null)
+    // while the route's view is loading its dataset.
+    views.v = makeView("v", "dsX");
+    let release: () => void = () => {};
     stubAction(
       "getDataset",
       ({ id }) =>
         new Promise((resolve) => {
-          datasetLoads[id] = () =>
+          release = () =>
             resolve({ id, xy: [0], z: [0], time: [0] } as IDataset);
         }),
     );
+    const navigation = main.setDatasetViewId({ id: "v" });
+    await vi.waitFor(() => expect(main.datasetView?.id).toBe("v"));
+    await main.setSelectedDataset(main.selectedDatasetId);
+    release();
+    await navigation;
 
-    const first = main.setDatasetViewId({ id: "a" });
-    await vi.waitFor(() => expect(datasetLoads.dsA).toBeDefined());
-    const second = main.setDatasetViewId({ id: "b" });
-    await vi.waitFor(() => expect(datasetLoads.dsB).toBeDefined());
-    datasetLoads.dsA();
-    await first;
-    // A's tail must not end B's loading (nor clamp or save B's location).
-    expect(sync.datasetLoading).toBe(true);
-    datasetLoads.dsB();
-    await second;
-    expect(sync.datasetLoading).toBe(false);
-    expect(main.datasetView?.id).toBe("b");
+    expect(main.dataset?.id).toBe("dsX");
   });
 
   it("an overtaken load that fails leaves loading to the newer navigation", async () => {
@@ -252,7 +247,13 @@ describe("camera deep link", () => {
 
     expect(main.pendingCameraDeepLink).toBeNull();
     const applied = main.appliedCameraDeepLink;
-    expect(applied).toEqual({ x: 1, y: 2, zoom: null, datasetId: "ds1" });
+    expect(applied).toEqual({
+      x: 1,
+      y: 2,
+      zoom: null,
+      datasetId: "ds1",
+      datasetViewId: "v",
+    });
     // A navigation's reset is not an apply: the routes keep its keys.
     await main.setDatasetViewId({ id: "v", routeQuery: { x: "3", y: "4" } });
     await main.setDatasetViewId({ id: "v" });

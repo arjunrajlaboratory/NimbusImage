@@ -8,6 +8,7 @@ from nimbusimage_mcp._common import (
     clamp,
     client,
     instrumented,
+    sending_once,
 )
 
 MAX_HISTORY = 50
@@ -55,7 +56,10 @@ def ni_history_undo(dataset_id: str) -> dict:
     pending = [e for e in entries(nc, dataset_id) if not e.get("isUndone")]
     if not pending:
         raise ValueError("There is nothing to undo in this dataset.")
-    nc.girder.put("history/undo", parameters={"datasetId": dataset_id})
+    # Never resent: each undo undoes the next action, so a retry after a
+    # lost answer would undo two while reporting one.
+    with sending_once(nc, "undo", "Check ni_history_list"):
+        nc.girder.put("history/undo", parameters={"datasetId": dataset_id})
     undone = describe(pending[0])
     del undone["undone"]
     return {"undone": undone, "remaining": len(pending) - 1}

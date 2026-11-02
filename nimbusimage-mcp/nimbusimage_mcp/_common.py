@@ -339,6 +339,38 @@ def submitting_job():
         raise ToolError(JOB_MAY_HAVE_STARTED) from None
 
 
+@contextlib.contextmanager
+def sending_once(nc: ni.NimbusClient, what: str, check: str):
+    """Around a write that is not safe to repeat (an undo undoes the next
+    action; a repeated delete records a second history entry). Requests in
+    the block are never resent once they may have reached Girder: only a
+    connection that never opened is retried. A lost answer is reported as
+    "may have happened", with how to check, rather than "try again"."""
+    adapters = nc.girder._session.adapters.values()
+    saved = [(a, a.max_retries) for a in adapters
+             if isinstance(getattr(a, "max_retries", None), Retry)]
+    for adapter, retries in saved:
+        adapter.max_retries = retries.new(read=0, status=0, other=0)
+    unconfirmed = ToolError(
+        f"NimbusImage did not confirm the {what}, but it may have happened. "
+        f"{check} before trying again."
+    )
+    try:
+        yield
+    except girder_client.HttpError as e:
+        # First: girder_client.HttpError is also a RequestException.
+        if e.status in (502, 504):
+            raise unconfirmed from None
+        raise
+    except requests.RequestException as e:
+        if never_sent(e):
+            raise
+        raise unconfirmed from None
+    finally:
+        for adapter, retries in saved:
+            adapter.max_retries = retries
+
+
 def instrumented(fn):
     """Wrap a tool (sync or async): compact JSON result, mapped errors,
     one log record per call."""
