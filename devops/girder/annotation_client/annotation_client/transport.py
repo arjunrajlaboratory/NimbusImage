@@ -58,8 +58,9 @@ except ImportError:
 # Once a request is sent, only idempotent methods are retried (urllib3's
 # default allowed set: GET/HEAD/PUT/DELETE/OPTIONS/TRACE), so a retried POST
 # can't create duplicate annotations. A request that fails to connect is
-# retried whatever its method, since nothing reached the server. raise_on_status=False lets girder_client raise its
-# usual HttpError on the final response instead of a urllib3 RetryError.
+# retried whatever its method, since nothing reached the server.
+# raise_on_status=False lets girder_client raise its usual HttpError on the
+# final response instead of a urllib3 RetryError.
 # Like nimbusimage/_girder.py, except that 504 is not retried: the load
 # balancer sends it after a request has run for its full 300 s server
 # timeout, so a retry would rerun the same slow read or delete (up to six
