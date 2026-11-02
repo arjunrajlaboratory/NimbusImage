@@ -71,6 +71,14 @@ Status values: `fixed <commit>`, `not real` (with the evidence), `declined` (rea
 
 Round 5's two fixes are prose, checked against the code but not re-reviewed by a sixth round.
 
+## Round 6 (head `d89143c0`), confirmation round
+
+| # | Pass | Severity | Finding | Status |
+|---|---|---|---|---|
+| R6-B1 | branch-review | Nit | The design doc's list of `batch` values that used to serialize (as Girder's `str()` fallback) and now fail mid-response named Decimal128/Binary/Regex/Timestamp but not MinKey/MaxKey or an embedded `{$ref, $id}` (DBRef) | fixed: verified Girder writes `"MinKey()"` / `"DBRef('c', 1)"`; the doc now states the rule (any type Girder's encoder `str()`s) and lists all of them. The PR body's copy fixed too |
+| — | /code-review | — | No findings: round 5's claims match Girder's `endpoint` (streams a callable's output, `list()`s a `GeneratorType`) | — |
+| — | Codex | — | Ran on `d89143c0`: "No actionable regressions were identified" | — |
+
 ## Not in this PR's lines
 
 No finding fell in #1458's commit `15bcc1c8`.
