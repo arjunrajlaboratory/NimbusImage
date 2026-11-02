@@ -10,6 +10,7 @@ import datetime
 import json
 import math
 import random
+from pathlib import Path
 from unittest.mock import patch
 
 import girder_client
@@ -70,12 +71,12 @@ def stdlibBody(value):
     return json.dumps(value, allow_nan=False).encode("utf-8")
 
 
-class FakeResponse:
-    def __init__(self, content):
-        self.content = content
-
-    def json(self):
-        return json.loads(self.content)
+def FakeResponse(content):
+    """A real requests.Response, so the reference is master's .json()."""
+    response = requests.Response()
+    response._content = content
+    response.status_code = 200
+    return response
 
 
 class TestDumpsJson:
@@ -189,8 +190,19 @@ class TestLoadsJson:
             body = stdlibBody(payload)
             assert (
                 transport.loadsJson(FakeResponse(body))
-                == json.loads(body)
+                == FakeResponse(body).json()
             )
+
+    @pytest.mark.parametrize("body", [
+        b'\xef\xbb\xbf{"a": 1}',  # UTF-8 BOM: orjson refuses it
+        '{"tag": "\u7d30\u80de"}'.encode("utf-16"),
+        '{"tag": "\u7d30\u80de"}'.encode("utf-8"),
+    ])
+    def test_encodings_match_requests(self, body):
+        assert (
+            transport.loadsJson(FakeResponse(body))
+            == FakeResponse(body).json()
+        )
 
     def test_nan_tokens_fall_back_to_stdlib(self):
         value = transport.loadsJson(FakeResponse(b'{"a": NaN, "b": 1}'))
@@ -366,6 +378,14 @@ class TestClientOverHttp:
                 client.createMultipleAnnotations([{"shape": "point"}])
         assert info.value.status == 503
         assert len(fakeGirder.requests) == 1
+
+
+def test_packaging_requires_an_orjson_with_the_options_used():
+    # An older orjson already in a worker env satisfies a bare "orjson"
+    # requirement, and one before 3.3 fails this package's import.
+    root = Path(transport.__file__).parent.parent
+    assert "orjson>=3.10" in (root / "requirements.txt").read_text()
+    assert '"orjson>=3.10"' in (root / "setup.py").read_text()
 
 
 class TestEveryClientUsesTheTransport:

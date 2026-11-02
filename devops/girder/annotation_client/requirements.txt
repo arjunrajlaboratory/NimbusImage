@@ -1,3 +1,3 @@
 girder-client
-orjson
+orjson>=3.10
 tifffile

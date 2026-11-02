@@ -24,12 +24,12 @@ def _stdlib_body(value):
     return json.dumps(value, allow_nan=False).encode("utf-8")
 
 
-class _Response:
-    def __init__(self, content):
-        self.content = content
-
-    def json(self):
-        return json.loads(self.content)
+def _Response(content):
+    """A real requests.Response, so the reference is master's .json()."""
+    response = requests.Response()
+    response._content = content
+    response.status_code = 200
+    return response
 
 
 @pytest.fixture
@@ -102,7 +102,14 @@ class TestDumpsJson:
 class TestLoadsJson:
     def test_matches_stdlib(self, annotations):
         body = _stdlib_body(annotations)
-        assert g.loads_json(_Response(body)) == json.loads(body)
+        assert g.loads_json(_Response(body)) == _Response(body).json()
+
+    @pytest.mark.parametrize("body", [
+        b'\xef\xbb\xbf{"a": 1}',  # UTF-8 BOM: orjson refuses it
+        '{"tag": "\u7d30\u80de"}'.encode("utf-16"),
+    ])
+    def test_encodings_match_requests(self, body):
+        assert g.loads_json(_Response(body)) == _Response(body).json()
 
     def test_nan_tokens_fall_back_to_stdlib(self):
         assert math.isnan(g.loads_json(_Response(b"[NaN]"))[0])

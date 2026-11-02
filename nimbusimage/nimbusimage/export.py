@@ -65,13 +65,8 @@ class ExportAccessor:
             "undefinedValue": undefined_value,
             "sanitizeColumnNames": sanitize_column_names,
         }
-        import json as json_mod
-
         response = self._gc.sendRestRequest(
-            "POST", "export/csv",
-            data=json_mod.dumps(body),
-            headers={"Content-Type": "application/json"},
-            jsonResp=False,
+            "POST", "export/csv", json=body, jsonResp=False,
         )
         data = response.content
 

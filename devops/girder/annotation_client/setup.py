@@ -10,5 +10,5 @@ setup(
     author_email="adrien.boucaud@kitware.com",
     url="https://github.com/boucaud/UPennContrast_annotation_client",
     packages=["annotation_client"],
-    install_requires=["girder-client", "orjson", "tifffile"],
+    install_requires=["girder-client", "orjson>=3.10", "tifffile"],
 )

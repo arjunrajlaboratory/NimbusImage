@@ -32,8 +32,8 @@ class TestExportAccessor:
             property_paths=[["prop1", "Area"]],
             sanitize_column_names=True,
         )
-        body = mock_gc.sendRestRequest.call_args.kwargs["data"]
-        assert '"sanitizeColumnNames": true' in body
+        body = mock_gc.sendRestRequest.call_args.kwargs["json"]
+        assert body["sanitizeColumnNames"] is True
 
     def test_to_csv_with_path(self, mock_gc, tmp_path):
         mock_response = MagicMock()

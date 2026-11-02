@@ -78,6 +78,9 @@ RETRY_SUPPORTS_JITTER = (
 
 NON_FINITE_MESSAGE = "Out of range float values are not JSON compliant"
 
+# requirements.txt and setup.py require orjson>=3.10: OPT_PASSTHROUGH_*
+# needs 3.3 (read here, at import), and the numpy scalars the module
+# docstring lists (np.bool_, np.float16) need 3.5.2 and 3.10.
 ORJSON_OPTIONS = (
     orjson.OPT_SERIALIZE_NUMPY
     | orjson.OPT_PASSTHROUGH_DATACLASS
