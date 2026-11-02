@@ -159,7 +159,7 @@ def dumpsJson(value):
         else:
             # orjson writes NaN/Infinity as null. A body without any null
             # can't have had one, so only bodies with a null pay for the
-            # walk (still several times cheaper than stdlib encoding).
+            # walk (about 2x faster than stdlib encoding even then).
             if body.find(b"null") != -1 and containsNonFinite(value):
                 raise ValueError(NON_FINITE_MESSAGE)
             return body
