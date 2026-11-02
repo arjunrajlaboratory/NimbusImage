@@ -5,6 +5,8 @@ accepted must still be accepted and produce the same JSON values, and
 anything it rejected before sending (NaN/Infinity) must still be rejected.
 """
 
+import dataclasses
+import datetime
 import json
 import math
 import random
@@ -157,9 +159,17 @@ class TestDumpsJson:
     def test_values_orjson_rejects_fall_back_to_stdlib(self, payload):
         assert transport.dumpsJson(payload) == stdlibBody(payload)
 
-    def test_values_stdlib_rejects_still_raise_type_error(self):
+    @pytest.mark.parametrize("payload", [
+        {"when": {1, 2}},
+        {"when": datetime.datetime(2026, 1, 1)},
+        # orjson would encode a dataclass, and a NaN in it as null.
+        {"point": dataclasses.make_dataclass("P", ["x"])(float("nan"))},
+    ])
+    def test_values_stdlib_rejects_still_raise_type_error(self, payload):
         with pytest.raises(TypeError):
-            transport.dumpsJson({"when": {1, 2}})
+            stdlibBody(payload)
+        with pytest.raises(TypeError):
+            transport.dumpsJson(payload)
 
     def test_fallback_still_rejects_nan(self):
         with pytest.raises(ValueError, match="not JSON compliant"):
@@ -185,6 +195,14 @@ class TestLoadsJson:
     def test_nan_tokens_fall_back_to_stdlib(self):
         value = transport.loadsJson(FakeResponse(b'{"a": NaN, "b": 1}'))
         assert math.isnan(value["a"]) and value["b"] == 1
+
+    def test_ints_past_64_bits_decode_as_floats(self):
+        # The one known difference from stdlib (documented in transport.py).
+        # Girder can't send these: MongoDB stores at most 64-bit integers.
+        body = b"[18446744073709551615, 18446744073709551616]"
+        assert transport.loadsJson(FakeResponse(body)) == [
+            18446744073709551615, 1.8446744073709552e19,
+        ]
 
     def test_truncated_body_raises_requests_json_error(self):
         response = requests.Response()
@@ -287,6 +305,47 @@ class TestClientOverHttp:
             client.countAnnotationsByDatasetId(DATASET_ID)
         ports = {request["client"] for request in fakeGirder.requests}
         assert len(ports) == 1
+
+    def test_posts_use_fresh_connections(self, fakeGirder):
+        # A pooled connection closed by the server mid-send fails a POST
+        # with no retry, so POSTs don't reuse one; GETs still do.
+        fakeGirder.route("GET", "/api/v1/upenn_annotation/count",
+                         (200, {"count": 1}))
+        fakeGirder.route("POST", "/api/v1/upenn_annotation/multiple",
+                         (200, []))
+        client = UPennContrastAnnotationClient(fakeGirder.apiUrl, "tok")
+        client.countAnnotationsByDatasetId(DATASET_ID)
+        client.createMultipleAnnotations([{"shape": "point"}])
+        client.countAnnotationsByDatasetId(DATASET_ID)
+        client.countAnnotationsByDatasetId(DATASET_ID)
+        client.createMultipleAnnotations([{"shape": "point"}])
+        ports = [request["client"] for request in fakeGirder.requests]
+        assert ports[1] != ports[0]
+        assert ports[2] == ports[3]
+        assert ports[4] not in ports[:4]
+
+    def test_cookies_are_not_kept(self, fakeGirder):
+        # The load balancer's sticky cookie must not pin a worker to one
+        # backend; module-level requests.* never sent it back either.
+        fakeGirder.route("GET", "/api/v1/upenn_annotation/count", (
+            200, {"count": 1}, {"Set-Cookie": "SERVER=girder1; path=/"},
+        ))
+        client = UPennContrastAnnotationClient(fakeGirder.apiUrl, "tok")
+        client.countAnnotationsByDatasetId(DATASET_ID)
+        client.countAnnotationsByDatasetId(DATASET_ID)
+        assert "Cookie" not in fakeGirder.requests[-1]["headers"]
+        assert len(client.client._session.cookies) == 0
+
+    def test_gateway_timeouts_are_not_retried(self, fakeGirder):
+        # A 504 comes after the server timeout; retrying reruns slow work.
+        fakeGirder.route("GET", "/api/v1/upenn_annotation",
+                         (504, {"message": "timeout"}), (200, []))
+        client = UPennContrastAnnotationClient(fakeGirder.apiUrl, "tok")
+        with patch.object(Retry, "sleep", _noSleep):
+            with pytest.raises(girder_client.HttpError) as info:
+                client.getAnnotationsByDatasetId(DATASET_ID, limit=0)
+        assert info.value.status == 504
+        assert len(fakeGirder.requests) == 1
 
     def test_get_retries_transient_5xx(self, fakeGirder):
         fakeGirder.route("GET", "/api/v1/upenn_annotation/count",

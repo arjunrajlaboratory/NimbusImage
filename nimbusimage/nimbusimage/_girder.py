@@ -67,11 +67,21 @@ USER_AGENT = f"nimbusimage-python/{_VERSION}"
 # devops/girder/annotation_client/annotation_client/transport.py):
 # - NaN/Infinity raise ValueError before sending, as allow_nan=False did;
 #   orjson alone would silently write null.
-# - numpy scalars and arrays are serialized (OPT_SERIALIZE_NUMPY).
-# - Whatever orjson can't encode (non-str dict keys, ints past 64 bits,
+# - numpy scalars and C-contiguous arrays are serialized
+#   (OPT_SERIALIZE_NUMPY).
+# - Dataclasses and datetimes pass through to stdlib, which rejects them as
+#   before (a NaN inside a dataclass would otherwise slip out as null).
+# - Whatever else orjson can't encode (non-str dict keys, ints past 64 bits,
 #   float subclasses) or decode (NaN tokens, non-UTF-8 or truncated bodies)
-#   falls back to the stdlib path, which accepts or raises as before.
+#   falls back to the stdlib path, which accepts or raises as before. One
+#   decode difference remains: integers past 64 bits parse as floats, but
+#   Girder can't emit them (MongoDB stores at most 64-bit integers).
 _NON_FINITE_MESSAGE = "Out of range float values are not JSON compliant"
+_ORJSON_OPTIONS = (
+    orjson.OPT_SERIALIZE_NUMPY
+    | orjson.OPT_PASSTHROUGH_DATACLASS
+    | orjson.OPT_PASSTHROUGH_DATETIME
+) if orjson is not None else 0
 
 
 def _contains_non_finite(value) -> bool:
@@ -98,12 +108,13 @@ def dumps_json(value) -> bytes:
     """Encode value as a UTF-8 JSON request body, like requests' json=."""
     if orjson is not None:
         try:
-            body = orjson.dumps(value, option=orjson.OPT_SERIALIZE_NUMPY)
+            body = orjson.dumps(value, option=_ORJSON_OPTIONS)
         except orjson.JSONEncodeError:
             pass  # let stdlib accept it or raise its usual error
         else:
             # orjson writes NaN/Infinity as null. A body without any null
-            # can't have had one, which spares the walk on typical payloads.
+            # can't have had one, so only bodies with a null pay for the
+            # walk (still several times cheaper than stdlib encoding).
             if body.find(b"null") != -1 and _contains_non_finite(value):
                 raise ValueError(_NON_FINITE_MESSAGE)
             return body

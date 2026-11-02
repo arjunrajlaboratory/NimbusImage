@@ -9,7 +9,8 @@ class FakeGirder:
     """Routes for a throwaway HTTP server, plus a record of what it got.
 
     ``routes`` maps "METHOD /path" (no query string) to a list of
-    (status, body bytes) responses served in order; the last one repeats.
+    (status, body bytes, extra headers) responses served in order; the last
+    one repeats.
     """
 
     def __init__(self):
@@ -17,10 +18,13 @@ class FakeGirder:
         self.requests = []
 
     def route(self, method, path, *responses):
+        """Each response is (status, body) or (status, body, headers)."""
         self.routes[f"{method} {path}"] = [
-            (status, body if isinstance(body, bytes) else
-             json.dumps(body).encode())
-            for status, body in responses
+            (response[0],
+             response[1] if isinstance(response[1], bytes) else
+             json.dumps(response[1]).encode(),
+             response[2] if len(response) > 2 else {})
+            for response in responses
         ]
 
 
@@ -47,12 +51,14 @@ def fakeGirder():
             })
             responses = fake.routes.get(f"{self.command} {path}")
             if responses is None:
-                status, payload = 404, b'{"message": "no route"}'
+                status, payload, extra = 404, b'{"message": "no route"}', {}
             else:
-                status, payload = (
+                status, payload, extra = (
                     responses.pop(0) if len(responses) > 1 else responses[0]
                 )
             self.send_response(status)
+            for name, value in extra.items():
+                self.send_header(name, value)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()

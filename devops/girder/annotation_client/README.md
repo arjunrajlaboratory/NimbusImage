@@ -13,13 +13,18 @@ code path:
   1.5 s to encode.
 - NaN and Infinity still raise `ValueError` before anything is sent, as
   requests' `json=` (stdlib `allow_nan=False`) did.
-- numpy scalars and arrays are serialized as their values. Before, only
-  `np.float64` worked.
+- numpy scalars and C-contiguous arrays are serialized as their values.
+  Before, only `np.float64` worked. Dataclasses and datetimes are still
+  rejected with `TypeError`.
 - Inputs orjson can't handle (non-str dict keys, ints past 64 bits, NaN
   tokens in a response, truncated bodies) go through the stdlib path, which
   accepts or raises exactly as before. Without orjson installed everything
   runs at stdlib speed.
-- Requests share a pooled `requests.Session` (keep-alive). GET, PUT and
-  DELETE retry 502/503/504 with backoff; POST is never retried.
+- Requests share one `requests.Session`. GET, PUT and DELETE reuse
+  keep-alive connections and retry 502/503 with backoff. 504 is not
+  retried, because it arrives after the server timeout and a retry would
+  rerun the slow request. POST is never retried, and it goes out on a fresh
+  connection, as before. The session keeps no cookies, so the load
+  balancer's sticky cookie doesn't pin a worker to one backend.
 
 Tests: `pip install -e . numpy pytest && pytest tests`.

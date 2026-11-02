@@ -11,8 +11,10 @@ being re-decided per endpoint.
   the full ``str`` copy of the body that ``.json()`` makes first.
 - Request bodies are encoded with orjson, roughly 10x faster than requests'
   ``json=`` (stdlib ``json.dumps(allow_nan=False)``).
-- Requests share one pooled ``requests.Session`` (keep-alive), and idempotent
-  requests retry transient 502/503/504 responses with backoff.
+- Requests share one ``requests.Session``. GET/PUT/DELETE reuse pooled
+  keep-alive connections and retry 502/503 with backoff. See
+  buildRetrySession and FastJsonGirderClient for what stays as it was on
+  module-level ``requests.*``: POSTs on fresh connections, no cookies.
 
 Compatibility with the stdlib path is deliberate:
 
@@ -20,14 +22,22 @@ Compatibility with the stdlib path is deliberate:
   stdlib's ``allow_nan=False`` did. orjson alone would silently write null.
 - numpy scalars and arrays are serialized (OPT_SERIALIZE_NUMPY). np.float64
   worked before because it subclasses float; np.float32, numpy ints and
-  ndarrays now work too, where stdlib raised TypeError.
-- Anything orjson can't encode (non-str dict keys, ints past 64 bits, float
-  subclasses, nesting deeper than 255) or decode (NaN tokens, non-UTF-8 or
-  truncated bodies) goes through the stdlib path, which accepts and rejects
-  exactly what it did before.
+  C-contiguous native-order ndarrays now work too, where stdlib raised
+  TypeError. orjson also accepts plain Enums and UUIDs, which stdlib did not.
+- Dataclasses and datetimes are passed through to the stdlib path, which
+  rejects them as before (orjson would encode them, and a NaN inside a
+  dataclass would slip out as null).
+- Anything else orjson can't encode (non-str dict keys, ints past 64 bits,
+  float subclasses, nesting deeper than 255) or decode (NaN tokens, non-UTF-8
+  or truncated bodies) goes through the stdlib path, which accepts and
+  rejects exactly what it did before.
+- One decode difference remains: orjson reads integers outside the 64-bit
+  range as floats rather than failing. Girder can't emit them, since MongoDB
+  stores at most 64-bit integers.
 - Without orjson installed everything still works, at stdlib speed.
 """
 
+import http.cookiejar
 import inspect
 import json
 import math
@@ -47,11 +57,19 @@ except ImportError:
 # GET/HEAD/PUT/DELETE/OPTIONS/TRACE), so a retried POST can't create
 # duplicate annotations. raise_on_status=False lets girder_client raise its
 # usual HttpError on the final response instead of a urllib3 RetryError.
-# Mirrors nimbusimage/_girder.py.
+# Like nimbusimage/_girder.py, except that 504 is not retried: the load
+# balancer sends it after a request has run for its full 300 s server
+# timeout, so a retry would rerun the same slow read or delete (up to six
+# times) instead of failing as it did before.
 RETRY_TOTAL = 5
-RETRY_STATUS_FORCELIST = (502, 503, 504)
+RETRY_STATUS_FORCELIST = (502, 503)
 RETRY_BACKOFF_FACTOR = 0.5
 RETRY_BACKOFF_JITTER = 0.5
+# urllib3's default retryable set; spelled out because urllib3 < 1.26 names
+# the constant differently.
+IDEMPOTENT_METHODS = frozenset(
+    ["GET", "HEAD", "PUT", "DELETE", "OPTIONS", "TRACE"]
+)
 
 # backoff_jitter was added in urllib3 2.0; passing it to 1.26.x raises.
 RETRY_SUPPORTS_JITTER = (
@@ -59,6 +77,17 @@ RETRY_SUPPORTS_JITTER = (
 )
 
 NON_FINITE_MESSAGE = "Out of range float values are not JSON compliant"
+
+ORJSON_OPTIONS = (
+    orjson.OPT_SERIALIZE_NUMPY
+    | orjson.OPT_PASSTHROUGH_DATACLASS
+    | orjson.OPT_PASSTHROUGH_DATETIME
+) if orjson is not None else 0
+
+
+class _RejectAllCookies(http.cookiejar.DefaultCookiePolicy):
+    def set_ok(self, cookie, request):
+        return False
 
 
 def buildRetrySession():
@@ -74,6 +103,9 @@ def buildRetrySession():
         retryKwargs["backoff_jitter"] = RETRY_BACKOFF_JITTER
     adapter = HTTPAdapter(max_retries=Retry(**retryKwargs))
     session = requests.Session()
+    # Module-level requests.* kept no cookies, so the load balancer's sticky
+    # SERVER cookie never pinned a worker to one Girder backend. Keep it so.
+    session.cookies.set_policy(_RejectAllCookies())
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
@@ -111,12 +143,13 @@ def dumpsJson(value):
     """
     if orjson is not None:
         try:
-            body = orjson.dumps(value, option=orjson.OPT_SERIALIZE_NUMPY)
+            body = orjson.dumps(value, option=ORJSON_OPTIONS)
         except orjson.JSONEncodeError:
             pass  # let stdlib accept it or raise its usual error
         else:
             # orjson writes NaN/Infinity as null. A body without any null
-            # can't have had one, which spares the walk on typical payloads.
+            # can't have had one, so only bodies with a null pay for the
+            # walk (still several times cheaper than stdlib encoding).
             if body.find(b"null") != -1 and containsNonFinite(value):
                 raise ValueError(NON_FINITE_MESSAGE)
             return body
@@ -139,6 +172,13 @@ class FastJsonGirderClient(girder_client.GirderClient):
     def sendRestRequest(self, method, path, parameters=None, data=None,
                         files=None, json=None, headers=None, jsonResp=True,
                         **kwargs):
+        if (self._session is not None
+                and method.upper() not in IDEMPOTENT_METHODS):
+            # A pooled connection the server closes just as a request goes
+            # out fails that request, and urllib3 won't retry a POST. Send
+            # POST/PATCH on a fresh connection, as module-level requests.*
+            # did; GET loops still reuse connections.
+            self._session.close()
         # requests ignores json= when data or files are given; so do we.
         if json is not None and not data and not files:
             data = dumpsJson(json)

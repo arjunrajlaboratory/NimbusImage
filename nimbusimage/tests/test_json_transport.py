@@ -5,6 +5,8 @@ accepted must still be accepted with the same JSON values, and NaN/Infinity
 must still be rejected before sending.
 """
 
+import dataclasses
+import datetime
 import json
 import math
 import random
@@ -81,6 +83,14 @@ class TestDumpsJson:
     ])
     def test_orjson_rejects_fall_back_to_stdlib(self, payload):
         assert g.dumps_json(payload) == _stdlib_body(payload)
+
+    @pytest.mark.parametrize("payload", [
+        {"when": datetime.datetime(2026, 1, 1)},
+        {"point": dataclasses.make_dataclass("P", ["x"])(float("nan"))},
+    ])
+    def test_stdlib_rejections_still_raise(self, payload):
+        with pytest.raises(TypeError):
+            g.dumps_json(payload)
 
     def test_without_orjson(self, annotations, monkeypatch):
         monkeypatch.setattr(g, "orjson", None)
