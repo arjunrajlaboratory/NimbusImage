@@ -60,6 +60,17 @@ Status values: `fixed <commit>`, `not real` (with the evidence), `declined` (rea
 | — | /code-review | — | No findings: round 3's new cases hit the scan path as claimed, and the docstring is true for both endpoints | — |
 | — | Codex | — | Ran on `60347b2e`: "No actionable regressions were identified" | — |
 
+## Round 5 (head `bc7f7c8a`), the last round allowed
+
+| # | Pass | Severity | Finding | Status |
+|---|---|---|---|---|
+| R5-B1 | branch-review | Low | The `nimbus-backend` skill said "return a generator, so Girder streams the body". Girder's `endpoint` streams only a callable's output and `list()`s a generator object, so following the prose literally brings back the OOM the section warns about. The wording came from #1458; this PR rewrote that section | fixed in both skill sections that said it (the list-streaming section and the numpy section, a sibling from master), and in `streamJsonArray`'s docstring ("Returns a generator", from master) |
+| R5-B2 | branch-review | Nit | Round 4's parenthetical named `serialization.py` for `prefetchedBatches` and the depths, which live in `aggregation.py` | fixed |
+| — | /code-review | — | No findings: rechecked the prose invariants, including that `girder/tox-and-node-lts` is amd64-only (Docker Hub lists only `amd64/linux` for `latest`) | — |
+| — | Codex | — | Ran on `bc7f7c8a`: "No actionable regressions were identified" | — |
+
+Round 5's two fixes are prose, checked against the code but not re-reviewed by a sixth round.
+
 ## Not in this PR's lines
 
 No finding fell in #1458's commit `15bcc1c8`.

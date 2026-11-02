@@ -130,7 +130,8 @@ building Python dicts it only serializes again. For 100K cell polygons that's
 arguments, timeout and projection, on `find_raw_batches`) or
 `collection.aggregate_raw_batches(...)`, then
 `streamRawJsonArray(prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
-collection.codec_options)` (`helpers/serialization.py`; the default depth,
+collection.codec_options)` (`streamRawJsonArray` in `helpers/serialization.py`;
+`prefetchedBatches` and both depths in `helpers/aggregation.py`. The default,
 `PREFETCH_BATCHES`, is for aggregations like stubs, where Mongo is the slow
 half). The bytes are identical to
 `streamJsonArray(docs, default=orJsonDefaults)`, through the Rust transcoder
@@ -728,7 +729,10 @@ dataset Girder grew ~1.6 GiB per 100K documents until the container was
 OOM-killed (fixed 2026-11). A public reader of a large public dataset can do
 that to production.
 
-Return a generator instead, so Girder streams the body. For documents read
+Return a generator *function* instead (what `streamJsonArray` and
+`streamRawJsonArray` return), so Girder streams the body: Girder's `endpoint`
+streams the output of a callable, but `list()`s a generator object, which is
+the materialization this section exists to prevent. For documents read
 straight from a collection, stream the raw batches (see "Streaming many
 documents to JSON" above):
 
@@ -762,8 +766,8 @@ of `(annotationId, value)` pairs):
 - **Girder JSON-encodes whatever the handler returns.** Returning `orjson.dumps(...)`
   bytes without marking the response raw ships a JSON *string* containing JSON — the
   client's `resp.json` is a `str`. Call `setRawResponse()` (from `girder.api.rest`)
-  and set the `Content-Type` header yourself, or return a generator (the annotation
-  plugin's `_streamJsonArray` pattern).
+  and set the `Content-Type` header yourself, or return a generator function (the
+  annotation plugin's `streamJsonArray` pattern; a generator object is `list()`ed).
 - **`orjson.OPT_SERIALIZE_NUMPY` takes numeric and bool arrays only.** A unicode
   (`U24`) array of ids raises `TypeError: unsupported datatype in numpy array`;
   `.tolist()` the string array, keep the numeric one as numpy. Cast integral floats

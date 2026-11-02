@@ -53,7 +53,8 @@ def streamJsonArray(items, prefix=b"[", suffix=b"]", default=None):
     """Stream `items` as a JSON array, orjson-encoding each element and
     wrapping them in `prefix`/`suffix` (so callers can embed the array inside
     an enclosing object, e.g. {"total": N, "rows": [...]}). Returns a
-    generator suitable for a streamed response body."""
+    generator function suitable for a streamed response body (Girder streams
+    a callable's output but list()s a generator object)."""
     def generate():
         chunk = [prefix]
         first = True
