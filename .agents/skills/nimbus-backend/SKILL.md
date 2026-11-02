@@ -716,6 +716,31 @@ Rules:
 Full incident, numbers, and procedure:
 `codebaseDocumentation/PROPERTY_VALUES_UNIQUE_INDEX.md`.
 
+## Dataset-wide list endpoints must stream, not return a cursor or list
+
+`.pagingParams()` accepts `limit=0`, which means "every document". If the
+handler returns a cursor, a `list(cursor)`, or `jsonSafe(...)` of either,
+Girder materializes the whole result and then `json.dumps` it into one string.
+`GET annotation_property_values?limit=0` did this, and on a 709K-cell Xenium
+dataset Girder grew ~1.6 GiB per 100K documents until the container was
+OOM-killed (fixed 2026-11). A public reader of a large public dataset can do
+that to production.
+
+Return a generator instead, so Girder streams the body:
+
+```python
+setResponseHeader("Content-Type", "application/json")
+return streamJsonArray(cursor, default=orJsonDefaults)  # helpers/serialization
+```
+
+orjson already writes Infinity/NaN as null, so `jsonSafe` isn't needed. The
+Girder 5 ASGI bridge passes chunks through a one-slot queue, so a slow client
+gets backpressure rather than a growing buffer. In tests, a streamed body is a
+generator of chunks: pass `isJson=False` and read `list(resp.body)`. More than
+one chunk shows the endpoint streamed (`test_list_streaming.py`). Measure with
+the container's cgroup `anon` memory, not `/proc/1/status` (that is rosetta's
+view on Apple silicon). Sample it while the request runs and abort past a cap.
+
 ## Returning a large JSON body from numpy (orjson + raw response)
 
 Two traps, both hit by the spatial plugin's `column` endpoint (hundreds of thousands
