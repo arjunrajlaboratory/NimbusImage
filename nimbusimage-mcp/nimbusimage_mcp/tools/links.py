@@ -12,10 +12,9 @@ from nimbusimage_mcp.tools.properties import (
     discover_paths,
 )
 
-# Property columns in a CSV link. Each path rides in the URL, and browsers
-# and proxies limit URL length (about 8 KB is safe).
+# Property columns in a CSV link. Each path rides in the URL, so the
+# encoded link is kept under links.MAX_LINK_LENGTH.
 MAX_CSV_PATHS = 100
-MAX_CSV_QUERY = 6000
 
 
 @instrumented
@@ -93,16 +92,21 @@ def ni_export_links(
         ]
     omitted = max(0, len(property_paths) - MAX_CSV_PATHS)
     property_paths = property_paths[:MAX_CSV_PATHS]
-    encoded = json.dumps(property_paths, separators=(",", ":"))
-    while len(encoded) > MAX_CSV_QUERY:
+    name = ds.name
+
+    def csv_link(paths):
+        return links.api_link("export/csv", {
+            "datasetId": ds.id,
+            "propertyPaths": json.dumps(paths, separators=(",", ":")),
+            "filename": f"{name}.csv",
+        })
+
+    csv = csv_link(property_paths)
+    # The limit is on the encoded link, not the JSON: quoting can double it.
+    while csv is not None and len(csv) > links.MAX_LINK_LENGTH:
         omitted += 1
         property_paths = property_paths[:-1]
-        encoded = json.dumps(property_paths, separators=(",", ":"))
-    name = ds.name
-    csv = links.api_link("export/csv", {
-        "datasetId": ds.id, "propertyPaths": encoded,
-        "filename": f"{name}.csv",
-    })
+        csv = csv_link(property_paths)
     if csv is None:
         raise ValueError(
             "This NimbusImage server has no download links configured. "

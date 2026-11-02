@@ -18,6 +18,9 @@ from nimbusimage_mcp import _common
 # Longest side of a downloaded image; past this, crop. A full-resolution
 # slide can be 100,000 pixels across.
 MAX_DOWNLOAD_SIZE = 8192
+# Longest link handed out: browsers and proxies refuse longer request
+# lines (8 KB is common), and a style with many frames grows fast.
+MAX_LINK_LENGTH = 7500
 DOWNLOAD_NOTE = (
     "Download links work in the browser where the user is signed in to "
     "NimbusImage; they carry no credential, so they show nothing to "
@@ -77,7 +80,8 @@ def region_link(ds, style: dict, crop=None, filename="image.png",
         width, height = right - left, bottom - top
     if max(width, height) > MAX_DOWNLOAD_SIZE:
         params.update(width=MAX_DOWNLOAD_SIZE, height=MAX_DOWNLOAD_SIZE)
-    return api_link(f"item/{ds.item_id}/tiles/region", params)
+    url = api_link(f"item/{ds.item_id}/tiles/region", params)
+    return url if url is None or len(url) <= MAX_LINK_LENGTH else None
 
 
 def slice_label(ds, xy: int, z: int, time: int,

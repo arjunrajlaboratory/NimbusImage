@@ -118,6 +118,33 @@ def test_large_downloads_are_capped(ds, downloads):
     assert query(url)["width"] == str(links.MAX_DOWNLOAD_SIZE)
 
 
+def test_too_long_a_download_link_is_left_out(ds, downloads):
+    ds.images.get_composite.return_value = np.full((8, 8, 3), 9, np.uint8)
+    ds.images.composite_style.return_value = {"bands": [
+        {"frame": i, "min": 0, "max": 9, "palette": ["#000000", "#ff0000"]}
+        for i in range(300)]}
+    _, footer = images.ni_image_get_composite(dataset_id="d1")
+    assert "Download (PNG" not in footer
+    assert "too many frames" in footer
+
+
+def test_projection_matches_the_raw_maximum(ds, downloads):
+    """A dim slice must not outshine a bright one: the projection is of
+    raw values, stretched once."""
+    ds.num_z = 2
+    dim = np.array([[0, 10], [10, 10]], np.uint16)
+    bright = np.array([[1000, 0], [0, 0]], np.uint16)
+    ds.images.get.side_effect = lambda **kw: [dim, bright][kw["z"]]
+    ds.images.frame_index.side_effect = lambda **kw: kw["z"]
+    result = images.ni_image_get_channel(
+        dataset_id="d1", channel=0, projection="max")
+    download = result[-1].split("full resolution): ")[1].split("\n")[0]
+    bands = json.loads(query(download)["style"])["bands"]
+    expected = images.contrast_bounds(np.maximum(dim, bright))
+    assert expected[1] > 900  # the bright slice's 1000 sets the top
+    assert {(b["min"], b["max"]) for b in bands} == {expected}
+
+
 def test_no_download_link_without_a_browser_api_url(ds):
     ds.images.get_composite.return_value = np.full((8, 8, 3), 9, np.uint8)
     ds.images.composite_style.return_value = {"bands": [{"frame": 0}]}
@@ -204,7 +231,8 @@ def test_channel_max_projection_over_every_slice(ds, downloads,
     download = result[-1].split("full resolution): ")[1].split("\n")[0]
     bands = json.loads(query(download)["style"])["bands"]
     assert [b["frame"] for b in bands] == [1, 3, 5]
-    assert {b["min"] for b in bands} == {"auto"}
+    # Every band shares the preview's bounds (the projection is all 20s).
+    assert {(b["min"], b["max"]) for b in bands} == {(20.0, 21.0)}
 
 
 def test_export_links_use_registered_measurement_paths(
@@ -226,7 +254,7 @@ def test_export_links_stay_under_the_url_limit(ds, downloads):
     paths = [["p" * 24, f"measurement {i:03d}"] for i in range(150)]
     result = json.loads(link_tools.ni_export_links(
         dataset_id="d1", property_paths=paths))
-    assert len(result["csv"]) < link_tools.MAX_CSV_QUERY + 500
+    assert len(result["csv"]) <= links.MAX_LINK_LENGTH
     assert result["csv_columns"] + result["csv_columns_omitted"] == 150
 
 

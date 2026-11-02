@@ -140,6 +140,11 @@ class TestShareLink:
             request(server, "POST", route, token=token,
                     body={"datasetId": str(dataset["_id"])})
             for route in ("/export/csv", "/export/geojson")
+        ] + [
+            # And their GET link forms.
+            request(server, "GET", route, token=token,
+                    params={"datasetId": str(dataset["_id"])})
+            for route in ("/export/csv", "/export/geojson")
         ]
         for resp in refusals:
             assertStatus(resp, 403)
@@ -185,6 +190,10 @@ class TestShareLink:
                 path=route, method="POST", user=user, isJson=False,
                 type="application/json",
                 body=json.dumps({"datasetId": str(dataset["_id"])}),
+            ))
+            assertStatusOk(server.request(
+                path=route, method="GET", user=user, isJson=False,
+                params={"datasetId": str(dataset["_id"])},
             ))
 
     def testCreateNeedsAdminAndValidInput(self, admin, user, server):

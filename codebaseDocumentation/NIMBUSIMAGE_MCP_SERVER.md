@@ -361,8 +361,11 @@ results carry links, and the server instructions tell the model to pass them on.
   (`NI_MCP_BROWSER_API_URL`; unset means none) on routes that accept Girder's HttpOnly
   auth cookie: large_image's `tiles/region` (PNG, `contentDisposition=attachment`, the
   composite as one `lighten` band style from `ds.images.composite_style()`, a channel as
-  gray `auto` bands) and new `GET export/{csv,geojson}` twins of the POST exports (plus
-  the existing `GET export/json`, now cookie-enabled). The link carries no credential:
+  gray bands sharing the preview's numeric bounds, so a projection's dim slice cannot
+  outshine a bright one) and new `GET export/{csv,geojson}` twins of the POST exports
+  (plus the existing `GET export/json`, now cookie-enabled). The twins are in the
+  share-link download guard with the POST forms. A link longer than ~7.5 KB (a style
+  over many frames) is left out with a note rather than handed out to be refused. The link carries no credential:
   it works only where the user is signed in. We rejected a short-lived token in the URL,
   which anyone who sees the link could use.
 - **Indices** are 0-based in every tool; image results and `ni_view_link` say "Z 2 of 7
@@ -1490,7 +1493,11 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
 - [x] The download routes accept the auth cookie and refuse anonymous and unauthorized
       callers; the CSV link matches the POST export. *"testCookieAuthenticatesDownloadLink"*,
       *"testCsvLinkMatchesPost"*, *"testCsvLinkRejectsMalformedPaths"*,
-      *"testGeoJsonLinkRequiresReadAccess"*
+      *"testGeoJsonLinkRequiresReadAccess"*; a share-link bearer cannot use them, as with the
+      POST exports. *"testBearerReadsOnlyTheSharedDataset"*, *"testNonAdminOwnerCanStillDownload"*
+- [x] A projection is of raw values with one set of bounds, preview and download alike.
+      *"test_projection_matches_the_raw_maximum"*; a link too long for a proxy is left out.
+      *"test_too_long_a_download_link_is_left_out"*
 - [x] The composite download style is the composite's (colors, contrast, hidden layers).
       *"test_matches_get_composite"*, *"test_hidden_layers_and_nothing_drawn"*
 - [x] Outlines cost two batch requests and only fetch geometry near the shown region.

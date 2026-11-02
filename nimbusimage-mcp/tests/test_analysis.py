@@ -170,13 +170,22 @@ def test_pairs_note_values_too_small_for_the_server_rounding(nc):
 
 
 @pytest.mark.parametrize("path", [
-    ["p"], [], "p.Area", ["p", "a.b"], ["p", "$x"], ["p", ""], ["p", 3],
+    [], "p.Area", ["p", "a.b"], ["p", "$x"], ["p", ""], ["p", 3],
 ])
 def test_pairs_refuse_a_malformed_path(nc, path):
     with pytest.raises(ToolError, match="value path"):
         analysis.ni_property_pairs(
             dataset_id="d", x_property=path, y_property=["p", "b"])
     nc.girder.post.assert_not_called()
+
+
+def test_pairs_accept_a_scalar_property_path(nc):
+    """A scalar measurement's path is just [property_id]."""
+    nc.girder.post.return_value = histogram2d_answer(
+        np.arange(10.0), np.arange(10.0))
+    analysis.ni_property_pairs(
+        dataset_id="d", x_property=["p"], y_property=["q", "b"])
+    nc.girder.post.assert_called_once()
 
 
 def test_pairs_say_when_nothing_is_paired(nc):

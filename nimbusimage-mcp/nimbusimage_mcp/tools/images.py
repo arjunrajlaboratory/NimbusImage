@@ -4,7 +4,7 @@ annotation outlines on request and links to the app and a download."""
 from __future__ import annotations
 
 import io
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal
 
 import numpy as np
@@ -91,12 +91,21 @@ def encode_jpeg(pixels: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
-def stretch(frame: np.ndarray) -> np.ndarray:
-    """A raw frame as uint8, stretched between two percentiles of its
-    own pixels."""
+def contrast_bounds(frame: np.ndarray) -> tuple[float, float]:
+    """The intensities a raw frame is stretched between: two percentiles
+    of its own pixels."""
+    if frame.ndim == 3:
+        frame = frame[..., 0]
     low, high = (float(v) for v in np.percentile(frame, CHANNEL_CONTRAST))
-    if high <= low:
-        high = low + 1
+    return low, high if high > low else low + 1
+
+
+def stretch(frame: np.ndarray, low: float | None = None,
+            high: float | None = None) -> np.ndarray:
+    """A raw frame as uint8, stretched between low and high (by default
+    contrast_bounds of the frame)."""
+    if low is None or high is None:
+        low, high = contrast_bounds(frame)
     scaled = (frame.astype(np.float64) - low) / (high - low)
     return (np.clip(scaled, 0, 1) * 255).astype(np.uint8)
 
@@ -215,6 +224,11 @@ def footer(ds, xy, z, time, crop, download: str | None,
     if download:
         lines.append(f"Download (PNG, full resolution): {download}")
         lines.append(links.DOWNLOAD_NOTE)
+    elif links.downloads_enabled():
+        lines.append(
+            "No download link: this image draws too many frames to fit in "
+            "a link. The user can export it from the app."
+        )
     return "\n".join(lines)
 
 
@@ -336,14 +350,19 @@ def ni_image_get_channel(
         return ds.images.get(xy=xy, z=zi, time=time, channel=channel,
                              crop=crop, max_size=max_size)
 
-    # The slices are independent; fetch a few at a time.
+    # The slices are independent; fetch a few at a time, folding each into
+    # a running maximum as it lands, so at most a few planes are held.
+    frame = None
     with ThreadPoolExecutor(max_workers=PROJECTION_WORKERS) as pool:
-        frames = list(pool.map(fetch, zs))
-    frame = np.max(frames, axis=0) if len(frames) > 1 else frames[0]
+        for future in as_completed([pool.submit(fetch, zi) for zi in zs]):
+            plane = future.result()
+            frame = plane if frame is None else np.maximum(frame, plane)
+            del plane
     if frame.ndim == 3:
         # A multi-band (e.g. RGB brightfield) frame: show its first band.
         frame = frame[..., 0]
-    pixels = stretch(frame)
+    low, high = contrast_bounds(frame)
+    pixels = stretch(frame, low, high)
     notes = []
     if projection == "max":
         notes.append(
@@ -358,9 +377,9 @@ def ni_image_get_channel(
         )
         notes.append(outline_note(outline_tags, len(drawn), matched, scanned))
     download = links.region_link(
-        ds, channel_style(ds, channel, xy, zs, time), crop,
+        ds, channel_style(ds, channel, xy, zs, time, low, high), crop,
         filename=f"{ds.name} channel {channel}.png",
-    )
+    ) if links.downloads_enabled() else None
     return [
         Image(data=encode_jpeg(pixels), format="jpeg"),
         *notes,
@@ -368,13 +387,16 @@ def ni_image_get_channel(
     ]
 
 
-def channel_style(ds, channel: int, xy: int, zs, time: int) -> dict:
-    """One channel in gray, the server's automatic contrast, its frames
-    combined by maximum (a projection when there are several)."""
+def channel_style(ds, channel: int, xy: int, zs, time: int,
+                  low: float, high: float) -> dict:
+    """One channel in gray at the preview's contrast, its frames combined
+    by maximum (a projection when there are several). Every band shares
+    the bounds: windowing each frame on its own range would let a dim
+    slice outshine a bright one."""
     return {"bands": [
         {"frame": ds.images.frame_index(
             xy=xy, z=zi, time=time, channel=channel),
-         "min": "auto", "max": "auto", "palette": ["#000000", "#ffffff"]}
+         "min": low, "max": high, "palette": ["#000000", "#ffffff"]}
         for zi in zs
     ]}
 

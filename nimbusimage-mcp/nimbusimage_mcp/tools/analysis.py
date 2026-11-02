@@ -59,7 +59,7 @@ ACCESS_LEVELS = {0: "read", 1: "write", 2: "admin"}
 def check_property_path(path, name: str) -> list[str]:
     """A value path as ni_properties_list reports it; ValueError
     otherwise. Its keys become a Mongo field path on the server."""
-    if not isinstance(path, list) or len(path) < 2 or any(
+    if not isinstance(path, list) or not path or any(
         not isinstance(key, str) or not key or "." in key or "$" in key
         for key in path
     ):
