@@ -38,6 +38,9 @@ setup(
         # pulling it in transitively.
         "numpy",
         "orjson",
+        # Wire compression to MongoDB (compressors=zstd in GIRDER_MONGO_URI).
+        # Without this extra, pymongo only warns and connects uncompressed.
+        "pymongo[zstd]",
         "numpy",
         "Pillow",
         # raw_region writes full-bit-depth TIFFs (server/api/rawRegion.py)
