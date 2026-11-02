@@ -79,6 +79,14 @@ Round 5's two fixes are prose, checked against the code but not re-reviewed by a
 | — | /code-review | — | No findings: round 5's claims match Girder's `endpoint` (streams a callable's output, `list()`s a `GeneratorType`) | — |
 | — | Codex | — | Ran on `d89143c0`: "No actionable regressions were identified" | — |
 
+## Round 7 (head `c7d8bdd4`), confirmation round
+
+| # | Pass | Severity | Finding | Status |
+|---|---|---|---|---|
+| R7-B1 | branch-review | Nit | Round 6's sentence left out DBPointer (which pymongo also decodes to a DBRef). Its stated rule ("any type JSON has no form for… orjson can't encode those") also took in ObjectId and datetime, which still serialize identically | fixed: the sentence now names both directions. ObjectId/datetime are unchanged; Decimal128, Binary (UUIDs included), Regex, Timestamp, MinKey/MaxKey and anything decoded to a DBRef (DBPointer or embedded `{$ref, $id}`) now fail. The reviewer verified every BSON type against Girder's `JsonEncoder` and orjson. The PR body is fixed too |
+| — | /code-review | — | No findings | — |
+| — | Codex | — | Ran on `c7d8bdd4`: "No actionable regressions were found" | — |
+
 ## Not in this PR's lines
 
 No finding fell in #1458's commit `15bcc1c8`.
