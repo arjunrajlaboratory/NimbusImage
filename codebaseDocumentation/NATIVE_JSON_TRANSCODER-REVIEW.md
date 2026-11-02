@@ -87,6 +87,14 @@ Round 5's two fixes are prose, checked against the code but not re-reviewed by a
 | — | /code-review | — | No findings | — |
 | — | Codex | — | Ran on `c7d8bdd4`: "No actionable regressions were found" | — |
 
+## Round 8 (head `bf2ca68a`): clean
+
+| # | Pass | Severity | Finding | Status |
+|---|---|---|---|---|
+| — | /code-review | — | No findings. Verified round 7's sentence empirically: every BSON type decoded with Girder's codec options and encoded by Girder's `JsonEncoder` vs orjson. ObjectId, datetime, Int64, code, symbol and undefined are unchanged; Decimal128, Binary/UUID, Regex, Timestamp, MinKey/MaxKey, embedded DBRef and DBPointer now fail | — |
+| — | Codex | — | Ran on `bf2ca68a`: "No actionable regressions were identified" | — |
+| R8-B1 | branch-review | Nit (#1458) | No findings in #1460's lines. One in #1458's commit `15bcc1c8`: moving property-value `find` and connection `find` from Girder's encoder to orjson has the same type-level consequences as `batch` (unsorted keys, the same exotic types now fail mid-response, a stored Infinity in a connection becomes `null` instead of a 500), and #1458 doesn't document it | belongs to #1458: reported, not reworked here. #1460's doc says `batch` is "the one exception", which holds against #1458, the base this PR stacks on |
+
 ## Not in this PR's lines
 
-No finding fell in #1458's commit `15bcc1c8`.
+Two findings concerned #1458's lines: R2-B4 (prose #1460 made stale, fixed here) and R8-B1 (reported to #1458, not reworked here).
