@@ -88,7 +88,10 @@ describe("dataset view bookkeeping saves", () => {
     await main.setDatasetViewId({ id: "v" });
 
     expect(updateDatasetView).toHaveBeenCalled();
-    expect(logError).toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(
+      expect.stringContaining("lastViewed"),
+      expect.any(Error),
+    );
     expect(sync.datasetLoading).toBe(false);
     expect(main.datasetView?.id).toBe("v");
     expect(main.dataset?.id).toBe("ds1");
