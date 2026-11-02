@@ -1270,10 +1270,16 @@ the local stack. Add an item whenever a review finds something this list missed.
       during the body, is a clear tool error that does not name the internal host.
       A 504 is treated the same way: in production the server reaches Girder through
       HAProxy, whose 300 s server timeout answers 504 before the read timeout. 502/503
-      and a connection dropped before the response are still retried.
+      and a connection dropped before the response are still retried, except for writes
+      that are not safe to repeat (next item).
       *"test_tool_requests_time_out_once_without_retrying"*,
       *"test_a_body_that_stalls_is_a_timeout"*, *"test_dropped_connections_are_still_retried"*,
       *"test_a_proxy_timeout_is_not_retried"*
+- [x] A write that is not safe to repeat (undo, delete, create, tag change) is never
+      resent once it may have reached Girder: a retried undo would undo the next action
+      too, and a resent delete records an empty history entry. Only a connection that
+      never opened is retried; a lost answer says the write may have happened and how to
+      check. *"test_writes_are_never_resent_once_sent"*
 - [x] A wait's result is one complete job snapshot, never a mix of states.
       *"test_job_wait_never_reports_a_torn_state"*
 - [x] Failing to write the optional call log never fails a tool call.

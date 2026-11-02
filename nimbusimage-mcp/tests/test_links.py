@@ -335,24 +335,26 @@ def test_undo_reports_the_entry_it_undoes(ds, nc):
 
 
 def test_writes_are_never_resent_once_sent():
-    """An undo or delete whose answer is lost must not be repeated: the
-    session's read and status retries are off inside sending_once, and
-    put back after."""
+    """An undo or delete whose answer is lost must not be repeated: on the
+    real client session (its retry class from _bound_requests), read and
+    status retries are off inside sending_once and put back after, and
+    retries of a connection that never opened are kept."""
     import girder_client
     import requests
     from types import SimpleNamespace
-    from urllib3.util.retry import Retry
+    from nimbusimage._girder import _build_retry_session
 
-    session = requests.Session()
+    session = _build_retry_session()
+    _common._bound_requests(session)
     adapter = session.get_adapter("https://x")
-    adapter.max_retries = Retry(total=5, read=5, status=5,
-                                status_forcelist=[502])
+    before = adapter.max_retries
     nc = SimpleNamespace(girder=SimpleNamespace(_session=session))
     with _common.sending_once(nc, "undo", "Check ni_history_list"):
         inside = adapter.max_retries
+        assert type(inside) is type(before)
         assert (inside.read, inside.status, inside.other) == (0, 0, 0)
-        assert inside.connect == adapter.max_retries.connect
-    assert adapter.max_retries.read == 5
+        assert (inside.connect, inside.total) == (before.connect, before.total)
+    assert adapter.max_retries is before
 
     # A lost answer is "may have happened", never "try again".
     with pytest.raises(ToolError, match="may have happened. Check"):

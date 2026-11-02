@@ -119,6 +119,34 @@ describe("useCameraDeepLinkUrlCleanup", () => {
     expect(router.replace).not.toHaveBeenCalled();
   });
 
+  it("leaves another share's link with the same numbers alone", async () => {
+    // A share route has no view param: the store still holds the old view
+    // while the next share's link loads, so only the path tells them apart.
+    route.path = "/shared/T1";
+    route.params = {};
+    mount();
+    // A URL write in flight holds the lock, so the removal waits.
+    let release: () => void = () => {};
+    router.replace.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const inFlight = removeQueryKeys(["z"], router as any, route as any);
+    await nextTick();
+    applyLink(5, 6);
+    await nextTick();
+    // Meanwhile another share opens, with the same numbers.
+    route.path = "/shared/T2";
+    release();
+    await inFlight;
+    await settle();
+
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(route.query).toMatchObject({ x: "5", y: "6" });
+  });
+
   it("leaves the URL alone until a link is applied", async () => {
     mount();
     await settle();

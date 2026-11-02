@@ -52,8 +52,9 @@ def _tag_filter(tags: list[str] | None) -> dict | None:
             "all": True}
 
 
-# Girder servers known to honor tags.all, by REST root, and the made-up
-# tag-filter key that such a server refuses by name.
+# Girder servers known to honor tags.all, by REST root (for the life of the
+# process: restart the MCP server after rolling Girder back), and the
+# made-up tag-filter key that such a server refuses by name.
 PROBE_KEY = "capabilityProbe"
 _ALL_TAGS_SERVERS: set[str] = set()
 OLD_SERVER = (
@@ -87,7 +88,9 @@ def _require_all_tags_support(nc, dataset_id: str, tags) -> None:
         # Only a refusal of the made-up key itself shows support: an old
         # server also answers 400 for other reasons (a malformed dataset
         # id), and caching that would let every later call match ANY.
-        if e.status == 400 and PROBE_KEY in (e.responseText or ""):
+        message = _common.girder_message(e)
+        if e.status == 400 and "unknown keys" in message \
+                and PROBE_KEY in message:
             _ALL_TAGS_SERVERS.add(server)
             return
         raise

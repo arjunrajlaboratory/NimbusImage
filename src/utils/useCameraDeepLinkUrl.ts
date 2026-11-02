@@ -51,8 +51,15 @@ export function useCameraDeepLinkUrlCleanup() {
       if (!applied) {
         return;
       }
-      removeQueryKeys(CAMERA_DEEP_LINK_QUERY_KEYS, router, route, (current) =>
-        routeCarriesCameraDeepLink(current, applied),
+      // The path too: on a share route the view id comes from the store,
+      // which still holds the old share while another share's link loads.
+      const path = route.path;
+      removeQueryKeys(
+        CAMERA_DEEP_LINK_QUERY_KEYS,
+        router,
+        route,
+        (current) =>
+          current.path === path && routeCarriesCameraDeepLink(current, applied),
       );
     },
   );
