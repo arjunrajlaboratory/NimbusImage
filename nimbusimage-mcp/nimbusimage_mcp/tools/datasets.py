@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from nimbusimage_mcp import links
 from nimbusimage_mcp._common import READ_ONLY, clamp, client, instrumented
 
 # The spike's 200 cap made a 10 KB response on 95 datasets; name_contains
@@ -67,7 +68,9 @@ def ni_dataset_info(dataset_id: str) -> dict:
     """Describe one dataset: name, image size, channels, and how many
     z-slices, time points, and XY positions (fields of view) it has, plus
     pixel size (µm), z step, and bit depth; either is null when unknown.
-    Use this before fetching images or running workers.
+    Use this before fetching images or running workers. Z-slice, time,
+    and XY indices in every tool are 0-based; the app numbers them from 1
+    (its "Z=2" is z=1). app_url opens the dataset in the app.
     """
     ds = client().dataset(dataset_id)
     height, width = ds.shape
@@ -87,6 +90,7 @@ def ni_dataset_info(dataset_id: str) -> dict:
         "pixel_size_um": pixel.to("um").value if pixel else None,
         "z_step": known_scale(ds.collections.scales.get("zStep")),
         "magnification": ds.magnification,
+        "app_url": links.view_link(ds),
     }
 
 

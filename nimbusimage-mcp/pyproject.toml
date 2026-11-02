@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nimbusimage-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server exposing NimbusImage to Claude, as the calling user"
 readme = "README.md"
 requires-python = ">=3.10"

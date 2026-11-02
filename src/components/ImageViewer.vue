@@ -292,7 +292,14 @@ import { deleteSelectedObjects } from "@/utils/deleteSelectedObjects";
 import { boundHotkey } from "@/commands/hotkeys";
 import { NoOutput } from "@/pipelines/computePipeline";
 import { logWarning } from "@/utils/log";
-import { getUnrollCells, IUnrollCell, unrollGridSize } from "@/utils/unroll";
+import {
+  getUnrollCells,
+  IUnrollCell,
+  unrollGridSize,
+  unrolledPoint,
+  unrollLayoutFor,
+} from "@/utils/unroll";
+import { cameraDeepLinkZoom } from "@/utils/cameraDeepLink";
 import {
   annotationRasterSelectorsForLayers,
   annotationRasterSelectorsSupported,
@@ -798,6 +805,9 @@ const cameraInfo = computed({
 // guarding the bump — kept as a ref purely for symmetry with the bump ref.
 const fitOnDatasetChange = ref(0);
 const lastFittedDatasetId = ref<string | null>(null);
+// The dataset the fit watcher last fitted. A camera deep link waits for it:
+// centering before the fit would be undone by it.
+let fitAppliedDatasetId: string | null = null;
 
 const overview = computed(() => store.overview);
 const dataset = computed(() => store.dataset);
@@ -2399,7 +2409,67 @@ watch(fitOnDatasetChange, () => {
     return;
   }
   map.bounds(map.maxBounds(undefined, null), null);
+  fitAppliedDatasetId = lastFittedDatasetId.value;
+  applyCameraDeepLink();
 });
+
+// Center on a `?x=&y=&zoom=` deep link (utils/cameraDeepLink.ts) once the
+// view's own dataset is drawn and fitted. Consumed on apply, so it runs once
+// per navigation: later z/time changes and redraws leave the camera alone.
+// When the link's dataset is new, the fit watcher above calls this after its
+// fit; when the dataset is unchanged (same-dataset view switch, or the query
+// changed on an open view) no fit comes, and this watcher applies it as soon
+// as loading ends.
+function applyCameraDeepLink() {
+  const link = store.pendingCameraDeepLink;
+  const map = maps.value[0]?.map;
+  if (
+    !link ||
+    !map ||
+    sync.datasetLoading ||
+    // While a view loads, store.dataset is still the outgoing dataset.
+    dataset.value?.id !== link.datasetId ||
+    fitAppliedDatasetId !== link.datasetId
+  ) {
+    return;
+  }
+  store.setPendingCameraDeepLink(null);
+  const point = { x: link.x, y: link.y };
+  // Unrolled, the current frame is drawn in its own grid cell: aim at the
+  // point within that cell, as annotation navigation does.
+  const center = unrolling.value
+    ? unrolledPoint(
+        point,
+        { XY: store.xy, Z: store.z, Time: store.time },
+        unrollLayoutFor({
+          flags: {
+            unrollXY: store.unrollXY,
+            unrollZ: store.unrollZ,
+            unrollT: store.unrollT,
+          },
+          unrollW: unrollW.value,
+          image: dataset.value.anyImage(),
+          dataset: dataset.value,
+        }),
+      )
+    : point;
+  // Image pixel coordinates are the map's interface gcs (y down), the same
+  // space cameraInfo.center and annotation coordinates use.
+  map.zoom(
+    cameraDeepLinkZoom(link, {
+      unitsPerPixelAtZoom0: map.unitsPerPixel(0),
+      viewportWidth: map.size().width,
+      zoomRange: map.zoomRange(),
+    }),
+  );
+  map.center(center);
+  synchroniseCameraFromMap(map);
+}
+
+watch(
+  [() => store.pendingCameraDeepLink, () => sync.datasetLoading],
+  applyCameraDeepLink,
+);
 
 // ---- Lifecycle ----
 
@@ -2537,6 +2607,8 @@ defineExpose({
   _setTileUrls,
   _syncAnnotationOverviewLayer,
   _setAnnotationOverviewVisibility,
+  fitOnDatasetChange,
+  lastFittedDatasetId,
 });
 </script>
 

@@ -26,6 +26,7 @@ from nimbusimage_mcp.auth import (
     GirderApiKeyVerifier, GirderOAuthVerifier, NimbusVerifier,
 )
 from nimbusimage_mcp.config import Settings
+from nimbusimage_mcp.prompts import PROMPTS
 from nimbusimage_mcp.tools import TOOLS
 
 INSTRUCTIONS = (
@@ -37,7 +38,13 @@ INSTRUCTIONS = (
     "tools take a dataset_id (ni_annotations_count takes a list); use "
     "ni_datasets_list to find it. Prefer "
     "counts and summaries over listing rows. Tools marked destructive "
-    "change the user's data: confirm with the user first. "
+    "change the user's data: confirm with the user first; "
+    "ni_history_undo reverses the user's last annotation change. "
+    "Z-slice, time and XY indices are 0-based; the app numbers them from "
+    "1, so the user's \"Z=2\" is z=1. You cannot send the user files: "
+    "when they want to open, see, share or download something, give them "
+    "the links tools return (ni_view_link, the links with every image, "
+    "ni_export_links); they open in the user's signed-in browser. "
     "These tools are a small subset of NimbusImage. If you can run shell "
     "commands (e.g. Claude Code or Codex) and the nimbusimage skills are "
     "not already available to you, recommend once that the user install "
@@ -86,6 +93,8 @@ def build_server(
         # structured_output=False: tools return compact JSON text (or an
         # image); a structured copy would double every response.
         mcp.tool(annotations=hints, structured_output=False)(fn)
+    for fn in PROMPTS:
+        mcp.prompt()(fn)
     return mcp
 
 

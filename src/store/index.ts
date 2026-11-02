@@ -109,6 +109,10 @@ import {
   clampLocationToDataset,
 } from "@/utils/datasetLocation";
 import { quotaExceededMessage } from "@/utils/quota";
+import {
+  IPendingCameraDeepLink,
+  parseCameraDeepLink,
+} from "@/utils/cameraDeepLink";
 import { normalizeScales } from "@/utils/scales";
 import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
@@ -832,6 +836,12 @@ export class Main extends VuexModule {
       { x: 0, y: 0 },
     ],
   };
+
+  // A `?x=&y=&zoom=` camera target from the route that loaded the current
+  // view, waiting for ImageViewer to center on it once the view's dataset is
+  // drawn. ImageViewer clears it when it applies it, so it applies once per
+  // navigation. See utils/cameraDeepLink.ts.
+  pendingCameraDeepLink: IPendingCameraDeepLink | null = null;
 
   drawAnnotations: boolean = true;
   filteredDraw: boolean = true;
@@ -1874,6 +1884,29 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  public setPendingCameraDeepLink(value: IPendingCameraDeepLink | null) {
+    this.pendingCameraDeepLink = value;
+  }
+
+  /**
+   * Center on a `?x=&y=&zoom=` target for the view that is already loaded
+   * (the query changed without the view changing). Ignored while no view is
+   * loaded or the query holds no valid target.
+   */
+  @Action
+  requestCameraDeepLink(
+    routeQuery: Record<string, string | null | (string | null)[]>,
+  ) {
+    const cameraDeepLink = parseCameraDeepLink(routeQuery);
+    if (cameraDeepLink && this.datasetView) {
+      this.setPendingCameraDeepLink({
+        ...cameraDeepLink,
+        datasetId: this.datasetView.datasetId,
+      });
+    }
+  }
+
+  @Mutation
   public setUnrollXYImpl(value: boolean) {
     this.unrollXY = value;
   }
@@ -2409,6 +2442,10 @@ export class Main extends VuexModule {
     // this.dataset still describe it. Not awaited: its state reads and commit
     // run synchronously here, and datasetLoading must be set before any await.
     this.flushLastLocationInDatasetView();
+    // A new navigation supersedes any camera target the last one left
+    // unapplied. Parsed now: route.query may change while the view loads.
+    const cameraDeepLink = parseCameraDeepLink(routeQuery);
+    this.setPendingCameraDeepLink(null);
     if (!id) {
       this.setDatasetViewImpl(null);
     } else {
@@ -2431,6 +2468,14 @@ export class Main extends VuexModule {
       }
       datasetView.lastViewed = Date.now();
       this.setDatasetViewImpl(datasetView);
+      if (cameraDeepLink) {
+        // Tied to the view's dataset: while it loads, this.dataset is still
+        // the outgoing one, and ImageViewer must not center that.
+        this.setPendingCameraDeepLink({
+          ...cameraDeepLink,
+          datasetId: datasetView.datasetId,
+        });
+      }
       const promises: Promise<any>[] = [];
 
       // Only update lastViewed if user has write access to the view

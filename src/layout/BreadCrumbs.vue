@@ -147,6 +147,7 @@ import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
 import { IDatasetConfiguration, IDatasetView } from "@/store/model";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import { userDisplayInfo } from "@/utils/userDisplay";
+import { omitCameraDeepLinkQuery } from "@/utils/cameraDeepLink";
 
 // Suppress unused import warnings for template-only components
 void AlertDialog;
@@ -436,7 +437,9 @@ function goToView(datasetViewId: string) {
   router.push({
     name: "datasetview",
     params: { datasetViewId },
-    query: { ...route.query },
+    // Keep the location, but not a camera target: it names a point in the
+    // view being left, and would yank the next view back to it.
+    query: omitCameraDeepLinkQuery(route.query),
   });
 }
 

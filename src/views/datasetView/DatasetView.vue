@@ -6,8 +6,23 @@ import store from "@/store";
 import { TLayerMode } from "@/store/model";
 import { useRouteMapper } from "@/utils/useRouteMapper";
 import { useRoute } from "vue-router";
+import { watch } from "vue";
 
 const route = useRoute();
+
+// A `?x=&y=&zoom=` change on the view that is already loaded (an external tool
+// re-targeting an open tab). A view change carries its target through
+// setDatasetViewId instead, and is skipped here: until it loads,
+// store.datasetView is still the previous view. Only these keys are watched,
+// so the z/time/xy writes that keep x and y in the URL never re-center.
+watch(
+  [() => route.query.x, () => route.query.y, () => route.query.zoom],
+  () => {
+    if (store.datasetView?.id === route.params.datasetViewId) {
+      store.requestCameraDeepLink(route.query);
+    }
+  },
+);
 
 useRouteMapper(
   {

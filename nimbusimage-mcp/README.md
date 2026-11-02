@@ -21,22 +21,37 @@ Phase 0 measurements: [`eval/PHASE0_RESULTS.md`](eval/PHASE0_RESULTS.md).
 ## Tools
 
 All names start with `ni_`. Results are compact JSON, capped, and summary-first;
-images are downsampled JPEGs.
+images are downsampled JPEGs. Image results also carry a link that opens the app
+at that place and, when `NI_MCP_BROWSER_API_URL` is set, a full-resolution PNG
+download link (see [Links](#links)). XY, z, and time indices are 0-based; the app
+numbers them from 1.
 
 | Tool | What it does |
 |---|---|
 | `ni_datasets_list` | Datasets you can open (`{id, name}`, max 100; filter by name) |
-| `ni_dataset_info` | Size, channels, z/time/xy counts, pixel size |
+| `ni_dataset_info` | Size, channels, z/time/xy counts, pixel size, app link |
+| `ni_view_link` | A link opening the app at a location, point, or annotation |
+| `ni_export_links` | CSV, GeoJSON, and JSON download links for a dataset's annotations |
 | `ni_annotations_count` | Counts in one or more datasets (up to 50), by shape and tags |
 | `ni_annotations_summary` | Total, counts by tag and by shape |
 | `ni_annotations_list` | Specific annotations (max 200 per call), with center and location |
 | `ni_annotations_tag` | **Writes.** Add/remove/replace tags on annotations chosen by a query (max 10,000) |
-| `ni_image_get_composite` | The image as the app draws it, optionally cropped |
-| `ni_image_get_channel` | One channel in grayscale, auto-contrast |
+| `ni_annotations_in_region` | Annotations at one location whose center is in a region |
+| `ni_annotations_create` | **Writes.** Create points, lines, polygons, or rectangles (max 1,000) |
+| `ni_annotations_delete` | **Writes.** Delete annotations matching a filter, only at the count the user confirmed (max 50,000) |
+| `ni_connections_summary` | Connections and the objects they link (per-cell counts after z-linking) |
+| `ni_history_list` | Your recent changes to a dataset that undo can reverse |
+| `ni_history_undo` | **Writes.** Undo your last change (as the app's undo button) |
+| `ni_image_get_composite` | The image as the app draws it, optionally cropped, with annotation outlines |
+| `ni_image_get_channel` | One channel in grayscale, auto-contrast, optionally a z max projection |
+| `ni_image_line_scan` | Intensity profile along a line, at the source bit depth |
 | `ni_properties_list` | Measurements set up for a dataset, their value paths and uncomputed counts |
 | `ni_property_values_summary` | Count/mean/std/min/max per value path, optionally filtered |
 | `ni_property_histogram` | Equal-count histogram of one value path |
 | `ni_property_compute` | **Writes.** Start computing a measurement (returns a job id) |
+| `ni_property_pairs` | Two measurements over the same annotations: correlation and a sample to plot |
+| `ni_projects_list` | Your projects |
+| `ni_dataset_access` | Who can open a dataset (no emails) |
 | `ni_workers_list` | Annotation and property workers on the server |
 | `ni_worker_interface` | A worker's parameters and the value format each expects |
 | `ni_worker_run` | **Writes.** Run an annotation worker (returns a job id) |
@@ -45,6 +60,24 @@ images are downsampled JPEGs.
 
 Tools that write are marked with the MCP `destructiveHint`, so clients ask
 before running them.
+
+The server also offers three prompts (workflow starters a client lists for the
+user to pick): `explore_dataset`, `segment_and_count`, and `spots_per_cell`.
+
+### Links
+
+A client cannot hand the user a file from a tool call, and may fold returned
+images into the call where the user does not see them. So results carry links:
+
+- **App links** (`NI_MCP_FRONTEND_URL`, defaulting to the issuer, the site's
+  origin) open the caller's own view of the dataset at a location, centered on a
+  point when one is given (`x`, `y`, `zoom` query parameters).
+- **Download links** (`NI_MCP_BROWSER_API_URL`, unset by default, so none) point
+  at Girder as the browser reaches it: `tiles/region` for images (PNG, full
+  resolution up to 8,192 px on the longer side, the composite as the app's
+  `lighten` style) and `export/{csv,geojson,json}` for annotations. These routes
+  accept Girder's auth cookie, so a link downloads in the browser where the user
+  is signed in and carries no credential: it shows nothing to anyone else.
 
 ## Running it
 
@@ -78,6 +111,8 @@ NI_API_URL=http://localhost:8080/api/v1 nimbusimage-mcp/.venv/bin/nimbusimage-mc
 | `NI_MCP_INTROSPECTION_SECRET` | unset | Shared with the plugin's `mcp_oauth.introspection_secret` (32+ printable ASCII characters, no spaces). Unset: OAuth tokens are refused and only API keys work. Reach Girder over the private network or https (`NI_API_URL`), since the secret travels with every OAuth request |
 | `NI_MCP_CALL_LOG` | unset | JSON-lines call log (tool, user id, arguments, seconds, bytes, error), for evals. The server log has the same records without arguments or error messages (only the kind of error) |
 | `NI_MCP_MAX_JOB_WAIT` | `240` | Longest `ni_job_wait` (and cap on a worker-interface fetch, at most 60 s), in seconds, at least 1; keep it under every HTTP timeout in front of the server. Each request to Girder separately times out after 330 s (behind a proxy with a shorter timeout, such as HAProxy, the client sees the proxy's timeout first) |
+| `NI_MCP_FRONTEND_URL` | the issuer | Where users open the app, for app links in results (compose: `http://localhost:5173`) |
+| `NI_MCP_BROWSER_API_URL` | unset | Girder's REST root as users' browsers reach it (production: `https://app.nimbusimage.com/girder/api/v1`), for download links; unset means no download links |
 
 `NI_API_KEY` and `NI_TOKEN` must **not** be set: the server refuses to start
 with a service credential. (The introspection secret is not one: it only

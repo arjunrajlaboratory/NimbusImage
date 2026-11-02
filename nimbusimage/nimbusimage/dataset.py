@@ -415,6 +415,13 @@ class Dataset:
 
     # --- URLs ---
 
+    @property
+    def item_id(self) -> str:
+        """The id of the dataset's large-image item (the source of its
+        tiles/region, histogram, and frame endpoints)."""
+        self._ensure_metadata()
+        return self._item_id
+
     def _get_view_id(self) -> str | None:
         """The default view's ID (the caller's own view, if any), looked
         up fresh so a view created since the settings were cached counts."""
@@ -439,6 +446,9 @@ class Dataset:
         unroll_xy: bool | None = None,
         unroll_z: bool | None = None,
         unroll_t: bool | None = None,
+        x: float | None = None,
+        y: float | None = None,
+        zoom: float | None = None,
     ) -> str:
         """URL for the dataset image viewer.
 
@@ -450,6 +460,9 @@ class Dataset:
             unroll_xy: Unroll XY dimension.
             unroll_z: Unroll Z dimension.
             unroll_t: Unroll time dimension.
+            x, y: Center the viewer on this point, in full-resolution
+                image pixels (origin top-left, as annotation coordinates).
+            zoom: Viewer zoom level for the centered point.
 
         Returns:
             URL string for the image viewer.
@@ -466,6 +479,7 @@ class Dataset:
             view_id, self._frontend_url,
             xy=xy, z=z, time=time, layer=layer,
             unroll_xy=unroll_xy, unroll_z=unroll_z, unroll_t=unroll_t,
+            x=x, y=y, zoom=zoom,
         )
 
     def configuration_url(self) -> str:

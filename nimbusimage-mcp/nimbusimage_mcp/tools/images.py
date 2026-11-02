@@ -1,16 +1,26 @@
-"""Looking at the image: the app's composite, or one raw channel."""
+"""Looking at the image: the app's composite, or one raw channel, with
+annotation outlines on request and links to the app and a download."""
 
 from __future__ import annotations
 
 import io
+from typing import Literal
 
 import numpy as np
 from mcp.server.mcpserver import Image
 from PIL import Image as PILImage
+from PIL import ImageDraw
 
+from nimbusimage_mcp import links
 from nimbusimage_mcp._common import READ_ONLY, clamp, client, instrumented
 
 DEFAULT_MAX_SIZE = 1024
+# Outlines drawn on one image; the list endpoint's centers are scanned in
+# pages of LIST_PAGE, at most MAX_OUTLINE_SCAN of them.
+MAX_OUTLINES = 3000
+LIST_PAGE = 10_000
+MAX_OUTLINE_SCAN = 20_000
+OUTLINE_COLOR = (255, 255, 0)
 MAX_IMAGE_SIZE = 2048
 # Percentiles of the returned pixels used to stretch a raw channel.
 CHANNEL_CONTRAST = (0.5, 99.5)
@@ -55,12 +65,13 @@ def open_view(
     time: int,
     max_size: int,
     crop: tuple[int, int, int, int] | None,
+    nc=None,
 ):
     """What both image tools start with: the dataset, with the location
     checked, max_size clamped and crop clipped to the image. Returns
     (ds, max_size, crop)."""
     max_size = clamp(max_size, 64, MAX_IMAGE_SIZE)
-    ds = client().dataset(dataset_id)
+    ds = (nc or client()).dataset(dataset_id)
     check_location(ds, xy, z, time)
     if crop is not None:
         height, width = ds.shape
@@ -86,6 +97,106 @@ def stretch(frame: np.ndarray) -> np.ndarray:
     return (np.clip(scaled, 0, 1) * 255).astype(np.uint8)
 
 
+def outlines(nc, ds, tags, xy, z, time, crop) -> tuple[list, int, bool]:
+    """Annotations with any of `tags` at this location whose center is in
+    the shown region (with a margin, so edge objects are drawn): two
+    requests, the list's centers then the chosen ones' coordinates.
+    Returns (annotations, matched, capped)."""
+    height, width = ds.shape
+    left, top, right, bottom = crop or (0, 0, width, height)
+    margin = 0.1 * max(right - left, bottom - top)
+    filters = {
+        "location": {"XY": xy, "Z": z, "Time": time},
+        "tags": {"values": tags, "exclusive": False},
+    }
+    ids, offset, total = [], 0, None
+    while offset < MAX_OUTLINE_SCAN and (total is None or offset < total):
+        page = nc.girder.post("upenn_annotation/list", json={
+            "datasetId": ds.id, "filters": filters,
+            "limit": LIST_PAGE, "offset": offset,
+        })
+        total = page["total"]
+        for row in page["rows"]:
+            center = row.get("centroid") or {}
+            cx, cy = center.get("x"), center.get("y")
+            if cx is None or cy is None or (
+                left - margin <= cx <= right + margin
+                and top - margin <= cy <= bottom + margin
+            ):
+                ids.append(row["_id"])
+        if not page["rows"]:
+            break
+        offset += len(page["rows"])
+    capped = len(ids) > MAX_OUTLINES or (total or 0) > offset
+    drawn = nc.girder.post(
+        "upenn_annotation/hydrate", json=ids[:MAX_OUTLINES]
+    ) if ids else []
+    return drawn, len(ids), capped
+
+
+def draw_outlines(pixels: np.ndarray, annotations: list, crop,
+                  full_size: tuple[int, int]) -> np.ndarray:
+    """Outline each annotation on an RGB image of the region `crop` (full
+    resolution pixels) shown at pixels' size."""
+    height, width = full_size
+    left, top, right, bottom = crop or (0, 0, width, height)
+    sx = pixels.shape[1] / (right - left)
+    sy = pixels.shape[0] / (bottom - top)
+    image = PILImage.fromarray(pixels)
+    draw = ImageDraw.Draw(image)
+    stroke = max(1, round(max(pixels.shape[:2]) / 700))
+
+    def place(c):
+        return ((c["x"] - left) * sx, (c["y"] - top) * sy)
+
+    for annotation in annotations:
+        points = [place(c) for c in annotation.get("coordinates") or []]
+        if not points:
+            continue
+        shape = annotation.get("shape")
+        if shape == "point" or len(points) == 1:
+            x, y = points[0]
+            r = 2 * stroke + 1
+            draw.ellipse((x - r, y - r, x + r, y + r),
+                         outline=OUTLINE_COLOR, width=stroke)
+        elif shape == "line":
+            draw.line(points, fill=OUTLINE_COLOR, width=stroke)
+        else:
+            draw.polygon(points, outline=OUTLINE_COLOR, width=stroke)
+    return np.asarray(image)
+
+
+def outline_note(tags, drawn: int, matched: int, capped: bool) -> str:
+    note = f"Outlined in yellow: {drawn} annotation(s) tagged any of {tags}"
+    if capped:
+        note += (
+            f" (not all: {matched}+ match here and at most {MAX_OUTLINES} "
+            "are drawn; crop to a smaller region to see every outline)"
+        )
+    return note + "."
+
+
+def footer(ds, xy, z, time, crop, download: str | None,
+           projected: bool = False) -> str:
+    """Where the image is, a link to open it in the app, and a download
+    link; the user sees these, while the image itself may sit folded
+    inside the tool call."""
+    center = {}
+    if crop is not None:
+        left, top, right, bottom = crop
+        center = {"x": round((left + right) / 2, 1),
+                  "y": round((top + bottom) / 2, 1)}
+    lines = [
+        links.slice_label(ds, xy, z, time, projected),
+        f"Open in NimbusImage: "
+        f"{links.view_link(ds, xy=xy, z=z, time=time, **center)}",
+    ]
+    if download:
+        lines.append(f"Download (PNG, full resolution): {download}")
+        lines.append(links.DOWNLOAD_NOTE)
+    return "\n".join(lines)
+
+
 @instrumented
 def ni_image_get_composite(
     dataset_id: str,
@@ -94,7 +205,8 @@ def ni_image_get_composite(
     time: int = 0,
     max_size: int = DEFAULT_MAX_SIZE,
     crop: tuple[int, int, int, int] | None = None,
-) -> Image:
+    outline_tags: list[str] | None = None,
+) -> list:
     """Show the image: a color composite of the dataset's visible channels
     at one XY position, z-slice, and time point, rendered the way the user
     sees it in NimbusImage (their channel colors, contrast, and layer
@@ -104,8 +216,22 @@ def ni_image_get_composite(
     crop=(left, top, right, bottom) in full-resolution image pixels (see
     width/height from ni_dataset_info). To see one channel on its own,
     use ni_image_get_channel.
+
+    xy, z, and time are 0-based indices; the app numbers them from 1, so
+    the user's "Z=2" is z=1. outline_tags draws the annotations having
+    any of those tags at this location in yellow, e.g. ["nucleus"], so
+    you (and the user) can see a segmentation.
+
+    The result also has a link that opens the app at this location
+    (centered on the crop) and, when available, a link to download the
+    composite as a full-resolution PNG. The user may not see the image
+    itself (clients often fold it into the tool call): when they ask to
+    see, open, or download it, give them these links.
     """
-    ds, max_size, crop = open_view(dataset_id, xy, z, time, max_size, crop)
+    nc = client()
+    ds, max_size, crop = open_view(
+        dataset_id, xy, z, time, max_size, crop, nc
+    )
     if not any(layer.get("visible", True) for layer in ds.collections.layers):
         raise ValueError(
             "This dataset has no visible layers to show; use "
@@ -114,13 +240,27 @@ def ni_image_get_composite(
     rgb = ds.images.get_composite(
         xy=xy, z=z, time=time, dtype="uint8", max_size=max_size, crop=crop
     )
-    image = Image(data=encode_jpeg(rgb), format="jpeg")
+    notes = []
     if not rgb.any():
         # Black is ambiguous: get_composite also returns black when no
         # layer draws here (e.g. an offset slice out of range). Show it,
         # and say so, rather than refuse a frame that may really be dark.
-        return [image, BLACK_NOTE]
-    return image
+        notes.append(BLACK_NOTE)
+    if outline_tags:
+        drawn, matched, capped = outlines(
+            nc, ds, outline_tags, xy, z, time, crop
+        )
+        rgb = draw_outlines(rgb, drawn, crop, ds.shape)
+        notes.append(outline_note(outline_tags, len(drawn), matched, capped))
+    style = ds.images.composite_style(xy=xy, z=z, time=time)
+    download = links.region_link(
+        ds, style, crop, filename=f"{ds.name} composite.png"
+    ) if style else None
+    return [
+        Image(data=encode_jpeg(rgb), format="jpeg"),
+        *notes,
+        footer(ds, xy, z, time, crop, download),
+    ]
 
 
 @instrumented
@@ -132,7 +272,9 @@ def ni_image_get_channel(
     time: int = 0,
     max_size: int = DEFAULT_MAX_SIZE,
     crop: tuple[int, int, int, int] | None = None,
-) -> Image:
+    projection: Literal["none", "max"] = "none",
+    outline_tags: list[str] | None = None,
+) -> list:
     """Show one channel (stain) on its own, in grayscale, at one XY
     position, z-slice, and time point. Contrast is stretched automatically
     from the 0.5th to the 99.5th percentile of the shown pixels, not the
@@ -140,19 +282,68 @@ def ni_image_get_channel(
     sees). Channel indices come from ni_dataset_info. Returns a JPEG whose
     longer side is at most max_size (default 1024, max 2048); crop=(left,
     top, right, bottom) in full-resolution pixels zooms in.
+
+    projection="max" shows the maximum intensity over every z-slice (z is
+    then ignored), the usual way to see spots in a z-stack. xy, z, and
+    time are 0-based (the app's "Z=2" is z=1). outline_tags draws the
+    annotations having any of those tags at this location in yellow (for
+    a projection, those on slice z).
+    The result links to the app at this location and, when available, to
+    a full-resolution PNG download of the channel; give the user these
+    links when they ask to see, open, or download the image.
     """
-    ds, max_size, crop = open_view(dataset_id, xy, z, time, max_size, crop)
+    nc = client()
+    ds, max_size, crop = open_view(
+        dataset_id, xy, z, time, max_size, crop, nc
+    )
     if not 0 <= channel < ds.num_channels:
         raise ValueError(
             f"channel={channel} is out of range (0..{ds.num_channels - 1})"
         )
-    frame = ds.images.get(
-        xy=xy, z=z, time=time, channel=channel, crop=crop, max_size=max_size
-    )
+    zs = range(ds.num_z) if projection == "max" else [z]
+    frames = [
+        ds.images.get(xy=xy, z=zi, time=time, channel=channel, crop=crop,
+                      max_size=max_size)
+        for zi in zs
+    ]
+    frame = np.max(frames, axis=0) if len(frames) > 1 else frames[0]
     if frame.ndim == 3:
         # A multi-band (e.g. RGB brightfield) frame: show its first band.
         frame = frame[..., 0]
-    return Image(data=encode_jpeg(stretch(frame)), format="jpeg")
+    pixels = stretch(frame)
+    notes = []
+    if projection == "max":
+        notes.append(
+            f"Maximum projection over all {ds.num_z} z-slices."
+        )
+    if outline_tags:
+        drawn, matched, capped = outlines(
+            nc, ds, outline_tags, xy, z, time, crop
+        )
+        pixels = draw_outlines(
+            np.stack([pixels] * 3, axis=-1), drawn, crop, ds.shape
+        )
+        notes.append(outline_note(outline_tags, len(drawn), matched, capped))
+    download = links.region_link(
+        ds, channel_style(ds, channel, xy, zs, time), crop,
+        filename=f"{ds.name} channel {channel}.png",
+    )
+    return [
+        Image(data=encode_jpeg(pixels), format="jpeg"),
+        *notes,
+        footer(ds, xy, z, time, crop, download, projection == "max"),
+    ]
+
+
+def channel_style(ds, channel: int, xy: int, zs, time: int) -> dict:
+    """One channel in gray, the server's automatic contrast, its frames
+    combined by maximum (a projection when there are several)."""
+    return {"bands": [
+        {"frame": ds.images.frame_index(
+            xy=xy, z=zi, time=time, channel=channel),
+         "min": "auto", "max": "auto", "palette": ["#000000", "#ffffff"]}
+        for zi in zs
+    ]}
 
 
 TOOLS = [
