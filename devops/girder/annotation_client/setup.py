@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from distutils.core import setup
+from setuptools import setup
 
 setup(
     name="annotation_client",
@@ -10,4 +10,5 @@ setup(
     author_email="adrien.boucaud@kitware.com",
     url="https://github.com/boucaud/UPennContrast_annotation_client",
     packages=["annotation_client"],
+    install_requires=["girder-client", "orjson", "tifffile"],
 )

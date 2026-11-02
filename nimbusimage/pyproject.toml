@@ -21,6 +21,7 @@ classifiers = [
 dependencies = [
     "girder-client",
     "numpy",
+    "orjson",
     "pydantic>=2.0",
     "requests",
     "shapely",

@@ -139,7 +139,7 @@ class TestProjectUrlMethods:
 class TestClientFrontendUrl:
     def test_default_frontend_url(self):
         from unittest.mock import MagicMock
-        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+        with patch("nimbusimage._girder.FastJsonGirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
             from nimbusimage.client import NimbusClient
@@ -150,7 +150,7 @@ class TestClientFrontendUrl:
 
     def test_custom_frontend_url(self):
         from unittest.mock import MagicMock
-        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+        with patch("nimbusimage._girder.FastJsonGirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
             from nimbusimage.client import NimbusClient
@@ -163,7 +163,7 @@ class TestClientFrontendUrl:
     def test_env_var_overrides(self):
         import os
         from unittest.mock import MagicMock
-        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+        with patch("nimbusimage._girder.FastJsonGirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
             with patch.dict(
