@@ -723,7 +723,13 @@ setResponseHeader("Content-Type", "application/json")
 return streamJsonArray(cursor, default=orJsonDefaults)  # helpers/serialization
 ```
 
-orjson already writes Infinity/NaN as null, so `jsonSafe` isn't needed. The
+orjson is not Girder's encoder, so moving an endpoint to it changes the output
+in edge cases. It writes Infinity/NaN as null, where Girder (`allow_nan=False`)
+returns a 500, so `jsonSafe` isn't needed. It keeps insertion key order rather
+than sorting keys. A type `orJsonDefaults` doesn't know (anything but ObjectId)
+raises in the middle of the stream, where Girder's encoder `str()`s it. Stored
+JSON bodies never hold such types, but check before streaming a model that
+stores datetimes or sets. The
 Girder 5 ASGI bridge passes chunks through a one-slot queue, so a slow client
 gets backpressure rather than a growing buffer. In tests `resp.json` still
 works, because the test client joins the chunks. To check that an endpoint
