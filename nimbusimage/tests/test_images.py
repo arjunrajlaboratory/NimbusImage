@@ -1,10 +1,12 @@
 """Tests for ImageAccessor."""
 
+import io
 import json
 import pickle
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
+import tifffile
 import pytest
 from nimbusimage.images import ImageAccessor, _parse_color
 from nimbusimage.models import FrameInfo
@@ -523,34 +525,26 @@ class TestMaxProjection:
         assert result.dtype == np.uint16
         assert int(result.max()) == 100 + len(frames) - 1
 
-    def test_float_slices_are_downsampled_here_not_by_the_server(
+    def test_uint8_fast_path_keeps_the_source_dtype(
         self, mock_gc, sample_tiles_metadata,
     ):
-        """The server would downsample float data through 8 bits (values
-        in 0..1 become 0): read full-resolution slices, sample by index."""
-        ds, regions = _composite_dataset(
+        """large_image leaves "source" styling of 8-bit data as float32."""
+        ds, _ = _composite_dataset(
             mock_gc, sample_tiles_metadata, [_layer()], {},
         )
-        frames = ds.images.projection_frames(channel=0)
-        height, width = ds.shape
 
         def get(path, parameters=None, jsonResp=True):
-            regions.append(parameters)
-            assert "width" not in parameters and "style" not in parameters
             response = MagicMock()
-            plane = np.full((height, width), 0.25, np.float32)
-            plane[0, 0] = 0.5 + frames.index(parameters["frame"]) / 100
-            response.content = pickle.dumps(plane)
+            response.content = pickle.dumps(
+                np.full((4, 4, 4), 7.0, np.float32))
             return response
 
         mock_gc.get.side_effect = get
         with patch.object(type(ds), "dtype", new_callable=PropertyMock,
-                          return_value="float32"):
-            result = ds.images.get_max_projection(channel=0, max_size=64)
-        assert result.dtype == np.float32
-        assert max(result.shape) == 64
-        assert result[0, 0] == np.float32(0.5 + (len(frames) - 1) / 100)
-        assert float(result.min()) == 0.25
+                          return_value="uint8"):
+            result = ds.images.get_max_projection(channel=0)
+        assert result.dtype == np.uint8
+        assert int(result.max()) == 7
 
     def test_only_existing_slices_are_projected(
         self, mock_gc, sample_tiles_metadata,
@@ -565,6 +559,79 @@ class TestMaxProjection:
         assert len(ds.images.projection_frames(channel=0)) == len(by_z)
         with pytest.raises(ValueError, match="No z-slices"):
             ds.images.get_max_projection(channel=99)
+
+
+class TestExactDownsampling:
+    """tiles/region downsamples everything but 8-bit and single-band
+    16-bit data through 8-bit PIL; those reads use raw_region."""
+
+    def _dataset(self, mock_gc, tiles, dtype, bands=1):
+        ds = _make_dataset(mock_gc, tiles)
+        ds._ensure_metadata()
+        ds._tiles["bandCount"] = bands
+        requests = []
+
+        def get(path, parameters=None, jsonResp=True):
+            requests.append((path.rsplit("/", 1)[-1], parameters))
+            response = MagicMock()
+            shape = (parameters.get("height", 8), parameters.get("width", 8))
+            if bands > 1:
+                shape += (bands,)
+            plane = np.full(shape, 0.5 if dtype == "float32" else 100,
+                            dtype=dtype)
+            if path.endswith("/raw_region"):
+                buffer = io.BytesIO()
+                tifffile.imwrite(buffer, plane)
+                response.content = buffer.getvalue()
+            else:
+                response.content = pickle.dumps(plane)
+            return response
+
+        mock_gc.get.side_effect = get
+        return ds, requests
+
+    @pytest.mark.parametrize("dtype,bands", [
+        ("float32", 1), ("int16", 1), ("uint16", 3),
+    ])
+    def test_lossy_downsamples_read_raw_region(
+        self, mock_gc, sample_tiles_metadata, dtype, bands,
+    ):
+        ds, requests = self._dataset(
+            mock_gc, sample_tiles_metadata, dtype, bands)
+        with patch.object(type(ds), "dtype", new_callable=PropertyMock,
+                          return_value=dtype):
+            image = ds.images.get(channel=0, max_size=64)
+        route, params = requests[-1]
+        assert route == "raw_region"
+        assert (params["left"], params["top"]) == (0, 0)
+        assert (params["right"], params["bottom"]) == ds.shape[::-1]
+        assert image.dtype == np.dtype(dtype)
+        # Values intact: 0.5 or 100, never rounded through 8 bits to 0.
+        assert float(image.min()) in (0.5, 100.0)
+
+    @pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+    def test_exact_downsamples_stay_on_tiles_region(
+        self, mock_gc, sample_tiles_metadata, dtype,
+    ):
+        ds, requests = self._dataset(mock_gc, sample_tiles_metadata, dtype)
+        with patch.object(type(ds), "dtype", new_callable=PropertyMock,
+                          return_value=dtype):
+            ds.images.get(channel=0, max_size=64)
+            ds.images.get(channel=0)
+        assert [route for route, _ in requests[-2:]] == ["region", "region"]
+
+    def test_negative_crop_edges_are_resolved_for_raw_region(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        ds, requests = self._dataset(mock_gc, sample_tiles_metadata,
+                                     "float32")
+        height, width = ds.shape
+        with patch.object(type(ds), "dtype", new_callable=PropertyMock,
+                          return_value="float32"):
+            ds.images.get(channel=0, crop=(-100, 0, width, -50), max_size=8)
+        _, params = requests[-1]
+        assert params["left"] == width - 100
+        assert params["bottom"] == height - 50
 
 
 class TestCompositeStyle:

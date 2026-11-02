@@ -382,7 +382,7 @@ results carry links, and the server instructions tell the model to pass them on.
 |---|---|---|
 | `ni_view_link` | `default_view` + `dataset_view_url` | Location, point, or `annotation_id` (centered on its vertex mean) |
 | `ni_export_links` | `GET export/*` | CSV columns: the registered measurements' sampled value paths (max 100, the encoded link kept under 7,500 characters; file names capped at 100) |
-| `ni_image_get_composite` / `_channel` | + `upenn_annotation/list` and `hydrate` | `outline_tags` (any of the tags, at that location, centers near the crop; max 3,000 drawn, says when capped); `projection="max"` on the channel (`ds.images.get_max_projection`: one styled `tiles/region` request at full resolution for 8/16-bit sources; otherwise raw slices folded into a running maximum, since the server styles a downsampled result through 8 bits) |
+| `ni_image_get_composite` / `_channel` | + `upenn_annotation/list` and `hydrate` | `outline_tags` (any of the tags, at that location, centers near the crop; max 3,000 drawn, says when capped); `projection="max"` on the channel (`ds.images.get_max_projection`: one styled `tiles/region` request at full resolution for 8/16-bit sources; otherwise slices read as `get()` reads them, folded into a running maximum, since the server styles a downsampled result through 8 bits) |
 | `ni_annotations_in_region` | `upenn_annotation/list` with a location filter | Center inside a region; scans at most 20,000 at the location (client-side region test, so on a 700K-object frame a small region can be missed: a server-side region filter is follow-up work) |
 | `ni_annotations_create` | `create_many` | **Destructive hint.** Max 1,000; validates shapes and bounds first, creates nothing on any error |
 | `ni_annotations_delete` | `list/ids` + `DELETE multiple` | **Destructive hint.** Requires a filter and the confirmed `expected_count`; max 50,000; one request, so one undo |
@@ -1522,9 +1522,13 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
       *"test_projection_matches_the_raw_maximum"*, *"test_channel_max_projection_is_one_server_request"*,
       *"test_one_request_returns_the_raw_maximum"*, *"test_only_existing_slices_are_projected"*,
       *"test_downsampled_or_other_dtypes_fold_raw_slices"*,
-      *"test_float_slices_are_downsampled_here_not_by_the_server"* (the server downsamples
-      dtypes other than 8/16-bit unsigned through 8-bit PIL, so those are read at full
-      resolution, up to 4M pixels a slice, and sampled by index here); a link too long for a proxy is left out.
+      *"test_uint8_fast_path_keeps_the_source_dtype"*;
+- [x] Every downsampled read keeps its values (images, projections, line scans): large_image's
+      `tiles/region` downsamples all but 8-bit and single-band 16-bit data through 8-bit PIL
+      (a float 0.5 or a 16-bit RGB 100 becomes 0), so the package reads those from the
+      plugin's `raw_region` route (`ImageAccessor._read_region`).
+      *"test_lossy_downsamples_read_raw_region"*, *"test_exact_downsamples_stay_on_tiles_region"*,
+      *"test_negative_crop_edges_are_resolved_for_raw_region"*; a link too long for a proxy is left out.
       *"test_too_long_a_download_link_is_left_out"*
 - [x] The composite download style is the composite's (colors, contrast, hidden layers).
       *"test_matches_get_composite"*, *"test_hidden_layers_and_nothing_drawn"*

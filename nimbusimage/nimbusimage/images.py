@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import pickle
 from typing import TYPE_CHECKING, Iterator, NamedTuple, Sequence
 
 import numpy as np
+import tifffile
 
 from nimbusimage.models import FrameInfo
 
@@ -83,6 +85,50 @@ class ImageAccessor:
         )
         return pickle.loads(response.content)
 
+    def _resamples_exactly(self) -> bool:
+        """Whether large_image's tiles/region downsamples this source
+        without losing values: 8-bit data, and single-band 16-bit data.
+        It sends every other array through 8-bit PIL (a float 0.5 or a
+        16-bit RGB 100 becomes 0)."""
+        self._dataset._ensure_metadata()
+        dtype = np.dtype(self._dataset.dtype)
+        bands = self._dataset._tiles.get("bandCount", 1) or 1
+        return dtype == np.uint8 or (dtype == np.uint16 and bands == 1)
+
+    def _read_region(self, frame: int, **kwargs) -> np.ndarray:
+        """An unstyled region (tiles/region parameters: optional crop
+        edges and width/height cap) in the source dtype, values intact.
+
+        A downsample the server cannot do exactly is read from the
+        plugin's raw_region route instead, which samples without PIL
+        (nearest, from the pyramid level read) and returns a TIFF.
+        """
+        if "width" not in kwargs or self._resamples_exactly():
+            return self._get_region(frame, **kwargs)
+        height, width = self._dataset.shape
+
+        def edge(name, size, default):
+            value = kwargs.get(name, default)
+            # tiles/region reads a negative edge from the far side;
+            # raw_region clamps instead, so resolve it here.
+            return value + size if value < 0 else value
+
+        params = {
+            "frame": frame,
+            "left": edge("left", width, 0),
+            "top": edge("top", height, 0),
+            "right": edge("right", width, width),
+            "bottom": edge("bottom", height, height),
+            "width": kwargs["width"],
+            "height": kwargs["height"],
+        }
+        response = self._dataset._gc.get(
+            f"item/{self._dataset._item_id}/raw_region",
+            parameters=params,
+            jsonResp=False,
+        )
+        return tifffile.imread(io.BytesIO(response.content))
+
     def get(
         self,
         xy: int = 0,
@@ -109,7 +155,7 @@ class ImageAccessor:
             2D numpy array.
         """
         frame = self._frame_index(channel, time, z, xy)
-        return _drop_single_band(self._get_region(
+        return _drop_single_band(self._read_region(
             frame, **self._region_params(crop, max_size)
         ))
 
@@ -193,9 +239,8 @@ class ImageAccessor:
         Otherwise the slices are read one at a time and folded into a
         running maximum, holding at most two planes: large_image styles a
         downsampled result through 8 bits (a faint signal would round to
-        0), and its "source" dtype does not cover other types. Other
-        dtypes are also downsampled here, not by the server (see below),
-        from full-resolution reads of at most MAX_PROJECTION_READ_PIXELS.
+        0), and its "source" dtype does not cover other types. Each slice
+        is read as get() reads it, values intact (see _read_region).
         """
         frames = self.projection_frames(channel, xy, time)
         if not frames:
@@ -215,35 +260,16 @@ class ImageAccessor:
                 **region,
             )
             # The styled result has color (and alpha) bands; the first
-            # holds the value.
-            return projected[..., 0] if projected.ndim == 3 else projected
-        # The server downsamples single-band 8- and 16-bit data exactly;
-        # anything else goes through 8-bit PIL there. So other dtypes are
-        # read at full resolution and downsampled here, the way the
-        # server's exact path does (nearest sample, by index).
-        exact_on_server = dtype in (np.uint8, np.uint16)
-        if "width" in region and not exact_on_server:
-            height, width = self._region_size(crop)
-            if height * width > MAX_PROJECTION_READ_PIXELS:
-                raise ValueError(
-                    f"A downsampled projection of {dtype} data reads every "
-                    f"slice at full resolution; this region is {width} x "
-                    f"{height} pixels. Crop to at most "
-                    f"{MAX_PROJECTION_READ_PIXELS:,} pixels."
-                )
-            out_height, out_width = self._output_shape(crop, max_size)
-            rows = [int(i * height / out_height) for i in range(out_height)]
-            cols = [int(i * width / out_width) for i in range(out_width)]
-            region = self._region_params(crop, None)
-        else:
-            rows = cols = None
+            # holds the value. "source" is not applied to 8-bit data (it
+            # comes back as float32), so restore the dtype.
+            if projected.ndim == 3:
+                projected = projected[..., 0]
+            return projected.astype(dtype, copy=False)
         projected = None
         for frame in frames:
-            plane = _drop_single_band(self._get_region(frame, **region))
+            plane = _drop_single_band(self._read_region(frame, **region))
             if plane.ndim == 3:
                 plane = plane[..., 0]
-            if rows is not None:
-                plane = plane[np.ix_(rows, cols)]
             projected = plane if projected is None \
                 else np.maximum(projected, plane, out=projected)
         return projected
@@ -647,7 +673,7 @@ class ImageAccessor:
         if scale < 1.0:
             kwargs["width"] = round(region_width * scale)
             kwargs["height"] = round(region_height * scale)
-        region = _drop_single_band(self._get_region(frame, **kwargs))
+        region = _drop_single_band(self._read_region(frame, **kwargs))
         # The server preserves the aspect ratio, so the effective scale can
         # differ slightly from the requested one — use the returned size
         return (
@@ -727,10 +753,6 @@ def _bilinear_sample(
 
 # The app's histogram request (GirderAPI.baseHistogramOptions). Its min..max
 # is what percentile contrast is a percentage of.
-# Largest region a projection reads per slice at full resolution, to
-# downsample a dtype the server cannot downsample exactly (16 MB of float32).
-MAX_PROJECTION_READ_PIXELS = 4096 * 1024
-
 _HISTOGRAM_PARAMS = {
     "bins": 4096,
     "width": 2048,

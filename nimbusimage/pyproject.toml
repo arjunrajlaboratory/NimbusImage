@@ -25,6 +25,9 @@ dependencies = [
     "requests",
     "shapely",
     "scikit-image",
+    # Decodes the raw_region TIFF (exact downsampling); scikit-image
+    # already depends on it.
+    "tifffile",
     "urllib3",
 ]
 
