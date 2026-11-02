@@ -344,7 +344,8 @@ class TestBulkCreateResponses:
         """The one deliberate difference: a body number too large for a
         float parses to infinity, which the schema accepts and Mongo
         stores. Girder's encoder then refused it (a 500 after the write);
-        the response now carries null, as the orjson list endpoints do."""
+        the response now carries null, as GET /upenn_annotation and
+        POST /upenn_annotation/hydrate do."""
         dataset = self._dataset(admin)
         annotation = upenn_utilities.getSampleAnnotation(str(dataset["_id"]))
         body = json.dumps([annotation]).replace(

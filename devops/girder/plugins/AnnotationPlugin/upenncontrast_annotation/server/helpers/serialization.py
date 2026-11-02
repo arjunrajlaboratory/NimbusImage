@@ -86,10 +86,12 @@ def createdDocumentsResponse(documents):
     escapes. Python-computed values are not covered (a numpy float would
     become a string; Enums, dataclasses and non-UTC aware datetimes encode
     differently). One deliberate difference: Girder refuses a non-finite
-    float (allow_nan=False), so a create whose body held `1e999` stored its
-    documents and then answered 500. orjson writes null, as the orjson list
-    endpoints (GET /upenn_annotation, POST /upenn_annotation/list) do for
-    that stored value; GET by id, still Girder-encoded, answers 500."""
+    float (allow_nan=False), so an annotation or connection create whose
+    body held `1e999` stored its documents and then answered 500 (the
+    property-value create already wrote null through jsonSafe). orjson
+    writes null, as GET /upenn_annotation and POST /upenn_annotation/hydrate
+    do for that stored value; GET by id, still Girder-encoded, answers 500.
+    """
     setResponseHeader("Content-Type", "application/json")
     return streamJsonArray(
         documents,

@@ -724,8 +724,8 @@ costs were pure Python overhead, not Mongo:
   Girder's `str()` fallback, so it parses to the same value Girder sent for
   documents decoded from a JSON body or from Mongo. Python-computed values are
   not covered: a numpy float becomes a string, and Enums, dataclasses and
-  non-UTC aware datetimes encode differently. Remember
-  that orjson writes NaN/Infinity as `null`, where Girder raised (a 500).
+  non-UTC aware datetimes encode differently. Remember that orjson writes
+  NaN/Infinity as `null`, where Girder raised (a 500).
 - **fastjsonschema costs ~1 µs per array item** (it builds key sets per object).
   For a schema with a large array of small objects (coordinates), a hand-written
   exact-type check that only ever *accepts* (`coordinatesMatchSchema`), plus the
