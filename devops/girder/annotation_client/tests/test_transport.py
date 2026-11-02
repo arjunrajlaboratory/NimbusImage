@@ -364,6 +364,21 @@ class TestClientOverHttp:
         assert "Cookie" not in fakeGirder.requests[-1]["headers"]
         assert len(client.client._session.cookies) == 0
 
+    def test_post_that_never_connected_is_retried(self):
+        # Nothing reached the server, so a retry can't duplicate anything.
+        client = UPennContrastAnnotationClient("http://127.0.0.1:1/api/v1",
+                                               "tok")
+        attempts = []
+
+        def countingSleep(self, response=None):
+            attempts.append(self)
+            return _noSleep(self, response)
+
+        with patch.object(Retry, "sleep", countingSleep):
+            with pytest.raises(requests.exceptions.ConnectionError):
+                client.createMultipleAnnotations([{"shape": "point"}])
+        assert len(attempts) == transport.RETRY_TOTAL
+
     def test_gateway_timeouts_are_not_retried(self, fakeGirder):
         # A 504 comes after the server timeout; retrying reruns slow work.
         fakeGirder.route("GET", "/api/v1/upenn_annotation",

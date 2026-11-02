@@ -23,8 +23,9 @@ code path:
 - Requests share one `requests.Session`. GET, PUT and DELETE reuse
   keep-alive connections and retry 502/503 with backoff. 504 is not
   retried, because it arrives after the server timeout and a retry would
-  rerun the slow request. POST is never retried, and it goes out on a fresh
-  connection, as before. The session keeps no cookies, so the load
+  rerun the slow request. A POST is never retried once sent, and it goes out
+  on a fresh connection, as before. Any request that fails to connect at all
+  (Girder restarting) is retried, since nothing reached the server. The session keeps no cookies, so the load
   balancer's sticky cookie doesn't pin a worker to one backend.
 
 Tests: `pip install -e . numpy pytest && pytest tests`.
