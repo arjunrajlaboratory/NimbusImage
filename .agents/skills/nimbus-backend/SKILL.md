@@ -121,6 +121,34 @@ users = list(User().find(
 
 For detailed query patterns: read `references/database-query-patterns.md`
 
+### Streaming many documents to JSON: raw batches, not decoded documents
+
+A list endpoint that returns thousands of annotations spends most of its time
+building Python dicts it only serializes again. For 100K cell polygons that's
+~1.1 s of ~1.45 s. Stream raw BSON batches instead:
+`self._model.findRawBatches(...)` (`helpers/customModel.py`: `Model.find`'s
+arguments, timeout and projection, on `find_raw_batches`) or
+`collection.aggregate_raw_batches(...)`, then
+`streamRawJsonArray(prefetchedBatches(cursor), collection.codec_options)`
+(`helpers/serialization.py`). The bytes are identical to
+`streamJsonArray(docs, default=orJsonDefaults)`, through the Rust transcoder
+`bson_json_native` when it is installed and decode + orjson when it isn't.
+`findRawBatches` is the one sanctioned exception to "never
+`collection.find()`"; don't hand-roll another. Details and what the
+transcoder refuses: `codebaseDocumentation/NATIVE_JSON_TRANSCODER.md`.
+
+Two traps from building it:
+- **A directory named like a module shadows it.** The crate first lived in
+  `AnnotationPlugin/bson_json_native/`. With `AnnotationPlugin/` on
+  `sys.path` (tox, `pip install -e`), `import bson_json_native` found that
+  directory as an empty namespace package, so the import "succeeded" with no
+  `transcode` and every endpoint 500'd. Non-Python source trees next to a
+  package get a non-identifier name (`bson-json-native/`).
+- **A builder stage must match the final image's platform.**
+  `girder/tox-and-node-lts` is amd64-only. A builder `FROM python:3.11-slim`
+  (multi-arch) built an arm64 wheel on Apple Silicon, and the emulated amd64
+  final stage refused it. Build from the same base as the final stage.
+
 ## API Endpoint Patterns
 
 ### Route Registration

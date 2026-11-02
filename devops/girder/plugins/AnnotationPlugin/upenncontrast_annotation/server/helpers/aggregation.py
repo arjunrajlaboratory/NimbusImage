@@ -25,10 +25,23 @@ _END = object()
 
 def prefetchedDocuments(rawBatches, codecOptions, depth=PREFETCH_BATCHES):
     """Documents of a raw-batch cursor, decoded in the caller while a thread
-    fetches the batches ahead.
+    fetches the batches ahead (see `prefetchedBatches`)."""
+    def documents():
+        batches = prefetchedBatches(rawBatches, depth)
+        try:
+            for batch in batches:
+                yield from bson.decode_all(batch, codec_options=codecOptions)
+        finally:
+            batches.close()
+
+    return documents()
+
+
+def prefetchedBatches(rawBatches, depth=PREFETCH_BATCHES):
+    """The batches of a raw-batch cursor, fetched ahead by a thread.
 
     A pymongo cursor asks for its next batch only once the current one is
-    consumed, so a pipeline whose server-side work and client-side decoding
+    consumed, so a query whose server-side work and client-side processing
     are both large (the stubs aggregate: seconds of each at 700K) runs them
     back to back. The thread keeps up to `depth` batches in flight instead.
     Closing the generator early (a dropped response) stops the thread and
@@ -68,7 +81,7 @@ def prefetchedDocuments(rawBatches, codecOptions, depth=PREFETCH_BATCHES):
             except queue.Full:
                 continue
 
-    def documents():
+    def batches():
         thread = threading.Thread(target=fetch, daemon=True)
         thread.start()
         try:
@@ -78,8 +91,8 @@ def prefetchedDocuments(rawBatches, codecOptions, depth=PREFETCH_BATCHES):
                     return
                 if isinstance(item, Exception):
                     raise item
-                yield from bson.decode_all(item, codec_options=codecOptions)
+                yield item
         finally:
             stopped.set()
 
-    return documents()
+    return batches()
