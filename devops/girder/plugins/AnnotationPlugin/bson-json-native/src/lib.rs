@@ -74,8 +74,13 @@ const MAX_DEPTH: u32 = 100;
 
 /// Keys in one document level checked for repeats by a linear scan; a wider
 /// level switches to a hash set, so a document with thousands of keys (a
-/// gene panel) stays linear.
-const LINEAR_KEY_SCAN: usize = 16;
+/// gene panel) stays linear. Measured on 68 MB batches: at 16, the per-document
+/// set made real Xenium property values (a 31-key level) 18% slower than the
+/// linear scan; at 32 they match it, and 2,000-key levels take 152 ms where a
+/// linear scan takes 2.9 s.
+const LINEAR_KEY_SCAN: usize = 32;
+// Typical property-value levels (31 keys on Xenium) must stay on the scan.
+const _: () = assert!(LINEAR_KEY_SCAN > 31);
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
@@ -557,13 +562,23 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(json(&wide(&keys)).is_ok());
         assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
-        // A repeat is still found before and after the switch to hashing.
-        for repeat_at in [3, LINEAR_KEY_SCAN, LINEAR_KEY_SCAN + 1, 5_000] {
+        // A repeat is still found before and after the switch to hashing,
+        // including of the key that triggers the switch (it must enter the
+        // set as well as the keys scanned before it).
+        let cases = [
+            (3, 1),
+            (LINEAR_KEY_SCAN, LINEAR_KEY_SCAN / 2),
+            (LINEAR_KEY_SCAN + 1, LINEAR_KEY_SCAN / 2),
+            (LINEAR_KEY_SCAN + 1, LINEAR_KEY_SCAN),
+            (5_000, LINEAR_KEY_SCAN),
+            (5_000, 2_500),
+        ];
+        for (repeat_at, repeated) in cases {
             let mut with_repeat = keys[..6_000].to_vec();
-            with_repeat.insert(repeat_at, keys[repeat_at / 2].clone());
+            with_repeat.insert(repeat_at, keys[repeated].clone());
             assert!(
                 matches!(json(&wide(&with_repeat)), Err(Error::DuplicateKey(_))),
-                "repeat at {repeat_at}"
+                "key {repeated} repeated at {repeat_at}"
             );
         }
     }

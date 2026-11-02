@@ -2,9 +2,10 @@
 
 `limit=0` asks for every document in a dataset. Built as one list and one
 JSON string, 709K property values took Girder past 13.5 GiB and the
-container was OOM-killed. Streamed, Girder holds one chunk of ~1000
-documents at a time. The Girder test server hands a streamed body back as
-a generator of chunks and a serialized one as a single chunk, so more than
+container was OOM-killed. Streamed, Girder holds one Mongo batch at a time
+(`streamRawJsonArray`: one chunk per raw batch of up to 16 MB, plus `[`,
+`,` and `]`). The Girder test server hands a streamed body back as a
+generator of chunks and a serialized one as a single chunk, so more than
 one chunk means the response was not materialized.
 """
 import json
@@ -24,8 +25,8 @@ from upenncontrast_annotation.server.models.propertyValues import (
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
 
-# More than streamJsonArray's ~1000-document chunk, so a streamed response
-# has several chunks.
+# More than one Mongo batch (the first holds 101 documents), so the body
+# spans several raw batches.
 DOCUMENT_COUNT = 2500
 
 

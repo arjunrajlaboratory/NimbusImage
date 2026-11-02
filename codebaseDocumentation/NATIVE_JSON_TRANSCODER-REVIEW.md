@@ -16,8 +16,8 @@ Status values: `fixed <commit>`, `not real` (with the evidence), `declined` (rea
 
 | # | Severity | Finding | Status |
 |---|---|---|---|
-| C1 | — | `streamRawJsonArray` yields `[` before the first fetch, so a first-batch error becomes a truncated 200 instead of a 500 | not real: Girder's `endpoint` returns the generator, CherryPy calls `start_response` (200) before iterating a streamed body, and the ASGI bridge sends that status with the first chunk or the end. On master the same error gave a 200 with an empty body. Both are a client parse error, not a 500 |
-| C2 | Medium | Duplicate-key check scans linearly per key, quadratic in a level's width | fixed: a level switches to a hash set past 16 keys. 500 keys at one level: 1,018 → 179 ms per 68 MB; 2,000 keys: 4,101 → 176 ms. Test: crate `wide_documents_stay_linear_and_still_refuse_repeats`, which failed before the fix |
+| C1 | — | `streamRawJsonArray` yields `[` before the first fetch, so a first-batch error becomes a truncated 200 instead of a 500 | not real: Girder's `endpoint` returns the generator, CherryPy calls `start_response` (200) before iterating a streamed body, and the ASGI bridge sends that status with the first chunk or the end. For the endpoints that already streamed (annotation find/hydrate/stubs, and #1458's lists) master also gave a 200, with an empty body. `batch` was a 500 on master (round 2's review pointed this out). There the change is a 500 becoming a truncated 200 for a Mongo error mid-query; the one predictable such error (overlapping paths) is now a 400 up front, and the frontend's only caller fails either way (`.map` on a string throws). Kept as not worth restructuring |
+| C2 | Medium | Duplicate-key check scans linearly per key, quadratic in a level's width | fixed: a level switches to a hash set past 16 keys (32 since round 2, see R2-C1). 500 keys at one level: 1,018 → 179 ms per 68 MB; 2,000 keys: 4,101 → 176 ms. Test: crate `wide_documents_stay_linear_and_still_refuse_repeats`, which failed before the fix |
 | C3 | Low | Virtual-path precondition stated only in prose | declined, see B1 |
 | C4 | Low | CLAUDE.md said `collection.aggregate()` is "the only acceptable use of `collection` directly", but `findRawBatches` uses `find_raw_batches` | fixed: CLAUDE.md (`AGENTS.md` is a symlink to it) and the `branch-review` skill's Raw PyMongo check now name the raw-batch exception |
 | C5 | Low | Prefetch depth duplicated | fixed, see B2 |
@@ -32,6 +32,16 @@ Status values: `fixed <commit>`, `not real` (with the evidence), `declined` (rea
 
 - Whole-collection byte parity with the fixed wheel (Girder's codec options): 2,531,625 property values, 21,008 connections and 2,548,793 annotations identical to decode + orjson, none refused.
 - `cargo test`, `tox -e py311` (full suite) and `tox -e native` re-run against a throwaway Mongo 8.0 container. The local `nimbusimage-mongodb-1` had been OOM-killed under the combined load of several sessions, so it wasn't used.
+
+## Round 2 (head `07ca44bf`)
+
+| # | Pass | Severity | Finding | Status |
+|---|---|---|---|---|
+| R2-C1 / R2-B1 | /code-review, branch-review | Medium | Round 1's hash-set switch at 16 keys made typical property-value documents slower: Xenium documents have a 31-key level, so each built its own set. Real 100K Xenium read: 165 ms (linear) → 194–202 ms | fixed: threshold 32, from a sweep of 16/32/64/128 over widths 20–2,000 plus the real read (32: 160 ms real, 152 ms at 2,000 keys). A compile-time assertion keeps it above 31 |
+| R2-B2 | branch-review | Low | The wide-key test never repeated the key that triggers the switch, and no Python test checked byte parity for wide levels | fixed: the crate test repeats the switch key; new *testWideDocumentsMatchOrjson* covers widths 31/32/33/2,000 and repeats on both sides. Both fail when the switch branch's `insert` is dropped |
+| R2-B3 | branch-review | Nit | The Cost checklist item cited only a Rust test, which the checklist validator can't check | fixed: it cites *testWideDocumentsMatchOrjson* |
+| R2-B4 | branch-review | Nit | `test_list_streaming.py` (#1458's file) described ~1000-document chunks, stale since raw-batch streaming | fixed here, because #1460 made it stale |
+| Codex | Codex | — | Ran on `07ca44bf`: "No actionable regressions were found" | — |
 
 ## Not in this PR's lines
 

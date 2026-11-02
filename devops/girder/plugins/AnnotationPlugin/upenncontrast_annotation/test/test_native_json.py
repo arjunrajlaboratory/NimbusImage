@@ -147,6 +147,28 @@ def withDuplicateKey():
     return raw.replace(b"\x10b\x00", b"\x10a\x00")
 
 
+def wideDocument(width, repeatAt=None):
+    """{"values": {<width> property-id-like keys}}, the shape of a gene panel
+    stored under one property; with repeatAt, the key at that position
+    appears a second time at the end (bson.encode can't write that)."""
+    keys = ["6a18de9586eb3776%08x" % i for i in range(width)]
+    raw = bson.encode({"values": {key: 1.5 + i for i, key in enumerate(keys)}})
+    if repeatAt is None:
+        return raw
+    extra = bson.encode({"values": {"zzzzzzzzzzzzzzzzzzzzzzzz": -1.0}})
+    # Splice one more int-free element into the values subdocument: the
+    # last element's key is rewritten to the repeated key.
+    element = extra[extra.index(b"\x01zzzz"):-2]
+    element = element.replace(
+        b"zzzzzzzzzzzzzzzzzzzzzzzz", keys[repeatAt].encode()
+    )
+    values = raw[raw.index(b"\x03values\x00") + 8:-1]
+    body = values[4:-1] + element
+    values = struct.pack("<i", len(body) + 5) + body + b"\x00"
+    top = b"\x03values\x00" + values + b"\x00"
+    return struct.pack("<i", len(top) + 4) + top
+
+
 def rawElement(elementType, payload):
     """A one-element document {"v": <payload>} of the given BSON type."""
     body = bytes([elementType]) + b"v\x00" + payload + b"\x00"
@@ -248,6 +270,22 @@ class TestTranscoder:
             {"v": randomFloats(rng, 1000)} for _ in range(300)
         )
         assert transcoder.transcode(batch) == expectedJson(batch)
+
+    def testWideDocumentsMatchOrjson(self, transcoder):
+        """Levels on both sides of the transcoder's switch from a linear
+        repeated-key scan to a hash set (32 keys), and far past it."""
+        for width in (31, 32, 33, 2000):
+            batch = wideDocument(width) * 3
+            assert transcoder.transcode(batch) == expectedJson(batch), width
+        for width, repeatAt in ((40, 0), (40, 32), (2000, 1999)):
+            batch = wideDocument(width, repeatAt)
+            assert bson.decode(batch)["values"][
+                "6a18de9586eb3776%08x" % repeatAt
+            ] == -1.0
+            with pytest.raises(ValueError):
+                transcoder.transcode(batch)
+            # The refused batch falls back to the same bytes as orjson.
+            assert rawBatchJson(batch, GIRDER_CODEC) == expectedJson(batch)
 
     def testEmptyBatch(self, transcoder):
         assert transcoder.transcode(b"") == b""
