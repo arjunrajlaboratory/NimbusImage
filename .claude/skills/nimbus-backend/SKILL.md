@@ -726,14 +726,25 @@ dataset Girder grew ~1.6 GiB per 100K documents until the container was
 OOM-killed (fixed 2026-11). A public reader of a large public dataset can do
 that to production.
 
-Return a generator instead, so Girder streams the body:
+Return a generator instead, so Girder streams the body. For documents read
+straight from a collection, stream the raw batches (see "Streaming many
+documents to JSON" above):
 
 ```python
+cursor = self._model.findRawBatches(query, sort=sort, limit=limit,
+                                    offset=offset).hint(...)
 setResponseHeader("Content-Type", "application/json")
-return streamJsonArray(cursor, default=orJsonDefaults)  # helpers/serialization
+return streamRawJsonArray(prefetchedBatches(cursor, depth=2),
+                          self._model.collection.codec_options)
 ```
 
-orjson already writes Infinity/NaN as null, so `jsonSafe` isn't needed. The
+For documents built or changed in Python (merged virtual values, computed
+rows), use `streamJsonArray(documents, default=orJsonDefaults)`; both write
+the same bytes. Either way Infinity/NaN come out as null, so `jsonSafe` isn't
+needed. A streamed response can't change its status once the first chunk is
+out, so validate everything that could make the query fail (e.g. a
+projection path and its sub-path: Mongo's "Path collision") before
+returning the generator. The
 Girder 5 ASGI bridge passes chunks through a one-slot queue, so a slow client
 gets backpressure rather than a growing buffer. In tests, a streamed body is a
 generator of chunks: pass `isJson=False` and read `list(resp.body)`. More than

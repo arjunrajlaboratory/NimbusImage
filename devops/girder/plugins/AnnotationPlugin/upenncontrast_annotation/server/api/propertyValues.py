@@ -11,10 +11,13 @@ from ..helpers.access_helpers import (
     requireAnnotationsInDatasets,
     requireDatasetsAccess,
 )
+from ..helpers import valueProviders
+from ..helpers.aggregation import prefetchedBatches
 from ..helpers.serialization import (
     jsonSafe,
     orJsonDefaults,
     streamJsonArray,
+    streamRawJsonArray,
 )
 from ..helpers.validation import (
     MAX_DISTINCT_SEARCH_LENGTH,
@@ -26,6 +29,7 @@ from ..helpers.validation import (
     requireObjectBody,
     requireObjectId,
     validateAnnotationIdCount,
+    validateDisjointPropertyPaths,
     validatePropertyPaths,
 )
 from ..models.propertyValues import (
@@ -177,6 +181,7 @@ class PropertyValues(Resource):
             # injected projection key; a non-list-of-lists-of-strings would
             # raise TypeError in findByAnnotationIds. Reject at the boundary.
             validatePropertyPaths(propertyPaths)
+            validateDisjointPropertyPaths(propertyPaths)
         # Guard the list shape before len()/iterating: a scalar would raise
         # TypeError on len(), a string would iterate per-character. Both must
         # be a clean 400 on this public endpoint, not a 500.
@@ -189,13 +194,29 @@ class PropertyValues(Resource):
             exc=True,
         )
         annotationIds = [requireObjectId(i, "annotationId") for i in rawIds]
+        model = self._annotationPropertyValuesModel
+        _, virtualPaths = valueProviders.splitPaths(propertyPaths or [])
+        if not virtualPaths:
+            # Stored values only: raw batches straight to JSON, without
+            # decoding every value into Python (serialization.py).
+            setResponseHeader("Content-Type", "application/json")
+            return streamRawJsonArray(
+                model.findRawBatchesByAnnotationIds(
+                    datasetId, annotationIds, propertyPaths
+                ),
+                model.collection.codec_options,
+            )
         try:
-            return self._annotationPropertyValuesModel.findByAnnotationIds(
+            documents = model.findByAnnotationIds(
                 datasetId, annotationIds, propertyPaths
             )
         except ValueError as exc:
             # A virtual path the provider cannot resolve (unknown key).
             raise RestException(str(exc), code=400)
+        # Virtual values are merged into the documents in Python; written in
+        # the same JSON form as the raw path (orjson: Infinity/NaN as null).
+        setResponseHeader("Content-Type", "application/json")
+        return streamJsonArray(documents, default=orJsonDefaults)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -240,8 +261,10 @@ class PropertyValues(Resource):
             query["_id"] = {"$gt": ObjectId(after_id)}
             offset = 0  # Ignore offset when using cursor
 
-        # Use regular find instead of findWithPermissions
-        cursor = self._annotationPropertyValuesModel.find(
+        # Use regular find instead of findWithPermissions. Raw batches go
+        # straight to JSON (findRawBatches): decoding 100K value documents
+        # into dicts cost several times the rest of the request.
+        cursor = self._annotationPropertyValuesModel.findRawBatches(
             query,
             sort=sort,
             limit=limit,
@@ -251,9 +274,13 @@ class PropertyValues(Resource):
         # Stream, never materialize: limit=0 returns the whole dataset, and
         # building that list (plus Girder's JSON string of it) took ~1.6 GiB
         # per 100K documents, enough to OOM-kill Girder on a 709K-cell
-        # dataset. orjson writes Infinity/NaN as null, as jsonSafe did.
+        # dataset. Infinity/NaN come out as null, as jsonSafe did. Fetching
+        # overlaps transcoding, as in the annotation list.
         setResponseHeader("Content-Type", "application/json")
-        return streamJsonArray(cursor, default=orJsonDefaults)
+        return streamRawJsonArray(
+            prefetchedBatches(cursor, depth=2),
+            self._annotationPropertyValuesModel.collection.codec_options,
+        )
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(

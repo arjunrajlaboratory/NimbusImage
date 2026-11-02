@@ -35,7 +35,17 @@ from upenncontrast_annotation.server.helpers.serialization import (
     streamJsonArray,
     streamRawJsonArray,
 )
+from upenncontrast_annotation.server.helpers import valueProviders
 from upenncontrast_annotation.server.models.annotation import Annotation
+from upenncontrast_annotation.server.models.connections import (
+    AnnotationConnection,
+)
+from upenncontrast_annotation.server.models import (
+    propertyValues as propertyValuesModule,
+)
+from upenncontrast_annotation.server.models.propertyValues import (
+    AnnotationPropertyValues,
+)
 
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
@@ -459,6 +469,260 @@ class TestEndpointsServeTheSameBytes:
             body = b"".join(resp.body)
             assert body == oldPathBody(expected)
             assert len(json.loads(body)) == (125 if params else 250)
+
+
+def girderEncoded(value):
+    """What Girder's own response encoder wrote: the batch endpoint's bytes
+    before this change (sort_keys, stdlib json; Infinity was a 500)."""
+    from girder.api.rest import JsonEncoder
+    return json.dumps(value, sort_keys=True, allow_nan=False, cls=JsonEncoder)
+
+
+class StoredPlusOne:
+    """A value provider (virtual path "plusone.x") for the batch fallback."""
+
+    def valuesForIds(self, datasetId, path, annotationIds):
+        if path[1] != "x":
+            raise ValueError("unknown key %r" % path[1])
+        return [len(annotationId) + 1 for annotationId in annotationIds]
+
+
+@pytest.fixture
+def plusOneProvider():
+    valueProviders.registerValueProvider("plusone", StoredPlusOne())
+    yield
+    valueProviders._providers.pop("plusone", None)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestValueAndConnectionEndpointsServeTheSameBytes:
+    """Property values (find, batch) and connections (find) return what the
+    orjson path returned. 250 documents span more than one raw batch."""
+
+    def makeDataset(self, admin, withInfinity=False, withDatetime=False):
+        folder = utilities.createFolder(
+            admin, "native_json_values", upenn_utilities.datasetMetadata
+        )
+        annotations = Annotation().createMultiple([
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+            for _ in range(250)
+        ])
+        rng = random.Random(13)
+        entries = []
+        for index, annotation in enumerate(annotations):
+            values = {
+                "area": {"mean": rng.uniform(0, 1e4), "count": index},
+                "intensity": rng.choice(EDGE_FLOATS[:28]),
+                "label": STRINGS[index % len(STRINGS)],
+            }
+            if index % 3:
+                values["gene"] = {"CD3E": rng.random(), "PTPRC": 1e-7}
+            entries.append({
+                "datasetId": folder["_id"],
+                "annotationId": annotation["_id"],
+                "values": values,
+            })
+        if withInfinity:
+            entries[5]["values"]["intensity"] = float("inf")
+        AnnotationPropertyValues().appendMultipleValues(entries)
+        if withDatetime:
+            # Not a value the schema accepts; set directly to send one raw
+            # batch through the Python fallback, as any unexpected type
+            # would.
+            AnnotationPropertyValues().collection.update_one(
+                {"annotationId": annotations[7]["_id"]},
+                {"$set": {"values.reviewed": datetime.datetime(2024, 5, 6)}},
+            )
+        self.entries = {
+            entry["annotationId"]: entry["values"] for entry in entries
+        }
+        AnnotationConnection().createMultiple([
+            upenn_utilities.getSampleConnection(
+                annotations[i]["_id"], annotations[i + 1]["_id"],
+                folder["_id"],
+            )
+            for i in range(249)
+        ])
+        return folder, annotations
+
+    def testPropertyValuesFind(self, admin, server, eitherPath):
+        folder, _ = self.makeDataset(
+            admin, withInfinity=True, withDatetime=True
+        )
+        for params in (
+            {"limit": 0, "sort": "_id"},
+            {"limit": 120, "offset": 30, "sort": "_id"},
+            {"limit": 0, "sort": "_id", "sortdir": -1},
+        ):
+            resp = server.request(
+                path="/annotation_property_values", method="GET",
+                user=admin, isJson=False,
+                params={"datasetId": str(folder["_id"]), **params},
+            )
+            assertStatusOk(resp)
+            expected = AnnotationPropertyValues().find(
+                {"datasetId": folder["_id"]},
+                sort=[("_id", params.get("sortdir", 1))],
+                limit=params["limit"], offset=params.get("offset", 0),
+            ).hint([("datasetId", 1), ("_id", 1)])
+            body = b"".join(resp.body)
+            assert body == oldPathBody(expected), params
+            assert b"Infinity" not in body
+
+    def testConnectionsFind(self, admin, server, eitherPath):
+        folder, _ = self.makeDataset(admin)
+        for params in ({"limit": 0, "sort": "_id"},
+                       {"limit": 100, "offset": 7, "sort": "_id"}):
+            resp = server.request(
+                path="/annotation_connection", method="GET", user=admin,
+                params={"datasetId": str(folder["_id"]), **params},
+                isJson=False,
+            )
+            assertStatusOk(resp)
+            expected = AnnotationConnection().find(
+                {"datasetId": folder["_id"]}, sort=[("_id", 1)],
+                limit=params["limit"], offset=params.get("offset", 0),
+            ).hint([("datasetId", 1), ("_id", 1)])
+            body = b"".join(resp.body)
+            assert body == oldPathBody(expected), params
+            assert len(json.loads(body)) == (params["limit"] or 249)
+
+    def batch(self, server, admin, body):
+        resp = server.request(
+            path="/annotation_property_values/batch", method="POST",
+            user=admin, body=json.dumps(body), type="application/json",
+            isJson=False,
+        )
+        assertStatusOk(resp)
+        return b"".join(resp.body)
+
+    def testPropertyValuesBatch(self, admin, server, eitherPath):
+        """Same bytes as orjson over findByAnnotationIds, and the same parsed
+        value Girder's encoder produced before (key order and spacing are
+        all that change)."""
+        folder, annotations = self.makeDataset(admin)
+        ids = [annotation["_id"] for annotation in annotations][::-2]
+        for paths in (None, [["area", "mean"], ["gene"]], [["missing"]]):
+            request = {
+                "datasetId": str(folder["_id"]),
+                "annotationIds": [str(i) for i in ids],
+            }
+            if paths is not None:
+                request["propertyPaths"] = paths
+            body = self.batch(server, admin, request)
+            documents = AnnotationPropertyValues().findByAnnotationIds(
+                folder["_id"], ids, paths
+            )
+            assert body == oldPathBody(documents), paths
+            assert json.loads(body) == json.loads(girderEncoded(documents))
+            assert len(json.loads(body)) == len(ids)
+        # Independently of findByAnnotationIds (which shares the projection
+        # code): the projected values are what was stored.
+        byId = {doc["annotationId"]: doc["values"] for doc in json.loads(
+            self.batch(server, admin, {
+                "datasetId": str(folder["_id"]),
+                "annotationIds": [str(i) for i in ids],
+                "propertyPaths": [["area", "mean"], ["gene"]],
+            })
+        )}
+        for annotationId in ids:
+            stored = self.entries[annotationId]
+            expected = {"area": {"mean": stored["area"]["mean"]}}
+            if "gene" in stored:
+                expected["gene"] = stored["gene"]
+            assert byId[str(annotationId)] == expected
+
+    def testPropertyValuesBatchAcrossInChunks(
+        self, admin, server, eitherPath, monkeypatch
+    ):
+        """More ids than one $in holds: the chunks come back in order, on
+        both paths."""
+        monkeypatch.setattr(propertyValuesModule, "MAX_IDS_PER_QUERY", 7)
+        folder, annotations = self.makeDataset(admin, withDatetime=True)
+        ids = [annotation["_id"] for annotation in annotations][::-1][:120]
+        body = self.batch(server, admin, {
+            "datasetId": str(folder["_id"]),
+            "annotationIds": [str(i) for i in ids],
+        })
+        documents = AnnotationPropertyValues().findByAnnotationIds(
+            folder["_id"], ids
+        )
+        assert body == oldPathBody(documents)
+        assert sorted(doc["annotationId"] for doc in json.loads(body)) == (
+            sorted(str(i) for i in ids)
+        )
+
+    def testPropertyValuesBatchOverlappingPathsIs400(self, admin, server):
+        """Mongo refuses a projection with a path and its sub-path. The
+        response streams, so it must be refused before the 200."""
+        folder, annotations = self.makeDataset(admin)
+        resp = server.request(
+            path="/annotation_property_values/batch", method="POST",
+            user=admin, type="application/json", body=json.dumps({
+                "datasetId": str(folder["_id"]),
+                "annotationIds": [str(annotations[0]["_id"])],
+                "propertyPaths": [["area"], ["gene"], ["area", "mean"]],
+            }),
+        )
+        assert resp.status.startswith("400")
+        assert "sub-path" in resp.json["message"]
+
+    def testPropertyValuesBatchInfinityIsNull(self, admin, server, eitherPath):
+        """Girder's allow_nan=False encoder made a stored Infinity a 500;
+        it is now null, as in the list endpoint."""
+        folder, annotations = self.makeDataset(admin, withInfinity=True)
+        body = self.batch(server, admin, {
+            "datasetId": str(folder["_id"]),
+            "annotationIds": [str(annotations[5]["_id"])],
+        })
+        assert json.loads(body)[0]["values"]["intensity"] is None
+
+    def testPropertyValuesBatchWithVirtualPath(
+        self, admin, server, eitherPath, plusOneProvider
+    ):
+        """A virtual path is merged in Python, then written in the same JSON
+        form as the raw path."""
+        folder, annotations = self.makeDataset(admin)
+        ids = [annotation["_id"] for annotation in annotations][:40]
+        paths = [["area", "count"], ["plusone", "x"]]
+        body = self.batch(server, admin, {
+            "datasetId": str(folder["_id"]),
+            "annotationIds": [str(i) for i in ids],
+            "propertyPaths": paths,
+        })
+        documents = AnnotationPropertyValues().findByAnnotationIds(
+            folder["_id"], ids, paths
+        )
+        assert body == oldPathBody(documents)
+        assert json.loads(body) == json.loads(girderEncoded(documents))
+        assert json.loads(body)[0]["values"]["plusone"] == {"x": 25}
+        # Virtual paths only: no stored query, provider values only.
+        virtualOnly = json.loads(self.batch(server, admin, {
+            "datasetId": str(folder["_id"]),
+            "annotationIds": [str(i) for i in ids],
+            "propertyPaths": [["plusone", "x"]],
+        }))
+        assert virtualOnly == [
+            {"annotationId": str(i), "values": {"plusone": {"x": 25}}}
+            for i in ids
+        ]
+        resp = server.request(
+            path="/annotation_property_values/batch", method="POST",
+            user=admin, type="application/json", body=json.dumps({
+                "datasetId": str(folder["_id"]),
+                "annotationIds": [str(ids[0])],
+                "propertyPaths": [["plusone", "nope"]],
+            }),
+        )
+        assert resp.status.startswith("400")
+
+    def testPropertyValuesBatchEmpty(self, admin, server, eitherPath):
+        folder, _ = self.makeDataset(admin)
+        body = self.batch(server, admin, {
+            "datasetId": str(folder["_id"]), "annotationIds": [],
+        })
+        assert json.loads(body) == []
 
 
 CURSOR_SPEC = (
