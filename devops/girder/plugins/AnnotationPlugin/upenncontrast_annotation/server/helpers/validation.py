@@ -670,6 +670,15 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
     if tags is not None:
         if not isinstance(tags, dict):
             raise RestException("filters.tags must be an object", code=400)
+        # A key this server does not know is refused, not ignored: an
+        # ignored "all" would widen an ALL-tags match (e.g. a delete) to ANY.
+        unknown = set(tags) - {"values", "exclusive", "all"}
+        if unknown:
+            raise RestException(
+                "filters.tags has unknown keys: %s"
+                % ", ".join(sorted(map(str, unknown))),
+                code=400,
+            )
         for flag in ("exclusive", "all"):
             if tags.get(flag) is not None and not isinstance(
                 tags[flag], bool

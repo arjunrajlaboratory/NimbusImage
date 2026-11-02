@@ -190,17 +190,20 @@ def draw_outlines(pixels: np.ndarray, annotations: list, crop,
 def outline_note(tags, drawn: int, matched: int,
                  scan_complete: bool = True) -> str:
     note = f"Outlined in yellow: {drawn} annotation(s) tagged any of {tags}"
+    details = []
+    if drawn < matched:
+        details.append(
+            f"an even sample of the {matched} found in view; at most "
+            f"{MAX_OUTLINES} are drawn"
+        )
     if not scan_complete:
-        note += (
-            f" (an even sample: more than {matched} are in view, since "
-            f"only the first {MAX_OUTLINE_SCAN} at this location were "
-            "read; crop to a smaller region to see every outline)"
+        details.append(
+            f"only the first {MAX_OUTLINE_SCAN} annotations at this location "
+            "were read, so there may be more in view"
         )
-    elif drawn < matched:
-        note += (
-            f" (an even sample of the {matched} in view; at most "
-            f"{MAX_OUTLINES} are drawn, so crop to see every outline)"
-        )
+    if details:
+        note += f" ({'; '.join(details)}; crop to a smaller region to see " \
+            "every outline)"
     return note + "."
 
 
@@ -355,11 +358,17 @@ def ni_image_get_channel(
     # The slices are independent; fetch a few at a time, folding each into
     # a running maximum as it lands, so at most a few planes are held.
     frame = None
-    with ThreadPoolExecutor(max_workers=PROJECTION_WORKERS) as pool:
+    pool = ThreadPoolExecutor(max_workers=PROJECTION_WORKERS)
+    try:
         for future in as_completed([pool.submit(fetch, zi) for zi in zs]):
             plane = future.result()
             frame = plane if frame is None else np.maximum(frame, plane)
             del plane
+    finally:
+        # On a failed slice, report it now: drop the slices not yet
+        # started instead of fetching them all first (as leaving a `with`
+        # block would).
+        pool.shutdown(wait=False, cancel_futures=True)
     if frame.ndim == 3:
         # A multi-band (e.g. RGB brightfield) frame: show its first band.
         frame = frame[..., 0]
@@ -396,8 +405,10 @@ def channel_style(ds, channel: int, xy: int, zs, time: int,
     the bounds: windowing each frame on its own range would let a dim
     slice outshine a bright one."""
     return {"bands": [
+        # band 1 (large_image counts from 1): the band the preview shows
+        # for a multi-band (e.g. RGB) source; a no-op for one band.
         {"frame": ds.images.frame_index(
-            xy=xy, z=zi, time=time, channel=channel),
+            xy=xy, z=zi, time=time, channel=channel), "band": 1,
          "min": low, "max": high, "palette": ["#000000", "#ffffff"]}
         for zi in zs
     ]}

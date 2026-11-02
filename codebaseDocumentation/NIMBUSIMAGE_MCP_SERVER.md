@@ -395,6 +395,8 @@ results carry links, and the server instructions tell the model to pass them on.
 Three prompts (`prompts.py`) start common workflows. `ni_annotations_count`, `_list`,
 `_in_region`, and `_delete` match ALL the given tags (the list endpoint gained `tags.all`
 for the last two), so a count from `ni_annotations_count` is what a delete acts on.
+The list endpoint refuses tag-filter keys it does not know, so an older Girder answers
+400 rather than reading `all` as ANY: **deploy Girder before the MCP server.**
 `ni_annotations_summary`, `ni_property_values_summary`, and `ni_property_pairs` match ANY
 (or exactly, with `exclusive`), and `outline_tags` matches ANY, for display; each
 docstring says which. Not built: an MCP Apps viewer, Xenium tools, share links, snapshots.
@@ -1505,8 +1507,10 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
       *"testCsvLinkMatchesPost"*, *"testCsvLinkRejectsMalformedPaths"*,
       *"testGeoJsonLinkRequiresReadAccess"*; a share-link bearer cannot use them, as with the
       POST exports. *"testBearerReadsOnlyTheSharedDataset"*, *"testNonAdminOwnerCanStillDownload"*
-- [x] A projection is of raw values with one set of bounds, preview and download alike.
-      *"test_projection_matches_the_raw_maximum"*; a link too long for a proxy is left out.
+- [x] A projection is of raw values with one set of bounds and the same band, preview and
+      download alike, and a failed slice is reported without fetching the rest.
+      *"test_projection_matches_the_raw_maximum"*, *"test_channel_max_projection_over_every_slice"*,
+      *"test_a_failed_slice_stops_the_projection"*; a link too long for a proxy is left out.
       *"test_too_long_a_download_link_is_left_out"*
 - [x] The composite download style is the composite's (colors, contrast, hidden layers).
       *"test_matches_get_composite"*, *"test_hidden_layers_and_nothing_drawn"*

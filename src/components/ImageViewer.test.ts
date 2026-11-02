@@ -962,6 +962,11 @@ describe("ImageViewer", () => {
         map1.bounds.mock.invocationCallOrder[0] <
           map1.center.mock.invocationCallOrder.at(-1)!,
       ).toBe(true);
+      // Consumed, which is what tells the routes to drop the URL keys.
+      expect(mockedStore.consumeCameraDeepLink).toHaveBeenCalledTimes(1);
+      expect(mockedStore.setPendingCameraDeepLink).not.toHaveBeenCalledWith(
+        null,
+      );
       expect(mockedStore.pendingCameraDeepLink).toBeNull();
     });
 

@@ -69,8 +69,9 @@ apply):
 
 1. `setDatasetViewId` parses `routeQuery` before its first `await`, clears any
    target an earlier navigation left unapplied, claims a navigation number,
-   and once the view is fetched stores `pendingCameraDeepLink` tagged with the
-   view's `datasetId`, unless a later navigation has started meanwhile.
+   and once the view is fetched (and no later navigation has started; an
+   overtaken call applies nothing) stores `pendingCameraDeepLink` tagged with
+   the view's `datasetId`.
 2. ImageViewer applies it only when it is not loading, `store.dataset` is the
    tagged dataset (while a view loads, `store.dataset` is the outgoing one) and
    the fit-to-image for that dataset has run. On a new dataset the fit watcher
@@ -78,9 +79,11 @@ apply):
    when loading ends. It zooms, centers map 0, and syncs `cameraInfo`, so
    every map in a multi-map layout follows.
 3. Applying consumes the target (`consumeCameraDeepLink`), so it runs once per
-   navigation, and `DatasetView.vue` (and `SharedView.vue`) then removes the
-   camera keys from the URL with `removeQueryKeys`, under the route mapper's
-   one write lock,
+   navigation, and `useCameraDeepLinkUrlCleanup` (on `DatasetView.vue` and
+   `SharedView.vue`) then removes that link's camera keys from the URL with
+   `removeQueryKeys`, under the route mapper's one write lock and only if the
+   route still carries that link. A store-driven switch to another view drops
+   them in its own URL write (`clearsQuery`),
    so a reload or a copied URL keeps where the user moved to instead of jumping
    back to the linked point.
 4. Changing only the camera keys on the open view (`DatasetView.vue` watches
@@ -92,7 +95,7 @@ Without these keys nothing changes: the view opens fitted to the image.
 
 ## Regression checklist
 
-Run `pnpm test src/utils/datasetLocation.test.ts src/store/__tests__/datasetLocationClamp.test.ts src/utils/cameraDeepLink.test.ts src/store/__tests__/cameraDeepLink.test.ts src/components/ImageViewer.test.ts`.
+Run `pnpm test src/utils/datasetLocation.test.ts src/store/__tests__/datasetLocationClamp.test.ts src/utils/cameraDeepLink.test.ts src/store/__tests__/cameraDeepLink.test.ts src/components/ImageViewer.test.ts src/utils/useRouteMapper.test.ts src/utils/useCameraDeepLinkUrl.test.ts`.
 
 ### Clamping
 
@@ -123,8 +126,10 @@ Run `pnpm test src/utils/datasetLocation.test.ts src/store/__tests__/datasetLoca
 - [ ] **A same-dataset view switch still applies it**, when loading ends. — *"waits for loading to end when the dataset is unchanged"*
 - [ ] **The view switcher drops the camera keys.** — *"goToView keeps the location but drops a camera deep link"*
 - [ ] **A link can size the view by image width**; an explicit zoom wins. — *"shows a link's width, and its zoom wins over it"*
-- [ ] **Applied keys leave the URL**, so a reload keeps where the user moved: only on apply (a navigation's reset would strip a loading view's own target), through the route mapper's one write lock (on the dataset view and share routes alike). — *"consuming a target clears it and counts the apply"*, *"removes query keys after a mapper write in flight, keeping its value"*
-- [ ] **A superseded navigation never commits its target**, even when its view fetch resolves last. — *"a superseded navigation does not commit its target when its fetch resolves last"*
+- [ ] **Applied keys leave the URL**, so a reload keeps where the user moved: only on apply (a navigation's reset would strip a loading view's own target), through the route mapper's one write lock (on the dataset view and share routes alike, via `useCameraDeepLinkUrlCleanup`). — *"centers on the link after the dataset's fit, not before"* (consumes the target), *"consuming a target clears it and counts the apply"*, *"drops the applied link's keys from the URL, keeping the rest"*, *"leaves the URL alone until a link is applied"*, *"removes query keys after a mapper write in flight, keeping its value"*
+- [ ] **Only the applied link's keys are removed**: a removal that waited behind other URL writes leaves another view's link alone. — *"does not strip another view's link that arrived while the removal waited"*
+- [ ] **A store-driven view switch drops the old view's camera keys** in the same URL write (`clearsQuery` on the `datasetViewId` mapper), so a snapshot or new dataset never reopens at the last link's point. — *"drops a mapper's clearsQuery keys when the store changes its value"*
+- [ ] **A superseded navigation applies nothing** (view, location, dataset, camera target), even when its view fetch resolves last; the newest navigation owns `datasetLoading`. — *"a superseded navigation does not apply its view or target when its fetch resolves last"*, *"an overtaken load that fails leaves loading to the newer navigation"*, *"navigating to no view clears loading an overtaken load left"*
 
 ### Known limitation
 

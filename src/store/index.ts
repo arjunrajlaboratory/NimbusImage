@@ -357,9 +357,9 @@ export function adoptServerConfirmedPropertyId(
 // Without this, a slower request with a different filter can land last and
 // overwrite the result of a newer request.
 let recentDatasetViewsRequestId = 0;
-// setDatasetViewId calls, counted so only the latest one's camera deep link
-// is committed (an earlier view fetch can resolve after a later one).
-let cameraDeepLinkNavigation = 0;
+// setDatasetViewId calls, counted so only the latest one applies its view:
+// an earlier view's fetch can resolve after a later one's.
+let datasetViewNavigation = 0;
 
 // Annotation-browser persistence bookkeeping. Module-level rather than Vuex
 // state because the debounce timer is never read by the UI.
@@ -2459,12 +2459,15 @@ export class Main extends VuexModule {
     // A new navigation supersedes any camera target the last one left
     // unapplied. Parsed now: route.query may change while the view loads.
     const cameraDeepLink = parseCameraDeepLink(routeQuery);
-    // Claimed before any await: a later navigation supersedes this one's
-    // target even if this view's fetch resolves last.
-    const cameraNavigation = ++cameraDeepLinkNavigation;
+    // Claimed before any await: a later navigation supersedes this one even
+    // if this view's fetch resolves last.
+    const navigation = ++datasetViewNavigation;
     this.setPendingCameraDeepLink(null);
     if (!id) {
       this.setDatasetViewImpl(null);
+      // An overtaken load returns without clearing datasetLoading (the
+      // newest navigation owns it), so this one must.
+      sync.setDatasetLoading(false);
     } else {
       // Set datasetLoading immediately BEFORE any async work.
       // Without this, the first await yields to the microtask queue,
@@ -2475,6 +2478,10 @@ export class Main extends VuexModule {
       try {
         datasetView = await this.api.getDatasetView(id);
       } catch (err) {
+        if (navigation !== datasetViewNavigation) {
+          // Overtaken: the newer navigation owns datasetLoading.
+          return;
+        }
         // The datasetView doesn't exist
         logError(
           `Failed to fetch dataset view ${id}.\nIt may be because it has been deleted or that you don't have the access is forbidden.\n`,
@@ -2483,9 +2490,15 @@ export class Main extends VuexModule {
         sync.setDatasetLoading(false);
         return;
       }
+      if (navigation !== datasetViewNavigation) {
+        // A later navigation started while this view loaded: it is the one
+        // the user asked for, so this view must not replace it (nor its
+        // location, dataset, or camera target).
+        return;
+      }
       datasetView.lastViewed = Date.now();
       this.setDatasetViewImpl(datasetView);
-      if (cameraDeepLink && cameraNavigation === cameraDeepLinkNavigation) {
+      if (cameraDeepLink) {
         // Tied to the view's dataset: while it loads, this.dataset is still
         // the outgoing one, and ImageViewer must not center that.
         this.setPendingCameraDeepLink({

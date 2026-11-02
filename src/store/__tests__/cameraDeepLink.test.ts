@@ -150,7 +150,7 @@ describe("camera deep link", () => {
     expect(main.pendingCameraDeepLink).toBeNull();
   });
 
-  it("a superseded navigation does not commit its target when its fetch resolves last", async () => {
+  it("a superseded navigation does not apply its view or target when its fetch resolves last", async () => {
     views.a = makeView("a", "ds1");
     views.b = makeView("b", "ds1");
     let resolveA: () => void = () => {};
@@ -171,7 +171,51 @@ describe("camera deep link", () => {
     resolveA();
     await first;
 
+    // The view the user asked for last stays, with no stray target.
+    expect(main.datasetView?.id).toBe("b");
     expect(main.pendingCameraDeepLink).toBeNull();
+    expect(sync.datasetLoading).toBe(false);
+  });
+
+  it("an overtaken load that fails leaves loading to the newer navigation", async () => {
+    views.b = makeView("b", "ds1");
+    let rejectA: (e: Error) => void = () => {};
+    let resolveB: () => void = () => {};
+    vi.spyOn(main.api, "getDatasetView").mockImplementation(
+      (id: string) =>
+        new Promise((resolve, reject) => {
+          if (id === "a") rejectA = reject;
+          else resolveB = () => resolve({ ...views[id] });
+        }),
+    );
+
+    const first = main.setDatasetViewId({ id: "a" });
+    const second = main.setDatasetViewId({ id: "b" });
+    rejectA(new Error("gone"));
+    await first;
+    expect(sync.datasetLoading).toBe(true);
+    resolveB();
+    await second;
+    expect(main.datasetView?.id).toBe("b");
+  });
+
+  it("navigating to no view clears loading an overtaken load left", async () => {
+    views.a = makeView("a", "ds1");
+    let resolveA: () => void = () => {};
+    vi.spyOn(main.api, "getDatasetView").mockImplementation(
+      (id: string) =>
+        new Promise((resolve) => {
+          resolveA = () => resolve({ ...views[id] });
+        }),
+    );
+
+    const first = main.setDatasetViewId({ id: "a" });
+    await main.setDatasetViewId({ id: null });
+    resolveA();
+    await first;
+
+    expect(main.datasetView).toBeNull();
+    expect(sync.datasetLoading).toBe(false);
   });
 
   it("consuming a target clears it and counts the apply", async () => {

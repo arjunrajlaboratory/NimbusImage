@@ -4,13 +4,13 @@
 <script setup lang="ts">
 import store from "@/store";
 import { TLayerMode } from "@/store/model";
-import { removeQueryKeys, useRouteMapper } from "@/utils/useRouteMapper";
-import { useRoute, useRouter } from "vue-router";
+import { useRouteMapper } from "@/utils/useRouteMapper";
+import { useRoute } from "vue-router";
+import { useCameraDeepLinkUrlCleanup } from "@/utils/useCameraDeepLinkUrl";
 import { watch } from "vue";
 import { CAMERA_DEEP_LINK_QUERY_KEYS } from "@/utils/cameraDeepLink";
 
 const route = useRoute();
-const router = useRouter();
 
 // A `?x=&y=&zoom=` change on the view that is already loaded (an external tool
 // re-targeting an open tab). A view change carries its target through
@@ -26,15 +26,7 @@ watch(
   },
 );
 
-// Once ImageViewer has applied a target, drop its keys from the URL: left
-// there, a reload or a copied URL would jump back to the linked point after
-// the user has moved on. Only on apply: a navigation also clears the pending
-// target, and stripping then would re-sync the route while its own view is
-// still loading and drop the target it carries.
-watch(
-  () => store.appliedCameraDeepLinks,
-  () => removeQueryKeys(CAMERA_DEEP_LINK_QUERY_KEYS, router, route),
-);
+useCameraDeepLinkUrlCleanup();
 
 useRouteMapper(
   {
@@ -43,6 +35,9 @@ useRouteMapper(
       get: () => store.datasetView?.id || null,
       set: (value: string) =>
         store.setDatasetViewId({ id: value, routeQuery: route.query }),
+      // A store-driven switch to another view (a snapshot, a new dataset)
+      // must not carry the last view's camera target into its URL.
+      clearsQuery: CAMERA_DEEP_LINK_QUERY_KEYS,
     },
   },
   {

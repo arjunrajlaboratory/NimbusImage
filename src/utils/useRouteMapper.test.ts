@@ -310,4 +310,57 @@ describe("useRouteMapper", () => {
 
     expect(replaced[1]).toEqual({ z: "4" });
   });
+
+  it("drops a mapper's clearsQuery keys when the store changes its value", async () => {
+    const storeView = { value: "a" };
+    const view = reactive(storeView);
+    const route = reactive({
+      name: "datasetview",
+      params: { id: "a" } as Record<string, string>,
+      query: { z: "1", x: "5", y: "6" } as Record<string, string>,
+      path: "/a",
+      hash: "",
+      fullPath: "/a?z=1&x=5&y=6",
+      matched: [],
+      meta: {},
+      redirectedFrom: undefined,
+    });
+    mockRouter.replace = vi.fn(async (location: any) => {
+      route.params = { ...location.params };
+      route.query = { ...location.query };
+    });
+    const TestComponent = defineComponent({
+      template: "<div />",
+      setup() {
+        useRouteMapper(
+          {
+            id: {
+              parse: String,
+              get: () => view.value,
+              set: vi.fn(),
+              clearsQuery: ["x", "y"],
+            },
+          },
+          {},
+        );
+      },
+    });
+    shallowMount(TestComponent, {
+      global: {
+        provide: {
+          [routeLocationKey as symbol]: route,
+          ...routerProvider(mockRouter),
+        },
+      },
+    });
+    await nextTick();
+    await nextTick();
+
+    view.value = "b";
+    for (let i = 0; i < 4; i++) await nextTick();
+
+    expect(mockRouter.replace).toHaveBeenCalledTimes(1);
+    expect(route.params.id).toBe("b");
+    expect(route.query).toEqual({ z: "1" });
+  });
 });

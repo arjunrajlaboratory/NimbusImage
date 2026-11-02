@@ -130,6 +130,14 @@ class TestServerListIds:
         })
         assertStatus(resp, 400)
 
+        # An unknown key is refused, not ignored (a client relying on a
+        # mode this server lacks must not get ANY instead).
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"tags": {"values": ["A"], "every": True}},
+        })
+        assertStatus(resp, 400)
+
     def testListIdsRequiresReadAccess(self, admin, user, server):
         folder = utilities.createPrivateFolder(
             admin, "ds", upenn_utilities.datasetMetadata

@@ -118,6 +118,26 @@ def test_large_downloads_are_capped(ds, downloads):
     assert query(url)["width"] == str(links.MAX_DOWNLOAD_SIZE)
 
 
+def test_a_failed_slice_stops_the_projection(ds, monkeypatch):
+    ds.num_z = 40
+    fetched = []
+
+    def get(**kw):
+        fetched.append(kw["z"])
+        if kw["z"] == 0:
+            raise ValueError("slice 0 is unreadable")
+        import time
+        time.sleep(0.05)
+        return np.zeros((4, 4), np.uint16)
+
+    ds.images.get.side_effect = get
+    with pytest.raises(ToolError, match="slice 0 is unreadable"):
+        images.ni_image_get_channel(
+            dataset_id="d1", channel=0, projection="max")
+    # The rest were dropped rather than fetched before reporting.
+    assert len(fetched) < 40
+
+
 def test_too_long_a_download_link_is_left_out(ds, downloads):
     ds.images.get_composite.return_value = np.full((8, 8, 3), 9, np.uint8)
     ds.images.composite_style.return_value = {"bands": [
@@ -194,9 +214,12 @@ def test_draw_outlines_scales_to_the_shown_region():
 
 def test_outline_note_says_how_it_was_capped():
     drawn = images.outline_note(["a"], 3000, 5000, True)
-    assert "even sample of the 5000 in view" in drawn
-    scan = images.outline_note(["a"], 3000, 19000, False)
-    assert "more than 19000" in scan
+    assert "even sample of the 5000 found in view" in drawn
+    assert "may be more" not in drawn
+    # A cut-off scan says more may exist, and only claims a sample when
+    # it drew fewer than it found.
+    scan = images.outline_note(["a"], 50, 50, False)
+    assert "may be more in view" in scan and "sample" not in scan
     assert "sample" not in images.outline_note(["a"], 2, 2, True)
 
 
@@ -233,6 +256,8 @@ def test_channel_max_projection_over_every_slice(ds, downloads,
     assert [b["frame"] for b in bands] == [1, 3, 5]
     # Every band shares the preview's bounds (the projection is all 20s).
     assert {(b["min"], b["max"]) for b in bands} == {(20.0, 21.0)}
+    # The preview shows a source's first band; so must the download.
+    assert {b["band"] for b in bands} == {1}
 
 
 def test_export_links_use_registered_measurement_paths(
