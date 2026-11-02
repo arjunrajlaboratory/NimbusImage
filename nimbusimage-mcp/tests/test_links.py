@@ -258,6 +258,24 @@ def test_export_links_stay_under_the_url_limit(ds, downloads):
     assert result["csv_columns"] + result["csv_columns_omitted"] == 150
 
 
+def test_export_links_with_a_very_long_name_end(ds, downloads):
+    """Even with no columns left, a long (percent-encoded) name must not
+    keep the budget loop going: the file name is capped instead."""
+    ds.name = "\u7d30\u80de" * 2000
+    result = json.loads(link_tools.ni_export_links(
+        dataset_id="d1", property_paths=[["p", "a"]]))
+    assert len(result["csv"]) <= links.MAX_LINK_LENGTH
+    assert len(query(result["csv"])["filename"]) == links.MAX_FILENAME
+
+
+def test_black_composite_has_no_too_long_note(ds, downloads):
+    ds.images.get_composite.return_value = np.zeros((8, 8, 3), np.uint8)
+    ds.images.composite_style.return_value = None
+    result = images.ni_image_get_composite(dataset_id="d1")
+    assert images.BLACK_NOTE in result
+    assert "too many frames" not in result[-1]
+
+
 def test_export_links_need_a_browser_api_url(ds):
     with pytest.raises(ToolError, match="Import / export"):
         link_tools.ni_export_links(dataset_id="d1", property_paths=[])

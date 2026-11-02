@@ -95,6 +95,35 @@ const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
   },
 );
 
+/**
+ * Remove query keys from the URL, serialized with the mappers' own writes
+ * (and counted in pendingUrlWrites), so it never cancels one in flight or
+ * writes back a value one of them just changed: `route.query` is read when
+ * the removal runs, not when it was asked for.
+ */
+export const removeQueryKeys = awaitPreviousCallsDecorator(
+  async (
+    keys: readonly string[],
+    router: Router,
+    route: RouteLocationNormalized,
+  ) => {
+    if (!keys.some((key) => key in route.query)) {
+      return;
+    }
+    const query = { ...route.query };
+    for (const key of keys) {
+      delete query[key];
+    }
+    pendingUrlWrites++;
+    try {
+      await router.replace({ params: { ...route.params }, query });
+    } finally {
+      pendingUrlWrites--;
+      notifyDrainIfIdle();
+    }
+  },
+);
+
 // Call the setter for this mapper if needed, using the value from the URL
 function setMapperValueFromUrl(
   obj: IMapper<any>,

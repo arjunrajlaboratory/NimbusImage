@@ -466,7 +466,6 @@ class Dataset:
             zoom: Viewer zoom level for the centered point.
             width: Instead of zoom, image pixels to show across the
                 viewer.
-        width: Instead of zoom, image pixels to show across the viewer.
 
         Returns:
             URL string for the image viewer.

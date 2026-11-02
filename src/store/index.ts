@@ -357,6 +357,9 @@ export function adoptServerConfirmedPropertyId(
 // Without this, a slower request with a different filter can land last and
 // overwrite the result of a newer request.
 let recentDatasetViewsRequestId = 0;
+// setDatasetViewId calls, counted so only the latest one's camera deep link
+// is committed (an earlier view fetch can resolve after a later one).
+let cameraDeepLinkNavigation = 0;
 
 // Annotation-browser persistence bookkeeping. Module-level rather than Vuex
 // state because the debounce timer is never read by the UI.
@@ -2445,6 +2448,9 @@ export class Main extends VuexModule {
     // A new navigation supersedes any camera target the last one left
     // unapplied. Parsed now: route.query may change while the view loads.
     const cameraDeepLink = parseCameraDeepLink(routeQuery);
+    // Claimed before any await: a later navigation supersedes this one's
+    // target even if this view's fetch resolves last.
+    const cameraNavigation = ++cameraDeepLinkNavigation;
     this.setPendingCameraDeepLink(null);
     if (!id) {
       this.setDatasetViewImpl(null);
@@ -2468,7 +2474,7 @@ export class Main extends VuexModule {
       }
       datasetView.lastViewed = Date.now();
       this.setDatasetViewImpl(datasetView);
-      if (cameraDeepLink) {
+      if (cameraDeepLink && cameraNavigation === cameraDeepLinkNavigation) {
         // Tied to the view's dataset: while it loads, this.dataset is still
         // the outgoing one, and ImageViewer must not center that.
         this.setPendingCameraDeepLink({

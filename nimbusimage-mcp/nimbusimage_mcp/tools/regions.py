@@ -35,8 +35,9 @@ MIN_VERTICES = {"point": 1, "line": 2, "polygon": 3, "rectangle": 4}
 
 
 def _tag_filter(tags: list[str] | None) -> dict | None:
-    """The list endpoint's tag filter: annotations with ANY of the tags
-    (exclusive=false; exclusive=true would mean exactly that set)."""
+    """The list endpoint's tag filter: annotations with ALL of the tags
+    (others allowed), the rule ni_annotations_count and _list use, so a
+    count from one tool is the count another acts on."""
     if not tags:
         return None
     if isinstance(tags, str) or not all(
@@ -44,7 +45,8 @@ def _tag_filter(tags: list[str] | None) -> dict | None:
     ):
         raise ValueError("tags must be a list of tag names.")
     # Deduplicated, as the server compares against the list.
-    return {"values": list(dict.fromkeys(tags)), "exclusive": False}
+    return {"values": list(dict.fromkeys(tags)), "exclusive": False,
+            "all": True}
 
 
 def _list_filters(tags=None, shape=None, xy=None, z=None,
@@ -127,8 +129,8 @@ def ni_annotations_in_region(
 
     region is [left, top, right, bottom] in full-resolution image pixels
     (x grows rightward, y downward; edges included). An annotation's
-    center is the mean of its vertices. tags matches annotations with ANY
-    of the given tags (unlike ni_annotations_count, which needs ALL);
+    center is the mean of its vertices. tags matches annotations with ALL
+    of the given tags (as ni_annotations_count does);
     shape is point (spots), polygon (cells/nuclei), line, or rectangle.
 
     Returns {matched, returned, scanned, total_at_location, incomplete,
@@ -314,7 +316,7 @@ def ni_annotations_delete(
     time: int | None = None,
 ) -> dict:
     """Delete the annotations matching a filter: tags (annotations with
-    ANY of the given tags, unlike ni_annotations_count, which needs ALL),
+    ALL of the given tags, as ni_annotations_count counts them),
     shape, and optionally a location (xy, z, time; 0-based; omitted means
     every position). At least one filter is required; this never deletes
     a whole dataset. At most 50,000 per call.

@@ -30,9 +30,9 @@ from ..models.datasetView import DatasetView as DatasetViewModel
 from ..helpers import valueProviders
 from ..helpers.serialization import orJsonDefaults, streamJsonArray
 from ..helpers.validation import (
-    isValidPropertyPath,
     requireObjectId,
     validateAnnotationIdCount,
+    validatePropertyPaths,
 )
 
 
@@ -184,6 +184,10 @@ class Export(Resource):
     # The GET exports opt into Girder's HttpOnly auth cookie, so a plain
     # link (one the MCP server hands a user) downloads in their signed-in
     # browser without a token in the URL. Read-only, like the tile routes.
+    # Accepted risk, as for those: a hostile page can make a signed-in
+    # browser start exports (the cookie has no SameSite attribute, and
+    # Safari and Firefox send it on cross-site requests), but cannot read
+    # them, since CORS never shares a credentialed answer with it.
     @access.public(scope=TokenScope.DATA_READ, cookie=True)
     @autoDescribeRoute(
         Description("Export dataset annotations and related data as JSON")
@@ -460,11 +464,7 @@ class Export(Resource):
     def exportCsvLink(self, datasetId, propertyPaths, delimiter, filename):
         # The POST form's body schema checks path shapes; a query
         # parameter has no schema, so check them here.
-        if not all(map(isValidPropertyPath, propertyPaths or [])):
-            raise RestException(
-                "propertyPaths must be lists of property path segments",
-                code=400,
-            )
+        validatePropertyPaths(propertyPaths or [])
         return self._exportCsv({
             "datasetId": datasetId,
             "propertyPaths": propertyPaths or [],

@@ -68,8 +68,9 @@ How it flows (`src/utils/cameraDeepLink.ts` parses; the store and ImageViewer
 apply):
 
 1. `setDatasetViewId` parses `routeQuery` before its first `await`, clears any
-   target an earlier navigation left unapplied, and once the view is fetched
-   stores `pendingCameraDeepLink` tagged with the view's `datasetId`.
+   target an earlier navigation left unapplied, claims a navigation number,
+   and once the view is fetched stores `pendingCameraDeepLink` tagged with the
+   view's `datasetId`, unless a later navigation has started meanwhile.
 2. ImageViewer applies it only when it is not loading, `store.dataset` is the
    tagged dataset (while a view loads, `store.dataset` is the outgoing one) and
    the fit-to-image for that dataset has run. On a new dataset the fit watcher
@@ -77,7 +78,8 @@ apply):
    when loading ends. It zooms, centers map 0, and syncs `cameraInfo`, so
    every map in a multi-map layout follows.
 3. Applying clears the target, so it runs once per navigation, and
-   `DatasetView.vue` then removes the camera keys from the URL (`router.replace`),
+   `DatasetView.vue` (and `SharedView.vue`) then removes the camera keys from the
+   URL with `removeQueryKeys`, serialized with the route mapper's writes,
    so a reload or a copied URL keeps where the user moved to instead of jumping
    back to the linked point.
 4. Changing only the camera keys on the open view (`DatasetView.vue` watches
@@ -120,7 +122,8 @@ Run `pnpm test src/utils/datasetLocation.test.ts src/store/__tests__/datasetLoca
 - [ ] **A same-dataset view switch still applies it**, when loading ends. — *"waits for loading to end when the dataset is unchanged"*
 - [ ] **The view switcher drops the camera keys.** — *"goToView keeps the location but drops a camera deep link"*
 - [ ] **A link can size the view by image width**; an explicit zoom wins. — *"shows a link's width, and its zoom wins over it"*
-- [ ] **Applied keys leave the URL**, so a reload keeps where the user moved. — *"drops the camera keys once a target stops pending"*, *"leaves the URL alone while pending or without camera keys"*
+- [ ] **Applied keys leave the URL**, so a reload keeps where the user moved, through the route mapper's serialized writer (on the dataset view and share routes alike). — *"is true once a target stops pending"*, *"is false while pending or when there was none"*
+- [ ] **A superseded navigation never commits its target**, even when its view fetch resolves last. — *"a superseded navigation does not commit its target when its fetch resolves last"*
 
 ### Known limitation
 

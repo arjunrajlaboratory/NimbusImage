@@ -3,7 +3,7 @@ import {
   cameraDeepLinkZoom,
   omitCameraDeepLinkQuery,
   parseCameraDeepLink,
-  queryAfterCameraDeepLink,
+  cameraDeepLinkSettled,
   zoomToShowImageWidth,
 } from "./cameraDeepLink";
 
@@ -133,18 +133,16 @@ describe("default zoom", () => {
   });
 });
 
-describe("queryAfterCameraDeepLink", () => {
+describe("cameraDeepLinkSettled", () => {
   const target = { x: 1, y: 2, zoom: null, datasetId: "d" };
 
-  it("drops the camera keys once a target stops pending", () => {
-    expect(
-      queryAfterCameraDeepLink(null, target, { x: "1", y: "2", z: "3" }),
-    ).toEqual({ z: "3" });
+  it("is true once a target stops pending", () => {
+    expect(cameraDeepLinkSettled(null, target)).toBe(true);
   });
 
-  it("leaves the URL alone while pending or without camera keys", () => {
-    expect(queryAfterCameraDeepLink(target, null, { x: "1" })).toBeNull();
-    expect(queryAfterCameraDeepLink(null, null, { x: "1" })).toBeNull();
-    expect(queryAfterCameraDeepLink(null, target, { z: "3" })).toBeNull();
+  it("is false while pending or when there was none", () => {
+    expect(cameraDeepLinkSettled(target, null)).toBe(false);
+    expect(cameraDeepLinkSettled(null, null)).toBe(false);
+    expect(cameraDeepLinkSettled(target, target)).toBe(false);
   });
 });

@@ -46,6 +46,15 @@ def view_link(ds, xy=None, z=None, time=None, x=None, y=None,
     )
 
 
+# Longest download file name kept: a dataset name is user text, and must
+# not decide whether a link fits.
+MAX_FILENAME = 100
+
+
+def download_filename(name: str, suffix: str) -> str:
+    return f"{name[:MAX_FILENAME - len(suffix)]}{suffix}"
+
+
 def downloads_enabled() -> bool:
     return _common.settings().browser_api_url is not None
 
@@ -71,7 +80,8 @@ def region_link(ds, style: dict, crop=None, filename="image.png",
         "style": json.dumps(style, separators=(",", ":")),
         "encoding": "PNG",
         "contentDisposition": "attachment",
-        "contentDispositionFilename": filename,
+        "contentDispositionFilename": download_filename(
+            filename.rsplit(".", 1)[0], ".png"),
     }
     height, width = ds.shape
     if crop is not None:

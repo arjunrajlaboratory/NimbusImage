@@ -670,6 +670,13 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
     if tags is not None:
         if not isinstance(tags, dict):
             raise RestException("filters.tags must be an object", code=400)
+        for flag in ("exclusive", "all"):
+            if tags.get(flag) is not None and not isinstance(
+                tags[flag], bool
+            ):
+                raise RestException(
+                    "filters.tags.%s must be a boolean" % flag, code=400
+                )
         tagValues = tags.get("values")
         if tagValues is not None:
             requireList(tagValues, "filters.tags.values")

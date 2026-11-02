@@ -19,8 +19,8 @@ DATASET = "d" * 24
 class FakeAnnotationGirder:
     """The plugin endpoints these tools call, over in-memory documents.
 
-    Mirrors the server: POST upenn_annotation/list matches tags with ANY
-    (exclusive=false), pages by offset (limit clamped to 10,000) in _id
+    Mirrors the server: POST upenn_annotation/list matches tags with ANY,
+    or ALL with all=true, pages by offset (limit clamped to 10,000) in _id
     order, and returns stub rows without coordinates plus a centroid.
     Every request is recorded in ``calls`` as (method, path).
     """
@@ -60,7 +60,9 @@ class FakeAnnotationGirder:
         location = filters.get("location") or {}
         for annotation_id in sorted(self.annotations):
             a = self.annotations[annotation_id]
-            if tags and not set(tags) & set(a["tags"]):
+            wanted = set(tags)
+            if tags and (filters["tags"].get("all") and not wanted <= set(
+                    a["tags"]) or not wanted & set(a["tags"])):
                 continue
             if filters.get("shape") and a["shape"] != filters["shape"]:
                 continue
@@ -192,15 +194,27 @@ def test_without_a_region_the_server_total_is_exact(girder):
     assert count(girder, "POST", "upenn_annotation/list") == 1
 
 
-def test_region_tags_match_any_and_shape_filters(girder):
-    a = girder.add(5, 5, tags=["nucleus"])
-    b = girder.add(6, 6, tags=["cell", "dim"])
-    girder.add(7, 7, tags=["spot"])
-    girder.add(8, 8, tags=["nucleus"], shape="polygon")
+def test_region_tags_match_all_and_shape_filters(girder):
+    """ALL of the tags, as ni_annotations_count counts them."""
+    girder.add(5, 5, tags=["nucleus"])
+    b = girder.add(6, 6, tags=["nucleus", "dim", "extra"])
+    girder.add(7, 7, tags=["dim"])
+    girder.add(8, 8, tags=["nucleus", "dim"], shape="polygon")
     result = loads(regions.ni_annotations_in_region(
         dataset_id=DATASET, region=(0, 0, 50, 50),
-        tags=["nucleus", "cell"], shape="point"))
-    assert {r["id"] for r in result["annotations"]} == {a, b}
+        tags=["nucleus", "dim"], shape="point"))
+    assert {r["id"] for r in result["annotations"]} == {b}
+
+
+def test_delete_matches_all_tags_like_count(girder):
+    girder.add(1, 1, tags=["dapi"])
+    reject = girder.add(2, 2, tags=["dapi", "reject"])
+    result = loads(regions.ni_annotations_delete(
+        dataset_id=DATASET, tags=["dapi", "reject"], expected_count=-1))
+    assert result["matching"] == 1
+    loads(regions.ni_annotations_delete(
+        dataset_id=DATASET, tags=["dapi", "reject"], expected_count=1))
+    assert reject not in girder.annotations and len(girder.annotations) == 1
 
 
 def test_region_scan_stops_at_its_cap(girder, monkeypatch):

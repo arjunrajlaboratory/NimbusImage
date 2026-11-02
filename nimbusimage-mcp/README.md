@@ -71,13 +71,15 @@ images into the call where the user does not see them. So results carry links:
 
 - **App links** (`NI_MCP_FRONTEND_URL`, defaulting to the issuer, the site's
   origin) open the caller's own view of the dataset at a location, centered on a
-  point when one is given (`x`, `y`, `zoom` query parameters).
+  point when one is given (`x`, `y`, and `width` or `zoom` query parameters).
 - **Download links** (`NI_MCP_BROWSER_API_URL`, unset by default, so none) point
   at Girder as the browser reaches it: `tiles/region` for images (PNG, full
   resolution up to 8,192 px on the longer side, the composite as the app's
   `lighten` style) and `export/{csv,geojson,json}` for annotations. These routes
   accept Girder's auth cookie, so a link downloads in the browser where the user
-  is signed in and carries no credential: it shows nothing to anyone else.
+  is signed in and carries no credential: it shows nothing to anyone else. The
+  browser keeps that cookie only when the app and Girder share an origin (as in
+  production); compose leaves `NI_MCP_BROWSER_API_URL` unset for that reason.
 
 ## Running it
 
@@ -112,7 +114,7 @@ NI_API_URL=http://localhost:8080/api/v1 nimbusimage-mcp/.venv/bin/nimbusimage-mc
 | `NI_MCP_CALL_LOG` | unset | JSON-lines call log (tool, user id, arguments, seconds, bytes, error), for evals. The server log has the same records without arguments or error messages (only the kind of error) |
 | `NI_MCP_MAX_JOB_WAIT` | `240` | Longest `ni_job_wait` (and cap on a worker-interface fetch, at most 60 s), in seconds, at least 1; keep it under every HTTP timeout in front of the server. Each request to Girder separately times out after 330 s (behind a proxy with a shorter timeout, such as HAProxy, the client sees the proxy's timeout first) |
 | `NI_MCP_FRONTEND_URL` | the issuer | Where users open the app, for app links in results (compose: `http://localhost:5173`) |
-| `NI_MCP_BROWSER_API_URL` | unset | Girder's REST root as users' browsers reach it (production: `https://app.nimbusimage.com/girder/api/v1`), for download links; unset means no download links |
+| `NI_MCP_BROWSER_API_URL` | unset | Girder's REST root as users' browsers reach it (production: `https://app.nimbusimage.com/girder/api/v1`), for download links; unset means none. Set it only where the app and Girder share an origin |
 
 `NI_API_KEY` and `NI_TOKEN` must **not** be set: the server refuses to start
 with a service credential. (The introspection secret is not one: it only

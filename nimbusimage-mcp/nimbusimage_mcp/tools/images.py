@@ -205,7 +205,7 @@ def outline_note(tags, drawn: int, matched: int,
 
 
 def footer(ds, xy, z, time, crop, download: str | None,
-           projected: bool = False) -> str:
+           projected: bool = False, can_download: bool = True) -> str:
     """Where the image is, a link to open it in the app, and a download
     link; the user sees these, while the image itself may sit folded
     inside the tool call."""
@@ -224,7 +224,8 @@ def footer(ds, xy, z, time, crop, download: str | None,
     if download:
         lines.append(f"Download (PNG, full resolution): {download}")
         lines.append(links.DOWNLOAD_NOTE)
-    elif links.downloads_enabled():
+    elif can_download and links.downloads_enabled():
+        # The style was built but its link would be too long.
         lines.append(
             "No download link: this image draws too many frames to fit in "
             "a link. The user can export it from the app."
@@ -297,7 +298,8 @@ def ni_image_get_composite(
     return [
         Image(data=encode_jpeg(rgb), format="jpeg"),
         *notes,
-        footer(ds, xy, z, time, crop, download),
+        # Nothing draws here: the black note already says so.
+        footer(ds, xy, z, time, crop, download, can_download=bool(style)),
     ]
 
 

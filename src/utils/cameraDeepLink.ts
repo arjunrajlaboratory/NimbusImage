@@ -6,7 +6,8 @@
  * - `x`, `y`: full-resolution image pixel coordinates, origin top-left, the
  *   same coordinates annotations are stored in. Both are required.
  * - `width`: optional image pixels to show across the viewport, for callers
- *   that know a region but not the map (an MCP image result links its crop).
+ *   that know a region but not the map (an MCP image result links its crop's
+ *   width; a crop taller than the viewport's aspect is then cut off).
  * - `zoom`: optional GeoJS zoom level, the value `store.cameraInfo.zoom`
  *   holds; it wins over `width`. Without either the viewer zooms so about
  *   `DEFAULT_DEEP_LINK_VIEW_WIDTH` image pixels span the viewport's width.
@@ -112,22 +113,10 @@ export function cameraDeepLinkZoom(
   return Math.min(map.zoomRange.max, Math.max(map.zoomRange.min, zoom));
 }
 
-/**
- * The query to replace the route's with once a target stops pending (applied
- * or superseded): without the camera keys, so a reload or a copied URL does
- * not jump back to the linked point. null when nothing needs to change.
- */
-export function queryAfterCameraDeepLink<T extends Record<string, unknown>>(
+/** Whether a target just stopped pending (applied or superseded). */
+export function cameraDeepLinkSettled(
   pending: IPendingCameraDeepLink | null,
   previous: IPendingCameraDeepLink | null | undefined,
-  query: T,
-): Partial<T> | null {
-  if (
-    !previous ||
-    pending ||
-    !CAMERA_DEEP_LINK_QUERY_KEYS.some((key) => key in query)
-  ) {
-    return null;
-  }
-  return omitCameraDeepLinkQuery(query);
+): boolean {
+  return !!previous && !pending;
 }

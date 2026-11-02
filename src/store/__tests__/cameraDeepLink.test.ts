@@ -150,6 +150,30 @@ describe("camera deep link", () => {
     expect(main.pendingCameraDeepLink).toBeNull();
   });
 
+  it("a superseded navigation does not commit its target when its fetch resolves last", async () => {
+    views.a = makeView("a", "ds1");
+    views.b = makeView("b", "ds1");
+    let resolveA: () => void = () => {};
+    vi.spyOn(main.api, "getDatasetView").mockImplementation(
+      (id: string) =>
+        new Promise((resolve) => {
+          const answer = () => resolve({ ...views[id] });
+          if (id === "a") resolveA = answer;
+          else answer();
+        }),
+    );
+
+    const first = main.setDatasetViewId({
+      id: "a",
+      routeQuery: { x: "1", y: "2" },
+    });
+    await main.setDatasetViewId({ id: "b" });
+    resolveA();
+    await first;
+
+    expect(main.pendingCameraDeepLink).toBeNull();
+  });
+
   it("requestCameraDeepLink re-targets the loaded view", async () => {
     views.v = makeView("v", "ds1");
     await main.setDatasetViewId({ id: "v" });

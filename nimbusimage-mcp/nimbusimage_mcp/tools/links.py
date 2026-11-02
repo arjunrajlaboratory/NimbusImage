@@ -98,12 +98,13 @@ def ni_export_links(
         return links.api_link("export/csv", {
             "datasetId": ds.id,
             "propertyPaths": json.dumps(paths, separators=(",", ":")),
-            "filename": f"{name}.csv",
+            "filename": links.download_filename(name, ".csv"),
         })
 
     csv = csv_link(property_paths)
     # The limit is on the encoded link, not the JSON: quoting can double it.
-    while csv is not None and len(csv) > links.MAX_LINK_LENGTH:
+    while csv is not None and len(csv) > links.MAX_LINK_LENGTH \
+            and property_paths:
         omitted += 1
         property_paths = property_paths[:-1]
         csv = csv_link(property_paths)
@@ -116,10 +117,12 @@ def ni_export_links(
     result = {
         "csv": csv,
         "geojson": links.api_link("export/geojson", {
-            "datasetId": ds.id, "filename": f"{name}.geojson",
+            "datasetId": ds.id,
+            "filename": links.download_filename(name, ".geojson"),
         }),
         "json": links.api_link("export/json", {
-            "datasetId": ds.id, "filename": f"{name}.json",
+            "datasetId": ds.id,
+            "filename": links.download_filename(name, ".json"),
         }),
         "csv_columns": len(property_paths),
         "note": links.DOWNLOAD_NOTE,

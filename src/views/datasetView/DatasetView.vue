@@ -4,12 +4,12 @@
 <script setup lang="ts">
 import store from "@/store";
 import { TLayerMode } from "@/store/model";
-import { useRouteMapper } from "@/utils/useRouteMapper";
+import { removeQueryKeys, useRouteMapper } from "@/utils/useRouteMapper";
 import { useRoute, useRouter } from "vue-router";
 import { watch } from "vue";
 import {
   CAMERA_DEEP_LINK_QUERY_KEYS,
-  queryAfterCameraDeepLink,
+  cameraDeepLinkSettled,
 } from "@/utils/cameraDeepLink";
 
 const route = useRoute();
@@ -36,9 +36,8 @@ watch(
 watch(
   () => store.pendingCameraDeepLink,
   (pending, previous) => {
-    const query = queryAfterCameraDeepLink(pending, previous, route.query);
-    if (query) {
-      router.replace({ query });
+    if (cameraDeepLinkSettled(pending, previous)) {
+      removeQueryKeys(CAMERA_DEEP_LINK_QUERY_KEYS, router, route);
     }
   },
 );

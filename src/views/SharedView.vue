@@ -19,8 +19,13 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import store from "@/store";
+import { removeQueryKeys } from "@/utils/useRouteMapper";
+import {
+  CAMERA_DEEP_LINK_QUERY_KEYS,
+  cameraDeepLinkSettled,
+} from "@/utils/cameraDeepLink";
 import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
 import Viewer from "./datasetView/Viewer.vue";
@@ -33,6 +38,18 @@ import Viewer from "./datasetView/Viewer.vue";
  */
 
 const route = useRoute();
+const router = useRouter();
+
+// As on the dataset view route: once a `?x=&y=` target is applied, drop it
+// from the URL, so a reload keeps where the viewer moved to.
+watch(
+  () => store.pendingCameraDeepLink,
+  (pending, previous) => {
+    if (cameraDeepLinkSettled(pending, previous)) {
+      removeQueryKeys(CAMERA_DEEP_LINK_QUERY_KEYS, router, route);
+    }
+  },
+);
 const error = ref<string | null>(null);
 const ready = ref(false);
 let sequence = 0;

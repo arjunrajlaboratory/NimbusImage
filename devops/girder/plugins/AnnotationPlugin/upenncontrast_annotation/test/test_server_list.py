@@ -106,6 +106,30 @@ class TestServerListIds:
         result = parseStreaming(resp)
         assert result["ids"] == [str(exact["_id"])]
 
+    def testListIdsFilterByAllTags(self, admin, server):
+        """all=true: every given tag, others allowed (the count endpoint's
+        rule), so a count and a delete agree."""
+        folder = utilities.createFolder(
+            admin, "ds", upenn_utilities.datasetMetadata
+        )
+        exact = makeAnnotation(folder["_id"], tags=["A", "B"])
+        superset = makeAnnotation(folder["_id"], tags=["A", "B", "C"])
+        makeAnnotation(folder["_id"], tags=["A"])
+
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"tags": {"values": ["A", "B"], "all": True}},
+        })
+        assertStatusOk(resp)
+        result = parseStreaming(resp)
+        assert set(result["ids"]) == {str(exact["_id"]), str(superset["_id"])}
+
+        resp = postList(server, admin, "/upenn_annotation/list/ids", {
+            "datasetId": str(folder["_id"]),
+            "filters": {"tags": {"values": ["A"], "all": "yes"}},
+        })
+        assertStatus(resp, 400)
+
     def testListIdsRequiresReadAccess(self, admin, user, server):
         folder = utilities.createPrivateFolder(
             admin, "ds", upenn_utilities.datasetMetadata
